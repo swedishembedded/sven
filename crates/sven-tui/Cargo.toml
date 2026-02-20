@@ -1,0 +1,18 @@
+[package]
+name    = "sven-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sven-config = { path = "../sven-config" }
+sven-model  = { path = "../sven-model" }
+sven-tools  = { path = "../sven-tools" }
+sven-core   = { path = "../sven-core" }
+anyhow      = { workspace = true }
+tokio       = { workspace = true }
+futures     = { workspace = true }
+tracing     = { workspace = true }
+ratatui     = { workspace = true }
+crossterm   = { workspace = true }
+unicode-width = { workspace = true }
+pulldown-cmark = { workspace = true }

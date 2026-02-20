@@ -1,0 +1,209 @@
+# Mock model responses for sven end-to-end / bats tests.
+#
+# Rules are matched against the last user message (case-insensitive).
+# The first matching rule wins; 'default' is the fallback.
+#
+# match_type: contains | equals | starts_with | regex | default
+#
+# Simple reply:
+#   reply: "text"
+#
+# Tool-call sequence (the agent runs the tool, then calls the model again):
+#   tool_calls:
+#     - id: tc-1
+#       tool: <tool-name>       # "shell" | "fs" | "glob"
+#       args: { ... }           # YAML map → serialised to JSON for the tool
+#   after_tool_reply: "text"    # response after tool results arrive
+
+responses:
+
+  # ── Sanity / basic ──────────────────────────────────────────────────────────
+
+  - match_type: equals
+    pattern: "ping"
+    reply: "pong"
+
+  - match_type: equals
+    pattern: "hello"
+    reply: "hello from sven mock agent"
+
+  # ── Multi-word contains match ───────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "what is rust"
+    reply: |
+      Rust is a systems programming language focused on safety, speed, and concurrency.
+      It achieves memory safety without a garbage collector through its ownership system.
+
+  # ── Research mode ───────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "research"
+    reply: |
+      ## Research Summary
+
+      Based on my analysis of the codebase:
+
+      - The project is structured as a Rust workspace with 7 crates
+      - Each crate has a clearly defined responsibility
+      - Tests cover both unit and integration scenarios
+
+  # ── Plan mode ───────────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "make a plan"
+    reply: |
+      ## Plan
+
+      1. Analyse the existing codebase structure
+      2. Identify gaps and missing features
+      3. Implement changes incrementally
+      4. Write tests for each change
+      5. Review and finalise
+
+  - match_type: starts_with
+    pattern: "plan"
+    reply: |
+      ## Implementation Plan
+
+      ### Phase 1 — Setup
+      Configure the environment and dependencies.
+
+      ### Phase 2 — Implementation
+      Write the core logic following existing conventions.
+
+      ### Phase 3 — Testing
+      Add unit and integration tests.
+
+  # ── Pipeline / summarise ────────────────────────────────────────────────────
+
+  - match_type: starts_with
+    pattern: "summarize"
+    reply: "Summary: the previous agent output described a structured plan with multiple phases."
+
+  - match_type: starts_with
+    pattern: "summarise"
+    reply: "Summary: the previous agent output described a structured plan with multiple phases."
+
+  - match_type: starts_with
+    pattern: "implement the plan"
+    reply: "Implementation complete. All phases from the plan have been executed."
+
+  - match_type: contains
+    pattern: "implement"
+    reply: "Implementation complete. The requested changes have been applied."
+
+  # ── File operations (tool-call sequences) ───────────────────────────────────
+
+  - match_type: contains
+    pattern: "write a file"
+    tool_calls:
+      - id: tc-write
+        tool: fs
+        args:
+          operation: write
+          path: /tmp/sven_e2e_test.txt
+          content: "written by sven mock agent"
+    after_tool_reply: "I have written the content to /tmp/sven_e2e_test.txt"
+
+  - match_type: contains
+    pattern: "read the file"
+    tool_calls:
+      - id: tc-read
+        tool: fs
+        args:
+          operation: read
+          path: /tmp/sven_e2e_test.txt
+    after_tool_reply: "File read successfully. Contents match expectations."
+
+  - match_type: contains
+    pattern: "list files"
+    tool_calls:
+      - id: tc-list
+        tool: fs
+        args:
+          operation: list
+          path: /tmp
+    after_tool_reply: "Listed /tmp directory. Found the expected files."
+
+  # ── Shell execution ─────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "run echo"
+    tool_calls:
+      - id: tc-echo
+        tool: shell
+        args:
+          command: "echo sven_mock_shell_output"
+    after_tool_reply: "Shell command executed. Output contained: sven_mock_shell_output"
+
+  - match_type: contains
+    pattern: "run ls"
+    tool_calls:
+      - id: tc-ls
+        tool: shell
+        args:
+          command: "ls /tmp"
+    after_tool_reply: "Directory listing completed successfully."
+
+  # ── Multi-step markdown sequences ───────────────────────────────────────────
+  # (each H2 section in a markdown file is submitted as a separate user message)
+
+  - match_type: contains
+    pattern: "step one"
+    reply: "Step 1 complete: environment analysed."
+
+  - match_type: contains
+    pattern: "step two"
+    reply: "Step 2 complete: implementation applied."
+
+  - match_type: contains
+    pattern: "step three"
+    reply: "Step 3 complete: tests passing."
+
+  - match_type: contains
+    pattern: "analyse the codebase"
+    reply: "Codebase analysis complete. The project uses a Rust workspace with clear separation of concerns."
+
+  - match_type: contains
+    pattern: "summarise findings"
+    reply: "Summary: the codebase is well-structured with comprehensive test coverage."
+
+  # ── Mode-tagged replies ──────────────────────────────────────────────────────
+
+  - match_type: starts_with
+    pattern: "[research]"
+    reply: "Research mode: gathering information only, no changes made."
+
+  - match_type: starts_with
+    pattern: "[plan]"
+    reply: "Plan mode: structured plan generated."
+
+  - match_type: starts_with
+    pattern: "[agent]"
+    reply: "Agent mode: task executed with full tool access."
+
+  # ── Error simulation ─────────────────────────────────────────────────────────
+  # (tests that verify error output goes to stderr)
+
+  - match_type: equals
+    pattern: "trigger error"
+    reply: "This response was generated but the task had issues."
+
+  # ── Glob / search ────────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "find rust files"
+    tool_calls:
+      - id: tc-glob
+        tool: glob
+        args:
+          pattern: "*.rs"
+          root: /data/agents/sven/crates
+          max_results: 5
+    after_tool_reply: "Found Rust source files in the crates directory."
+
+  # ── Default fallback ─────────────────────────────────────────────────────────
+
+  - match_type: default
+    reply: "Mock response: I understand your request and will proceed with the task."

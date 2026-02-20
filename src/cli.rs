@@ -1,0 +1,81 @@
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
+use std::path::PathBuf;
+use sven_config::AgentMode;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "sven",
+    about = "An efficient AI coding agent for CLI and CI",
+    version,
+    long_about = None,
+)]
+pub struct Cli {
+    /// Optional initial prompt or task description
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
+
+    /// Run headless (no TUI); outputs clean text to stdout
+    #[arg(long, short = 'H')]
+    pub headless: bool,
+
+    /// Agent mode
+    #[arg(long, short = 'm', value_enum, default_value = "agent")]
+    pub mode: AgentMode,
+
+    /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
+    #[arg(long, short = 'M', env = "SVEN_MODEL")]
+    pub model: Option<String>,
+
+    /// Path to a markdown file to use as input (CI mode)
+    #[arg(long, short = 'f')]
+    pub file: Option<PathBuf>,
+
+    /// Path to config file (overrides auto-discovery)
+    #[arg(long, short = 'c')]
+    pub config: Option<PathBuf>,
+
+    /// Increase verbosity (-v = debug, -vv = trace)
+    #[arg(long, short = 'v', action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Generate shell completion script
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Print the effective configuration and exit
+    ShowConfig,
+}
+
+impl Cli {
+    /// Returns true if the run should be headless (CI mode).
+    pub fn is_headless(&self) -> bool {
+        self.headless
+            || self.file.is_some()
+            || !std::io::stdin().is_terminal()
+    }
+}
+
+pub fn print_completions(shell: Shell) {
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "sven", &mut std::io::stdout());
+}
+
+// We need this trait for stdin TTY detection
+trait IsTerminal {
+    fn is_terminal(&self) -> bool;
+}
+
+impl IsTerminal for std::io::Stdin {
+    fn is_terminal(&self) -> bool {
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::isatty(self.as_raw_fd()) != 0 }
+    }
+}

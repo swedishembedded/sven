@@ -1,0 +1,9 @@
+[package]
+name    = "sven-input"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow        = { workspace = true }
+pulldown-cmark = { workspace = true }
+tracing       = { workspace = true }

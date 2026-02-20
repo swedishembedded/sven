@@ -1,0 +1,109 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/sven-config",
+    "crates/sven-model",
+    "crates/sven-input",
+    "crates/sven-tools",
+    "crates/sven-core",
+    "crates/sven-ci",
+    "crates/sven-tui",
+]
+
+[workspace.dependencies]
+libc         = "0.2"
+tempfile     = "3"
+serde_yaml   = "0.9"
+anyhow       = "1"
+thiserror    = "1"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+toml         = "0.8"
+tokio        = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait  = "0.1"
+futures      = "0.3"
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+clap         = { version = "4", features = ["derive", "env", "string"] }
+clap_complete = "4"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid         = { version = "1", features = ["v4"] }
+chrono       = { version = "0.4", features = ["serde"] }
+dirs         = "5"
+humantime    = "2"
+regex        = "1"
+sha2         = "0.10"
+hex          = "0.4"
+pulldown-cmark = "0.12"
+ratatui      = "0.29"
+crossterm    = { version = "0.28", features = ["event-stream"] }
+syntect      = "5"
+unicode-width = "0.2"
+
+[package]
+name    = "sven"
+version = "0.1.0"
+edition = "2021"
+description = "A CLI and CI AI coding agent"
+license = "MIT"
+
+[[bin]]
+name = "sven"
+path = "src/main.rs"
+
+[dependencies]
+sven-config = { path = "crates/sven-config" }
+sven-model  = { path = "crates/sven-model" }
+sven-input  = { path = "crates/sven-input" }
+sven-tools  = { path = "crates/sven-tools" }
+sven-core   = { path = "crates/sven-core" }
+sven-ci     = { path = "crates/sven-ci" }
+sven-tui    = { path = "crates/sven-tui" }
+anyhow      = { workspace = true }
+tokio       = { workspace = true }
+clap        = { workspace = true }
+clap_complete = { workspace = true }
+tracing     = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs        = { workspace = true }
+toml        = { workspace = true }
+libc        = { workspace = true }
+ratatui     = { workspace = true }
+
+[dev-dependencies]
+serde_json  = { workspace = true }
+uuid        = { workspace = true }
+
+# ── Debian package metadata ──────────────────────────────────────────────────
+# Used by `cargo deb` (cargo-deb crate) and mirrored by scripts/build-deb.sh.
+[package.metadata.deb]
+maintainer    = "Sven Team <team@example.com>"
+copyright     = "2024 Sven Contributors"
+license-file  = ["LICENSE", "0"]
+extended-description = """\
+Sven is an efficient AI coding agent that works both as an interactive
+terminal UI (TUI) and as a headless CI pipeline tool.  It can read
+multi-step instructions from Markdown files or stdin, execute tool calls
+(shell, filesystem, glob search), and stream clean text to stdout so its
+output pipes directly into other agents or CI steps."""
+depends       = "$auto"
+section       = "utils"
+priority      = "optional"
+assets = [
+    # Binary
+    ["target/release/sven", "usr/bin/sven", "755"],
+    # Shell completions (generated during the deb build — see Makefile)
+    ["target/completions/sven.bash", "usr/share/bash-completion/completions/sven",    "644"],
+    ["target/completions/_sven",     "usr/share/zsh/vendor-completions/_sven",        "644"],
+    ["target/completions/sven.fish", "usr/share/fish/vendor_completions.d/sven.fish", "644"],
+]
+
+[profile.release]
+opt-level = 3
+lto       = true
+strip     = true
+
+[profile.dev]
+opt-level = 0

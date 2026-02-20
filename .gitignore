@@ -1,0 +1,35 @@
+# Rust / Cargo
+/target/
+Cargo.lock
+
+# Generated shell completions (produced by `make deb` / `make release`)
+/target/completions/
+
+# Debian packaging artefacts
+/target/debian/
+/target/debian-staging/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Test artefacts
+/tests/tmp/
+*.bats.log
+
+# Logs
+*.log
