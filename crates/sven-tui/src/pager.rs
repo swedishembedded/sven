@@ -98,6 +98,8 @@ impl PagerOverlay {
             // ── Line scrolling ────────────────────────────────────────────────
             KeyCode::Char('j') | KeyCode::Down  => self.scroll_down(1),
             KeyCode::Char('k') | KeyCode::Up    => self.scroll_up(1),
+            KeyCode::Char('J') => self.scroll_down(1),
+            KeyCode::Char('K') => self.scroll_up(1),
 
             // ── Half-page ─────────────────────────────────────────────────────
             KeyCode::Char('d') if ctrl => self.scroll_down(half),
@@ -237,7 +239,7 @@ impl PagerOverlay {
         let k = Style::default().fg(Color::Gray);
         let d = Style::default().fg(Color::DarkGray);
         let hints = Line::from(vec![
-            Span::styled(" j/k", k), Span::styled(":line  ", d),
+            Span::styled(" j/k/J/K", k), Span::styled(":line  ", d),
             Span::styled("^u/^d", k), Span::styled(":½pg  ", d),
             Span::styled("^b/^f", k), Span::styled(":page  ", d),
             Span::styled("gg/G", k),  Span::styled(":top/bot  ", d),

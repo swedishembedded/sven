@@ -9,8 +9,11 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, AgentEvent};
+use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::{AskQuestionTool, FsTool, GlobTool, QuestionRequest, ShellTool, ToolRegistry};
 
 use crate::{
@@ -34,6 +37,29 @@ pub struct AppOptions {
 pub enum FocusPane {
     Chat,
     Input,
+}
+
+/// One segment in the chat display (message or display-only note).
+#[derive(Debug, Clone)]
+pub enum ChatSegment {
+    Message(Message),
+    ContextCompacted {
+        tokens_before: usize,
+        tokens_after: usize,
+    },
+    Error(String),
+}
+
+/// Request from TUI to the background agent task.
+#[derive(Debug)]
+pub enum AgentRequest {
+    /// Submit a new user message (normal flow).
+    Submit(String),
+    /// Replace history and submit (edit-and-resubmit flow).
+    Resubmit {
+        messages: Vec<Message>,
+        new_user_content: String,
+    },
 }
 
 // ── Search state ──────────────────────────────────────────────────────────────
@@ -145,8 +171,14 @@ pub struct App {
     mode: AgentMode,
     focus: FocusPane,
     chat_lines: StyledLines,
-    /// Raw markdown buffer — re-rendered on resize or new content.
+    /// Display string built from chat_segments + streaming buffer; re-rendered on resize or new content.
     chat_raw: String,
+    /// Structured segments (messages + context compacted notes). Source of truth for display and resubmit.
+    chat_segments: Vec<ChatSegment>,
+    /// Accumulated assistant text during streaming until TextComplete.
+    streaming_assistant_buffer: String,
+    /// For each segment index, (start_line, end_line) in chat_lines. Built when rerendering.
+    segment_line_ranges: Vec<(usize, usize)>,
     scroll_offset: u16,
     input_buffer: String,
     input_cursor: usize,
@@ -157,7 +189,9 @@ pub struct App {
     /// Name of the tool currently executing (shown in status bar).
     current_tool: Option<String>,
     context_pct: u8,
-    agent_tx: Option<mpsc::Sender<String>>,
+    /// Track if we need to add "Agent:" prefix for next text delta
+    needs_agent_prefix: bool,
+    agent_tx: Option<mpsc::Sender<AgentRequest>>,
     event_rx: Option<mpsc::Receiver<AgentEvent>>,
     pending_nav: bool,
     chat_height: u16,
@@ -167,6 +201,10 @@ pub struct App {
     question_modal: Option<QuestionModal>,
     /// Args preview cache: call_id → formatted args string.
     tool_args_cache: HashMap<String, String>,
+    /// When set, we're in edit mode: edit_buffer/edit_cursor are active.
+    editing_message_index: Option<usize>,
+    edit_buffer: String,
+    edit_cursor: usize,
 }
 
 impl App {
@@ -177,6 +215,9 @@ impl App {
             focus: FocusPane::Input,
             chat_lines: Vec::new(),
             chat_raw: String::new(),
+            chat_segments: Vec::new(),
+            streaming_assistant_buffer: String::new(),
+            segment_line_ranges: Vec::new(),
             scroll_offset: 0,
             input_buffer: String::new(),
             input_cursor: 0,
@@ -186,6 +227,7 @@ impl App {
             agent_busy: false,
             current_tool: None,
             context_pct: 0,
+            needs_agent_prefix: false,
             agent_tx: None,
             event_rx: None,
             pending_nav: false,
@@ -193,6 +235,9 @@ impl App {
             pager: None,
             question_modal: None,
             tool_args_cache: HashMap::new(),
+            editing_message_index: None,
+            edit_buffer: String::new(),
+            edit_cursor: 0,
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(prompt);
@@ -202,7 +247,7 @@ impl App {
 
     /// Run the TUI event loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> anyhow::Result<()> {
-        let (submit_tx, submit_rx) = mpsc::channel::<String>(64);
+        let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
@@ -217,6 +262,9 @@ impl App {
         });
 
         if let Some(p) = self.queued.pop_front() {
+            self.chat_segments
+                .push(ChatSegment::Message(Message::user(&p)));
+            self.rerender_chat();
             self.send_to_agent(p).await;
         }
 
@@ -288,11 +336,20 @@ impl App {
                 draw_input(
                     frame,
                     layout.input_pane,
-                    &self.input_buffer,
-                    self.input_cursor,
-                    self.focus == FocusPane::Input,
+                    if self.editing_message_index.is_some() {
+                        &self.edit_buffer
+                    } else {
+                        &self.input_buffer
+                    },
+                    if self.editing_message_index.is_some() {
+                        self.edit_cursor
+                    } else {
+                        self.input_cursor
+                    },
+                    self.focus == FocusPane::Input || self.editing_message_index.is_some(),
                     self.queued.len(),
                     ascii,
+                    self.editing_message_index.is_some(),
                 );
                 if self.search.active {
                     draw_search(
@@ -345,7 +402,20 @@ impl App {
     fn handle_agent_event(&mut self, event: AgentEvent) -> bool {
         match event {
             AgentEvent::TextDelta(delta) => {
-                self.chat_raw.push_str(&delta);
+                if self.needs_agent_prefix {
+                    self.needs_agent_prefix = false;
+                }
+                self.streaming_assistant_buffer.push_str(&delta);
+                self.rerender_chat();
+                self.scroll_to_bottom();
+                if let Some(pager) = &mut self.pager {
+                    pager.set_lines(self.chat_lines.clone());
+                }
+            }
+            AgentEvent::TextComplete(full_text) => {
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::assistant(&full_text)));
+                self.streaming_assistant_buffer.clear();
                 self.rerender_chat();
                 self.scroll_to_bottom();
                 if let Some(pager) = &mut self.pager {
@@ -356,25 +426,26 @@ impl App {
                 let args_preview = format_args_preview(&tc.args);
                 self.tool_args_cache.insert(tc.id.clone(), args_preview.clone());
                 self.current_tool = Some(tc.name.clone());
-                let line = format!("\n**⚙ {}** `{}`\n", tc.name, args_preview);
-                self.chat_raw.push_str(&line);
+                self.chat_segments.push(ChatSegment::Message(Message {
+                    role: Role::Assistant,
+                    content: MessageContent::ToolCall {
+                        tool_call_id: tc.id.clone(),
+                        function: FunctionCall {
+                            name: tc.name.clone(),
+                            arguments: tc.args.to_string(),
+                        },
+                    },
+                }));
                 self.rerender_chat();
                 self.scroll_to_bottom();
                 if let Some(pager) = &mut self.pager {
                     pager.set_lines(self.chat_lines.clone());
                 }
             }
-            AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
+            AgentEvent::ToolCallFinished { call_id, output, .. } => {
                 self.current_tool = None;
-                let args_preview = self.tool_args_cache.remove(&call_id).unwrap_or_default();
-                let status = if is_error { "⚠" } else { "✓" };
-
-                // Build output display with middle truncation
-                let output_block = format_output_block(&output);
-                let line = format!(
-                    "\n{status} **{tool_name}** `{args_preview}`{output_block}\n\n"
-                );
-                self.chat_raw.push_str(&line);
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::tool_result(&call_id, &output)));
                 self.rerender_chat();
                 self.scroll_to_bottom();
                 if let Some(pager) = &mut self.pager {
@@ -382,11 +453,10 @@ impl App {
                 }
             }
             AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
-                let note = format!(
-                    "\n---\n*Context compacted: {} → {} tokens*\n\n",
-                    tokens_before, tokens_after
-                );
-                self.chat_raw.push_str(&note);
+                self.chat_segments.push(ChatSegment::ContextCompacted {
+                    tokens_before,
+                    tokens_after,
+                });
                 self.rerender_chat();
             }
             AgentEvent::TokenUsage { input, output, .. } => {
@@ -398,13 +468,13 @@ impl App {
                 self.current_tool = None;
                 if let Some(next) = self.queued.pop_front() {
                     let tx = self.agent_tx.clone().unwrap();
-                    tokio::spawn(async move { let _ = tx.send(next).await; });
+                    tokio::spawn(async move { let _ = tx.send(AgentRequest::Submit(next)).await; });
                     self.agent_busy = true;
+                    self.needs_agent_prefix = true;
                 }
             }
             AgentEvent::Error(msg) => {
-                let line = format!("\n**Error**: {msg}\n\n");
-                self.chat_raw.push_str(&line);
+                self.chat_segments.push(ChatSegment::Error(msg.clone()));
                 self.rerender_chat();
                 self.agent_busy = false;
                 self.current_tool = None;
@@ -448,7 +518,8 @@ impl App {
                 let in_search = self.search.active;
                 let in_input  = self.focus == FocusPane::Input;
 
-                if let Some(action) = map_key(k, in_search, in_input, self.pending_nav) {
+                let in_edit_mode = self.editing_message_index.is_some();
+                if let Some(action) = map_key(k, in_search, in_input, self.pending_nav, in_edit_mode) {
                     if action == Action::NavPrefix {
                         self.pending_nav = true;
                         return false;
@@ -559,6 +630,9 @@ impl App {
         match pager.handle_key(k) {
             PagerAction::Close => { self.pager = None; }
             PagerAction::OpenSearch => {
+                self.search.query.clear();
+                self.search.current = 0;
+                self.search.update_matches(&self.chat_lines);
                 self.search.active = true;
             }
             PagerAction::SearchNext => {
@@ -592,11 +666,84 @@ impl App {
     // ── Action dispatcher ─────────────────────────────────────────────────────
 
     async fn dispatch(&mut self, action: Action) -> bool {
+        // When in edit mode, route Input* actions to edit buffer
+        if self.editing_message_index.is_some() {
+            if let Some((buf, cur)) = self.apply_input_to_edit(&action) {
+                self.edit_buffer = buf;
+                self.edit_cursor = cur;
+                return false;
+            }
+        }
+
         match action {
             Action::Quit => return true,
 
             Action::FocusChat  => self.focus = FocusPane::Chat,
             Action::FocusInput => self.focus = FocusPane::Input,
+
+            Action::EditMessageAtCursor => {
+                let line = self.scroll_offset as usize;
+                if let Some(seg_idx) = self.segment_at_line(line) {
+                    if let Some(text) = Self::segment_editable_text(&self.chat_segments, seg_idx) {
+                        self.editing_message_index = Some(seg_idx);
+                        self.edit_cursor = text.len();
+                        self.edit_buffer = text;
+                    }
+                }
+            }
+            Action::EditMessageConfirm => {
+                if let Some(i) = self.editing_message_index {
+                    let new_content = self.edit_buffer.trim().to_string();
+                    self.editing_message_index = None;
+                    self.edit_buffer.clear();
+                    self.edit_cursor = 0;
+                    if new_content.is_empty() {
+                        return false;
+                    }
+                    let seg = match self.chat_segments.get(i) {
+                        Some(ChatSegment::Message(m)) => m.clone(),
+                        _ => return false,
+                    };
+                    match (&seg.role, &seg.content) {
+                        (Role::User, MessageContent::Text(_)) => {
+                            self.chat_segments.truncate(i + 1);
+                            self.chat_segments.pop();
+                            self.chat_segments.push(ChatSegment::Message(Message::user(&new_content)));
+                            let messages = Self::messages_for_resubmit(&self.chat_segments);
+                            self.rerender_chat();
+                            self.scroll_to_bottom();
+                            self.send_resubmit_to_agent(messages, new_content).await;
+                        }
+                        (Role::Assistant, MessageContent::Text(_)) => {
+                            let last_user_seg = self.chat_segments[..=i]
+                                .iter()
+                                .rposition(|s| matches!(s, ChatSegment::Message(m) if m.role == Role::User));
+                            let keep_end = match last_user_seg {
+                                Some(j) => j + 1,
+                                None => return false,
+                            };
+                            self.chat_segments.truncate(keep_end);
+                            let messages = Self::messages_for_resubmit(&self.chat_segments);
+                            let new_user_content = self.chat_segments
+                                .last()
+                                .and_then(|s| match s {
+                                    ChatSegment::Message(m) => m.as_text().map(String::from),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            self.rerender_chat();
+                            self.scroll_to_bottom();
+                            self.send_resubmit_to_agent(messages, new_user_content).await;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Action::EditMessageCancel => {
+                self.editing_message_index = None;
+                self.edit_buffer.clear();
+                self.edit_cursor = 0;
+            }
 
             Action::ScrollUp       => self.scroll_up(1),
             Action::ScrollDown     => self.scroll_down(1),
@@ -606,6 +753,9 @@ impl App {
             Action::ScrollBottom   => self.scroll_to_bottom(),
 
             Action::SearchOpen => {
+                self.search.query.clear();
+                self.search.current = 0;
+                self.search.update_matches(&self.chat_lines);
                 self.search.active = true;
                 self.focus = FocusPane::Chat;
             }
@@ -712,7 +862,8 @@ impl App {
                     if self.agent_busy {
                         self.queued.push_back(text);
                     } else {
-                        self.chat_raw.push_str(&format!("\n**You:** {text}\n\n"));
+                        self.chat_segments
+                            .push(ChatSegment::Message(Message::user(&text)));
                         self.rerender_chat();
                         self.scroll_to_bottom();
                         self.send_to_agent(text).await;
@@ -752,14 +903,61 @@ impl App {
 
     async fn send_to_agent(&mut self, text: String) {
         if let Some(tx) = &self.agent_tx {
-            let _ = tx.send(text).await;
+            let _ = tx.send(AgentRequest::Submit(text)).await;
             self.agent_busy = true;
+            self.needs_agent_prefix = true;
         }
     }
 
+    async fn send_resubmit_to_agent(&mut self, messages: Vec<Message>, new_user_content: String) {
+        if let Some(tx) = &self.agent_tx {
+            let _ = tx
+                .send(AgentRequest::Resubmit {
+                    messages,
+                    new_user_content,
+                })
+                .await;
+            self.agent_busy = true;
+            self.needs_agent_prefix = true;
+        }
+    }
+
+    /// Build chat_lines and segment_line_ranges from chat_segments and streaming buffer.
+    /// User messages get a green vertical bar and dimmed text; agent messages get a blue bar.
+    fn build_display_from_segments(&mut self) {
+        let mut all_lines = Vec::new();
+        let mut ranges = Vec::new();
+        let mut line_start = 0usize;
+        let bar_char = if self.ascii() { "| " } else { "▌ " };
+        for seg in &self.chat_segments {
+            let s = segment_to_markdown(seg, &self.tool_args_cache);
+            let lines = render_markdown(&s, self.config.tui.wrap_width, self.ascii());
+            let (bar_style, dim) = segment_bar_style(seg);
+            let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
+            let n = styled.len();
+            all_lines.extend(styled);
+            ranges.push((line_start, line_start + n));
+            line_start += n;
+        }
+        if !self.streaming_assistant_buffer.is_empty() {
+            let prefix = if self.chat_segments.is_empty() {
+                "**Agent:** "
+            } else {
+                "\n**Agent:** "
+            };
+            let s = format!("{}{}", prefix, self.streaming_assistant_buffer);
+            let lines = render_markdown(&s, self.config.tui.wrap_width, self.ascii());
+            let styled = apply_bar_and_dim(lines, Some(Style::default().fg(Color::Blue)), false, bar_char);
+            all_lines.extend(styled);
+        }
+        self.chat_lines = all_lines;
+        self.segment_line_ranges = ranges;
+        self.chat_raw.clear();
+        self.chat_raw.push_str("[built from segments]");
+    }
+
     fn rerender_chat(&mut self) {
-        self.chat_lines =
-            render_markdown(&self.chat_raw, self.config.tui.wrap_width, self.ascii());
+        self.build_display_from_segments();
         self.search.update_matches(&self.chat_lines);
     }
 
@@ -782,6 +980,84 @@ impl App {
     fn scroll_to_bottom(&mut self) {
         self.scroll_offset =
             (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
+    }
+
+    /// Segment index that contains the given line (0-based). Returns None if line is in streaming buffer.
+    fn segment_at_line(&self, line: usize) -> Option<usize> {
+        self.segment_line_ranges
+            .iter()
+            .position(|&(start, end)| line >= start && line < end)
+    }
+
+    /// If the segment at index i is an editable message (User or Assistant text), return its text.
+    fn segment_editable_text(segments: &[ChatSegment], i: usize) -> Option<String> {
+        let seg = segments.get(i)?;
+        match seg {
+            ChatSegment::Message(m) => match (&m.role, &m.content) {
+                (Role::User, MessageContent::Text(t)) => Some(t.clone()),
+                (Role::Assistant, MessageContent::Text(t)) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Messages for resubmit: only Message segments (no ContextCompacted, no Error).
+    fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
+        segments
+            .iter()
+            .filter_map(|s| match s {
+                ChatSegment::Message(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// When in edit mode, apply Input* action to (edit_buffer, edit_cursor). Returns Some((new_buf, new_cur)) if the action was consumed.
+    fn apply_input_to_edit(&self, action: &Action) -> Option<(String, usize)> {
+        let (buf, cur) = (&self.edit_buffer, self.edit_cursor);
+        let mut buf = buf.clone();
+        let mut cur = cur;
+        match action {
+            Action::InputChar(c) => {
+                buf.insert(cur, *c);
+                cur += c.len_utf8();
+            }
+            Action::InputNewline => {
+                buf.insert(cur, '\n');
+                cur += 1;
+            }
+            Action::InputBackspace => {
+                if cur > 0 {
+                    let prev = prev_char_boundary(&buf, cur);
+                    buf.remove(prev);
+                    cur = prev;
+                }
+            }
+            Action::InputDelete => {
+                if cur < buf.len() {
+                    buf.remove(cur);
+                }
+            }
+            Action::InputMoveCursorLeft => cur = prev_char_boundary(&buf, cur),
+            Action::InputMoveCursorRight => {
+                if cur < buf.len() {
+                    let ch = buf[cur..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    cur += ch;
+                }
+            }
+            Action::InputMoveWordLeft => cur = prev_word_boundary(&buf, cur),
+            Action::InputMoveWordRight => cur = next_word_boundary(&buf, cur),
+            Action::InputMoveLineStart => cur = 0,
+            Action::InputMoveLineEnd => cur = buf.len(),
+            Action::InputDeleteToEnd => buf.truncate(cur),
+            Action::InputDeleteToStart => {
+                buf = buf[cur..].to_string();
+                cur = 0;
+            }
+            _ => return None,
+        }
+        Some((buf, cur))
     }
 }
 
@@ -817,20 +1093,28 @@ fn format_output_block(output: &str) -> String {
     if lines.is_empty() {
         return String::new();
     }
-    let body = if lines.len() <= TOOL_CALL_MAX_LINES {
-        output.trim_end().to_string()
+    
+    let formatted_lines = if lines.len() <= TOOL_CALL_MAX_LINES {
+        lines.iter()
+            .map(|l| format!("> {}", l))
+            .collect::<Vec<_>>()
+            .join("\n")
     } else {
         let head = TOOL_CALL_MAX_LINES / 2;
         let tail = TOOL_CALL_MAX_LINES - head - 1;
         let omitted = lines.len() - head - tail;
-        format!(
-            "{}\n… +{} lines\n{}",
-            lines[..head].join("\n"),
-            omitted,
-            lines[lines.len() - tail..].join("\n"),
-        )
+        let head_str = lines[..head].iter()
+            .map(|l| format!("> {}", l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tail_str = lines[lines.len() - tail..].iter()
+            .map(|l| format!("> {}", l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{}\n> \n> … (+{} lines omitted)\n> \n{}", head_str, omitted, tail_str)
     };
-    format!("\n```\n{body}\n```")
+    
+    format!("\n>\n> **Output:**\n> ```\n{}\n> ```", formatted_lines)
 }
 
 /// Format a JSON args value into a short preview string.
@@ -863,12 +1147,94 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+/// Format a single chat segment as markdown for display.
+fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
+    match seg {
+        ChatSegment::Message(m) => message_to_markdown(m, tool_args_cache),
+        ChatSegment::ContextCompacted {
+            tokens_before,
+            tokens_after,
+        } => format!(
+            "\n---\n*Context compacted: {} → {} tokens*\n\n",
+            tokens_before, tokens_after
+        ),
+        ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
+    }
+}
+
+/// Return (bar_style, dim) for a segment: User = green + dim, Assistant text = blue, else none.
+fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
+    match seg {
+        ChatSegment::Message(m) => match (&m.role, &m.content) {
+            (Role::User, MessageContent::Text(_)) => {
+                (Some(Style::default().fg(Color::Green)), true)
+            }
+            (Role::Assistant, MessageContent::Text(_)) => {
+                (Some(Style::default().fg(Color::Blue)), false)
+            }
+            _ => (None, false),
+        },
+        _ => (None, false),
+    }
+}
+
+/// Prepend a bar to each line and optionally apply dim to content.
+fn apply_bar_and_dim(
+    lines: StyledLines,
+    bar_style: Option<Style>,
+    dim: bool,
+    bar_char: &str,
+) -> StyledLines {
+    let modifier = if dim { Modifier::DIM } else { Modifier::empty() };
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut spans = Vec::new();
+            if let Some(style) = bar_style {
+                spans.push(Span::styled(bar_char.to_string(), style));
+            }
+            for s in line.spans {
+                spans.push(Span::styled(
+                    s.content.to_string(),
+                    s.style.patch(Style::default().add_modifier(modifier)),
+                ));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
+    use sven_model::Role;
+    match (&m.role, &m.content) {
+        (Role::User, MessageContent::Text(t)) => format!("\n---\n\n> **You:** {t}\n\n"),
+        (Role::Assistant, MessageContent::Text(t)) => format!("**Agent:** {t}\n\n"),
+        (Role::Assistant, MessageContent::ToolCall { function, .. }) => {
+            let args_preview = serde_json::from_str(&function.arguments)
+                .ok()
+                .as_ref()
+                .map(format_args_preview)
+                .unwrap_or_else(|| truncate_str(&function.arguments, 80));
+            format!("\n> 🔧 **{}** `{}`\n", function.name, args_preview)
+        }
+        (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
+            let args_preview = tool_args_cache
+                .get(tool_call_id)
+                .cloned()
+                .unwrap_or_else(|| truncate_str(tool_call_id, 40));
+            let output_block = format_output_block(content);
+            format!("> ✅ **tool** `{}`{}\n", args_preview, output_block)
+        }
+        _ => String::new(),
+    }
+}
+
 // ── Background agent task ─────────────────────────────────────────────────────
 
 async fn agent_task(
     config: Arc<Config>,
     mode: AgentMode,
-    mut rx: mpsc::Receiver<String>,
+    mut rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
 ) {
@@ -894,10 +1260,26 @@ async fn agent_task(
         128_000,
     );
 
-    while let Some(msg) = rx.recv().await {
-        debug!(msg_len = msg.len(), "agent task received message");
-        if let Err(e) = agent.submit(&msg, tx.clone()).await {
-            let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+    while let Some(req) = rx.recv().await {
+        match req {
+            AgentRequest::Submit(msg) => {
+                debug!(msg_len = msg.len(), "agent task received message");
+                if let Err(e) = agent.submit(&msg, tx.clone()).await {
+                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                }
+            }
+            AgentRequest::Resubmit {
+                messages,
+                new_user_content,
+            } => {
+                debug!("agent task received resubmit");
+                if let Err(e) = agent
+                    .replace_history_and_submit(messages, &new_user_content, tx.clone())
+                    .await
+                {
+                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                }
+            }
         }
     }
 }

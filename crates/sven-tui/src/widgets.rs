@@ -132,8 +132,11 @@ pub fn draw_input(
     focused: bool,
     queued_steps: usize,
     ascii: bool,
+    edit_mode: bool,
 ) {
-    let title = if queued_steps > 0 {
+    let title = if edit_mode {
+        "Edit  [Enter:confirm  Esc:cancel]".into()
+    } else if queued_steps > 0 {
         format!("Input  [{queued_steps} queued]")
     } else {
         "Input  [Enter:send  Shift+Enter:newline  ^w+k:chat]".into()
@@ -187,7 +190,7 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
         Line::default(),
         Line::from(" ^w k     Focus chat pane"),
         Line::from(" ^w j     Focus input pane"),
-        Line::from(" j/k      Scroll chat down/up"),
+        Line::from(" j/k/J/K  Scroll chat down/up"),
         Line::from(" ^u/^d    Half-page up/down"),
         Line::from(" g / G    Jump to top/bottom"),
         Line::from(" ^T       Open full-screen pager"),

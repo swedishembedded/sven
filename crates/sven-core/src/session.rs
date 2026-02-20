@@ -56,6 +56,12 @@ impl Session {
     pub fn recalculate_tokens(&mut self) {
         self.token_count = self.messages.iter().map(|m| m.approx_tokens()).sum();
     }
+
+    /// Replace the message list and recalculate token count (for resubmit / edit).
+    pub fn replace_messages(&mut self, messages: Vec<Message>) {
+        self.messages = messages;
+        self.recalculate_tokens();
+    }
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
@@ -117,6 +123,19 @@ mod tests {
         s.messages.clear();
         s.recalculate_tokens();
         assert_eq!(s.token_count, 0);
+    }
+
+    #[test]
+    fn replace_messages_sets_messages_and_recalculates_tokens() {
+        let mut s = Session::new(1000);
+        s.push(Message::user("first"));
+        s.push(Message::assistant("reply"));
+        assert_eq!(s.messages.len(), 2);
+        let new_msgs = vec![Message::user("only")];
+        s.replace_messages(new_msgs.clone());
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].as_text(), Some("only"));
+        assert_eq!(s.token_count, 1); // "only" → 1 token
     }
 
     // ── Context fraction ──────────────────────────────────────────────────────

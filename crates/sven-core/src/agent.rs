@@ -97,6 +97,26 @@ impl Agent {
         self.run_agentic_loop(tx).await
     }
 
+    /// Replace session history with the given messages, then run with the new user message.
+    /// Used for edit-and-resubmit: TUI sends truncated history + new user content.
+    /// Prepends system message if the list does not start with one.
+    pub async fn replace_history_and_submit(
+        &mut self,
+        messages: Vec<Message>,
+        new_user_content: &str,
+        tx: mpsc::Sender<AgentEvent>,
+    ) -> anyhow::Result<()> {
+        let mode = *self.current_mode.lock().await;
+        let mut msgs = messages;
+        if msgs.is_empty() || msgs[0].role != Role::System {
+            let sys = self.system_message(mode);
+            msgs.insert(0, sys);
+        }
+        self.session.replace_messages(msgs);
+        self.session.push(Message::user(new_user_content));
+        self.run_agentic_loop(tx).await
+    }
+
     /// The main agent loop: model call → optional tool calls → repeat
     async fn run_agentic_loop(&mut self, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
         let mut rounds = 0u32;

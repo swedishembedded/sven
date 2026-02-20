@@ -278,6 +278,12 @@ impl MarkdownRenderer {
             }
         }
 
+        // Defensive cleanup: pop style stack so unclosed tags (e.g. malformed markdown)
+        // cannot leak style to the rest of the document.
+        while self.style_stack.len() > 1 {
+            self.style_stack.pop();
+        }
+
         if !self.current_spans.is_empty() {
             self.lines.push(Line::from(self.current_spans));
         }
@@ -378,4 +384,31 @@ fn plain_code_lines(code: &str) -> Vec<Line<'static>> {
     code.lines()
         .map(|l| Line::from(Span::styled(l.to_string(), style)))
         .collect()
+}
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_empty_returns_some_lines() {
+        let lines = render_markdown("", 80, false);
+        assert!(lines.len() <= 1, "empty input should yield at most one line");
+    }
+
+    #[test]
+    fn render_unclosed_link_does_not_panic() {
+        let md = "[unclosed link\n\nnormal text";
+        let lines = render_markdown(md, 80, false);
+        assert!(!lines.is_empty(), "should produce some lines");
+    }
+
+    #[test]
+    fn style_stack_cleanup_after_unclosed_tag() {
+        let md = "**bold [link\n\nplain text";
+        let lines = render_markdown(md, 80, false);
+        assert!(!lines.is_empty());
+    }
 }
