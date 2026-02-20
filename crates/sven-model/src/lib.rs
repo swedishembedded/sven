@@ -46,7 +46,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             if let Some(path) = responses_path {
                 Ok(Box::new(YamlMockProvider::from_file(&path)?))
             } else {
-                Ok(Box::new(MockProvider::default()))
+                Ok(Box::new(MockProvider))
             }
         }
         other => bail!("unknown model provider: {other}"),

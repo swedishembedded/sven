@@ -11,7 +11,7 @@
 # Tool-call sequence (the agent runs the tool, then calls the model again):
 #   tool_calls:
 #     - id: tc-1
-#       tool: <tool-name>       # "shell" | "fs" | "glob"
+#       tool: <tool-name>       # e.g. "run_terminal_command" | "write" | "read_file" | "glob_file_search"
 #       args: { ... }           # YAML map → serialised to JSON for the tool
 #   after_tool_reply: "text"    # response after tool results arrive
 
@@ -99,10 +99,9 @@ responses:
     pattern: "write a file"
     tool_calls:
       - id: tc-write
-        tool: fs
+        tool: write
         args:
-          operation: write
-          path: /tmp/sven_e2e_test.txt
+          file_path: /tmp/sven_e2e_test.txt
           content: "written by sven mock agent"
     after_tool_reply: "I have written the content to /tmp/sven_e2e_test.txt"
 
@@ -110,20 +109,19 @@ responses:
     pattern: "read the file"
     tool_calls:
       - id: tc-read
-        tool: fs
+        tool: read_file
         args:
-          operation: read
-          path: /tmp/sven_e2e_test.txt
+          file_path: /tmp/sven_e2e_test.txt
     after_tool_reply: "File read successfully. Contents match expectations."
 
   - match_type: contains
     pattern: "list files"
     tool_calls:
       - id: tc-list
-        tool: fs
+        tool: list_dir
         args:
-          operation: list
-          path: /tmp
+          dir_path: /tmp
+          depth: 1
     after_tool_reply: "Listed /tmp directory. Found the expected files."
 
   # ── Shell execution ─────────────────────────────────────────────────────────
@@ -132,7 +130,7 @@ responses:
     pattern: "run echo"
     tool_calls:
       - id: tc-echo
-        tool: shell
+        tool: run_terminal_command
         args:
           command: "echo sven_mock_shell_output"
     after_tool_reply: "Shell command executed. Output contained: sven_mock_shell_output"
@@ -141,7 +139,7 @@ responses:
     pattern: "run ls"
     tool_calls:
       - id: tc-ls
-        tool: shell
+        tool: run_terminal_command
         args:
           command: "ls /tmp"
     after_tool_reply: "Directory listing completed successfully."
@@ -196,12 +194,90 @@ responses:
     pattern: "find rust files"
     tool_calls:
       - id: tc-glob
-        tool: glob
+        tool: glob_file_search
         args:
           pattern: "*.rs"
           root: /data/agents/sven/crates
           max_results: 5
     after_tool_reply: "Found Rust source files in the crates directory."
+
+  # ── New tools (run_terminal_command, read_file, edit_file, grep, apply_patch) ─
+
+  - match_type: contains
+    pattern: "run terminal command"
+    tool_calls:
+      - id: tc-rtc
+        tool: run_terminal_command
+        args:
+          command: "echo sven_terminal_output"
+    after_tool_reply: "Terminal command executed. Output: sven_terminal_output"
+
+  - match_type: contains
+    pattern: "read the test file"
+    tool_calls:
+      - id: tc-rf
+        tool: read_file
+        args:
+          file_path: /tmp/sven_e2e_test.txt
+    after_tool_reply: "File read with line numbers."
+
+  - match_type: contains
+    pattern: "edit the test file"
+    tool_calls:
+      - id: tc-ef
+        tool: edit_file
+        args:
+          file_path: /tmp/sven_e2e_test.txt
+          old_str: "written by sven mock agent"
+          new_str: "edited by sven mock agent"
+    after_tool_reply: "File edited successfully."
+
+  - match_type: contains
+    pattern: "grep for pattern"
+    tool_calls:
+      - id: tc-grep
+        tool: grep
+        args:
+          pattern: "sven"
+          path: /data/agents/sven/crates/sven-tools/src/lib.rs
+          limit: 5
+    after_tool_reply: "Grep completed. Found matching lines."
+
+  - match_type: contains
+    pattern: "search the codebase"
+    tool_calls:
+      - id: tc-sc
+        tool: search_codebase
+        args:
+          query: "ToolRegistry"
+          path: /data/agents/sven/crates/sven-tools/src
+          limit: 5
+    after_tool_reply: "Codebase search completed."
+
+  - match_type: contains
+    pattern: "write todo list"
+    tool_calls:
+      - id: tc-todo
+        tool: todo_write
+        args:
+          todos:
+            - id: "1"
+              content: "first task"
+              status: "in_progress"
+            - id: "2"
+              content: "second task"
+              status: "pending"
+    after_tool_reply: "Todo list updated."
+
+  - match_type: contains
+    pattern: "list the directory"
+    tool_calls:
+      - id: tc-ld
+        tool: list_dir
+        args:
+          dir_path: /data/agents/sven/crates
+          depth: 1
+    after_tool_reply: "Directory listing complete."
 
   # ── Default fallback ─────────────────────────────────────────────────────────
 

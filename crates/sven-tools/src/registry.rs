@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use sven_config::AgentMode;
+
 use crate::{Tool, ToolCall, ToolOutput};
 
 /// A tool schema – mirrors sven_model::ToolSchema but keeps tools crate
@@ -30,13 +32,29 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
-    /// Produce the list of schemas to send with every completion request.
+    /// Produce schemas for ALL registered tools (mode-unfiltered).
     pub fn schemas(&self) -> Vec<ToolSchema> {
-        self.tools.values().map(|t| ToolSchema {
+        let mut schemas: Vec<ToolSchema> = self.tools.values().map(|t| ToolSchema {
             name: t.name().to_string(),
             description: t.description().to_string(),
             parameters: t.parameters_schema(),
-        }).collect()
+        }).collect();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
+    }
+
+    /// Produce schemas only for tools available in the given mode.
+    pub fn schemas_for_mode(&self, mode: AgentMode) -> Vec<ToolSchema> {
+        let mut schemas: Vec<ToolSchema> = self.tools.values()
+            .filter(|t| t.modes().contains(&mode))
+            .map(|t| ToolSchema {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                parameters: t.parameters_schema(),
+            })
+            .collect();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
     }
 
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
@@ -51,6 +69,15 @@ impl ToolRegistry {
 
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
+    }
+
+    pub fn names_for_mode(&self, mode: AgentMode) -> Vec<String> {
+        let mut names: Vec<String> = self.tools.values()
+            .filter(|t| t.modes().contains(&mode))
+            .map(|t| t.name().to_string())
+            .collect();
+        names.sort();
+        names
     }
 }
 

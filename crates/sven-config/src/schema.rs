@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub model: ModelConfig,
@@ -10,17 +10,6 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub tui: TuiConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            model: ModelConfig::default(),
-            agent: AgentConfig::default(),
-            tools: ToolsConfig::default(),
-            tui: TuiConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +104,15 @@ pub struct ToolsConfig {
     pub use_docker: bool,
     /// Docker image to use when use_docker is true
     pub docker_image: Option<String>,
+    /// Web fetch and search configuration
+    #[serde(default)]
+    pub web: WebConfig,
+    /// Persistent memory configuration
+    #[serde(default)]
+    pub memory: MemoryConfig,
+    /// Linter configuration
+    #[serde(default)]
+    pub lints: LintsConfig,
 }
 
 impl Default for ToolsConfig {
@@ -134,8 +132,51 @@ impl Default for ToolsConfig {
             timeout_secs: 30,
             use_docker: false,
             docker_image: None,
+            web: WebConfig::default(),
+            memory: MemoryConfig::default(),
+            lints: LintsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    /// Brave Search API key (also checked via BRAVE_API_KEY env var)
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// Search backend configuration
+    #[serde(default)]
+    pub search: WebSearchConfig,
+    /// Default maximum characters for web_fetch (default 50000)
+    pub fetch_max_chars: usize,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            search: WebSearchConfig::default(),
+            fetch_max_chars: 50_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
+    pub memory_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LintsConfig {
+    /// Override the lint command for Rust projects
+    pub rust_command: Option<String>,
+    /// Override the lint command for TypeScript/JS projects
+    pub typescript_command: Option<String>,
+    /// Override the lint command for Python projects
+    pub python_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

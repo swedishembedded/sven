@@ -1,4 +1,5 @@
-use sven_tools::ToolCall;
+use sven_config::AgentMode;
+use sven_tools::{events::TodoItem, ToolCall};
 
 /// Events emitted by the agent during a single turn.
 /// Consumers (CI runner, TUI) subscribe to these to drive their output.
@@ -28,4 +29,12 @@ pub enum AgentEvent {
     TurnComplete,
     /// A recoverable error occurred
     Error(String),
+    /// The todo list was updated
+    TodoUpdate(Vec<TodoItem>),
+    /// The agent mode was changed
+    ModeChanged(AgentMode),
+    /// The agent is asking the user a question (id links to QuestionAnswer)
+    Question { id: String, questions: Vec<String> },
+    /// Answer to a previous Question event
+    QuestionAnswer { id: String, answer: String },
 }

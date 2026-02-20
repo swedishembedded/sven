@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use sven_config::AgentMode;
+
 use crate::policy::ApprovalPolicy;
 
 /// A single tool invocation requested by the model.
@@ -42,6 +44,11 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> Value;
     /// Default approval level for this tool
     fn default_policy(&self) -> ApprovalPolicy;
+    /// The agent modes in which this tool is available.
+    /// Default: all modes (Research, Plan, Agent).
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Research, AgentMode::Plan, AgentMode::Agent]
+    }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }

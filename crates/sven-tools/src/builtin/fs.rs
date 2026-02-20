@@ -127,14 +127,10 @@ mod tests {
     }
 
     fn tmp_path() -> String {
-        format!("/tmp/sven_fs_test_{}.txt", uuid_simple())
-    }
-
-    fn uuid_simple() -> String {
-        // Cheap unique name without pulling in uuid crate here
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
-        format!("{n:08x}")
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let n = CTR.fetch_add(1, Ordering::Relaxed);
+        format!("/tmp/sven_fs_test_{}_{n}.txt", std::process::id())
     }
 
     // ── write + read round-trip ───────────────────────────────────────────────
@@ -200,7 +196,9 @@ mod tests {
 
     #[tokio::test]
     async fn write_creates_nested_directories() {
-        let dir = format!("/tmp/sven_nested_{}", uuid_simple());
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR1: AtomicU32 = AtomicU32::new(0);
+        let dir = format!("/tmp/sven_nested_{}_{}", std::process::id(), CTR1.fetch_add(1, Ordering::Relaxed));
         let path = format!("{dir}/sub/file.txt");
         let t = FsTool;
 
@@ -229,7 +227,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_shows_slash_for_directories() {
-        let dir = format!("/tmp/sven_listdir_{}", uuid_simple());
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR2: AtomicU32 = AtomicU32::new(0);
+        let dir = format!("/tmp/sven_listdir_{}_{}", std::process::id(), CTR2.fetch_add(1, Ordering::Relaxed));
         std::fs::create_dir_all(format!("{dir}/subdir")).unwrap();
         std::fs::write(format!("{dir}/file.txt"), "x").unwrap();
 

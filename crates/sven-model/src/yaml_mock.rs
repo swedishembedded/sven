@@ -101,11 +101,11 @@ impl YamlMockProvider {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading mock responses file: {}", path.display()))?;
-        Self::from_str(&text)
+        Self::load(&text)
     }
 
     /// Load a provider from a YAML string.
-    pub fn from_str(yaml: &str) -> anyhow::Result<Self> {
+    pub fn load(yaml: &str) -> anyhow::Result<Self> {
         let config: MockConfig = serde_yaml::from_str(yaml)
             .context("parsing mock responses YAML")?;
         Ok(Self {
@@ -266,7 +266,7 @@ responses:
 "#;
 
     fn provider() -> YamlMockProvider {
-        YamlMockProvider::from_str(BASIC_YAML).unwrap()
+        YamlMockProvider::load(BASIC_YAML).unwrap()
     }
 
     fn req(user: &str) -> CompletionRequest {
@@ -382,13 +382,13 @@ responses:
 
     #[test]
     fn from_str_error_on_invalid_yaml() {
-        let result = YamlMockProvider::from_str("{ invalid yaml: [");
+        let result = YamlMockProvider::load("{ invalid yaml: [");
         assert!(result.is_err());
     }
 
     #[test]
     fn from_str_ok_on_valid_yaml() {
-        let result = YamlMockProvider::from_str(BASIC_YAML);
+        let result = YamlMockProvider::load(BASIC_YAML);
         assert!(result.is_ok());
     }
 
@@ -404,7 +404,7 @@ responses:
   - match_type: default
     reply: "no match"
 "#;
-        let p = YamlMockProvider::from_str(yaml).unwrap();
+        let p = YamlMockProvider::load(yaml).unwrap();
         let events = collect(&p, req("step 3 of the plan")).await;
         assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "step matched")));
     }

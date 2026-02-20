@@ -1,13 +1,21 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 use anyhow::Context;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, AgentEvent};
+use sven_core::{Agent, AgentEvent, TaskTool};
 use sven_input::{parse_markdown_steps, Step, StepQueue};
-use sven_tools::{FsTool, GlobTool, ShellTool, ToolRegistry};
+use sven_tools::{
+    events::{TodoItem, ToolEvent},
+    AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
+    GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
+    RunTerminalCommandTool, SearchCodebaseTool, SwitchModeTool, TodoWriteTool,
+    UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
+    ToolRegistry,
+};
 
 use crate::output::{finalise_stdout, write_stderr, write_stdout};
 
@@ -36,10 +44,6 @@ impl CiRunner {
     pub async fn run(&self, opts: CiOptions) -> anyhow::Result<()> {
         let mut model_cfg = self.config.model.clone();
         if let Some(name) = &opts.model_override {
-            // Accept three forms:
-            //   "provider/model"  → sets both fields (e.g. "anthropic/claude-3-5")
-            //   bare provider keyword → sets provider only (e.g. "mock", "openai")
-            //   bare model name   → sets model name only (e.g. "gpt-4o")
             const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
             if let Some((provider, model)) = name.split_once('/') {
                 model_cfg.provider = provider.to_string();
@@ -55,12 +59,27 @@ impl CiRunner {
             .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
-        let tools = build_registry(&self.config);
         let agent_cfg = Arc::new(self.config.agent.clone());
+
+        // Shared state for stateful tools
+        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+        let current_mode: Arc<Mutex<AgentMode>> = Arc::new(Mutex::new(opts.mode));
+        let (tool_event_tx, _tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+        let task_depth = Arc::new(AtomicUsize::new(0));
+
+        let tools = Arc::new(build_registry(
+            &self.config,
+            todos,
+            current_mode,
+            tool_event_tx,
+            model.clone(),
+            agent_cfg.clone(),
+            task_depth,
+        ));
 
         let mut agent = Agent::new(
             model,
-            Arc::new(tools),
+            tools,
             agent_cfg,
             opts.mode,
             128_000,
@@ -68,12 +87,10 @@ impl CiRunner {
 
         // Build the step queue from input markdown
         let mut queue: StepQueue = if opts.input.trim().is_empty() {
-            // Nothing from stdin/file — use extra_prompt as a single step
             let content = opts.extra_prompt.clone().unwrap_or_default();
             StepQueue::from(vec![sven_input::Step { label: None, content }])
         } else {
             let mut q = parse_markdown_steps(&opts.input);
-            // If extra_prompt given, prepend it as step 0
             if let Some(prompt) = &opts.extra_prompt {
                 let mut prepended = StepQueue::from(vec![Step {
                     label: None,
@@ -99,7 +116,6 @@ impl CiRunner {
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
             let submit_fut = agent.submit(&step.content, tx);
 
-            // Collect full text as we stream
             let mut response_text = String::new();
             let mut failed = false;
 
@@ -107,81 +123,19 @@ impl CiRunner {
 
             loop {
                 tokio::select! {
-                    // Prefer the event channel so we never miss a TextDelta or
-                    // TurnComplete when the submit future resolves at the same
-                    // time as buffered events become available.
                     biased;
 
                     Some(event) = rx.recv() => {
-                        match event {
-                            AgentEvent::TextDelta(delta) => {
-                                write_stdout(&delta);
-                                response_text.push_str(&delta);
-                            }
-                            AgentEvent::ToolCallStarted(tc) => {
-                                write_stderr(&format!("[tool] {} ({})", tc.name, serde_json::to_string(&tc.args).unwrap_or_default()));
-                            }
-                            AgentEvent::ToolCallFinished { tool_name, is_error, output, .. } => {
-                                if is_error {
-                                    write_stderr(&format!("[tool error] {tool_name}: {output}"));
-                                } else {
-                                    write_stderr(&format!("[tool ok] {tool_name}"));
-                                }
-                            }
-                            AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
-                                write_stderr(&format!(
-                                    "[compacted context: {} → {} tokens]",
-                                    tokens_before, tokens_after
-                                ));
-                            }
-                            AgentEvent::Error(msg) => {
-                                write_stderr(&format!("[agent error] {msg}"));
-                                failed = true;
-                            }
-                            AgentEvent::TurnComplete => break,
-                            _ => {}
-                        }
+                        handle_event(event, &mut response_text, &mut failed);
                     }
 
                     result = &mut submit_fut => {
                         if let Err(e) = result {
                             write_stderr(&format!("[fatal] {e}"));
-                            // Propagate exit code 1 to abort pipelines with set -e
                             std::process::exit(1);
                         }
-                        // submit_fut completed: by now all events have been
-                        // placed into the channel.  Drain whatever remains
-                        // (using try_recv so we don't block) before exiting the
-                        // loop.  This closes the window between the future
-                        // returning and all buffered events being consumed.
                         while let Ok(ev) = rx.try_recv() {
-                            match ev {
-                                AgentEvent::TextDelta(delta) => {
-                                    write_stdout(&delta);
-                                    response_text.push_str(&delta);
-                                }
-                                AgentEvent::ToolCallStarted(tc) => {
-                                    write_stderr(&format!("[tool] {} ({})", tc.name, serde_json::to_string(&tc.args).unwrap_or_default()));
-                                }
-                                AgentEvent::ToolCallFinished { tool_name, is_error, output, .. } => {
-                                    if is_error {
-                                        write_stderr(&format!("[tool error] {tool_name}: {output}"));
-                                    } else {
-                                        write_stderr(&format!("[tool ok] {tool_name}"));
-                                    }
-                                }
-                                AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
-                                    write_stderr(&format!(
-                                        "[compacted context: {} → {} tokens]",
-                                        tokens_before, tokens_after
-                                    ));
-                                }
-                                AgentEvent::Error(msg) => {
-                                    write_stderr(&format!("[agent error] {msg}"));
-                                    failed = true;
-                                }
-                                AgentEvent::TurnComplete | _ => {}
-                            }
+                            handle_event(ev, &mut response_text, &mut failed);
                         }
                         break;
                     }
@@ -194,8 +148,6 @@ impl CiRunner {
                 std::process::exit(1);
             }
 
-            // Between steps add a separator on stderr (not stdout) so the
-            // pipeline output stays clean
             if step_idx < total {
                 write_stderr(&format!("\n--- step {}/{} complete ---\n", step_idx, total));
             }
@@ -205,10 +157,107 @@ impl CiRunner {
     }
 }
 
-fn build_registry(cfg: &Config) -> ToolRegistry {
+fn handle_event(event: AgentEvent, response_text: &mut String, failed: &mut bool) {
+    match event {
+        AgentEvent::TextDelta(delta) => {
+            write_stdout(&delta);
+            response_text.push_str(&delta);
+        }
+        AgentEvent::ToolCallStarted(tc) => {
+            write_stderr(&format!(
+                "[tool] {} ({})",
+                tc.name,
+                serde_json::to_string(&tc.args).unwrap_or_default()
+            ));
+        }
+        AgentEvent::ToolCallFinished { tool_name, is_error, output, .. } => {
+            if is_error {
+                write_stderr(&format!("[tool error] {tool_name}: {output}"));
+            } else {
+                write_stderr(&format!("[tool ok] {tool_name}"));
+            }
+        }
+        AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
+            write_stderr(&format!(
+                "[compacted context: {} → {} tokens]",
+                tokens_before, tokens_after
+            ));
+        }
+        AgentEvent::Error(msg) => {
+            write_stderr(&format!("[agent error] {msg}"));
+            *failed = true;
+        }
+        AgentEvent::TodoUpdate(todos) => {
+            let lines: Vec<String> = todos.iter().map(|t| {
+                let icon = match t.status.as_str() {
+                    "completed" => "✓",
+                    "in_progress" => "→",
+                    "cancelled" => "✗",
+                    _ => "○",
+                };
+                format!("  {icon} [{}] {}", t.id, t.content)
+            }).collect();
+            write_stderr(&format!("[todos]\n{}", lines.join("\n")));
+        }
+        AgentEvent::ModeChanged(mode) => {
+            write_stderr(&format!("[mode changed] now in {mode} mode"));
+        }
+        AgentEvent::Question { questions, .. } => {
+            write_stderr(&format!("[questions] {}", questions.join(" | ")));
+        }
+        AgentEvent::TurnComplete | AgentEvent::TextComplete(_) |
+        AgentEvent::TokenUsage { .. } | AgentEvent::QuestionAnswer { .. } => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_registry(
+    cfg: &Config,
+    todos: Arc<Mutex<Vec<TodoItem>>>,
+    current_mode: Arc<Mutex<AgentMode>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    agent_cfg: Arc<sven_config::AgentConfig>,
+    task_depth: Arc<AtomicUsize>,
+) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
-    reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
-    reg.register(FsTool);
-    reg.register(GlobTool);
+
+    // Read-only / all-mode tools
+    reg.register(ReadFileTool);
+    reg.register(ListDirTool);
+    reg.register(GlobFileSearchTool);
+    reg.register(GrepTool);
+    reg.register(SearchCodebaseTool);
+    reg.register(WebFetchTool);
+    reg.register(WebSearchTool {
+        api_key: cfg.tools.web.search.api_key.clone(),
+    });
+    reg.register(ReadLintsTool);
+    reg.register(UpdateMemoryTool {
+        memory_file: cfg.tools.memory.memory_file.clone(),
+    });
+    reg.register(AskQuestionTool);
+
+    // Stateful tools
+    reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
+    reg.register(SwitchModeTool::new(current_mode, tool_event_tx));
+
+    // Agent-mode write tools
+    reg.register(WriteTool);
+    reg.register(EditFileTool);
+    reg.register(DeleteFileTool);
+    reg.register(ApplyPatchTool);
+    reg.register(RunTerminalCommandTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
+
+    // Sub-agent spawner
+    reg.register(TaskTool::new(
+        model,
+        Arc::new(cfg.clone()),
+        agent_cfg,
+        task_depth,
+    ));
+
     reg
 }
