@@ -1,17 +1,43 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
+/// Sent to the TUI when the agent asks a question; the TUI sends the answer
+/// back via `answer_tx`.
+pub struct QuestionRequest {
+    pub id: String,
+    pub questions: Vec<String>,
+    pub answer_tx: oneshot::Sender<String>,
+}
+
 /// Interactively ask the user one or more questions and collect their answers.
 ///
-/// Only works when stdin is an interactive TTY (i.e. the user is at a real
-/// terminal). In headless / CI / piped mode stdin is not a TTY and no answers
-/// can be collected; the tool returns an error so the model knows to proceed
-/// with its best judgement rather than silently receiving empty answers.
-pub struct AskQuestionTool;
+/// In TUI mode a `question_tx` channel is provided; the tool sends a
+/// [`QuestionRequest`] and awaits the answer from the UI.  In plain terminal
+/// mode stdin must be a TTY; in headless/CI mode the tool returns an error.
+pub struct AskQuestionTool {
+    /// When set, routes questions to the TUI instead of reading from stdin.
+    question_tx: Option<mpsc::Sender<QuestionRequest>>,
+}
+
+impl AskQuestionTool {
+    pub fn new() -> Self {
+        Self { question_tx: None }
+    }
+
+    /// Create a TUI-aware instance that sends questions via `tx`.
+    pub fn new_tui(tx: mpsc::Sender<QuestionRequest>) -> Self {
+        Self { question_tx: Some(tx) }
+    }
+}
+
+impl Default for AskQuestionTool {
+    fn default() -> Self { Self::new() }
+}
 
 #[async_trait]
 impl Tool for AskQuestionTool {
@@ -19,11 +45,8 @@ impl Tool for AskQuestionTool {
 
     fn description(&self) -> &str {
         "Ask the user one to three clarifying questions and return their answers. \
-         Only available when running interactively (stdin is a terminal). \
-         In headless / CI / piped mode this tool is unavailable — proceed with \
-         your best judgement and note any assumptions in your response. \
-         Use sparingly: only when the task is genuinely ambiguous and you cannot \
-         make a reasonable assumption without more information."
+         Use sparingly: only when the task is genuinely ambiguous and a reasonable \
+         assumption cannot be made. In headless/CI/piped mode this tool is unavailable."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -59,10 +82,26 @@ impl Tool for AskQuestionTool {
             return ToolOutput::err(&call.id, "at most 3 questions may be asked at a time");
         }
 
-        // Refuse to block waiting for input when stdin is not an interactive
-        // terminal.  Piped / CI / headless runs have stdin already consumed or
-        // redirected; blindly reading would return empty strings immediately,
-        // which would silently corrupt the model's context.
+        debug!(count = questions.len(), "ask_question tool");
+
+        // ── TUI mode ─────────────────────────────────────────────────────────
+        if let Some(tx) = &self.question_tx {
+            let (answer_tx, answer_rx) = oneshot::channel();
+            let req = QuestionRequest {
+                id: call.id.clone(),
+                questions,
+                answer_tx,
+            };
+            if tx.send(req).await.is_err() {
+                return ToolOutput::err(&call.id, "TUI question channel closed unexpectedly");
+            }
+            return match answer_rx.await {
+                Ok(answer) => ToolOutput::ok(&call.id, answer),
+                Err(_) => ToolOutput::err(&call.id, "Question was cancelled by the user"),
+            };
+        }
+
+        // ── Plain terminal / headless mode ────────────────────────────────────
         if !stdin_is_tty() {
             let question_list = questions.iter()
                 .enumerate()
@@ -79,9 +118,6 @@ impl Tool for AskQuestionTool {
             );
         }
 
-        debug!(count = questions.len(), "ask_question tool");
-
-        // Print questions to stderr so they appear on the terminal
         eprintln!();
         eprintln!("╔══ Questions from agent ══════════════════════════╗");
         for (i, q) in questions.iter().enumerate() {
@@ -89,7 +125,6 @@ impl Tool for AskQuestionTool {
         }
         eprintln!("╚══════════════════════════════════════════════════╝");
 
-        // Read answers from the interactive terminal
         let mut answers: Vec<String> = Vec::new();
         for (i, q) in questions.iter().enumerate() {
             eprint!("  Answer {}: ", i + 1);
@@ -135,7 +170,7 @@ mod tests {
 
     #[test]
     fn schema_requires_questions() {
-        let t = AskQuestionTool;
+        let t = AskQuestionTool::new();
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("questions")));
@@ -145,7 +180,7 @@ mod tests {
     async fn missing_questions_is_error() {
         use serde_json::json;
         use crate::tool::ToolCall;
-        let t = AskQuestionTool;
+        let t = AskQuestionTool::new();
         let call = ToolCall { id: "1".into(), name: "ask_question".into(), args: json!({}) };
         let out = t.execute(&call).await;
         assert!(out.is_error);
@@ -156,7 +191,7 @@ mod tests {
     async fn too_many_questions_is_error() {
         use serde_json::json;
         use crate::tool::ToolCall;
-        let t = AskQuestionTool;
+        let t = AskQuestionTool::new();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
@@ -178,7 +213,7 @@ mod tests {
 
         // Tests always run with stdin as a pipe (not a TTY), so we don't need
         // to mock anything — stdin_is_tty() will return false naturally.
-        let t = AskQuestionTool;
+        let t = AskQuestionTool::new();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),

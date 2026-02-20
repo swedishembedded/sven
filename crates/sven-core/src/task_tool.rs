@@ -52,7 +52,7 @@ impl TaskTool {
         reg.register(GrepTool);
         reg.register(SearchCodebaseTool);
         reg.register(ReadLintsTool);
-        reg.register(AskQuestionTool);
+        reg.register(AskQuestionTool::new());
         reg.register(WebFetchTool);
         reg.register(WebSearchTool {
             api_key: self.config.tools.web.search.api_key.clone(),

@@ -236,7 +236,7 @@ fn build_registry(
     reg.register(UpdateMemoryTool {
         memory_file: cfg.tools.memory.memory_file.clone(),
     });
-    reg.register(AskQuestionTool);
+    reg.register(AskQuestionTool::new());
 
     // Stateful tools
     reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));

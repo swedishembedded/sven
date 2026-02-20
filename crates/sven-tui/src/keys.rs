@@ -48,6 +48,7 @@ pub enum Action {
     // App
     Quit,
     Help,
+    OpenPager,
 }
 
 /// Map a raw key event to an [`Action`], depending on which pane has focus.
@@ -93,9 +94,10 @@ pub fn map_key(event: KeyEvent, in_search: bool, in_input: bool, pending_nav: bo
         // Ctrl+w → start the nav-prefix chord (works from any pane)
         KeyCode::Char('w') if ctrl => Some(Action::NavPrefix),
 
-        // Global cycle / help
+        // Global cycle / help / pager
         KeyCode::F(1) => Some(Action::Help),
         KeyCode::F(4) => Some(Action::CycleMode),
+        KeyCode::Char('t') if ctrl => Some(Action::OpenPager),
 
         // ── Rest of input pane ────────────────────────────────────────────────
         KeyCode::Enter    if in_input && !shift => Some(Action::Submit),
@@ -128,7 +130,7 @@ pub fn map_key(event: KeyEvent, in_search: bool, in_input: bool, pending_nav: bo
     }
 }
 
-fn map_search_key(event: KeyEvent) -> Option<Action> {
+pub(crate) fn map_search_key(event: KeyEvent) -> Option<Action> {
     match event.code {
         KeyCode::Esc       => Some(Action::SearchClose),
         KeyCode::Enter     => Some(Action::SearchNextMatch),

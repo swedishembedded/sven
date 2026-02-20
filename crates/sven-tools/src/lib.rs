@@ -25,7 +25,7 @@ pub use builtin::todo_write::TodoWriteTool;
 pub use builtin::web_fetch::WebFetchTool;
 pub use builtin::web_search::WebSearchTool;
 pub use builtin::update_memory::UpdateMemoryTool;
-pub use builtin::ask_question::AskQuestionTool;
+pub use builtin::ask_question::{AskQuestionTool, QuestionRequest};
 pub use builtin::switch_mode::SwitchModeTool;
 
 // Legacy exports preserved for backwards compatibility
