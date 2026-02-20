@@ -6,8 +6,11 @@ use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
 /// Interactively ask the user one or more questions and collect their answers.
-/// In CI / headless mode, questions are printed to stderr and answers are read
-/// from stdin line by line.
+///
+/// Only works when stdin is an interactive TTY (i.e. the user is at a real
+/// terminal). In headless / CI / piped mode stdin is not a TTY and no answers
+/// can be collected; the tool returns an error so the model knows to proceed
+/// with its best judgement rather than silently receiving empty answers.
 pub struct AskQuestionTool;
 
 #[async_trait]
@@ -16,8 +19,11 @@ impl Tool for AskQuestionTool {
 
     fn description(&self) -> &str {
         "Ask the user one to three clarifying questions and return their answers. \
-         Use sparingly – only when the task is genuinely ambiguous and you cannot proceed \
-         without more information."
+         Only available when running interactively (stdin is a terminal). \
+         In headless / CI / piped mode this tool is unavailable — proceed with \
+         your best judgement and note any assumptions in your response. \
+         Use sparingly: only when the task is genuinely ambiguous and you cannot \
+         make a reasonable assumption without more information."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -53,6 +59,26 @@ impl Tool for AskQuestionTool {
             return ToolOutput::err(&call.id, "at most 3 questions may be asked at a time");
         }
 
+        // Refuse to block waiting for input when stdin is not an interactive
+        // terminal.  Piped / CI / headless runs have stdin already consumed or
+        // redirected; blindly reading would return empty strings immediately,
+        // which would silently corrupt the model's context.
+        if !stdin_is_tty() {
+            let question_list = questions.iter()
+                .enumerate()
+                .map(|(i, q)| format!("  {}. {}", i + 1, q))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "ask_question is unavailable in non-interactive (headless/CI/piped) mode.\n\
+                     The following questions could not be answered:\n{question_list}\n\
+                     Proceed with your best judgement and state your assumptions clearly."
+                ),
+            );
+        }
+
         debug!(count = questions.len(), "ask_question tool");
 
         // Print questions to stderr so they appear on the terminal
@@ -61,20 +87,33 @@ impl Tool for AskQuestionTool {
         for (i, q) in questions.iter().enumerate() {
             eprintln!("  {}. {}", i + 1, q);
         }
-        eprintln!("╚════════════════════════════════════════════════════╝");
+        eprintln!("╚══════════════════════════════════════════════════╝");
 
-        // Read answers from stdin
+        // Read answers from the interactive terminal
         let mut answers: Vec<String> = Vec::new();
         for (i, q) in questions.iter().enumerate() {
             eprint!("  Answer {}: ", i + 1);
             let answer = read_stdin_line().await;
-            if answer.is_empty() && questions.len() == 1 {
-                eprintln!("(no answer provided)");
-            }
             answers.push(format!("Q: {}\nA: {}", q, answer));
         }
+        eprintln!();
 
         ToolOutput::ok(&call.id, answers.join("\n\n"))
+    }
+}
+
+/// Returns true only when stdin is connected to an interactive terminal.
+/// Uses `libc::isatty` on Unix; always false on other platforms.
+fn stdin_is_tty() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: isatty is async-signal-safe and only reads an fd number.
+        unsafe { libc::isatty(std::io::stdin().as_raw_fd()) != 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
     }
 }
 
@@ -128,5 +167,29 @@ mod tests {
         let out = t.execute(&call).await;
         assert!(out.is_error);
         assert!(out.content.contains("at most 3"));
+    }
+
+    /// In CI / test environments stdin is never a real TTY, so the tool must
+    /// return a descriptive error rather than blocking forever on empty stdin.
+    #[tokio::test]
+    async fn headless_mode_returns_error_with_question_list() {
+        use serde_json::json;
+        use crate::tool::ToolCall;
+
+        // Tests always run with stdin as a pipe (not a TTY), so we don't need
+        // to mock anything — stdin_is_tty() will return false naturally.
+        let t = AskQuestionTool;
+        let call = ToolCall {
+            id: "1".into(),
+            name: "ask_question".into(),
+            args: json!({ "questions": ["What language?", "What framework?"] }),
+        };
+        let out = t.execute(&call).await;
+        // In non-TTY (test) environments the tool must fail gracefully.
+        assert!(out.is_error);
+        assert!(out.content.contains("non-interactive"));
+        assert!(out.content.contains("What language?"));
+        assert!(out.content.contains("What framework?"));
+        assert!(out.content.contains("best judgement"));
     }
 }

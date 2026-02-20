@@ -19,3 +19,4 @@ reqwest     = { workspace = true }
 html2text   = { workspace = true }
 async-recursion = { workspace = true }
 dirs        = { workspace = true }
+libc        = { workspace = true }
