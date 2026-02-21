@@ -240,7 +240,8 @@ fn handle_event(
             write_stderr(&format!("[questions] {}", questions.join(" | ")));
         }
         AgentEvent::TurnComplete | AgentEvent::TokenUsage { .. } |
-        AgentEvent::QuestionAnswer { .. } => {}
+        AgentEvent::QuestionAnswer { .. } |
+        AgentEvent::ThinkingDelta(_) | AgentEvent::ThinkingComplete(_) => {}
     }
 }
 

@@ -252,7 +252,9 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
 
         AgentEvent::TurnComplete
         | AgentEvent::TokenUsage { .. }
-        | AgentEvent::QuestionAnswer { .. } => {}
+        | AgentEvent::QuestionAnswer { .. }
+        | AgentEvent::ThinkingDelta(_)
+        | AgentEvent::ThinkingComplete(_) => {}
     }
 }
 
