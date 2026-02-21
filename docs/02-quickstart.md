@@ -177,11 +177,49 @@ sven "Implement the caching layer we just designed."
 
 ---
 
+## Workflow files
+
+For multi-step tasks, write a markdown workflow file where each `##` heading
+is a step:
+
+```markdown
+---
+title: Code Review
+mode: research
+step_timeout_secs: 120
+---
+
+## Understand the change
+Read the most recently modified files and summarise what changed.
+
+## Review for issues
+Identify bugs, security issues, and style violations.
+
+## Write review
+Produce a constructive code review.
+```
+
+Run it:
+
+```sh
+sven --file review.md
+```
+
+Output is valid conversation markdown that can be piped or loaded later:
+
+```sh
+# Pipe into another instance for follow-up analysis
+sven --file review.md | sven "Summarise the main findings in one sentence."
+```
+
+---
+
 ## What next?
 
 - [User Guide](03-user-guide.md) — full details on the TUI, modes, tools, and
   conversation management
 - [CI and Pipelines](04-ci-pipeline.md) — run sven in scripts and automated
-  workflows
+  workflows, with workflow file format reference, output formats, timeouts,
+  artifacts, and CI integration guides
 - [Configuration](05-configuration.md) — change the model, set defaults, and
   tune behaviour

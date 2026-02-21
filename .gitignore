@@ -17,6 +17,9 @@ Cargo.lock
 *.swo
 *~
 
+# Sven
+/.sven/
+
 # OS
 .DS_Store
 Thumbs.db

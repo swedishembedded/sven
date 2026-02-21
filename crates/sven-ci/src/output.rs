@@ -18,22 +18,22 @@ pub fn write_stderr(msg: &str) {
     eprintln!("{msg}");
 }
 
+/// Write a structured progress line to stderr.
+///
+/// Lines are prefixed with `[sven:...]` so CI systems can scrape them with
+/// simple pattern matching without interfering with stdout conversation output.
+pub fn write_progress(msg: &str) {
+    eprintln!("{msg}");
+}
+
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // These test the observable side-effects of the output helpers.
-    // stdout/stderr writes are fire-and-forget; we verify the logic
-    // that decides *what* is written, not the OS write itself.
-
     #[test]
     fn finalise_adds_newline_when_missing() {
-        // We capture by redirecting is not possible in unit tests, but we can
-        // at least ensure the function does not panic and branches correctly.
-        // The branch condition: ends_with('\n') → no println!, else println!()
-        // We test via the predicate directly.
         let needs_newline = !("hello".ends_with('\n'));
         let already_newline = "hello\n".ends_with('\n');
         assert!(needs_newline, "text without newline should trigger newline");
@@ -42,7 +42,6 @@ mod tests {
 
     #[test]
     fn finalise_stdout_does_not_panic_on_empty_string() {
-        // Must not panic – empty string does not end with '\n'
         finalise_stdout("");
     }
 
@@ -59,5 +58,10 @@ mod tests {
     #[test]
     fn write_stdout_does_not_panic_on_empty_string() {
         write_stdout("");
+    }
+
+    #[test]
+    fn write_progress_does_not_panic() {
+        write_progress("[sven:step:start] 1/3 label=\"Analyse codebase\"");
     }
 }

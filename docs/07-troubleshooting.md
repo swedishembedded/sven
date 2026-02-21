@@ -234,6 +234,78 @@ mock_responses_file = "/path/to/responses.yaml"
 
 ---
 
+## Headless / CI mode issues
+
+### Agent uses wrong paths or "directory does not exist"
+
+Sven automatically detects the project root by walking up to the nearest `.git`
+directory and injects it into the system prompt.  If you see path-related
+failures:
+
+1. Make sure you are running sven from within the project (or a subdirectory).
+2. Check that a `.git` directory exists at or above your working directory.
+3. Confirm the injected root with verbose output:
+
+```bash
+sven --file workflow.md -v 2>&1 | grep "Project Context"
+```
+
+### Workflow hangs and never finishes
+
+Add timeouts to prevent indefinite runs:
+
+```bash
+sven --file workflow.md --step-timeout 300 --run-timeout 1800
+```
+
+Or set defaults in `~/.config/sven/config.toml`:
+
+```toml
+[agent]
+max_step_timeout_secs = 300
+max_run_timeout_secs  = 1800
+```
+
+Sven exits with code `124` when a timeout is exceeded.
+
+### Output is not valid conversation markdown
+
+By default, headless runs produce conversation-format markdown.  If you
+see raw text without `## User` / `## Sven` headers, check that you are not
+using `--output-format compact`.
+
+If a step fails mid-way, the partial conversation is saved to history and
+you can inspect it:
+
+```bash
+sven chats          # list recent conversations
+sven --resume <id>  # resume in the TUI or headless mode
+```
+
+### Validate a workflow file before running
+
+```bash
+sven validate --file workflow.md
+```
+
+This parses the frontmatter, counts steps, and checks inline step options
+without calling the model.
+
+### Dry-run to preview what will execute
+
+```bash
+sven --file workflow.md --dry-run
+```
+
+Prints each step label, mode, and timeout without running anything.
+
+### Exit code 130 (interrupted)
+
+The run was stopped by Ctrl+C.  Any partial conversation has been saved to
+history and can be resumed.
+
+---
+
 ## Conversation history
 
 ### sven chats returns "No saved conversations found"

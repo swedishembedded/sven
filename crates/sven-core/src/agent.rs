@@ -280,10 +280,18 @@ impl Agent {
     }
 
     fn system_message(&self, mode: AgentMode) -> Message {
+        let ctx = crate::prompts::PromptContext {
+            project_root: self.config.project_root.as_deref(),
+            git_context: self.config.git_context_note.as_deref(),
+            project_context_file: self.config.project_context_file.as_deref(),
+            ci_context: self.config.ci_context_note.as_deref(),
+            append: self.config.append_system_prompt.as_deref(),
+        };
         Message::system(system_prompt(
             mode,
             self.config.system_prompt.as_deref(),
             &self.tools.names_for_mode(mode),
+            ctx,
         ))
     }
 
@@ -293,6 +301,14 @@ impl Agent {
 
     pub fn mode(&self) -> AgentMode {
         *self.current_mode.blocking_lock()
+    }
+
+    /// Override the agent's current mode.  Takes effect on the next
+    /// `submit` call (the new mode is used to build the system message and
+    /// select the available tool set).
+    pub async fn set_mode(&self, mode: AgentMode) {
+        let mut m = self.current_mode.lock().await;
+        *m = mode;
     }
 }
 

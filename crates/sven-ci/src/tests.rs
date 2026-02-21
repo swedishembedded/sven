@@ -35,7 +35,11 @@ mod tests {
     fn extra_prompt_can_be_prepended_to_queue() {
         // Simulate what CiRunner does when extra_prompt is Some
         let base = parse_markdown_steps("## Step 1\nDo it.");
-        let extra_step = sven_input::Step { label: None, content: "Extra context.".into() };
+        let extra_step = sven_input::Step {
+            label: None,
+            content: "Extra context.".into(),
+            options: sven_input::StepOptions::default(),
+        };
         let mut prepended = StepQueue::from(vec![extra_step]);
         let mut base = base;
         while let Some(s) = base.pop() {

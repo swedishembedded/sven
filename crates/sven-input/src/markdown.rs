@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 use tracing::debug;
 
-use crate::{Step, StepQueue};
+use crate::{Step, StepOptions, StepQueue};
 
 /// Parse a markdown document into a [`StepQueue`].
 ///
@@ -10,10 +10,13 @@ use crate::{Step, StepQueue};
 /// - Content before the first `##` heading (or the entire document if there are
 ///   no `##` headings) is treated as a single unlabelled step.
 /// - `#` and `###`+ headings are kept as body text inside the current step.
+/// - HTML comments of the form `<!-- step: key=value ... -->` are parsed as
+///   per-step options and removed from the body text.
 pub fn parse_markdown_steps(input: &str) -> StepQueue {
     let mut steps: Vec<Step> = Vec::new();
     let mut current_label: Option<String> = None;
     let mut current_body = String::new();
+    let mut current_opts = StepOptions::default();
     let mut inside_h2 = false;
     let mut h2_text = String::new();
 
@@ -22,7 +25,7 @@ pub fn parse_markdown_steps(input: &str) -> StepQueue {
         match event {
             Event::Start(Tag::Heading { level: HeadingLevel::H2, .. }) => {
                 // Flush previous step
-                flush_step(&mut steps, current_label.take(), &mut current_body);
+                flush_step(&mut steps, current_label.take(), &mut current_body, std::mem::take(&mut current_opts));
                 inside_h2 = true;
                 h2_text.clear();
             }
@@ -54,25 +57,59 @@ pub fn parse_markdown_steps(input: &str) -> StepQueue {
             Event::End(TagEnd::CodeBlock) => {
                 current_body.push_str("```\n\n");
             }
+            // Raw HTML: capture `<!-- step: ... -->` option comments, drop others
+            Event::Html(html) => {
+                let trimmed = html.trim();
+                if trimmed.starts_with("<!-- step:") && trimmed.contains("-->") {
+                    parse_step_comment_into(trimmed, &mut current_opts);
+                }
+                // All HTML comments are stripped from body text
+            }
             _ => {}
         }
     }
 
     // Final flush
-    flush_step(&mut steps, current_label, &mut current_body);
+    flush_step(&mut steps, current_label, &mut current_body, std::mem::take(&mut current_opts));
 
     debug!(steps = steps.len(), "parsed markdown steps");
 
     // If nothing was found (empty input) create one empty step so the caller
     // always has something to process.
     if steps.is_empty() {
-        steps.push(Step { label: None, content: input.trim().to_string() });
+        steps.push(Step { label: None, content: input.trim().to_string(), options: StepOptions::default() });
     }
 
     StepQueue::from(steps)
 }
 
-fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String) {
+/// Parse a `<!-- step: key=value key2=value2 -->` comment into `opts`.
+fn parse_step_comment_into(comment: &str, opts: &mut StepOptions) {
+    // Find everything between "<!-- step:" and "-->"
+    let start = match comment.find("<!-- step:") {
+        Some(i) => i + "<!-- step:".len(),
+        None => return,
+    };
+    let end = match comment[start..].find("-->") {
+        Some(i) => start + i,
+        None => return,
+    };
+    let inner = comment[start..end].trim();
+
+    for token in inner.split_whitespace() {
+        if let Some((key, val)) = token.split_once('=') {
+            let val = val.trim_matches('"').trim_matches('\'');
+            match key {
+                "mode" => opts.mode = Some(val.to_string()),
+                "timeout" => opts.timeout_secs = val.parse().ok(),
+                "cache_key" => opts.cache_key = Some(val.to_string()),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String, options: StepOptions) {
     let content = body.trim().to_string();
     body.clear();
 
@@ -88,7 +125,7 @@ fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String) {
         content
     };
 
-    out.push(Step { label, content });
+    out.push(Step { label, content, options });
 }
 
 #[cfg(test)]
@@ -205,5 +242,45 @@ mod tests {
         let mut q = parse_markdown_steps(md);
         let s = q.pop().unwrap();
         assert!(!s.content.is_empty(), "step must have non-empty content");
+    }
+
+    // ── Per-step HTML comment options ─────────────────────────────────────────
+
+    #[test]
+    fn step_comment_sets_mode() {
+        let md = "## My Step\n<!-- step: mode=research -->\nDo some reading.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert_eq!(s.options.mode.as_deref(), Some("research"));
+        // Comment should not appear in body
+        assert!(!s.content.contains("<!-- step:"));
+    }
+
+    #[test]
+    fn step_comment_sets_timeout() {
+        let md = "## Heavy Step\n<!-- step: timeout=600 -->\nExpensive work.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert_eq!(s.options.timeout_secs, Some(600));
+    }
+
+    #[test]
+    fn step_comment_sets_multiple_options() {
+        let md = "## Step\n<!-- step: mode=agent timeout=120 cache_key=abc -->\nWork.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert_eq!(s.options.mode.as_deref(), Some("agent"));
+        assert_eq!(s.options.timeout_secs, Some(120));
+        assert_eq!(s.options.cache_key.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn step_without_comment_has_default_options() {
+        let md = "## My Step\nJust do it.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert!(s.options.mode.is_none());
+        assert!(s.options.timeout_secs.is_none());
+        assert!(s.options.cache_key.is_none());
     }
 }

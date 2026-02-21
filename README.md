@@ -11,6 +11,84 @@ two modes that share the same agent core:
 
 ---
 
+## Features
+
+### Workflow files — unique to sven
+
+sven treats markdown files as first-class workflow definitions.  No other
+agent-CLI has an equivalent:
+
+```markdown
+---
+title: Security Audit
+mode: research
+step_timeout_secs: 120
+---
+
+## Understand the codebase
+Read the project structure and summarise the architecture.
+<!-- step: timeout=60 -->
+
+## Identify risks
+{{context}}
+Look for OWASP Top-10 issues and insecure defaults.
+
+## Write report
+Produce a structured security report with severity ratings.
+```
+
+Run it with:
+
+```sh
+sven --file audit.md --var context="Focus on authentication."
+```
+
+Key capabilities the workflow format provides:
+
+| Feature | sven | Codex | Claude Code | OpenClaw |
+|---------|------|-------|-------------|----------|
+| Markdown workflow files (`##` steps) | ✅ native | ❌ | ❌ | ❌ |
+| YAML frontmatter (mode, timeouts, vars) | ✅ | ❌ | ❌ | ❌ |
+| Per-step options (`<!-- step: ... -->`) | ✅ | ❌ | ❌ | ❌ |
+| Variable templating (`{{key}}`) | ✅ | ❌ | ❌ | ❌ |
+| Pipeable conversation output | ✅ full conv. | last msg only | last msg only | ❌ |
+| `sven validate --file` dry-run | ✅ | ❌ | ❌ | ❌ |
+| Per-step artifacts directory | ✅ | ❌ | ❌ | ❌ |
+| `conversation` / `json` / `compact` output | ✅ | `json` only | `stream-json` | `json` |
+| Auto-detect CI environment | ✅ GA/GL/Jenkins | ❌ | ❌ | ❌ |
+| Git context injection (branch/commit/dirty) | ✅ | ✅ | partial | ❌ |
+| Auto-load `AGENTS.md` / `.sven/context.md` | ✅ | ✅ | `CLAUDE.md` | `AGENTS.md` |
+| Zero runtime dependencies | ✅ native Rust | Node.js | Node.js | Node.js |
+| TUI + headless in one binary | ✅ | separate | separate | separate |
+
+### Pipeable conversations
+
+sven headless output is valid sven conversation markdown — it can be piped
+directly into another sven instance or loaded back with `--conversation`:
+
+```sh
+# Chain agents: plan → implement
+sven --file plan.md | sven --mode agent "Implement the plan above."
+
+# Save and resume
+sven --file review.md > review.conv.md
+sven --file review.conv.md --conversation  # continue from where you left off
+```
+
+### Project awareness
+
+When a workflow runs, sven automatically:
+
+1. Walks up the directory tree to find the `.git` root.
+2. Injects the absolute project path into the system prompt — tools use it for
+   all file operations.
+3. Collects live git metadata (branch, commit, remote, dirty status) and injects
+   it so the agent knows the repository context without being asked.
+4. Reads `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md` from the project root
+   and injects the contents as project-level instructions.
+
+---
+
 ## Documentation
 
 The `docs/` directory contains the full user guide split into focused sections.
@@ -69,19 +147,40 @@ mode. Input is parsed as markdown: each `##` section becomes a separate step
 that is queued and sent to the model only after the previous step finishes.
 This lets a single markdown file describe a multi-step workflow.
 
-Output is plain text on stdout. Errors go to stderr. A failed step exits
-non-zero, so the pipeline aborts naturally under `set -e`.
+Output is full conversation markdown on stdout by default. Errors go to stderr.
+A failed step exits non-zero, so the pipeline aborts naturally under `set -e`.
 
 ```sh
 # Simple pipe
 echo "Summarise the project" | sven
 
-# Multi-step file
+# Multi-step workflow file
 sven --file plan.md
 
-# Chained agents
-echo "Design a REST API" | sven --mode plan | sven --mode agent
+# Structured JSON output
+sven --file audit.md --output-format json
+
+# Save just the final answer to a file
+sven --file plan.md --output-last-message answer.txt
+
+# Chained agents: plan then implement
+sven --file plan.md | sven --mode agent "Implement the plan above."
+
+# Variable substitution
+sven --file review.md --var branch=main --var pr=42
+
+# Custom system prompt
+sven --file tasks.md --system-prompt-file .sven/custom-prompt.md
+
+# Append to default system prompt
+sven --file tasks.md --append-system-prompt "Always write tests."
+
+# Validate a workflow without running it
+sven validate --file plan.md
+sven --file plan.md --dry-run
 ```
+
+**Exit codes:** `0` success · `1` agent error · `2` validation error · `124` timeout · `130` interrupt
 
 ### Conversation files
 

@@ -1,10 +1,38 @@
+use std::path::Path;
+
 use sven_config::AgentMode;
 
+/// All optional contextual blocks that can be injected into the system prompt.
+#[derive(Debug, Default)]
+pub struct PromptContext<'a> {
+    /// Absolute path to the project root (from `.git` detection).
+    pub project_root: Option<&'a Path>,
+    /// Pre-formatted git context (branch, commit, dirty status).
+    pub git_context: Option<&'a str>,
+    /// Contents of the project context file (AGENTS.md / .sven/context.md).
+    pub project_context_file: Option<&'a str>,
+    /// Pre-formatted CI environment block.
+    pub ci_context: Option<&'a str>,
+    /// Text appended verbatim after the default Guidelines section.
+    pub append: Option<&'a str>,
+}
+
 /// Build the system prompt for the given agent mode.
-/// `tool_names` lists the tools available in this mode so the model
-/// knows exactly what it can use.
-pub fn system_prompt(mode: AgentMode, custom: Option<&str>, tool_names: &[String]) -> String {
+///
+/// `tool_names` lists the tools available in this mode so the model knows
+/// exactly what it can use.  `ctx` carries optional project / CI / git
+/// context injected when running in headless mode.
+pub fn system_prompt(
+    mode: AgentMode,
+    custom: Option<&str>,
+    tool_names: &[String],
+    ctx: PromptContext<'_>,
+) -> String {
     if let Some(custom) = custom {
+        // Even with a custom prompt, honour append if set.
+        if let Some(extra) = ctx.append {
+            return format!("{}\n\n{}", custom.trim_end(), extra);
+        }
         return custom.to_string();
     }
 
@@ -36,15 +64,57 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, tool_names: &[String
         format!("\n\n## Available Tools\n{list}")
     };
 
+    let project_section = if let Some(root) = ctx.project_root {
+        format!(
+            "\n\n## Project Context\n\
+             Project root directory: `{}`\n\
+             - Use this absolute path for all file read/write operations.\n\
+             - Pass this path as the `workdir` argument to `run_terminal_command` \
+               so shell commands execute in the correct directory.\n\
+             - Prefer absolute paths over relative paths in every tool call.",
+            root.display()
+        )
+    } else {
+        String::new()
+    };
+
+    let git_section = if let Some(git) = ctx.git_context {
+        format!("\n\n{git}")
+    } else {
+        String::new()
+    };
+
+    // Project context file (AGENTS.md / .sven/context.md) — injected as a
+    // labelled section so the model treats it as authoritative instructions.
+    let context_file_section = if let Some(content) = ctx.project_context_file {
+        format!("\n\n## Project Instructions\n\n{content}")
+    } else {
+        String::new()
+    };
+
+    let ci_section = if let Some(ci) = ctx.ci_context {
+        format!("\n\n{ci}")
+    } else {
+        String::new()
+    };
+
+    let append_section = if let Some(extra) = ctx.append {
+        format!("\n\n{extra}")
+    } else {
+        String::new()
+    };
+
     format!(
         "You are Sven, an efficient AI coding agent operating in `{mode}` mode.\n\n\
-         {mode_instructions}{tools_section}\n\n\
+         {mode_instructions}{tools_section}{project_section}{git_section}\
+         {context_file_section}{ci_section}\n\n\
          ## Guidelines\n\
          - Be concise and precise in your responses.\n\
          - Use tools instead of guessing file contents.\n\
          - When writing code, follow existing project conventions.\n\
          - If a task is ambiguous, ask for clarification before acting.\n\
-         - Summarise what you did at the end of each turn.",
+         - Summarise what you did at the end of each turn.\
+         {append_section}",
     )
 }
 
@@ -53,42 +123,53 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, tool_names: &[String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use sven_config::AgentMode;
 
     fn no_tools() -> Vec<String> { vec![] }
+    fn p(s: &str) -> PathBuf { PathBuf::from(s) }
+    fn empty() -> PromptContext<'static> { PromptContext::default() }
 
     #[test]
     fn custom_prompt_is_returned_verbatim() {
-        let prompt = system_prompt(AgentMode::Agent, Some("Custom instructions here."), &no_tools());
+        let prompt = system_prompt(AgentMode::Agent, Some("Custom instructions here."), &no_tools(), empty());
         assert_eq!(prompt, "Custom instructions here.");
     }
 
     #[test]
+    fn custom_prompt_with_append() {
+        let ctx = PromptContext { append: Some("Extra rule."), ..Default::default() };
+        let prompt = system_prompt(AgentMode::Agent, Some("Base."), &no_tools(), ctx);
+        assert!(prompt.contains("Base."));
+        assert!(prompt.contains("Extra rule."));
+    }
+
+    #[test]
     fn research_mode_mentions_read_only() {
-        let p = system_prompt(AgentMode::Research, None, &no_tools());
-        assert!(p.contains("read-only") || p.contains("MUST NOT write"),
+        let pr = system_prompt(AgentMode::Research, None, &no_tools(), empty());
+        assert!(pr.contains("read-only") || pr.contains("MUST NOT write"),
             "Research mode should forbid writes");
     }
 
     #[test]
     fn plan_mode_mentions_structured_plan() {
-        let p = system_prompt(AgentMode::Plan, None, &no_tools());
-        assert!(p.to_lowercase().contains("plan"),
+        let pr = system_prompt(AgentMode::Plan, None, &no_tools(), empty());
+        assert!(pr.to_lowercase().contains("plan"),
             "Plan mode prompt should mention 'plan'");
     }
 
     #[test]
     fn agent_mode_mentions_write_capability() {
-        let p = system_prompt(AgentMode::Agent, None, &no_tools());
-        assert!(p.contains("write files") || p.contains("read and write"),
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("write files") || pr.contains("read and write"),
             "Agent mode should mention write capability");
     }
 
     #[test]
     fn all_modes_name_sven() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let p = system_prompt(mode, None, &no_tools());
-            assert!(p.contains("Sven"), "prompt should identify the agent as Sven");
+            let pr = system_prompt(mode, None, &no_tools(), empty());
+            assert!(pr.contains("Sven"), "prompt should identify the agent as Sven");
         }
     }
 
@@ -99,8 +180,8 @@ mod tests {
             (AgentMode::Plan, "plan"),
             (AgentMode::Agent, "agent"),
         ] {
-            let p = system_prompt(mode, None, &no_tools());
-            assert!(p.contains(expected),
+            let pr = system_prompt(mode, None, &no_tools(), empty());
+            assert!(pr.contains(expected),
                 "prompt for {mode} should contain the mode name");
         }
     }
@@ -108,16 +189,69 @@ mod tests {
     #[test]
     fn all_modes_include_guidelines_section() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let p = system_prompt(mode, None, &no_tools());
-            assert!(p.contains("Guidelines"), "prompt should contain a Guidelines section");
+            let pr = system_prompt(mode, None, &no_tools(), empty());
+            assert!(pr.contains("Guidelines"), "prompt should contain a Guidelines section");
         }
     }
 
     #[test]
     fn tools_list_appears_in_prompt() {
         let tools = vec!["read_file".to_string(), "grep".to_string()];
-        let p = system_prompt(AgentMode::Research, None, &tools);
-        assert!(p.contains("`read_file`"));
-        assert!(p.contains("`grep`"));
+        let pr = system_prompt(AgentMode::Research, None, &tools, empty());
+        assert!(pr.contains("`read_file`"));
+        assert!(pr.contains("`grep`"));
+    }
+
+    #[test]
+    fn project_root_appears_in_prompt() {
+        let root = p("/home/user/my-project");
+        let ctx = PromptContext { project_root: Some(&root), ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(pr.contains("/home/user/my-project"),
+            "project root should appear in prompt");
+        assert!(pr.contains("Project Context"),
+            "prompt should have Project Context section");
+    }
+
+    #[test]
+    fn no_project_root_no_section() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(!pr.contains("Project Context"));
+    }
+
+    #[test]
+    fn ci_context_is_appended() {
+        let ci = "## CI Environment\nRunning in: GitHub Actions\nBranch: main";
+        let ctx = PromptContext { ci_context: Some(ci), ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(pr.contains("GitHub Actions"));
+        assert!(pr.contains("Branch: main"));
+    }
+
+    #[test]
+    fn git_context_appears_in_prompt() {
+        let git = "## Git Context\nBranch: main\nCommit: abc1234";
+        let ctx = PromptContext { git_context: Some(git), ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(pr.contains("Git Context"));
+        assert!(pr.contains("abc1234"));
+    }
+
+    #[test]
+    fn project_context_file_appears_in_prompt() {
+        let file_content = "Always write tests for every function.";
+        let ctx = PromptContext { project_context_file: Some(file_content), ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(pr.contains("Project Instructions"));
+        assert!(pr.contains("Always write tests"));
+    }
+
+    #[test]
+    fn append_section_is_added_after_guidelines() {
+        let ctx = PromptContext { append: Some("Custom rule: never delete files."), ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let guidelines_pos = pr.find("Guidelines").unwrap();
+        let append_pos = pr.find("Custom rule").unwrap();
+        assert!(append_pos > guidelines_pos, "append should come after Guidelines");
     }
 }

@@ -1,13 +1,8 @@
 #!/usr/bin/env bats
-# End-to-end CI-mode tests.
-# Requires the MOCK provider to avoid real API calls.
-# Run with:  SVEN_MODEL=mock bats tests/bats/ci_mode.bats
+# ci_mode.bats – legacy smoke tests (kept for backwards compatibility).
+# Uses the same mock-model infrastructure as the numbered test suites.
 
-setup() {
-    export SVEN_PROVIDER=mock
-    export OPENAI_API_KEY=dummy
-    BIN="${BATS_TEST_DIRNAME}/../../target/debug/sven"
-}
+load helpers
 
 @test "sven --help exits 0" {
     run "$BIN" --help
@@ -20,26 +15,30 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "headless mode echoes mock response to stdout" {
-    run bash -c 'echo "ping" | '"$BIN"' --headless --mode agent 2>/dev/null'
+@test "headless mode outputs mock response to stdout" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock 2>/dev/null'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "MOCK" ]]
+    [ -n "$output" ]
 }
 
 @test "file input mode processes markdown steps" {
-    run "$BIN" --headless --file "${BATS_TEST_DIRNAME}/../fixtures/plan.md" 2>/dev/null
+    run "$BIN" --headless --model mock \
+        --file "${BATS_TEST_DIRNAME}/../fixtures/plan.md" 2>/dev/null
     [ "$status" -eq 0 ]
 }
 
 @test "errors go to stderr not stdout" {
-    stdout=$("$BIN" --headless 2>/dev/null <<< "test" || true)
-    # stdout should not contain any [fatal] prefix
-    [[ ! "$stdout" =~ "\[fatal\]" ]]
+    run_split_output bash -c '"$BIN" --headless --model mock <<< "test"'
+    [[ "${STDOUT_OUT}" != *"[fatal]"* ]]
 }
 
 @test "pipeline: sven output piped to sven" {
-    result=$(echo "first task" | "$BIN" --headless 2>/dev/null | "$BIN" --headless "summarise the above" 2>/dev/null || true)
-    [ -n "$result" ]
+    run bash -c \
+        'echo "make a plan" \
+           | "$BIN" --headless --model mock 2>/dev/null \
+           | "$BIN" --headless --model mock "summarise the above" 2>/dev/null'
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
 }
 
 @test "completions subcommand generates bash script" {

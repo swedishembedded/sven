@@ -12,10 +12,23 @@
 # Support both debug and release builds; prefer release if present.
 _REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
 
-if [[ -x "${_REPO_ROOT}/target/release/sven" ]]; then
-    BIN="${_REPO_ROOT}/target/release/sven"
+# Prefer the newest binary so tests always run against the most recently built
+# code.  In CI the release build is preferred; in development the debug build
+# may be newer after an incremental `cargo build`.
+_release="${_REPO_ROOT}/target/release/sven"
+_debug="${_REPO_ROOT}/target/debug/sven"
+
+if [[ -x "${_release}" && -x "${_debug}" ]]; then
+    # Both exist — use whichever was modified more recently.
+    if [[ "${_release}" -nt "${_debug}" ]]; then
+        BIN="${_release}"
+    else
+        BIN="${_debug}"
+    fi
+elif [[ -x "${_release}" ]]; then
+    BIN="${_release}"
 else
-    BIN="${_REPO_ROOT}/target/debug/sven"
+    BIN="${_debug}"
 fi
 
 export BIN

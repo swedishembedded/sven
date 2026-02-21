@@ -1,5 +1,6 @@
 mod cli;
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,10 +8,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, OutputFormatArg};
 use clap::Parser;
-use sven_ci::{CiOptions, CiRunner, ConversationOptions, ConversationRunner};
-use sven_input::history;
+use sven_ci::{
+    CiOptions, CiRunner, ConversationOptions, ConversationRunner,
+    OutputFormat, find_project_root,
+};
+use sven_input::{history, parse_frontmatter, parse_markdown_steps};
 use sven_tui::{App, AppOptions};
 
 #[tokio::main]
@@ -35,6 +39,9 @@ async fn main() -> anyhow::Result<()> {
                 print_chats(*limit);
                 return Ok(());
             }
+            Commands::Validate { file } => {
+                return validate_workflow(file);
+            }
         }
     }
 
@@ -47,6 +54,64 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Validate a workflow file: parse frontmatter, count steps, report to stdout.
+fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("reading workflow file {}", file.display()))?;
+
+    let (frontmatter, markdown_body) = parse_frontmatter(&content);
+
+    if let Some(fm) = &frontmatter {
+        println!("Frontmatter: OK");
+        if let Some(t) = &fm.title {
+            println!("  title: {t}");
+        }
+        if let Some(m) = &fm.mode {
+            println!("  mode: {m}");
+        }
+        if let Some(m) = &fm.model {
+            println!("  model: {m}");
+        }
+        if let Some(t) = fm.step_timeout_secs {
+            println!("  step_timeout_secs: {t}");
+        }
+        if let Some(t) = fm.run_timeout_secs {
+            println!("  run_timeout_secs: {t}");
+        }
+        if let Some(vars) = &fm.vars {
+            println!("  vars ({}):", vars.len());
+            for (k, v) in vars {
+                println!("    {k} = {v}");
+            }
+        }
+    } else {
+        println!("Frontmatter: (none)");
+    }
+
+    let mut queue = parse_markdown_steps(markdown_body);
+    let total = queue.len();
+    println!("Steps: {total}");
+
+    let mut i = 0;
+    while let Some(step) = queue.pop() {
+        i += 1;
+        let label = step.label.as_deref().unwrap_or("(unlabelled)");
+        let mode = step.options.mode.as_deref().unwrap_or("(inherit)");
+        let timeout = step.options.timeout_secs
+            .map(|t| format!("{t}s"))
+            .unwrap_or_else(|| "(inherit)".to_string());
+        println!("  Step {i}/{total}: {label:?}  mode={mode}  timeout={timeout}");
+        if !step.content.is_empty() {
+            let preview = step.content.chars().take(80).collect::<String>();
+            let ellipsis = if step.content.chars().count() > 80 { "…" } else { "" };
+            println!("    {preview}{ellipsis}");
+        }
+    }
+
+    println!("\nWorkflow is valid.");
+    Ok(())
+}
+
 /// Print the list of saved conversations to stdout.
 fn print_chats(limit: usize) {
     match history::list(Some(limit)) {
@@ -56,8 +121,8 @@ fn print_chats(limit: usize) {
         }
         Ok(entries) => {
             println!(
-                "{:<45}  {:<16}  {:<5}  {}",
-                "ID (use with --resume)", "DATE", "TURNS", "TITLE"
+                "{:<45}  {:<16}  {:<5}  TITLE",
+                "ID (use with --resume)", "DATE", "TURNS"
             );
             println!("{}", "-".repeat(95));
             for e in &entries {
@@ -67,7 +132,7 @@ fn print_chats(limit: usize) {
                     e.id.clone()
                 };
                 let date = e.timestamp.replace('T', " ");
-                let date = &date[..16.min(date.len())]; // YYYY-MM-DD HH:MM
+                let date = &date[..16.min(date.len())];
                 let title = if e.title.chars().count() > 50 {
                     format!("{}…", e.title.chars().take(49).collect::<String>())
                 } else {
@@ -86,13 +151,6 @@ fn print_chats(limit: usize) {
 }
 
 /// Launch `fzf` and let the user pick a conversation to resume.
-///
-/// Each line fed to fzf is tab-separated:
-///   `<id>\t<date>\t<title>\t<turns>`
-///
-/// fzf displays only columns 3–4 (title + turns) with column 2 (date) in the
-/// prompt, keeping the ID hidden for clean parsing.  Returns the selected ID,
-/// or `None` if the user cancelled.
 fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
     let entries = history::list(None).context("listing saved conversations")?;
     if entries.is_empty() {
@@ -102,7 +160,6 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
         );
     }
 
-    // Build tab-separated lines: ID \t DATE \t TITLE \t TURNS
     let lines: String = entries
         .iter()
         .map(|e| {
@@ -117,16 +174,16 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
     let mut child = std::process::Command::new("fzf")
         .args([
             "--delimiter=\t",
-            "--with-nth=3,2,4",   // display: title | date | turns  (ID column is hidden)
+            "--with-nth=3,2,4",
             "--tabstop=1",
             "--header=Resume conversation  (Enter: open · Esc: cancel)",
             "--header-first",
             "--height=50%",
             "--min-height=10",
             "--reverse",
-            "--no-sort",          // preserve recency order
+            "--no-sort",
             "--bind=ctrl-/:toggle-preview",
-            "--preview=echo {}",  // show the raw line (including id) in preview
+            "--preview=echo {}",
             "--preview-window=down:2:wrap:hidden",
         ])
         .stdin(Stdio::piped())
@@ -137,7 +194,6 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
              (https://github.com/junegunn/fzf or `apt install fzf`)"
         )?;
 
-    // Write the list to fzf's stdin then close it.
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(lines.as_bytes());
     }
@@ -145,7 +201,6 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
     let output = child.wait_with_output()?;
 
     if !output.status.success() {
-        // Exit 1 = no match / user pressed Esc
         return Ok(None);
     }
 
@@ -155,7 +210,6 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
         return Ok(None);
     }
 
-    // First tab-delimited field is the hidden ID.
     let id = selected.split('\t').next().unwrap_or("").trim().to_string();
     if id.is_empty() {
         anyhow::bail!("fzf returned an unexpected selection: {selected:?}");
@@ -164,7 +218,10 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
 }
 
 async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
-    // --resume in headless mode: resolve to a history file then run as conversation.
+    // ── Detect project root (used in all CI modes) ───────────────────────────
+    let project_root = find_project_root().ok();
+
+    // ── --resume in headless mode ────────────────────────────────────────────
     if let Some(id) = &cli.resume {
         if id.is_empty() {
             anyhow::bail!(
@@ -175,7 +232,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         let file_path = history::resolve(id)
             .with_context(|| format!("resolving conversation id '{id}'"))?;
 
-        // If a new prompt was given, append it as a pending ## User section.
         if let Some(prompt) = &cli.prompt {
             use std::fmt::Write as _;
             let current = std::fs::read_to_string(&file_path)
@@ -197,7 +253,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         return ConversationRunner::new(config).run(opts).await;
     }
 
-    // Conversation file mode: load history, execute pending ## User, append results
+    // ── Conversation file mode ───────────────────────────────────────────────
     if cli.conversation {
         let file_path = cli.file.as_ref()
             .ok_or_else(|| anyhow::anyhow!("--conversation requires --file <path>"))?
@@ -213,7 +269,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         return ConversationRunner::new(config).run(opts).await;
     }
 
-    // Standard CI mode: read input, parse steps, run
+    // ── Standard CI mode ─────────────────────────────────────────────────────
     let input = if let Some(path) = &cli.file {
         std::fs::read_to_string(path)
             .with_context(|| format!("reading input file {}", path.display()))?
@@ -225,11 +281,38 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         String::new()
     };
 
+    // ── Parse template variables from --var flags ────────────────────────────
+    let mut vars: HashMap<String, String> = HashMap::new();
+    for spec in &cli.vars {
+        if let Some((k, v)) = sven_ci::template::parse_var(spec) {
+            vars.insert(k, v);
+        } else {
+            eprintln!("[sven:warn] Ignoring invalid --var argument: {spec:?}  (expected KEY=VALUE)");
+        }
+    }
+
+    // ── Map CLI output format to OutputFormat ────────────────────────────────
+    let output_format = match cli.output_format {
+        OutputFormatArg::Conversation => OutputFormat::Conversation,
+        OutputFormatArg::Json => OutputFormat::Json,
+        OutputFormatArg::Compact => OutputFormat::Compact,
+    };
+
     let opts = CiOptions {
         mode: cli.mode,
         model_override: cli.model,
         input,
         extra_prompt: cli.prompt,
+        project_root,
+        output_format,
+        artifacts_dir: cli.artifacts_dir,
+        vars,
+        step_timeout_secs: cli.step_timeout,
+        run_timeout_secs: cli.run_timeout,
+        dry_run: cli.dry_run,
+        output_last_message: cli.output_last_message,
+        system_prompt_file: cli.system_prompt_file,
+        append_system_prompt: cli.append_system_prompt,
     };
 
     CiRunner::new(config).run(opts).await
@@ -244,17 +327,13 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         },
     };
 
-    // Resolve history BEFORE entering raw-terminal mode.  If anything goes
-    // wrong (bad ID, parse error, fzf cancelled) we can print a normal error
-    // message without corrupting the terminal state.
     let initial_history = match &cli.resume {
         None => None,
         Some(id) => {
             let actual_id = if id.is_empty() {
-                // No ID given — launch fzf so the user can pick interactively.
                 match pick_chat_with_fzf()? {
                     Some(picked) => picked,
-                    None => return Ok(()), // user cancelled fzf
+                    None => return Ok(()),
                 }
             } else {
                 id.clone()
@@ -274,10 +353,6 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
 
     let terminal = ratatui::init();
     let _ = execute!(std::io::stderr(), EnableMouseCapture);
-    
-    // Enable keyboard enhancement so the terminal reports distinct escape sequences for
-    // Shift+Enter vs plain Enter (and other modifier combos). Same flags as codex.
-    // If the terminal doesn't support it, this will fail silently; Ctrl+J remains a newline fallback.
     let _ = execute!(
         std::io::stderr(),
         PushKeyboardEnhancementFlags(
@@ -297,7 +372,6 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let app = App::new(config, opts);
     let result = app.run(terminal).await;
 
-    // Clean up: restore terminal state
     let _ = execute!(std::io::stderr(), PopKeyboardEnhancementFlags);
     let _ = execute!(std::io::stderr(), DisableMouseCapture);
     ratatui::restore();

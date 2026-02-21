@@ -279,6 +279,32 @@ responses:
           depth: 1
     after_tool_reply: "Directory listing complete."
 
+  # ── Headless enhancements test patterns ─────────────────────────────────────
+
+  - match_type: contains
+    pattern: "variable test"
+    reply: "Variable substitution confirmed: template variables are working."
+
+  - match_type: contains
+    pattern: "context file test"
+    reply: "Context file instructions received and acknowledged."
+
+  - match_type: contains
+    pattern: "system prompt test"
+    reply: "Custom system prompt acknowledged and applied."
+
+  - match_type: contains
+    pattern: "final response test"
+    reply: "This is the final agent response for output-last-message test."
+
+  - match_type: contains
+    pattern: "frontmatter test"
+    reply: "Frontmatter configuration applied and workflow executing."
+
+  - match_type: contains
+    pattern: "per-step test"
+    reply: "Per-step option was applied to this step."
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default

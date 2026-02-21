@@ -1,5 +1,16 @@
 use std::collections::VecDeque;
 
+/// Per-step configuration parsed from inline `<!-- step: ... -->` HTML comments.
+#[derive(Debug, Clone, Default)]
+pub struct StepOptions {
+    /// Override agent mode for this step (e.g. "research", "plan", "agent")
+    pub mode: Option<String>,
+    /// Step-level timeout in seconds (overrides the runner default)
+    pub timeout_secs: Option<u64>,
+    /// Optional cache key — if set, a matching cached result is reused
+    pub cache_key: Option<String>,
+}
+
 /// A single step / message to be sent to the agent.
 #[derive(Debug, Clone)]
 pub struct Step {
@@ -7,6 +18,8 @@ pub struct Step {
     pub label: Option<String>,
     /// The actual content of the step
     pub content: String,
+    /// Per-step configuration parsed from `<!-- step: ... -->` comments
+    pub options: StepOptions,
 }
 
 /// A queue of steps that are delivered to the agent one at a time.
@@ -41,11 +54,11 @@ mod tests {
     use super::*;
 
     fn step(content: &str) -> Step {
-        Step { label: None, content: content.into() }
+        Step { label: None, content: content.into(), options: StepOptions::default() }
     }
 
     fn labelled(label: &str, content: &str) -> Step {
-        Step { label: Some(label.into()), content: content.into() }
+        Step { label: Some(label.into()), content: content.into(), options: StepOptions::default() }
     }
 
     #[test]

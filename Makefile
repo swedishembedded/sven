@@ -1,4 +1,7 @@
 CARGO   ?= cargo
+# Use the user-writable registry when the system CARGO_HOME is read-only.
+# Override with: make CARGO_HOME=/path/to/cargo
+export CARGO_HOME ?= $(HOME)/.cargo
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 DEB_OUT := target/debian
 

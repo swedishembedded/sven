@@ -1,0 +1,155 @@
+name: 'Run Sven AI Workflow'
+description: >
+  Execute a sven AI agent workflow file in headless CI mode.
+  Outputs a full conversation transcript to stdout and saves per-step
+  artifacts to a configurable directory.
+
+inputs:
+  workflow-file:
+    description: 'Path to the workflow markdown file (relative to repo root)'
+    required: true
+
+  model:
+    description: >
+      Model override in "provider/name" format, e.g.
+      "anthropic/claude-opus-4-5" or "openai/gpt-4o".
+      Defaults to the project config or frontmatter setting.
+    required: false
+    default: ''
+
+  mode:
+    description: >
+      Agent mode: "agent" (default, read+write), "research" (read-only),
+      or "plan" (read-only, produces structured plan).
+    required: false
+    default: 'agent'
+
+  output-format:
+    description: >
+      Output format for stdout: "conversation" (default, pipeable markdown),
+      "json" (structured metadata), or "compact" (plain text only).
+    required: false
+    default: 'conversation'
+
+  artifacts-dir:
+    description: >
+      Directory to save run artifacts (per-step markdown files, full
+      conversation).  Defaults to ".sven/artifacts/<run-id>".
+    required: false
+    default: '.sven/artifacts'
+
+  step-timeout:
+    description: 'Per-step timeout in seconds (0 = no limit)'
+    required: false
+    default: '0'
+
+  run-timeout:
+    description: 'Total run timeout in seconds (0 = no limit)'
+    required: false
+    default: '0'
+
+  dry-run:
+    description: 'Validate the workflow without executing it (true/false)'
+    required: false
+    default: 'false'
+
+  vars:
+    description: >
+      Newline-separated KEY=VALUE pairs substituted as {{KEY}} in steps.
+      Example:
+        vars: |
+          branch=main
+          pr_number=42
+    required: false
+    default: ''
+
+  sven-version:
+    description: >
+      Version of sven to install (e.g. "0.1.0").  Leave empty to use a
+      pre-installed binary in PATH.
+    required: false
+    default: ''
+
+outputs:
+  conversation:
+    description: 'Path to the full conversation artifact file'
+    value: ${{ steps.run-sven.outputs.conversation }}
+
+  exit-code:
+    description: 'Exit code from the sven run (0 = success, 124 = timeout, 130 = interrupted)'
+    value: ${{ steps.run-sven.outputs.exit-code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install sven
+      if: inputs.sven-version != ''
+      shell: bash
+      run: |
+        echo "Installing sven ${{ inputs.sven-version }}..."
+        # Adjust this URL pattern to match your release distribution
+        curl -sSL "https://github.com/your-org/sven/releases/download/v${{ inputs.sven-version }}/sven-x86_64-unknown-linux-gnu.tar.gz" \
+          | tar -xz -C /usr/local/bin/ sven
+        sven --version
+
+    - name: Run sven workflow
+      id: run-sven
+      shell: bash
+      env:
+        SVEN_MODEL: ${{ inputs.model }}
+      run: |
+        set +e  # Don't fail immediately; capture exit code
+
+        ARTIFACTS="${{ inputs.artifacts-dir }}/${{ github.run_id }}"
+        mkdir -p "${ARTIFACTS}"
+
+        # Build --var flags from newline-separated KEY=VALUE pairs
+        VAR_FLAGS=()
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          VAR_FLAGS+=(--var "$line")
+        done <<< "${{ inputs.vars }}"
+
+        # Build optional flags
+        MODEL_FLAG=""
+        [[ -n "${{ inputs.model }}" ]] && MODEL_FLAG="--model ${{ inputs.model }}"
+
+        STEP_TIMEOUT_FLAG=""
+        [[ "${{ inputs.step-timeout }}" != "0" ]] && STEP_TIMEOUT_FLAG="--step-timeout ${{ inputs.step-timeout }}"
+
+        RUN_TIMEOUT_FLAG=""
+        [[ "${{ inputs.run-timeout }}" != "0" ]] && RUN_TIMEOUT_FLAG="--run-timeout ${{ inputs.run-timeout }}"
+
+        DRY_RUN_FLAG=""
+        [[ "${{ inputs.dry-run }}" == "true" ]] && DRY_RUN_FLAG="--dry-run"
+
+        sven \
+          --headless \
+          --file "${{ inputs.workflow-file }}" \
+          --mode "${{ inputs.mode }}" \
+          --output-format "${{ inputs.output-format }}" \
+          --artifacts-dir "${ARTIFACTS}" \
+          ${MODEL_FLAG} \
+          ${STEP_TIMEOUT_FLAG} \
+          ${RUN_TIMEOUT_FLAG} \
+          ${DRY_RUN_FLAG} \
+          "${VAR_FLAGS[@]}" \
+          > "${ARTIFACTS}/conversation.md" 2> "${ARTIFACTS}/run.log"
+
+        EXIT_CODE=$?
+
+        echo "conversation=${ARTIFACTS}/conversation.md" >> "$GITHUB_OUTPUT"
+        echo "exit-code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+        # Print the log for CI visibility
+        cat "${ARTIFACTS}/run.log"
+
+        exit ${EXIT_CODE}
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sven-artifacts-${{ github.run_id }}
+        path: ${{ inputs.artifacts-dir }}/${{ github.run_id }}/
+        retention-days: 30
