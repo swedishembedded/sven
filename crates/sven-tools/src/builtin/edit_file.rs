@@ -14,9 +14,11 @@ impl Tool for EditFileTool {
     fn name(&self) -> &str { "edit_file" }
 
     fn description(&self) -> &str {
-        "Edit a file by replacing the first occurrence of old_str with new_str. \
-         Fails if old_str is not found or appears more than once (to prevent ambiguous edits). \
-         Use read_file first to confirm the exact text to replace."
+        "Performs exact string replacements in files. \
+         The edit will FAIL if old_str is not found or is not unique in the file — \
+         provide more surrounding context to make it unique, or set replace_all=true \
+         to replace every occurrence. Use replace_all for renaming a symbol across the file. \
+         If you want to create a new file, use the write tool instead."
     }
 
     fn parameters_schema(&self) -> Value {

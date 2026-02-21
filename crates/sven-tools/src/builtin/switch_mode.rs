@@ -27,8 +27,13 @@ impl Tool for SwitchModeTool {
     fn name(&self) -> &str { "switch_mode" }
 
     fn description(&self) -> &str {
-        "Switch the agent's operating mode. Can only downgrade: agent → plan, agent → research, \
-         plan → research. Upgrading (e.g. research → agent) is not allowed for safety."
+        "Switch the agent's operating mode to better match the current task. \
+         Each mode is optimised for a specific type of work: \
+         'agent' for making code changes, 'plan' for designing approaches before coding, \
+         'research' for read-only exploration and answering questions. \
+         Switch proactively when the task type changes, complexity emerges requiring planning, \
+         or a different approach is needed. \
+         Mode can only be downgraded (agent → plan → research); upgrading requires user action."
     }
 
     fn parameters_schema(&self) -> Value {

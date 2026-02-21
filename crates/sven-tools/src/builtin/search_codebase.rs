@@ -14,9 +14,11 @@ impl Tool for SearchCodebaseTool {
     fn name(&self) -> &str { "search_codebase" }
 
     fn description(&self) -> &str {
-        "Search the codebase for a pattern using ripgrep. Automatically excludes build artifacts \
-         (.git/, target/, node_modules/, dist/, __pycache__/). \
-         Returns file:line:content matches. Supports regex."
+        "Semantic search that finds code by meaning, not exact text. \
+         Use when you need to explore an unfamiliar codebase, ask 'how / where / what' questions \
+         to understand behaviour, or find code by concept rather than exact symbol names. \
+         When you know the exact symbol or string to search for, prefer the grep tool instead. \
+         Automatically excludes build artifacts (.git/, target/, node_modules/, dist/, __pycache__/)."
     }
 
     fn parameters_schema(&self) -> Value {

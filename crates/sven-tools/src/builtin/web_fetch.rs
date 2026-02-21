@@ -14,8 +14,12 @@ impl Tool for WebFetchTool {
     fn name(&self) -> &str { "web_fetch" }
 
     fn description(&self) -> &str {
-        "Fetch a URL and return its content. HTML pages are converted to plain text. \
-         JSON responses are pretty-printed. Output is capped at max_chars characters."
+        "Fetch content from a specified URL and return its contents in a readable text format. \
+         Use when you need to retrieve and analyse webpage content. \
+         The URL must be fully-formed and valid (http or https). \
+         This tool is read-only and will not work for requests with side effects. \
+         Authentication is not supported. Does not support fetching binary content, \
+         localhost, or private IP addresses."
     }
 
     fn parameters_schema(&self) -> Value {

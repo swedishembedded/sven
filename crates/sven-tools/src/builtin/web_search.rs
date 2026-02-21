@@ -16,8 +16,11 @@ impl Tool for WebSearchTool {
     fn name(&self) -> &str { "web_search" }
 
     fn description(&self) -> &str {
-        "Search the web using Brave Search API. Requires BRAVE_API_KEY environment variable. \
-         Returns a list of results with title, URL, and description."
+        "Search the web for real-time information about any topic. Returns results with title, \
+         URL, and description. Use when you need up-to-date information that may not be in \
+         training data, or to verify current facts. Useful for libraries and frameworks with \
+         frequently updated APIs, current events, and general informational queries. \
+         Requires BRAVE_API_KEY environment variable."
     }
 
     fn parameters_schema(&self) -> Value {

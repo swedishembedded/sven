@@ -14,7 +14,11 @@ impl Tool for WriteTool {
     fn name(&self) -> &str { "write" }
 
     fn description(&self) -> &str {
-        "Write or append content to a file. Creates parent directories automatically. \
+        "Writes a file to the local filesystem. This tool will overwrite the existing file if \
+         one exists at the provided path. ALWAYS prefer editing existing files with edit_file. \
+         NEVER write new files unless explicitly required. \
+         NEVER proactively create documentation or README files unless explicitly requested. \
+         Creates parent directories automatically. \
          Set append=true to add to the end of an existing file instead of overwriting."
     }
 

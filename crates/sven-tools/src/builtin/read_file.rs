@@ -14,8 +14,11 @@ impl Tool for ReadFileTool {
     fn name(&self) -> &str { "read_file" }
 
     fn description(&self) -> &str {
-        "Read the contents of a file. Returns lines prefixed with their line number \
-         (L1:, L2:, ...). Use offset and limit to read specific sections of large files."
+        "Reads a file from the local filesystem. You can access any file directly by using \
+         this tool. It is okay to read a file that does not exist; an error will be returned. \
+         Optionally specify a line offset and limit for large files, but it is recommended to \
+         read the whole file when possible. Lines in the output are numbered starting at 1. \
+         If the file exists but has empty contents, 'File is empty.' is returned."
     }
 
     fn parameters_schema(&self) -> Value {

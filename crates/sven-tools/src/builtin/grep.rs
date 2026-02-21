@@ -12,8 +12,12 @@ impl Tool for GrepTool {
     fn name(&self) -> &str { "grep" }
 
     fn description(&self) -> &str {
-        "Search for a pattern in files using ripgrep (rg). Falls back to grep -rn if rg is not \
-         installed. Returns file:line:content matches. Supports regex patterns."
+        "A powerful search tool built on ripgrep. \
+         Supports full regex syntax (e.g. 'log.*Error', 'fn\\s+\\w+'). \
+         Filter files with the include parameter (e.g. '*.rs', '**/*.{ts,tsx}'). \
+         Output modes: 'content' shows matching lines (default), \
+         'files_with_matches' shows only file paths, 'count' shows match counts. \
+         Results are capped at several thousand lines for responsiveness."
     }
 
     fn parameters_schema(&self) -> Value {

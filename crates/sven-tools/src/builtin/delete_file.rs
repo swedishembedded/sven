@@ -14,8 +14,9 @@ impl Tool for DeleteFileTool {
     fn name(&self) -> &str { "delete_file" }
 
     fn description(&self) -> &str {
-        "Delete a file. Directories must be deleted with run_terminal_command (rm -rf). \
-         This tool only deletes individual files."
+        "Deletes a file at the specified path. The operation will fail gracefully if \
+         the file doesn't exist, the operation is rejected for security reasons, or \
+         the file cannot be deleted. Directories must be removed with run_terminal_command."
     }
 
     fn parameters_schema(&self) -> Value {

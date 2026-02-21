@@ -12,9 +12,10 @@ impl Tool for GlobFileSearchTool {
     fn name(&self) -> &str { "glob_file_search" }
 
     fn description(&self) -> &str {
-        "Search for files matching a glob pattern. \
-         Returns a newline-delimited list of matching paths. \
-         Automatically excludes .git/ and target/ directories."
+        "Search for files matching a glob pattern. Works fast with codebases of any size. \
+         Returns matching file paths sorted by modification time. \
+         Use this tool when you need to find files by name patterns. \
+         Patterns not starting with '**/' are automatically searched recursively."
     }
 
     fn parameters_schema(&self) -> Value {

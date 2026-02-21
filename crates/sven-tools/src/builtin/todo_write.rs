@@ -25,10 +25,14 @@ impl Tool for TodoWriteTool {
     fn name(&self) -> &str { "todo_write" }
 
     fn description(&self) -> &str {
-        "Create or update the task list for the current session. Each item needs a unique id, \
-         content description, and status (pending/in_progress/completed/cancelled). \
-         At most one item should be in_progress at a time. Use this to track progress on \
-         multi-step tasks."
+        "Create and manage a structured task list for the current session. \
+         Helps track progress, organise complex tasks, and demonstrate thoroughness. \
+         Use proactively for complex multi-step tasks (3+ distinct steps), non-trivial tasks \
+         requiring careful planning, or when the user provides multiple tasks. \
+         Update status in real-time; mark complete immediately after finishing. \
+         Only one item should be in_progress at a time. \
+         Each item requires a unique id, content description, and status \
+         (pending / in_progress / completed / cancelled)."
     }
 
     fn parameters_schema(&self) -> Value {

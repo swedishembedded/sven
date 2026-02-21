@@ -44,9 +44,12 @@ impl Tool for AskQuestionTool {
     fn name(&self) -> &str { "ask_question" }
 
     fn description(&self) -> &str {
-        "Ask the user one to three clarifying questions and return their answers. \
-         Use sparingly: only when the task is genuinely ambiguous and a reasonable \
-         assumption cannot be made. In headless/CI/piped mode this tool is unavailable."
+        "Collect structured multiple-choice answers from the user. Provide one or more \
+         questions with options, and set allow_multiple when multi-select is appropriate. \
+         Use this tool when you need to gather specific information from the user through \
+         a structured question format. Each question should have a unique id, a clear prompt, \
+         and at least 2 options for the user to choose from. \
+         In headless/CI/piped mode this tool is unavailable."
     }
 
     fn parameters_schema(&self) -> Value {

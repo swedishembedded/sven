@@ -12,9 +12,13 @@ impl Tool for ReadLintsTool {
     fn name(&self) -> &str { "read_lints" }
 
     fn description(&self) -> &str {
-        "Run the project linter and return diagnostics. Automatically detects the project type \
-         by looking for Cargo.toml (Rust → cargo check), package.json (TypeScript → tsc), or \
-         pyproject.toml/setup.py (Python → ruff). Returns file:line: message format."
+        "Read and display linter errors from the current workspace. You can provide paths to \
+         specific files or directories, or omit the argument to get diagnostics for all files. \
+         If a file path is provided, returns diagnostics for that file only. \
+         If a directory path is provided, returns diagnostics for all files within that directory. \
+         This tool can return linter errors that were already present before your edits, so avoid \
+         calling it with a very wide scope of files. \
+         NEVER call this tool on a file unless you have edited it or are about to edit it."
     }
 
     fn parameters_schema(&self) -> Value {

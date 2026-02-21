@@ -25,8 +25,12 @@ impl Tool for RunTerminalCommandTool {
     fn name(&self) -> &str { "run_terminal_command" }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return stdout + stderr. \
-         Prefer non-interactive commands. Avoid commands that require a TTY."
+        "Executes a given command in a shell session. \
+         Use for terminal operations like git, build tools, and system commands. \
+         DO NOT use for file operations (reading, writing, editing, searching, finding files) — \
+         use the specialized tools for those instead. \
+         Always quote file paths that contain spaces. \
+         Avoid commands that require a TTY or interactive input."
     }
 
     fn parameters_schema(&self) -> Value {
