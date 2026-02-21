@@ -292,16 +292,27 @@ fn extract_text_content(lines: &[&str], i: &mut usize, prefix: &str) -> Result<S
     let inline_text = first_line.strip_prefix(prefix).map(|s| s.trim()).unwrap_or("");
     let mut text = String::from(inline_text);
     *i += 1;
+    // Track consecutive blank lines so they can be reproduced faithfully.
+    // Trailing blank lines are discarded (never flushed after the last non-blank
+    // line before a section header or end of input).
+    let mut pending_blanks: usize = 0;
     while *i < lines.len() {
         let line = lines[*i];
         let trimmed = line.trim();
         if is_message_header(trimmed) {
             break;
         }
-        if !trimmed.is_empty() {
+        if trimmed.is_empty() {
+            pending_blanks += 1;
+        } else {
             if !text.is_empty() {
+                // One '\n' for the normal line separator, then one per blank line.
                 text.push('\n');
+                for _ in 0..pending_blanks {
+                    text.push('\n');
+                }
             }
+            pending_blanks = 0;
             text.push_str(trimmed);
         }
         *i += 1;
@@ -666,6 +677,22 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].as_text(), Some("first"));
         assert_eq!(messages[1].as_text(), Some("second"));
+    }
+
+    #[test]
+    fn multi_paragraph_user_message_blank_lines_preserved_in_round_trip() {
+        // A user message that contains a blank line (paragraph break) must
+        // survive format → parse without losing the blank line.
+        let msg = Message::user("First paragraph\n\nSecond paragraph");
+        let cache = HashMap::new();
+        let md = message_to_markdown(&msg, &cache);
+        let messages = parse_markdown_to_messages(&md).unwrap();
+        assert_eq!(messages.len(), 1, "should produce exactly one message; md was: {md:?}");
+        let text = messages[0].as_text().unwrap();
+        assert!(
+            text.contains("First paragraph\n\nSecond paragraph"),
+            "blank line between paragraphs must be preserved; got: {text:?}",
+        );
     }
 
     #[test]

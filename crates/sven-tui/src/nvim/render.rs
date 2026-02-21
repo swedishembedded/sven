@@ -32,8 +32,7 @@ pub(crate) fn render_grid_to_lines(
 
         for cell in &grid.cells[row] {
             if cell.attr_id != current_attr_id && !current_text.is_empty() {
-                spans.push(Span::styled(current_text.clone(), current_style));
-                current_text.clear();
+                spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
             }
             if cell.attr_id != current_attr_id {
                 current_attr_id = cell.attr_id;

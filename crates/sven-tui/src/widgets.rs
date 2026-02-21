@@ -99,6 +99,11 @@ pub fn draw_chat(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Build a set for O(1) per-line match lookup instead of scanning the Vec.
+    let match_set: std::collections::HashSet<usize> =
+        search_matches.iter().copied().collect();
+    let current_match_line = search_matches.get(search_current).copied();
+
     let visible: Vec<Line<'static>> = lines
         .iter()
         .enumerate()
@@ -106,10 +111,10 @@ pub fn draw_chat(
         .take(inner.height as usize)
         .map(|(i, line)| {
             let is_current = !search_query.is_empty()
-                && search_matches.get(search_current) == Some(&i);
+                && current_match_line == Some(i);
             let is_other = !search_query.is_empty()
                 && !is_current
-                && search_matches.contains(&i);
+                && match_set.contains(&i);
             if is_current {
                 highlight_match_in_line(line.clone(), search_query, search_regex)
             } else if is_other {
