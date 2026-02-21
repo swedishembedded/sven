@@ -1,7 +1,15 @@
-/// Agent intelligence for discovering the GDB server command from project files.
+/// Agent intelligence for discovering the GDB server command and firmware ELF
+/// from common project structures including Zephyr/sysbuild, PlatformIO, Cargo
+/// embedded, and CMake/Make projects.
 ///
-/// The discovery strategy tries each source in order, stopping at the first
-/// match that yields a usable command string.
+/// Discovery strategy (tried in order, first match wins):
+///   1. `.gdbinit`                   — explicit server comment or target remote
+///   2. `.vscode/launch.json`        — cortex-debug / debugServerPath
+///   3. `debugging/launch.json`      — alternative location (ng-iot-platform style)
+///   4. `openocd.cfg`               — OpenOCD config
+///   5. `platformio.ini`            — PlatformIO debug_server / debug_tool
+///   6. `Makefile`                  — JLinkExe / JLinkRTTLogger / flash targets
+///   7. Chip heuristics             — scan CMakeLists, Cargo.toml, board files
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -54,21 +62,34 @@ pub async fn discover_gdb_server_command_in(base: Option<&std::path::Path>) -> R
     }
 
     // ── 2. .vscode/launch.json ───────────────────────────────────────────────
-    let launch_json = root.join(".vscode").join("launch.json");
-    if let Some(content) = read_opt(&launch_json) {
-        if let Some(cmd) = vscode_launch_to_server_command(&content) {
+    let vscode_launch = root.join(".vscode").join("launch.json");
+    if let Some(content) = read_opt(&vscode_launch) {
+        if let Some(cmd) = launch_json_to_server_command(&content) {
             return Ok(Some(cmd));
         }
     }
 
-    // ── 3. openocd.cfg ───────────────────────────────────────────────────────
+    // ── 3. debugging/launch.json (ng-iot-platform and similar) ───────────────
+    for candidate in [
+        root.join("debugging").join("launch.json"),
+        cwd.join("debugging").join("launch.json"),
+        root.join(".debug").join("launch.json"),
+    ] {
+        if let Some(content) = read_opt(&candidate) {
+            if let Some(cmd) = launch_json_to_server_command(&content) {
+                return Ok(Some(cmd));
+            }
+        }
+    }
+
+    // ── 4. openocd.cfg ───────────────────────────────────────────────────────
     for candidate in [root.join("openocd.cfg"), cwd.join("openocd.cfg")] {
         if candidate.exists() {
             return Ok(Some(openocd_command(&candidate)));
         }
     }
 
-    // ── 4. platformio.ini ────────────────────────────────────────────────────
+    // ── 5. platformio.ini ────────────────────────────────────────────────────
     for candidate in [root.join("platformio.ini"), cwd.join("platformio.ini")] {
         if let Some(content) = read_opt(&candidate) {
             if let Some(cmd) = platformio_to_server_command(&content) {
@@ -77,12 +98,119 @@ pub async fn discover_gdb_server_command_in(base: Option<&std::path::Path>) -> R
         }
     }
 
-    // ── 5. Device/chip heuristics from CMakeLists / Cargo.toml ───────────────
+    // ── 6. Makefile ──────────────────────────────────────────────────────────
+    for candidate in [root.join("Makefile"), cwd.join("Makefile")] {
+        if let Some(content) = read_opt(&candidate) {
+            if let Some(cmd) = makefile_to_server_command(&content) {
+                return Ok(Some(cmd));
+            }
+        }
+    }
+
+    // ── 7. Device/chip heuristics from CMakeLists / Cargo.toml / board files ─
     if let Some(cmd) = chip_heuristics(&root) {
         return Ok(Some(cmd));
     }
 
     Ok(None)
+}
+
+// ─── ELF discovery ───────────────────────────────────────────────────────────
+
+/// Try to find the firmware ELF binary for a project.
+///
+/// Searches common build output locations used by Zephyr/sysbuild, PlatformIO,
+/// Cargo embedded, and plain CMake/Make projects. Returns the path to the
+/// most likely firmware ELF (newest mtime, largest of ambiguous matches).
+pub fn find_firmware_elf(project_root: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // Zephyr sysbuild (west build --sysbuild): build-firmware/<app>/zephyr/zephyr.elf
+    // Multiple possible build dirs; collect all matches.
+    for build_dir in ["build-firmware", "build", "out", "target"] {
+        let base = project_root.join(build_dir);
+        if !base.exists() {
+            continue;
+        }
+        // Direct Zephyr structure: build/zephyr/zephyr.elf
+        let direct = base.join("zephyr").join("zephyr.elf");
+        if direct.exists() {
+            candidates.push(direct);
+        }
+        // Sysbuild: build-firmware/<app>/zephyr/zephyr.elf (walk one level)
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("zephyr").join("zephyr.elf");
+                if candidate.exists() {
+                    candidates.push(candidate);
+                }
+            }
+        }
+    }
+
+    // PlatformIO: .pio/build/<env>/firmware.elf
+    let pio = project_root.join(".pio").join("build");
+    if let Ok(entries) = std::fs::read_dir(&pio) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join("firmware.elf");
+            if candidate.exists() {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    // Cargo embedded: target/<triple>/{debug,release}/*.elf
+    let cargo_target = project_root.join("target");
+    if cargo_target.exists() {
+        collect_elf_under(&cargo_target, 3, &mut candidates);
+    }
+
+    // Plain CMake / Make out-of-tree builds
+    for build_dir in ["build", "cmake-build-debug", "cmake-build-release"] {
+        let base = project_root.join(build_dir);
+        collect_elf_under(&base, 2, &mut candidates);
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Prefer by mtime (newest first), then by size (largest = usually main fw)
+    candidates.sort_by(|a, b| {
+        let mt_a = a.metadata().and_then(|m| m.modified()).ok();
+        let mt_b = b.metadata().and_then(|m| m.modified()).ok();
+        mt_b.cmp(&mt_a)
+    });
+
+    // Prefer the firmware application ELF over bootloader/test ELFs
+    let preferred = candidates.iter().find(|p| {
+        let s = p.to_string_lossy().to_lowercase();
+        // Exclude mcuboot, bootloader, test ELFs
+        !s.contains("mcuboot")
+            && !s.contains("bootloader")
+            && !s.contains("_pre0")
+            && !s.contains("native_sim")
+            && !s.contains("zephyr_pre")
+    });
+
+    preferred.or_else(|| candidates.first()).cloned()
+}
+
+/// Recursively collect `.elf` files under `dir` up to `depth` levels deep.
+fn collect_elf_under(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth == 0 || !dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_elf_under(&path, depth - 1, out);
+            } else if path.extension().map(|e| e == "elf").unwrap_or(false) {
+                out.push(path);
+            }
+        }
+    }
 }
 
 /// Inspect `.gdbinit` for clues about the debug server.
@@ -129,9 +257,15 @@ pub fn extract_port_from_gdbinit(content: &str) -> Option<u16> {
     re.captures(content).and_then(|c| c[1].parse().ok())
 }
 
-/// Parse `.vscode/launch.json` for debugServerPath + debugServerArgs, or
-/// miDebuggerServerAddress to infer a server command.
-fn vscode_launch_to_server_command(content: &str) -> Option<String> {
+/// Parse a VS Code / cortex-debug compatible `launch.json` (from `.vscode/`,
+/// `debugging/`, or any other path) for a GDB server command.
+///
+/// Handles:
+///   - `debugServerPath` + `debugServerArgs` (explicit server command)
+///   - `servertype` = "jlink" | "openocd" | "pyocd" (inferred from cortex-debug config)
+///   - `device` field for JLink device name
+///   - `miDebuggerServerAddress` for host:port
+pub fn launch_json_to_server_command(content: &str) -> Option<String> {
     // Strip comments (launch.json often has // comments which are not valid JSON).
     let stripped = strip_json_comments(content);
     let json: serde_json::Value = serde_json::from_str(&stripped).ok()?;
@@ -151,24 +285,37 @@ fn vscode_launch_to_server_command(content: &str) -> Option<String> {
             }
         }
 
-        // miDebuggerServerAddress gives us host:port, but not the server binary.
-        // Attempt to infer from the GDB server path field commonly used with
-        // cortex-debug extension: `servertype`.
         let server_type = cfg
             .get("servertype")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_lowercase();
 
-        if let Some(addr) = cfg.get("miDebuggerServerAddress").and_then(|v| v.as_str()) {
-            let port = addr.split(':').last().unwrap_or("3333");
-            match server_type.to_lowercase().as_str() {
-                "jlink" => {
-                    let device = cfg
-                        .get("device")
+        // cortex-debug: servertype + device (no miDebuggerServerAddress)
+        // e.g. ng-iot-platform debugging/launch.json
+        if !server_type.is_empty() {
+            let port = cfg
+                .get("port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2331);
+
+            let raw_device = cfg.get("device").and_then(|v| v.as_str()).unwrap_or("");
+            // Remove leading dash that cortex-debug sometimes uses
+            let device = raw_device.trim_start_matches('-');
+
+            match server_type.as_str() {
+                "jlink" if !device.is_empty() => {
+                    let interface = cfg
+                        .get("interface")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("cortex-m4");
+                        .unwrap_or("SWD");
                     return Some(format!(
-                        "JLinkGDBServer -device {device} -if SWD -speed 4000 -port {port}"
+                        "JLinkGDBServer -device {device} -if {interface} -speed 4000 -port {port}"
+                    ));
+                }
+                "jlink" => {
+                    return Some(format!(
+                        "JLinkGDBServer -if SWD -speed 4000 -port {port}"
                     ));
                 }
                 "openocd" => {
@@ -180,8 +327,76 @@ fn vscode_launch_to_server_command(content: &str) -> Option<String> {
                 _ => {}
             }
         }
+
+        // miDebuggerServerAddress fallback
+        if let Some(addr) = cfg.get("miDebuggerServerAddress").and_then(|v| v.as_str()) {
+            let port = addr.split(':').next_back().unwrap_or("3333");
+            match server_type.as_str() {
+                "jlink" => {
+                    let raw_device = cfg
+                        .get("device")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cortex-m4");
+                    let device = raw_device.trim_start_matches('-');
+                    return Some(format!(
+                        "JLinkGDBServer -device {device} -if SWD -speed 4000 -port {port}"
+                    ));
+                }
+                "openocd" => return Some(format!("openocd -c 'gdb_port {port}'")),
+                "pyocd" => return Some(format!("pyocd gdbserver -p {port}")),
+                _ => {}
+            }
+        }
     }
     None
+}
+
+/// Parse a `Makefile` for J-Link device names and build a GDB server command.
+///
+/// Recognises patterns such as:
+///   - `JLinkRTTLogger -device AT32F435RMT7 ...`
+///   - `JLinkExe ... -device STM32H562VI ...`
+///   - `jlink_quake) ... -device AT32F435RMT7`
+fn makefile_to_server_command(content: &str) -> Option<String> {
+    // Match explicit JLink commands with -device flag
+    let device_re = Regex::new(
+        r"-device\s+([A-Za-z0-9]+)"
+    ).unwrap();
+
+    // Find all unique device names referenced in the Makefile
+    let mut devices: Vec<String> = Vec::new();
+    for caps in device_re.captures_iter(content) {
+        let dev = caps[1].to_uppercase();
+        if !devices.contains(&dev) {
+            devices.push(dev);
+        }
+    }
+
+    // Pick the best device: prefer full part number (longer = more specific)
+    // Filter out common non-device words
+    let ignore = ["JTAG", "SWD", "USB", "TCP", "RTT", "GDB", "ALL"];
+    let best = devices
+        .iter()
+        .filter(|d| !ignore.contains(&d.as_str()))
+        .max_by_key(|d| d.len())?;
+
+    // Detect the interface (SWD or JTAG)
+    let interface = if content.contains("-if JTAG") || content.contains("-if jtag") {
+        "JTAG"
+    } else {
+        "SWD"
+    };
+
+    // Detect speed
+    let speed_re = Regex::new(r"-speed\s+(\d+)").unwrap();
+    let speed = speed_re
+        .captures(content)
+        .and_then(|c| c[1].parse::<u32>().ok())
+        .unwrap_or(4000);
+
+    Some(format!(
+        "JLinkGDBServer -device {best} -if {interface} -speed {speed} -port 2331"
+    ))
 }
 
 /// Build a minimal OpenOCD command given its config file path.
@@ -303,7 +518,10 @@ pub fn extract_port_from_command(cmd: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use super::*;
+
+    // ── Port extraction ───────────────────────────────────────────────────────
 
     #[test]
     fn extract_port_jlink_port_flag() {
@@ -330,6 +548,8 @@ mod tests {
         assert_eq!(extract_port_from_command("JLinkGDBServer -device STM32F4"), None);
     }
 
+    // ── .gdbinit parsing ─────────────────────────────────────────────────────
+
     #[test]
     fn gdbinit_detects_jlink_comment() {
         let content = "# JLinkGDBServer -device AT32F435 -if SWD -speed 4000 -port 2331\ntarget remote :2331\n";
@@ -337,6 +557,153 @@ mod tests {
         assert!(result.is_some());
         assert!(result.unwrap().contains("JLinkGDBServer"));
     }
+
+    #[test]
+    fn gdbinit_detects_openocd_comment() {
+        let content = "# openocd -f board/stm32f4discovery.cfg\ntarget remote :3333\n";
+        let result = gdbinit_to_server_command(content);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("openocd"));
+    }
+
+    // ── launch.json parsing ───────────────────────────────────────────────────
+
+    #[test]
+    fn launch_json_servertype_jlink_with_device() {
+        let json = r#"{
+            "configurations": [{
+                "name": "Debug",
+                "type": "cortex-debug",
+                "servertype": "jlink",
+                "device": "AT32F435RMT7",
+                "interface": "swd",
+                "port": 2331
+            }]
+        }"#;
+        let cmd = launch_json_to_server_command(json).unwrap();
+        assert!(cmd.contains("JLinkGDBServer"));
+        assert!(cmd.contains("AT32F435RMT7"));
+        assert!(cmd.contains("2331"));
+    }
+
+    #[test]
+    fn launch_json_servertype_jlink_device_with_dash_prefix() {
+        // ng-iot-platform uses "-AT32F435RMT7" (cortex-debug quirk)
+        let json = r#"{
+            "configurations": [{
+                "name": "Debug",
+                "type": "cortex-debug",
+                "servertype": "jlink",
+                "device": "-AT32F435RMT7"
+            }]
+        }"#;
+        let cmd = launch_json_to_server_command(json).unwrap();
+        // Dash prefix should be stripped
+        assert!(cmd.contains("AT32F435RMT7"));
+        assert!(!cmd.contains("-AT32F435RMT7"), "dash prefix should be removed");
+    }
+
+    #[test]
+    fn launch_json_servertype_openocd() {
+        let json = r#"{
+            "configurations": [{
+                "servertype": "openocd",
+                "port": 3333
+            }]
+        }"#;
+        let cmd = launch_json_to_server_command(json).unwrap();
+        assert!(cmd.contains("openocd"));
+        assert!(cmd.contains("3333"));
+    }
+
+    #[test]
+    fn launch_json_debug_server_path() {
+        let json = r#"{
+            "configurations": [{
+                "debugServerPath": "/usr/bin/JLinkGDBServer",
+                "debugServerArgs": "-device STM32H5 -if SWD -port 2331"
+            }]
+        }"#;
+        let cmd = launch_json_to_server_command(json).unwrap();
+        assert!(cmd.contains("/usr/bin/JLinkGDBServer"));
+        assert!(cmd.contains("STM32H5"));
+    }
+
+    #[test]
+    fn launch_json_mi_debugger_address_jlink() {
+        let json = r#"{
+            "configurations": [{
+                "servertype": "jlink",
+                "device": "STM32F407VG",
+                "miDebuggerServerAddress": "localhost:2331"
+            }]
+        }"#;
+        let cmd = launch_json_to_server_command(json).unwrap();
+        assert!(cmd.contains("STM32F407VG"));
+        assert!(cmd.contains("2331"));
+    }
+
+    #[test]
+    fn launch_json_with_comments_parses() {
+        let json = r#"{
+            // This is a comment
+            "version": "0.2.0",
+            "configurations": [
+                {
+                    // Quake board
+                    "servertype": "jlink",
+                    "device": "AT32F435RMT7"
+                }
+            ]
+        }"#;
+        let cmd = launch_json_to_server_command(json);
+        assert!(cmd.is_some(), "should parse despite comments");
+        assert!(cmd.unwrap().contains("AT32F435RMT7"));
+    }
+
+    #[test]
+    fn launch_json_no_relevant_config() {
+        let json = r#"{
+            "configurations": [{
+                "type": "node",
+                "request": "launch",
+                "program": "app.js"
+            }]
+        }"#;
+        assert!(launch_json_to_server_command(json).is_none());
+    }
+
+    // ── Makefile parsing ──────────────────────────────────────────────────────
+
+    #[test]
+    fn makefile_detects_at32f435() {
+        let makefile = r#"
+flash/quake_can:
+    JLinkExe -nogui 1 -if swd -speed 4000 -device AT32F435RMT7 -CommanderScript flash.jlink
+
+shell/quake/jlink:
+    JLinkRTTLogger -device AT32F435RMT7 -if SWD -speed 4000
+"#;
+        let cmd = makefile_to_server_command(makefile).unwrap();
+        assert!(cmd.contains("AT32F435RMT7"));
+        assert!(cmd.contains("JLinkGDBServer"));
+        assert!(cmd.contains("SWD"));
+    }
+
+    #[test]
+    fn makefile_detects_stm32h562() {
+        let makefile = "JLinkExe -device STM32H562VI -if swd -speed 4000\n";
+        let cmd = makefile_to_server_command(makefile).unwrap();
+        assert!(cmd.contains("STM32H562VI"));
+    }
+
+    #[test]
+    fn makefile_no_jlink_returns_none() {
+        let makefile = "build:\n\tcargo build\n";
+        assert!(makefile_to_server_command(makefile).is_none());
+    }
+
+    // ── PlatformIO parsing ────────────────────────────────────────────────────
 
     #[test]
     fn platformio_debug_server_parsed() {
@@ -355,6 +722,8 @@ mod tests {
         assert!(result.unwrap().contains("JLinkGDBServer"));
     }
 
+    // ── JSON comment stripping ────────────────────────────────────────────────
+
     #[test]
     fn strip_json_line_comment() {
         let s = r#"{ "key": "value" // comment
@@ -362,5 +731,170 @@ mod tests {
         let stripped = strip_json_comments(s);
         let v: serde_json::Value = serde_json::from_str(&stripped).unwrap();
         assert_eq!(v["key"], "value");
+    }
+
+    #[test]
+    fn strip_json_block_comment() {
+        let s = r#"{ /* block comment */ "key": "value" }"#;
+        let stripped = strip_json_comments(s);
+        let v: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(v["key"], "value");
+    }
+
+    // ── Full discovery from filesystem ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn discovery_reads_gdbinit_comment() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".gdbinit")).unwrap();
+        writeln!(f, "# JLinkGDBServer -device STM32F407VG -if SWD -speed 4000 -port 2331\ntarget remote :2331").unwrap();
+
+        let cmd = discover_gdb_server_command_in(Some(dir.path())).await.unwrap().unwrap();
+        assert!(cmd.contains("JLinkGDBServer"));
+        assert!(cmd.contains("STM32F407VG"));
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_debugging_launch_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("debugging")).unwrap();
+        std::fs::write(
+            dir.path().join("debugging").join("launch.json"),
+            r#"{
+                "configurations": [{
+                    "name": "Debug",
+                    "servertype": "jlink",
+                    "device": "AT32F435RMT7"
+                }]
+            }"#,
+        ).unwrap();
+
+        let cmd = discover_gdb_server_command_in(Some(dir.path())).await.unwrap().unwrap();
+        assert!(cmd.contains("AT32F435RMT7"), "got: {cmd}");
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_vscode_launch_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".vscode")).unwrap();
+        std::fs::write(
+            dir.path().join(".vscode").join("launch.json"),
+            r#"{
+                "configurations": [{
+                    "servertype": "jlink",
+                    "device": "STM32H562VI"
+                }]
+            }"#,
+        ).unwrap();
+
+        let cmd = discover_gdb_server_command_in(Some(dir.path())).await.unwrap().unwrap();
+        assert!(cmd.contains("STM32H562VI"), "got: {cmd}");
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_makefile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Makefile"),
+            "flash:\n\tJLinkExe -device AT32F435RMT7 -if SWD -speed 4000\n",
+        ).unwrap();
+
+        let cmd = discover_gdb_server_command_in(Some(dir.path())).await.unwrap().unwrap();
+        assert!(cmd.contains("AT32F435RMT7"), "got: {cmd}");
+    }
+
+    #[tokio::test]
+    async fn discovery_prefers_gdbinit_over_makefile() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".gdbinit")).unwrap();
+        writeln!(f, "# JLinkGDBServer -device DEVICE_FROM_GDBINIT -if SWD -speed 4000 -port 2331").unwrap();
+        std::fs::write(
+            dir.path().join("Makefile"),
+            "flash:\n\tJLinkExe -device DEVICE_FROM_MAKEFILE -if SWD -speed 4000\n",
+        ).unwrap();
+
+        let cmd = discover_gdb_server_command_in(Some(dir.path())).await.unwrap().unwrap();
+        assert!(cmd.contains("DEVICE_FROM_GDBINIT"), "gdbinit should win: {cmd}");
+    }
+
+    #[tokio::test]
+    async fn discovery_returns_none_in_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = discover_gdb_server_command_in(Some(dir.path())).await;
+        assert!(result.unwrap().is_none());
+    }
+
+    // ── ELF discovery ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn find_firmware_elf_sysbuild_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create sysbuild structure: build-firmware/<app>/zephyr/zephyr.elf
+        let elf_dir = dir.path()
+            .join("build-firmware")
+            .join("ng-iot-platform")
+            .join("zephyr");
+        std::fs::create_dir_all(&elf_dir).unwrap();
+        let elf_path = elf_dir.join("zephyr.elf");
+        std::fs::write(&elf_path, b"\x7fELF").unwrap(); // minimal ELF magic
+
+        let found = find_firmware_elf(dir.path());
+        assert!(found.is_some(), "should find sysbuild ELF");
+        assert_eq!(found.unwrap(), elf_path);
+    }
+
+    #[test]
+    fn find_firmware_elf_direct_build_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let elf_dir = dir.path().join("build").join("zephyr");
+        std::fs::create_dir_all(&elf_dir).unwrap();
+        let elf_path = elf_dir.join("zephyr.elf");
+        std::fs::write(&elf_path, b"\x7fELF").unwrap();
+
+        let found = find_firmware_elf(dir.path());
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), elf_path);
+    }
+
+    #[test]
+    fn find_firmware_elf_skips_mcuboot() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create both mcuboot and app ELF
+        let mcuboot_dir = dir.path().join("build-firmware").join("mcuboot").join("zephyr");
+        std::fs::create_dir_all(&mcuboot_dir).unwrap();
+        std::fs::write(mcuboot_dir.join("zephyr.elf"), b"\x7fELF").unwrap();
+
+        let app_dir = dir.path().join("build-firmware").join("ng-iot-platform").join("zephyr");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let app_elf = app_dir.join("zephyr.elf");
+        std::fs::write(&app_elf, b"\x7fELF").unwrap();
+
+        let found = find_firmware_elf(dir.path());
+        assert!(found.is_some());
+        // Should prefer the app ELF over mcuboot
+        assert!(
+            found.as_ref().map(|p| !p.to_string_lossy().contains("mcuboot")).unwrap_or(false),
+            "should not pick mcuboot ELF, got: {:?}",
+            found
+        );
+    }
+
+    #[test]
+    fn find_firmware_elf_platformio_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let elf_dir = dir.path().join(".pio").join("build").join("main_env");
+        std::fs::create_dir_all(&elf_dir).unwrap();
+        let elf_path = elf_dir.join("firmware.elf");
+        std::fs::write(&elf_path, b"\x7fELF").unwrap();
+
+        let found = find_firmware_elf(dir.path());
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), elf_path);
+    }
+
+    #[test]
+    fn find_firmware_elf_empty_dir_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_firmware_elf(dir.path()).is_none());
     }
 }

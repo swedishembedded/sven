@@ -82,9 +82,8 @@ pub enum ParseError {
 /// ```
 ///
 /// ## Tool Result
-/// ```
+/// ```text
 /// file contents
-/// ```
 /// ```
 ///
 /// If the file ends with a `## User` section, it is returned as `pending_user_input`

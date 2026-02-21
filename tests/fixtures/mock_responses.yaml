@@ -305,6 +305,62 @@ responses:
     pattern: "per-step test"
     reply: "Per-step option was applied to this step."
 
+  # ── GDB tool mocks ───────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "start gdb server"
+    tool_calls:
+      - id: tc-gdb-start
+        tool: gdb_start_server
+        args:
+          command: "sleep 30"
+    after_tool_reply: "GDB server started. (Note: mock server uses sleep as placeholder; use gdb_connect to attach.)"
+
+  - match_type: contains
+    pattern: "connect gdb"
+    tool_calls:
+      - id: tc-gdb-connect
+        tool: gdb_connect
+        args:
+          port: 19998
+    after_tool_reply: "GDB connect attempted. Result depends on server availability."
+
+  - match_type: contains
+    pattern: "stop gdb"
+    tool_calls:
+      - id: tc-gdb-stop
+        tool: gdb_stop
+        args: {}
+    after_tool_reply: "GDB session stopped successfully."
+
+  - match_type: contains
+    pattern: "find elf"
+    tool_calls:
+      - id: tc-glob-elf
+        tool: glob_file_search
+        args:
+          pattern: "*.elf"
+          root: /tmp
+    after_tool_reply: "ELF file search completed."
+
+  - match_type: contains
+    pattern: "discover device"
+    reply: |
+      Device discovery results:
+      - Found `debugging/launch.json` with servertype: jlink, device: AT32F435RMT7
+      - GDB server command: JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331
+      - ELF path: build-firmware/ng-iot-platform/zephyr/zephyr.elf
+
+  - match_type: contains
+    pattern: "gdb session"
+    reply: |
+      GDB session summary:
+      - Server started: JLinkGDBServer -device AT32F435RMT7
+      - Connected: yes
+      - ELF loaded: build-firmware/ng-iot-platform/zephyr/zephyr.elf
+      - Registers captured: pc=0x08000000, sp=0x20080000
+      - Session stopped cleanly.
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default

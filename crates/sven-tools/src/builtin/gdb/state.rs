@@ -15,6 +15,7 @@ pub struct GdbSessionState {
     pub connected: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for GdbSessionState {
     fn default() -> Self {
         Self {
