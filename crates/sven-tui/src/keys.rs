@@ -95,7 +95,10 @@ pub fn map_key(
     // ── Edit message mode: confirm, cancel, or route to input ─────────────────
     if in_edit_mode {
         return match event.code {
-            KeyCode::Enter if !shift => Some(Action::EditMessageConfirm),
+            KeyCode::Enter if shift => Some(Action::InputNewline),
+            KeyCode::Enter => Some(Action::EditMessageConfirm),
+            KeyCode::Char(' ') if shift => Some(Action::InputNewline), // Shift+Enter decoded as space
+            KeyCode::Char('j' | 'm') if ctrl => Some(Action::InputNewline),
             KeyCode::Esc => Some(Action::EditMessageCancel),
             KeyCode::Backspace => Some(Action::InputBackspace),
             KeyCode::Delete => Some(Action::InputDelete),
@@ -108,7 +111,6 @@ pub fn map_key(
             KeyCode::Char('u') if ctrl => Some(Action::InputDeleteToStart),
             KeyCode::Char('k') if ctrl => Some(Action::InputDeleteToEnd),
             KeyCode::Char(c) if plain => Some(Action::InputChar(c)),
-            KeyCode::Enter if shift => Some(Action::InputNewline),
             _ => None,
         };
     }
@@ -136,6 +138,10 @@ pub fn map_key(
         // ── Rest of input pane ────────────────────────────────────────────────
         KeyCode::Enter    if in_input && !shift => Some(Action::Submit),
         KeyCode::Enter    if in_input &&  shift => Some(Action::InputNewline),
+        // Some terminals send Shift+Enter as KeyCode::Char(' ') with Shift; treat as newline
+        KeyCode::Char(' ') if in_input &&  shift => Some(Action::InputNewline),
+        // Ctrl+J / Ctrl+M insert newline (fallback when terminal doesn't report Shift+Enter)
+        KeyCode::Char('j' | 'm') if ctrl && in_input => Some(Action::InputNewline),
         KeyCode::Backspace if in_input          => Some(Action::InputBackspace),
         KeyCode::Delete    if in_input          => Some(Action::InputDelete),
         KeyCode::Left  if in_input && ctrl      => Some(Action::InputMoveWordLeft),

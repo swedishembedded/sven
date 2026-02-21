@@ -108,6 +108,9 @@ pub enum ResponseEvent {
         /// Accumulated JSON arguments (may arrive across multiple deltas)
         arguments: String,
     },
+    /// A thinking/reasoning delta from the model (extended thinking API).
+    /// Accumulated into a Thinking segment and collapsed by default in the UI.
+    ThinkingDelta(String),
     /// Final usage statistics
     Usage { input_tokens: u32, output_tokens: u32 },
     /// The stream finished normally

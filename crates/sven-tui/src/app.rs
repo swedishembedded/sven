@@ -56,6 +56,10 @@ pub enum ChatSegment {
         tokens_after: usize,
     },
     Error(String),
+    /// Chain-of-thought / extended thinking content from the model.
+    /// Collapsed by default with a "Thought" header; expandable in both
+    /// Neovim (za) and ratatui (click) modes.
+    Thinking { content: String },
 }
 
 /// Request from TUI to the background agent task.
@@ -273,10 +277,15 @@ pub struct App {
     question_modal: Option<QuestionModal>,
     /// Args preview cache: call_id → formatted args string.
     tool_args_cache: HashMap<String, String>,
+    /// Set of segment indices that are collapsed (tool calls/results/thinking).
+    /// Only used in ratatui-only mode (no_nvim); Neovim uses its own fold state.
+    collapsed_segments: std::collections::HashSet<usize>,
     /// When set, we're in edit mode: edit_buffer/edit_cursor are active.
     editing_message_index: Option<usize>,
     edit_buffer: String,
     edit_cursor: usize,
+    /// Original text before editing (used for cancel/restore).
+    edit_original_text: Option<String>,
     /// Embedded Neovim instance for chat view
     nvim_bridge: Option<Arc<tokio::sync::Mutex<NvimBridge>>>,
     /// Shared with NvimBridge's NvimHandler.  Notified after every Neovim
@@ -327,9 +336,11 @@ impl App {
             pager: None,
             question_modal: None,
             tool_args_cache: HashMap::new(),
+            collapsed_segments: std::collections::HashSet::new(),
             editing_message_index: None,
             edit_buffer: String::new(),
             edit_cursor: 0,
+            edit_original_text: None,
             nvim_bridge: None,
             nvim_flush_notify: None,
             nvim_submit_notify: None,
@@ -339,6 +350,24 @@ impl App {
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(prompt);
+        }
+        // In ratatui-only mode, pre-collapse all tool call/result/thinking segments
+        // loaded from initial history so existing conversations start compact.
+        if app.no_nvim {
+            for (i, seg) in app.chat_segments.iter().enumerate() {
+                let is_collapsible = match seg {
+                    ChatSegment::Message(m) => matches!(
+                        (&m.role, &m.content),
+                        (Role::Assistant, MessageContent::ToolCall { .. })
+                            | (Role::Tool, MessageContent::ToolResult { .. })
+                    ),
+                    ChatSegment::Thinking { .. } => true,
+                    _ => false,
+                };
+                if is_collapsible {
+                    app.collapsed_segments.insert(i);
+                }
+            }
         }
         app
     }
@@ -651,6 +680,7 @@ impl App {
                 // Store tool name with call ID for later lookup
                 self.tool_args_cache.insert(tc.id.clone(), tc.name.clone());
                 self.current_tool = Some(tc.name.clone());
+                let seg_idx = self.chat_segments.len();
                 self.chat_segments.push(ChatSegment::Message(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {
@@ -661,6 +691,10 @@ impl App {
                         },
                     },
                 }));
+                // In ratatui-only mode, default tool call segments to collapsed.
+                if self.no_nvim {
+                    self.collapsed_segments.insert(seg_idx);
+                }
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
                 self.nvim_scroll_to_bottom().await;
@@ -670,8 +704,13 @@ impl App {
             }
             AgentEvent::ToolCallFinished { call_id, output, .. } => {
                 self.current_tool = None;
+                let seg_idx = self.chat_segments.len();
                 self.chat_segments
                     .push(ChatSegment::Message(Message::tool_result(&call_id, &output)));
+                // In ratatui-only mode, default tool result segments to collapsed.
+                if self.no_nvim {
+                    self.collapsed_segments.insert(seg_idx);
+                }
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
                 self.nvim_scroll_to_bottom().await;
@@ -727,6 +766,26 @@ impl App {
                         tracing::warn!("Failed to refresh todo display: {}", e);
                     }
                 }
+            }
+            // Accumulate streaming thinking deltas into a temporary buffer.
+            // The buffer is prepended to the next streaming render pass so the
+            // user can see thinking content arrive in real time.
+            AgentEvent::ThinkingDelta(delta) => {
+                self.streaming_assistant_buffer.push_str(&delta);
+                self.rerender_chat().await;
+            }
+            // A complete thinking block arrived: store it as a Thinking segment.
+            // In ratatui-only mode it starts collapsed; Neovim uses fold level 1.
+            AgentEvent::ThinkingComplete(content) => {
+                self.streaming_assistant_buffer.clear();
+                let seg_idx = self.chat_segments.len();
+                self.chat_segments.push(ChatSegment::Thinking { content });
+                if self.no_nvim {
+                    self.collapsed_segments.insert(seg_idx);
+                }
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
             }
             _ => {}
         }
@@ -826,6 +885,59 @@ impl App {
                                 }
                             } else {
                                 self.scroll_down(3);
+                            }
+                        }
+                        // Left click toggles collapse for tool call/result segments
+                        // (ratatui-only mode; Neovim handles folds via its own fold toggle).
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                            if self.no_nvim =>
+                        {
+                            // Layout: row 0 = status bar, row 1 = chat border top,
+                            // rows 2..N-1 = chat content, row N = chat border bottom.
+                            // Map click row to logical line index in chat_lines.
+                            let content_start_row: u16 = 2; // status(1) + border(1)
+                            if mouse.row >= content_start_row {
+                                let click_line = (mouse.row - content_start_row) as usize
+                                    + self.scroll_offset as usize;
+                                if let Some(seg_idx) = self.segment_at_line(click_line) {
+                                    if let Some(seg) = self.chat_segments.get(seg_idx) {
+                                        // Check if it's an editable message (User or Assistant text)
+                                        let is_editable = Self::segment_editable_text(&self.chat_segments, seg_idx).is_some();
+                                        
+                                        if is_editable {
+                                            // Start editing this message
+                                            if let Some(text) = Self::segment_editable_text(&self.chat_segments, seg_idx) {
+                                                self.editing_message_index = Some(seg_idx);
+                                                self.edit_cursor = text.len();
+                                                self.edit_original_text = Some(text.clone());
+                                                self.edit_buffer = text;
+                                                self.focus = FocusPane::Input; // Switch focus to input for editing
+                                                self.update_editing_segment_live();
+                                                self.rerender_chat().await;
+                                            }
+                                        } else {
+                                            // Check if it's collapsible (tool call/result/thinking)
+                                            let is_collapsible = match seg {
+                                                ChatSegment::Message(m) => matches!(
+                                                    (&m.role, &m.content),
+                                                    (Role::Assistant, MessageContent::ToolCall { .. })
+                                                        | (Role::Tool, MessageContent::ToolResult { .. })
+                                                ),
+                                                ChatSegment::Thinking { .. } => true,
+                                                _ => false,
+                                            };
+                                            if is_collapsible {
+                                                if self.collapsed_segments.contains(&seg_idx) {
+                                                    self.collapsed_segments.remove(&seg_idx);
+                                                } else {
+                                                    self.collapsed_segments.insert(seg_idx);
+                                                }
+                                                self.build_display_from_segments();
+                                                self.search.update_matches(&self.chat_lines);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -978,6 +1090,8 @@ impl App {
             if let Some((buf, cur)) = self.apply_input_to_edit(&action) {
                 self.edit_buffer = buf;
                 self.edit_cursor = cur;
+                self.update_editing_segment_live();
+                self.rerender_chat().await;
                 return false;
             }
         }
@@ -992,7 +1106,9 @@ impl App {
                     if let Some(text) = Self::segment_editable_text(&self.chat_segments, seg_idx) {
                         self.editing_message_index = Some(seg_idx);
                         self.edit_cursor = text.len();
+                        self.edit_original_text = Some(text.clone());
                         self.edit_buffer = text;
+                        self.focus = FocusPane::Input; // Switch focus to input for editing
                     }
                 }
             }
@@ -1002,6 +1118,7 @@ impl App {
                     self.editing_message_index = None;
                     self.edit_buffer.clear();
                     self.edit_cursor = 0;
+                    self.edit_original_text = None;
                     if new_content.is_empty() {
                         return false;
                     }
@@ -1011,6 +1128,7 @@ impl App {
                     };
                     match (&seg.role, &seg.content) {
                         (Role::User, MessageContent::Text(_)) => {
+                            // User message: truncate below, update message, and resubmit
                             self.chat_segments.truncate(i + 1);
                             self.chat_segments.pop();
                             self.chat_segments.push(ChatSegment::Message(Message::user(&new_content)));
@@ -1020,34 +1138,41 @@ impl App {
                             self.send_resubmit_to_agent(messages, new_content).await;
                         }
                         (Role::Assistant, MessageContent::Text(_)) => {
-                            let last_user_seg = self.chat_segments[..=i]
-                                .iter()
-                                .rposition(|s| matches!(s, ChatSegment::Message(m) if m.role == Role::User));
-                            let keep_end = match last_user_seg {
-                                Some(j) => j + 1,
-                                None => return false,
-                            };
-                            self.chat_segments.truncate(keep_end);
-                            let messages = Self::messages_for_resubmit(&self.chat_segments);
-                            let new_user_content = self.chat_segments
-                                .last()
-                                .and_then(|s| match s {
-                                    ChatSegment::Message(m) => m.as_text().map(String::from),
-                                    _ => None,
-                                })
-                                .unwrap_or_default();
+                            // Assistant message: just update in place, no resubmit
+                            if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(i) {
+                                m.content = MessageContent::Text(new_content);
+                            }
+                            self.build_display_from_segments();
+                            self.search.update_matches(&self.chat_lines);
                             self.rerender_chat().await;
-                            self.scroll_to_bottom();
-                            self.send_resubmit_to_agent(messages, new_user_content).await;
                         }
                         _ => {}
                     }
                 }
             }
             Action::EditMessageCancel => {
+                // Restore the original text before canceling
+                if let Some(idx) = self.editing_message_index {
+                    if let Some(original) = &self.edit_original_text {
+                        if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
+                            match (&m.role, &mut m.content) {
+                                (Role::User, MessageContent::Text(t)) => {
+                                    *t = original.clone();
+                                }
+                                (Role::Assistant, MessageContent::Text(t)) => {
+                                    *t = original.clone();
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.build_display_from_segments();
+                        self.search.update_matches(&self.chat_lines);
+                    }
+                }
                 self.editing_message_index = None;
                 self.edit_buffer.clear();
                 self.edit_cursor = 0;
+                self.edit_original_text = None;
             }
 
             Action::SubmitBufferToAgent => {
@@ -1354,13 +1479,19 @@ impl App {
 
     /// Build chat_lines and segment_line_ranges from chat_segments and streaming buffer.
     /// User messages get a green vertical bar and dimmed text; agent messages get a blue bar.
+    /// Tool call/result segments get an orange bar.  In ratatui-only mode (no_nvim), segments
+    /// listed in `collapsed_segments` are rendered as a single summary line.
     fn build_display_from_segments(&mut self) {
         let mut all_lines = Vec::new();
         let mut ranges = Vec::new();
         let mut line_start = 0usize;
         let bar_char = if self.ascii() { "| " } else { "▌ " };
-        for seg in &self.chat_segments {
-            let s = segment_to_markdown(seg, &self.tool_args_cache);
+        for (i, seg) in self.chat_segments.iter().enumerate() {
+            let s = if self.no_nvim && self.collapsed_segments.contains(&i) {
+                collapsed_preview(seg, &self.tool_args_cache)
+            } else {
+                segment_to_markdown(seg, &self.tool_args_cache)
+            };
             let lines = render_markdown(&s, self.config.tui.wrap_width, self.ascii());
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
@@ -1563,6 +1694,25 @@ impl App {
         }
     }
 
+    /// Update the segment being edited with the current edit_buffer content (live preview).
+    fn update_editing_segment_live(&mut self) {
+        if let Some(idx) = self.editing_message_index {
+            if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
+                match (&m.role, &mut m.content) {
+                    (Role::User, MessageContent::Text(t)) => {
+                        *t = self.edit_buffer.clone();
+                    }
+                    (Role::Assistant, MessageContent::Text(t)) => {
+                        *t = self.edit_buffer.clone();
+                    }
+                    _ => {}
+                }
+            }
+            self.build_display_from_segments();
+            self.search.update_matches(&self.chat_lines);
+        }
+    }
+
     /// Messages for resubmit: only Message segments (no ContextCompacted, no Error).
     fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
         segments
@@ -1741,6 +1891,64 @@ fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, Stri
             tokens_before, tokens_after
         ),
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
+        ChatSegment::Thinking { content } => {
+            format!("\n**Agent:thinking**\n💭 **Thought**\n```\n{}\n```\n", content)
+        }
+    }
+}
+
+/// Render a single-line collapsed preview for a segment (ratatui-only mode).
+/// Shows the tool name and a short content preview; user clicks to expand.
+fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
+    use sven_model::Role;
+    match seg {
+        ChatSegment::Message(m) => match (&m.role, &m.content) {
+            (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+                // Show tool name and a brief args preview
+                let args_preview = serde_json::from_str::<serde_json::Value>(&function.arguments)
+                    .map(|v| {
+                        if let serde_json::Value::Object(map) = &v {
+                            let parts: Vec<String> = map.iter().take(2).map(|(k, val)| {
+                                let s = match val {
+                                    serde_json::Value::String(s) => s.chars().take(40).collect::<String>(),
+                                    other => other.to_string().chars().take(40).collect::<String>(),
+                                };
+                                format!("{}={}", k, s)
+                            }).collect();
+                            parts.join(" ")
+                        } else {
+                            function.arguments.chars().take(60).collect::<String>()
+                        }
+                    })
+                    .unwrap_or_else(|_| function.arguments.chars().take(60).collect::<String>());
+                format!(
+                    "\n**Agent:tool_call:{}**\n🔧 **Tool Call: {}** `{}` ▶ click to expand\n",
+                    tool_call_id, function.name, args_preview
+                )
+            }
+            (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
+                let tool_name = tool_args_cache
+                    .get(tool_call_id)
+                    .map(|s| s.as_str())
+                    .unwrap_or("tool");
+                let preview: String = content.lines().next().unwrap_or("").chars().take(80).collect();
+                let truncated = if content.len() > preview.len() + 1 { "…" } else { "" };
+                format!(
+                    "\n**Tool:{}**\n✅ **Tool Response: {}** `{}{}` ▶ click to expand\n",
+                    tool_call_id, tool_name, preview, truncated
+                )
+            }
+            _ => segment_to_markdown(seg, tool_args_cache),
+        },
+        ChatSegment::Thinking { content } => {
+            let preview: String = content.lines().next().unwrap_or("").chars().take(80).collect();
+            let truncated = if content.len() > preview.len() + 1 { "…" } else { "" };
+            format!(
+                "\n**Agent:thinking**\n💭 **Thought** `{}{}` ▶ click to expand\n",
+                preview, truncated
+            )
+        }
+        _ => segment_to_markdown(seg, tool_args_cache),
     }
 }
 
@@ -1936,13 +2144,23 @@ fn extract_code_block(lines: &[&str], i: &mut usize) -> Result<String, String> {
 
 /// Extract tool name from the display line "🔧 **Tool Call: name**" that
 /// appears before the code block. Looks backward from current position.
+/// No fixed line limit: scans until the tool-call header is found or a section
+/// separator is hit, so it works correctly with multi-line pretty-printed JSON.
 fn extract_tool_name_from_previous_lines(lines: &[&str], current: usize) -> Result<String, String> {
-    for j in (0..current).rev().take(5) {
+    for j in (0..current).rev() {
         let line = lines[j].trim();
         if let Some(rest) = line.strip_prefix("🔧 **Tool Call:") {
             if let Some(name) = rest.strip_suffix("**") {
                 return Ok(name.trim().to_string());
             }
+        }
+        // Stop at section boundaries so we never bleed into a previous segment.
+        if line == "---"
+            || line.starts_with("**Agent:")
+            || line.starts_with("**You:")
+            || line.starts_with("**Tool:")
+        {
+            break;
         }
     }
     Err("Could not find tool name in previous lines".to_string())
@@ -1976,7 +2194,7 @@ fn format_conversation(
     result
 }
 
-/// Return (bar_style, dim) for a segment: User = green + dim, Assistant text = blue, else none.
+/// Return (bar_style, dim) for a segment: User = green + dim, Assistant text = blue, tool calls/results = orange, else none.
 fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
@@ -1986,8 +2204,18 @@ fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
             (Role::Assistant, MessageContent::Text(_)) => {
                 (Some(Style::default().fg(Color::Blue)), false)
             }
+            (Role::Assistant, MessageContent::ToolCall { .. }) => {
+                (Some(Style::default().fg(Color::Rgb(255, 165, 0))), false)
+            }
+            (Role::Tool, MessageContent::ToolResult { .. }) => {
+                (Some(Style::default().fg(Color::Rgb(255, 165, 0))), false)
+            }
             _ => (None, false),
         },
+        ChatSegment::Thinking { .. } => {
+            // Purple bar for thinking/reasoning content
+            (Some(Style::default().fg(Color::Rgb(160, 100, 200))), false)
+        }
         _ => (None, false),
     }
 }
@@ -2030,11 +2258,14 @@ fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -
         // Tool call: store full args as JSON for lossless round-trip.
         // Format: **Agent:tool_call:ID** followed by formatted display.
         (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+            let pretty_args = serde_json::from_str::<serde_json::Value>(&function.arguments)
+                .and_then(|v| serde_json::to_string_pretty(&v))
+                .unwrap_or_else(|_| function.arguments.clone());
             format!(
                 "\n**Agent:tool_call:{}**\n🔧 **Tool Call: {}**\n```json\n{}\n```\n",
                 tool_call_id,
                 function.name,
-                function.arguments
+                pretty_args
             )
         }
         

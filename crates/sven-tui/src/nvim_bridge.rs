@@ -616,13 +616,13 @@ impl NvimBridge {
             .context("Failed to set buffer lines")?;
 
         // NOTE: No foldlevel manipulation needed here.
-        // configure_buffer sets foldlevel=99, and when set_lines adds content,
-        // Neovim evaluates the fold expression and creates folds OPEN because
-        // foldlevel=99 >= any fold level we use.  Confirmed via foldclosed()
-        // diagnostic: foldclosed(2)==-1 (open) immediately after set_lines.
-        // Toggling foldlevel (0→99) would temporarily close the fold, causing
-        // grid_scroll events that race with the subsequent re-open and leave
-        // the grid in an incorrect state.
+        // configure_buffer sets foldlevel=1, which keeps level-1 folds (Agent/Tool
+        // headers) open and collapses level-2 folds (tool call JSON bodies) by
+        // default.  When set_lines adds content, Neovim evaluates the fold
+        // expression and creates folds according to foldlevel=1.  Level-1 folds
+        // (--- separator, **Agent:**, etc.) remain open; level-2 bodies (🔧 Tool
+        // Call JSON, ✅ Tool Response) start collapsed.  The user can press za to
+        // toggle individual folds or zR to open all.
 
         Ok(())
     }
@@ -685,9 +685,10 @@ vim.bo[buf].shiftwidth = 2
         //
         // Design decisions:
         //
-        // 1. foldlevel=99 keeps all folds open by default.  The user can use
-        //    zc/zo/za to open/close individual folds, zM to close all, zR to
-        //    open all.
+        // 1. foldlevel=1 keeps level-1 folds open (conversation turn headers)
+        //    and collapses level-2 folds (tool call JSON / result bodies) by
+        //    default, reducing visual noise.  The user can use za to toggle
+        //    individual folds, zM to close all, zR to open all.
         //
         // 2. Body lines return "=" (inherit the level of the previous line).
         //    While Neovim docs note "=" requires a backward scan, the scan only
@@ -708,18 +709,20 @@ function _G.sven_fold_expr(lnum)
   if not ok then return '=' end
 
   -- Level-1 fold headers: user message separators, agent response lines,
-  -- and metadata headers for tool calls/results
+  -- and metadata headers for tool calls/results/thinking
   if line:match('^%-%-%-$')              then return '>1' end
   if line:match('^%*%*Agent:%*%*')       then return '>1' end
   if line:match('^%*%*Agent:tool_call:') then return '>1' end
+  if line:match('^%*%*Agent:thinking%*%*') then return '>1' end
   if line:match('^%*%*Tool:')            then return '>1' end
   if line:match('^%*%*You:%*%*')         then return '>1' end
   if line:match('^%*%*System:%*%*')      then return '>1' end
   if line:match('^## ')                  then return '>1' end
 
-  -- Level-2 fold headers: visual display lines for tool calls/responses
+  -- Level-2 fold headers: visual display lines for tool calls/responses/thinking
   if line:match('^🔧 %*%*Tool Call:')     then return '>2' end
   if line:match('^✅ %*%*Tool Response:') then return '>2' end
+  if line:match('^💭 %*%*Thought')        then return '>2' end
 
   -- Body lines inherit the fold level of the previous line.
   -- The backward scan is bounded by the distance to the nearest fold marker,
@@ -730,7 +733,7 @@ end
 -- Window-scoped options must go through setlocal, not vim.bo
 vim.cmd('setlocal foldmethod=expr')
 vim.cmd('setlocal foldexpr=v:lua.sven_fold_expr(v:lnum)')
-vim.cmd('setlocal foldlevel=99')   -- all folds open on load / buffer update
+vim.cmd('setlocal foldlevel=1')    -- level-1 open (Agent/Tool headers), level-2 collapsed (JSON/output bodies)
 vim.cmd('setlocal foldenable')
 vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
 
@@ -782,6 +785,15 @@ vim.api.nvim_buf_create_user_command(buf, 'q', quit_sven, {
 vim.api.nvim_buf_create_user_command(buf, 'qa', quit_sven, {
   desc = 'Quit sven (alias for :q)'
 })
+
+-- Double-click or Enter on a fold header toggles the fold open/closed.
+-- This makes tool call bodies expandable by clicking the header line.
+vim.keymap.set('n', '<2-LeftMouse>', function()
+  local line = vim.fn.line('.')
+  if vim.fn.foldlevel(line) > 0 then
+    vim.cmd('normal! za')
+  end
+end, { buffer = buf, silent = true, desc = 'Toggle fold under cursor' })
 "#;
         
         if let Err(e) = self.neovim.exec_lua(submit_handler, vec![]).await {
@@ -1942,7 +1954,7 @@ mod tests {
         #[tokio::test]
         async fn diagnose_fold_state_step_by_step() {
             // This diagnostic test probes the exact fold state at each step to
-            // understand why folds appear closed despite foldlevel=99.
+            // understand the fold state after configure_buffer (foldlevel=1).
             if !nvim_available() { return; }
             let mut bridge = spawn_bridge().await;
 
@@ -2742,9 +2754,9 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn no_folds_closed_after_configure_and_set_content() {
-            // All folds must be open (foldlevel=99) after configure_buffer +
-            // set_buffer_content, so navigation covers the whole buffer.
+        async fn level1_folds_open_level2_folds_closed_after_configure_and_set_content() {
+            // With foldlevel=1, level-1 folds (turn headers) must be open and
+            // level-2 folds (tool call JSON / response bodies) must be closed.
             if !nvim_available() { return; }
             let mut bridge = spawn_configured_bridge().await;
 
@@ -2752,25 +2764,38 @@ mod tests {
             bridge.set_buffer_content(&content).await.unwrap();
             sleep(Duration::from_millis(200)).await;
 
-            // Count lines in the buffer
-            let line_count = bridge.get_buffer_line_count().await.unwrap();
-
-            // foldclosed(N) returns -1 when the line is NOT in a closed fold.
-            // If any line returns something other than -1, a fold is closed.
-            // We check every line via a Vimscript loop.
+            // foldlevel() returns the fold level of the line.
+            // A level-1 fold header (e.g. "---", "**Agent:**") should be open (foldclosed=-1).
+            // A level-2 fold body (the 🔧 Tool Call JSON block) should be closed.
+            // We verify at least one closed fold exists (a tool call body).
             let closed = bridge
                 .eval_vim("max(map(range(1, line('$')), 'foldclosed(v:val)'))")
                 .await
                 .unwrap();
 
             let max_foldclosed = match closed {
-                Value::Integer(n) => n.as_i64().unwrap_or(0),
+                Value::Integer(n) => n.as_i64().unwrap_or(-1),
                 _ => -1,
             };
 
-            assert_eq!(max_foldclosed, -1,
-                "foldclosed() must return -1 for all {line_count} lines (all folds open); \
-                 got max_foldclosed={max_foldclosed} — some fold is closed");
+            // With foldlevel=1, tool call bodies (level-2) should be closed,
+            // so max_foldclosed should be > -1 (pointing to the first line of a closed fold).
+            assert!(max_foldclosed > -1,
+                "With foldlevel=1 and a tool call in the buffer, at least one level-2 fold \
+                 (tool call body) should be closed; got max_foldclosed={max_foldclosed}");
+
+            // Verify the first line (--- separator, level-1) is NOT closed.
+            let first_closed = bridge
+                .eval_vim("foldclosed(1)")
+                .await
+                .unwrap_or(Value::from(-1i64));
+            let first_closed_val = match first_closed {
+                Value::Integer(n) => n.as_i64().unwrap_or(-1),
+                _ => -1,
+            };
+            assert_eq!(first_closed_val, -1,
+                "Level-1 fold headers (turn separators) must remain open with foldlevel=1; \
+                 line 1 reports foldclosed={first_closed_val}");
         }
 
         // ── Edit mode — cursor alignment ──────────────────────────────────────

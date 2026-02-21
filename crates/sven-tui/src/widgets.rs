@@ -71,7 +71,7 @@ pub fn draw_status(
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
         tool_span,
         Span::styled(
-            "  F1:help  ^w k:↑chat  ^w j:↓input  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",
+            "  F1:help  ^w k:↑chat  ^w j:↓input  click/e:edit  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -222,11 +222,18 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
         Line::from(" j/k/J/K  Scroll chat down/up"),
         Line::from(" ^u/^d    Half-page up/down"),
         Line::from(" g / G    Jump to top/bottom"),
+        Line::from(" e        Edit message at top of chat view"),
+        Line::from(" click    Click any message to edit it (ratatui mode)"),
+        Line::from("           Live preview as you type; Enter submits"),
+        Line::from("           Submitting discards later conversation"),
+        Line::from("           Esc to cancel and restore original"),
+        Line::from(" click    Toggle tool call / thought collapse"),
+        Line::from("           (click again to expand)"),
         Line::from(" ^T       Open full-screen pager"),
         Line::from(" /        Open search bar"),
         Line::from(" n / N    Next/prev search match"),
-        Line::from(" Enter    Submit input"),
-        Line::from(" S+Enter  Insert newline"),
+        Line::from(" Enter    Submit input (confirm edit in edit mode)"),
+        Line::from(" S+Enter  Insert newline (^J if S+Enter not available)"),
         Line::from(" F4       Cycle agent mode"),
         Line::from(" ^c       Interrupt agent / quit"),
         Line::from(" F1       Toggle this help"),
@@ -237,7 +244,7 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
         )),
     ];
 
-    let width = 52u16.min(area.width);
+    let width = 60u16.min(area.width);
     let height = (help_text.len() as u16 + 2).min(area.height);
     let x = area.width.saturating_sub(width) / 2;
     let y = area.height.saturating_sub(height) / 2;

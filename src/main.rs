@@ -238,7 +238,10 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
 async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     use ratatui::crossterm::{
         execute,
-        event::{EnableMouseCapture, DisableMouseCapture},
+        event::{
+            EnableMouseCapture, DisableMouseCapture,
+            KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        },
     };
 
     // Resolve history BEFORE entering raw-terminal mode.  If anything goes
@@ -271,6 +274,18 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
 
     let terminal = ratatui::init();
     let _ = execute!(std::io::stderr(), EnableMouseCapture);
+    
+    // Enable keyboard enhancement so the terminal reports distinct escape sequences for
+    // Shift+Enter vs plain Enter (and other modifier combos). Same flags as codex.
+    // If the terminal doesn't support it, this will fail silently; Ctrl+J remains a newline fallback.
+    let _ = execute!(
+        std::io::stderr(),
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        )
+    );
 
     let opts = AppOptions {
         mode: cli.mode,
@@ -282,6 +297,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let app = App::new(config, opts);
     let result = app.run(terminal).await;
 
+    // Clean up: restore terminal state
+    let _ = execute!(std::io::stderr(), PopKeyboardEnhancementFlags);
     let _ = execute!(std::io::stderr(), DisableMouseCapture);
     ratatui::restore();
 

@@ -9,6 +9,12 @@ pub enum AgentEvent {
     TextDelta(String),
     /// A complete text response from the model (after streaming finishes)
     TextComplete(String),
+    /// A thinking/reasoning chunk from the model (extended thinking API).
+    /// Consumers should accumulate deltas and finalise them into a Thinking
+    /// segment when the model signals the end of the reasoning block.
+    ThinkingDelta(String),
+    /// A complete thinking/reasoning block (accumulated from ThinkingDelta events).
+    ThinkingComplete(String),
     /// The model has requested a tool call
     ToolCallStarted(ToolCall),
     /// A tool call finished
