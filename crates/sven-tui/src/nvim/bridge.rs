@@ -123,7 +123,6 @@ impl NvimBridge {
     }
 
     /// Read the current content of the conversation buffer.
-    #[allow(dead_code)]
     pub async fn get_buffer_content(&self) -> Result<String> {
         let lines = self.buffer
             .get_lines(0, -1, false)

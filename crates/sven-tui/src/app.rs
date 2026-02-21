@@ -84,7 +84,6 @@ pub struct App {
     /// Name of the tool currently executing (shown in status bar).
     current_tool: Option<String>,
     context_pct: u8,
-    needs_agent_prefix: bool,
     agent_tx: Option<mpsc::Sender<AgentRequest>>,
     event_rx: Option<mpsc::Receiver<AgentEvent>>,
     pending_nav: bool,
@@ -135,7 +134,6 @@ impl App {
             agent_busy: false,
             current_tool: None,
             context_pct: 0,
-            needs_agent_prefix: false,
             agent_tx: None,
             event_rx: None,
             pending_nav: false,
@@ -377,7 +375,6 @@ impl App {
     async fn handle_agent_event(&mut self, event: AgentEvent) -> bool {
         match event {
             AgentEvent::TextDelta(delta) => {
-                self.needs_agent_prefix = false;
                 self.streaming_assistant_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -464,7 +461,6 @@ impl App {
                     let tx = self.agent_tx.clone().unwrap();
                     tokio::spawn(async move { let _ = tx.send(AgentRequest::Submit(next)).await; });
                     self.agent_busy = true;
-                    self.needs_agent_prefix = true;
                 }
             }
             AgentEvent::Error(msg) => {
@@ -1108,7 +1104,6 @@ impl App {
         if let Some(tx) = &self.agent_tx {
             let _ = tx.send(AgentRequest::Submit(text)).await;
             self.agent_busy = true;
-            self.needs_agent_prefix = true;
         }
     }
 
@@ -1118,7 +1113,6 @@ impl App {
                 .send(AgentRequest::Resubmit { messages, new_user_content })
                 .await;
             self.agent_busy = true;
-            self.needs_agent_prefix = true;
         }
     }
 
