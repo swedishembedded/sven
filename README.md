@@ -1,4 +1,4 @@
-# sven
+# Agent Sven
 
 A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works in
 two modes that share the same agent core:
@@ -8,6 +8,29 @@ two modes that share the same agent core:
 - **Headless / CI** — reads instructions from stdin or a markdown file, writes
   clean text to stdout, and exits with a meaningful code. Designed to compose
   with other tools via pipes.
+
+---
+
+## Documentation
+
+The `docs/` directory contains the full user guide split into focused sections.
+Build it locally with:
+
+```sh
+make docs        # single markdown file → target/docs/sven-user-guide.md
+make docs-pdf    # PDF (requires pandoc) → target/docs/sven-user-guide.pdf
+```
+
+| Section | Topic |
+|---------|-------|
+| [Introduction](docs/00-introduction.md) | What sven is and how it works |
+| [Installation](docs/01-installation.md) | Getting sven onto your machine |
+| [Quick Start](docs/02-quickstart.md) | Your first session in five minutes |
+| [User Guide](docs/03-user-guide.md) | TUI navigation, modes, tools, conversations |
+| [CI and Pipelines](docs/04-ci-pipeline.md) | Headless mode, scripts, and CI integration |
+| [Configuration](docs/05-configuration.md) | All config options explained |
+| [Examples](docs/06-examples.md) | Real-world use cases |
+| [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 
 ---
 

@@ -1,0 +1,28 @@
+---
+title: "Agent Sven User Guide"
+subtitle: "AI Coding Agent for Terminal and CI"
+author: "Sven Contributors"
+date: "\\today"
+lang: en-GB
+
+# PDF layout
+geometry: "margin=1in"
+fontsize: 11pt
+linestretch: 1.2
+
+# Table of contents
+toc: true
+toc-depth: 2
+toc-title: "Contents"
+
+# Section numbering
+numbersections: true
+
+# PDF hyperlinks
+colorlinks: true
+linkcolor: "NavyBlue"
+urlcolor: "NavyBlue"
+citecolor: "NavyBlue"
+
+# Code block appearance
+highlight-style: tango

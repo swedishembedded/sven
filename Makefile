@@ -2,7 +2,7 @@ CARGO   ?= cargo
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 DEB_OUT := target/debian
 
-.PHONY: all build release test bats bats-fast deb clean help fmt check
+.PHONY: all build release test bats bats-fast deb clean help fmt check docs docs-pdf
 
 all: build
 
@@ -46,6 +46,42 @@ deb: release
 		bash scripts/build-deb.sh --out-dir $(DEB_OUT); \
 	fi
 
+## docs      – build single-file markdown user guide (output: target/docs/sven-user-guide.md)
+docs:
+	@mkdir -p target/docs
+	@printf '' > target/docs/sven-user-guide.md
+	@for f in docs/00-introduction.md \
+	           docs/01-installation.md \
+	           docs/02-quickstart.md \
+	           docs/03-user-guide.md \
+	           docs/04-ci-pipeline.md \
+	           docs/05-configuration.md \
+	           docs/06-examples.md \
+	           docs/07-troubleshooting.md; do \
+		if [ -f "$$f" ]; then \
+			cat "$$f" >> target/docs/sven-user-guide.md; \
+			printf '\n---\n\n' >> target/docs/sven-user-guide.md; \
+		fi; \
+	done
+	@echo "User guide written to target/docs/sven-user-guide.md"
+
+## docs-pdf  – build PDF user guide (requires pandoc + a LaTeX distribution)
+docs-pdf: docs
+	@command -v pandoc >/dev/null 2>&1 || { \
+		echo "Error: pandoc is not installed."; \
+		echo "Install it with: sudo apt install pandoc texlive-xetex texlive-fonts-recommended"; \
+		exit 1; \
+	}
+	pandoc target/docs/sven-user-guide.md \
+		--metadata-file=docs/metadata.yaml \
+		--pdf-engine=xelatex \
+		--toc \
+		--toc-depth=2 \
+		--number-sections \
+		--highlight-style=tango \
+		-o target/docs/sven-user-guide.pdf
+	@echo "PDF guide written to target/docs/sven-user-guide.pdf"
+
 ## fmt       – format all code
 fmt:
 	$(CARGO) fmt --all
@@ -57,7 +93,7 @@ check:
 ## clean     – remove build artefacts
 clean:
 	$(CARGO) clean
-	rm -rf target/debian target/debian-staging target/completions
+	rm -rf target/debian target/debian-staging target/completions target/docs
 
 ## help      – show this message
 help:
