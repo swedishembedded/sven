@@ -171,7 +171,7 @@ pub fn apply_bar_and_dim(
 
 /// Format a single `Message` as markdown.  This is the per-message building
 /// block for `format_conversation` and the round-trip parse tests.
-pub fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
+pub(crate) fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
     match (&m.role, &m.content) {
         (Role::User, MessageContent::Text(t)) =>
             format!("---\n\n**You:** {}\n", t),
@@ -295,7 +295,7 @@ fn extract_text_content(lines: &[&str], i: &mut usize, prefix: &str) -> Result<S
     while *i < lines.len() {
         let line = lines[*i];
         let trimmed = line.trim();
-        if trimmed.starts_with("**") || trimmed == "---" {
+        if is_message_header(trimmed) {
             break;
         }
         if !trimmed.is_empty() {
@@ -307,6 +307,17 @@ fn extract_text_content(lines: &[&str], i: &mut usize, prefix: &str) -> Result<S
         *i += 1;
     }
     Ok(text)
+}
+
+/// Returns true when `line` is a message-section delimiter that should stop
+/// continuation-text accumulation.  Only the known role-header patterns and
+/// the `---` turn separator qualify; generic `**bold**` markdown does NOT.
+fn is_message_header(line: &str) -> bool {
+    line == "---"
+        || line.starts_with("**You:")
+        || line.starts_with("**Agent:")
+        || line.starts_with("**Tool:")
+        || line.starts_with("**System:")
 }
 
 fn skip_until_code_fence(lines: &[&str], i: &mut usize) {
@@ -655,6 +666,20 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].as_text(), Some("first"));
         assert_eq!(messages[1].as_text(), Some("second"));
+    }
+
+    #[test]
+    fn parse_continuation_lines_with_bold_markdown_not_truncated() {
+        // A continuation line that starts with ** (bold text) must NOT be
+        // treated as a message header and must be preserved in the parsed text.
+        let md = "**You:** first line\n**bold continuation**\nthird line\n";
+        let messages = parse_markdown_to_messages(md).unwrap();
+        assert_eq!(messages.len(), 1, "should produce exactly one message");
+        let text = messages[0].as_text().unwrap();
+        assert!(text.contains("bold continuation"),
+            "bold continuation line must be preserved; got: {:?}", text);
+        assert!(text.contains("third line"),
+            "third line must be present; got: {:?}", text);
     }
 
     #[test]

@@ -377,9 +377,7 @@ impl App {
     async fn handle_agent_event(&mut self, event: AgentEvent) -> bool {
         match event {
             AgentEvent::TextDelta(delta) => {
-                if self.needs_agent_prefix {
-                    self.needs_agent_prefix = false;
-                }
+                self.needs_agent_prefix = false;
                 self.streaming_assistant_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
