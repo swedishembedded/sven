@@ -69,13 +69,33 @@ impl Tool for GdbInterruptTool {
 
         let gdb = state.client.as_ref().unwrap();
 
-        // Send the interrupt command to GDB/MI.
-        if let Err(e) = gdb.raw_console_cmd("interrupt").await {
+        // Check whether the target is already stopped.  If so, return the
+        // current stopped state immediately without sending any command.
+        // Sending -exec-interrupt (or the CLI "interrupt") to an already-halted
+        // target confuses some GDB servers (e.g. JLinkGDBServer) and can cause
+        // spurious *running / *stopped notifications that leave the gdbmi worker
+        // in an unexpected state, making all subsequent commands time out.
+        let timeout = Duration::from_secs(timeout_secs);
+        match gdb.await_stopped(Some(Duration::from_millis(200))).await {
+            Ok(stopped) => {
+                return ToolOutput::ok(
+                    &call.id,
+                    format!("Target is already stopped.\n{stopped:?}"),
+                );
+            }
+            Err(_) => {
+                // Target is not yet stopped; proceed with the interrupt below.
+            }
+        }
+
+        // Use the GDB/MI command -exec-interrupt rather than the CLI "interrupt"
+        // to avoid wrapping it in -interpreter-exec which can produce extra async
+        // notifications on remote targets.
+        if let Err(e) = gdb.raw_cmd("-exec-interrupt").await {
             return ToolOutput::err(&call.id, format!("Failed to send interrupt: {e}"));
         }
 
         // Wait for the target to report a stopped status.
-        let timeout = Duration::from_secs(timeout_secs);
         match gdb.await_stopped(Some(timeout)).await {
             Ok(stopped) => ToolOutput::ok(
                 &call.id,

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use gdbmi::raw::GeneralMessage;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -40,10 +41,6 @@ impl Tool for GdbCommandTool {
                 "command": {
                     "type": "string",
                     "description": "GDB command to execute (e.g., 'info registers', 'break main')"
-                },
-                "capture_lines": {
-                    "type": "integer",
-                    "description": "Maximum number of console output lines to capture (default: 40)"
                 }
             },
             "required": ["command"]
@@ -59,10 +56,6 @@ impl Tool for GdbCommandTool {
             Some(c) => c.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'command' argument"),
         };
-        let capture_lines = call.args
-            .get("capture_lines")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(40) as usize;
 
         debug!(cmd = %command, "gdb_command");
 
@@ -77,13 +70,34 @@ impl Tool for GdbCommandTool {
 
         let gdb = state.client.as_ref().unwrap();
 
-        match gdb.raw_console_cmd_for_output(&command, capture_lines).await {
-            Ok((_resp, lines)) => {
-                let output = lines.join("\n");
-                if output.is_empty() {
-                    ToolOutput::ok(&call.id, format!("[command '{command}' produced no output]"))
-                } else {
-                    ToolOutput::ok(&call.id, output)
+        // Use raw_console_cmd (waits for ^done/^running/^error) then pop_general
+        // for console output.  This is safer than raw_console_cmd_for_output because
+        // that function requires exactly N lines; if the command emits fewer lines the
+        // gdbmi worker gets stuck with pending_console set and blocks ALL subsequent
+        // commands until the process is restarted.  With raw_console_cmd, GDB sends all
+        // console output lines BEFORE the result token, so by the time raw_cmd returns
+        // the lines are already in pending_general and pop_general retrieves them.
+        match gdb.raw_console_cmd(&command).await {
+            Ok(_resp) => {
+                match gdb.pop_general().await {
+                    Ok(msgs) => {
+                        let lines: Vec<String> = msgs.iter()
+                            .filter_map(|m| match m {
+                                GeneralMessage::Console(s) => {
+                                    // Strip the trailing \n escape that GDB embeds in MI output
+                                    Some(s.trim_end_matches("\\n").to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        let output = lines.join("\n");
+                        if output.is_empty() {
+                            ToolOutput::ok(&call.id, format!("[command '{command}' produced no output]"))
+                        } else {
+                            ToolOutput::ok(&call.id, output)
+                        }
+                    }
+                    Err(e) => ToolOutput::err(&call.id, format!("GDB command error: {e}")),
                 }
             }
             Err(e) => ToolOutput::err(&call.id, format!("GDB command error: {e}")),
