@@ -1207,7 +1207,7 @@ fn apply_bar_and_dim(
 fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
     use sven_model::Role;
     match (&m.role, &m.content) {
-        (Role::User, MessageContent::Text(t)) => format!("\n---\n\n> **You:** {t}\n\n"),
+        (Role::User, MessageContent::Text(t)) => format!("\n---\n\n**You:** {t}\n"),
         (Role::Assistant, MessageContent::Text(t)) => format!("**Agent:** {t}\n\n"),
         (Role::Assistant, MessageContent::ToolCall { function, .. }) => {
             let args_preview = serde_json::from_str(&function.arguments)
