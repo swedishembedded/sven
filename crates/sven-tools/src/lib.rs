@@ -31,7 +31,7 @@ pub use builtin::switch_mode::SwitchModeTool;
 // GDB debugging tools
 pub use builtin::gdb::{
     GdbStartServerTool, GdbConnectTool, GdbCommandTool,
-    GdbInterruptTool, GdbStopTool,
+    GdbInterruptTool, GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
 };
 pub use builtin::gdb::state::GdbSessionState;
 

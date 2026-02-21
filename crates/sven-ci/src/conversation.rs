@@ -18,7 +18,8 @@ use sven_tools::{
     GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
     RunTerminalCommandTool, SearchCodebaseTool, SwitchModeTool, TodoWriteTool,
     UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool, GdbStopTool,
+    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool,
+    GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
     GdbSessionState,
     ToolRegistry,
 };
@@ -302,8 +303,10 @@ fn build_registry(
     let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
     reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
     reg.register(GdbConnectTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-    reg.register(GdbCommandTool::new(gdb_state.clone()));
+    reg.register(GdbCommandTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
     reg.register(GdbInterruptTool::new(gdb_state.clone()));
+    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
+    reg.register(GdbStatusTool::new(gdb_state.clone()));
     reg.register(GdbStopTool::new(gdb_state));
 
     reg

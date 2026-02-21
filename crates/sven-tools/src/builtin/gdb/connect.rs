@@ -179,8 +179,6 @@ impl Tool for GdbConnectTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let timeout = Duration::from_secs(self.cfg.command_timeout_secs);
-
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::err(
@@ -192,7 +190,18 @@ impl Tool for GdbConnectTool {
             ),
         };
 
-        let gdb = gdbmi::Gdb::new(child, timeout);
+        // Capture PID before handing the child to gdbmi, since gdbmi does not
+        // expose the child PID after construction.  We need it to send SIGINT
+        // for reliable hardware interrupts.
+        let gdb_pid = child.id();
+
+        // Use the connect timeout (longer) for the startup handshake.
+        // Loading debug symbols from a large ELF can take 15-30s; using the
+        // short command_timeout_secs (10s default) would cause a false timeout.
+        let connect_timeout = Duration::from_secs(self.cfg.connect_timeout_secs);
+        let command_timeout = Duration::from_secs(self.cfg.command_timeout_secs);
+
+        let mut gdb = gdbmi::Gdb::new(child, connect_timeout);
 
         // await_ready() waits for GDB to emit (gdb) or a *stopped record.
         // With -ex "target extended-remote ...", GDB connects and emits *stopped
@@ -205,13 +214,17 @@ impl Tool for GdbConnectTool {
                 format!(
                     "GDB client ready timeout: {e}\n\
                      The server was reachable but GDB took too long to initialise.\n\
-                     Try increasing command_timeout_secs in your sven config (current: {}s).",
-                    self.cfg.command_timeout_secs
+                     Hint: large ELFs (>10MB of symbols) can take 15-30s to load.\n\
+                     → Increase connect_timeout_secs in your sven config (current: {}s).",
+                    self.cfg.connect_timeout_secs
                 ),
             );
         }
 
-        state.set_client(gdb);
+        // Switch to the shorter per-command timeout for normal operations.
+        gdb.set_timeout(command_timeout);
+
+        state.set_client(gdb, gdb_pid);
 
         ToolOutput::ok(
             &call.id,

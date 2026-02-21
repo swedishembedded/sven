@@ -228,6 +228,11 @@ pub struct GdbConfig {
     /// Default timeout for GDB commands in seconds
     #[serde(default = "GdbConfig::default_command_timeout_secs")]
     pub command_timeout_secs: u64,
+    /// Timeout for the initial gdb_connect handshake in seconds.
+    /// This covers symbol loading (which can take 15-30s for large ELFs)
+    /// plus the TCP connection + GDB/MI startup.  Must be >= command_timeout_secs.
+    #[serde(default = "GdbConfig::default_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
     /// Milliseconds to wait after spawning the GDB server before connecting
     #[serde(default = "GdbConfig::default_server_startup_wait_ms")]
     pub server_startup_wait_ms: u64,
@@ -236,6 +241,7 @@ pub struct GdbConfig {
 impl GdbConfig {
     fn default_gdb_path() -> String { "gdb-multiarch".into() }
     fn default_command_timeout_secs() -> u64 { 10 }
+    fn default_connect_timeout_secs() -> u64 { 30 }
     fn default_server_startup_wait_ms() -> u64 { 500 }
 }
 
@@ -244,6 +250,7 @@ impl Default for GdbConfig {
         Self {
             gdb_path: Self::default_gdb_path(),
             command_timeout_secs: Self::default_command_timeout_secs(),
+            connect_timeout_secs: Self::default_connect_timeout_secs(),
             server_startup_wait_ms: Self::default_server_startup_wait_ms(),
         }
     }

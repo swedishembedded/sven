@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use sven_config::AgentMode;
+use libc;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -52,10 +53,17 @@ impl Tool for GdbStopTool {
             return ToolOutput::ok(&call.id, "No active GDB session to stop.");
         }
 
-        // Attempt graceful GDB quit before dropping the client
-        if let Some(gdb) = &state.client {
-            let _ = gdb.raw_console_cmd("quit").await;
+        // Send SIGTERM to the GDB process if we know its PID.
+        // Avoid raw_console_cmd("quit"): when GDB exits immediately after receiving
+        // "quit", its stderr closes with an empty read, triggering a panic in the
+        // gdbmi worker's process_stderr() (usize underflow on len()-1 of empty buf).
+        // SIGTERM lets GDB exit cleanly without us blocking on its response.
+        if let Some(pid) = state.gdb_pid {
+            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
         }
+
+        // Brief pause to let GDB drain output before we drop it.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         state.clear().await;
 

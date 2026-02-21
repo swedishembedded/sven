@@ -24,7 +24,7 @@ mod gdb_integration {
     use sven_config::GdbConfig;
     use sven_tools::{
         GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState,
-        GdbStartServerTool, GdbStopTool,
+        GdbStartServerTool, GdbStatusTool, GdbStopTool, GdbWaitStoppedTool,
     };
     use sven_tools::tool::{Tool, ToolCall};
 
@@ -40,6 +40,7 @@ mod gdb_integration {
         GdbConfig {
             gdb_path: "gdb-multiarch".into(),
             command_timeout_secs: 15,
+            connect_timeout_secs: 30,
             server_startup_wait_ms: 1000,
         }
     }
@@ -242,7 +243,7 @@ mod gdb_integration {
     #[tokio::test]
     async fn command_fails_when_not_connected() {
         let state = make_state();
-        let t = GdbCommandTool::new(state);
+        let t = GdbCommandTool::new(state, GdbConfig::default());
         let out = t.execute(&call("gdb_command", json!({
             "command": "info registers"
         }))).await;
@@ -253,7 +254,7 @@ mod gdb_integration {
     #[tokio::test]
     async fn command_fails_with_missing_arg() {
         let state = make_state();
-        let t = GdbCommandTool::new(state);
+        let t = GdbCommandTool::new(state, GdbConfig::default());
         let out = t.execute(&call("gdb_command", json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing 'command'"));
@@ -426,7 +427,7 @@ mod gdb_integration {
         assert!(!out.is_error, "connect failed: {}", out.content);
         assert!(out.content.contains("Connected"), "got: {}", out.content);
 
-        let cmd = GdbCommandTool::new(state.clone());
+        let cmd = GdbCommandTool::new(state.clone(), GdbConfig::default());
 
         let out = cmd.execute(&call("gdb_command", json!({
             "command": "monitor reset halt"
@@ -470,7 +471,7 @@ mod gdb_integration {
         let out = connect.execute(&call("gdb_connect", json!({"port": 2331}))).await;
         assert!(!out.is_error, "connect failed: {}", out.content);
 
-        let cmd = GdbCommandTool::new(state.clone());
+        let cmd = GdbCommandTool::new(state.clone(), GdbConfig::default());
         let out = cmd.execute(&call("gdb_command", json!({
             "command": "info registers"
         }))).await;

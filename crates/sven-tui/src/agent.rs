@@ -7,7 +7,8 @@ use sven_core::{Agent, AgentEvent};
 use sven_model::Message;
 use sven_tools::{
     AskQuestionTool, FsTool, GlobTool, QuestionRequest, ShellTool, ToolRegistry,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool, GdbStopTool,
+    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool,
+    GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
     GdbSessionState,
 };
 use tokio::sync::mpsc;
@@ -53,8 +54,10 @@ pub async fn agent_task(
     let gdb_state = Arc::new(tokio::sync::Mutex::new(GdbSessionState::default()));
     registry.register(GdbStartServerTool::new(gdb_state.clone(), config.tools.gdb.clone()));
     registry.register(GdbConnectTool::new(gdb_state.clone(), config.tools.gdb.clone()));
-    registry.register(GdbCommandTool::new(gdb_state.clone()));
+    registry.register(GdbCommandTool::new(gdb_state.clone(), config.tools.gdb.clone()));
     registry.register(GdbInterruptTool::new(gdb_state.clone()));
+    registry.register(GdbWaitStoppedTool::new(gdb_state.clone()));
+    registry.register(GdbStatusTool::new(gdb_state.clone()));
     registry.register(GdbStopTool::new(gdb_state));
 
     let mut agent = Agent::new(

@@ -2,7 +2,7 @@ use tokio::process::Child;
 
 /// Shared runtime state for an active GDB debugging session.
 ///
-/// Created once in `build_registry()` and shared across all five GDB tools
+/// Created once in `build_registry()` and shared across all GDB tools
 /// via `Arc<Mutex<GdbSessionState>>`.
 pub struct GdbSessionState {
     /// GDB server process (e.g., JLinkGDBServer, OpenOCD).
@@ -11,6 +11,10 @@ pub struct GdbSessionState {
     pub server_addr: Option<String>,
     /// gdbmi client (gdb-multiarch driven via GDB/MI on its stdin/stdout).
     pub client: Option<gdbmi::Gdb>,
+    /// PID of the gdb-multiarch process — stored separately because gdbmi::Gdb
+    /// does not expose the child PID after construction.  Used by gdb_interrupt
+    /// to send SIGINT for a reliable hardware halt.
+    pub gdb_pid: Option<u32>,
     /// Whether the gdbmi client has successfully connected to the remote target.
     pub connected: bool,
 }
@@ -22,6 +26,7 @@ impl Default for GdbSessionState {
             server: None,
             server_addr: None,
             client: None,
+            gdb_pid: None,
             connected: false,
         }
     }
@@ -33,8 +38,9 @@ impl GdbSessionState {
         self.server_addr = Some(addr);
     }
 
-    pub fn set_client(&mut self, gdb: gdbmi::Gdb) {
+    pub fn set_client(&mut self, gdb: gdbmi::Gdb, pid: Option<u32>) {
         self.client = Some(gdb);
+        self.gdb_pid = pid;
         self.connected = true;
     }
 
@@ -46,6 +52,7 @@ impl GdbSessionState {
         // Drop the client first – this closes stdin, which causes the
         // gdb-multiarch process to exit cleanly.
         let _ = self.client.take();
+        self.gdb_pid = None;
         self.connected = false;
 
         if let Some(mut child) = self.server.take() {

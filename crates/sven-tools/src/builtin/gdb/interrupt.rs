@@ -1,7 +1,8 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use gdbmi::status::Status;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -12,6 +13,21 @@ use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
 use super::state::GdbSessionState;
+
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Send SIGINT to the GDB process to trigger a hardware halt via the
+/// remote debugging protocol.  This is the only reliable way to interrupt
+/// a running embedded target because `-exec-interrupt` is not supported
+/// while the GDB async executor is active with JLinkGDBServer.
+fn send_sigint(pid: u32) {
+    // SAFETY: pid is a valid process ID obtained from tokio::process::Child.
+    // We only send SIGINT (non-destructive signal) to the GDB process.
+    let ret = unsafe { libc::kill(pid as i32, libc::SIGINT) };
+    if ret != 0 {
+        tracing::warn!(pid, "SIGINT to GDB process failed (errno={})", ret);
+    }
+}
 
 pub struct GdbInterruptTool {
     state: Arc<Mutex<GdbSessionState>>,
@@ -68,43 +84,83 @@ impl Tool for GdbInterruptTool {
         }
 
         let gdb = state.client.as_ref().unwrap();
+        let pid = state.gdb_pid;
 
-        // Check whether the target is already stopped.  If so, return the
-        // current stopped state immediately without sending any command.
-        // Sending -exec-interrupt (or the CLI "interrupt") to an already-halted
-        // target confuses some GDB servers (e.g. JLinkGDBServer) and can cause
-        // spurious *running / *stopped notifications that leave the gdbmi worker
-        // in an unexpected state, making all subsequent commands time out.
-        let timeout = Duration::from_secs(timeout_secs);
-        match gdb.await_stopped(Some(Duration::from_millis(200))).await {
-            Ok(stopped) => {
+        // Check whether the target is already stopped using a single non-blocking
+        // status query.  Using await_stopped() would register an AwaitStatus entry
+        // in the gdbmi worker; if it times out the entry stays and causes the
+        // worker to fail on all future *stopped notifications.  A simple status()
+        // poll is safe and avoids that footgun entirely.
+        match gdb.status().await {
+            Ok(Status::Stopped(stopped)) => {
+                let location = match (&stopped.function, &stopped.file, stopped.line) {
+                    (Some(func), Some(file), Some(line)) =>
+                        format!("{func} ({file}:{line})"),
+                    (Some(func), _, _) =>
+                        func.clone(),
+                    _ =>
+                        format!("PC=0x{:x}", stopped.address.0),
+                };
                 return ToolOutput::ok(
                     &call.id,
-                    format!("Target is already stopped.\n{stopped:?}"),
+                    format!("Target is already stopped at {location}."),
                 );
             }
-            Err(_) => {
-                // Target is not yet stopped; proceed with the interrupt below.
+            Err(e) => {
+                return ToolOutput::err(&call.id, format!("Status query failed: {e}"));
+            }
+            _ => {}  // Running or unstarted — proceed with interrupt
+        }
+
+        // Send SIGINT to the GDB process.  This is the reliable way to halt an
+        // embedded target through JLinkGDBServer: GDB forwards the signal to the
+        // target via the GDB remote serial protocol ($03 interrupt packet).
+        //
+        // Note: -exec-interrupt is NOT used here because JLinkGDBServer returns
+        // "Cannot execute this command while the target is running" without a
+        // response token, causing raw_cmd to time out indefinitely.
+        match pid {
+            Some(p) => send_sigint(p),
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    "Cannot interrupt: GDB process PID is unknown. \
+                     Re-connect with gdb_connect.",
+                );
             }
         }
 
-        // Use the GDB/MI command -exec-interrupt rather than the CLI "interrupt"
-        // to avoid wrapping it in -interpreter-exec which can produce extra async
-        // notifications on remote targets.
-        if let Err(e) = gdb.raw_cmd("-exec-interrupt").await {
-            return ToolOutput::err(&call.id, format!("Failed to send interrupt: {e}"));
-        }
-
-        // Wait for the target to report a stopped status.
-        match gdb.await_stopped(Some(timeout)).await {
-            Ok(stopped) => ToolOutput::ok(
-                &call.id,
-                format!("Target interrupted and stopped.\n{stopped:?}"),
-            ),
-            Err(e) => ToolOutput::err(
-                &call.id,
-                format!("Target did not stop within {timeout_secs}s: {e}"),
-            ),
+        // Poll until stopped or timeout.
+        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+        loop {
+            match gdb.status().await {
+                Ok(Status::Stopped(stopped)) => {
+                    let location = match (&stopped.function, &stopped.file, stopped.line) {
+                        (Some(func), Some(file), Some(line)) =>
+                            format!("{func} ({file}:{line})"),
+                        (Some(func), _, _) =>
+                            func.clone(),
+                        _ =>
+                            format!("PC=0x{:x}", stopped.address.0),
+                    };
+                    return ToolOutput::ok(
+                        &call.id,
+                        format!("Target interrupted and stopped at {location}."),
+                    );
+                }
+                Ok(_) => {
+                    if Instant::now() >= deadline {
+                        return ToolOutput::err(
+                            &call.id,
+                            format!("Target did not stop within {timeout_secs}s after interrupt."),
+                        );
+                    }
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                Err(e) => {
+                    return ToolOutput::err(&call.id, format!("Status poll failed: {e}"));
+                }
+            }
         }
     }
 }

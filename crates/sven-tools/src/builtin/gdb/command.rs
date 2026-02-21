@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use gdbmi::raw::GeneralMessage;
@@ -6,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::AgentMode;
+use sven_config::{AgentMode, GdbConfig};
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -15,11 +16,12 @@ use super::state::GdbSessionState;
 
 pub struct GdbCommandTool {
     state: Arc<Mutex<GdbSessionState>>,
+    cfg: GdbConfig,
 }
 
 impl GdbCommandTool {
-    pub fn new(state: Arc<Mutex<GdbSessionState>>) -> Self {
-        Self { state }
+    pub fn new(state: Arc<Mutex<GdbSessionState>>, cfg: GdbConfig) -> Self {
+        Self { state, cfg }
     }
 }
 
@@ -40,7 +42,17 @@ impl Tool for GdbCommandTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "GDB command to execute (e.g., 'info registers', 'break main')"
+                    "description": "GDB command to execute (e.g., 'info registers', 'break main', \
+                        'continue', 'step', 'next', 'stepi', 'nexti', 'finish', \
+                        'backtrace', 'info threads', 'info locals', 'info args', \
+                        'x/10x 0x20000000', 'load', 'monitor reset halt')"
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Override the default command timeout in seconds. \
+                        Use a higher value for slow operations: 'load' (firmware flash, 60-120s), \
+                        'monitor erase' (60s), or 'continue' if the target takes time to respond. \
+                        Default: the configured command_timeout_secs (typically 10s)."
                 }
             },
             "required": ["command"]
@@ -57,9 +69,14 @@ impl Tool for GdbCommandTool {
             None => return ToolOutput::err(&call.id, "missing 'command' argument"),
         };
 
-        debug!(cmd = %command, "gdb_command");
+        let timeout_secs = call.args
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(self.cfg.command_timeout_secs);
 
-        let state = self.state.lock().await;
+        debug!(cmd = %command, timeout_secs, "gdb_command");
+
+        let mut state = self.state.lock().await;
 
         if !state.has_client() {
             return ToolOutput::err(
@@ -68,6 +85,9 @@ impl Tool for GdbCommandTool {
             );
         }
 
+        // Temporarily set the timeout for this command, then restore.
+        let gdb = state.client.as_mut().unwrap();
+        gdb.set_timeout(Duration::from_secs(timeout_secs));
         let gdb = state.client.as_ref().unwrap();
 
         // Use raw_console_cmd (waits for ^done/^running/^error) then pop_general
@@ -77,8 +97,15 @@ impl Tool for GdbCommandTool {
         // commands until the process is restarted.  With raw_console_cmd, GDB sends all
         // console output lines BEFORE the result token, so by the time raw_cmd returns
         // the lines are already in pending_general and pop_general retrieves them.
-        match gdb.raw_console_cmd(&command).await {
+        let result = gdb.raw_console_cmd(&command).await;
+
+        // Restore the default timeout regardless of outcome.
+        let default_timeout = Duration::from_secs(self.cfg.command_timeout_secs);
+        state.client.as_mut().unwrap().set_timeout(default_timeout);
+
+        match result {
             Ok(_resp) => {
+                let gdb = state.client.as_ref().unwrap();
                 match gdb.pop_general().await {
                     Ok(msgs) => {
                         let lines: Vec<String> = msgs.iter()
@@ -109,6 +136,7 @@ impl Tool for GdbCommandTool {
 
 #[cfg(test)]
 mod tests {
+    use sven_config::GdbConfig;
     use super::*;
     use crate::tool::ToolCall;
 
@@ -116,17 +144,20 @@ mod tests {
         ToolCall { id: "t1".into(), name: "gdb_command".into(), args }
     }
 
+    fn make_tool() -> GdbCommandTool {
+        let state = Arc::new(Mutex::new(GdbSessionState::default()));
+        GdbCommandTool::new(state, GdbConfig::default())
+    }
+
     #[test]
     fn only_available_in_agent_mode() {
-        let state = Arc::new(Mutex::new(GdbSessionState::default()));
-        let t = GdbCommandTool::new(state);
+        let t = make_tool();
         assert_eq!(t.modes(), &[AgentMode::Agent]);
     }
 
     #[tokio::test]
     async fn fails_when_not_connected() {
-        let state = Arc::new(Mutex::new(GdbSessionState::default()));
-        let t = GdbCommandTool::new(state);
+        let t = make_tool();
         let out = t.execute(&call(json!({"command": "info registers"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("No active GDB session"));
@@ -134,8 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn fails_with_missing_command() {
-        let state = Arc::new(Mutex::new(GdbSessionState::default()));
-        let t = GdbCommandTool::new(state);
+        let t = make_tool();
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing 'command'"));
