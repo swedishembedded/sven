@@ -54,7 +54,6 @@ pub enum Action {
     SubmitBufferToAgent,
 
     // App
-    Quit,
     Help,
     OpenPager,
 }
@@ -116,7 +115,7 @@ pub fn map_key(
 
     match event.code {
         // ── Input-pane overrides come FIRST so they shadow global bindings ────
-        // Ctrl+c in input — interrupt agent (not quit)
+        // Ctrl+c in input — interrupt agent
         KeyCode::Char('c') if ctrl && in_input  => Some(Action::InterruptAgent),
         // Ctrl+u — delete to line start
         KeyCode::Char('u') if ctrl && in_input  => Some(Action::InputDeleteToStart),
@@ -124,8 +123,7 @@ pub fn map_key(
         KeyCode::Char('k') if ctrl && in_input  => Some(Action::InputDeleteToEnd),
 
         // ── Global bindings ───────────────────────────────────────────────────
-        KeyCode::Char('q') if ctrl => Some(Action::Quit),
-        KeyCode::Char('c') if ctrl => Some(Action::Quit),
+        // Quit is via :q/:qa in Neovim chat view and /quit in input pane (no Ctrl+C/Ctrl+Q)
 
         // Ctrl+w → start the nav-prefix chord (works from any pane)
         KeyCode::Char('w') if ctrl => Some(Action::NavPrefix),
@@ -297,14 +295,15 @@ mod tests {
     // ── Global quit ───────────────────────────────────────────────────────────
 
     #[test]
-    fn ctrl_c_quits_outside_input() {
+    fn ctrl_c_outside_input_not_reserved() {
+        // Quit is via :q/:qa in chat and /quit in input; Ctrl+C outside input is not bound (forwarded to Neovim)
         let ev = ctrl_key('c');
-        assert_eq!(map_key(ev, false, false, false, false), Some(Action::Quit));
+        assert_eq!(map_key(ev, false, false, false, false), None);
     }
 
     #[test]
     fn ctrl_c_interrupts_inside_input() {
-        // In input pane Ctrl+c is InterruptAgent (defined before global Quit)
+        // In input pane Ctrl+c is InterruptAgent
         let ev = ctrl_key('c');
         assert_eq!(map_key(ev, false, true, false, false), Some(Action::InterruptAgent));
     }

@@ -49,6 +49,10 @@ pub struct Cli {
     #[arg(long, short = 'c')]
     pub config: Option<PathBuf>,
 
+    /// Disable embedded Neovim; use ratatui-only chat view (no :w/:q in buffer).
+    #[arg(long)]
+    pub no_nvim: bool,
+
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,

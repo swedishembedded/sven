@@ -216,6 +216,10 @@ pub struct NvimHandler {
     cursor_pos: Arc<Mutex<(u16, u16)>>,
     /// Fired after each `flush` event so the TUI can re-render immediately.
     flush_notify: Arc<Notify>,
+    /// Fired when Neovim sends "sven_submit" (e.g. from :w command).
+    submit_notify: Arc<Notify>,
+    /// Fired when Neovim sends "sven_quit" (e.g. from :q or :qa command).
+    quit_notify: Arc<Notify>,
 }
 
 impl NvimHandler {
@@ -224,12 +228,16 @@ impl NvimHandler {
         hl_attrs: Arc<Mutex<HashMap<u64, HlAttr>>>,
         cursor_pos: Arc<Mutex<(u16, u16)>>,
         flush_notify: Arc<Notify>,
+        submit_notify: Arc<Notify>,
+        quit_notify: Arc<Notify>,
     ) -> Self {
         Self {
             grid,
             hl_attrs,
             cursor_pos,
             flush_notify,
+            submit_notify,
+            quit_notify,
         }
     }
 
@@ -435,6 +443,14 @@ impl Handler for NvimHandler {
                     }
                 }
             }
+        } else if name == "sven_submit" {
+            // Neovim notified us that the user wants to submit (e.g. from :w)
+            debug!("Received sven_submit notification from Neovim");
+            self.submit_notify.notify_one();
+        } else if name == "sven_quit" {
+            // Neovim notified us that the user wants to quit (e.g. from :q or :qa)
+            debug!("Received sven_quit notification from Neovim");
+            self.quit_notify.notify_one();
         }
     }
 }
@@ -507,6 +523,10 @@ pub struct NvimBridge {
     /// waits on this so it re-renders immediately after Neovim finishes
     /// processing each input (fixing the "G needs second keypress" bug).
     pub flush_notify: Arc<Notify>,
+    /// Fired when Neovim sends "sven_submit" (triggered by :w command).
+    pub submit_notify: Arc<Notify>,
+    /// Fired when Neovim sends "sven_quit" (triggered by :q or :qa command).
+    pub quit_notify: Arc<Notify>,
 }
 
 impl NvimBridge {
@@ -519,12 +539,16 @@ impl NvimBridge {
         let hl_attrs = Arc::new(Mutex::new(HashMap::new()));
         let cursor_pos = Arc::new(Mutex::new((0u16, 0u16)));
         let flush_notify = Arc::new(Notify::new());
+        let submit_notify = Arc::new(Notify::new());
+        let quit_notify = Arc::new(Notify::new());
 
         let handler = NvimHandler::new(
             grid.clone(),
             hl_attrs.clone(),
             cursor_pos.clone(),
             flush_notify.clone(),
+            submit_notify.clone(),
+            quit_notify.clone(),
         );
 
         // Prepare command
@@ -572,6 +596,8 @@ impl NvimBridge {
             height,
             buffer,
             flush_notify,
+            submit_notify,
+            quit_notify,
         })
     }
 
@@ -716,6 +742,52 @@ vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
             let _ = self.neovim.command("setlocal foldmethod=manual foldlevel=99").await;
         }
 
+        // Create custom commands to submit the conversation buffer to the agent.
+        // :Submit (or :W as a convenient alias) notifies the host to process the buffer.
+        let submit_handler = r#"
+local buf = vim.api.nvim_get_current_buf()
+
+-- Helper function to submit the conversation
+local function submit_conversation()
+  -- Mark buffer as unmodified (user just "saved" by submitting)
+  vim.bo[buf].modified = false
+  -- Notify the host (sven) to submit the conversation.
+  -- Channel 1 is the first (and only) client in embedded mode.
+  vim.rpcnotify(1, 'sven_submit', {})
+end
+
+-- Create buffer-local commands
+vim.api.nvim_buf_create_user_command(buf, 'Submit', submit_conversation, {
+  desc = 'Submit the conversation to the agent'
+})
+
+-- Alias :W to :Submit for convenience (similar to :w for saving)
+vim.api.nvim_buf_create_user_command(buf, 'W', submit_conversation, {
+  desc = 'Submit the conversation to the agent (alias for :Submit)'
+})
+
+-- Also support :w by aliasing it to Submit for this buffer
+vim.api.nvim_buf_create_user_command(buf, 'w', submit_conversation, {
+  desc = 'Submit the conversation to the agent (overrides write)'
+})
+
+-- Quit: notify the host so the application exits
+local function quit_sven()
+  vim.rpcnotify(1, 'sven_quit', {})
+end
+
+vim.api.nvim_buf_create_user_command(buf, 'q', quit_sven, {
+  desc = 'Quit sven'
+})
+vim.api.nvim_buf_create_user_command(buf, 'qa', quit_sven, {
+  desc = 'Quit sven (alias for :q)'
+})
+"#;
+        
+        if let Err(e) = self.neovim.exec_lua(submit_handler, vec![]).await {
+            debug!("Could not configure submit/quit handlers: {:?}", e);
+        }
+
         debug!("Buffer configuration completed");
         Ok(())
     }
@@ -742,32 +814,6 @@ vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
             .exec_lua("pcall(_G.sven_enhance_todos)", vec![])
             .await
             .context("Failed to refresh todo display")?;
-
-        Ok(())
-    }
-
-    /// Add custom keymaps for conversation navigation
-    #[allow(dead_code)]
-    pub async fn setup_custom_keymaps(&mut self) -> Result<()> {
-        // This is called once during initialization
-        // Additional custom keymaps can be added here
-        
-        // Example: Add a keymap to collapse all tool outputs
-        self.neovim
-            .command("nnoremap <buffer> <leader>ct :g/^> 🔧/normal zc<CR>")
-            .await
-            .ok();  // Don't fail if keymap doesn't work
-
-        Ok(())
-    }
-
-    /// Set cursor position programmatically (useful for auto-scrolling)
-    #[allow(dead_code)]
-    pub async fn set_cursor(&mut self, row: i64, col: i64) -> Result<()> {
-        self.neovim
-            .call_function("nvim_win_set_cursor", vec![Value::from(0), Value::from(vec![Value::from(row), Value::from(col)])])
-            .await
-            .context("Failed to set cursor")?;
 
         Ok(())
     }
@@ -841,11 +887,13 @@ mod tests {
 
     /// Build a fresh handler with its backing shared state for inspection.
     fn make_handler() -> (NvimHandler, Arc<Mutex<Grid>>, Arc<Mutex<HashMap<u64, HlAttr>>>, Arc<Mutex<(u16, u16)>>) {
-        let grid         = Arc::new(Mutex::new(Grid::new(80, 24)));
-        let hl_attrs     = Arc::new(Mutex::new(HashMap::new()));
-        let cursor       = Arc::new(Mutex::new((0u16, 0u16)));
-        let flush_notify = Arc::new(Notify::new());
-        let handler      = NvimHandler::new(grid.clone(), hl_attrs.clone(), cursor.clone(), flush_notify);
+        let grid          = Arc::new(Mutex::new(Grid::new(80, 24)));
+        let hl_attrs      = Arc::new(Mutex::new(HashMap::new()));
+        let cursor        = Arc::new(Mutex::new((0u16, 0u16)));
+        let flush_notify  = Arc::new(Notify::new());
+        let submit_notify = Arc::new(Notify::new());
+        let quit_notify   = Arc::new(Notify::new());
+        let handler       = NvimHandler::new(grid.clone(), hl_attrs.clone(), cursor.clone(), flush_notify, submit_notify, quit_notify);
         (handler, grid, hl_attrs, cursor)
     }
 

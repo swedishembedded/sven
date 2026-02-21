@@ -36,6 +36,8 @@ pub struct AppOptions {
     /// segments are injected into the chat pane on startup and the path is
     /// used for subsequent auto-saves.
     pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
+    /// If true, do not spawn embedded Neovim; use ratatui-only chat view.
+    pub no_nvim: bool,
 }
 
 /// Which pane currently holds keyboard focus.
@@ -78,7 +80,6 @@ fn is_reserved_key(event: &KeyEvent) -> bool {
     matches!(
         (event.modifiers, event.code),
         (KeyModifiers::CONTROL, KeyCode::Char('w'))  // Pane switching prefix
-        | (KeyModifiers::CONTROL, KeyCode::Char('c'))  // Quit
         | (KeyModifiers::CONTROL, KeyCode::Char('t'))  // Pager toggle
         | (KeyModifiers::CONTROL, KeyCode::Enter)  // Submit buffer to agent
         | (KeyModifiers::NONE, KeyCode::F(1))  // Help
@@ -244,8 +245,6 @@ pub struct App {
     mode: AgentMode,
     focus: FocusPane,
     chat_lines: StyledLines,
-    /// Display string built from chat_segments + streaming buffer; re-rendered on resize or new content.
-    chat_raw: String,
     /// Structured segments (messages + context compacted notes). Source of truth for display and resubmit.
     chat_segments: Vec<ChatSegment>,
     /// Accumulated assistant text during streaming until TextComplete.
@@ -284,9 +283,16 @@ pub struct App {
     /// `flush` event so the render loop can re-draw without waiting for a
     /// keyboard event.  This fixes the "G needs a second keypress" timing bug.
     nvim_flush_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Shared with NvimBridge's NvimHandler.  Notified when Neovim sends
+    /// "sven_submit" (e.g. from :w command), triggering buffer submission.
+    nvim_submit_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Notified when Neovim sends "sven_quit" (from :q or :qa command).
+    nvim_quit_notify: Option<Arc<tokio::sync::Notify>>,
     /// Path to the current conversation's history file.  Set on first save,
     /// or pre-set when resuming an existing conversation.
     history_path: Option<PathBuf>,
+    /// If true, Neovim was disabled (--no-nvim); use ratatui-only chat view.
+    no_nvim: bool,
 }
 
 impl App {
@@ -301,7 +307,6 @@ impl App {
             mode: opts.mode,
             focus: FocusPane::Input,
             chat_lines: Vec::new(),
-            chat_raw: String::new(),
             chat_segments: initial_segments,
             streaming_assistant_buffer: String::new(),
             segment_line_ranges: Vec::new(),
@@ -327,7 +332,10 @@ impl App {
             edit_cursor: 0,
             nvim_bridge: None,
             nvim_flush_notify: None,
+            nvim_submit_notify: None,
+            nvim_quit_notify: None,
             history_path,
+            no_nvim: opts.no_nvim,
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(prompt);
@@ -371,33 +379,44 @@ impl App {
             self.scroll_to_bottom();
         }
 
-        // Initialize NvimBridge with proper dimensions
-        let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
-            let layout = AppLayout::compute(
-                Rect::new(0, 0, size.width, size.height),
-                false,  // search not active initially
-            );
-            (
-                layout.chat_pane.width.saturating_sub(2),  // Account for border
-                layout.chat_inner_height().max(1),
-            )
-        } else {
-            (80, 24)  // Fallback dimensions
-        };
+        // Initialize NvimBridge unless disabled by --no-nvim
+        if !self.no_nvim {
+            let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
+                let layout = AppLayout::compute(
+                    Rect::new(0, 0, size.width, size.height),
+                    false,  // search not active initially
+                );
+                (
+                    layout.chat_pane.width.saturating_sub(2),  // Account for border
+                    layout.chat_inner_height().max(1),
+                )
+            } else {
+                (80, 24)  // Fallback dimensions
+            };
 
-        match NvimBridge::spawn(nvim_width, nvim_height).await {
-            Ok(mut bridge) => {
-                // Configure the buffer
-                if let Err(e) = bridge.configure_buffer().await {
-                    tracing::warn!("Failed to configure Neovim buffer: {}", e);
+            match NvimBridge::spawn(nvim_width, nvim_height).await {
+                Ok(mut bridge) => {
+                    // Configure the buffer
+                    if let Err(e) = bridge.configure_buffer().await {
+                        tracing::warn!("Failed to configure Neovim buffer: {}", e);
+                    }
+                    // Grab the notifies BEFORE moving the bridge into the Arc.
+                    self.nvim_flush_notify = Some(bridge.flush_notify.clone());
+                    self.nvim_submit_notify = Some(bridge.submit_notify.clone());
+                    self.nvim_quit_notify = Some(bridge.quit_notify.clone());
+                    self.nvim_bridge = Some(Arc::new(tokio::sync::Mutex::new(bridge)));
                 }
-                // Grab the flush notify BEFORE moving the bridge into the Arc.
-                self.nvim_flush_notify = Some(bridge.flush_notify.clone());
-                self.nvim_bridge = Some(Arc::new(tokio::sync::Mutex::new(bridge)));
+                Err(e) => {
+                    tracing::error!("Failed to spawn Neovim: {}. Chat view will be degraded.", e);
+                    // Continue without Neovim - we'll handle this gracefully
+                }
             }
-            Err(e) => {
-                tracing::error!("Failed to spawn Neovim: {}. Chat view will be degraded.", e);
-                // Continue without Neovim - we'll handle this gracefully
+
+            // When resuming, the first rerender_chat() ran before the bridge existed, so the
+            // Neovim buffer was never filled. Sync the loaded conversation into the buffer now.
+            if self.nvim_bridge.is_some() && !self.chat_segments.is_empty() {
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
             }
         }
 
@@ -548,9 +567,11 @@ impl App {
                 }
             })?;
 
-            // Clone the Arc (cheap) so the flush future doesn't borrow self
+            // Clone the Arcs (cheap) so the futures don't borrow self
             // at the same time as the mutable arms below.
             let flush_notify_clone = self.nvim_flush_notify.clone();
+            let submit_notify_clone = self.nvim_submit_notify.clone();
+            let quit_notify_clone = self.nvim_quit_notify.clone();
             tokio::select! {
                 Some(agent_event) = self.recv_agent_event() => {
                     if self.handle_agent_event(agent_event).await { break; }
@@ -564,7 +585,15 @@ impl App {
                 // Re-render when Neovim finishes a redraw cycle (flush event).
                 // This ensures the grid and cursor state are always current
                 // without waiting for the next user keypress.
-                _ = Self::nvim_flush_future(flush_notify_clone.as_deref()) => {}
+                _ = Self::nvim_notify_future(flush_notify_clone.as_deref()) => {}
+                // Submit buffer when Neovim sends "sven_submit" (from :w command).
+                _ = Self::nvim_notify_future(submit_notify_clone.as_deref()) => {
+                    let _ = self.dispatch(Action::SubmitBufferToAgent).await;
+                }
+                // Quit when Neovim sends "sven_quit" (from :q or :qa command).
+                _ = Self::nvim_notify_future(quit_notify_clone.as_deref()) => {
+                    break;
+                }
             }
         }
 
@@ -575,11 +604,9 @@ impl App {
         if let Some(rx) = &mut self.event_rx { rx.recv().await } else { None }
     }
 
-    /// Returns a future that resolves when the Neovim flush_notify fires, or
-    /// that never resolves when Neovim is not active.  This is used as the
-    /// fourth `select!` arm so the render loop wakes up immediately after
-    /// Neovim finishes processing each input key.
-    async fn nvim_flush_future(notify: Option<&tokio::sync::Notify>) {
+    /// Returns a future that resolves when the given notify fires, or never
+    /// resolves if notify is None. Used for Neovim flush and submit events.
+    async fn nvim_notify_future(notify: Option<&tokio::sync::Notify>) {
         match notify {
             Some(n) => n.notified().await,
             None    => std::future::pending().await,
@@ -956,8 +983,6 @@ impl App {
         }
 
         match action {
-            Action::Quit => return true,
-
             Action::FocusChat  => self.focus = FocusPane::Chat,
             Action::FocusInput => self.focus = FocusPane::Input,
 
@@ -1245,6 +1270,10 @@ impl App {
             Action::Submit => {
                 let text = std::mem::take(&mut self.input_buffer).trim().to_string();
                 self.input_cursor = 0;
+                // /quit in input pane exits the application
+                if text.eq_ignore_ascii_case("/quit") {
+                    return true;
+                }
                 if !text.is_empty() {
                     if self.agent_busy {
                         self.queued.push_back(text);
@@ -1322,29 +1351,6 @@ impl App {
         }
     }
 
-    /// Send the current Neovim buffer content to the agent
-    #[allow(dead_code)]
-    async fn send_buffer_to_agent(&mut self) {
-        let content = if let Some(nvim_bridge) = &self.nvim_bridge {
-            let bridge = nvim_bridge.lock().await;
-            match bridge.get_buffer_content().await {
-                Ok(content) => Some(content),
-                Err(e) => {
-                    tracing::error!("Failed to get buffer content: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        
-        if let Some(content) = content {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                self.send_to_agent(trimmed.to_string()).await;
-            }
-        }
-    }
 
     /// Build chat_lines and segment_line_ranges from chat_segments and streaming buffer.
     /// User messages get a green vertical bar and dimmed text; agent messages get a blue bar.
@@ -1376,8 +1382,6 @@ impl App {
         }
         self.chat_lines = all_lines;
         self.segment_line_ranges = ranges;
-        self.chat_raw.clear();
-        self.chat_raw.push_str("[built from segments]");
     }
 
     async fn rerender_chat(&mut self) {
@@ -1390,9 +1394,6 @@ impl App {
             );
             
             tracing::debug!("Neovim buffer update: {} chars, {} segments", content.len(), self.chat_segments.len());
-            if content.len() < 1000 {
-                tracing::debug!("Buffer content:\n{}", content);
-            }
             
             let mut bridge = nvim_bridge.lock().await;
             
@@ -1966,13 +1967,9 @@ fn format_conversation(
         }
     }
     
-    // Add streaming buffer if present (only add prefix if not empty conversation)
+    // Add streaming buffer if present
     if !streaming_buffer.is_empty() {
-        if !result.is_empty() {
-            result.push_str("**Agent:** ");
-        } else {
-            result.push_str("**Agent:** ");
-        }
+        result.push_str("**Agent:** ");
         result.push_str(streaming_buffer);
     }
     
@@ -2752,11 +2749,10 @@ mod tests {
     }
 
     #[test]
-    fn quit_ctrl_c_is_reserved() {
-        // Arrange
+    fn ctrl_c_not_reserved() {
+        // Quit is via :q/:qa in chat and /quit in input; Ctrl+C is not reserved (forwarded to Neovim in chat)
         let event = press(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        // Act / Assert
-        assert!(is_reserved_key(&event), "Ctrl+C must be reserved for quit");
+        assert!(!is_reserved_key(&event));
     }
 
     #[test]
