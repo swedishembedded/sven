@@ -1253,11 +1253,18 @@ impl App {
                         // the new message.  Without this, rerender_chat() would
                         // overwrite the buffer from the stale chat_segments.
                         self.sync_nvim_buffer_to_segments().await;
+                        // Capture the (potentially edited) history so we can
+                        // send it to the agent via Resubmit.  This ensures that
+                        // any changes the user made in the Neovim buffer are
+                        // reflected in the model's conversation context.  Using
+                        // plain Submit would only append to the agent's stale
+                        // internal history, ignoring the edits.
+                        let history = Self::messages_for_resubmit(&self.chat_segments);
                         self.chat_segments
                             .push(ChatSegment::Message(Message::user(&text)));
                         self.rerender_chat().await;
                         self.scroll_to_bottom();
-                        self.send_to_agent(text).await;
+                        self.send_resubmit_to_agent(history, text).await;
                     }
                 }
             }

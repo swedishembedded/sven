@@ -60,10 +60,13 @@ pub fn save(messages: &[Message]) -> Result<PathBuf> {
         .and_then(|m| m.as_text())
         .unwrap_or("conversation");
 
+    // Derive a human-readable title from the first user message.
+    let title = make_title(first_user);
     let filename = make_filename(first_user);
     let path = dir.join(&filename);
 
-    let content = serialize_conversation(None, messages);
+    // Embed the title as an H1 so the file is self-describing.
+    let content = serialize_conversation(Some(&title), messages);
     fs::write(&path, &content)
         .with_context(|| format!("writing conversation to {}", path.display()))?;
 
@@ -72,13 +75,31 @@ pub fn save(messages: &[Message]) -> Result<PathBuf> {
 
 /// Overwrites an existing conversation file with the given messages.
 ///
-/// Use this when updating a previously saved conversation (e.g. after each TUI
-/// turn).
+/// Preserves the H1 title already present in the file (if any); otherwise
+/// derives one from the first user message, consistent with `save()`.
 pub fn save_to(path: &Path, messages: &[Message]) -> Result<()> {
     if messages.is_empty() {
         return Ok(());
     }
-    let content = serialize_conversation(None, messages);
+
+    // Preserve an existing title so repeated saves don't lose it.
+    let existing_title: Option<String> = fs::read_to_string(path)
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("# ") && !l.starts_with("## "))
+                .map(|l| l[2..].trim().to_string())
+        });
+
+    let title = existing_title.or_else(|| {
+        messages
+            .iter()
+            .find(|m| matches!(m.role, sven_model::Role::User))
+            .and_then(|m| m.as_text())
+            .map(make_title)
+    });
+
+    let content = serialize_conversation(title.as_deref(), messages);
     fs::write(path, &content)
         .with_context(|| format!("writing conversation to {}", path.display()))
 }
@@ -206,7 +227,7 @@ pub fn load(id: &str) -> Result<(ParsedConversation, PathBuf)> {
 /// Builds a filename for a new conversation file.
 pub fn make_filename(first_user_message: &str) -> String {
     let ts = Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
-    let slug = slugify(first_user_message, 45);
+    let slug = slugify(first_user_message, 60);
     if slug.is_empty() {
         format!("{ts}.md")
     } else {
@@ -214,9 +235,32 @@ pub fn make_filename(first_user_message: &str) -> String {
     }
 }
 
+/// Derives a human-readable title (capitalised, up to ~80 chars) from a
+/// free-form text string — used as the H1 title in saved conversation files.
+pub fn make_title(text: &str) -> String {
+    // Take up to the first sentence (stop at '.', '!', '?') or 80 chars.
+    let trimmed = text.trim();
+    let sentence_end = trimmed
+        .char_indices()
+        .find(|(_, c)| matches!(*c, '.' | '!' | '?'))
+        .map(|(i, _)| i + 1)
+        .unwrap_or(trimmed.len());
+    let raw: String = trimmed.chars().take(sentence_end.min(80)).collect();
+    let raw = raw.trim_end_matches(|c: char| c == '.' || c == '!' || c == '?').trim();
+    if raw.is_empty() {
+        return "Conversation".to_string();
+    }
+    // Capitalise first character.
+    let mut chars = raw.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 fn slugify(s: &str, max_chars: usize) -> String {
     s.split_whitespace()
-        .take(6)
+        .take(10)
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric())

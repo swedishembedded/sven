@@ -787,6 +787,7 @@ vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
     /// Query Neovim for the 1-indexed buffer line the cursor is on.
     /// Unlike `get_cursor_pos` (which tracks the grid row), this returns the
     /// actual buffer line number, unaffected by viewport scrolling.
+    #[cfg(test)]
     pub async fn get_cursor_line_in_buffer(&self) -> Result<i64> {
         let result = self.neovim
             .call_function("line", vec![Value::from(".")])
@@ -800,6 +801,7 @@ vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
 
     /// Query Neovim for the total number of lines in the current buffer.
     /// Equivalent to `line('$')` in Vimscript.
+    #[cfg(test)]
     pub async fn get_buffer_line_count(&self) -> Result<i64> {
         let result = self.neovim
             .call_function("line", vec![Value::from("$")])
@@ -813,6 +815,7 @@ vim.cmd('setlocal foldminlines=0') -- allow even 1-line-body folds to collapse
 
     /// Evaluate a Vimscript expression and return the raw msgpack value.
     /// Useful in tests to inspect Neovim internal state (foldlevel, etc.).
+    #[cfg(test)]
     pub async fn eval_vim(&self, expr: &str) -> Result<Value> {
         self.neovim
             .eval(expr)

@@ -37,11 +37,12 @@ pub struct Cli {
     #[arg(long)]
     pub conversation: bool,
 
-    /// Resume a saved conversation by ID (or unique prefix / file path).
-    /// In TUI mode the history is displayed and the session continues interactively.
-    /// In headless mode it behaves like --conversation --file <resolved-path>.
+    /// Resume a saved conversation.
+    /// Supply an ID (or unique prefix / file path) to resume directly.
+    /// Omit the ID to pick interactively with fzf.
+    /// In headless mode an explicit ID is required.
     /// Use 'sven chats' to list available conversations.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
     pub resume: Option<String>,
 
     /// Path to config file (overrides auto-discovery)

@@ -1,6 +1,7 @@
 mod cli;
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -55,24 +56,24 @@ fn print_chats(limit: usize) {
         }
         Ok(entries) => {
             println!(
-                "{:<45}  {:<19}  {}",
-                "ID (use with --resume)", "DATE", "TITLE"
+                "{:<45}  {:<16}  {:<5}  {}",
+                "ID (use with --resume)", "DATE", "TURNS", "TITLE"
             );
-            println!("{}", "-".repeat(90));
+            println!("{}", "-".repeat(95));
             for e in &entries {
-                // Shorten the ID for display (timestamp only if slug is long)
                 let display_id = if e.id.len() > 44 {
                     format!("{}…", &e.id[..43])
                 } else {
                     e.id.clone()
                 };
-                let date = e.timestamp.replace('T', " ").replace('-', "-");
-                let title = if e.title.len() > 50 {
-                    format!("{}…", &e.title[..49])
+                let date = e.timestamp.replace('T', " ");
+                let date = &date[..16.min(date.len())]; // YYYY-MM-DD HH:MM
+                let title = if e.title.chars().count() > 50 {
+                    format!("{}…", e.title.chars().take(49).collect::<String>())
                 } else {
                     e.title.clone()
                 };
-                println!("{:<45}  {:<19}  {}", display_id, &date[..19.min(date.len())], title);
+                println!("{:<45}  {:<16}  {:<5}  {}", display_id, date, e.turns, title);
             }
             println!("\nTotal: {} conversation(s)", entries.len());
             println!("History dir: {}", history::history_dir().display());
@@ -84,9 +85,93 @@ fn print_chats(limit: usize) {
     }
 }
 
+/// Launch `fzf` and let the user pick a conversation to resume.
+///
+/// Each line fed to fzf is tab-separated:
+///   `<id>\t<date>\t<title>\t<turns>`
+///
+/// fzf displays only columns 3–4 (title + turns) with column 2 (date) in the
+/// prompt, keeping the ID hidden for clean parsing.  Returns the selected ID,
+/// or `None` if the user cancelled.
+fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
+    let entries = history::list(None).context("listing saved conversations")?;
+    if entries.is_empty() {
+        anyhow::bail!(
+            "No saved conversations found.\n\
+             Start a conversation with sven first, then use --resume to continue it."
+        );
+    }
+
+    // Build tab-separated lines: ID \t DATE \t TITLE \t TURNS
+    let lines: String = entries
+        .iter()
+        .map(|e| {
+            let date = e.timestamp.replace('T', " ");
+            let date = &date[..16.min(date.len())];
+            let turns_label = if e.turns == 1 { "1 turn".to_string() } else { format!("{} turns", e.turns) };
+            format!("{}\t{}\t{}\t{}", e.id, date, e.title, turns_label)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut child = std::process::Command::new("fzf")
+        .args([
+            "--delimiter=\t",
+            "--with-nth=3,2,4",   // display: title | date | turns  (ID column is hidden)
+            "--tabstop=1",
+            "--header=Resume conversation  (Enter: open · Esc: cancel)",
+            "--header-first",
+            "--height=50%",
+            "--min-height=10",
+            "--reverse",
+            "--no-sort",          // preserve recency order
+            "--bind=ctrl-/:toggle-preview",
+            "--preview=echo {}",  // show the raw line (including id) in preview
+            "--preview-window=down:2:wrap:hidden",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context(
+            "failed to launch fzf — make sure fzf is installed\n\
+             (https://github.com/junegunn/fzf or `apt install fzf`)"
+        )?;
+
+    // Write the list to fzf's stdin then close it.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(lines.as_bytes());
+    }
+
+    let output = child.wait_with_output()?;
+
+    if !output.status.success() {
+        // Exit 1 = no match / user pressed Esc
+        return Ok(None);
+    }
+
+    let selected = String::from_utf8_lossy(&output.stdout);
+    let selected = selected.trim();
+    if selected.is_empty() {
+        return Ok(None);
+    }
+
+    // First tab-delimited field is the hidden ID.
+    let id = selected.split('\t').next().unwrap_or("").trim().to_string();
+    if id.is_empty() {
+        anyhow::bail!("fzf returned an unexpected selection: {selected:?}");
+    }
+    Ok(Some(id))
+}
+
 async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     // --resume in headless mode: resolve to a history file then run as conversation.
     if let Some(id) = &cli.resume {
+        if id.is_empty() {
+            anyhow::bail!(
+                "--resume requires an explicit ID in headless mode.\n\
+                 Use 'sven chats' to list available conversations."
+            );
+        }
         let file_path = history::resolve(id)
             .with_context(|| format!("resolving conversation id '{id}'"))?;
 
@@ -156,25 +241,36 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         event::{EnableMouseCapture, DisableMouseCapture},
     };
 
-    let terminal = ratatui::init();
+    // Resolve history BEFORE entering raw-terminal mode.  If anything goes
+    // wrong (bad ID, parse error, fzf cancelled) we can print a normal error
+    // message without corrupting the terminal state.
+    let initial_history = match &cli.resume {
+        None => None,
+        Some(id) => {
+            let actual_id = if id.is_empty() {
+                // No ID given — launch fzf so the user can pick interactively.
+                match pick_chat_with_fzf()? {
+                    Some(picked) => picked,
+                    None => return Ok(()), // user cancelled fzf
+                }
+            } else {
+                id.clone()
+            };
 
-    // Enable mouse reporting so scroll-wheel events reach us.
-    let _ = execute!(std::io::stderr(), EnableMouseCapture);
+            let (parsed, path) = history::load(&actual_id)
+                .with_context(|| format!("loading conversation '{actual_id}'"))?;
 
-    // If --resume was given, load the conversation history.
-    let initial_history = if let Some(id) = &cli.resume {
-        let (parsed, path) = history::load(id)
-            .with_context(|| format!("loading conversation '{id}'"))?;
-        // Convert history messages into ChatSegments.
-        let segments: Vec<sven_tui::ChatSegment> = parsed
-            .history
-            .into_iter()
-            .map(sven_tui::ChatSegment::Message)
-            .collect();
-        Some((segments, path))
-    } else {
-        None
+            let segments: Vec<sven_tui::ChatSegment> = parsed
+                .history
+                .into_iter()
+                .map(sven_tui::ChatSegment::Message)
+                .collect();
+            Some((segments, path))
+        }
     };
+
+    let terminal = ratatui::init();
+    let _ = execute!(std::io::stderr(), EnableMouseCapture);
 
     let opts = AppOptions {
         mode: cli.mode,
