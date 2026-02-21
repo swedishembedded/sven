@@ -31,6 +31,19 @@ pub struct Cli {
     #[arg(long, short = 'f')]
     pub file: Option<PathBuf>,
 
+    /// Conversation file mode: load history from file, execute the trailing
+    /// ## User section, and append results back to the same file.
+    /// Requires --file.
+    #[arg(long)]
+    pub conversation: bool,
+
+    /// Resume a saved conversation by ID (or unique prefix / file path).
+    /// In TUI mode the history is displayed and the session continues interactively.
+    /// In headless mode it behaves like --conversation --file <resolved-path>.
+    /// Use 'sven chats' to list available conversations.
+    #[arg(long, value_name = "ID")]
+    pub resume: Option<String>,
+
     /// Path to config file (overrides auto-discovery)
     #[arg(long, short = 'c')]
     pub config: Option<PathBuf>,
@@ -52,6 +65,12 @@ pub enum Commands {
     },
     /// Print the effective configuration and exit
     ShowConfig,
+    /// List saved conversations
+    Chats {
+        /// Maximum number of conversations to show (default: 20)
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: usize,
+    },
 }
 
 impl Cli {

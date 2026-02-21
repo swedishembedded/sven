@@ -71,7 +71,7 @@ pub fn draw_status(
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
         tool_span,
         Span::styled(
-            "  F1:help  ^w k:↑chat  ^w j:↓input  /:search  ^T:pager  F4:mode  ^c:quit",
+            "  F1:help  ^w k:↑chat  ^w j:↓input  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -120,13 +120,26 @@ pub fn draw_chat(
         })
         .collect();
 
-    let para = Paragraph::new(visible).wrap(Wrap { trim: false });
+    // When Neovim is the content source (nvim_cursor is Some), the lines are
+    // already grid rows of exactly bridge.width columns — never rewrap them.
+    // Ratatui's `Wrap` can miscount unicode wide-char display widths and add
+    // an unexpected extra visual row, which shifts every subsequent row down
+    // by 1 and clips the bottom of the grid from view.
+    //
+    // For the non-Neovim fallback (chat_lines from markdown renderer), we
+    // keep wrapping on so that unusually long words are not hard-truncated.
+    let para = if nvim_cursor.is_some() {
+        Paragraph::new(visible)
+    } else {
+        Paragraph::new(visible).wrap(Wrap { trim: false })
+    };
     frame.render_widget(para, inner);
 
     // Draw Neovim cursor if provided and focused
     if focused {
         if let Some((cursor_row, cursor_col)) = nvim_cursor {
-            // Adjust cursor position relative to scroll offset
+            // cursor_row is the 0-indexed row in the Neovim grid; scroll_offset
+            // is 0 when Neovim owns the viewport, so visible_row == cursor_row.
             if let Some(visible_row) = cursor_row.checked_sub(scroll_offset) {
                 if (visible_row as usize) < inner.height as usize {
                     frame.set_cursor_position((

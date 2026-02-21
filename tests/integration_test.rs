@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use sven_config::{AgentConfig, AgentMode, Config};
 use sven_core::Agent;
-use sven_input::parse_markdown_steps;
-use sven_model::MockProvider;
+use sven_input::{parse_markdown_steps, parse_conversation, serialize_conversation_turn};
+use sven_model::{MockProvider, Message, Role};
 use sven_tools::ToolRegistry;
 use tokio::sync::mpsc;
 
@@ -129,4 +129,124 @@ async fn fs_tool_write_read_roundtrip() {
     assert_eq!(ro.content.trim(), "roundtrip");
 
     let _ = std::fs::remove_file(&path);
+}
+
+// ── Conversation parsing integration tests ────────────────────────────────────
+
+#[test]
+fn conversation_parse_fixture_file() {
+    let md = std::fs::read_to_string("tests/fixtures/conversation.md")
+        .expect("conversation fixture must exist");
+    let conv = parse_conversation(&md).expect("fixture must parse cleanly");
+    // Fixture has title + 2 complete turns + 1 pending user section
+    assert_eq!(conv.title.as_deref(), Some("Test Conversation"));
+    assert_eq!(conv.history.len(), 2, "two complete messages in history");
+    assert!(conv.pending_user_input.is_some(), "trailing ## User is pending");
+    assert_eq!(
+        conv.pending_user_input.as_deref().unwrap().trim(),
+        "What did you echo?"
+    );
+}
+
+#[test]
+fn conversation_parse_empty_file() {
+    let conv = parse_conversation("").expect("empty file must parse");
+    assert!(conv.history.is_empty());
+    assert!(conv.pending_user_input.is_none());
+}
+
+#[test]
+fn conversation_parse_only_user_section() {
+    let md = "## User\nFirst task\n";
+    let conv = parse_conversation(md).expect("must parse");
+    assert!(conv.history.is_empty());
+    assert_eq!(conv.pending_user_input.as_deref(), Some("First task"));
+}
+
+#[test]
+fn conversation_parse_complete_exchange_no_pending() {
+    let md = "## User\nTask\n\n## Sven\nDone\n";
+    let conv = parse_conversation(md).expect("must parse");
+    assert_eq!(conv.history.len(), 2);
+    assert!(conv.pending_user_input.is_none());
+}
+
+#[test]
+fn conversation_round_trip_text_only() {
+    let messages = vec![
+        Message::user("Do something"),
+        Message::assistant("I did it"),
+    ];
+    let md = serialize_conversation_turn(&messages);
+    let conv = parse_conversation(&md).expect("round-trip must parse");
+    assert_eq!(conv.history.len(), 2);
+    assert_eq!(conv.history[0].as_text(), Some("Do something"));
+    assert_eq!(conv.history[1].as_text(), Some("I did it"));
+}
+
+#[test]
+fn conversation_round_trip_with_tool_call() {
+    use sven_model::{FunctionCall, MessageContent};
+    let messages = vec![
+        Message::user("Search"),
+        Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "call_99".into(),
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"/tmp/x"}"#.into(),
+                },
+            },
+        },
+        Message::tool_result("call_99", "file contents"),
+        Message::assistant("Found it"),
+    ];
+    let md = serialize_conversation_turn(&messages);
+
+    assert!(md.contains("## Tool\n"), "tool section present");
+    assert!(md.contains("## Tool Result\n"), "tool result section present");
+    assert!(md.contains("call_99"), "tool call id present");
+
+    let conv = parse_conversation(&md).expect("round-trip parse");
+    assert_eq!(conv.history.len(), 4);
+    match &conv.history[1].content {
+        MessageContent::ToolCall { tool_call_id, function } => {
+            assert_eq!(tool_call_id, "call_99");
+            assert_eq!(function.name, "read_file");
+        }
+        _ => panic!("expected ToolCall"),
+    }
+    match &conv.history[2].content {
+        MessageContent::ToolResult { tool_call_id, content } => {
+            assert_eq!(tool_call_id, "call_99");
+            assert!(content.contains("file contents"));
+        }
+        _ => panic!("expected ToolResult"),
+    }
+}
+
+#[test]
+fn conversation_nested_code_block_preserved() {
+    let md = concat!(
+        "## User\nHow to write Rust?\n\n",
+        "## Sven\nHere you go:\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nDone.\n",
+    );
+    let conv = parse_conversation(md).expect("nested code block must not break parsing");
+    assert_eq!(conv.history.len(), 2);
+    let response = conv.history[1].as_text().unwrap();
+    assert!(response.contains("fn main()"), "code block content preserved");
+}
+
+#[test]
+fn conversation_serialize_skips_system_messages() {
+    let messages = vec![
+        Message::system("You are a helpful assistant"),
+        Message::user("Hi"),
+        Message::assistant("Hello"),
+    ];
+    let md = serialize_conversation_turn(&messages);
+    assert!(!md.contains("## System"), "system messages must not appear in file");
+    assert!(md.contains("## User"), "user message present");
+    assert!(md.contains("## Sven"), "sven message present");
 }

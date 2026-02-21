@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sven-config = { path = "../sven-config" }
 sven-model  = { path = "../sven-model" }
+sven-input  = { path = "../sven-input" }
 sven-tools  = { path = "../sven-tools" }
 sven-core   = { path = "../sven-core" }
 anyhow      = { workspace = true }

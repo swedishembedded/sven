@@ -6,4 +6,4 @@ mod nvim_bridge;
 mod pager;
 mod widgets;
 
-pub use app::{App, AppOptions};
+pub use app::{App, AppOptions, ChatSegment};

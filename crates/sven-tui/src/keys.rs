@@ -50,6 +50,9 @@ pub enum Action {
     EditMessageConfirm,
     EditMessageCancel,
 
+    // Buffer submit (Neovim integration)
+    SubmitBufferToAgent,
+
     // App
     Quit,
     Help,
@@ -163,6 +166,9 @@ pub fn map_key(
 
         // Edit message at cursor (chat pane)
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
+
+        // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
+        KeyCode::Enter if !in_input && ctrl => Some(Action::SubmitBufferToAgent),
 
         _ => None,
     }

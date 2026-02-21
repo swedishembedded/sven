@@ -289,6 +289,8 @@ impl Agent {
 
     pub fn session(&self) -> &Session { &self.session }
 
+    pub fn session_mut(&mut self) -> &mut Session { &mut self.session }
+
     pub fn mode(&self) -> AgentMode {
         *self.current_mode.blocking_lock()
     }

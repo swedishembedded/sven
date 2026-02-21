@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
@@ -31,6 +32,10 @@ use crate::{
 pub struct AppOptions {
     pub mode: AgentMode,
     pub initial_prompt: Option<String>,
+    /// Pre-loaded conversation history (from `--resume`).  When set the
+    /// segments are injected into the chat pane on startup and the path is
+    /// used for subsequent auto-saves.
+    pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
 }
 
 /// Which pane currently holds keyboard focus.
@@ -61,6 +66,9 @@ pub enum AgentRequest {
         messages: Vec<Message>,
         new_user_content: String,
     },
+    /// Pre-load conversation history (resume flow).  Does not trigger a
+    /// model call; the agent is just primed for the next submission.
+    LoadHistory(Vec<Message>),
 }
 
 // ── Key filtering for Neovim forwarding ──────────────────────────────────────
@@ -72,6 +80,7 @@ fn is_reserved_key(event: &KeyEvent) -> bool {
         (KeyModifiers::CONTROL, KeyCode::Char('w'))  // Pane switching prefix
         | (KeyModifiers::CONTROL, KeyCode::Char('c'))  // Quit
         | (KeyModifiers::CONTROL, KeyCode::Char('t'))  // Pager toggle
+        | (KeyModifiers::CONTROL, KeyCode::Enter)  // Submit buffer to agent
         | (KeyModifiers::NONE, KeyCode::F(1))  // Help
         | (KeyModifiers::NONE, KeyCode::F(4))  // Mode cycle
         | (KeyModifiers::NONE, KeyCode::Char('/'))  // Search (when not in nvim)
@@ -93,7 +102,9 @@ fn to_nvim_notation(event: &KeyEvent) -> Option<String> {
             }
         }
         KeyCode::Enter => {
-            if event.modifiers.contains(KeyModifiers::SHIFT) {
+            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                "<C-CR>".to_string()
+            } else if event.modifiers.contains(KeyModifiers::SHIFT) {
                 "<S-CR>".to_string()
             } else {
                 "<CR>".to_string()
@@ -269,17 +280,29 @@ pub struct App {
     edit_cursor: usize,
     /// Embedded Neovim instance for chat view
     nvim_bridge: Option<Arc<tokio::sync::Mutex<NvimBridge>>>,
+    /// Shared with NvimBridge's NvimHandler.  Notified after every Neovim
+    /// `flush` event so the render loop can re-draw without waiting for a
+    /// keyboard event.  This fixes the "G needs a second keypress" timing bug.
+    nvim_flush_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Path to the current conversation's history file.  Set on first save,
+    /// or pre-set when resuming an existing conversation.
+    history_path: Option<PathBuf>,
 }
 
 impl App {
     pub fn new(config: Arc<Config>, opts: AppOptions) -> Self {
+        let (initial_segments, history_path) = opts
+            .initial_history
+            .map(|(segs, path)| (segs, Some(path)))
+            .unwrap_or_else(|| (Vec::new(), None));
+
         let mut app = Self {
             config,
             mode: opts.mode,
             focus: FocusPane::Input,
             chat_lines: Vec::new(),
             chat_raw: String::new(),
-            chat_segments: Vec::new(),
+            chat_segments: initial_segments,
             streaming_assistant_buffer: String::new(),
             segment_line_ranges: Vec::new(),
             scroll_offset: 0,
@@ -303,6 +326,8 @@ impl App {
             edit_buffer: String::new(),
             edit_cursor: 0,
             nvim_bridge: None,
+            nvim_flush_notify: None,
+            history_path,
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(prompt);
@@ -316,7 +341,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
-        self.agent_tx = Some(submit_tx);
+        self.agent_tx = Some(submit_tx.clone());
         self.event_rx = Some(event_rx);
 
         let cfg = self.config.clone();
@@ -325,6 +350,26 @@ impl App {
         tokio::spawn(async move {
             agent_task(cfg, mode, submit_rx, event_tx, question_tx).await;
         });
+
+        // When resuming a conversation, prime the agent with the loaded history.
+        if !self.chat_segments.is_empty() {
+            let messages: Vec<Message> = self
+                .chat_segments
+                .iter()
+                .filter_map(|seg| {
+                    if let ChatSegment::Message(m) = seg {
+                        Some(m.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !messages.is_empty() {
+                let _ = submit_tx.send(AgentRequest::LoadHistory(messages)).await;
+            }
+            self.rerender_chat().await;
+            self.scroll_to_bottom();
+        }
 
         // Initialize NvimBridge with proper dimensions
         let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
@@ -346,6 +391,8 @@ impl App {
                 if let Err(e) = bridge.configure_buffer().await {
                     tracing::warn!("Failed to configure Neovim buffer: {}", e);
                 }
+                // Grab the flush notify BEFORE moving the bridge into the Arc.
+                self.nvim_flush_notify = Some(bridge.flush_notify.clone());
                 self.nvim_bridge = Some(Arc::new(tokio::sync::Mutex::new(bridge)));
             }
             Err(e) => {
@@ -375,20 +422,26 @@ impl App {
 
             let ascii = self.ascii();
 
-            // Render Neovim grid to lines before drawing (if available)
-            let nvim_lines = if let Some(nvim_bridge) = &self.nvim_bridge {
-                let bridge = nvim_bridge.lock().await;
-                bridge.render_to_lines(self.scroll_offset, self.chat_height).await
-            } else {
-                Vec::new()
-            };
-
-            let nvim_cursor = if let Some(nvim_bridge) = &self.nvim_bridge {
-                let bridge = nvim_bridge.lock().await;
-                Some(bridge.get_cursor_pos().await)
-            } else {
-                None
-            };
+            // Render Neovim grid to lines before drawing (if available).
+            //
+            // IMPORTANT: always pass scroll=0 and bridge.height (not self.scroll_offset
+            // / self.chat_height).  The Neovim grid IS the viewport — Neovim has
+            // already applied its own internal scrolling via grid_scroll events.
+            // Passing scroll_offset here would:
+            //   1. Cut off the top scroll_offset rows of the Neovim grid
+            //   2. Combine with draw_chat's own .skip(scroll_offset) for double-scroll
+            //
+            // When Neovim is active, draw_chat is called with nvim_draw_scroll=0
+            // so it does not skip any rows from the already-correct grid.
+            let (nvim_lines, nvim_draw_scroll, nvim_cursor) =
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let bridge = nvim_bridge.lock().await;
+                    let lines  = bridge.render_to_lines(0, bridge.height).await;
+                    let cursor = bridge.get_cursor_pos().await;
+                    (lines, 0u16, Some(cursor))
+                } else {
+                    (Vec::new(), self.scroll_offset, None)
+                };
 
             terminal.draw(|frame| {
                 // Pager overlay takes the whole screen
@@ -429,18 +482,20 @@ impl App {
                     self.current_tool.as_deref(),
                     ascii,
                 );
-                // Use Neovim lines if available, otherwise fall back to chat_lines
+                // Use Neovim lines if available, otherwise fall back to chat_lines.
+                // When Neovim is active, nvim_draw_scroll=0 (no additional skipping —
+                // Neovim already managed its own viewport).
                 let lines_to_draw = if !nvim_lines.is_empty() {
                     &nvim_lines
                 } else {
                     &self.chat_lines
                 };
-                
+
                 draw_chat(
                     frame,
                     layout.chat_pane,
                     lines_to_draw,
-                    self.scroll_offset,
+                    nvim_draw_scroll,
                     self.focus == FocusPane::Chat,
                     ascii,
                     &self.search.query,
@@ -493,6 +548,9 @@ impl App {
                 }
             })?;
 
+            // Clone the Arc (cheap) so the flush future doesn't borrow self
+            // at the same time as the mutable arms below.
+            let flush_notify_clone = self.nvim_flush_notify.clone();
             tokio::select! {
                 Some(agent_event) = self.recv_agent_event() => {
                     if self.handle_agent_event(agent_event).await { break; }
@@ -503,6 +561,10 @@ impl App {
                 Some(req) = question_rx.recv() => {
                     self.handle_question_request(req);
                 }
+                // Re-render when Neovim finishes a redraw cycle (flush event).
+                // This ensures the grid and cursor state are always current
+                // without waiting for the next user keypress.
+                _ = Self::nvim_flush_future(flush_notify_clone.as_deref()) => {}
             }
         }
 
@@ -511,6 +573,17 @@ impl App {
 
     async fn recv_agent_event(&mut self) -> Option<AgentEvent> {
         if let Some(rx) = &mut self.event_rx { rx.recv().await } else { None }
+    }
+
+    /// Returns a future that resolves when the Neovim flush_notify fires, or
+    /// that never resolves when Neovim is not active.  This is used as the
+    /// fourth `select!` arm so the render loop wakes up immediately after
+    /// Neovim finishes processing each input key.
+    async fn nvim_flush_future(notify: Option<&tokio::sync::Notify>) {
+        match notify {
+            Some(n) => n.notified().await,
+            None    => std::future::pending().await,
+        }
     }
 
     // ── Agent event handler ───────────────────────────────────────────────────
@@ -524,6 +597,7 @@ impl App {
                 self.streaming_assistant_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
                 if let Some(pager) = &mut self.pager {
                     pager.set_lines(self.chat_lines.clone());
                 }
@@ -534,6 +608,7 @@ impl App {
                 self.streaming_assistant_buffer.clear();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
                 if let Some(pager) = &mut self.pager {
                     pager.set_lines(self.chat_lines.clone());
                 }
@@ -561,6 +636,7 @@ impl App {
                 }));
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
                 if let Some(pager) = &mut self.pager {
                     pager.set_lines(self.chat_lines.clone());
                 }
@@ -571,6 +647,7 @@ impl App {
                     .push(ChatSegment::Message(Message::tool_result(&call_id, &output)));
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
                 if let Some(pager) = &mut self.pager {
                     pager.set_lines(self.chat_lines.clone());
                 }
@@ -596,6 +673,7 @@ impl App {
                         tracing::error!("Failed to set buffer modifiable: {}", e);
                     }
                 }
+                self.save_history_async();
                 if let Some(next) = self.queued.pop_front() {
                     let tx = self.agent_tx.clone().unwrap();
                     tokio::spawn(async move { let _ = tx.send(AgentRequest::Submit(next)).await; });
@@ -699,8 +777,30 @@ impl App {
                 // Only scroll when pager is not open (pager uses keyboard)
                 if self.pager.is_none() {
                     match mouse.kind {
-                        MouseEventKind::ScrollUp   => self.scroll_up(3),
-                        MouseEventKind::ScrollDown => self.scroll_down(3),
+                        MouseEventKind::ScrollUp => {
+                            // When Neovim is active it owns the viewport; forward
+                            // scroll as Neovim commands instead of moving scroll_offset.
+                            if self.nvim_bridge.is_some() {
+                                if let Some(nvim_bridge) = &self.nvim_bridge {
+                                    let mut bridge = nvim_bridge.lock().await;
+                                    // <C-y> scrolls viewport up (reveals earlier lines)
+                                    let _ = bridge.send_input("<C-y><C-y><C-y>").await;
+                                }
+                            } else {
+                                self.scroll_up(3);
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if self.nvim_bridge.is_some() {
+                                if let Some(nvim_bridge) = &self.nvim_bridge {
+                                    let mut bridge = nvim_bridge.lock().await;
+                                    // <C-e> scrolls viewport down (reveals later lines)
+                                    let _ = bridge.send_input("<C-e><C-e><C-e>").await;
+                                }
+                            } else {
+                                self.scroll_down(3);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -925,12 +1025,119 @@ impl App {
                 self.edit_cursor = 0;
             }
 
-            Action::ScrollUp       => self.scroll_up(1),
-            Action::ScrollDown     => self.scroll_down(1),
-            Action::ScrollPageUp   => self.scroll_up(self.chat_height / 2),
-            Action::ScrollPageDown => self.scroll_down(self.chat_height / 2),
-            Action::ScrollTop      => self.scroll_offset = 0,
-            Action::ScrollBottom   => self.scroll_to_bottom(),
+            Action::SubmitBufferToAgent => {
+                // Get content from Neovim buffer, parse to messages, and resubmit
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let markdown = {
+                        let bridge = nvim_bridge.lock().await;
+                        match bridge.get_buffer_content().await {
+                            Ok(content) => content,
+                            Err(e) => {
+                                tracing::error!("Failed to get buffer content: {}", e);
+                                return false;
+                            }
+                        }
+                    };
+                    
+                    // Parse markdown to messages
+                    match parse_markdown_to_messages(&markdown) {
+                        Ok(messages) => {
+                            if messages.is_empty() {
+                                tracing::warn!("Empty buffer, nothing to submit");
+                                return false;
+                            }
+                            
+                            // Find the last user message as the new_user_content
+                            let new_user_content = messages
+                                .iter()
+                                .rev()
+                                .find(|m| m.role == Role::User)
+                                .and_then(|m| m.as_text())
+                                .unwrap_or("")
+                                .to_string();
+                            
+                            if new_user_content.is_empty() {
+                                tracing::warn!("No user message found in buffer");
+                                return false;
+                            }
+                            
+                            // Update our internal state with parsed messages
+                            self.chat_segments = messages
+                                .iter()
+                                .map(|m| ChatSegment::Message(m.clone()))
+                                .collect();
+                            
+                            // Rebuild tool_args_cache for tool result display
+                            self.tool_args_cache.clear();
+                            for msg in &messages {
+                                if let MessageContent::ToolCall { tool_call_id, function } = &msg.content {
+                                    self.tool_args_cache
+                                        .insert(tool_call_id.clone(), function.name.clone());
+                                }
+                            }
+                            
+                            self.rerender_chat().await;
+                            self.scroll_to_bottom();
+                            self.send_resubmit_to_agent(messages, new_user_content).await;
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to parse buffer markdown: {}", e);
+                            // TODO: Show error in UI?
+                            return false;
+                        }
+                    }
+                } else {
+                    tracing::warn!("SubmitBufferToAgent called but nvim_bridge not available");
+                }
+            }
+
+            // When Neovim is active it manages the viewport; forward scroll
+            // actions as Neovim scroll commands.  When it is not active, use
+            // the normal TUI scroll_offset mechanism.
+            Action::ScrollUp => {
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-y>").await;
+                } else {
+                    self.scroll_up(1);
+                }
+            }
+            Action::ScrollDown => {
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-e>").await;
+                } else {
+                    self.scroll_down(1);
+                }
+            }
+            Action::ScrollPageUp => {
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-u>").await;
+                } else {
+                    self.scroll_up(self.chat_height / 2);
+                }
+            }
+            Action::ScrollPageDown => {
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-d>").await;
+                } else {
+                    self.scroll_down(self.chat_height / 2);
+                }
+            }
+            Action::ScrollTop => {
+                if let Some(nvim_bridge) = &self.nvim_bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("gg").await;
+                } else {
+                    self.scroll_offset = 0;
+                }
+            }
+            Action::ScrollBottom => {
+                self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
+            }
 
             Action::SearchOpen => {
                 self.search.query.clear();
@@ -1042,6 +1249,10 @@ impl App {
                     if self.agent_busy {
                         self.queued.push_back(text);
                     } else {
+                        // Sync any in-buffer edits the user made before appending
+                        // the new message.  Without this, rerender_chat() would
+                        // overwrite the buffer from the stale chat_segments.
+                        self.sync_nvim_buffer_to_segments().await;
                         self.chat_segments
                             .push(ChatSegment::Message(Message::user(&text)));
                         self.rerender_chat().await;
@@ -1086,6 +1297,7 @@ impl App {
             let _ = tx.send(AgentRequest::Submit(text)).await;
             self.agent_busy = true;
             self.needs_agent_prefix = true;
+            // Note: rerender_chat() will set buffer to non-modifiable during streaming
         }
     }
 
@@ -1099,6 +1311,7 @@ impl App {
                 .await;
             self.agent_busy = true;
             self.needs_agent_prefix = true;
+            // Note: rerender_chat() will set buffer to non-modifiable during streaming
         }
     }
 
@@ -1175,8 +1388,21 @@ impl App {
             }
             
             let mut bridge = nvim_bridge.lock().await;
+            
+            // Temporarily make buffer modifiable for updates
+            if let Err(e) = bridge.set_modifiable(true).await {
+                tracing::error!("Failed to set buffer modifiable for update: {}", e);
+            }
+            
             if let Err(e) = bridge.set_buffer_content(&content).await {
                 tracing::error!("Failed to update Neovim buffer: {}", e);
+            }
+            
+            // Set back to non-modifiable if agent is still busy (streaming)
+            if self.agent_busy {
+                if let Err(e) = bridge.set_modifiable(false).await {
+                    tracing::error!("Failed to set buffer non-modifiable: {}", e);
+                }
             }
         }
         
@@ -1201,9 +1427,112 @@ impl App {
         self.scroll_offset = (self.scroll_offset + n).min(max);
     }
 
+    /// Collect `Message` objects from `chat_segments` and persist the
+    /// conversation to disk.  Runs the I/O in a background task so it does
+    /// not block the event loop.  Errors are logged and silently swallowed.
+    fn save_history_async(&mut self) {
+        let messages: Vec<sven_model::Message> = self
+            .chat_segments
+            .iter()
+            .filter_map(|seg| {
+                if let ChatSegment::Message(m) = seg {
+                    Some(m.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if messages.is_empty() {
+            return;
+        }
+
+        let path_opt = self.history_path.clone();
+
+        // We need to propagate the new path back if this is the first save.
+        // Because `tokio::spawn` cannot mutate `self`, we save synchronously
+        // for the first save (path creation) and then background subsequent ones.
+        match path_opt {
+            None => {
+                // First save: create the file and record the path.
+                match sven_input::history::save(&messages) {
+                    Ok(path) => {
+                        debug!(path = %path.display(), "conversation saved to history");
+                        self.history_path = Some(path);
+                    }
+                    Err(e) => {
+                        debug!("failed to save conversation to history: {e}");
+                    }
+                }
+            }
+            Some(path) => {
+                // Subsequent saves: overwrite in background.
+                tokio::spawn(async move {
+                    if let Err(e) = sven_input::history::save_to(&path, &messages) {
+                        debug!("failed to update conversation history: {e}");
+                    }
+                });
+            }
+        }
+    }
+
     fn scroll_to_bottom(&mut self) {
-        self.scroll_offset =
-            (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
+        // When Neovim is active it owns the viewport.  Modifying scroll_offset
+        // here would corrupt the Neovim grid rendering because the offset gets
+        // applied on top of Neovim's already-scrolled grid, cutting off content.
+        // Callers that also want to scroll Neovim to the bottom must separately
+        // call nvim_scroll_to_bottom().
+        if self.nvim_bridge.is_none() {
+            self.scroll_offset =
+                (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
+        }
+    }
+
+    /// Read the Neovim buffer and update `chat_segments` from it.
+    ///
+    /// Called before submitting a new user message so that any in-buffer edits
+    /// the user made are preserved rather than discarded when `rerender_chat`
+    /// overwrites the buffer.  If the buffer cannot be read or does not parse,
+    /// the existing `chat_segments` are left unchanged.
+    async fn sync_nvim_buffer_to_segments(&mut self) {
+        let content = if let Some(nvim_bridge) = &self.nvim_bridge {
+            let bridge = nvim_bridge.lock().await;
+            bridge.get_buffer_content().await.ok()
+        } else {
+            return;
+        };
+
+        if let Some(content) = content {
+            match parse_markdown_to_messages(&content) {
+                Ok(messages) if !messages.is_empty() => {
+                    self.chat_segments = messages
+                        .iter()
+                        .map(|m| ChatSegment::Message(m.clone()))
+                        .collect();
+                    self.tool_args_cache.clear();
+                    for m in &messages {
+                        if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
+                            self.tool_args_cache
+                                .insert(tool_call_id.clone(), function.name.clone());
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!("sync_nvim_buffer_to_segments: parse error — keeping existing segments: {e}");
+                }
+            }
+        }
+    }
+
+    /// Send "G" to Neovim to scroll to the end of the buffer.
+    /// This is the async counterpart to scroll_to_bottom() for when the nvim
+    /// bridge is active.  Errors are silently ignored (non-critical UI update).
+    async fn nvim_scroll_to_bottom(&self) {
+        if let Some(nvim_bridge) = &self.nvim_bridge {
+            let mut bridge = nvim_bridge.lock().await;
+            let _ = bridge.send_input("G").await;
+        }
     }
 
     /// Segment index that contains the given line (0-based). Returns None if line is in streaming buffer.
@@ -1309,9 +1638,13 @@ fn next_word_boundary(s: &str, pos: usize) -> usize {
 
 // ── Tool call formatting helpers ──────────────────────────────────────────────
 
+
+// ── Legacy formatting helpers (used only in tests for validating old behavior) ───
+
+#[cfg(test)]
 const TOOL_CALL_MAX_LINES: usize = 8;
 
-/// Build a markdown output block with middle-truncation for long outputs.
+#[cfg(test)]
 fn format_output_block(output: &str) -> String {
     let lines: Vec<&str> = output.lines().collect();
     if lines.is_empty() {
@@ -1332,7 +1665,7 @@ fn format_output_block(output: &str) -> String {
     format!("\n```\n{}\n```", formatted)
 }
 
-/// Format a JSON args value into a short preview string.
+#[cfg(test)]
 fn format_args_preview(args: &serde_json::Value) -> String {
     match args {
         serde_json::Value::Object(map) => {
@@ -1353,6 +1686,7 @@ fn format_args_preview(args: &serde_json::Value) -> String {
     }
 }
 
+#[cfg(test)]
 fn truncate_str(s: &str, max: usize) -> String {
     let s = s.trim_matches('"');
     if s.chars().count() <= max {
@@ -1400,6 +1734,210 @@ fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, Stri
         ),
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
     }
+}
+
+/// Parse markdown buffer back into structured messages for resubmit.
+/// This is the inverse of `message_to_markdown`, enabling lossless round-trip editing.
+///
+/// Format parsed:
+/// - `**You:** text` → User message
+/// - `**Agent:** text` → Assistant text message
+/// - `**Agent:tool_call:ID**` + ```json block → Assistant ToolCall
+/// - `**Tool:ID**` + ``` block → Tool ToolResult
+/// - `**System:** text` → System message
+/// - `---` → Turn separator (informational, not structural)
+fn parse_markdown_to_messages(markdown: &str) -> Result<Vec<Message>, String> {
+    let mut messages = Vec::new();
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut i = 0;
+    
+    while i < lines.len() {
+        let line = lines[i].trim();
+        
+        // Skip empty lines and --- separators
+        if line.is_empty() || line == "---" {
+            i += 1;
+            continue;
+        }
+        
+        // Parse role headers: **Role:** or **Role:metadata**
+        if let Some(msg) = parse_message_at_line(&lines, &mut i)? {
+            messages.push(msg);
+        } else {
+            i += 1;
+        }
+    }
+    
+    Ok(messages)
+}
+
+/// Parse a single message starting at lines[*i]. Advances *i past the message.
+/// Returns None if no valid message header found at this position.
+fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message>, String> {
+    if *i >= lines.len() {
+        return Ok(None);
+    }
+    
+    let line = lines[*i].trim();
+    
+    // Match role headers
+    if line.starts_with("**You:**") {
+        let text = extract_text_content(lines, i, "**You:**")?;
+        return Ok(Some(Message::user(text)));
+    }
+    
+    if line.starts_with("**Agent:tool_call:") {
+        // Extract tool_call_id from **Agent:tool_call:ID**
+        let tool_call_id = line
+            .strip_prefix("**Agent:tool_call:")
+            .and_then(|s| s.strip_suffix("**"))
+            .ok_or_else(|| format!("Malformed tool_call header: {}", line))?
+            .trim()
+            .to_string();
+        
+        *i += 1;
+        
+        // Skip display line: "🔧 **Tool Call: name**"
+        skip_until_code_fence(lines, i);
+        
+        // Extract JSON args from ```json block
+        let arguments = extract_code_block(lines, i)?;
+        
+        // Extract tool name from the display line we skipped
+        let name = extract_tool_name_from_previous_lines(lines, *i)?;
+        
+        return Ok(Some(Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id,
+                function: FunctionCall { name, arguments },
+            },
+        }));
+    }
+    
+    if line.starts_with("**Tool:") {
+        // Extract tool_call_id from **Tool:ID**
+        let tool_call_id = line
+            .strip_prefix("**Tool:")
+            .and_then(|s| s.strip_suffix("**"))
+            .ok_or_else(|| format!("Malformed tool result header: {}", line))?
+            .trim()
+            .to_string();
+        
+        *i += 1;
+        
+        // Skip display line: "✅ **Tool Response: name**"
+        skip_until_code_fence(lines, i);
+        
+        // Extract output from ``` block
+        let content = extract_code_block(lines, i)?;
+        
+        return Ok(Some(Message {
+            role: Role::Tool,
+            content: MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            },
+        }));
+    }
+    
+    if line.starts_with("**Agent:**") {
+        let text = extract_text_content(lines, i, "**Agent:**")?;
+        return Ok(Some(Message::assistant(text)));
+    }
+    
+    if line.starts_with("**System:**") {
+        let text = extract_text_content(lines, i, "**System:**")?;
+        return Ok(Some(Message::system(text)));
+    }
+    
+    Ok(None)
+}
+
+/// Extract text content for a simple text message. Advances *i past the message.
+fn extract_text_content(lines: &[&str], i: &mut usize, prefix: &str) -> Result<String, String> {
+    let first_line = lines[*i].trim();
+    let inline_text = first_line
+        .strip_prefix(prefix)
+        .map(|s| s.trim())
+        .unwrap_or("");
+    
+    let mut text = String::from(inline_text);
+    *i += 1;
+    
+    // Collect subsequent lines until we hit a new header, ---, or end
+    while *i < lines.len() {
+        let line = lines[*i];
+        let trimmed = line.trim();
+        
+        // Stop at next message header or separator
+        if trimmed.starts_with("**") || trimmed == "---" {
+            break;
+        }
+        
+        // Accumulate non-empty content lines
+        if !trimmed.is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(trimmed);
+        }
+        
+        *i += 1;
+    }
+    
+    Ok(text)
+}
+
+/// Skip lines until we find a code fence marker (```).
+fn skip_until_code_fence(lines: &[&str], i: &mut usize) {
+    while *i < lines.len() {
+        if lines[*i].trim().starts_with("```") {
+            return;
+        }
+        *i += 1;
+    }
+}
+
+/// Extract content from a code block. Assumes *i points to the opening ```.
+/// Advances *i past the closing ```.
+fn extract_code_block(lines: &[&str], i: &mut usize) -> Result<String, String> {
+    if *i >= lines.len() || !lines[*i].trim().starts_with("```") {
+        return Err(format!("Expected code fence at line {}", i));
+    }
+    
+    *i += 1; // skip opening ```
+    
+    let mut content = String::new();
+    while *i < lines.len() {
+        let line = lines[*i];
+        if line.trim().starts_with("```") {
+            *i += 1; // skip closing ```
+            return Ok(content.trim_end().to_string());
+        }
+        
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(line);
+        *i += 1;
+    }
+    
+    Err("Unclosed code block".to_string())
+}
+
+/// Extract tool name from the display line "🔧 **Tool Call: name**" that
+/// appears before the code block. Looks backward from current position.
+fn extract_tool_name_from_previous_lines(lines: &[&str], current: usize) -> Result<String, String> {
+    for j in (0..current).rev().take(5) {
+        let line = lines[j].trim();
+        if let Some(rest) = line.strip_prefix("🔧 **Tool Call:") {
+            if let Some(name) = rest.strip_suffix("**") {
+                return Ok(name.trim().to_string());
+            }
+        }
+    }
+    Err("Could not find tool name in previous lines".to_string())
 }
 
 /// Format the entire conversation as markdown for Neovim buffer
@@ -1479,24 +2017,42 @@ fn apply_bar_and_dim(
 fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
     use sven_model::Role;
     match (&m.role, &m.content) {
+        // User message: starts a new turn with --- separator
         (Role::User, MessageContent::Text(t)) => format!("---\n\n**You:** {}\n", t),
+        
+        // Assistant text message
         (Role::Assistant, MessageContent::Text(t)) => format!("\n**Agent:** {}\n", t),
-        (Role::Assistant, MessageContent::ToolCall { function, .. }) => {
-            let args_preview = serde_json::from_str(&function.arguments)
-                .ok()
-                .as_ref()
-                .map(format_args_preview)
-                .unwrap_or_else(|| truncate_str(&function.arguments, 80));
-            format!("\n🔧 **Tool Call: {}**\n```\n{}\n```\n", function.name, args_preview)
+        
+        // Tool call: store full args as JSON for lossless round-trip.
+        // Format: **Agent:tool_call:ID** followed by formatted display.
+        (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+            format!(
+                "\n**Agent:tool_call:{}**\n🔧 **Tool Call: {}**\n```json\n{}\n```\n",
+                tool_call_id,
+                function.name,
+                function.arguments
+            )
         }
+        
+        // Tool result: store full output (no truncation) for lossless round-trip.
+        // Format: **Tool:ID** followed by formatted display.
         (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
             let tool_name = tool_args_cache
                 .get(tool_call_id)
-                .and_then(|s| s.split(':').next())
+                .map(|s| s.as_str())
                 .unwrap_or("tool");
-            let output_block = format_output_block(content);
-            format!("✅ **Tool Response: {}**{}\n", tool_name, output_block)
+            format!(
+                "\n**Tool:{}**\n✅ **Tool Response: {}**\n```\n{}\n```\n",
+                tool_call_id,
+                tool_name,
+                content
+            )
         }
+        
+        // System messages: render with System header for lossless format
+        (Role::System, MessageContent::Text(t)) => format!("**System:** {}\n\n", t),
+        
+        // Fallback for any unexpected combinations
         _ => String::new(),
     }
 }
@@ -1551,6 +2107,10 @@ async fn agent_task(
                 {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
                 }
+            }
+            AgentRequest::LoadHistory(messages) => {
+                debug!(n = messages.len(), "agent task loading history");
+                agent.session_mut().replace_messages(messages);
             }
         }
     }
@@ -1848,6 +2408,328 @@ mod tests {
         // Assert
         assert!(!result.contains("omitted"),
             "output at exactly max lines must not show an omission notice");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // parse_markdown_to_messages — round-trip tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_empty_markdown_produces_empty_messages() {
+        // Arrange / Act
+        let result = parse_markdown_to_messages("").unwrap();
+        
+        // Assert
+        assert!(result.is_empty(), "empty markdown must parse to empty message list");
+    }
+
+    #[test]
+    fn parse_single_user_message_extracts_role_and_text() {
+        // Arrange
+        let md = "---\n\n**You:** hello world\n";
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 1, "must parse exactly one message");
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].as_text(), Some("hello world"));
+    }
+
+    #[test]
+    fn parse_user_and_agent_messages_preserves_order_and_content() {
+        // Arrange
+        let md = "---\n\n**You:** question\n\n**Agent:** answer\n";
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].as_text(), Some("question"));
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[1].as_text(), Some("answer"));
+    }
+
+    #[test]
+    fn parse_tool_call_extracts_id_name_and_full_args() {
+        // Arrange
+        let md = concat!(
+            "**Agent:tool_call:abc123**\n",
+            "🔧 **Tool Call: read_file**\n",
+            "```json\n",
+            r#"{"path": "/tmp/test.txt"}"#, "\n",
+            "```\n",
+        );
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::Assistant);
+        if let MessageContent::ToolCall { tool_call_id, function } = &messages[0].content {
+            assert_eq!(tool_call_id, "abc123");
+            assert_eq!(function.name, "read_file");
+            assert_eq!(function.arguments.trim(), r#"{"path": "/tmp/test.txt"}"#);
+        } else {
+            panic!("expected ToolCall content");
+        }
+    }
+
+    #[test]
+    fn parse_tool_result_extracts_id_and_full_output() {
+        // Arrange
+        let md = concat!(
+            "**Tool:xyz789**\n",
+            "✅ **Tool Response: glob**\n",
+            "```\n",
+            "file1.rs\n",
+            "file2.rs\n",
+            "```\n",
+        );
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::Tool);
+        if let MessageContent::ToolResult { tool_call_id, content } = &messages[0].content {
+            assert_eq!(tool_call_id, "xyz789");
+            assert_eq!(content.trim(), "file1.rs\nfile2.rs");
+        } else {
+            panic!("expected ToolResult content");
+        }
+    }
+
+    #[test]
+    fn parse_system_message_extracts_role_and_text() {
+        // Arrange
+        let md = "**System:** You are a helpful assistant.\n\n";
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::System);
+        assert_eq!(messages[0].as_text(), Some("You are a helpful assistant."));
+    }
+
+    #[test]
+    fn roundtrip_user_and_agent_messages_preserves_content() {
+        // Arrange
+        let original = vec![
+            Message::user("first question"),
+            Message::assistant("first answer"),
+            Message::user("second question"),
+        ];
+        let cache = HashMap::new();
+        
+        // Act — convert to markdown and back
+        let md: String = original.iter().map(|m| message_to_markdown(m, &cache)).collect();
+        let parsed = parse_markdown_to_messages(&md).unwrap();
+        
+        // Assert
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].as_text(), original[0].as_text());
+        assert_eq!(parsed[1].as_text(), original[1].as_text());
+        assert_eq!(parsed[2].as_text(), original[2].as_text());
+    }
+
+    #[test]
+    fn roundtrip_conversation_with_tool_call_and_result_preserves_all_data() {
+        // Arrange
+        let mut cache = HashMap::new();
+        cache.insert("call1".to_string(), "read_file".to_string());
+        
+        let original = vec![
+            Message::user("read the file"),
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call1".into(),
+                    function: FunctionCall {
+                        name: "read_file".into(),
+                        arguments: r#"{"path":"/tmp/x","encoding":"utf8"}"#.into(),
+                    },
+                },
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::ToolResult {
+                    tool_call_id: "call1".into(),
+                    content: "file contents\nline two\nline three".into(),
+                },
+            },
+            Message::assistant("The file contains three lines"),
+        ];
+        
+        // Act
+        let md: String = original.iter().map(|m| message_to_markdown(m, &cache)).collect();
+        let parsed = parse_markdown_to_messages(&md).unwrap();
+        
+        // Assert — all four messages reconstructed with full data
+        assert_eq!(parsed.len(), 4, "all messages must be preserved");
+        
+        // User message
+        assert_eq!(parsed[0].role, Role::User);
+        assert_eq!(parsed[0].as_text(), Some("read the file"));
+        
+        // Tool call with full args (not truncated)
+        assert_eq!(parsed[1].role, Role::Assistant);
+        if let MessageContent::ToolCall { tool_call_id, function } = &parsed[1].content {
+            assert_eq!(tool_call_id, "call1");
+            assert_eq!(function.name, "read_file");
+            assert!(function.arguments.contains("utf8"),
+                "full args must be preserved; got: {}", function.arguments);
+        } else {
+            panic!("expected ToolCall");
+        }
+        
+        // Tool result with full output (not truncated)
+        assert_eq!(parsed[2].role, Role::Tool);
+        if let MessageContent::ToolResult { tool_call_id, content } = &parsed[2].content {
+            assert_eq!(tool_call_id, "call1");
+            assert!(content.contains("line three"),
+                "full output must be preserved; got: {}", content);
+        } else {
+            panic!("expected ToolResult");
+        }
+        
+        // Final assistant message
+        assert_eq!(parsed[3].role, Role::Assistant);
+        assert_eq!(parsed[3].as_text(), Some("The file contains three lines"));
+    }
+
+    #[test]
+    fn parse_multiline_user_message_joins_lines() {
+        // Arrange
+        let md = "**You:** first line\nsecond line\nthird line\n";
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 1);
+        let text = messages[0].as_text().unwrap();
+        assert!(text.contains("first line"), "first line present");
+        assert!(text.contains("second line"), "second line present");
+        assert!(text.contains("third line"), "third line present");
+    }
+
+    #[test]
+    fn parse_stops_at_next_message_header() {
+        // Arrange — ensure parser doesn't consume text from the next message
+        let md = "**You:** first\n\n**Agent:** second\n";
+        
+        // Act
+        let messages = parse_markdown_to_messages(md).unwrap();
+        
+        // Assert
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].as_text(), Some("first"));
+        assert_eq!(messages[1].as_text(), Some("second"));
+    }
+
+    #[test]
+    fn edit_first_user_message_then_parse_produces_correct_messages_for_resubmit() {
+        // Arrange — simulate editing the first user message in a multi-turn conversation
+        let mut cache = HashMap::new();
+        cache.insert("c1".to_string(), "glob".to_string());
+        
+        let original_segments = vec![
+            user_seg("ORIGINAL_QUESTION"),
+            agent_seg("first answer"),
+            tool_call_seg("c1", "glob"),
+            tool_result_seg("c1", "file.rs"),
+            agent_seg("Found file"),
+            user_seg("second question"),
+            agent_seg("second answer"),
+        ];
+        
+        // Convert to markdown (as it appears in Neovim)
+        let original_md = format_conversation(&original_segments, "", &cache);
+        
+        // Act — simulate user editing: replace "ORIGINAL_QUESTION" with "EDITED_QUESTION"
+        let edited_md = original_md.replace("ORIGINAL_QUESTION", "EDITED_QUESTION");
+        
+        // Parse edited markdown back to messages
+        let parsed = parse_markdown_to_messages(&edited_md).unwrap();
+        
+        // Assert — all messages parsed correctly with edited text
+        assert_eq!(parsed.len(), 7, "all messages must be present");
+        assert_eq!(parsed[0].as_text(), Some("EDITED_QUESTION"), "first message was edited");
+        assert_eq!(parsed[1].as_text(), Some("first answer"), "second message unchanged");
+        assert_eq!(parsed[5].as_text(), Some("second question"), "later messages unchanged");
+        
+        // Verify tool call structure preserved
+        if let MessageContent::ToolCall { tool_call_id, function } = &parsed[2].content {
+            assert_eq!(tool_call_id, "c1");
+            assert_eq!(function.name, "glob");
+        } else {
+            panic!("tool call structure must be preserved");
+        }
+    }
+
+    #[test]
+    fn edit_middle_agent_response_then_parse_truncates_correctly() {
+        // Arrange — edit an assistant message in the middle should truncate
+        // to the preceding user message for resubmit (standard edit-assistant behavior)
+        let original_segments = vec![
+            user_seg("question 1"),
+            agent_seg("EDIT_THIS_RESPONSE"),
+            user_seg("question 2"),
+            agent_seg("answer 2"),
+        ];
+        let cache = HashMap::new();
+        let original_md = format_conversation(&original_segments, "", &cache);
+        
+        // Act — simulate editing the first agent response
+        let edited_md = original_md.replace("EDIT_THIS_RESPONSE", "EDITED_RESPONSE");
+        let parsed = parse_markdown_to_messages(&edited_md).unwrap();
+        
+        // For resubmit after editing assistant message, the app truncates to the
+        // last user message before the edit point. Parse gives us all 4 messages;
+        // the app's truncation logic (lines 897-916) would then cut after message[0].
+        // Here we just verify parsing gives us all messages with edits intact.
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed[0].as_text(), Some("question 1"));
+        assert_eq!(parsed[1].as_text(), Some("EDITED_RESPONSE"), "agent message edited");
+        assert_eq!(parsed[2].as_text(), Some("question 2"));
+        assert_eq!(parsed[3].as_text(), Some("answer 2"));
+    }
+
+    #[test]
+    fn delete_last_turn_by_removing_markdown_then_parse_produces_truncated_list() {
+        // Arrange — simulate deleting the last turn by removing its markdown
+        let original_segments = vec![
+            user_seg("keep this"),
+            agent_seg("keep this too"),
+            user_seg("DELETE_ME"),
+            agent_seg("delete this also"),
+        ];
+        let cache = HashMap::new();
+        let original_md = format_conversation(&original_segments, "", &cache);
+        
+        // Act — remove everything after "keep this too"
+        let lines: Vec<&str> = original_md.lines().collect();
+        let truncated_lines: Vec<&str> = lines
+            .iter()
+            .take_while(|line| !line.contains("DELETE_ME"))
+            .copied()
+            .collect();
+        let edited_md = truncated_lines.join("\n");
+        
+        let parsed = parse_markdown_to_messages(&edited_md).unwrap();
+        
+        // Assert — only first two messages remain
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].as_text(), Some("keep this"));
+        assert_eq!(parsed[1].as_text(), Some("keep this too"));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

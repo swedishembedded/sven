@@ -60,6 +60,83 @@ sven --file plan.md
 echo "Design a REST API" | sven --mode plan | sven --mode agent
 ```
 
+### Conversation files
+
+Conversation mode lets you use a single markdown file as a persistent,
+human-editable conversation log. Run sven on it repeatedly, and each run loads
+the existing history and appends the new agent turn back to the file.
+
+The format uses H2 sections as turn boundaries:
+
+| Section | Role |
+|---------|------|
+| `## User` | Your message or task |
+| `## Sven` | Agent's text response |
+| `## Tool` | A tool call (JSON code block) |
+| `## Tool Result` | Output of the tool call |
+
+An optional H1 line at the top is treated as the conversation title.
+
+Everything inside a section is plain markdown — code blocks, lists, and
+headings at H3 or below are all safe to use without escaping.
+
+**Execution rule:** if the file ends with a `## User` section that has no
+following `## Sven` section, sven treats it as the next instruction to execute
+and appends the result.
+
+```sh
+# Create a conversation file
+cat > work.md << 'EOF'
+# Codebase Analysis
+
+## User
+Summarise the project structure.
+EOF
+
+# First run — sven executes the ## User section and appends ## Sven (+ any tool sections)
+sven --file work.md --conversation
+
+# You can then append a follow-up yourself
+printf '\n## User\nNow list all public API entry points.\n' >> work.md
+
+# Second run — history is loaded, only the new ## User is executed
+sven --file work.md --conversation
+```
+
+After two runs the file might look like:
+
+```markdown
+# Codebase Analysis
+
+## User
+Summarise the project structure.
+
+## Sven
+The project is a Rust workspace with crates for config, model, tools ...
+
+## User
+Now list all public API entry points.
+
+## Tool
+```json
+{
+  "tool_call_id": "call_001",
+  "name": "glob_file_search",
+  "args": {"pattern": "**/*.rs"}
+}
+```
+
+## Tool Result
+```
+src/main.rs
+crates/sven-core/src/lib.rs
+...
+```
+
+## Sven
+The public entry points are `src/main.rs` (binary) and the `pub` items in ...
+```
+
 ### Context management
 
 The agent tracks token usage and compacts the conversation history

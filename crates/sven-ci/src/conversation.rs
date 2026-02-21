@@ -1,3 +1,6 @@
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -7,7 +10,7 @@ use tracing::debug;
 
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, AgentEvent, TaskTool};
-use sven_input::{history, parse_markdown_steps, Step, StepQueue};
+use sven_input::{parse_conversation, serialize_conversation_turn};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::{
     events::{TodoItem, ToolEvent},
@@ -20,29 +23,50 @@ use sven_tools::{
 
 use crate::output::{finalise_stdout, write_stderr, write_stdout};
 
-/// Options for the CI runner.
+/// Options for the conversation runner.
 #[derive(Debug)]
-pub struct CiOptions {
+pub struct ConversationOptions {
     pub mode: AgentMode,
     pub model_override: Option<String>,
-    /// The markdown input to process.  May come from a file or stdin.
-    pub input: String,
-    /// Extra prompt appended before the first step (from positional CLI args)
-    pub extra_prompt: Option<String>,
+    /// Path to the conversation markdown file to load and append to.
+    pub file_path: PathBuf,
+    /// The full file content (already read by the caller).
+    pub content: String,
 }
 
-/// Headless CI runner that processes a [`StepQueue`] sequentially and writes
-/// clean text to stdout.
-pub struct CiRunner {
+/// Headless runner for conversation files.
+///
+/// Loads conversation history from a markdown file, executes the trailing
+/// `## User` section (if any), and appends the new turn back to the file.
+pub struct ConversationRunner {
     config: Arc<Config>,
 }
 
-impl CiRunner {
+impl ConversationRunner {
     pub fn new(config: Arc<Config>) -> Self {
         Self { config }
     }
 
-    pub async fn run(&self, opts: CiOptions) -> anyhow::Result<()> {
+    pub async fn run(&self, opts: ConversationOptions) -> anyhow::Result<()> {
+        // Parse the conversation file
+        let parsed = parse_conversation(&opts.content)
+            .context("failed to parse conversation file")?;
+
+        let pending = match parsed.pending_user_input {
+            Some(p) => p,
+            None => {
+                write_stderr("[conversation] no pending ## User section found — nothing to execute");
+                return Ok(());
+            }
+        };
+
+        debug!(
+            history_messages = parsed.history.len(),
+            pending_len = pending.len(),
+            "starting conversation turn"
+        );
+
+        // Build model
         let mut model_cfg = self.config.model.clone();
         if let Some(name) = &opts.model_override {
             const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
@@ -62,7 +86,6 @@ impl CiRunner {
 
         let agent_cfg = Arc::new(self.config.agent.clone());
 
-        // Shared state for stateful tools
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
         let current_mode: Arc<Mutex<AgentMode>> = Arc::new(Mutex::new(opts.mode));
         let (tool_event_tx, _tool_event_rx) = mpsc::channel::<ToolEvent>(64);
@@ -78,149 +101,134 @@ impl CiRunner {
             task_depth,
         ));
 
-        let mut agent = Agent::new(
-            model,
-            tools,
-            agent_cfg,
-            opts.mode,
-            128_000,
-        );
+        let mut agent = Agent::new(model, tools, agent_cfg, opts.mode, 128_000);
 
-        // Build the step queue from input markdown
-        let mut queue: StepQueue = if opts.input.trim().is_empty() {
-            let content = opts.extra_prompt.clone().unwrap_or_default();
-            StepQueue::from(vec![sven_input::Step { label: None, content }])
-        } else {
-            let mut q = parse_markdown_steps(&opts.input);
-            if let Some(prompt) = &opts.extra_prompt {
-                let mut prepended = StepQueue::from(vec![Step {
-                    label: None,
-                    content: prompt.clone(),
-                }]);
-                while let Some(s) = q.pop() {
-                    prepended.push(s);
+        // Load conversation history into the agent session.
+        // replace_history_and_submit prepends the system message and then adds
+        // the new user message, so we pass history (without pending) and the
+        // pending string separately.
+        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+        let submit_fut = agent.replace_history_and_submit(parsed.history, &pending, tx);
+
+        // Collect events from agent into new messages for the file
+        let mut new_messages: Vec<Message> = Vec::new();
+        let mut failed = false;
+
+        // Append the pending user message first (it was not in history)
+        new_messages.push(Message::user(&pending));
+
+        tokio::pin!(submit_fut);
+
+        loop {
+            tokio::select! {
+                biased;
+
+                Some(event) = rx.recv() => {
+                    collect_event(event, &mut new_messages, &mut failed);
                 }
-                prepended
-            } else {
-                q
-            }
-        };
 
-        let total = queue.len();
-        let mut step_idx = 0usize;
-        let mut collected: Vec<Message> = Vec::new();
-
-        while let Some(step) = queue.pop() {
-            step_idx += 1;
-            let label = step.label.as_deref().unwrap_or("(unlabelled)");
-            debug!(step = step_idx, total, label, "processing CI step");
-
-            // Record the user turn before submitting.
-            collected.push(Message::user(&step.content));
-
-            let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-            let submit_fut = agent.submit(&step.content, tx);
-
-            let mut response_text = String::new();
-            let mut failed = false;
-
-            tokio::pin!(submit_fut);
-
-            loop {
-                tokio::select! {
-                    biased;
-
-                    Some(event) = rx.recv() => {
-                        handle_event(event, &mut response_text, &mut failed, &mut collected);
+                result = &mut submit_fut => {
+                    if let Err(e) = result {
+                        write_stderr(&format!("[fatal] {e}"));
+                        std::process::exit(1);
                     }
-
-                    result = &mut submit_fut => {
-                        if let Err(e) = result {
-                            write_stderr(&format!("[fatal] {e}"));
-                            std::process::exit(1);
-                        }
-                        while let Ok(ev) = rx.try_recv() {
-                            handle_event(ev, &mut response_text, &mut failed, &mut collected);
-                        }
-                        break;
+                    while let Ok(ev) = rx.try_recv() {
+                        collect_event(ev, &mut new_messages, &mut failed);
                     }
+                    break;
                 }
-            }
-
-            finalise_stdout(&response_text);
-
-            if failed {
-                std::process::exit(1);
-            }
-
-            if step_idx < total {
-                write_stderr(&format!("\n--- step {}/{} complete ---\n", step_idx, total));
             }
         }
 
-        // Persist the conversation to history.
-        if !collected.is_empty() {
-            if let Err(e) = history::save(&collected) {
-                debug!("failed to save conversation to history: {e}");
-            }
+        // Finalise stdout (ensure trailing newline)
+        let response_text: String = new_messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .filter_map(|m| m.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        finalise_stdout(&response_text);
+
+        if failed {
+            std::process::exit(1);
+        }
+
+        // Append new turn to the file (skip the User message — it's already there)
+        let to_append = &new_messages[1..]; // skip the user message we prepended
+        if !to_append.is_empty() {
+            let md = serialize_conversation_turn(to_append);
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(&opts.file_path)
+                .with_context(|| format!("opening conversation file for append: {}", opts.file_path.display()))?;
+            file.write_all(md.as_bytes())
+                .with_context(|| "writing to conversation file")?;
+            debug!(chars = md.len(), "appended to conversation file");
         }
 
         Ok(())
     }
 }
 
-fn handle_event(
-    event: AgentEvent,
-    response_text: &mut String,
-    failed: &mut bool,
-    collected: &mut Vec<Message>,
-) {
+// ── Event → Message collector ─────────────────────────────────────────────────
+
+/// Translate an `AgentEvent` into messages/stdout, accumulating new `Message`
+/// structs that will be serialised back into the conversation file.
+fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bool) {
     match event {
         AgentEvent::TextDelta(delta) => {
             write_stdout(&delta);
-            response_text.push_str(&delta);
         }
+
         AgentEvent::TextComplete(text) => {
-            // Record the complete assistant turn.
+            // Merge consecutive assistant text messages (streaming produces one
+            // TextComplete per turn; tool calls produce interleaved ones).
+            // Push as a new assistant message only if non-empty.
             if !text.is_empty() {
-                collected.push(Message::assistant(&text));
+                messages.push(Message::assistant(&text));
             }
         }
+
         AgentEvent::ToolCallStarted(tc) => {
             write_stderr(&format!(
                 "[tool] {} ({})",
                 tc.name,
                 serde_json::to_string(&tc.args).unwrap_or_default()
             ));
-            // Record tool call as an assistant message.
-            let args_str = serde_json::to_string(&tc.args).unwrap_or_default();
-            collected.push(Message {
+            // Record the tool call message so it appears in the file
+            messages.push(Message {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
-                    tool_call_id: tc.id.clone(),
-                    function: FunctionCall { name: tc.name.clone(), arguments: args_str },
+                    tool_call_id: tc.id,
+                    function: FunctionCall {
+                        name: tc.name,
+                        arguments: tc.args.to_string(),
+                    },
                 },
             });
         }
-        AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
+
+        AgentEvent::ToolCallFinished { call_id, tool_name, output, is_error } => {
             if is_error {
                 write_stderr(&format!("[tool error] {tool_name}: {output}"));
             } else {
                 write_stderr(&format!("[tool ok] {tool_name}"));
             }
-            // Record tool result.
-            collected.push(Message::tool_result(&call_id, &output));
+            // Record the tool result
+            messages.push(Message::tool_result(&call_id, &output));
         }
+
         AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
             write_stderr(&format!(
-                "[compacted context: {} → {} tokens]",
-                tokens_before, tokens_after
+                "[compacted context: {tokens_before} → {tokens_after} tokens]"
             ));
         }
+
         AgentEvent::Error(msg) => {
             write_stderr(&format!("[agent error] {msg}"));
             *failed = true;
         }
+
         AgentEvent::TodoUpdate(todos) => {
             let lines: Vec<String> = todos.iter().map(|t| {
                 let icon = match t.status.as_str() {
@@ -233,16 +241,22 @@ fn handle_event(
             }).collect();
             write_stderr(&format!("[todos]\n{}", lines.join("\n")));
         }
+
         AgentEvent::ModeChanged(mode) => {
             write_stderr(&format!("[mode changed] now in {mode} mode"));
         }
+
         AgentEvent::Question { questions, .. } => {
             write_stderr(&format!("[questions] {}", questions.join(" | ")));
         }
-        AgentEvent::TurnComplete | AgentEvent::TokenUsage { .. } |
-        AgentEvent::QuestionAnswer { .. } => {}
+
+        AgentEvent::TurnComplete
+        | AgentEvent::TokenUsage { .. }
+        | AgentEvent::QuestionAnswer { .. } => {}
     }
 }
+
+// ── Registry builder (mirrors CiRunner) ──────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
 fn build_registry(
@@ -256,7 +270,6 @@ fn build_registry(
 ) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
-    // Read-only / all-mode tools
     reg.register(ReadFileTool);
     reg.register(ListDirTool);
     reg.register(GlobFileSearchTool);
@@ -271,12 +284,8 @@ fn build_registry(
         memory_file: cfg.tools.memory.memory_file.clone(),
     });
     reg.register(AskQuestionTool::new());
-
-    // Stateful tools
     reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
     reg.register(SwitchModeTool::new(current_mode, tool_event_tx));
-
-    // Agent-mode write tools
     reg.register(WriteTool);
     reg.register(EditFileTool);
     reg.register(DeleteFileTool);
@@ -284,14 +293,7 @@ fn build_registry(
     reg.register(RunTerminalCommandTool {
         timeout_secs: cfg.tools.timeout_secs,
     });
-
-    // Sub-agent spawner
-    reg.register(TaskTool::new(
-        model,
-        Arc::new(cfg.clone()),
-        agent_cfg,
-        task_depth,
-    ));
+    reg.register(TaskTool::new(model, Arc::new(cfg.clone()), agent_cfg, task_depth));
 
     reg
 }
