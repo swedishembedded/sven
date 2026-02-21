@@ -257,3 +257,50 @@ Or for documentation lookups:
 ```sh
 sven "Fetch the API documentation from https://api.example.com/docs and generate a typed TypeScript client for the /users and /orders endpoints."
 ```
+
+---
+
+## Example 11 — Embedded GDB debugging session
+
+Flash firmware and step through an embedded target using sven's integrated GDB
+tools. The agent discovers the device automatically from project files, or you
+can tell it the device explicitly.
+
+```sh
+sven "Flash the firmware to the AT32F435RMT7 and check the value of the
+SystemCoreClock variable after the clock initialisation."
+```
+
+sven will:
+
+1. Start JLinkGDBServer with the correct `-device` and `-port` flags
+2. Spawn `gdb-multiarch --interpreter=mi3` and connect with `target remote :2331`
+3. Load the ELF binary (`load`)
+4. Set a breakpoint past clock init and `continue`
+5. Print `SystemCoreClock` with `print SystemCoreClock`
+6. Call `gdb_stop` to kill the server and free the debug probe
+
+You can also drive the debug session step by step in a conversation file:
+
+```markdown
+# Firmware Debug
+
+## User
+Start the GDB server. The device is STM32F407VG, SWD, 4000 kHz, port 2331.
+
+## User
+Connect gdb-multiarch to it and load build/firmware.elf.
+
+## User
+Set a breakpoint at HAL_Init and continue. Show me the backtrace when it hits.
+
+## User
+Read the GPIOA ODR register (address 0x40020014) as a 32-bit hex value.
+
+## User
+Stop the debugging session.
+```
+
+```sh
+sven --file firmware-debug.md --conversation
+```

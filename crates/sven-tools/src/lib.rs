@@ -28,6 +28,13 @@ pub use builtin::update_memory::UpdateMemoryTool;
 pub use builtin::ask_question::{AskQuestionTool, QuestionRequest};
 pub use builtin::switch_mode::SwitchModeTool;
 
+// GDB debugging tools
+pub use builtin::gdb::{
+    GdbStartServerTool, GdbConnectTool, GdbCommandTool,
+    GdbInterruptTool, GdbStopTool,
+};
+pub use builtin::gdb::state::GdbSessionState;
+
 // Legacy exports preserved for backwards compatibility
 pub use builtin::shell::ShellTool;
 pub use builtin::fs::FsTool;

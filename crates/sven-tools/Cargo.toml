@@ -20,3 +20,7 @@ html2text   = { workspace = true }
 async-recursion = { workspace = true }
 dirs        = { workspace = true }
 libc        = { workspace = true }
+gdbmi       = "0.0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

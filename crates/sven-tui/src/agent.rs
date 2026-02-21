@@ -5,7 +5,11 @@ use std::sync::Arc;
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, AgentEvent};
 use sven_model::Message;
-use sven_tools::{AskQuestionTool, FsTool, GlobTool, QuestionRequest, ShellTool, ToolRegistry};
+use sven_tools::{
+    AskQuestionTool, FsTool, GlobTool, QuestionRequest, ShellTool, ToolRegistry,
+    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool, GdbStopTool,
+    GdbSessionState,
+};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -45,6 +49,13 @@ pub async fn agent_task(
     registry.register(FsTool);
     registry.register(GlobTool);
     registry.register(AskQuestionTool::new_tui(question_tx));
+
+    let gdb_state = Arc::new(tokio::sync::Mutex::new(GdbSessionState::default()));
+    registry.register(GdbStartServerTool::new(gdb_state.clone(), config.tools.gdb.clone()));
+    registry.register(GdbConnectTool::new(gdb_state.clone(), config.tools.gdb.clone()));
+    registry.register(GdbCommandTool::new(gdb_state.clone()));
+    registry.register(GdbInterruptTool::new(gdb_state.clone()));
+    registry.register(GdbStopTool::new(gdb_state));
 
     let mut agent = Agent::new(
         model,

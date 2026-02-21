@@ -191,6 +191,48 @@ sven has a set of built-in tools it can call to complete tasks:
 | `todo_write` | Track tasks in the current session |
 | `ask_question` | Ask you a clarifying question |
 | `switch_mode` | Change the agent mode mid-session |
+| `gdb_start_server` | Start a GDB server in the background |
+| `gdb_connect` | Connect gdb-multiarch to the running server |
+| `gdb_command` | Run a GDB command and return its output |
+| `gdb_interrupt` | Interrupt execution (Ctrl+C equivalent) |
+| `gdb_stop` | Stop the debugging session and kill the server |
+
+### GDB debugging tools
+
+sven includes integrated GDB debugging support aimed at embedded development
+workflows. The five GDB tools form a lifecycle:
+
+```
+gdb_start_server → gdb_connect → gdb_command / gdb_interrupt → gdb_stop
+```
+
+**Starting a server**
+
+If you do not supply a command, sven searches your project for configuration
+hints in this order:
+
+1. `.gdbinit` — looks for `# JLinkGDBServer ...` comments or `target remote` lines
+2. `.vscode/launch.json` — reads `debugServerPath`, `debugServerArgs`, and `servertype`
+3. `openocd.cfg` — builds an OpenOCD command from the config file
+4. `platformio.ini` — reads `debug_server` or `debug_tool`
+5. `CMakeLists.txt` / `Cargo.toml` — matches MCU family names (STM32, AT32, NRF, …)
+
+If discovery fails, sven asks you to supply the command explicitly.
+
+**Example session**
+
+```
+User: Flash and debug my firmware. The device is an AT32F435RMT7.
+
+Agent calls:
+  gdb_start_server {"command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"}
+  gdb_connect      {"executable": "build/firmware.elf"}
+  gdb_command      {"command": "load"}
+  gdb_command      {"command": "break main"}
+  gdb_command      {"command": "continue"}
+  gdb_command      {"command": "info registers"}
+  gdb_stop
+```
 
 ### Approval policy
 

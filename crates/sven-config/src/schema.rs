@@ -160,6 +160,9 @@ pub struct ToolsConfig {
     /// Linter configuration
     #[serde(default)]
     pub lints: LintsConfig,
+    /// GDB debugging configuration
+    #[serde(default)]
+    pub gdb: GdbConfig,
 }
 
 impl Default for ToolsConfig {
@@ -182,6 +185,7 @@ impl Default for ToolsConfig {
             web: WebConfig::default(),
             memory: MemoryConfig::default(),
             lints: LintsConfig::default(),
+            gdb: GdbConfig::default(),
         }
     }
 }
@@ -214,6 +218,35 @@ impl Default for WebConfig {
 pub struct MemoryConfig {
     /// Path to the memory JSON file (default: ~/.config/sven/memory.json)
     pub memory_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GdbConfig {
+    /// Path to gdb-multiarch (or gdb) executable
+    #[serde(default = "GdbConfig::default_gdb_path")]
+    pub gdb_path: String,
+    /// Default timeout for GDB commands in seconds
+    #[serde(default = "GdbConfig::default_command_timeout_secs")]
+    pub command_timeout_secs: u64,
+    /// Milliseconds to wait after spawning the GDB server before connecting
+    #[serde(default = "GdbConfig::default_server_startup_wait_ms")]
+    pub server_startup_wait_ms: u64,
+}
+
+impl GdbConfig {
+    fn default_gdb_path() -> String { "gdb-multiarch".into() }
+    fn default_command_timeout_secs() -> u64 { 10 }
+    fn default_server_startup_wait_ms() -> u64 { 500 }
+}
+
+impl Default for GdbConfig {
+    fn default() -> Self {
+        Self {
+            gdb_path: Self::default_gdb_path(),
+            command_timeout_secs: Self::default_command_timeout_secs(),
+            server_startup_wait_ms: Self::default_server_startup_wait_ms(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

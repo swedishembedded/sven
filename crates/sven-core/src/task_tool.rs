@@ -15,6 +15,8 @@ use sven_tools::{
     GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
     RunTerminalCommandTool, SearchCodebaseTool, SwitchModeTool, TodoWriteTool,
     UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
+    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool, GdbStopTool,
+    GdbSessionState,
     ToolRegistry,
 };
 
@@ -70,6 +72,14 @@ impl TaskTool {
             timeout_secs: self.config.tools.timeout_secs,
         });
         // Note: TaskTool is intentionally NOT registered here to limit nesting
+
+        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+        reg.register(GdbStartServerTool::new(gdb_state.clone(), self.config.tools.gdb.clone()));
+        reg.register(GdbConnectTool::new(gdb_state.clone(), self.config.tools.gdb.clone()));
+        reg.register(GdbCommandTool::new(gdb_state.clone()));
+        reg.register(GdbInterruptTool::new(gdb_state.clone()));
+        reg.register(GdbStopTool::new(gdb_state));
+
         reg
     }
 }

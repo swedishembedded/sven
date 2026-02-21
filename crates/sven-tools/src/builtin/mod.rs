@@ -16,6 +16,8 @@ pub mod update_memory;
 pub mod ask_question;
 pub mod switch_mode;
 
+pub mod gdb;
+
 // Legacy modules kept for backwards compatibility
 pub mod shell;
 pub mod fs;

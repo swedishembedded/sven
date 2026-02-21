@@ -304,6 +304,30 @@ errors. The commands should produce JSON output that sven can parse.
 
 ---
 
+### `[tools.gdb]`
+
+Configures the integrated GDB debugging support.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `gdb_path` | `"gdb-multiarch"` | GDB executable name or absolute path |
+| `command_timeout_secs` | `10` | Seconds to wait for a GDB command response |
+| `server_startup_wait_ms` | `500` | Milliseconds to wait after spawning the GDB server |
+
+**Example:**
+
+```toml
+[tools.gdb]
+gdb_path = "/usr/bin/gdb-multiarch"
+command_timeout_secs = 30
+server_startup_wait_ms = 1000
+```
+
+Increase `server_startup_wait_ms` if your GDB server (e.g. JLinkGDBServer) takes
+more than half a second to open its TCP port before sven reports it as ready.
+
+---
+
 ### `[tui]`
 
 | Key | Default | Description |
