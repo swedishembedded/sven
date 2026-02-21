@@ -1,8 +1,9 @@
 mod app;
 mod keys;
 mod layout;
+mod markdown;
+mod nvim_bridge;
 mod pager;
 mod widgets;
-mod markdown;
 
 pub use app::{App, AppOptions};

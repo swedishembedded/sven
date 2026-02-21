@@ -71,7 +71,7 @@ pub fn draw_status(
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
         tool_span,
         Span::styled(
-            "  F1:help  ^w+k:chat  ^w+j:input  /:search  ^T:pager  F4:mode  ^c:quit",
+            "  F1:help  ^w k:↑chat  ^w j:↓input  /:search  ^T:pager  F4:mode  ^c:quit",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -93,6 +93,7 @@ pub fn draw_chat(
     search_matches: &[usize],
     search_current: usize,
     search_regex: Option<&regex::Regex>,
+    nvim_cursor: Option<(u16, u16)>,
 ) {
     let block = pane_block("Chat", focused, ascii);
     let inner = block.inner(area);
@@ -121,6 +122,21 @@ pub fn draw_chat(
 
     let para = Paragraph::new(visible).wrap(Wrap { trim: false });
     frame.render_widget(para, inner);
+
+    // Draw Neovim cursor if provided and focused
+    if focused {
+        if let Some((cursor_row, cursor_col)) = nvim_cursor {
+            // Adjust cursor position relative to scroll offset
+            if let Some(visible_row) = cursor_row.checked_sub(scroll_offset) {
+                if (visible_row as usize) < inner.height as usize {
+                    frame.set_cursor_position((
+                        inner.x + cursor_col.min(inner.width.saturating_sub(1)),
+                        inner.y + visible_row,
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// Draw the input box at the bottom.
@@ -139,7 +155,7 @@ pub fn draw_input(
     } else if queued_steps > 0 {
         format!("Input  [{queued_steps} queued]")
     } else {
-        "Input  [Enter:send  Shift+Enter:newline  ^w+k:chat]".into()
+        "Input  [Enter:send  Shift+Enter:newline  ^w k:↑chat]".into()
     };
 
     let block = pane_block(&title, focused, ascii);

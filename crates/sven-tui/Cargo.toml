@@ -19,3 +19,6 @@ pulldown-cmark = { workspace = true }
 regex       = { workspace = true }
 syntect     = { workspace = true }
 serde_json  = { workspace = true }
+nvim-rs     = { workspace = true }
+rmpv        = { workspace = true }
+async-trait = { workspace = true }

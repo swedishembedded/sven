@@ -43,6 +43,8 @@ ratatui      = "0.29"
 crossterm    = { version = "0.28", features = ["event-stream"] }
 syntect      = "5"
 unicode-width = "0.2"
+nvim-rs      = { version = "0.9", features = ["use_tokio"] }
+rmpv         = "1.3"
 
 [package]
 name    = "sven"
