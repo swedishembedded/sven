@@ -351,16 +351,6 @@ impl CiRunner {
             if let Some(model_str) = &step.options.model {
                 let step_model_cfg = resolve_model_cfg(&self.config.model, model_str);
                 
-                // Warn about weak models in research mode
-                if current_mode == AgentMode::Research {
-                    let model_name = &step_model_cfg.name;
-                    if model_name.contains("nano") || model_name.contains("mini") {
-                        write_stderr(&format!(
-                            "[sven:warn] Model {model_name:?} may be too weak for research mode. \
-                             Consider using a more capable model (e.g., gpt-5, gpt-4o, claude-opus)"
-                        ));
-                    }
-                }
                 
                 match sven_model::from_config(&step_model_cfg) {
                     Ok(m) => {

@@ -68,7 +68,8 @@ impl Tool for GlobFileSearchTool {
                     "description": "Maximum number of results to return (default 200)"
                 }
             },
-            "required": ["pattern"]
+            "required": ["pattern"],
+            "additionalProperties": false
         })
     }
 

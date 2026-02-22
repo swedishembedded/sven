@@ -86,14 +86,16 @@ impl Tool for AskQuestionTool {
                                 "default": false
                             }
                         },
-                        "required": ["prompt", "options"]
+                        "required": ["prompt", "options"],
+                        "additionalProperties": false
                     },
                     "description": "List of 1-3 questions",
                     "minItems": 1,
                     "maxItems": 3
                 }
             },
-            "required": ["questions"]
+            "required": ["questions"],
+            "additionalProperties": false
         })
     }
 

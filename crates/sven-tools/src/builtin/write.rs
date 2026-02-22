@@ -42,7 +42,8 @@ impl Tool for WriteTool {
                     "description": "If true, append to existing content instead of overwriting (default false)"
                 }
             },
-            "required": ["path", "content"]
+            "required": ["path", "content"],
+            "additionalProperties": false
         })
     }
 

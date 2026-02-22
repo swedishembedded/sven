@@ -64,7 +64,8 @@ impl Tool for GdbConnectTool {
                     "description": "Path or name of the GDB executable to use \
                         (default from config, typically 'gdb-multiarch')."
                 }
-            }
+            },
+            "additionalProperties": false
         })
     }
 

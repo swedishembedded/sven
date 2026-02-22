@@ -49,7 +49,8 @@ impl Tool for SwitchModeTool {
                     "description": "Target mode to switch to"
                 }
             },
-            "required": ["mode"]
+            "required": ["mode"],
+            "additionalProperties": false
         })
     }
 

@@ -37,7 +37,8 @@ impl Tool for ReadLintsTool {
                     "type": "string",
                     "description": "Working directory for the lint command (default: current directory)"
                 }
-            }
+            },
+            "additionalProperties": false
         })
     }
 

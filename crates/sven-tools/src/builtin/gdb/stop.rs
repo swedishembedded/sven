@@ -39,7 +39,8 @@ impl Tool for GdbStopTool {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "additionalProperties": false
         })
     }
 

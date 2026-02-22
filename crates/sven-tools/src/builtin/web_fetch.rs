@@ -38,7 +38,8 @@ impl Tool for WebFetchTool {
                     "description": "Maximum characters to return (default 50000)"
                 }
             },
-            "required": ["url"]
+            "required": ["url"],
+            "additionalProperties": false
         })
     }
 

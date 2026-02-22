@@ -37,7 +37,8 @@ impl Tool for ListDirTool {
                     "description": "Maximum number of entries to return (default 100)"
                 }
             },
-            "required": ["path"]
+            "required": ["path"],
+            "additionalProperties": false
         })
     }
 

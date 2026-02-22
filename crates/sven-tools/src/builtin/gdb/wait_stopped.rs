@@ -58,7 +58,8 @@ impl Tool for GdbWaitStoppedTool {
                     "description": "Seconds to wait for the target to halt (default: 30). \
                         Increase for long-running tests or slow targets."
                 }
-            }
+            },
+            "additionalProperties": false
         })
     }
 

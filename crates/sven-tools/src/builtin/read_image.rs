@@ -31,7 +31,8 @@ impl Tool for ReadImageTool {
                     "description": "Absolute or relative path to the image file"
                 }
             },
-            "required": ["path"]
+            "required": ["path"],
+            "additionalProperties": false
         })
     }
 

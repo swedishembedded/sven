@@ -39,7 +39,8 @@ impl Tool for FsTool {
                     "description": "Content to write (required for write/append)"
                 }
             },
-            "required": ["operation", "path"]
+            "required": ["operation", "path"],
+            "additionalProperties": false
         })
     }
 

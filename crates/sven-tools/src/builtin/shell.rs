@@ -49,7 +49,8 @@ impl Tool for ShellTool {
                     "description": "Execution timeout in seconds (optional)"
                 }
             },
-            "required": ["command"]
+            "required": ["command"],
+            "additionalProperties": false
         })
     }
 

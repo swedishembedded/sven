@@ -31,7 +31,8 @@ impl Tool for DeleteFileTool {
                     "description": "Absolute or relative path to the file to delete"
                 }
             },
-            "required": ["path"]
+            "required": ["path"],
+            "additionalProperties": false
         })
     }
 

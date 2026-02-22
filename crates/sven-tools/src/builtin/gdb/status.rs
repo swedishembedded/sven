@@ -43,7 +43,8 @@ impl Tool for GdbStatusTool {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "additionalProperties": false
         })
     }
 

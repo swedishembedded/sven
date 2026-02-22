@@ -62,11 +62,13 @@ impl Tool for TodoWriteTool {
                                 "description": "Current status of the task"
                             }
                         },
-                        "required": ["id", "content", "status"]
+                        "required": ["id", "content", "status"],
+                        "additionalProperties": false
                     }
                 }
             },
-            "required": ["todos"]
+            "required": ["todos"],
+            "additionalProperties": false
         })
     }
 

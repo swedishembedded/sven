@@ -43,7 +43,8 @@ impl Tool for UpdateMemoryTool {
                     "description": "Value to store (required for set)"
                 }
             },
-            "required": ["operation"]
+            "required": ["operation"],
+            "additionalProperties": false
         })
     }
 

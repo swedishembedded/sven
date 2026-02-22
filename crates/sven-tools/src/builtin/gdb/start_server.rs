@@ -108,7 +108,8 @@ impl Tool for GdbStartServerTool {
                         starting a new server. Use when a previous session left a zombie GDB \
                         server running. Default: false."
                 }
-            }
+            },
+            "additionalProperties": false
         })
     }
 

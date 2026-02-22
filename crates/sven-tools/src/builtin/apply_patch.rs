@@ -43,7 +43,8 @@ impl Tool for ApplyPatchTool {
                     "description": "The full patch text including *** Begin Patch and *** End Patch markers"
                 }
             },
-            "required": ["input"]
+            "required": ["input"],
+            "additionalProperties": false
         })
     }
 

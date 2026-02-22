@@ -41,7 +41,8 @@ impl Tool for EditFileTool {
                     "description": "Replacement string"
                 }
             },
-            "required": ["path", "old_str", "new_str"]
+            "required": ["path", "old_str", "new_str"],
+            "additionalProperties": false
         })
     }
 

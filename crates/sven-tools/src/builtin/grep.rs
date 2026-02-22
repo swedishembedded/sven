@@ -48,7 +48,8 @@ impl Tool for GrepTool {
                     "description": "Maximum number of matches to return (default 100)"
                 }
             },
-            "required": ["pattern"]
+            "required": ["pattern"],
+            "additionalProperties": false
         })
     }
 
