@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 /// YAML-configured mock model provider for end-to-end and bats tests.
 ///
 /// The provider reads a YAML file that maps input patterns to canned

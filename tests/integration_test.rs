@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 /// Integration tests for sven's core logic using the mock model provider.
 use std::sync::Arc;
 

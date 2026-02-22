@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 /// Comprehensive tests for the Agent agentic loop.
 ///
 /// Uses ScriptedMockProvider so every scenario is deterministic and

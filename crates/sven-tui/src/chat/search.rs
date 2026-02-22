@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! In-pane search state: query, regex, match list and current-match tracking.
 
 use crate::markdown::StyledLines;

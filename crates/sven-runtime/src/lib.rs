@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Runtime environment detection utilities.
 //!
 //! This crate provides project-root discovery, git context collection,

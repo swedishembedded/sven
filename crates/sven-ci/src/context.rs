@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Re-exports from `sven-runtime` for backwards compatibility.
 //!
 //! Environment-detection utilities now live in `sven-runtime`.  This module

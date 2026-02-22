@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Neovim grid and highlight-attribute data structures.
 //!
 //! These are pure data types with no async code, no RPC, and no process

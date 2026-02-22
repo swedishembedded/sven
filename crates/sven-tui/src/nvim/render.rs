@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Grid-to-ratatui rendering: converts a `Grid` snapshot to a `Vec<Line>`.
 
 use std::collections::HashMap;

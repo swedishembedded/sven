@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Question modal: multi-step question/answer flow triggered by the agent's
 //! `AskQuestion` tool.
 

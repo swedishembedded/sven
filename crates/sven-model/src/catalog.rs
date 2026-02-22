@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Model catalog: static metadata for known models, with optional live refresh.
 
 use serde::{Deserialize, Serialize};

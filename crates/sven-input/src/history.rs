@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 /// Persistent conversation history management.
 ///
 /// Conversations are stored as markdown files in `~/.local/share/sven/history/`

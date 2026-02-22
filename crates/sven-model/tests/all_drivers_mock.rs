@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Tests that every driver registered in the registry can be instantiated from
 //! config without returning an "unknown model provider" error.
 //!

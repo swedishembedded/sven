@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 pub mod run_terminal_command;
 pub mod read_file;
 pub mod read_image;

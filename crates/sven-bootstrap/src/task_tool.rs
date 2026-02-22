@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! TaskTool — spawns a sub-agent to complete a focused sub-task.
 //!
 //! Moved from `sven-core` to `sven-bootstrap` so that TaskTool can use

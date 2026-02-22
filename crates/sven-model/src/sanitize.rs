@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Message sanitization: strip image content when the model does not support it.
 //!
 //! Call [`strip_images_if_unsupported`] before building a [`CompletionRequest`]

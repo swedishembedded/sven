@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! `NvimHandler`: the nvim-rs `Handler` implementation that receives Neovim
 //! redraw and custom RPC notifications and writes them into the shared grid.
 

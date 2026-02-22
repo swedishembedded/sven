@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 /// Tests for CI-mode step processing and option handling.
 ///
 /// These are unit-level tests that exercise the logic that translates

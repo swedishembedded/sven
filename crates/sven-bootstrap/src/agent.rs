@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! [`AgentBuilder`] — single entry point for constructing a fully wired Agent.
 //!
 //! Callers pass a [`Config`], an optional [`RuntimeContext`], the desired

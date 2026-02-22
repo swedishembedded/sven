@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Cohere driver — native Chat API v2.
 //!
 //! Uses the `POST /v2/chat` endpoint with streaming.

@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Neovim integration: grid data structures, RPC handler, grid renderer, and
 //! the bridge that ties them all together around an embedded `nvim --embed`
 //! process.

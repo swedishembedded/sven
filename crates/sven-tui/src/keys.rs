@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// All logical actions the TUI can perform, independent of key binding.

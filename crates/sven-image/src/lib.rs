@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 //! Image loading, resizing, and base64-encoding utilities for sven.
 //!
 //! This crate converts local image files into data URLs that can be embedded

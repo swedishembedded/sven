@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: MIT
 use sven_config::AgentMode;
 
 /// A structured todo item managed by the todo_write tool.
