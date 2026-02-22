@@ -30,13 +30,39 @@ impl Tool for SwitchModeTool {
     fn name(&self) -> &str { "switch_mode" }
 
     fn description(&self) -> &str {
-        "Switch the agent's operating mode to better match the current task. \
-         Each mode is optimised for a specific type of work: \
-         'agent' for making code changes, 'plan' for designing approaches before coding, \
-         'research' for read-only exploration and answering questions. \
-         Switch proactively when the task type changes, complexity emerges requiring planning, \
-         or a different approach is needed. \
-         Mode can only be downgraded (agent → plan → research); upgrading requires user action."
+        "Switch the agent's operating mode to match the current task type.\n\n\
+         ## Modes\n\
+         - 'agent': Make code changes, write files, run commands\n\
+         - 'plan': Design approaches, create structured plans, no writes\n\
+         - 'research': Explore and learn, read-only, no modifications\n\n\
+         ## Mode Capabilities\n\
+         Agent: Read/write files, execute commands, modify code\n\
+         Plan: Read files, design approaches, output markdown plans\n\
+         Research: Read files, search code, gather information\n\n\
+         ## When to Switch\n\
+         - Research → Plan: Task requires planning before implementation\n\
+         - Plan → Agent: Ready to implement the plan\n\
+         - Agent → Plan: Need to step back and design approach\n\
+         - Agent → Research: Need to explore before proceeding\n\n\
+         ## Examples\n\
+         <example>\n\
+         Start research phase:\n\
+         switch_mode: mode=\"research\"\n\
+         </example>\n\
+         <example>\n\
+         Move to planning:\n\
+         switch_mode: mode=\"plan\"\n\
+         </example>\n\
+         <example>\n\
+         Begin implementation:\n\
+         switch_mode: mode=\"agent\"\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Can only downgrade: agent → plan → research\n\
+         - Upgrading requires user request\n\
+         - Current mode determines available tools\n\
+         - Switch proactively when task type changes\n\
+         - Use plan mode for complex tasks before coding"
     }
 
     fn parameters_schema(&self) -> Value {

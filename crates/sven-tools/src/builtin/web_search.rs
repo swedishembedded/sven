@@ -19,11 +19,51 @@ impl Tool for WebSearchTool {
     fn name(&self) -> &str { "web_search" }
 
     fn description(&self) -> &str {
-        "Search the web for real-time information about any topic. Returns results with title, \
-         URL, and description. Use when you need up-to-date information that may not be in \
-         training data, or to verify current facts. Useful for libraries and frameworks with \
-         frequently updated APIs, current events, and general informational queries. \
-         Requires BRAVE_API_KEY environment variable."
+        "Search the web for real-time information about any topic.\n\n\
+         ## Usage\n\
+         - Returns results with title, URL, and description\n\
+         - Search query can be specific or broad\n\
+         - Results are ranked by relevance\n\
+         - Returns up to 10 results (default 5)\n\n\
+         ## CRITICAL - Current Year Handling\n\
+         - Today's year is 2026 (update this dynamically when needed)\n\
+         - When searching for recent docs, include year: 'React 2026 documentation'\n\
+         - Do NOT use outdated years in queries\n\
+         - Examples: 'Python 3.13 2026', 'TypeScript 5.0 latest'\n\n\
+         ## When to Use\n\
+         - Current events and recent technology changes\n\
+         - Library/framework documentation (APIs change frequently)\n\
+         - Verifying facts beyond training data (knowledge cutoff: Feb 2025)\n\
+         - Real-time information needs\n\n\
+         ## When NOT to Use\n\
+         - Historical information (Wikipedia is better)\n\
+         - Deep technical questions (Stack Overflow via grep of local docs)\n\
+         - Searching codebases (use grep tool instead)\n\n\
+         ## Citation Requirements (MANDATORY)\n\
+         After answering the user's question, you MUST include a Sources section:\n\
+         Sources:\n\
+         - [Source Title](URL)\n\
+         - [Source Title](URL)\n\
+         This applies to ANY answer using web_search results.\n\n\
+         ## Examples\n\
+         <example>\n\
+         Search for recent library updates:\n\
+         web_search: query=\"React 2026 latest features and changes\"\n\
+         </example>\n\
+         <example>\n\
+         Search for current news:\n\
+         web_search: query=\"AI coding assistants 2026 latest\"\n\
+         </example>\n\
+         <example>\n\
+         Search for current documentation:\n\
+         web_search: query=\"Node.js 22 API documentation 2026\"\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Include year in query for recent information\n\
+         - Always cite sources in response\n\
+         - Requires BRAVE_API_KEY environment variable\n\
+         - Maximum 10 results per search (use count parameter)\n\
+         - Filter results to most relevant ones for user"
     }
 
     fn parameters_schema(&self) -> Value {

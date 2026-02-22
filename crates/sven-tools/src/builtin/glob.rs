@@ -16,8 +16,47 @@ impl Tool for GlobTool {
     fn name(&self) -> &str { "glob" }
 
     fn description(&self) -> &str {
-        "Search for files matching a pattern using `find`. \
-         Returns a newline-delimited list of matching paths."
+        "Search for files matching a glob pattern.\n\n\
+         ## Usage\n\
+         - Supports shell glob patterns (*, **, ?, [abc])\n\
+         - Automatically excludes target/ and .git/ directories\n\
+         - Returns matching file paths sorted by modification time\n\
+         - Results are newline-delimited\n\n\
+         ## Pattern Examples\n\
+         - '*.rs' → Find all Rust files in root directory\n\
+         - '**/*.rs' → Find all Rust files recursively\n\
+         - '**/*.test.ts' → Find all TypeScript test files\n\
+         - 'src/components/**/*.tsx' → Find all React components\n\
+         - '**/[Mm]akefile' → Find Makefiles (case-insensitive)\n\n\
+         ## When to Use\n\
+         - Finding files by name pattern\n\
+         - Discovering all files of a specific type\n\
+         - Locating files in specific directories\n\
+         - Initial discovery before using grep for content search\n\n\
+         ## When NOT to Use\n\
+         - Searching file contents → use grep tool instead\n\
+         - Finding specific code/functions → use grep tool instead\n\
+         - Pattern matching within filenames only → may need grep\n\n\
+         ## Examples\n\
+         <example>\n\
+         Find all test files:\n\
+         glob: pattern=\"**/*.test.ts\"\n\
+         </example>\n\
+         <example>\n\
+         Discovery workflow:\n\
+         1. glob: pattern=\"**/*.rs\" → Find all Rust files\n\
+         2. grep: pattern=\"fn new\", include=\"*.rs\" → Find new() functions\n\
+         3. read_file: (for specific file) → Read implementation\n\
+         </example>\n\
+         <example>\n\
+         Find configuration files:\n\
+         glob: pattern=\"**/{config,settings,*.yaml,*.yml}\"\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Patterns are automatically prefixed with **/ for recursive search if needed\n\
+         - Results are limited by max_results parameter (default 200)\n\
+         - Automatically excludes common build/version control directories\n\
+         - Works faster than grep for file discovery"
     }
 
     fn parameters_schema(&self) -> Value {

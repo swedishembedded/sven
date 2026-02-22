@@ -61,6 +61,96 @@ impl<'a> PromptContext<'a> {
     }
 }
 
+// ─── Guidelines Module ───────────────────────────────────────────────────────
+// Modular guidelines for easier maintenance and testing
+
+mod guidelines {
+    pub fn general() -> &'static str {
+        "- Be concise and precise in your responses.\n\
+         - Use tools instead of guessing file contents.\n\
+         - Always verify tool outputs before proceeding with dependent operations.\n\
+         - If a task is ambiguous, ask for clarification before acting."
+    }
+
+    pub fn tool_usage() -> &'static str {
+        "- NEVER use `run_terminal_command` for file operations — use dedicated tools instead.\n\
+         - Prefer `edit_file` over `write` for modifying existing files to preserve context.\n\
+         - Use `grep` with `output_mode: 'files_with_matches'` for discovery, 'content' for details.\n\
+         - Call multiple `read_file` tools in parallel when examining several files.\n\
+         - Use `glob` before `grep` when narrowing down which files to search."
+    }
+
+    pub fn code_quality() -> &'static str {
+        "- Follow existing project conventions discovered via file analysis.\n\
+         - Never write new files proactively unless explicitly requested by the user.\n\
+         - Run `read_lints` after substantive code changes to catch errors.\n\
+         - Include tests when adding new functionality to preserve project quality.\n\
+         - Preserve existing code structure and naming patterns."
+    }
+
+    pub fn workflow_efficiency() -> &'static str {
+        "- Use `switch_mode` to transition between Research, Plan, and Agent modes when appropriate.\n\
+         - Update persistent memory with `update_memory` for cross-session learnings.\n\
+         - Batch file reads in parallel when possible to reduce round-trips.\n\
+         - Summarize what you did at the end of each turn to keep users informed."
+    }
+
+    pub fn error_handling() -> &'static str {
+        "- When a tool fails, read the error message carefully and adjust your approach.\n\
+         - If `edit_file` fails due to ambiguity, provide more surrounding context lines (2-5).\n\
+         - Check that `project_root` is set before using absolute paths in terminal commands.\n\
+         - Never skip git hooks or commit safety checks without explicit user permission."
+    }
+}
+
+fn build_guidelines_section() -> String {
+    format!(
+        "## Guidelines\n\n\
+         ### General Principles\n\
+         {}\n\n\
+         ### Tool Usage Patterns\n\
+         {}\n\n\
+         ### Code Quality\n\
+         {}\n\n\
+         ### Workflow Efficiency\n\
+         {}\n\n\
+         ### Error Handling\n\
+         {}",
+        guidelines::general(),
+        guidelines::tool_usage(),
+        guidelines::code_quality(),
+        guidelines::workflow_efficiency(),
+        guidelines::error_handling()
+    )
+}
+
+fn build_tool_examples_section() -> &'static str {
+    "## Tool Usage Examples\n\n\
+     Example 1: Finding and modifying a function\n\
+     <example>\n\
+     1. glob: pattern=\"*.rs\" → Find relevant files\n\
+     2. grep: pattern=\"fn process_data\", output_mode=\"files_with_matches\" → Locate function\n\
+     3. read_file: path=\"/project/src/processor.rs\" → Read full context\n\
+     4. edit_file: old_str=\"...\", new_str=\"...\" → Modify function\n\
+     </example>\n\n\
+     Example 2: Parallel file exploration\n\
+     <example>\n\
+     Call multiple read_file tools in parallel:\n\
+     - read_file: path=\"/project/src/main.rs\"\n\
+     - read_file: path=\"/project/Cargo.toml\"\n\
+     - read_file: path=\"/project/README.md\"\n\
+     This is more efficient than sequential reads.\n\
+     </example>\n\n\
+     Example 3: Research workflow with mode switching\n\
+     <example>\n\
+     1. switch_mode: mode=\"research\" → Enter read-only mode\n\
+     2. search_codebase: query=\"authentication logic\" → High-level search\n\
+     3. grep: pattern=\"auth.*validate\", include=\"*.rs\" → Detailed search\n\
+     4. read_file: (multiple files) → Examine implementations\n\
+     5. switch_mode: mode=\"agent\" → Return to write mode for implementation\n\
+     </example>"
+}
+
 /// Build the system prompt for the given agent mode.
 ///
 /// `tool_names` lists the tools available in this mode so the model knows
@@ -79,6 +169,19 @@ pub fn system_prompt(
         }
         return custom.to_string();
     }
+
+    // Enhanced agent identity highlighting Sven's unique features
+    let agent_identity = format!(
+        "You are Sven, a specialized AI coding agent built for professional software development.\n\n\
+         Operating Mode: `{mode}`\n\n\
+         Core Capabilities:\n\
+         - Multi-mode operation (Research, Plan, Agent) with dynamic mode switching\n\
+         - Persistent memory across sessions via `update_memory` tool\n\
+         - Integrated debugging support with GDB tools\n\
+         - Markdown-driven workflows with frontmatter configuration\n\
+         - Comprehensive linting and test integration\n\
+         - Full CI/CD pipeline integration and awareness"
+    );
 
     let mode_instructions = match mode {
         AgentMode::Research => {
@@ -107,6 +210,8 @@ pub fn system_prompt(
             .join("\n");
         format!("\n\n## Available Tools\n{list}")
     };
+
+    let tool_examples_section = format!("\n\n{}", build_tool_examples_section());
 
     let project_section = if let Some(root) = ctx.project_root {
         format!(
@@ -142,6 +247,8 @@ pub fn system_prompt(
         String::new()
     };
 
+    let guidelines_section = build_guidelines_section();
+
     let append_section = if let Some(extra) = ctx.append {
         format!("\n\n{extra}")
     } else {
@@ -149,15 +256,10 @@ pub fn system_prompt(
     };
 
     format!(
-        "You are Sven, an efficient AI coding agent operating in `{mode}` mode.\n\n\
-         {mode_instructions}{tools_section}{project_section}{git_section}\
+        "{agent_identity}\n\n\
+         {mode_instructions}{tools_section}{tool_examples_section}{project_section}{git_section}\
          {context_file_section}{ci_section}\n\n\
-         ## Guidelines\n\
-         - Be concise and precise in your responses.\n\
-         - Use tools instead of guessing file contents.\n\
-         - When writing code, follow existing project conventions.\n\
-         - If a task is ambiguous, ask for clarification before acting.\n\
-         - Summarise what you did at the end of each turn.\
+         {guidelines_section}\
          {append_section}",
     )
 }
@@ -297,5 +399,83 @@ mod tests {
         let guidelines_pos = pr.find("Guidelines").unwrap();
         let append_pos = pr.find("Custom rule").unwrap();
         assert!(append_pos > guidelines_pos, "append should come after Guidelines");
+    }
+
+    #[test]
+    fn enhanced_agent_identity_mentions_core_capabilities() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("specialized AI coding agent"), "identity should emphasize specialization");
+        assert!(pr.contains("Core Capabilities"), "should list core capabilities");
+        assert!(pr.contains("Multi-mode operation"), "should mention mode switching");
+        assert!(pr.contains("Persistent memory"), "should mention memory feature");
+        assert!(pr.contains("GDB tools"), "should mention debugging support");
+    }
+
+    #[test]
+    fn guidelines_section_has_multiple_categories() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("### General Principles"), "guidelines should have General Principles");
+        assert!(pr.contains("### Tool Usage Patterns"), "guidelines should have Tool Usage Patterns");
+        assert!(pr.contains("### Code Quality"), "guidelines should have Code Quality");
+        assert!(pr.contains("### Workflow Efficiency"), "guidelines should have Workflow Efficiency");
+        assert!(pr.contains("### Error Handling"), "guidelines should have Error Handling");
+    }
+
+    #[test]
+    fn guidelines_section_contains_minimum_items() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        // Count bullet points in guidelines section. Guidelines are rendered with
+        // Rust \n\ line continuations so each bullet starts with "\n- " (no indent).
+        let guidelines_section = pr.split("## Guidelines").nth(1).unwrap();
+        let bullet_count = guidelines_section.matches("\n- ").count();
+        assert!(bullet_count >= 15, "guidelines should contain at least 15 bullet points, found {}", bullet_count);
+    }
+
+    #[test]
+    fn guidelines_mention_critical_tools() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("`run_terminal_command`"), "guidelines should mention run_terminal_command");
+        assert!(pr.contains("`edit_file`"), "guidelines should mention edit_file");
+        assert!(pr.contains("`grep`"), "guidelines should mention grep");
+        assert!(pr.contains("`glob`"), "guidelines should mention glob");
+        assert!(pr.contains("`read_file`"), "guidelines should mention read_file");
+    }
+
+    #[test]
+    fn prompt_contains_tool_usage_examples() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("## Tool Usage Examples"), "should have Tool Usage Examples section");
+        assert!(pr.contains("<example>"), "examples should use <example> tags");
+        assert!(pr.contains("Example 1:"), "should have multiple examples");
+        assert!(pr.contains("Example 2:"), "should have multiple examples");
+        assert!(pr.contains("Example 3:"), "should have multiple examples");
+    }
+
+    #[test]
+    fn guidelines_include_git_safety_warning() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("NEVER") || pr.contains("never skip"), "guidelines should include safety warnings");
+    }
+
+    #[test]
+    fn guidelines_mention_parallel_operations() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("parallel"), "guidelines should mention parallel tool usage");
+    }
+
+    #[test]
+    fn guidelines_mention_mode_switching() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("switch_mode"), "guidelines should mention mode switching");
+        assert!(pr.contains("Research, Plan, and Agent"), "guidelines should list all modes");
+    }
+
+    #[test]
+    fn all_modes_have_enhanced_identity() {
+        for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
+            let pr = system_prompt(mode, None, &no_tools(), empty());
+            assert!(pr.contains("specialized AI coding agent"), "all modes should use enhanced identity");
+            assert!(pr.contains("Core Capabilities"), "all modes should list capabilities");
+        }
     }
 }

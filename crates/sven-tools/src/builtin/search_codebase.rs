@@ -17,11 +17,42 @@ impl Tool for SearchCodebaseTool {
     fn name(&self) -> &str { "search_codebase" }
 
     fn description(&self) -> &str {
-        "Semantic search that finds code by meaning, not exact text. \
-         Use when you need to explore an unfamiliar codebase, ask 'how / where / what' questions \
-         to understand behaviour, or find code by concept rather than exact symbol names. \
-         When you know the exact symbol or string to search for, prefer the grep tool instead. \
-         Automatically excludes build artifacts (.git/, target/, node_modules/, dist/, __pycache__/)."
+        "Search the codebase for patterns using ripgrep with smart exclusions.\n\n\
+         Like the grep tool but with opinionated defaults for whole-codebase exploration: \
+         automatically excludes .git/, target/, node_modules/, dist/, __pycache__/, and *.lock files.\n\n\
+         ## Usage\n\
+         - Supports full regex syntax (e.g., 'fn \\w+\\(', 'impl.*Trait')\n\
+         - Searches recursively from the specified path\n\
+         - Filter by file type with the include parameter (e.g., '*.rs', '**/*.ts')\n\
+         - Results include file path, line number, and matching content\n\n\
+         ## When to Use\n\
+         - Broad pattern search across the whole codebase with common directories excluded\n\
+         - Initial exploration of where a pattern, function, or symbol appears\n\
+         - When you want build artifacts and VCS directories excluded automatically\n\n\
+         ## When NOT to Use\n\
+         - You need output_mode control (files_with_matches, count) → use grep tool instead\n\
+         - Searching a specific file or small directory → use grep tool for more control\n\
+         - Finding files by name pattern → use glob tool instead\n\
+         - You need context lines (-A/-B/-C) → use grep tool instead\n\n\
+         ## Examples\n\
+         <example>\n\
+         Find all public function definitions:\n\
+         search_codebase: query=\"pub fn \\w+\"\n\
+         </example>\n\
+         <example>\n\
+         Find struct/class definitions in source files:\n\
+         search_codebase: query=\"(pub struct|class) \\w+\", include=\"*.rs\"\n\
+         </example>\n\
+         <example>\n\
+         Initial discovery then targeted grep:\n\
+         1. search_codebase: query=\"AuthService\" → find where it appears\n\
+         2. grep: pattern=\"impl AuthService\", output_mode=\"files_with_matches\" → narrow to definitions\n\
+         3. read_file: path=(from above) → read the implementation\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Automatically excludes: .git/, target/, node_modules/, dist/, __pycache__/, *.lock\n\
+         - Use grep tool when you need richer output control or context lines\n\
+         - Results are limited to 100 matches by default (set limit to increase)"
     }
 
     fn parameters_schema(&self) -> Value {

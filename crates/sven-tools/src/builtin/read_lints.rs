@@ -15,13 +15,37 @@ impl Tool for ReadLintsTool {
     fn name(&self) -> &str { "read_lints" }
 
     fn description(&self) -> &str {
-        "Read and display linter errors from the current workspace. You can provide paths to \
-         specific files or directories, or omit the argument to get diagnostics for all files. \
-         If a file path is provided, returns diagnostics for that file only. \
-         If a directory path is provided, returns diagnostics for all files within that directory. \
-         This tool can return linter errors that were already present before your edits, so avoid \
-         calling it with a very wide scope of files. \
-         NEVER call this tool on a file unless you have edited it or are about to edit it."
+        "Read and display linter errors from the current workspace.\n\n\
+         ## Usage\n\
+         - Provide paths to specific files or directories\n\
+         - Omit paths to get diagnostics for all files\n\
+         - Single file: returns diagnostics for that file only\n\
+         - Directory: returns diagnostics for all files within\n\n\
+         ## When to Use\n\
+         - After making code changes to catch errors\n\
+         - Before committing to ensure code quality\n\
+         - To understand project-wide lint violations\n\n\
+         ## When NOT to Use\n\
+         - On files you haven't edited (returns pre-existing errors)\n\
+         - With very wide scope (check specific files/dirs instead)\n\n\
+         ## Examples\n\
+         <example>\n\
+         Check specific file:\n\
+         read_lints: paths=[\"/project/src/main.rs\"]\n\
+         </example>\n\
+         <example>\n\
+         Check directory:\n\
+         read_lints: paths=[\"/project/src\"]\n\
+         </example>\n\
+         <example>\n\
+         Check all files:\n\
+         read_lints\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - NEVER call unless you've edited files\n\
+         - Avoid wide scope (check specific files instead)\n\
+         - Returns pre-existing errors if not filtered by file\n\
+         - Focus on errors from your recent changes"
     }
 
     fn parameters_schema(&self) -> Value {

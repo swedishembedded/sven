@@ -28,14 +28,54 @@ impl Tool for TodoWriteTool {
     fn name(&self) -> &str { "todo_write" }
 
     fn description(&self) -> &str {
-        "Create and manage a structured task list for the current session. \
-         Helps track progress, organise complex tasks, and demonstrate thoroughness. \
-         Use proactively for complex multi-step tasks (3+ distinct steps), non-trivial tasks \
-         requiring careful planning, or when the user provides multiple tasks. \
-         Update status in real-time; mark complete immediately after finishing. \
-         Only one item should be in_progress at a time. \
-         Each item requires a unique id, content description, and status \
-         (pending / in_progress / completed / cancelled)."
+        "Create and manage a structured task list for the current session.\n\n\
+         Note: Other than when first creating todos, don't tell the user you're updating \
+         todos — just do it silently.\n\n\
+         ## Task Statuses\n\
+         - pending: Not yet started\n\
+         - in_progress: Currently being worked on (only ONE at a time)\n\
+         - completed: Finished successfully\n\
+         - cancelled: No longer relevant\n\n\
+         ## When to Use\n\
+         Use proactively for:\n\
+         - Complex multi-step tasks (3+ distinct steps)\n\
+         - Non-trivial tasks requiring careful planning\n\
+         - User provides multiple tasks to accomplish\n\
+         - Long-running implementations with clear sub-steps\n\n\
+         ## When NOT to Use\n\
+         Skip for:\n\
+         - Single, straightforward tasks\n\
+         - Trivial tasks completable in fewer than 3 steps\n\
+         - Purely conversational or informational requests\n\
+         - Don't add a task to test the change unless asked\n\n\
+         ## Parallel Todo Writes\n\
+         - Prefer creating the first todo as in_progress\n\
+         - Start working on todos by using other tool calls in the same turn as todo_write\n\
+         - Batch todo status updates with other tool calls to reduce round-trips\n\n\
+         ## Examples\n\
+         <example>\n\
+         Create initial task list and immediately start the first item:\n\
+         todo_write: todos=[\n\
+           {id=\"1\", content=\"Analyze codebase\", status=\"in_progress\"},\n\
+           {id=\"2\", content=\"Design solution\", status=\"pending\"},\n\
+           {id=\"3\", content=\"Implement changes\", status=\"pending\"}\n\
+         ]\n\
+         [Then call read_file or glob in the same turn to begin task 1]\n\
+         </example>\n\
+         <example>\n\
+         Update after completing task:\n\
+         todo_write: todos=[\n\
+           {id=\"1\", content=\"Analyze codebase\", status=\"completed\"},\n\
+           {id=\"2\", content=\"Design solution\", status=\"in_progress\"},\n\
+           {id=\"3\", content=\"Implement changes\", status=\"pending\"}\n\
+         ]\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Each item requires a unique id, content, and status\n\
+         - Only one item in_progress at a time — enforced at execution\n\
+         - Mark complete IMMEDIATELY after finishing each task\n\
+         - Calling todo_write replaces the entire list (not a merge/patch)\n\
+         - Complete current tasks before starting new ones"
     }
 
     fn parameters_schema(&self) -> Value {

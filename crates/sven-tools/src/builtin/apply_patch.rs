@@ -17,8 +17,8 @@ impl Tool for ApplyPatchTool {
     fn name(&self) -> &str { "apply_patch" }
 
     fn description(&self) -> &str {
-        "Apply a patch in the sven patch format to modify, add, or delete files.\n\
-         Format:\n\
+        "Apply a patch in sven patch format to modify, add, or delete multiple files.\n\n\
+         ## Format\n\
          *** Begin Patch\n\
          *** Add File: path/to/new_file.rs\n\
          +content line 1\n\
@@ -30,8 +30,23 @@ impl Tool for ApplyPatchTool {
          -removed line\n\
          +added line\n\
           context line\n\
-         *** End Patch\n\
-         Returns a summary of applied changes."
+         *** End Patch\n\n\
+         ## Usage\n\
+         - Apply multi-file changes atomically\n\
+         - Includes context for conflict detection\n\
+         - Returns summary of applied changes\n\n\
+         ## When to Use\n\
+         - Large-scale refactoring across multiple files\n\
+         - Coordinated changes to dependent files\n\
+         - Complex multi-file modifications\n\n\
+         ## When NOT to Use\n\
+         - Simple single-file edits → use edit_file\n\
+         - Adding single files → use write\n\
+         - Manual edits → use edit_file for clarity\n\n\
+         ## IMPORTANT\n\
+         - Provides atomic multi-file operation\n\
+         - Context helps resolve conflicts\n\
+         - All operations succeed or all fail together"
     }
 
     fn parameters_schema(&self) -> Value {

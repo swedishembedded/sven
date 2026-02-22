@@ -15,12 +15,46 @@ impl Tool for GrepTool {
     fn name(&self) -> &str { "grep" }
 
     fn description(&self) -> &str {
-        "A powerful search tool built on ripgrep. \
-         Supports full regex syntax (e.g. 'log.*Error', 'fn\\s+\\w+'). \
-         Filter files with the include parameter (e.g. '*.rs', '**/*.{ts,tsx}'). \
-         Output modes: 'content' shows matching lines (default), \
-         'files_with_matches' shows only file paths, 'count' shows match counts. \
-         Results are capped at several thousand lines for responsiveness."
+        "A powerful search tool built on ripgrep.\n\n\
+         ## Usage\n\
+         - Supports full regex syntax (e.g., 'log.*Error', 'fn\\s+\\w+')\n\
+         - Filter files with include parameter (e.g., '*.rs', '**/*.{ts,tsx}')\n\
+         - Pattern uses ripgrep syntax — escape literal braces (use interface\\{\\} to match interface{})\n\
+         - Results capped at limit parameter (default 100) for responsiveness\n\
+         - Prefer using grep for search tasks when you know the exact symbols or strings to search for\n\n\
+         ## Output Modes\n\
+         - 'content': Shows matching lines (default). Use when you need to see actual code/text.\n\
+         - 'files_with_matches': Shows only file paths. Use for initial discovery before reading files.\n\
+         - 'count': Shows match counts per file. Use to understand pattern distribution.\n\n\
+         ## When to Use\n\
+         - Finding patterns across multiple files\n\
+         - Discovering which files contain specific code\n\
+         - Searching within specific file types (use include parameter)\n\
+         - Case-insensitive searches (set case_sensitive=false)\n\n\
+         ## When NOT to Use\n\
+         - Finding files by name → use glob tool instead\n\
+         - Reading entire file contents → use read_file tool instead\n\
+         - Broad codebase search with build artifacts excluded → use search_codebase instead\n\n\
+         ## Examples\n\
+         <example>\n\
+         Discovery workflow:\n\
+         1. grep: pattern=\"TODO\", output_mode=\"files_with_matches\" → Find files with TODOs\n\
+         2. read_file: path=\"/path/to/found/file\" → Read specific file for details\n\
+         </example>\n\
+         <example>\n\
+         Case-insensitive search in TypeScript files:\n\
+         grep: pattern=\"useEffect\", path=\"/project/src\", include=\"*.{ts,tsx}\", case_sensitive=false\n\
+         </example>\n\
+         <example>\n\
+         Find all test functions and count per file:\n\
+         grep: pattern=\"#\\[test\\]\", include=\"*.rs\", output_mode=\"count\"\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Default output_mode is 'content' which shows matching lines\n\
+         - Use limit parameter to control result size\n\
+         - Include parameter uses glob syntax: '*.rs' or '**/*.{js,ts}'\n\
+         - Pattern is case-sensitive by default; set case_sensitive=false for case-insensitive\n\
+         - Results are capped to avoid overwhelming output; when truncated, a notice is shown"
     }
 
     fn parameters_schema(&self) -> Value {

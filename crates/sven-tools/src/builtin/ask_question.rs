@@ -55,10 +55,43 @@ impl Tool for AskQuestionTool {
     fn name(&self) -> &str { "ask_question" }
 
     fn description(&self) -> &str {
-        "Collect structured multiple-choice answers from the user. Each question has a prompt \
-         and a list of options. The user selects one or more options (if allow_multiple is true), \
-         or can provide custom text via 'Other'. Use this when you need specific choices from the user. \
-         In headless/CI/piped mode this tool is unavailable."
+        "Collect structured multiple-choice answers from the user.\n\n\
+         ## Usage\n\
+         - Each question has a prompt and list of options\n\
+         - User selects one or more options\n\
+         - 'Other' option always available for custom text\n\
+         - Supports single and multiple-choice questions\n\n\
+         ## When to Use\n\
+         - Need user confirmation before proceeding\n\
+         - Collect specific choices for decision making\n\
+         - Ask clarifying questions about ambiguous tasks\n\
+         - Get user input for configuration or preferences\n\n\
+         ## When NOT to Use\n\
+         - In headless/CI mode (unavailable there)\n\
+         - For open-ended questions (use context instead)\n\
+         - For yes/no (just ask directly in message)\n\n\
+         ## Examples\n\
+         <example>\n\
+         Ask for single choice:\n\
+         ask_question: questions=[{\n\
+           prompt=\"Which framework?\",\n\
+           options=[\"React\", \"Vue\", \"Angular\"],\n\
+           allow_multiple=false\n\
+         }]\n\
+         </example>\n\
+         <example>\n\
+         Ask for multiple choices:\n\
+         ask_question: questions=[{\n\
+           prompt=\"Which features to add?\",\n\
+           options=[\"Logging\", \"Caching\", \"Analytics\"],\n\
+           allow_multiple=true\n\
+         }]\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - Unavailable in headless/CI/piped mode\n\
+         - Always provide 2-4 clear options\n\
+         - Users can always select 'Other' for custom input\n\
+         - Use for critical decisions that need user input"
     }
 
     fn parameters_schema(&self) -> Value {

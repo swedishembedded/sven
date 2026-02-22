@@ -17,11 +17,51 @@ impl Tool for EditFileTool {
     fn name(&self) -> &str { "edit_file" }
 
     fn description(&self) -> &str {
-        "Performs exact string replacements in files. \
-         The edit will FAIL if old_str is not found or is not unique in the file — \
-         provide more surrounding context to make it unique, or set replace_all=true \
-         to replace every occurrence. Use replace_all for renaming a symbol across the file. \
-         If you want to create a new file, use the write tool instead."
+        "Performs exact string replacements in files.\n\n\
+         ## Usage\n\
+         - Edit FAILS if old_str not found or not unique in file\n\
+         - Provide 2-5 lines of surrounding context for uniqueness\n\
+         - Include exact whitespace and indentation as it appears in the file\n\
+         - For renaming symbols throughout a single file, use replace_all=true\n\n\
+         ## When to Use\n\
+         - Modifying existing code with surrounding context known\n\
+         - Making surgical changes to specific locations\n\
+         - Renaming symbols in a single file (with replace_all=true)\n\n\
+         ## When NOT to Use\n\
+         - Creating new files → use write tool instead\n\
+         - Making changes to multiple files → call edit_file multiple times\n\
+         - Large-scale refactoring → consider apply_patch tool\n\n\
+         ## How to Succeed\n\
+         1. ALWAYS read the file first with read_file to see exact formatting\n\
+         2. Copy 2-5 lines surrounding your target change\n\
+         3. Include exact indentation and all whitespace\n\
+         4. Ensure old_str appears exactly once in the file (check carefully)\n\
+         5. If edit fails with 'not found', copy MORE context lines\n\
+         6. If edit fails with 'appears N times', add UNIQUE context\n\n\
+         ## Examples\n\
+         <example>\n\
+         Good - includes 3 lines of context:\n\
+         edit_file(\n\
+           path=\"src/main.rs\",\n\
+           old_str=\"fn main() {\\n    println!(\\\"Hello\\\");\\n}\",\n\
+           new_str=\"fn main() {\\n    println!(\\\"Hello, World!\\\");\\n}\"\n\
+         )\n\
+         </example>\n\
+         <example>\n\
+         Bad - insufficient context (will fail if println! appears elsewhere):\n\
+         edit_file(path=\"src/main.rs\", old_str=\"println!\", new_str=\"eprintln!\")\n\
+         </example>\n\
+         <example>\n\
+         Good workflow - read first, then edit:\n\
+         1. read_file: path=\"src/processor.rs\" → See exact formatting\n\
+         2. edit_file with 2-5 lines of context from the read output\n\
+         </example>\n\n\
+         ## IMPORTANT\n\
+         - ALWAYS read the file first to see exact formatting\n\
+         - Include 2-5 context lines above and below your change\n\
+         - Respect existing indentation precisely\n\
+         - For new files, use write tool\n\
+         - Parent directories are created automatically if needed"
     }
 
     fn parameters_schema(&self) -> Value {
