@@ -6,7 +6,6 @@
 ///   `<YYYY-MM-DDTHH-MM-SSZ>_<slug>.md`
 ///
 /// where the slug is derived from the first user message.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -246,7 +245,7 @@ pub fn make_title(text: &str) -> String {
         .map(|(i, _)| i + 1)
         .unwrap_or(trimmed.len());
     let raw: String = trimmed.chars().take(sentence_end.min(80)).collect();
-    let raw = raw.trim_end_matches(|c: char| c == '.' || c == '!' || c == '?').trim();
+    let raw = raw.trim_end_matches(['.', '!', '?']).trim();
     if raw.is_empty() {
         return "Conversation".to_string();
     }

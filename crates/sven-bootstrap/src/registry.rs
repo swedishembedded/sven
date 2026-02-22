@@ -13,7 +13,7 @@ use sven_model::ModelProvider;
 use sven_tools::{
     AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
     FsTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool,
-    ReadFileTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
+    ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
     ShellTool, SwitchModeTool, TodoWriteTool, UpdateMemoryTool,
     WebFetchTool, WebSearchTool, WriteTool,
     GdbStartServerTool, GdbConnectTool, GdbCommandTool,
@@ -57,6 +57,7 @@ pub fn build_tool_registry(
             let mut reg = ToolRegistry::new();
 
             reg.register(ReadFileTool);
+            reg.register(ReadImageTool);
             reg.register(ListDirTool);
             reg.register(FsTool);
             reg.register(GlobFileSearchTool);
@@ -109,6 +110,7 @@ pub fn build_tool_registry(
             let mut reg = ToolRegistry::new();
 
             reg.register(ReadFileTool);
+            reg.register(ReadImageTool);
             reg.register(ListDirTool);
             reg.register(FsTool);
             reg.register(GlobFileSearchTool);

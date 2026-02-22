@@ -7,7 +7,7 @@ use tracing::debug;
 use crate::{
     catalog::{static_catalog, ModelCatalogEntry},
     provider::ResponseStream,
-    CompletionRequest, MessageContent, ResponseEvent, Role,
+    CompletionRequest, ResponseEvent,
 };
 
 pub struct AnthropicProvider {
@@ -57,51 +57,7 @@ impl crate::ModelProvider for AnthropicProvider {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let key = self.api_key.as_deref().context("ANTHROPIC_API_KEY not set")?;
 
-        // Separate system message from conversation
-        let mut system_text = String::new();
-        let mut messages: Vec<Value> = Vec::new();
-
-        for m in &req.messages {
-            if m.role == Role::System {
-                if let Some(t) = m.as_text() {
-                    system_text = t.to_string();
-                }
-                continue;
-            }
-            let role = match m.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::Tool => "user",
-                Role::System => unreachable!(),
-            };
-            match &m.content {
-                MessageContent::Text(t) => {
-                    messages.push(json!({ "role": role, "content": t }));
-                }
-                MessageContent::ToolCall { tool_call_id, function } => {
-                    messages.push(json!({
-                        "role": "assistant",
-                        "content": [{
-                            "type": "tool_use",
-                            "id": tool_call_id,
-                            "name": function.name,
-                            "input": serde_json::from_str::<Value>(&function.arguments)
-                                .unwrap_or(json!({})),
-                        }]
-                    }));
-                }
-                MessageContent::ToolResult { tool_call_id, content } => {
-                    messages.push(json!({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_call_id,
-                            "content": content,
-                        }]
-                    }));
-                }
-            }
-        }
+        let (system_text, messages) = build_anthropic_messages(&req.messages);
 
         let tools: Vec<Value> = req.tools.iter().map(|t| json!({
             "name": t.name,
@@ -209,6 +165,120 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
         "message_stop" => Ok(ResponseEvent::Done),
         _ => Ok(ResponseEvent::TextDelta(String::new())),
     }
+}
+
+/// Convert a slice of [`Message`]s into the Anthropic wire format.
+///
+/// Returns `(system_text, conversation_messages)`.  The system message is
+/// separated out because Anthropic expects it as a top-level `system` field,
+/// not as a conversation turn.
+pub(crate) fn build_anthropic_messages(
+    messages: &[crate::Message],
+) -> (String, Vec<Value>) {
+    use crate::{ContentPart, MessageContent, Role, ToolContentPart, ToolResultContent};
+
+    let mut system_text = String::new();
+    let mut out: Vec<Value> = Vec::new();
+
+    for m in messages {
+        if m.role == Role::System {
+            if let Some(t) = m.as_text() {
+                system_text = t.to_string();
+            }
+            continue;
+        }
+        let role = match m.role {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "user",
+            Role::System => unreachable!(),
+        };
+        match &m.content {
+            MessageContent::Text(t) => {
+                out.push(json!({ "role": role, "content": t }));
+            }
+            MessageContent::ContentParts(parts) if !parts.is_empty() => {
+                let content: Vec<Value> = parts.iter().map(|p| match p {
+                    ContentPart::Text { text } => {
+                        json!({ "type": "text", "text": text })
+                    }
+                    ContentPart::Image { image_url, .. } => {
+                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                            json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime,
+                                    "data": data,
+                                }
+                            })
+                        } else {
+                            json!({
+                                "type": "image",
+                                "source": { "type": "url", "url": image_url }
+                            })
+                        }
+                    }
+                }).collect();
+                out.push(json!({ "role": role, "content": content }));
+            }
+            MessageContent::ContentParts(_) => {
+                out.push(json!({ "role": role, "content": "" }));
+            }
+            MessageContent::ToolCall { tool_call_id, function } => {
+                out.push(json!({
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": tool_call_id,
+                        "name": function.name,
+                        "input": serde_json::from_str::<Value>(&function.arguments)
+                            .unwrap_or(json!({})),
+                    }]
+                }));
+            }
+            MessageContent::ToolResult { tool_call_id, content } => {
+                let wire_content: Value = match content {
+                    ToolResultContent::Text(t) => json!(t),
+                    ToolResultContent::Parts(parts) if !parts.is_empty() => {
+                        let arr: Vec<Value> = parts.iter().map(|p| match p {
+                            ToolContentPart::Text { text } => {
+                                json!({ "type": "text", "text": text })
+                            }
+                            ToolContentPart::Image { image_url } => {
+                                if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                                    json!({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": mime,
+                                            "data": data,
+                                        }
+                                    })
+                                } else {
+                                    json!({
+                                        "type": "image",
+                                        "source": { "type": "url", "url": image_url }
+                                    })
+                                }
+                            }
+                        }).collect();
+                        json!(arr)
+                    }
+                    ToolResultContent::Parts(_) => json!(""),
+                };
+                out.push(json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": wire_content,
+                    }]
+                }));
+            }
+        }
+    }
+    (system_text, out)
 }
 
 #[cfg(test)]
@@ -338,5 +408,79 @@ mod tests {
         let v = serde_json::json!({ "type": "ping" });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    // ── Multimodal message serialization ────────────────────────────────────────
+
+    #[test]
+    fn plain_text_message_serialized_correctly() {
+        use crate::Message;
+        let (sys, msgs) = build_anthropic_messages(&[Message::user("hello")]);
+        assert!(sys.is_empty());
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "hello");
+    }
+
+    #[test]
+    fn system_message_extracted_to_system_text() {
+        use crate::Message;
+        let (sys, msgs) = build_anthropic_messages(&[
+            Message::system("be helpful"),
+            Message::user("hi"),
+        ]);
+        assert_eq!(sys, "be helpful");
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn content_parts_image_base64_uses_source_block() {
+        use crate::{ContentPart, Message};
+        let data_url = "data:image/png;base64,iVBORw0KGgo=";
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "look at this".into() },
+            ContentPart::image(data_url),
+        ]);
+        let (_, msgs) = build_anthropic_messages(&[msg]);
+        let content = &msgs[0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        let img = &content[1];
+        assert_eq!(img["type"], "image");
+        assert_eq!(img["source"]["type"], "base64");
+        assert_eq!(img["source"]["media_type"], "image/png");
+        assert_eq!(img["source"]["data"], "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn content_parts_image_https_url_uses_url_source() {
+        use crate::{ContentPart, Message};
+        let url = "https://example.com/img.jpg";
+        let msg = Message::user_with_parts(vec![
+            ContentPart::image(url),
+        ]);
+        let (_, msgs) = build_anthropic_messages(&[msg]);
+        let img = &msgs[0]["content"][0];
+        assert_eq!(img["source"]["type"], "url");
+        assert_eq!(img["source"]["url"], url);
+    }
+
+    #[test]
+    fn tool_result_parts_with_image_serialized_as_tool_result_content_array() {
+        use crate::{Message, ToolContentPart};
+        let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
+        let msg = Message::tool_result_with_parts("tc-42", vec![
+            ToolContentPart::Text { text: "screenshot".into() },
+            ToolContentPart::Image { image_url: data_url.into() },
+        ]);
+        let (_, msgs) = build_anthropic_messages(&[msg]);
+        assert_eq!(msgs[0]["role"], "user");
+        let block = &msgs[0]["content"][0];
+        assert_eq!(block["type"], "tool_result");
+        assert_eq!(block["tool_use_id"], "tc-42");
+        let content = &block["content"];
+        assert!(content.is_array());
+        assert_eq!(content[0]["type"], "text");
+        let img = &content[1];
+        assert_eq!(img["type"], "image");
+        assert_eq!(img["source"]["type"], "base64");
     }
 }

@@ -111,6 +111,24 @@ impl Agent {
         self.run_agentic_loop(tx).await
     }
 
+    /// Push a multimodal user message (text + images), then run the agent loop.
+    ///
+    /// Use this when the caller wants to attach one or more images to the user
+    /// turn.  Images that the current model does not support will be stripped
+    /// transparently before the first model call.
+    pub async fn submit_with_parts(
+        &mut self,
+        parts: Vec<sven_model::ContentPart>,
+        tx: mpsc::Sender<AgentEvent>,
+    ) -> anyhow::Result<()> {
+        let mode = *self.current_mode.lock().await;
+        if self.session.messages.is_empty() {
+            self.session.push(self.system_message(mode));
+        }
+        self.session.push(Message::user_with_parts(parts));
+        self.run_agentic_loop(tx).await
+    }
+
     /// Replace session history with the given messages, then run with the new user message.
     /// Used for edit-and-resubmit: TUI sends truncated history + new user content.
     /// Prepends system message if the list does not start with one.
@@ -184,7 +202,22 @@ impl Agent {
                     is_error: output.is_error,
                 }).await;
 
-                self.session.push(Message::tool_result(&tc.id, &output.content));
+                // Build a tool result message — multipart when the output has images.
+                let tool_msg = if output.has_images() {
+                    use sven_model::ToolContentPart;
+                    let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
+                        sven_tools::ToolOutputPart::Text(t) => {
+                            ToolContentPart::Text { text: t.clone() }
+                        }
+                        sven_tools::ToolOutputPart::Image(url) => {
+                            ToolContentPart::Image { image_url: url.clone() }
+                        }
+                    }).collect();
+                    Message::tool_result_with_parts(&tc.id, parts)
+                } else {
+                    Message::tool_result(&tc.id, &output.content)
+                };
+                self.session.push(tool_msg);
             }
         }
 
@@ -222,8 +255,15 @@ impl Agent {
             })
             .collect();
 
+        // Strip image content when the current model does not support images.
+        let modalities = self.model.input_modalities();
+        let messages = sven_model::sanitize::strip_images_if_unsupported(
+            self.session.messages.clone(),
+            &modalities,
+        );
+
         let req = CompletionRequest {
-            messages: self.session.messages.clone(),
+            messages,
             tools,
             stream: true,
         };

@@ -2,10 +2,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Input modalities supported by a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputModality {
+    Text,
+    Image,
+}
+
+fn default_input_modalities() -> Vec<InputModality> {
+    // Conservative default: text only.
+    // Vision-capable models must explicitly list `image` in models.yaml.
+    vec![InputModality::Text]
+}
+
 /// Metadata for a single model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
-    /// Provider-scoped model identifier (e.g. "gpt-4o", "claude-opus-4-5")
+    /// Provider-scoped model identifier (e.g. "gpt-4o", "claude-opus-4-6")
     pub id: String,
     /// Human-readable display name
     pub name: String,
@@ -18,6 +32,16 @@ pub struct ModelCatalogEntry {
     /// Short description
     #[serde(default)]
     pub description: String,
+    /// Supported input modalities.  Defaults to `[text]`.
+    #[serde(default = "default_input_modalities")]
+    pub input_modalities: Vec<InputModality>,
+}
+
+impl ModelCatalogEntry {
+    /// Return `true` if the model can accept image input.
+    pub fn supports_images(&self) -> bool {
+        self.input_modalities.contains(&InputModality::Image)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +63,14 @@ pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
     static_catalog()
         .into_iter()
         .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
+}
+
+/// Return `true` if the model supports image input, defaulting to `false` when
+/// the model is not found in the catalog.
+pub fn supports_images(provider: &str, model_id: &str) -> bool {
+    lookup(provider, model_id)
+        .map(|e| e.supports_images())
+        .unwrap_or(false)
 }
 
 /// Look up the context window for a model.  Falls back to `default` if not in catalog.
@@ -76,10 +108,23 @@ mod tests {
     }
 
     #[test]
+    fn gpt4o_supports_images() {
+        let entry = lookup("openai", "gpt-4o").unwrap();
+        assert!(entry.supports_images(), "gpt-4o must support image input");
+    }
+
+    #[test]
     fn claude_opus_is_in_catalog() {
-        let entry = lookup("anthropic", "claude-opus-4-5").expect("claude-opus-4-5 must be in catalog");
+        let entry = lookup("anthropic", "claude-opus-4-6")
+            .expect("claude-opus-4-6 must be in catalog");
         assert_eq!(entry.provider, "anthropic");
         assert!(entry.context_window >= 200_000);
+    }
+
+    #[test]
+    fn claude_opus_supports_images() {
+        let entry = lookup("anthropic", "claude-opus-4-6").unwrap();
+        assert!(entry.supports_images(), "claude-opus-4-6 must support image input");
     }
 
     #[test]
@@ -96,8 +141,35 @@ mod tests {
     #[test]
     fn all_entries_have_non_zero_windows() {
         for entry in static_catalog() {
+            // Non-completion models (video generation, etc.) may have zero windows.
+            if entry.context_window == 0 || entry.max_output_tokens == 0 {
+                // Sanity: such entries should describe themselves as non-token models.
+                assert!(
+                    entry.description.to_lowercase().contains("video")
+                        || entry.description.to_lowercase().contains("non-token")
+                        || entry.description.to_lowercase().contains("generation"),
+                    "{} ({}) has zero context_window/max_output_tokens but does not appear \
+                     to be a non-token model (description: {})",
+                    entry.id,
+                    entry.provider,
+                    entry.description,
+                );
+                continue;
+            }
             assert!(entry.context_window > 0, "{} has zero context_window", entry.id);
             assert!(entry.max_output_tokens > 0, "{} has zero max_output_tokens", entry.id);
+        }
+    }
+
+    #[test]
+    fn all_entries_have_at_least_text_modality() {
+        for entry in static_catalog() {
+            assert!(
+                entry.input_modalities.contains(&InputModality::Text),
+                "{} ({}) missing text modality",
+                entry.id,
+                entry.provider,
+            );
         }
     }
 }

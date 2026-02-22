@@ -6,12 +6,13 @@ pub mod events;
 
 pub use policy::{ApprovalPolicy, ToolPolicy};
 pub use registry::{ToolRegistry, ToolSchema};
-pub use tool::{ToolCall, ToolOutput, Tool};
+pub use tool::{ToolCall, ToolOutput, ToolOutputPart, Tool};
 pub use events::{TodoItem, ToolEvent};
 
 // New tool exports
 pub use builtin::run_terminal_command::RunTerminalCommandTool;
 pub use builtin::read_file::ReadFileTool;
+pub use builtin::read_image::ReadImageTool;
 pub use builtin::write::WriteTool;
 pub use builtin::list_dir::ListDirTool;
 pub use builtin::delete_file::DeleteFileTool;

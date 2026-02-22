@@ -15,23 +15,91 @@ pub struct ToolCall {
     pub args: Value,
 }
 
+/// A single content item in a rich tool output.
+///
+/// Most tools produce only `Text`.  Vision-capable tools (e.g. `read_image`)
+/// may produce a mix of `Text` and `Image` items.
+#[derive(Debug, Clone)]
+pub enum ToolOutputPart {
+    /// Plain UTF-8 text.
+    Text(String),
+    /// Base64 data URL: `data:<mime>;base64,<b64>`.
+    Image(String),
+}
+
 /// The result of executing a tool.
+///
+/// ## Backward compatibility
+/// `content` is always the plain-text representation of the output (the
+/// concatenation of all `Text` parts).  Existing tools and tests that only
+/// access `content` continue to work unchanged.
+///
+/// ## Image support
+/// Tools that return images populate `parts` with a mix of [`ToolOutputPart::Text`]
+/// and [`ToolOutputPart::Image`] items.  The agent maps these into the
+/// appropriate [`sven_model::ToolResultContent`] variant when building the
+/// conversation history.
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
     pub call_id: String,
-    /// Human/model readable result text
+    /// Plain-text content — concatenation of all Text parts.
+    /// Always set; always readable.  Backward-compatible field.
     pub content: String,
-    /// If true, the tool execution failed non-fatally (returned error message)
+    /// Structured parts (text and/or images).  For tools that only return
+    /// text this contains exactly one `Text` part mirroring `content`.
+    pub parts: Vec<ToolOutputPart>,
+    /// If true, the tool execution failed non-fatally (returned error message).
     pub is_error: bool,
 }
 
 impl ToolOutput {
+    /// Successful plain-text result.
     pub fn ok(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { call_id: call_id.into(), content: content.into(), is_error: false }
+        let text = content.into();
+        let call_id = call_id.into();
+        Self {
+            call_id,
+            content: text.clone(),
+            parts: vec![ToolOutputPart::Text(text)],
+            is_error: false,
+        }
     }
 
+    /// Error result containing a plain-text error message.
     pub fn err(call_id: impl Into<String>, msg: impl Into<String>) -> Self {
-        Self { call_id: call_id.into(), content: msg.into(), is_error: true }
+        let text = msg.into();
+        let call_id = call_id.into();
+        Self {
+            call_id,
+            content: text.clone(),
+            parts: vec![ToolOutputPart::Text(text)],
+            is_error: true,
+        }
+    }
+
+    /// Result with arbitrary parts (text and/or images).
+    ///
+    /// `content` is set to the concatenation of all Text parts.
+    pub fn with_parts(call_id: impl Into<String>, parts: Vec<ToolOutputPart>) -> Self {
+        let text = parts
+            .iter()
+            .filter_map(|p| match p {
+                ToolOutputPart::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Self {
+            call_id: call_id.into(),
+            content: text,
+            parts,
+            is_error: false,
+        }
+    }
+
+    /// Return `true` if this output contains at least one image part.
+    pub fn has_images(&self) -> bool {
+        self.parts.iter().any(|p| matches!(p, ToolOutputPart::Image(_)))
     }
 }
 

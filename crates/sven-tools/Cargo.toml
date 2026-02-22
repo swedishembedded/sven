@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 sven-config = { path = "../sven-config" }
+sven-image  = { path = "../sven-image" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }

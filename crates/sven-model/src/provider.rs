@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
-use crate::{catalog::ModelCatalogEntry, CompletionRequest, ResponseEvent};
+use crate::{catalog::{InputModality, ModelCatalogEntry}, CompletionRequest, ResponseEvent};
 
 pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>> + Send>>;
 
@@ -45,5 +45,20 @@ pub trait ModelProvider: Send + Sync {
     fn catalog_context_window(&self) -> Option<u32> {
         crate::catalog::lookup(self.name(), self.model_name())
             .map(|e| e.context_window)
+    }
+
+    /// Input modalities supported by this provider/model combination.
+    ///
+    /// Reads from the static catalog.  Returns `[Text]` when the model is not
+    /// found, to be conservative (avoid sending images to unknown models).
+    fn input_modalities(&self) -> Vec<InputModality> {
+        crate::catalog::lookup(self.name(), self.model_name())
+            .map(|e| e.input_modalities)
+            .unwrap_or_else(|| vec![InputModality::Text])
+    }
+
+    /// Returns `true` if this model supports image input.
+    fn supports_images(&self) -> bool {
+        self.input_modalities().contains(&InputModality::Image)
     }
 }

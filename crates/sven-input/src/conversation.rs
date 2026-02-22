@@ -236,14 +236,14 @@ fn convert_sections_to_conversation(
                     return Ok(ParsedConversation {
                         title,
                         history,
-                        pending_user_input: Some(content.trim().to_string()),
+                        pending_user_input: Some(content.to_string().trim().to_string()),
                     });
                 }
-                history.push(Message::user(content.trim()));
+                history.push(Message::user(content.to_string().trim()));
             }
 
             SectionKind::Sven => {
-                history.push(Message::assistant(section.content.trim()));
+                history.push(Message::assistant(section.content.to_string().trim()));
             }
 
             SectionKind::Tool => {
@@ -267,7 +267,7 @@ fn convert_sections_to_conversation(
                     None => return Err(ParseError::OrphanedToolResult),
                 };
                 let content = extract_code_block_content(&section.content);
-                history.push(Message::tool_result(call_id, content.trim()));
+                history.push(Message::tool_result(call_id, content.to_string().trim()));
             }
         }
     }
@@ -502,7 +502,7 @@ mod tests {
         match &conv.history[3].content {
             MessageContent::ToolResult { tool_call_id, content } => {
                 assert_eq!(tool_call_id, "call_1");
-                assert_eq!(content.trim(), "src/main.rs");
+                assert_eq!(content.to_string().trim(), "src/main.rs");
             }
             _ => panic!("expected ToolResult"),
         }
@@ -658,7 +658,7 @@ mod tests {
         match &conv.history[2].content {
             MessageContent::ToolResult { tool_call_id, content } => {
                 assert_eq!(tool_call_id, "id_1");
-                assert_eq!(content.trim(), "src/main.rs");
+                assert_eq!(content.to_string().trim(), "src/main.rs");
             }
             _ => panic!("expected ToolResult"),
         }
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(conv.history.len(), 3);
         match &conv.history[2].content {
             MessageContent::ToolResult { content, .. } => {
-                assert!(content.contains("plain output line"));
+                assert!(content.to_string().contains("plain output line"));
             }
             _ => panic!("expected ToolResult"),
         }
@@ -726,7 +726,7 @@ mod tests {
         let conv = parse_conversation(md).unwrap();
         match &conv.history[2].content {
             MessageContent::ToolResult { content, .. } => {
-                assert!(content.contains("backticks"));
+                assert!(content.to_string().contains("backticks"));
             }
             _ => panic!("expected ToolResult"),
         }
@@ -760,7 +760,7 @@ mod tests {
         match &conv.history[2].content {
             MessageContent::ToolResult { tool_call_id, content } => {
                 assert_eq!(tool_call_id, "c1");
-                assert!(content.contains("src/main.rs"));
+                assert!(content.to_string().contains("src/main.rs"));
             }
             _ => panic!("expected first ToolResult at [2]"),
         }

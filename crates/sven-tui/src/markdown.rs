@@ -356,7 +356,7 @@ fn highlight_code_block(code: &str, lang: &str) -> Vec<Line<'static>> {
         let spans: Vec<Span<'static>> = ranges
             .iter()
             .filter_map(|(style, text)| {
-                let t = text.trim_end_matches(|c| c == '\n' || c == '\r');
+                let t = text.trim_end_matches(['\n', '\r']);
                 if t.is_empty() {
                     return None;
                 }

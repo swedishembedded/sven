@@ -76,9 +76,10 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
                     .get(tool_call_id)
                     .map(|s| s.as_str())
                     .unwrap_or("tool");
+                let content_text = content.to_string();
                 let preview: String =
-                    content.lines().next().unwrap_or("").chars().take(80).collect();
-                let truncated = if content.len() > preview.len() + 1 { "…" } else { "" };
+                    content_text.lines().next().unwrap_or("").chars().take(80).collect();
+                let truncated = if content_text.len() > preview.len() + 1 { "…" } else { "" };
                 format!(
                     "\n**Tool:{}**\n✅ **Tool Response: {}** `{}{}` ▶ click to expand\n",
                     tool_call_id, tool_name, preview, truncated
@@ -270,7 +271,10 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
         let content = extract_code_block(lines, i)?;
         return Ok(Some(Message {
             role: Role::Tool,
-            content: MessageContent::ToolResult { tool_call_id, content },
+            content: MessageContent::ToolResult {
+                tool_call_id,
+                content: sven_model::ToolResultContent::Text(content),
+            },
         }));
     }
 
@@ -587,7 +591,7 @@ mod tests {
         assert_eq!(messages[0].role, Role::Tool);
         if let MessageContent::ToolResult { tool_call_id, content } = &messages[0].content {
             assert_eq!(tool_call_id, "xyz789");
-            assert_eq!(content.trim(), "file1.rs\nfile2.rs");
+            assert_eq!(content.to_string().trim(), "file1.rs\nfile2.rs");
         } else {
             panic!("expected ToolResult content");
         }
@@ -654,7 +658,7 @@ mod tests {
         } else { panic!("expected ToolCall"); }
         if let MessageContent::ToolResult { tool_call_id, content } = &parsed[2].content {
             assert_eq!(tool_call_id, "call1");
-            assert!(content.contains("line three"), "full output must be preserved; got: {}", content);
+            assert!(content.to_string().contains("line three"), "full output must be preserved; got: {}", content);
         } else { panic!("expected ToolResult"); }
         assert_eq!(parsed[3].as_text(), Some("The file contains three lines"));
     }

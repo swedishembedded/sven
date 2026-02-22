@@ -23,7 +23,7 @@ use tracing::debug;
 use crate::{
     catalog::{static_catalog, ModelCatalogEntry},
     provider::ResponseStream,
-    CompletionRequest, MessageContent, ResponseEvent, Role,
+    CompletionRequest, ResponseEvent, Role,
 };
 
 /// How to send the API key in HTTP requests.
@@ -212,6 +212,8 @@ impl crate::ModelProvider for OpenAICompatProvider {
                         context_window: 0,
                         max_output_tokens: 0,
                         description: String::new(),
+                        // Unknown model: conservative default (text only).
+                        input_modalities: vec![crate::catalog::InputModality::Text],
                     });
                 }
             }
@@ -225,30 +227,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        let messages: Vec<Value> = req.messages.iter().map(|m| {
-            match &m.content {
-                MessageContent::Text(t) => json!({
-                    "role": role_str(&m.role),
-                    "content": t,
-                }),
-                MessageContent::ToolCall { tool_call_id, function } => json!({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "id": tool_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function.name,
-                            "arguments": function.arguments,
-                        }
-                    }]
-                }),
-                MessageContent::ToolResult { tool_call_id, content } => json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": content,
-                }),
-            }
-        }).collect();
+        let messages: Vec<Value> = build_openai_messages(&req.messages);
 
         let tools: Vec<Value> = req.tools.iter().map(|t| json!({
             "type": "function",
@@ -361,6 +340,74 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     }
 
     Ok(ResponseEvent::TextDelta(String::new()))
+}
+
+/// Convert a slice of [`Message`]s into the OpenAI wire-format JSON array.
+///
+/// Extracted as a free function so it can be unit-tested without making HTTP
+/// requests.
+pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
+    use crate::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
+
+    messages.iter().map(|m| {
+        match &m.content {
+            MessageContent::Text(t) => json!({
+                "role": role_str(&m.role),
+                "content": t,
+            }),
+            MessageContent::ContentParts(parts) if !parts.is_empty() => {
+                let content: Vec<Value> = parts.iter().map(|p| match p {
+                    ContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                    ContentPart::Image { image_url, detail } => {
+                        let mut img_obj = json!({ "url": image_url });
+                        if let Some(d) = detail {
+                            img_obj["detail"] = json!(d);
+                        }
+                        json!({ "type": "image_url", "image_url": img_obj })
+                    }
+                }).collect();
+                json!({ "role": role_str(&m.role), "content": content })
+            }
+            MessageContent::ContentParts(_) => {
+                // Empty parts — serialize as empty text to avoid invalid API payloads.
+                json!({ "role": role_str(&m.role), "content": "" })
+            }
+            MessageContent::ToolCall { tool_call_id, function } => json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": function.name,
+                        "arguments": function.arguments,
+                    }
+                }]
+            }),
+            MessageContent::ToolResult { tool_call_id, content } => {
+                let wire_content: Value = match content {
+                    ToolResultContent::Text(t) => json!(t),
+                    ToolResultContent::Parts(parts) if !parts.is_empty() => {
+                        let arr: Vec<Value> = parts.iter().map(|p| match p {
+                            ToolContentPart::Text { text } => {
+                                json!({ "type": "text", "text": text })
+                            }
+                            ToolContentPart::Image { image_url } => json!({
+                                "type": "image_url",
+                                "image_url": { "url": image_url },
+                            }),
+                        }).collect();
+                        json!(arr)
+                    }
+                    ToolResultContent::Parts(_) => json!(""),
+                };
+                json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": wire_content,
+                })
+            }
+        }
+    }).collect()
 }
 
 #[cfg(test)]
@@ -511,5 +558,99 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::TextDelta(t) if t == "hi"));
+    }
+
+    // ── Multimodal message serialization ────────────────────────────────────────
+
+    #[test]
+    fn plain_text_message_serialized_as_string_content() {
+        use crate::Message;
+        let msgs = vec![Message::user("hello world")];
+        let json = build_openai_messages(&msgs);
+        assert_eq!(json[0]["role"], "user");
+        assert_eq!(json[0]["content"], "hello world");
+    }
+
+    #[test]
+    fn content_parts_single_text_collapses_to_string() {
+        // user_with_parts(single text) collapses to MessageContent::Text for
+        // cleaner serialization — the wire format should be a plain string.
+        use crate::{ContentPart, Message};
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "describe this".into() },
+        ]);
+        let json = build_openai_messages(&[msg]);
+        assert_eq!(json[0]["content"], "describe this");
+    }
+
+    #[test]
+    fn content_parts_with_image_serialized_as_image_url_block() {
+        use crate::{ContentPart, Message};
+        let data_url = "data:image/png;base64,iVBORw0KGgo=";
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "what is this?".into() },
+            ContentPart::image(data_url),
+        ]);
+        let json = build_openai_messages(&[msg]);
+        let content = &json[0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], data_url);
+    }
+
+    #[test]
+    fn tool_result_parts_with_image_serialized_as_content_array() {
+        use crate::{Message, ToolContentPart};
+        let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
+        let msg = Message::tool_result_with_parts("tc-99", vec![
+            ToolContentPart::Text { text: "image captured".into() },
+            ToolContentPart::Image { image_url: data_url.into() },
+        ]);
+        let json = build_openai_messages(&[msg]);
+        assert_eq!(json[0]["role"], "tool");
+        assert_eq!(json[0]["tool_call_id"], "tc-99");
+        let content = &json[0]["content"];
+        assert!(content.is_array());
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], data_url);
+    }
+
+    #[test]
+    fn tool_result_plain_text_serialized_as_string() {
+        use crate::Message;
+        let msg = Message::tool_result("tc-1", "just text");
+        let json = build_openai_messages(&[msg]);
+        assert_eq!(json[0]["content"], "just text");
+    }
+
+    #[test]
+    fn image_with_detail_low_includes_detail_field() {
+        use crate::{ContentPart, Message};
+        let url = "data:image/png;base64,iVBORw0KGgo=";
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "what logo is this?".into() },
+            ContentPart::image_with_detail(url, "low"),
+        ]);
+        let json = build_openai_messages(&[msg]);
+        let content = &json[0]["content"];
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], url);
+        assert_eq!(content[1]["image_url"]["detail"], "low");
+    }
+
+    #[test]
+    fn image_without_detail_omits_detail_field() {
+        use crate::{ContentPart, Message};
+        let url = "data:image/png;base64,iVBORw0KGgo=";
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "describe".into() },
+            ContentPart::image(url),
+        ]);
+        let json = build_openai_messages(&[msg]);
+        let content = &json[0]["content"];
+        assert_eq!(content[1]["type"], "image_url");
+        // detail should be absent when None
+        assert!(content[1]["image_url"]["detail"].is_null());
     }
 }

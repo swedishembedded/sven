@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod registry;
+pub mod sanitize;
 pub(crate) mod openai_compat;
 mod types;
 mod provider;
@@ -11,7 +12,7 @@ mod cohere;
 mod mock;
 mod yaml_mock;
 
-pub use catalog::ModelCatalogEntry;
+pub use catalog::{ModelCatalogEntry, InputModality};
 pub use types::*;
 pub use provider::ModelProvider;
 pub use openai::OpenAiProvider;

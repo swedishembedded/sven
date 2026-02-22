@@ -8,7 +8,7 @@ mod agent_tests {
 
     use sven_config::{AgentConfig, AgentMode};
     use sven_model::{ResponseEvent, ScriptedMockProvider};
-    use sven_tools::{FsTool, ShellTool, ToolRegistry, events::ToolEvent};
+    use sven_tools::{FsTool, ReadImageTool, ShellTool, ToolRegistry, events::ToolEvent};
     use tokio::sync::{mpsc, Mutex};
 
     use crate::{Agent, AgentEvent, AgentRuntimeContext};
@@ -270,6 +270,108 @@ mod agent_tests {
             if let AgentEvent::TokenUsage { input, output, .. } = e { Some((*input, *output)) } else { None }
         });
         assert_eq!(usage, Some((42, 17)));
+    }
+
+    // ── Multimodal input ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn submit_with_parts_creates_content_parts_message() {
+        use std::sync::Arc;
+        use sven_model::{ContentPart, MessageContent};
+
+        let mock = ScriptedMockProvider::always_text("ok").with_vision();
+        let last_req = Arc::clone(&mock.last_request);
+        let mut agent = agent_with(mock, ToolRegistry::default(), AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit_with_parts(vec![
+            ContentPart::Text { text: "describe this".into() },
+            ContentPart::image("data:image/png;base64,abc="),
+        ], tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        // Inspect what was actually sent to the provider
+        let req = last_req.lock().unwrap().take().unwrap();
+        let user_msg = req.messages.iter().find(|m| m.role == sven_model::Role::User).unwrap();
+        assert!(
+            matches!(&user_msg.content, MessageContent::ContentParts(parts) if parts.len() == 2),
+            "user message should have ContentParts with 2 parts; got: {:?}", user_msg.content
+        );
+    }
+
+    #[tokio::test]
+    async fn text_only_model_strips_images_before_send() {
+        use std::sync::Arc;
+        use sven_model::{ContentPart, MessageContent};
+
+        // Default mock has no vision capability → images should be stripped
+        let mock = ScriptedMockProvider::always_text("ok");
+        let last_req = Arc::clone(&mock.last_request);
+        let mut agent = agent_with(mock, ToolRegistry::default(), AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit_with_parts(vec![
+            ContentPart::Text { text: "what is in this image?".into() },
+            ContentPart::image("data:image/png;base64,abc="),
+        ], tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        let req = last_req.lock().unwrap().take().unwrap();
+        let user_msg = req.messages.iter().find(|m| m.role == sven_model::Role::User).unwrap();
+        // The image should have been replaced with a text placeholder
+        let text = match &user_msg.content {
+            MessageContent::ContentParts(parts) => {
+                parts.iter().filter_map(|p| if let ContentPart::Text { text } = p { Some(text.as_str()) } else { None })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
+            MessageContent::Text(t) => t.clone(),
+            other => panic!("unexpected content: {other:?}"),
+        };
+        assert!(!text.contains("base64"), "raw base64 must not reach a text-only model");
+        assert!(text.contains("omitted") || text.contains("[image"), "image should be replaced with placeholder; got: {text}");
+    }
+
+    #[tokio::test]
+    async fn tool_result_with_image_stored_as_parts_in_session() {
+        use std::io::Write;
+        use sven_model::MessageContent;
+        use sven_tools::ReadImageTool;
+
+        // Write a valid 1×1 red PNG to a temp file (bytes verified by Python zlib)
+        let tmp = tempfile::NamedTempFile::with_suffix(".png").unwrap();
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+            0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1×1
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // bit depth 8, RGB
+            0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, // IDAT length + "IDAT"
+            0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, // compressed pixel (red)
+            0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, // IDAT CRC
+            0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND
+            0x44, 0xae, 0x42, 0x60, 0x82,                   // IEND CRC
+        ];
+        tmp.as_file().write_all(png_bytes).unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+
+        // Vision model so images are not stripped
+        let mock = ScriptedMockProvider::tool_then_text(
+            "ri-1", "read_image", &format!(r#"{{"file_path":"{path}"}}"#), "I see a red pixel",
+        ).with_vision();
+        let mut reg = ToolRegistry::new();
+        reg.register(ReadImageTool);
+        let mut agent = agent_with(mock, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit("read the image file", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        let has_image_in_tool_result = agent.session().messages.iter().any(|m| {
+            matches!(&m.content, MessageContent::ToolResult { content, .. }
+                if matches!(content, sven_model::ToolResultContent::Parts(parts)
+                    if parts.iter().any(|p| matches!(p, sven_model::ToolContentPart::Image { .. }))))
+        });
+        assert!(has_image_in_tool_result, "tool result should contain an image part in session history");
     }
 
     // ── Mode is accessible ────────────────────────────────────────────────────

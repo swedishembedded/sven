@@ -99,6 +99,24 @@ impl crate::ModelProvider for BedrockProvider {
             };
             let content = match &m.content {
                 MessageContent::Text(t) => vec![json!({ "text": t })],
+                MessageContent::ContentParts(parts) => {
+                    parts.iter().map(|p| match p {
+                        crate::ContentPart::Text { text } => json!({ "text": text }),
+                        crate::ContentPart::Image { image_url, .. } => {
+                            if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
+                                let format = normalize_bedrock_image_format(&mime);
+                                json!({
+                                    "image": {
+                                        "format": format,
+                                        "source": { "bytes": b64 },
+                                    }
+                                })
+                            } else {
+                                json!({ "text": format!("[image: {}]", image_url) })
+                            }
+                        }
+                    }).collect()
+                }
                 MessageContent::ToolCall { tool_call_id, function } => {
                     let input: Value = serde_json::from_str(&function.arguments)
                         .unwrap_or(json!({}));
@@ -111,10 +129,31 @@ impl crate::ModelProvider for BedrockProvider {
                     })]
                 }
                 MessageContent::ToolResult { tool_call_id, content } => {
+                    let bedrock_content: Vec<Value> = match content {
+                        crate::ToolResultContent::Text(t) => vec![json!({ "text": t })],
+                        crate::ToolResultContent::Parts(parts) => {
+                            parts.iter().map(|p| match p {
+                                crate::ToolContentPart::Text { text } => json!({ "text": text }),
+                                crate::ToolContentPart::Image { image_url } => {
+                                    if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
+                                        let format = normalize_bedrock_image_format(&mime);
+                                        json!({
+                                            "image": {
+                                                "format": format,
+                                                "source": { "bytes": b64 },
+                                            }
+                                        })
+                                    } else {
+                                        json!({ "text": format!("[image: {}]", image_url) })
+                                    }
+                                }
+                            }).collect()
+                        }
+                    };
                     vec![json!({
                         "toolResult": {
                             "toolUseId": tool_call_id,
-                            "content": [{ "text": content }],
+                            "content": bedrock_content,
                         }
                     })]
                 }
@@ -327,6 +366,19 @@ fn urlencoded(s: &str) -> String {
     out
 }
 
+/// Map an image MIME type to the format string expected by Bedrock's Converse API.
+///
+/// Bedrock accepts: `jpeg`, `png`, `gif`, `webp`.
+/// Normalizes non-standard aliases (`jpg` → `jpeg`).
+fn normalize_bedrock_image_format(mime: &str) -> String {
+    let raw = mime.strip_prefix("image/").unwrap_or("jpeg");
+    match raw {
+        "jpg" => "jpeg".to_string(),
+        // gif, webp, png, jpeg — all valid Bedrock formats, pass through
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +409,33 @@ mod tests {
     #[test]
     fn urlencoded_colon_encoded() {
         assert_eq!(urlencoded("model:0"), "model%3A0");
+    }
+
+    // ── normalize_bedrock_image_format ─────────────────────────────────────────
+
+    #[test]
+    fn bedrock_format_jpeg_passthrough() {
+        assert_eq!(normalize_bedrock_image_format("image/jpeg"), "jpeg");
+    }
+
+    #[test]
+    fn bedrock_format_png_passthrough() {
+        assert_eq!(normalize_bedrock_image_format("image/png"), "png");
+    }
+
+    #[test]
+    fn bedrock_format_jpg_normalized_to_jpeg() {
+        assert_eq!(normalize_bedrock_image_format("image/jpg"), "jpeg");
+    }
+
+    #[test]
+    fn bedrock_format_gif_passthrough() {
+        assert_eq!(normalize_bedrock_image_format("image/gif"), "gif");
+    }
+
+    #[test]
+    fn bedrock_format_webp_passthrough() {
+        assert_eq!(normalize_bedrock_image_format("image/webp"), "webp");
     }
 
     #[test]

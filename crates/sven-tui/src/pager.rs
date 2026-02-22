@@ -88,7 +88,7 @@ impl PagerOverlay {
         let was_g = self.last_was_g;
         self.last_was_g = false;
 
-        let half = (self.last_visible_height + 1) / 2;
+        let half = self.last_visible_height.div_ceil(2);
         let full = self.last_visible_height.max(1);
 
         match event.code {

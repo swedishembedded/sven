@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::stream;
 
-use crate::{provider::ResponseStream, CompletionRequest, ResponseEvent};
+use crate::{catalog::InputModality, provider::ResponseStream, CompletionRequest, ResponseEvent};
 
 /// Deterministic mock provider for tests.  Echoes the last user message
 /// back as the assistant response.
@@ -37,6 +37,11 @@ impl crate::ModelProvider for MockProvider {
 pub struct ScriptedMockProvider {
     scripts: Arc<Mutex<Vec<Vec<ResponseEvent>>>>,
     name: String,
+    /// Claimed input modalities.  Defaults to `[Text]` (conservative).
+    modalities: Vec<InputModality>,
+    /// The last `CompletionRequest` seen by this provider.
+    /// Written on each `complete()` call so tests can inspect what was sent.
+    pub last_request: Arc<Mutex<Option<CompletionRequest>>>,
 }
 
 impl ScriptedMockProvider {
@@ -47,7 +52,19 @@ impl ScriptedMockProvider {
         Self {
             scripts: Arc::new(Mutex::new(scripts)),
             name: "scripted-mock".into(),
+            modalities: vec![InputModality::Text],
+            last_request: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Declare that this mock supports image input as well as text.
+    ///
+    /// Use this in tests that exercise multimodal code paths so that
+    /// `strip_images_if_unsupported` does **not** strip images before they
+    /// reach the provider.
+    pub fn with_vision(mut self) -> Self {
+        self.modalities = vec![InputModality::Text, InputModality::Image];
+        self
     }
 
     /// Convenience: provider that always returns a single text reply.
@@ -91,7 +108,12 @@ impl crate::ModelProvider for ScriptedMockProvider {
     fn name(&self) -> &str { &self.name }
     fn model_name(&self) -> &str { "scripted-mock-model" }
 
-    async fn complete(&self, _req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+    fn input_modalities(&self) -> Vec<InputModality> {
+        self.modalities.clone()
+    }
+
+    async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        *self.last_request.lock().unwrap() = Some(req);
         let events = {
             let mut scripts = self.scripts.lock().unwrap();
             if scripts.is_empty() {

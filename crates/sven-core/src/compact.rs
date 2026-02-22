@@ -29,6 +29,12 @@ pub fn compact_session(messages: &mut Vec<Message>, system_msg: Option<Message>)
             };
             let text = match &m.content {
                 sven_model::MessageContent::Text(t) => t.clone(),
+                sven_model::MessageContent::ContentParts(parts) => {
+                    parts.iter().map(|p| match p {
+                        sven_model::ContentPart::Text { text } => text.clone(),
+                        sven_model::ContentPart::Image { .. } => "[image]".to_string(),
+                    }).collect::<Vec<_>>().join(" ")
+                }
                 sven_model::MessageContent::ToolCall { function, .. } => {
                     format!("[tool_call: {}({})]", function.name, function.arguments)
                 }

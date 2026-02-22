@@ -9,6 +9,8 @@
 //! # Endpoint pattern
 //! `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
 
+use std::collections::HashMap;
+
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -66,9 +68,19 @@ impl crate::ModelProvider for GoogleProvider {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let key = self.api_key.as_deref().context("GEMINI_API_KEY not set")?;
 
-        // Separate system instruction from conversation
+        // Separate system instruction from conversation.
+        // Also build a mapping from tool_call_id → function_name so that
+        // functionResponse parts can use the correct function name (Gemini
+        // matches responses to calls by name, not by ID).
         let mut system_parts: Vec<Value> = Vec::new();
         let mut contents: Vec<Value> = Vec::new();
+        let mut tc_name_map: HashMap<String, String> = HashMap::new();
+
+        for m in &req.messages {
+            if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
+                tc_name_map.insert(tool_call_id.clone(), function.name.clone());
+            }
+        }
 
         for m in &req.messages {
             match m.role {
@@ -78,11 +90,11 @@ impl crate::ModelProvider for GoogleProvider {
                     }
                 }
                 Role::User | Role::Tool => {
-                    let parts = message_to_gemini_parts(m);
+                    let parts = message_to_gemini_parts(m, &tc_name_map);
                     contents.push(json!({ "role": "user", "parts": parts }));
                 }
                 Role::Assistant => {
-                    let parts = message_to_gemini_parts(m);
+                    let parts = message_to_gemini_parts(m, &tc_name_map);
                     contents.push(json!({ "role": "model", "parts": parts }));
                 }
             }
@@ -161,9 +173,37 @@ impl crate::ModelProvider for GoogleProvider {
 }
 
 /// Convert a sven message into Gemini API `parts` array.
-fn message_to_gemini_parts(m: &crate::Message) -> Vec<Value> {
+///
+/// `tc_name_map` maps `tool_call_id → function_name` so that `functionResponse`
+/// parts can carry the correct function name (Gemini matches responses to calls
+/// by function name, not by the opaque call ID).
+fn message_to_gemini_parts(
+    m: &crate::Message,
+    tc_name_map: &HashMap<String, String>,
+) -> Vec<Value> {
     match &m.content {
         MessageContent::Text(t) => vec![json!({ "text": t })],
+        MessageContent::ContentParts(parts) => {
+            if parts.is_empty() {
+                return vec![json!({ "text": "" })];
+            }
+            parts.iter().map(|p| match p {
+                crate::ContentPart::Text { text } => json!({ "text": text }),
+                crate::ContentPart::Image { image_url, .. } => {
+                    if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                        json!({
+                            "inline_data": {
+                                "mime_type": mime,
+                                "data": data,
+                            }
+                        })
+                    } else {
+                        // Remote URL
+                        json!({ "file_data": { "file_uri": image_url } })
+                    }
+                }
+            }).collect()
+        }
         MessageContent::ToolCall { tool_call_id: _, function } => {
             let input: Value = serde_json::from_str(&function.arguments).unwrap_or(json!({}));
             vec![json!({
@@ -174,12 +214,58 @@ fn message_to_gemini_parts(m: &crate::Message) -> Vec<Value> {
             })]
         }
         MessageContent::ToolResult { tool_call_id, content } => {
-            vec![json!({
-                "functionResponse": {
-                    "name": tool_call_id,
-                    "response": { "output": content },
+            // Resolve the function name — Gemini matches functionResponse to
+            // functionCall by the "name" field, not by an opaque ID.
+            let fn_name = tc_name_map
+                .get(tool_call_id)
+                .map(|s| s.as_str())
+                .unwrap_or(tool_call_id);  // fallback to ID if name unknown
+
+            match content {
+                crate::ToolResultContent::Text(t) => {
+                    vec![json!({
+                        "functionResponse": {
+                            "name": fn_name,
+                            "response": { "output": t },
+                        }
+                    })]
                 }
-            })]
+                crate::ToolResultContent::Parts(parts) => {
+                    // Gemini functionResponse carries text in "output".
+                    // Images are emitted as separate inline_data parts alongside
+                    // the functionResponse part.
+                    let output_text: String = parts.iter()
+                        .filter_map(|p| match p {
+                            crate::ToolContentPart::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Use a non-empty placeholder when the tool returned only images.
+                    let output_text = if output_text.is_empty() {
+                        "[see attached images]".to_string()
+                    } else {
+                        output_text
+                    };
+
+                    let mut result_parts: Vec<Value> = vec![json!({
+                        "functionResponse": {
+                            "name": fn_name,
+                            "response": { "output": output_text },
+                        }
+                    })];
+                    for p in parts {
+                        if let crate::ToolContentPart::Image { image_url } = p {
+                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                                result_parts.push(json!({
+                                    "inline_data": { "mime_type": mime, "data": data }
+                                }));
+                            }
+                        }
+                    }
+                    result_parts
+                }
+            }
         }
     }
 }
@@ -303,5 +389,73 @@ mod tests {
         });
         let ev = parse_gemini_chunk(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::ToolCall { name, .. } if name == "shell"));
+    }
+
+    // ── message_to_gemini_parts ───────────────────────────────────────────────
+
+    #[test]
+    fn tool_result_uses_function_name_not_call_id() {
+        use crate::{FunctionCall, Message, MessageContent};
+        // Build a conversation: ToolCall then ToolResult.
+        let tc_msg = Message {
+            role: crate::Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "call_opaque_id_123".into(),
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        };
+        let tr_msg = Message::tool_result("call_opaque_id_123", "contents");
+
+        // Build the lookup map as `complete()` does.
+        let mut tc_name_map = HashMap::new();
+        if let MessageContent::ToolCall { tool_call_id, function } = &tc_msg.content {
+            tc_name_map.insert(tool_call_id.clone(), function.name.clone());
+        }
+
+        let parts = message_to_gemini_parts(&tr_msg, &tc_name_map);
+        assert_eq!(parts.len(), 1);
+        // The functionResponse must use the function name, not the opaque ID.
+        assert_eq!(parts[0]["functionResponse"]["name"], "read_file",
+            "functionResponse.name must be the function name, not the call ID");
+    }
+
+    #[test]
+    fn tool_result_falls_back_to_call_id_when_no_mapping() {
+        use crate::Message;
+        let tr_msg = Message::tool_result("unmapped_id", "result");
+        let parts = message_to_gemini_parts(&tr_msg, &HashMap::new());
+        assert_eq!(parts[0]["functionResponse"]["name"], "unmapped_id");
+    }
+
+    #[test]
+    fn tool_result_parts_image_only_uses_placeholder_text() {
+        use crate::{Message, ToolContentPart};
+        let msg = Message::tool_result_with_parts("tc-1", vec![
+            ToolContentPart::Image {
+                image_url: "data:image/png;base64,iVBORw0KGgo=".into(),
+            },
+        ]);
+        let parts = message_to_gemini_parts(&msg, &HashMap::new());
+        // Should have functionResponse + 1 inline_data part
+        assert!(parts.len() >= 1);
+        let resp_output = &parts[0]["functionResponse"]["response"]["output"];
+        assert_eq!(resp_output, "[see attached images]",
+            "image-only tool results must use placeholder text in functionResponse");
+    }
+
+    #[test]
+    fn content_parts_image_serialized_as_inline_data() {
+        use crate::{ContentPart, Message};
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text { text: "look".into() },
+            ContentPart::image("data:image/png;base64,abc="),
+        ]);
+        let parts = message_to_gemini_parts(&msg, &HashMap::new());
+        assert_eq!(parts[0]["text"], "look");
+        assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(parts[1]["inline_data"]["data"], "abc=");
     }
 }

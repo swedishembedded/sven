@@ -35,6 +35,7 @@ fn border_type(ascii: bool) -> BorderType {
 // ── Draw functions ────────────────────────────────────────────────────────────
 
 /// Draw the status bar at the top.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_status(
     frame: &mut Frame,
     area: Rect,
@@ -158,6 +159,7 @@ pub fn draw_chat(
 }
 
 /// Draw the input box at the bottom.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_input(
     frame: &mut Frame,
     area: Rect,
@@ -268,6 +270,7 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
 ///
 /// Shows all questions at once, with the current one highlighted.
 /// The answer input field is shown at the bottom.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_question_modal(
     frame: &mut Frame,
     questions: &[sven_tools::Question],
@@ -282,7 +285,7 @@ pub fn draw_question_modal(
     let bt = border_type(ascii);
 
     // Modal width: up to 80 columns, leaving 4 cols margin each side.
-    let modal_w = (area.width.saturating_sub(8)).min(80).max(20);
+    let modal_w = (area.width.saturating_sub(8)).clamp(20, 80);
 
     // Calculate rows needed: question prompt + options + "Other" line + hint
     let current_question = questions.get(current_q);

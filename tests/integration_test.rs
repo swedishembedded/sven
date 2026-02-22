@@ -222,7 +222,7 @@ fn conversation_round_trip_with_tool_call() {
     match &conv.history[2].content {
         MessageContent::ToolResult { tool_call_id, content } => {
             assert_eq!(tool_call_id, "call_99");
-            assert!(content.contains("file contents"));
+            assert!(content.to_string().contains("file contents"));
         }
         _ => panic!("expected ToolResult"),
     }

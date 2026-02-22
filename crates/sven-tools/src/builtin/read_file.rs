@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolOutput, ToolOutputPart};
 
 const READ_LIMIT: usize = 200_000;
 
@@ -18,7 +18,9 @@ impl Tool for ReadFileTool {
          this tool. It is okay to read a file that does not exist; an error will be returned. \
          Optionally specify a line offset and limit for large files, but it is recommended to \
          read the whole file when possible. Lines in the output are numbered starting at 1. \
-         If the file exists but has empty contents, 'File is empty.' is returned."
+         If the file exists but has empty contents, 'File is empty.' is returned. \
+         Image files (png, jpg, jpeg, gif, webp, bmp, tiff) are automatically returned as \
+         base64-encoded data URLs when the model supports image input."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -53,6 +55,24 @@ impl Tool for ReadFileTool {
         let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
         debug!(path = %path, offset, limit, "read_file tool");
+
+        // Auto-detect image files and return them as data URLs.
+        let ext = std::path::Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if sven_image::is_image_extension(ext) {
+            return match sven_image::load_image(std::path::Path::new(&path)) {
+                Ok(img) => {
+                    let data_url = img.into_data_url();
+                    ToolOutput::with_parts(&call.id, vec![
+                        ToolOutputPart::Text(format!("Image file: {path}")),
+                        ToolOutputPart::Image(data_url),
+                    ])
+                }
+                Err(e) => ToolOutput::err(&call.id, format!("failed to read image: {e}")),
+            };
+        }
 
         match tokio::fs::read(&path).await {
             Ok(bytes) => {

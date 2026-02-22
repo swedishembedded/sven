@@ -1,5 +1,6 @@
 pub mod run_terminal_command;
 pub mod read_file;
+pub mod read_image;
 pub mod write;
 pub mod list_dir;
 pub mod delete_file;

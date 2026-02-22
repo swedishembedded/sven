@@ -4,6 +4,7 @@ members = [
     ".",
     "crates/sven-config",
     "crates/sven-model",
+    "crates/sven-image",
     "crates/sven-input",
     "crates/sven-tools",
     "crates/sven-core",
@@ -40,6 +41,7 @@ humantime    = "2"
 regex        = "1"
 sha2         = "0.10"
 hex          = "0.4"
+lru          = "0.12"
 pulldown-cmark = "0.12"
 ratatui      = "0.29"
 crossterm    = { version = "0.28", features = ["event-stream"] }
@@ -47,6 +49,8 @@ syntect      = "5"
 unicode-width = "0.2"
 nvim-rs      = { version = "0.9", features = ["use_tokio"] }
 rmpv         = "1.3"
+image        = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+base64       = "0.22"
 
 [package]
 name    = "sven"

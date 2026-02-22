@@ -83,6 +83,15 @@ impl crate::ModelProvider for CohereProvider {
                         MessageContent::Text(t) => {
                             messages.push(json!({ "role": role, "content": t }));
                         }
+                        // Cohere command-r does not support image inputs natively.
+                        // Concatenate text parts; images are represented as a note.
+                        MessageContent::ContentParts(parts) => {
+                            let text = parts.iter().map(|p| match p {
+                                crate::ContentPart::Text { text } => text.clone(),
+                                crate::ContentPart::Image { .. } => "[image]".to_string(),
+                            }).collect::<Vec<_>>().join("\n");
+                            messages.push(json!({ "role": role, "content": text }));
+                        }
                         MessageContent::ToolCall { tool_call_id, function } => {
                             messages.push(json!({
                                 "role": "assistant",
@@ -97,10 +106,19 @@ impl crate::ModelProvider for CohereProvider {
                             }));
                         }
                         MessageContent::ToolResult { tool_call_id, content } => {
+                            let text_content = match content {
+                                crate::ToolResultContent::Text(t) => t.clone(),
+                                crate::ToolResultContent::Parts(parts) => {
+                                    parts.iter().map(|p| match p {
+                                        crate::ToolContentPart::Text { text } => text.clone(),
+                                        crate::ToolContentPart::Image { .. } => "[image]".to_string(),
+                                    }).collect::<Vec<_>>().join("\n")
+                                }
+                            };
                             messages.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
-                                "content": content,
+                                "content": text_content,
                             }));
                         }
                     }

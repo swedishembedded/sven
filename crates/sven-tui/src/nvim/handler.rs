@@ -63,7 +63,7 @@ impl NvimHandler {
                         Some(Value::Integer(_grid)),
                         Some(Value::Integer(width)),
                         Some(Value::Integer(height)),
-                    ) = (params.get(0), params.get(1), params.get(2))
+                    ) = (params.first(), params.get(1), params.get(2))
                     {
                         let width  = width.as_u64().unwrap_or(80)  as usize;
                         let height = height.as_u64().unwrap_or(24) as usize;
@@ -146,7 +146,7 @@ impl NvimHandler {
                         Some(Value::Integer(_grid)),
                         Some(Value::Integer(row)),
                         Some(Value::Integer(col)),
-                    ) = (params.get(0), params.get(1), params.get(2))
+                    ) = (params.first(), params.get(1), params.get(2))
                     {
                         let row = row.as_u64().unwrap_or(0) as u16;
                         let col = col.as_u64().unwrap_or(0) as u16;
@@ -167,7 +167,7 @@ impl NvimHandler {
                         Some(Value::Map(rgb_attrs)),
                         _,
                         _,
-                    ) = (params.get(0), params.get(1), params.get(2), params.get(3))
+                    ) = (params.first(), params.get(1), params.get(2), params.get(3))
                     {
                         let attr_id = id.as_u64().unwrap_or(0);
                         let mut attr_map = HashMap::new();
