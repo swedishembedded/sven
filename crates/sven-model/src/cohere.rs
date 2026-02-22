@@ -235,9 +235,84 @@ mod tests {
     }
 
     #[test]
-    fn message_end_returns_done() {
+    fn message_end_returns_done_when_no_usage() {
         let v = json!({ "type": "message-end", "delta": {} });
         let ev = parse_cohere_event(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::Done));
+    }
+
+    #[test]
+    fn message_end_with_usage_yields_usage_event() {
+        let v = json!({
+            "type": "message-end",
+            "delta": {
+                "usage": {
+                    "billed_units": {
+                        "input_tokens": 20,
+                        "output_tokens": 10
+                    }
+                }
+            }
+        });
+        let ev = parse_cohere_event(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage { input_tokens: 20, output_tokens: 10 }),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn tool_call_start_parsed() {
+        let v = json!({
+            "type": "tool-call-start",
+            "delta": {
+                "message": {
+                    "tool_calls": {
+                        "id": "tool_123",
+                        "function": {
+                            "name": "shell",
+                            "arguments": ""
+                        }
+                    }
+                }
+            }
+        });
+        let ev = parse_cohere_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { id, name, .. }
+                if id == "tool_123" && name == "shell"),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn tool_call_delta_with_args() {
+        let v = json!({
+            "type": "tool-call-delta",
+            "delta": {
+                "message": {
+                    "tool_calls": {
+                        "id": "",
+                        "function": {
+                            "name": "",
+                            "arguments": "{\"cmd\":\"ls\"}"
+                        }
+                    }
+                }
+            }
+        });
+        let ev = parse_cohere_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { arguments, .. }
+                if arguments == "{\"cmd\":\"ls\"}"),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_event_type_is_empty_delta() {
+        let v = json!({ "type": "stream-start", "generation_id": "abc" });
+        let ev = parse_cohere_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
     }
 }

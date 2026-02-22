@@ -96,12 +96,15 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                     "https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version={api_ver}"
                 )
             };
-            Ok(Box::new(AzureCompatProvider::new(
+            Ok(Box::new(OpenAICompatProvider::with_full_chat_url(
+                "azure",
                 cfg.name.clone(),
                 key(),
                 chat_url,
                 resolved_max_tokens,
                 cfg.temperature,
+                vec![],
+                openai_compat::AuthStyle::ApiKeyHeader,
             )))
         }
 
@@ -437,161 +440,6 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
     headers
 }
 
-// ── Azure shim ────────────────────────────────────────────────────────────────
-// Azure requires the full URL pre-built (including deployment + api-version
-// query param) rather than having `OpenAICompatProvider::new` appending
-// `/chat/completions`.  This thin wrapper stores the pre-built URL directly.
-
-use async_trait::async_trait;
-use crate::provider::ResponseStream;
-
-struct AzureCompatProvider {
-    inner_model: String,
-    api_key: Option<String>,
-    chat_url: String,
-    max_tokens: u32,
-    temperature: f32,
-    client: reqwest::Client,
-}
-
-impl AzureCompatProvider {
-    fn new(
-        model: String,
-        api_key: Option<String>,
-        chat_url: String,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-    ) -> Self {
-        Self {
-            inner_model: model,
-            api_key,
-            chat_url,
-            max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
-            client: reqwest::Client::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl ModelProvider for AzureCompatProvider {
-    fn name(&self) -> &str { "azure" }
-    fn model_name(&self) -> &str { &self.inner_model }
-
-    async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let entries = catalog::static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == "azure")
-            .collect();
-        Ok(entries)
-    }
-
-    async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        use anyhow::Context;
-        use serde_json::json;
-        use futures::StreamExt;
-        use crate::{MessageContent, Role, ResponseEvent};
-
-        let key = self.api_key.as_deref()
-            .context("AZURE_OPENAI_API_KEY not set")?;
-
-        let messages: Vec<serde_json::Value> = req.messages.iter().map(|m| {
-            match &m.content {
-                MessageContent::Text(t) => json!({
-                    "role": match m.role {
-                        Role::System => "system",
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => "tool",
-                    },
-                    "content": t,
-                }),
-                MessageContent::ToolCall { tool_call_id, function } => json!({
-                    "role": "assistant",
-                    "tool_calls": [{"id": tool_call_id, "type": "function",
-                        "function": {"name": function.name, "arguments": function.arguments}}]
-                }),
-                MessageContent::ToolResult { tool_call_id, content } => json!({
-                    "role": "tool", "tool_call_id": tool_call_id, "content": content,
-                }),
-            }
-        }).collect();
-
-        let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| json!({
-            "type": "function",
-            "function": {"name": t.name, "description": t.description, "parameters": t.parameters}
-        })).collect();
-
-        let mut body = json!({
-            "model": self.inner_model,
-            "messages": messages,
-            "stream": req.stream,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-        });
-        if !tools.is_empty() {
-            body["tools"] = json!(tools);
-        }
-
-        let resp = self.client
-            .post(&self.chat_url)
-            .header("api-key", key)
-            .json(&body)
-            .send()
-            .await
-            .context("Azure OpenAI request failed")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Azure OpenAI error {status}: {text}");
-        }
-
-        let byte_stream = resp.bytes_stream();
-        let event_stream = byte_stream.flat_map(|chunk| {
-            let lines = match chunk {
-                Ok(b) => String::from_utf8_lossy(&b).to_string(),
-                Err(e) => return futures::stream::iter(vec![Err(anyhow::anyhow!(e))]),
-            };
-            let events: Vec<anyhow::Result<ResponseEvent>> = lines
-                .lines()
-                .filter_map(|line| {
-                    let line = line.strip_prefix("data: ")?.trim();
-                    if line == "[DONE]" { return Some(Ok(ResponseEvent::Done)); }
-                    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-                    Some(parse_openai_sse(&v))
-                })
-                .collect();
-            futures::stream::iter(events)
-        });
-
-        Ok(Box::pin(event_stream))
-    }
-}
-
-fn parse_openai_sse(v: &serde_json::Value) -> anyhow::Result<ResponseEvent> {
-    use crate::ResponseEvent;
-    if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-        return Ok(ResponseEvent::Usage {
-            input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
-        });
-    }
-    let delta = &v["choices"][0]["delta"];
-    if let Some(tcs) = delta.get("tool_calls") {
-        if let Some(tc) = tcs.get(0) {
-            return Ok(ResponseEvent::ToolCall {
-                id: tc["id"].as_str().unwrap_or("").to_string(),
-                name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                arguments: tc["function"]["arguments"].as_str().unwrap_or("").to_string(),
-            });
-        }
-    }
-    if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
-        return Ok(ResponseEvent::TextDelta(text.to_string()));
-    }
-    Ok(ResponseEvent::TextDelta(String::new()))
-}
 
 #[cfg(test)]
 mod tests {

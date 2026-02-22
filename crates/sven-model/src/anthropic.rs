@@ -161,7 +161,7 @@ impl crate::ModelProvider for AnthropicProvider {
     }
 }
 
-fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> {
+pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> {
     let event_type = v["type"].as_str().unwrap_or("");
     match event_type {
         "content_block_delta" => {
@@ -208,5 +208,135 @@ fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> {
         }
         "message_stop" => Ok(ResponseEvent::Done),
         _ => Ok(ResponseEvent::TextDelta(String::new())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ModelProvider;
+
+    #[test]
+    fn provider_name_and_model() {
+        let p = AnthropicProvider::new(
+            "claude-3-5-sonnet-20241022".into(), None, None, None, None,
+        );
+        assert_eq!(p.name(), "anthropic");
+        assert_eq!(p.model_name(), "claude-3-5-sonnet-20241022");
+    }
+
+    // ── parse_anthropic_event ─────────────────────────────────────────────────
+
+    #[test]
+    fn message_start_yields_input_usage() {
+        let v = serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "usage": { "input_tokens": 42, "output_tokens": 0 }
+            }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage { input_tokens: 42, output_tokens: 0 }),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn message_start_without_usage_is_empty_delta() {
+        let v = serde_json::json!({ "type": "message_start", "message": {} });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn content_block_start_tool_use_emits_tool_call() {
+        let v = serde_json::json!({
+            "type": "content_block_start",
+            "content_block": { "type": "tool_use", "id": "toolu_01", "name": "shell" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { id, name, arguments }
+                if id == "toolu_01" && name == "shell" && arguments.is_empty()),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn content_block_start_text_is_empty_delta() {
+        let v = serde_json::json!({
+            "type": "content_block_start",
+            "content_block": { "type": "text", "text": "" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn content_block_delta_text_delta() {
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "text_delta", "text": "world" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t == "world"));
+    }
+
+    #[test]
+    fn content_block_delta_input_json_delta() {
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "input_json_delta", "partial_json": "{\"key\":" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { arguments, .. } if arguments == "{\"key\":"),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn content_block_delta_unknown_type_is_empty_delta() {
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "thinking_delta", "thinking": "hmm" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn message_delta_yields_output_usage() {
+        let v = serde_json::json!({
+            "type": "message_delta",
+            "usage": { "output_tokens": 88 }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage { input_tokens: 0, output_tokens: 88 }),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn message_delta_without_usage_is_empty_delta() {
+        let v = serde_json::json!({ "type": "message_delta", "delta": {} });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn message_stop_yields_done() {
+        let v = serde_json::json!({ "type": "message_stop" });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::Done));
+    }
+
+    #[test]
+    fn unknown_event_type_is_empty_delta() {
+        let v = serde_json::json!({ "type": "ping" });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
     }
 }

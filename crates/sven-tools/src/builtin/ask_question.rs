@@ -325,11 +325,15 @@ mod tests {
         use serde_json::json;
         use crate::tool::ToolCall;
         let t = AskQuestionTool::new();
+        let make_q = |prompt: &str| json!({
+            "prompt": prompt,
+            "options": ["Yes", "No"],
+        });
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
             args: json!({
-                "questions": ["q1", "q2", "q3", "q4"]
+                "questions": [make_q("q1"), make_q("q2"), make_q("q3"), make_q("q4")]
             }),
         };
         let out = t.execute(&call).await;
@@ -350,7 +354,12 @@ mod tests {
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
-            args: json!({ "questions": ["What language?", "What framework?"] }),
+            args: json!({
+                "questions": [
+                    { "prompt": "What language?", "options": ["Rust", "Python", "Go"] },
+                    { "prompt": "What framework?", "options": ["Axum", "Actix", "Rocket"] },
+                ]
+            }),
         };
         let out = t.execute(&call).await;
         // In non-TTY (test) environments the tool must fail gracefully.

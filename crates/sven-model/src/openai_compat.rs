@@ -98,6 +98,40 @@ impl OpenAICompatProvider {
             auth_style,
         }
     }
+
+    /// Construct a provider from a **pre-built** chat completions URL.
+    ///
+    /// Use this when the full URL cannot be derived by appending
+    /// `/chat/completions` to a base — e.g. Azure OpenAI, which encodes the
+    /// deployment name and API version as path/query segments:
+    /// `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=…`
+    ///
+    /// No `/models` URL is configured; the static catalog is used for model
+    /// discovery.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_full_chat_url(
+        driver_name: &'static str,
+        model: String,
+        api_key: Option<String>,
+        chat_url: impl Into<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        extra_headers: Vec<(String, String)>,
+        auth_style: AuthStyle,
+    ) -> Self {
+        Self {
+            driver_name,
+            model,
+            api_key,
+            chat_url: chat_url.into(),
+            models_url: None,
+            max_tokens: max_tokens.unwrap_or(4096),
+            temperature: temperature.unwrap_or(0.2),
+            client: reqwest::Client::new(),
+            extra_headers,
+            auth_style,
+        }
+    }
 }
 
 #[async_trait]
@@ -369,7 +403,7 @@ mod tests {
     fn base_url_trailing_slash_stripped() {
         let p = OpenAICompatProvider::new(
             "x", "m".into(), None,
-            "http://localhost:1234/v1/", // trailing slash
+            "http://localhost:1234/v1/",
             None, None, vec![], AuthStyle::None,
         );
         assert_eq!(p.chat_url, "http://localhost:1234/v1/chat/completions");
@@ -385,5 +419,97 @@ mod tests {
         );
         assert_eq!(p.extra_headers.len(), 1);
         assert_eq!(p.extra_headers[0].0, "HTTP-Referer");
+    }
+
+    // ── parse_sse_chunk ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_sse_text_delta() {
+        let v = serde_json::json!({
+            "choices": [{ "delta": { "content": "hello" } }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t == "hello"));
+    }
+
+    #[test]
+    fn parse_sse_empty_content_is_empty_text_delta() {
+        let v = serde_json::json!({
+            "choices": [{ "delta": { "content": "" } }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn parse_sse_no_content_no_tools_is_empty_text_delta() {
+        let v = serde_json::json!({
+            "choices": [{ "delta": {} }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn parse_sse_tool_call_start_with_id_and_name() {
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_abc",
+                        "function": { "name": "shell", "arguments": "" }
+                    }]
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { id, name, arguments }
+                if id == "call_abc" && name == "shell" && arguments.is_empty()),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_tool_call_args_delta() {
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "id": "",
+                        "function": { "name": "", "arguments": "{\"cmd\": " }
+                    }]
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { arguments, .. } if arguments == "{\"cmd\": "),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_usage_event() {
+        let v = serde_json::json!({
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50 }),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_null_usage_falls_through_to_delta() {
+        // When usage is null (not the final stats chunk), it should fall
+        // through to delta parsing rather than emit a Usage event.
+        let v = serde_json::json!({
+            "usage": null,
+            "choices": [{ "delta": { "content": "hi" } }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t == "hi"));
     }
 }

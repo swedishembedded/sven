@@ -288,7 +288,7 @@ fn hex_sha256(data: &[u8]) -> String {
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     const BLOCK: usize = 64;
     let norm_key = if key.len() > BLOCK { sha256(key) } else { key.to_vec() };
-    let mut padded = vec![0u8; BLOCK];
+    let mut padded = [0u8; BLOCK];
     padded[..norm_key.len()].copy_from_slice(&norm_key);
     let ipad: Vec<u8> = padded.iter().map(|&b| b ^ 0x36).collect();
     let opad: Vec<u8> = padded.iter().map(|&b| b ^ 0x5c).collect();

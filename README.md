@@ -89,6 +89,38 @@ When a workflow runs, sven automatically:
 
 ---
 
+## Model Providers
+
+Sven supports **35+ model providers** natively in Rust — no external gateway
+required.  Every provider is registered in the driver registry, so `sven
+list-providers` always shows a complete, up-to-date list.
+
+| Category | Providers |
+|----------|-----------|
+| Major cloud | OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Cohere |
+| Gateways | OpenRouter, LiteLLM, Portkey, Vercel AI, Cloudflare |
+| Fast inference | Groq, Cerebras |
+| Open models | Together AI, Fireworks, DeepInfra, Nebius, SambaNova, Hugging Face, NVIDIA NIM |
+| Specialized | Mistral, xAI (Grok), Perplexity |
+| Regional | DeepSeek, Moonshot, Qwen/DashScope, GLM, MiniMax, Baidu Qianfan |
+| Local / OSS | Ollama, vLLM, LM Studio |
+
+All drivers implement the same `ModelProvider` trait — tool calling, streaming,
+and catalog metadata work consistently across providers.  See
+[docs/providers.md](docs/providers.md) for configuration details and
+[crates/sven-model/DRIVERS.md](crates/sven-model/DRIVERS.md) for adding new
+drivers.
+
+```sh
+# List all registered providers
+sven list-providers --verbose
+
+# Switch provider on the fly
+sven -M anthropic/claude-3-5-sonnet-20241022 "Refactor this code"
+sven -M groq/llama-3.3-70b-versatile "Explain the algorithm"
+sven -M ollama/llama3.2 "Quick local question"
+```
+
 ## Documentation
 
 The `docs/` directory contains the full user guide split into focused sections.
