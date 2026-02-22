@@ -118,7 +118,7 @@ mod gdb_integration {
                 .arg("60")
                 .spawn()
                 .unwrap();
-            s.set_server(child, "localhost:2331".into());
+            s.set_server(child, "localhost:2331".into(), None);
         }
         let t = GdbStartServerTool::new(state, cfg());
         let out = t.execute(&call("gdb_start_server", json!({
@@ -166,7 +166,7 @@ mod gdb_integration {
                 .arg("60")
                 .spawn()
                 .unwrap();
-            s.set_server(child, "localhost:2331".into());
+            s.set_server(child, "localhost:2331".into(), None);
         }
         let t = GdbStopTool::new(state.clone());
         let out = t.execute(&call("gdb_stop", json!({}))).await;
@@ -534,7 +534,7 @@ mod gdb_integration {
         {
             let mut s = state.lock().await;
             let child = tokio::process::Command::new("sleep").arg("60").spawn().unwrap();
-            s.set_server(child, "localhost:2331".into());
+            s.set_server(child, "localhost:2331".into(), None);
         }
         assert!(state.lock().await.has_server());
 

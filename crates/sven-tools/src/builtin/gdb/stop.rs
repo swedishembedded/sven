@@ -107,7 +107,7 @@ mod tests {
                 .arg("60")
                 .spawn()
                 .unwrap();
-            s.set_server(child, "localhost:2331".into());
+            s.set_server(child, "localhost:2331".into(), None);
         }
         let t = GdbStopTool::new(state.clone());
         let out = t.execute(&call()).await;
