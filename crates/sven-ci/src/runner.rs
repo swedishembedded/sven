@@ -105,6 +105,34 @@ pub struct CiOptions {
     pub jsonl_format: crate::JsonlFormat,
 }
 
+// ── Helper: Write JSONL trace ────────────────────────────────────────────────
+
+/// Write JSONL trace if configured. Call this before any `std::process::exit()`.
+/// Takes a snapshot of messages to avoid borrow checker issues with `Agent`.
+fn write_jsonl_snapshot(
+    messages: &[Message],
+    jsonl_output: &Option<PathBuf>,
+    jsonl_format: crate::JsonlFormat,
+) {
+    if let Some(jsonl_path) = jsonl_output {
+        if let Some(parent) = jsonl_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match crate::jsonl_export::write_jsonl_trace(jsonl_path, messages, jsonl_format) {
+            Ok(()) => write_progress(&format!(
+                "[sven:info] JSONL trace written to {} ({} messages, format: {:?})",
+                jsonl_path.display(),
+                messages.len(),
+                jsonl_format
+            )),
+            Err(e) => write_stderr(&format!(
+                "[sven:warn] Could not write --jsonl-output {}: {e}",
+                jsonl_path.display()
+            )),
+        }
+    }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 /// Headless CI runner that processes a [`StepQueue`] sequentially.
@@ -334,6 +362,8 @@ impl CiRunner {
                         "[sven:error] Total run timeout exceeded ({}s). Completed {}/{} steps.",
                         t, step_idx - 1, total
                     ));
+                    let messages_at_timeout = &agent.session().messages;
+                    write_jsonl_snapshot(messages_at_timeout, &opts.jsonl_output, opts.jsonl_format);
                     std::process::exit(EXIT_TIMEOUT);
                 }
             }
@@ -397,6 +427,10 @@ impl CiRunner {
             // Record the user turn before submitting
             collected.push(Message::user(&step_content));
 
+            // Take a snapshot of all messages for potential JSONL writing on early exit.
+            // This avoids borrow checker issues when submit_fut holds a mutable borrow of agent.
+            let messages_snapshot = agent.session().messages.clone();
+
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
             let submit_fut = agent.submit(&step_content, tx);
 
@@ -429,10 +463,11 @@ impl CiRunner {
                                 "[sven:error] Step {step_idx} ({label:?}) timed out after {}s",
                                 step_timeout_secs.unwrap_or(0)
                             ));
-                            // Save partial conversation before aborting
+                            // Save partial conversation and JSONL trace before aborting
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
                             }
+                            write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
                             std::process::exit(EXIT_TIMEOUT);
                         }
                     }
@@ -442,6 +477,7 @@ impl CiRunner {
                         if !collected.is_empty() {
                             let _ = history::save(&collected);
                         }
+                        write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
                         std::process::exit(EXIT_INTERRUPT);
                     }
 
@@ -467,6 +503,7 @@ impl CiRunner {
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
                             }
+                            write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
                             std::process::exit(EXIT_AGENT_ERROR);
                         }
                     }
@@ -476,6 +513,7 @@ impl CiRunner {
                             write_stderr(&format!(
                                 "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
                             ));
+                            write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
                             std::process::exit(EXIT_AGENT_ERROR);
                         }
                         while let Ok(ev) = rx.try_recv() {
@@ -538,10 +576,12 @@ impl CiRunner {
                 write_stderr(&format!(
                     "[sven:error] Step {step_idx} ({label:?}) reported an error. Aborting."
                 ));
-                // Save partial conversation
+                // Save partial conversation and JSONL trace
                 if !collected.is_empty() {
                     let _ = history::save(&collected);
                 }
+                // Use snapshot to avoid borrow conflict (submit_fut is still in scope)
+                write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
                 std::process::exit(EXIT_AGENT_ERROR);
             }
 
@@ -549,6 +589,10 @@ impl CiRunner {
                 write_stderr(&format!("\n--- step {}/{} complete ---\n", step_idx, total));
             }
         }
+
+        // ── --jsonl-output (write early so it captures traces on normal completion) ──
+        let final_messages = &agent.session().messages;
+        write_jsonl_snapshot(final_messages, &opts.jsonl_output, opts.jsonl_format);
 
         // ── Finalize JSON output ─────────────────────────────────────────────
         if opts.output_format == OutputFormat::Json {
@@ -581,28 +625,6 @@ impl CiRunner {
                         out_path.display()
                     )),
                 }
-            }
-        }
-
-        // ── --jsonl-output ────────────────────────────────────────────────────
-        if let Some(jsonl_path) = &opts.jsonl_output {
-            if let Some(parent) = jsonl_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            // Get the complete conversation from the agent's session, which
-            // includes the system message and all messages.
-            let all_messages = &agent.session().messages;
-            match crate::jsonl_export::write_jsonl_trace(jsonl_path, all_messages, opts.jsonl_format) {
-                Ok(()) => write_progress(&format!(
-                    "[sven:info] JSONL trace written to {} ({} messages, format: {:?})",
-                    jsonl_path.display(),
-                    all_messages.len(),
-                    opts.jsonl_format
-                )),
-                Err(e) => write_stderr(&format!(
-                    "[sven:warn] Could not write --jsonl-output {}: {e}",
-                    jsonl_path.display()
-                )),
             }
         }
 
