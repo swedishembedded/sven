@@ -25,6 +25,9 @@ pub enum OutputFormatArg {
     long_about = None,
 )]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
     /// Optional initial prompt or task description
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
@@ -113,9 +116,6 @@ pub struct Cli {
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
-
-    #[command(subcommand)]
-    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -145,13 +145,27 @@ pub enum Commands {
     /// By default the static built-in catalog is shown.
     /// With --refresh the configured provider API is queried for live data.
     ListModels {
-        /// Filter by provider name (e.g. "openai", "anthropic")
+        /// Filter by provider name (e.g. "openai", "anthropic", "groq")
         #[arg(long, short = 'p')]
         provider: Option<String>,
         /// Query the provider API for the live list of available models
         #[arg(long)]
         refresh: bool,
         /// Output as JSON instead of a formatted table
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List all supported model providers.
+    ///
+    /// Shows each provider's id, name, description, and default API key
+    /// environment variable.  Use the provider id in your config file under
+    /// `model.provider`.
+    ListProviders {
+        /// Show detailed information for each provider
+        #[arg(long, short = 'v')]
+        verbose: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },

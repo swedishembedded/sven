@@ -14,20 +14,45 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
-    /// Provider identifier: "openai" | "anthropic" | "mock"
+    /// Provider identifier.  Run `sven list-providers` for the full list.
+    /// Common values: "openai" | "anthropic" | "google" | "azure" | "aws" |
+    /// "groq" | "openrouter" | "ollama" | "mistral" | "deepseek" | "mock"
     pub provider: String,
-    /// Model name forwarded to the provider
+    /// Model name forwarded to the provider API
     pub name: String,
     /// Environment variable that holds the API key (read at runtime)
     pub api_key_env: Option<String>,
-    /// Explicit API key; prefer api_key_env in config files
+    /// Explicit API key; prefer api_key_env in config files to avoid secrets
+    /// in version-controlled files
     pub api_key: Option<String>,
-    /// Base URL override (useful for local proxies / LiteLLM)
+    /// Base URL override.  Useful for local proxies, LiteLLM, or Cloudflare.
+    /// For most hosted providers the correct default is auto-selected.
     pub base_url: Option<String>,
     /// Maximum tokens to request in a single completion
     pub max_tokens: Option<u32>,
-    /// Temperature (0.0–2.0)
+    /// Sampling temperature (0.0–2.0)
     pub temperature: Option<f32>,
+
+    // ── Azure OpenAI ─────────────────────────────────────────────────────────
+    /// Azure resource name (the subdomain of `.openai.azure.com`).
+    /// Required when provider = "azure" and base_url is not set.
+    pub azure_resource: Option<String>,
+    /// Azure deployment name.  Defaults to `model.name` when not set.
+    pub azure_deployment: Option<String>,
+    /// Azure REST API version string, e.g. `"2024-02-01"`.
+    pub azure_api_version: Option<String>,
+
+    // ── AWS Bedrock ───────────────────────────────────────────────────────────
+    /// AWS region override (also honoured via AWS_DEFAULT_REGION env var).
+    pub aws_region: Option<String>,
+
+    // ── Provider-specific extras ──────────────────────────────────────────────
+    /// Free-form provider-specific options forwarded as-is to the driver.
+    /// Useful for headers or parameters not covered by the standard fields.
+    #[serde(default)]
+    pub driver_options: serde_json::Value,
+
+    // ── Mock provider ─────────────────────────────────────────────────────────
     /// Path to YAML mock-responses file (used when provider = "mock").
     /// Can also be set via the SVEN_MOCK_RESPONSES environment variable.
     pub mock_responses_file: Option<String>,
@@ -43,6 +68,11 @@ impl Default for ModelConfig {
             base_url: None,
             max_tokens: Some(4096),
             temperature: Some(0.2),
+            azure_resource: None,
+            azure_deployment: None,
+            azure_api_version: None,
+            aws_region: None,
+            driver_options: serde_json::Value::Null,
             mock_responses_file: None,
         }
     }

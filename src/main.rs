@@ -47,6 +47,9 @@ async fn main() -> anyhow::Result<()> {
                 let config = sven_config::load(cli.config.as_deref())?;
                 return list_models_cmd(&config, provider.as_deref(), *refresh, *json).await;
             }
+            Commands::ListProviders { verbose, json } => {
+                return list_providers_cmd(*verbose, *json);
+            }
         }
     }
 
@@ -124,11 +127,29 @@ async fn list_models_cmd(
     refresh: bool,
     as_json: bool,
 ) -> anyhow::Result<()> {
+    // Validate provider filter against the registry.
+    if let Some(prov) = provider_filter {
+        if sven_model::get_driver(prov).is_none() {
+            eprintln!("Unknown provider: {prov:?}");
+            eprintln!("\nAvailable providers (run `sven list-providers` for details):");
+            for d in sven_model::list_drivers() {
+                eprintln!("  {:20} {}", d.id, d.name);
+            }
+            anyhow::bail!("Invalid provider: {prov}");
+        }
+    }
+
     let entries: Vec<ModelCatalogEntry> = if refresh {
-        // Query the configured provider's live API and merge with catalog.
-        let model = sven_model::from_config(&config.model)?;
+        // Query the configured (or filtered) provider's live API.
+        let model_cfg = if let Some(prov) = provider_filter {
+            let mut c = config.model.clone();
+            c.provider = prov.to_string();
+            c
+        } else {
+            config.model.clone()
+        };
+        let model = sven_model::from_config(&model_cfg)?;
         let mut live = model.list_models().await?;
-        // If a filter is applied, restrict to that provider.
         if let Some(prov) = provider_filter {
             live.retain(|e| e.provider == prov);
         }
@@ -182,6 +203,63 @@ async fn list_models_cmd(
         );
     }
     println!("\nTotal: {} model(s)", entries.len());
+    Ok(())
+}
+
+/// List all registered model providers.
+fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
+    let drivers = sven_model::list_drivers();
+
+    if as_json {
+        #[derive(serde::Serialize)]
+        struct ProviderJson {
+            id: &'static str,
+            name: &'static str,
+            description: &'static str,
+            default_api_key_env: Option<&'static str>,
+            default_base_url: Option<&'static str>,
+            requires_api_key: bool,
+        }
+        let rows: Vec<ProviderJson> = drivers.iter().map(|d| ProviderJson {
+            id: d.id,
+            name: d.name,
+            description: d.description,
+            default_api_key_env: d.default_api_key_env,
+            default_base_url: d.default_base_url,
+            requires_api_key: d.requires_api_key,
+        }).collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    println!("Supported Model Providers ({} total)\n", drivers.len());
+
+    if verbose {
+        for d in drivers {
+            println!("  {} — {}", d.id, d.name);
+            println!("    {}", d.description);
+            if let Some(env) = d.default_api_key_env {
+                println!("    API key env : {env}");
+            }
+            if let Some(url) = d.default_base_url {
+                println!("    Default URL : {url}");
+            }
+            if !d.requires_api_key {
+                println!("    Auth        : none required");
+            }
+            println!();
+        }
+    } else {
+        let id_w = drivers.iter().map(|d| d.id.len()).max().unwrap_or(10).max(10);
+        let name_w = drivers.iter().map(|d| d.name.len()).max().unwrap_or(8).max(8);
+        println!("{:<id_w$}  {:<name_w$}  DESCRIPTION", "ID", "NAME");
+        println!("{}", "-".repeat(id_w + name_w + 40));
+        for d in drivers {
+            println!("{:<id_w$}  {:<name_w$}  {}", d.id, d.name, d.description);
+        }
+        println!("\nUse `sven list-providers --verbose` for API key and URL details.");
+        println!("Use `sven list-models --provider <ID>` to see models for a specific provider.");
+    }
     Ok(())
 }
 

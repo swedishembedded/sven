@@ -1,5 +1,5 @@
 models:
-  # OpenAI models
+  # ── OpenAI ────────────────────────────────────────────────────────────────────
   - id: gpt-4o
     name: GPT-4o
     provider: openai
@@ -77,7 +77,7 @@ models:
     max_output_tokens: 100000
     description: o4-mini fast reasoning model
 
-  # Anthropic models
+  # ── Anthropic ─────────────────────────────────────────────────────────────────
   - id: claude-opus-4-5
     name: Claude Opus 4.5
     provider: anthropic
@@ -133,3 +133,941 @@ models:
     context_window: 200000
     max_output_tokens: 4096
     description: Claude 3 Haiku
+
+  # ── Google Gemini ─────────────────────────────────────────────────────────────
+  - id: gemini-2.5-pro-preview-05-06
+    name: Gemini 2.5 Pro Preview
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 65536
+    description: Most capable Gemini 2.5 Pro model with thinking
+
+  - id: gemini-2.5-flash-preview-04-17
+    name: Gemini 2.5 Flash Preview
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 65536
+    description: Fast Gemini 2.5 model with thinking
+
+  - id: gemini-2.0-flash
+    name: Gemini 2.0 Flash
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Gemini 2.0 Flash — fast multimodal model
+
+  - id: gemini-2.0-flash-exp
+    name: Gemini 2.0 Flash (Experimental)
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Experimental Gemini 2.0 Flash
+
+  - id: gemini-2.0-flash-thinking-exp
+    name: Gemini 2.0 Flash Thinking
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Gemini 2.0 Flash with explicit thinking
+
+  - id: gemini-1.5-pro-002
+    name: Gemini 1.5 Pro
+    provider: google
+    context_window: 2097152
+    max_output_tokens: 8192
+    description: Gemini 1.5 Pro with 2M context window
+
+  - id: gemini-1.5-flash-002
+    name: Gemini 1.5 Flash
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Fast Gemini 1.5 Flash
+
+  - id: gemini-1.5-flash-8b
+    name: Gemini 1.5 Flash 8B
+    provider: google
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Lightweight Gemini 1.5 Flash 8B
+
+  - id: gemini-1.0-pro
+    name: Gemini 1.0 Pro
+    provider: google
+    context_window: 32760
+    max_output_tokens: 2048
+    description: Gemini 1.0 Pro
+
+  # ── AWS Bedrock ───────────────────────────────────────────────────────────────
+  - id: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+    name: Claude 3.5 Sonnet v2 (Bedrock)
+    provider: aws
+    context_window: 200000
+    max_output_tokens: 8192
+    description: Anthropic Claude 3.5 Sonnet v2 via AWS Bedrock
+
+  - id: us.anthropic.claude-3-5-haiku-20241022-v1:0
+    name: Claude 3.5 Haiku (Bedrock)
+    provider: aws
+    context_window: 200000
+    max_output_tokens: 8192
+    description: Anthropic Claude 3.5 Haiku via AWS Bedrock
+
+  - id: us.anthropic.claude-3-opus-20240229-v1:0
+    name: Claude 3 Opus (Bedrock)
+    provider: aws
+    context_window: 200000
+    max_output_tokens: 4096
+    description: Anthropic Claude 3 Opus via AWS Bedrock
+
+  - id: amazon.nova-pro-v1:0
+    name: Amazon Nova Pro
+    provider: aws
+    context_window: 300000
+    max_output_tokens: 5120
+    description: Amazon Nova Pro — capable multimodal model
+
+  - id: amazon.nova-lite-v1:0
+    name: Amazon Nova Lite
+    provider: aws
+    context_window: 300000
+    max_output_tokens: 5120
+    description: Amazon Nova Lite — fast and affordable
+
+  - id: amazon.nova-micro-v1:0
+    name: Amazon Nova Micro
+    provider: aws
+    context_window: 128000
+    max_output_tokens: 5120
+    description: Amazon Nova Micro — ultra-fast text-only model
+
+  - id: amazon.titan-text-express-v1
+    name: Amazon Titan Text Express
+    provider: aws
+    context_window: 8192
+    max_output_tokens: 8192
+    description: Amazon Titan Text Express
+
+  - id: us.meta.llama3-3-70b-instruct-v1:0
+    name: Meta Llama 3.3 70B (Bedrock)
+    provider: aws
+    context_window: 128000
+    max_output_tokens: 8192
+    description: Meta Llama 3.3 70B Instruct via AWS Bedrock
+
+  - id: us.meta.llama3-2-90b-instruct-v1:0
+    name: Meta Llama 3.2 90B (Bedrock)
+    provider: aws
+    context_window: 128000
+    max_output_tokens: 8192
+    description: Meta Llama 3.2 90B Instruct via AWS Bedrock
+
+  - id: mistral.mistral-large-2402-v1:0
+    name: Mistral Large (Bedrock)
+    provider: aws
+    context_window: 32768
+    max_output_tokens: 8192
+    description: Mistral Large via AWS Bedrock
+
+  # ── Cohere ────────────────────────────────────────────────────────────────────
+  - id: command-r-plus-08-2024
+    name: Command R+ (Aug 2024)
+    provider: cohere
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Cohere Command R+ — most capable Command model
+
+  - id: command-r-plus
+    name: Command R+
+    provider: cohere
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Cohere Command R+
+
+  - id: command-r-08-2024
+    name: Command R (Aug 2024)
+    provider: cohere
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Cohere Command R — optimized for RAG
+
+  - id: command-r
+    name: Command R
+    provider: cohere
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Cohere Command R
+
+  - id: command-nightly
+    name: Command Nightly
+    provider: cohere
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Cohere Command Nightly — latest experimental
+
+  - id: command-light
+    name: Command Light
+    provider: cohere
+    context_window: 4096
+    max_output_tokens: 4096
+    description: Cohere Command Light — fast and compact
+
+  # ── Groq ──────────────────────────────────────────────────────────────────────
+  - id: llama-3.3-70b-versatile
+    name: Llama 3.3 70B Versatile
+    provider: groq
+    context_window: 128000
+    max_output_tokens: 32768
+    description: Meta Llama 3.3 70B via Groq LPU
+
+  - id: llama-3.1-8b-instant
+    name: Llama 3.1 8B Instant
+    provider: groq
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Fast Llama 3.1 8B via Groq
+
+  - id: llama-3.2-90b-vision-preview
+    name: Llama 3.2 90B Vision
+    provider: groq
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Llama 3.2 90B multimodal via Groq
+
+  - id: llama-3.2-11b-vision-preview
+    name: Llama 3.2 11B Vision
+    provider: groq
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Llama 3.2 11B multimodal via Groq
+
+  - id: llama-3.2-3b-preview
+    name: Llama 3.2 3B
+    provider: groq
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Compact Llama 3.2 3B via Groq
+
+  - id: mixtral-8x7b-32768
+    name: Mixtral 8x7B
+    provider: groq
+    context_window: 32768
+    max_output_tokens: 32768
+    description: Mixtral 8x7B MoE via Groq
+
+  - id: gemma2-9b-it
+    name: Gemma 2 9B
+    provider: groq
+    context_window: 8192
+    max_output_tokens: 8192
+    description: Google Gemma 2 9B via Groq
+
+  - id: deepseek-r1-distill-llama-70b
+    name: DeepSeek R1 Distill Llama 70B
+    provider: groq
+    context_window: 131072
+    max_output_tokens: 16384
+    description: DeepSeek R1 distilled into Llama 70B via Groq
+
+  # ── Together AI ───────────────────────────────────────────────────────────────
+  - id: meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo
+    name: Llama 3.1 405B Turbo
+    provider: together
+    context_window: 130815
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 405B Instruct (Turbo) via Together
+
+  - id: meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+    name: Llama 3.1 70B Turbo
+    provider: together
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 70B Instruct (Turbo) via Together
+
+  - id: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
+    name: Llama 3.1 8B Turbo
+    provider: together
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 8B Instruct (Turbo) via Together
+
+  - id: meta-llama/Llama-3.3-70B-Instruct-Turbo
+    name: Llama 3.3 70B Turbo
+    provider: together
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.3 70B Instruct (Turbo) via Together
+
+  - id: Qwen/Qwen2.5-72B-Instruct-Turbo
+    name: Qwen 2.5 72B Turbo
+    provider: together
+    context_window: 32768
+    max_output_tokens: 8192
+    description: Qwen 2.5 72B Instruct (Turbo) via Together
+
+  - id: Qwen/QwQ-32B-Preview
+    name: QwQ 32B Preview
+    provider: together
+    context_window: 32768
+    max_output_tokens: 8192
+    description: QwQ 32B reasoning model via Together
+
+  - id: deepseek-ai/DeepSeek-R1
+    name: DeepSeek R1
+    provider: together
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 reasoning model via Together
+
+  - id: mistralai/Mixtral-8x22B-Instruct-v0.1
+    name: Mixtral 8x22B
+    provider: together
+    context_window: 65536
+    max_output_tokens: 8192
+    description: Mixtral 8x22B via Together
+
+  # ── Fireworks AI ──────────────────────────────────────────────────────────────
+  - id: accounts/fireworks/models/llama-v3p3-70b-instruct
+    name: Llama 3.3 70B
+    provider: fireworks
+    context_window: 131072
+    max_output_tokens: 16384
+    description: Llama 3.3 70B Instruct via Fireworks
+
+  - id: accounts/fireworks/models/llama-v3p1-405b-instruct
+    name: Llama 3.1 405B
+    provider: fireworks
+    context_window: 131072
+    max_output_tokens: 16384
+    description: Llama 3.1 405B Instruct via Fireworks
+
+  - id: accounts/fireworks/models/deepseek-r1
+    name: DeepSeek R1
+    provider: fireworks
+    context_window: 65536
+    max_output_tokens: 16384
+    description: DeepSeek R1 reasoning model via Fireworks
+
+  - id: accounts/fireworks/models/qwen2p5-coder-32b-instruct
+    name: Qwen 2.5 Coder 32B
+    provider: fireworks
+    context_window: 32768
+    max_output_tokens: 8192
+    description: Qwen 2.5 Coder 32B via Fireworks
+
+  # ── Mistral AI ────────────────────────────────────────────────────────────────
+  - id: mistral-large-latest
+    name: Mistral Large
+    provider: mistral
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Mistral Large — most capable Mistral model
+
+  - id: mistral-small-latest
+    name: Mistral Small
+    provider: mistral
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Mistral Small — fast and affordable
+
+  - id: mistral-nemo
+    name: Mistral NeMo
+    provider: mistral
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Mistral NeMo 12B — open weights
+
+  - id: codestral-latest
+    name: Codestral
+    provider: mistral
+    context_window: 262144
+    max_output_tokens: 8192
+    description: Codestral — specialized code model
+
+  - id: pixtral-large-latest
+    name: Pixtral Large
+    provider: mistral
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Pixtral Large multimodal model
+
+  - id: magistral-medium-latest
+    name: Magistral Medium
+    provider: mistral
+    context_window: 131072
+    max_output_tokens: 40960
+    description: Magistral Medium reasoning model
+
+  # ── xAI ───────────────────────────────────────────────────────────────────────
+  - id: grok-3
+    name: Grok 3
+    provider: xai
+    context_window: 131072
+    max_output_tokens: 8192
+    description: xAI Grok 3 — most capable Grok model
+
+  - id: grok-3-mini
+    name: Grok 3 Mini
+    provider: xai
+    context_window: 131072
+    max_output_tokens: 8192
+    description: xAI Grok 3 Mini — fast and efficient
+
+  - id: grok-2
+    name: Grok 2
+    provider: xai
+    context_window: 131072
+    max_output_tokens: 4096
+    description: xAI Grok 2
+
+  - id: grok-2-vision-1212
+    name: Grok 2 Vision
+    provider: xai
+    context_window: 32768
+    max_output_tokens: 4096
+    description: xAI Grok 2 with vision
+
+  - id: grok-beta
+    name: Grok Beta
+    provider: xai
+    context_window: 131072
+    max_output_tokens: 4096
+    description: xAI Grok Beta
+
+  # ── Perplexity ────────────────────────────────────────────────────────────────
+  - id: sonar-pro
+    name: Sonar Pro
+    provider: perplexity
+    context_window: 200000
+    max_output_tokens: 8192
+    description: Advanced AI with search — Perplexity Sonar Pro
+
+  - id: sonar
+    name: Sonar
+    provider: perplexity
+    context_window: 127072
+    max_output_tokens: 8192
+    description: Fast AI with real-time web search — Sonar
+
+  - id: sonar-reasoning-pro
+    name: Sonar Reasoning Pro
+    provider: perplexity
+    context_window: 200000
+    max_output_tokens: 8192
+    description: Sonar with chain-of-thought reasoning — Pro tier
+
+  - id: sonar-reasoning
+    name: Sonar Reasoning
+    provider: perplexity
+    context_window: 127072
+    max_output_tokens: 8192
+    description: Sonar with chain-of-thought reasoning
+
+  # ── DeepSeek ──────────────────────────────────────────────────────────────────
+  - id: deepseek-chat
+    name: DeepSeek Chat (V3)
+    provider: deepseek
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek V3 — state-of-the-art chat model
+
+  - id: deepseek-reasoner
+    name: DeepSeek Reasoner (R1)
+    provider: deepseek
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 — advanced reasoning model
+
+  # ── Moonshot AI ───────────────────────────────────────────────────────────────
+  - id: moonshot-v1-8k
+    name: Moonshot v1 8K
+    provider: moonshot
+    context_window: 8192
+    max_output_tokens: 4096
+    description: Kimi moonshot-v1 with 8K context
+
+  - id: moonshot-v1-32k
+    name: Moonshot v1 32K
+    provider: moonshot
+    context_window: 32768
+    max_output_tokens: 4096
+    description: Kimi moonshot-v1 with 32K context
+
+  - id: moonshot-v1-128k
+    name: Moonshot v1 128K
+    provider: moonshot
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Kimi moonshot-v1 with 128K context
+
+  # ── Qwen / DashScope ──────────────────────────────────────────────────────────
+  - id: qwen-max
+    name: Qwen Max
+    provider: dashscope
+    context_window: 32768
+    max_output_tokens: 8192
+    description: Alibaba Qwen Max — most capable Qwen model
+
+  - id: qwen-plus
+    name: Qwen Plus
+    provider: dashscope
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Alibaba Qwen Plus — balanced model
+
+  - id: qwen-turbo
+    name: Qwen Turbo
+    provider: dashscope
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Alibaba Qwen Turbo — fast model
+
+  - id: qwen2.5-72b-instruct
+    name: Qwen 2.5 72B Instruct
+    provider: dashscope
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Qwen 2.5 72B Instruct
+
+  - id: qwen2.5-coder-32b-instruct
+    name: Qwen 2.5 Coder 32B
+    provider: dashscope
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Qwen 2.5 Coder specialized model
+
+  - id: qwq-32b
+    name: QwQ 32B
+    provider: dashscope
+    context_window: 131072
+    max_output_tokens: 8192
+    description: QwQ 32B reasoning model
+
+  # ── GLM / Zhipu AI ────────────────────────────────────────────────────────────
+  - id: glm-4-plus
+    name: GLM-4 Plus
+    provider: glm
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Zhipu AI GLM-4 Plus — best GLM model
+
+  - id: glm-4
+    name: GLM-4
+    provider: glm
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Zhipu AI GLM-4
+
+  - id: glm-4-0520
+    name: GLM-4 0520
+    provider: glm
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Zhipu AI GLM-4 (May 2024 version)
+
+  - id: glm-4-flash
+    name: GLM-4 Flash
+    provider: glm
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Zhipu AI GLM-4 Flash — fast and free-tier
+
+  - id: glm-4-air
+    name: GLM-4 Air
+    provider: glm
+    context_window: 128000
+    max_output_tokens: 4096
+    description: Zhipu AI GLM-4 Air — lightweight model
+
+  # ── MiniMax ───────────────────────────────────────────────────────────────────
+  - id: MiniMax-Text-01
+    name: MiniMax Text-01
+    provider: minimax
+    context_window: 1000000
+    max_output_tokens: 16384
+    description: MiniMax Text-01 with 1M context window
+
+  - id: abab6.5s-chat
+    name: ABAB 6.5s Chat
+    provider: minimax
+    context_window: 245760
+    max_output_tokens: 8192
+    description: MiniMax ABAB 6.5s Chat
+
+  - id: abab6.5g-chat
+    name: ABAB 6.5g Chat
+    provider: minimax
+    context_window: 8192
+    max_output_tokens: 8192
+    description: MiniMax ABAB 6.5g Chat
+
+  # ── Baidu Qianfan ─────────────────────────────────────────────────────────────
+  - id: ernie-4.0-turbo-8k
+    name: ERNIE 4.0 Turbo 8K
+    provider: qianfan
+    context_window: 8192
+    max_output_tokens: 4096
+    description: Baidu ERNIE 4.0 Turbo via Qianfan
+
+  - id: ernie-3.5-128k
+    name: ERNIE 3.5 128K
+    provider: qianfan
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Baidu ERNIE 3.5 128K context via Qianfan
+
+  - id: ernie-lite-8k
+    name: ERNIE Lite 8K
+    provider: qianfan
+    context_window: 8192
+    max_output_tokens: 4096
+    description: Baidu ERNIE Lite via Qianfan
+
+  # ── Cerebras ──────────────────────────────────────────────────────────────────
+  - id: llama-4-scout-17b-16e-instruct
+    name: Llama 4 Scout 17B
+    provider: cerebras
+    context_window: 131072
+    max_output_tokens: 16384
+    description: Llama 4 Scout 17B via Cerebras ultra-fast inference
+
+  - id: llama3.1-70b
+    name: Llama 3.1 70B
+    provider: cerebras
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Llama 3.1 70B via Cerebras ultra-fast inference
+
+  - id: llama3.1-8b
+    name: Llama 3.1 8B
+    provider: cerebras
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Llama 3.1 8B via Cerebras ultra-fast inference
+
+  - id: qwen-3-32b
+    name: Qwen 3 32B
+    provider: cerebras
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Qwen 3 32B via Cerebras
+
+  # ── DeepInfra ─────────────────────────────────────────────────────────────────
+  - id: meta-llama/Meta-Llama-3.1-405B-Instruct
+    name: Llama 3.1 405B
+    provider: deepinfra
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 405B via DeepInfra
+
+  - id: meta-llama/Llama-3.3-70B-Instruct
+    name: Llama 3.3 70B
+    provider: deepinfra
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.3 70B Instruct via DeepInfra
+
+  - id: deepseek-ai/DeepSeek-R1
+    name: DeepSeek R1
+    provider: deepinfra
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 via DeepInfra
+
+  - id: Qwen/Qwen3-235B-A22B
+    name: Qwen 3 235B
+    provider: deepinfra
+    context_window: 40960
+    max_output_tokens: 8192
+    description: Qwen 3 235B MoE via DeepInfra
+
+  # ── NVIDIA NIM ────────────────────────────────────────────────────────────────
+  - id: meta/llama-3.3-70b-instruct
+    name: Llama 3.3 70B
+    provider: nvidia
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.3 70B via NVIDIA NIM
+
+  - id: meta/llama-3.1-405b-instruct
+    name: Llama 3.1 405B
+    provider: nvidia
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 405B via NVIDIA NIM
+
+  - id: deepseek-ai/deepseek-r1
+    name: DeepSeek R1
+    provider: nvidia
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 via NVIDIA NIM
+
+  - id: nvidia/llama-3.1-nemotron-ultra-253b-v1
+    name: Llama 3.1 Nemotron Ultra 253B
+    provider: nvidia
+    context_window: 131072
+    max_output_tokens: 32768
+    description: NVIDIA Llama Nemotron Ultra 253B
+
+  # ── SambaNova ─────────────────────────────────────────────────────────────────
+  - id: Meta-Llama-3.3-70B-Instruct
+    name: Llama 3.3 70B
+    provider: sambanova
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Llama 3.3 70B Instruct via SambaNova
+
+  - id: DeepSeek-R1-Distill-Llama-70B
+    name: DeepSeek R1 Distill Llama 70B
+    provider: sambanova
+    context_window: 131072
+    max_output_tokens: 4096
+    description: DeepSeek R1 distilled via SambaNova
+
+  - id: Qwen2.5-Coder-32B-Instruct
+    name: Qwen 2.5 Coder 32B
+    provider: sambanova
+    context_window: 32768
+    max_output_tokens: 4096
+    description: Qwen 2.5 Coder 32B via SambaNova
+
+  # ── Nebius AI ─────────────────────────────────────────────────────────────────
+  - id: meta-llama/Llama-3.3-70B-Instruct
+    name: Llama 3.3 70B
+    provider: nebius
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Llama 3.3 70B Instruct via Nebius
+
+  - id: deepseek-ai/DeepSeek-R1
+    name: DeepSeek R1
+    provider: nebius
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 via Nebius AI
+
+  - id: Qwen/Qwen3-235B-A22B
+    name: Qwen 3 235B
+    provider: nebius
+    context_window: 40960
+    max_output_tokens: 8192
+    description: Qwen 3 235B via Nebius AI
+
+  # ── Hugging Face ──────────────────────────────────────────────────────────────
+  - id: meta-llama/Llama-3.1-70B-Instruct
+    name: Llama 3.1 70B Instruct
+    provider: huggingface
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.1 70B via HF Inference Router
+
+  - id: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    name: DeepSeek R1 Distill Qwen 32B
+    provider: huggingface
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 distilled into Qwen 32B via HF
+
+  - id: Qwen/Qwen2.5-72B-Instruct
+    name: Qwen 2.5 72B Instruct
+    provider: huggingface
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Qwen 2.5 72B via Hugging Face
+
+  # ── Ollama (popular local models) ────────────────────────────────────────────
+  - id: llama3.2
+    name: Llama 3.2 3B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Meta Llama 3.2 3B — small local model
+
+  - id: llama3.2:1b
+    name: Llama 3.2 1B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Meta Llama 3.2 1B — ultra-small local model
+
+  - id: llama3.1:8b
+    name: Llama 3.1 8B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Meta Llama 3.1 8B local model
+
+  - id: llama3.1:70b
+    name: Llama 3.1 70B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Meta Llama 3.1 70B local model (requires ~40GB RAM)
+
+  - id: qwen2.5-coder:7b
+    name: Qwen 2.5 Coder 7B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Qwen 2.5 Coder 7B local model
+
+  - id: qwen2.5-coder:14b
+    name: Qwen 2.5 Coder 14B
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Qwen 2.5 Coder 14B local model
+
+  - id: deepseek-r1:7b
+    name: DeepSeek R1 7B
+    provider: ollama
+    context_window: 65536
+    max_output_tokens: 4096
+    description: DeepSeek R1 7B distilled local model
+
+  - id: deepseek-r1:14b
+    name: DeepSeek R1 14B
+    provider: ollama
+    context_window: 65536
+    max_output_tokens: 4096
+    description: DeepSeek R1 14B distilled local model
+
+  - id: mistral
+    name: Mistral 7B
+    provider: ollama
+    context_window: 32768
+    max_output_tokens: 4096
+    description: Mistral 7B local model
+
+  - id: codellama
+    name: Code Llama 7B
+    provider: ollama
+    context_window: 16384
+    max_output_tokens: 4096
+    description: Code Llama 7B local model
+
+  - id: phi3:medium
+    name: Phi-3 Medium
+    provider: ollama
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Microsoft Phi-3 Medium local model
+
+  # ── vLLM ─────────────────────────────────────────────────────────────────────
+  - id: custom-local-model
+    name: Custom Local Model
+    provider: vllm
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Set model.name to your vLLM-served model id
+
+  # ── LM Studio ────────────────────────────────────────────────────────────────
+  - id: lm-studio-local
+    name: LM Studio Local Model
+    provider: lmstudio
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Set model.name to any model loaded in LM Studio
+
+  # ── OpenRouter (popular gateway models) ───────────────────────────────────────
+  - id: anthropic/claude-opus-4-5
+    name: Claude Opus 4.5 (OpenRouter)
+    provider: openrouter
+    context_window: 200000
+    max_output_tokens: 32768
+    description: Claude Opus 4.5 via OpenRouter
+
+  - id: anthropic/claude-sonnet-4-5
+    name: Claude Sonnet 4.5 (OpenRouter)
+    provider: openrouter
+    context_window: 200000
+    max_output_tokens: 32768
+    description: Claude Sonnet 4.5 via OpenRouter
+
+  - id: openai/gpt-4o
+    name: GPT-4o (OpenRouter)
+    provider: openrouter
+    context_window: 128000
+    max_output_tokens: 16384
+    description: OpenAI GPT-4o via OpenRouter
+
+  - id: google/gemini-2.0-flash-exp:free
+    name: Gemini 2.0 Flash (OpenRouter Free)
+    provider: openrouter
+    context_window: 1048576
+    max_output_tokens: 8192
+    description: Google Gemini 2.0 Flash free tier via OpenRouter
+
+  - id: deepseek/deepseek-r1
+    name: DeepSeek R1 (OpenRouter)
+    provider: openrouter
+    context_window: 65536
+    max_output_tokens: 8192
+    description: DeepSeek R1 via OpenRouter
+
+  - id: meta-llama/llama-3.3-70b-instruct
+    name: Llama 3.3 70B (OpenRouter)
+    provider: openrouter
+    context_window: 131072
+    max_output_tokens: 8192
+    description: Meta Llama 3.3 70B via OpenRouter
+
+  - id: mistralai/mistral-large
+    name: Mistral Large (OpenRouter)
+    provider: openrouter
+    context_window: 131072
+    max_output_tokens: 4096
+    description: Mistral Large via OpenRouter
+
+  - id: x-ai/grok-3
+    name: Grok 3 (OpenRouter)
+    provider: openrouter
+    context_window: 131072
+    max_output_tokens: 8192
+    description: xAI Grok 3 via OpenRouter
+
+  # ── Azure (OpenAI models via Azure deployments) ────────────────────────────────
+  - id: gpt-4o
+    name: GPT-4o (Azure)
+    provider: azure
+    context_window: 128000
+    max_output_tokens: 16384
+    description: OpenAI GPT-4o via Azure deployment
+
+  - id: gpt-4o-mini
+    name: GPT-4o mini (Azure)
+    provider: azure
+    context_window: 128000
+    max_output_tokens: 16384
+    description: OpenAI GPT-4o mini via Azure deployment
+
+  - id: gpt-4.1
+    name: GPT-4.1 (Azure)
+    provider: azure
+    context_window: 1047576
+    max_output_tokens: 32768
+    description: OpenAI GPT-4.1 via Azure deployment
+
+  - id: o3-mini
+    name: o3-mini (Azure)
+    provider: azure
+    context_window: 200000
+    max_output_tokens: 100000
+    description: OpenAI o3-mini reasoning model via Azure
+
+  # ── Portkey ───────────────────────────────────────────────────────────────────
+  - id: openai/gpt-4o
+    name: GPT-4o (Portkey)
+    provider: portkey
+    context_window: 128000
+    max_output_tokens: 16384
+    description: Any provider model via Portkey gateway
+
+  # ── Vercel AI Gateway ─────────────────────────────────────────────────────────
+  - id: gpt-4o
+    name: GPT-4o (Vercel)
+    provider: vercel
+    context_window: 128000
+    max_output_tokens: 16384
+    description: OpenAI GPT-4o via Vercel AI Gateway

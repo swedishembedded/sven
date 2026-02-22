@@ -1,8 +1,13 @@
 pub mod catalog;
+pub mod registry;
+pub(crate) mod openai_compat;
 mod types;
 mod provider;
 mod openai;
 mod anthropic;
+mod google;
+mod aws;
+mod cohere;
 mod mock;
 mod yaml_mock;
 
@@ -13,45 +18,380 @@ pub use openai::OpenAiProvider;
 pub use anthropic::AnthropicProvider;
 pub use mock::{MockProvider, ScriptedMockProvider};
 pub use yaml_mock::YamlMockProvider;
+pub use registry::{DriverMeta, get_driver, list_drivers};
 
 use anyhow::bail;
+use openai_compat::{AuthStyle, OpenAICompatProvider};
 use sven_config::ModelConfig;
 
 /// Construct a boxed [`ModelProvider`] from configuration.
 ///
-/// Provider selection:
-/// - `"openai"` → [`OpenAiProvider`]
-/// - `"anthropic"` → [`AnthropicProvider`]
-/// - `"mock"` → [`YamlMockProvider`] if a responses file is configured,
-///   otherwise [`MockProvider`] (echo-back)
+/// Selects the driver implementation based on `cfg.provider`.  Run
+/// `sven list-providers` to see all recognised provider ids.
 ///
-/// When `max_tokens` is not set in config, the model's `max_output_tokens`
-/// is resolved from the static catalog.  If the model is not found there,
-/// a safe default (4096) is used.
+/// When `max_tokens` is not set in config, the model's `max_output_tokens` is
+/// resolved from the static catalog.  If the model is not found there a safe
+/// default of 4096 is used.
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
-    let key = resolve_api_key(cfg);
-    // Resolve max_tokens: explicit config > catalog > safe default.
+    // key() returns a fresh Option<String> on each call so that each match arm
+    // can take ownership without cross-arm borrow issues.
+    let key = || resolve_api_key(cfg);
     let resolved_max_tokens = cfg.max_tokens.or_else(|| {
         catalog::lookup(&cfg.provider, &cfg.name)
             .map(|e| e.max_output_tokens)
     });
+
+    // Helper that reads `base_url` from config or falls back to a static default.
+    let base_url = |default: &str| -> String {
+        cfg.base_url.clone().unwrap_or_else(|| default.into())
+    };
+
     match cfg.provider.as_str() {
+        // ── Native drivers ────────────────────────────────────────────────────
         "openai" => Ok(Box::new(OpenAiProvider::new(
             cfg.name.clone(),
-            key,
+            key(),
             cfg.base_url.clone(),
             resolved_max_tokens,
             cfg.temperature,
         ))),
         "anthropic" => Ok(Box::new(AnthropicProvider::new(
             cfg.name.clone(),
-            key,
+            key(),
             cfg.base_url.clone(),
             resolved_max_tokens,
             cfg.temperature,
         ))),
+        "google" => Ok(Box::new(google::GoogleProvider::new(
+            cfg.name.clone(),
+            key(),
+            cfg.base_url.clone(),
+            resolved_max_tokens,
+            cfg.temperature,
+        ))),
+        "aws" => Ok(Box::new(aws::BedrockProvider::new(
+            cfg.name.clone(),
+            cfg.aws_region.clone(),
+            resolved_max_tokens,
+            cfg.temperature,
+        ))),
+        "cohere" => Ok(Box::new(cohere::CohereProvider::new(
+            cfg.name.clone(),
+            key(),
+            cfg.base_url.clone(),
+            resolved_max_tokens,
+            cfg.temperature,
+        ))),
+
+        // ── Azure OpenAI (OpenAI-compat with special URL + api-key header) ────
+        "azure" => {
+            let chat_url = if let Some(b) = &cfg.base_url {
+                let api_ver = cfg.azure_api_version.as_deref().unwrap_or("2024-02-01");
+                format!("{}/chat/completions?api-version={}", b.trim_end_matches('/'), api_ver)
+            } else {
+                let resource = cfg.azure_resource.as_deref().unwrap_or("myresource");
+                let deployment = cfg.azure_deployment.as_deref().unwrap_or(&cfg.name);
+                let api_ver = cfg.azure_api_version.as_deref().unwrap_or("2024-02-01");
+                format!(
+                    "https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version={api_ver}"
+                )
+            };
+            Ok(Box::new(AzureCompatProvider::new(
+                cfg.name.clone(),
+                key(),
+                chat_url,
+                resolved_max_tokens,
+                cfg.temperature,
+            )))
+        }
+
+        // ── OpenAI-compatible gateways ────────────────────────────────────────
+        "openrouter" => Ok(Box::new(OpenAICompatProvider::new(
+            "openrouter",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://openrouter.ai/api/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![
+                ("HTTP-Referer".into(), "https://github.com/svenai/sven".into()),
+                ("X-Title".into(), "sven".into()),
+            ],
+            AuthStyle::Bearer,
+        ))),
+        "litellm" => {
+            let b = cfg.base_url.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("litellm provider requires base_url in config"))?;
+            Ok(Box::new(OpenAICompatProvider::new(
+                "litellm",
+                cfg.name.clone(),
+                key(),
+                b,
+                resolved_max_tokens,
+                cfg.temperature,
+                vec![],
+                AuthStyle::Bearer,
+            )))
+        }
+        "portkey" => Ok(Box::new(OpenAICompatProvider::new(
+            "portkey",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.portkey.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            // Portkey virtual key can be passed via driver_options.portkey_virtual_key
+            portkey_extra_headers(cfg),
+            AuthStyle::Bearer,
+        ))),
+        "vercel" => Ok(Box::new(OpenAICompatProvider::new(
+            "vercel",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://sdk.vercel.ai/openai"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "cloudflare" => {
+            let b = cfg.base_url.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("cloudflare provider requires base_url in config (account-specific URL)"))?;
+            Ok(Box::new(OpenAICompatProvider::new(
+                "cloudflare",
+                cfg.name.clone(),
+                key(),
+                b,
+                resolved_max_tokens,
+                cfg.temperature,
+                vec![],
+                AuthStyle::Bearer,
+            )))
+        }
+
+        // ── Fast inference ────────────────────────────────────────────────────
+        "groq" => Ok(Box::new(OpenAICompatProvider::new(
+            "groq",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.groq.com/openai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "cerebras" => Ok(Box::new(OpenAICompatProvider::new(
+            "cerebras",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.cerebras.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+
+        // ── Open model platforms ──────────────────────────────────────────────
+        "together" => Ok(Box::new(OpenAICompatProvider::new(
+            "together",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.together.xyz/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "fireworks" => Ok(Box::new(OpenAICompatProvider::new(
+            "fireworks",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.fireworks.ai/inference/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "deepinfra" => Ok(Box::new(OpenAICompatProvider::new(
+            "deepinfra",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.deepinfra.com/v1/openai"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "nebius" => Ok(Box::new(OpenAICompatProvider::new(
+            "nebius",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.studio.nebius.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "sambanova" => Ok(Box::new(OpenAICompatProvider::new(
+            "sambanova",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.sambanova.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "huggingface" => Ok(Box::new(OpenAICompatProvider::new(
+            "huggingface",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://router.huggingface.co/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "nvidia" => Ok(Box::new(OpenAICompatProvider::new(
+            "nvidia",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://integrate.api.nvidia.com/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+
+        // ── Specialized ───────────────────────────────────────────────────────
+        "perplexity" => Ok(Box::new(OpenAICompatProvider::new(
+            "perplexity",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.perplexity.ai"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "mistral" => Ok(Box::new(OpenAICompatProvider::new(
+            "mistral",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.mistral.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "xai" => Ok(Box::new(OpenAICompatProvider::new(
+            "xai",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.x.ai/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+
+        // ── Regional providers ────────────────────────────────────────────────
+        "deepseek" => Ok(Box::new(OpenAICompatProvider::new(
+            "deepseek",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.deepseek.com/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "moonshot" => Ok(Box::new(OpenAICompatProvider::new(
+            "moonshot",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.moonshot.cn/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "dashscope" => Ok(Box::new(OpenAICompatProvider::new(
+            "dashscope",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "glm" => Ok(Box::new(OpenAICompatProvider::new(
+            "glm",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://open.bigmodel.cn/api/paas/v4"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "minimax" => Ok(Box::new(OpenAICompatProvider::new(
+            "minimax",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://api.minimax.chat/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+        "qianfan" => Ok(Box::new(OpenAICompatProvider::new(
+            "qianfan",
+            cfg.name.clone(),
+            key(),
+            &base_url("https://qianfan.baidubce.com/v2"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::Bearer,
+        ))),
+
+        // ── Local / OSS ───────────────────────────────────────────────────────
+        "ollama" => Ok(Box::new(OpenAICompatProvider::new(
+            "ollama",
+            cfg.name.clone(),
+            None, // no key needed
+            &base_url("http://localhost:11434/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::None,
+        ))),
+        "vllm" => Ok(Box::new(OpenAICompatProvider::new(
+            "vllm",
+            cfg.name.clone(),
+            key(),
+            &base_url("http://localhost:8000/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            // vLLM accepts an optional bearer token
+            if key().is_some() { AuthStyle::Bearer } else { AuthStyle::None },
+        ))),
+        "lmstudio" => Ok(Box::new(OpenAICompatProvider::new(
+            "lmstudio",
+            cfg.name.clone(),
+            None,
+            &base_url("http://localhost:1234/v1"),
+            resolved_max_tokens,
+            cfg.temperature,
+            vec![],
+            AuthStyle::None,
+        ))),
+
+        // ── Testing / Mock ────────────────────────────────────────────────────
         "mock" => {
-            // Prefer env var, then config field
             let responses_path = std::env::var("SVEN_MOCK_RESPONSES").ok()
                 .or_else(|| cfg.mock_responses_file.clone());
             if let Some(path) = responses_path {
@@ -60,7 +400,16 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 Ok(Box::new(MockProvider))
             }
         }
-        other => bail!("unknown model provider: {other}"),
+
+        other => {
+            let known: Vec<&str> = registry::known_driver_ids().collect();
+            bail!(
+                "unknown model provider: {other:?}\n\
+                 Run `sven list-providers` for a full list, or check your config.\n\
+                 Known providers: {known}",
+                known = known.join(", ")
+            )
+        }
     }
 }
 
@@ -71,5 +420,287 @@ fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     if let Some(env) = &cfg.api_key_env {
         return std::env::var(env).ok();
     }
+    // Auto-resolve from registry default env var if neither is set.
+    if let Some(meta) = registry::get_driver(&cfg.provider) {
+        if let Some(env_var) = meta.default_api_key_env {
+            return std::env::var(env_var).ok();
+        }
+    }
     None
+}
+
+fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    if let Some(vk) = cfg.driver_options.get("portkey_virtual_key").and_then(|v| v.as_str()) {
+        headers.push(("x-portkey-virtual-key".into(), vk.to_string()));
+    }
+    headers
+}
+
+// ── Azure shim ────────────────────────────────────────────────────────────────
+// Azure requires the full URL pre-built (including deployment + api-version
+// query param) rather than having `OpenAICompatProvider::new` appending
+// `/chat/completions`.  This thin wrapper stores the pre-built URL directly.
+
+use async_trait::async_trait;
+use crate::provider::ResponseStream;
+
+struct AzureCompatProvider {
+    inner_model: String,
+    api_key: Option<String>,
+    chat_url: String,
+    max_tokens: u32,
+    temperature: f32,
+    client: reqwest::Client,
+}
+
+impl AzureCompatProvider {
+    fn new(
+        model: String,
+        api_key: Option<String>,
+        chat_url: String,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+    ) -> Self {
+        Self {
+            inner_model: model,
+            api_key,
+            chat_url,
+            max_tokens: max_tokens.unwrap_or(4096),
+            temperature: temperature.unwrap_or(0.2),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl ModelProvider for AzureCompatProvider {
+    fn name(&self) -> &str { "azure" }
+    fn model_name(&self) -> &str { &self.inner_model }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
+        let entries = catalog::static_catalog()
+            .into_iter()
+            .filter(|e| e.provider == "azure")
+            .collect();
+        Ok(entries)
+    }
+
+    async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        use anyhow::Context;
+        use serde_json::json;
+        use futures::StreamExt;
+        use crate::{MessageContent, Role, ResponseEvent};
+
+        let key = self.api_key.as_deref()
+            .context("AZURE_OPENAI_API_KEY not set")?;
+
+        let messages: Vec<serde_json::Value> = req.messages.iter().map(|m| {
+            match &m.content {
+                MessageContent::Text(t) => json!({
+                    "role": match m.role {
+                        Role::System => "system",
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        Role::Tool => "tool",
+                    },
+                    "content": t,
+                }),
+                MessageContent::ToolCall { tool_call_id, function } => json!({
+                    "role": "assistant",
+                    "tool_calls": [{"id": tool_call_id, "type": "function",
+                        "function": {"name": function.name, "arguments": function.arguments}}]
+                }),
+                MessageContent::ToolResult { tool_call_id, content } => json!({
+                    "role": "tool", "tool_call_id": tool_call_id, "content": content,
+                }),
+            }
+        }).collect();
+
+        let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| json!({
+            "type": "function",
+            "function": {"name": t.name, "description": t.description, "parameters": t.parameters}
+        })).collect();
+
+        let mut body = json!({
+            "model": self.inner_model,
+            "messages": messages,
+            "stream": req.stream,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        });
+        if !tools.is_empty() {
+            body["tools"] = json!(tools);
+        }
+
+        let resp = self.client
+            .post(&self.chat_url)
+            .header("api-key", key)
+            .json(&body)
+            .send()
+            .await
+            .context("Azure OpenAI request failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Azure OpenAI error {status}: {text}");
+        }
+
+        let byte_stream = resp.bytes_stream();
+        let event_stream = byte_stream.flat_map(|chunk| {
+            let lines = match chunk {
+                Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                Err(e) => return futures::stream::iter(vec![Err(anyhow::anyhow!(e))]),
+            };
+            let events: Vec<anyhow::Result<ResponseEvent>> = lines
+                .lines()
+                .filter_map(|line| {
+                    let line = line.strip_prefix("data: ")?.trim();
+                    if line == "[DONE]" { return Some(Ok(ResponseEvent::Done)); }
+                    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+                    Some(parse_openai_sse(&v))
+                })
+                .collect();
+            futures::stream::iter(events)
+        });
+
+        Ok(Box::pin(event_stream))
+    }
+}
+
+fn parse_openai_sse(v: &serde_json::Value) -> anyhow::Result<ResponseEvent> {
+    use crate::ResponseEvent;
+    if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
+        return Ok(ResponseEvent::Usage {
+            input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+            output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+        });
+    }
+    let delta = &v["choices"][0]["delta"];
+    if let Some(tcs) = delta.get("tool_calls") {
+        if let Some(tc) = tcs.get(0) {
+            return Ok(ResponseEvent::ToolCall {
+                id: tc["id"].as_str().unwrap_or("").to_string(),
+                name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                arguments: tc["function"]["arguments"].as_str().unwrap_or("").to_string(),
+            });
+        }
+    }
+    if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
+        return Ok(ResponseEvent::TextDelta(text.to_string()));
+    }
+    Ok(ResponseEvent::TextDelta(String::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_config::ModelConfig;
+
+    fn minimal_config(provider: &str, model: &str) -> ModelConfig {
+        ModelConfig {
+            provider: provider.into(),
+            name: model.into(),
+            ..ModelConfig::default()
+        }
+    }
+
+    #[test]
+    fn from_config_openai_succeeds() {
+        let cfg = minimal_config("openai", "gpt-4o");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_anthropic_succeeds() {
+        let cfg = minimal_config("anthropic", "claude-opus-4-5");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_google_succeeds() {
+        let cfg = minimal_config("google", "gemini-2.0-flash-exp");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_mock_succeeds() {
+        let cfg = minimal_config("mock", "mock-model");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_groq_succeeds() {
+        let cfg = minimal_config("groq", "llama-3.3-70b-versatile");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_ollama_requires_no_key() {
+        let cfg = minimal_config("ollama", "llama3.2");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_deepseek_succeeds() {
+        let cfg = minimal_config("deepseek", "deepseek-chat");
+        assert!(from_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn from_config_unknown_provider_returns_error() {
+        let cfg = minimal_config("totally_unknown_provider_xyz", "some-model");
+        let result = from_config(&cfg);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("unknown model provider"));
+    }
+
+    #[test]
+    fn from_config_error_message_suggests_list_providers() {
+        let cfg = minimal_config("badprovider", "m");
+        let msg = from_config(&cfg).err().unwrap().to_string();
+        assert!(msg.contains("list-providers") || msg.contains("Known providers"));
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_explicit_key() {
+        let cfg = ModelConfig {
+            api_key: Some("explicit-key".into()),
+            api_key_env: Some("NONEXISTENT_ENV_VAR_XYZ".into()),
+            ..ModelConfig::default()
+        };
+        let key = resolve_api_key(&cfg);
+        assert_eq!(key.as_deref(), Some("explicit-key"));
+    }
+
+    #[test]
+    fn all_registry_drivers_have_constructors() {
+        // Every driver id in the registry must be handled by from_config
+        // without returning "unknown provider" (API key errors are OK).
+        for meta in list_drivers() {
+            if meta.id == "litellm" || meta.id == "cloudflare" {
+                // These require base_url — skip here.
+                continue;
+            }
+            if meta.id == "azure" {
+                // Azure requires resource name — skip.
+                continue;
+            }
+            let cfg = minimal_config(meta.id, "test-model");
+            let result = from_config(&cfg);
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    assert!(
+                        !msg.contains("unknown model provider"),
+                        "driver {id} is in registry but not handled by from_config: {msg}",
+                        id = meta.id
+                    );
+                }
+            }
+        }
+    }
 }

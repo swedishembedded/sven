@@ -702,17 +702,17 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
 /// The override string may be:
 /// - `"provider/model"` → sets both provider and name  (e.g. `"anthropic/claude-opus-4-5"`)
 /// - `"model"` with no `/` → sets name only, keeps base provider
-/// - A bare provider keyword (`"openai"`, `"anthropic"`, `"mock"`) → sets provider only
+/// - A bare registered provider id (e.g. `"groq"`, `"ollama"`) → sets provider only
 fn resolve_model_cfg(
     base: &ModelConfig,
     override_str: &str,
 ) -> ModelConfig {
-    const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
     let mut cfg = base.clone();
     if let Some((provider, model)) = override_str.split_once('/') {
         cfg.provider = provider.to_string();
         cfg.name = model.to_string();
-    } else if PROVIDER_KEYWORDS.contains(&override_str) {
+    } else if sven_model::get_driver(override_str).is_some() {
+        // Bare provider id — change provider, keep the current model name.
         cfg.provider = override_str.to_string();
     } else {
         cfg.name = override_str.to_string();
