@@ -261,7 +261,7 @@ impl CiRunner {
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
         let task_depth = Arc::new(AtomicUsize::new(0));
 
-        let profile = ToolSetProfile::Full { todos, task_depth };
+        let profile = ToolSetProfile::Full { question_tx: None, todos, task_depth };
 
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_runtime_context(runtime_ctx)

@@ -1,13 +1,14 @@
 //! Background agent task and request/event channel types.
 
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use sven_bootstrap::{AgentBuilder, ToolSetProfile};
+use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_model::Message;
-use sven_tools::QuestionRequest;
-use tokio::sync::mpsc;
+use sven_tools::{QuestionRequest, TodoItem};
+use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 /// Request sent from the TUI to the background agent task.
@@ -41,9 +42,16 @@ pub async fn agent_task(
         }
     };
 
-    let profile = ToolSetProfile::TuiMinimal { question_tx };
+    let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
+    let task_depth = Arc::new(AtomicUsize::new(0));
+    let profile = ToolSetProfile::Full {
+        question_tx: Some(question_tx),
+        todos,
+        task_depth,
+    };
 
     let mut agent = AgentBuilder::new(config)
+        .with_runtime_context(RuntimeContext::auto_detect())
         .build(mode, model, profile);
 
     while let Some(req) = rx.recv().await {

@@ -12,7 +12,7 @@ use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
     AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
-    FsTool, GlobTool, GlobFileSearchTool, GrepTool, ListDirTool,
+    FsTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool,
     ReadFileTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
     ShellTool, SwitchModeTool, TodoWriteTool, UpdateMemoryTool,
     WebFetchTool, WebSearchTool, WriteTool,
@@ -53,12 +53,14 @@ pub fn build_tool_registry(
     sub_agent_runtime: AgentRuntimeContext,
 ) -> ToolRegistry {
     match profile {
-        ToolSetProfile::Full { todos, task_depth } => {
+        ToolSetProfile::Full { question_tx, todos, task_depth } => {
             let mut reg = ToolRegistry::new();
 
             reg.register(ReadFileTool);
             reg.register(ListDirTool);
+            reg.register(FsTool);
             reg.register(GlobFileSearchTool);
+            reg.register(GlobTool);
             reg.register(GrepTool);
             reg.register(SearchCodebaseTool);
             reg.register(WebFetchTool);
@@ -69,7 +71,11 @@ pub fn build_tool_registry(
             reg.register(UpdateMemoryTool {
                 memory_file: cfg.tools.memory.memory_file.clone(),
             });
-            reg.register(AskQuestionTool::new());
+            let ask_tool = match question_tx {
+                Some(tx) => AskQuestionTool::new_tui(tx),
+                None => AskQuestionTool::new(),
+            };
+            reg.register(ask_tool);
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
             reg.register(SwitchModeTool::new(mode_lock, tool_event_tx));
             reg.register(WriteTool);
@@ -79,6 +85,7 @@ pub fn build_tool_registry(
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
+            reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
             reg.register(TaskTool::new(
                 model,
                 Arc::new(cfg.clone()),
@@ -103,7 +110,9 @@ pub fn build_tool_registry(
 
             reg.register(ReadFileTool);
             reg.register(ListDirTool);
+            reg.register(FsTool);
             reg.register(GlobFileSearchTool);
+            reg.register(GlobTool);
             reg.register(GrepTool);
             reg.register(SearchCodebaseTool);
             reg.register(WebFetchTool);
@@ -124,27 +133,8 @@ pub fn build_tool_registry(
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
-            // TaskTool intentionally omitted to limit sub-agent nesting
-
-            let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbConnectTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbCommandTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbInterruptTool::new(gdb_state.clone()));
-            reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-            reg.register(GdbStatusTool::new(gdb_state.clone()));
-            reg.register(GdbStopTool::new(gdb_state));
-
-            reg
-        }
-
-        ToolSetProfile::TuiMinimal { question_tx } => {
-            let mut reg = ToolRegistry::new();
-
             reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
-            reg.register(FsTool);
-            reg.register(GlobTool);
-            reg.register(AskQuestionTool::new_tui(question_tx));
+            // TaskTool intentionally omitted to limit sub-agent nesting
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));

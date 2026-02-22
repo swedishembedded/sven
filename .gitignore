@@ -1,5 +1,6 @@
 # Rust / Cargo
 /target/
+.cargo/
 Cargo.lock
 
 # Generated shell completions (produced by `make deb` / `make release`)

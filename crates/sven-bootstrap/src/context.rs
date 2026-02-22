@@ -72,26 +72,24 @@ impl RuntimeContext {
 /// Selects which tool set to register and carries the caller-owned shared
 /// state that stateful tools require.
 ///
+/// TUI and headless/CI use the same full tool set; only `--mode` (research /
+/// plan / agent) controls which tools are exposed to the model. When
+/// `question_tx` is `Some`, ask_question uses the TUI channel; when `None`,
+/// it uses stdin (headless/CI).
+///
 /// `mode_lock` and the tool-event channel are intentionally **not** part of
 /// this enum — `AgentBuilder::build()` creates them, wires them into the
 /// registry, and passes the same instances to `Agent::new()` so that
 /// `SwitchModeTool` and `TodoWriteTool` events are correctly observed by the
 /// agent loop.
 pub enum ToolSetProfile {
-    /// Full tool set for CI / headless workflows.
+    /// Full tool set (TUI and headless/CI). Same tools; mode gates visibility.
     ///
-    /// Includes all file ops, shell, web, GDB, TaskTool, todos, mode-switch.
+    /// `question_tx`: when `Some`, ask_question routes to the TUI; when `None`, uses stdin.
     Full {
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
         task_depth: Arc<AtomicUsize>,
-    },
-
-    /// Minimal tool set for the interactive TUI.
-    ///
-    /// Includes Shell, Fs, Glob, AskQuestion (with TUI channel), and GDB.
-    /// Does not include file read/write, task spawning, or web tools.
-    TuiMinimal {
-        question_tx: mpsc::Sender<QuestionRequest>,
     },
 
     /// Sub-agent tool set (Full minus TaskTool to prevent unbounded nesting).
