@@ -66,40 +66,41 @@ impl<'a> PromptContext<'a> {
 
 mod guidelines {
     pub fn general() -> &'static str {
-        "- Be concise and precise in your responses.\n\
-         - Use tools instead of guessing file contents.\n\
-         - Always verify tool outputs before proceeding with dependent operations.\n\
-         - If a task is ambiguous, ask for clarification before acting."
+        "- Be concise and precise. Use tools instead of guessing — always verify tool outputs.\n\
+         - If a task is ambiguous, ask for clarification before acting.\n\
+         - Check `update_memory` (list) at session start for stored project context."
     }
 
     pub fn tool_usage() -> &'static str {
-        "- NEVER use `run_terminal_command` for file operations — use dedicated tools instead.\n\
-         - Prefer `edit_file` over `write` for modifying existing files to preserve context.\n\
-         - Use `grep` with `output_mode: 'files_with_matches'` for discovery, 'content' for details.\n\
-         - Call multiple `read_file` tools in parallel when examining several files.\n\
-         - Use `glob` before `grep` when narrowing down which files to search."
+        "- NEVER use `run_terminal_command` for file I/O — use `read_file`/`write`/`edit_file`/`grep`/`glob`.\n\
+         - Prefer `edit_file` over `write` for modifying existing files (preserves surrounding context).\n\
+         - Discovery workflow: `glob` to find files → `grep` with output_mode='files_with_matches' to narrow → `read_file` for full context.\n\
+         - Use `grep` output_mode='content' + context_lines for code-level inspection; use `search_codebase` for broad whole-repo sweeps.\n\
+         - Use `edit_file` with replace_all=true to rename a symbol throughout a single file.\n\
+         - Batch `read_file` calls in parallel — read all potentially relevant files in one turn."
     }
 
     pub fn code_quality() -> &'static str {
-        "- Follow existing project conventions discovered via file analysis.\n\
-         - Never write new files proactively unless explicitly requested by the user.\n\
-         - Run `read_lints` after substantive code changes to catch errors.\n\
-         - Include tests when adding new functionality to preserve project quality.\n\
+        "- Follow existing project conventions discovered via file analysis before writing any code.\n\
+         - NEVER create new files proactively unless explicitly requested.\n\
+         - Run `read_lints` (scoped to edited files) after every substantive code change.\n\
+         - Include tests when adding new functionality; preserve existing test coverage.\n\
          - Preserve existing code structure and naming patterns."
     }
 
     pub fn workflow_efficiency() -> &'static str {
-        "- Use `switch_mode` to transition between Research, Plan, and Agent modes when appropriate.\n\
-         - Update persistent memory with `update_memory` for cross-session learnings.\n\
-         - Batch file reads in parallel when possible to reduce round-trips.\n\
-         - Summarize what you did at the end of each turn to keep users informed."
+        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete immediately.\n\
+         - Use `switch_mode` to transition between Research, Plan, and Agent modes proactively.\n\
+         - Store project-specific conventions in `update_memory`; retrieve them at the start of new sessions.\n\
+         - Batch independent tool calls in parallel to reduce round-trips."
     }
 
     pub fn error_handling() -> &'static str {
         "- When a tool fails, read the error message carefully and adjust your approach.\n\
-         - If `edit_file` fails due to ambiguity, provide more surrounding context lines (2-5).\n\
-         - Check that `project_root` is set before using absolute paths in terminal commands.\n\
-         - Never skip git hooks or commit safety checks without explicit user permission."
+         - `edit_file` 'not found': re-read the file and copy old_str verbatim with more context lines.\n\
+         - `edit_file` 'N times': add unique surrounding context, or use replace_all=true if intentional.\n\
+         - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
+         - NEVER skip git hooks or force-push without explicit user permission."
     }
 }
 
@@ -126,28 +127,40 @@ fn build_guidelines_section() -> String {
 
 fn build_tool_examples_section() -> &'static str {
     "## Tool Usage Examples\n\n\
-     Example 1: Finding and modifying a function\n\
+     Example 1: Locate and modify a function\n\
      <example>\n\
-     1. glob: pattern=\"*.rs\" → Find relevant files\n\
-     2. grep: pattern=\"fn process_data\", output_mode=\"files_with_matches\" → Locate function\n\
-     3. read_file: path=\"/project/src/processor.rs\" → Read full context\n\
-     4. edit_file: old_str=\"...\", new_str=\"...\" → Modify function\n\
+     1. grep: pattern=\"fn process_data\", output_mode=\"files_with_matches\" → Discover which files contain it\n\
+     2. read_file: path=\"/project/src/processor.rs\" → Read full file for context\n\
+     3. edit_file: old_str=\"<exact lines from read_file>\", new_str=\"...\" → Apply change\n\
+     4. read_lints: paths=[\"/project/src/processor.rs\"] → Verify no new errors\n\
      </example>\n\n\
-     Example 2: Parallel file exploration\n\
+     Example 2: Rename a symbol across a file\n\
      <example>\n\
-     Call multiple read_file tools in parallel:\n\
+     edit_file: path=\"src/lib.rs\", old_str=\"OldName\", new_str=\"NewName\", replace_all=true\n\
+     Then: read_lints to confirm no type errors introduced.\n\
+     </example>\n\n\
+     Example 3: Parallel exploration before making changes\n\
+     <example>\n\
+     In one turn, call in parallel:\n\
      - read_file: path=\"/project/src/main.rs\"\n\
      - read_file: path=\"/project/Cargo.toml\"\n\
-     - read_file: path=\"/project/README.md\"\n\
-     This is more efficient than sequential reads.\n\
+     - grep: pattern=\"TODO|FIXME\", output_mode=\"files_with_matches\"\n\
+     - update_memory: operation=\"list\"  (check stored project context)\n\
      </example>\n\n\
-     Example 3: Research workflow with mode switching\n\
+     Example 4: Deep code inspection with context\n\
      <example>\n\
-     1. switch_mode: mode=\"research\" → Enter read-only mode\n\
-     2. search_codebase: query=\"authentication logic\" → High-level search\n\
-     3. grep: pattern=\"auth.*validate\", include=\"*.rs\" → Detailed search\n\
-     4. read_file: (multiple files) → Examine implementations\n\
-     5. switch_mode: mode=\"agent\" → Return to write mode for implementation\n\
+     grep: pattern=\"unsafe\", include=\"*.rs\", output_mode=\"content\", context_lines=3\n\
+     → See 3 lines of surrounding code for each match to understand usage.\n\
+     </example>\n\n\
+     Example 5: Research → Plan → Implement workflow\n\
+     <example>\n\
+     1. switch_mode: mode=\"research\"\n\
+     2. search_codebase: query=\"authentication\" → Broad sweep of auth-related files\n\
+     3. grep: pattern=\"fn (login|authenticate)\", include=\"*.rs\", output_mode=\"files_with_matches\"\n\
+     4. read_file: (all relevant files in parallel)\n\
+     5. switch_mode: mode=\"plan\" → Design the approach\n\
+     6. switch_mode: mode=\"agent\" → Implement\n\
+     7. run_terminal_command: command=\"cargo test\" → Verify\n\
      </example>"
 }
 

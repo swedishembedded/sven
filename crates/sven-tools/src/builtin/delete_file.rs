@@ -17,35 +17,8 @@ impl Tool for DeleteFileTool {
     fn name(&self) -> &str { "delete_file" }
 
     fn description(&self) -> &str {
-        "Deletes a file at the specified path.\n\n\
-         ## Usage\n\
-         - Deletes single file at specified path\n\
-         - Fails gracefully if file doesn't exist\n\
-         - Respects file permissions and security\n\
-         - Does NOT recursively delete directories\n\n\
-         ## When to Use\n\
-         - Removing unwanted files (only with explicit user request)\n\
-         - Cleaning up generated files\n\
-         - Removing temporary or obsolete code\n\n\
-         ## When NOT to Use\n\
-         - Deleting directories → use run_terminal_command with 'rm -r'\n\
-         - Batch deletion → call delete_file multiple times\n\
-         - Destructive operations without approval → ALWAYS ask first\n\n\
-         ## Examples\n\
-         <example>\n\
-         Delete a file:\n\
-         delete_file: path=\"/project/old_module.rs\"\n\
-         </example>\n\
-         <example>\n\
-         Delete temporary file:\n\
-         delete_file: path=\"/tmp/temp_config.json\"\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - NEVER delete files without explicit user request\n\
-         - Use for single files only (not directories)\n\
-         - Operation is permanent - no recovery available\n\
-         - Requires approval in most contexts\n\
-         - Non-existent files return graceful error"
+        "Delete a single file. Fails gracefully if not found. NEVER delete without explicit user request.\n\
+         Permanent — no recovery. For directories use run_terminal_command with rm -r."
     }
 
     fn parameters_schema(&self) -> Value {

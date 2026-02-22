@@ -30,39 +30,10 @@ impl Tool for SwitchModeTool {
     fn name(&self) -> &str { "switch_mode" }
 
     fn description(&self) -> &str {
-        "Switch the agent's operating mode to match the current task type.\n\n\
-         ## Modes\n\
-         - 'agent': Make code changes, write files, run commands\n\
-         - 'plan': Design approaches, create structured plans, no writes\n\
-         - 'research': Explore and learn, read-only, no modifications\n\n\
-         ## Mode Capabilities\n\
-         Agent: Read/write files, execute commands, modify code\n\
-         Plan: Read files, design approaches, output markdown plans\n\
-         Research: Read files, search code, gather information\n\n\
-         ## When to Switch\n\
-         - Research → Plan: Task requires planning before implementation\n\
-         - Plan → Agent: Ready to implement the plan\n\
-         - Agent → Plan: Need to step back and design approach\n\
-         - Agent → Research: Need to explore before proceeding\n\n\
-         ## Examples\n\
-         <example>\n\
-         Start research phase:\n\
-         switch_mode: mode=\"research\"\n\
-         </example>\n\
-         <example>\n\
-         Move to planning:\n\
-         switch_mode: mode=\"plan\"\n\
-         </example>\n\
-         <example>\n\
-         Begin implementation:\n\
-         switch_mode: mode=\"agent\"\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Can only downgrade: agent → plan → research\n\
-         - Upgrading requires user request\n\
-         - Current mode determines available tools\n\
-         - Switch proactively when task type changes\n\
-         - Use plan mode for complex tasks before coding"
+        "Switch the agent's operating mode.\n\
+         agent: read/write/execute (full). plan: read + design (no writes). research: read-only.\n\
+         Can only downgrade (agent → plan → research). Upgrading requires user request.\n\
+         Switch proactively: plan for complex tasks before coding, research before exploring."
     }
 
     fn parameters_schema(&self) -> Value {

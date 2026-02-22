@@ -21,40 +21,10 @@ impl Tool for UpdateMemoryTool {
     fn name(&self) -> &str { "update_memory" }
 
     fn description(&self) -> &str {
-        "Persist key-value pairs across sessions for learning and context.\n\n\
-         ## Operations\n\
-         - set: Store or update a key-value pair\n\
-         - get: Retrieve value for a key\n\
-         - delete: Remove a key-value pair\n\
-         - list: Show all stored keys\n\n\
-         ## Usage\n\
-         - Store project preferences and conventions\n\
-         - Remember discovered patterns and solutions\n\
-         - Track important decisions for future reference\n\n\
-         ## When to Use\n\
-         - After discovering important project conventions\n\
-         - To store solutions to recurring problems\n\
-         - For preferences and settings to remember\n\
-         - To document project-specific patterns\n\n\
-         ## Examples\n\
-         <example>\n\
-         Store project convention:\n\
-         update_memory: operation=\"set\", key=\"project_style_guide\", value=\"2 spaces for indent\"\n\
-         </example>\n\
-         <example>\n\
-         Retrieve remembered value:\n\
-         update_memory: operation=\"get\", key=\"project_style_guide\"\n\
-         </example>\n\
-         <example>\n\
-         List all remembered items:\n\
-         update_memory: operation=\"list\"\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Memory persists across sessions\n\
-         - Stored in ~/.config/sven/memory.json\n\
-         - Use meaningful key names for clarity\n\
-         - Store discovered patterns and best practices\n\
-         - Useful for cross-session learning"
+        "Persist key-value pairs across sessions (~/.config/sven/memory.json).\n\
+         operations: set | get | delete | list\n\
+         At session start: call list to check for stored project context before proceeding.\n\
+         Use proactively to store: project conventions, toolchain quirks, recurring solutions."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -17,46 +17,9 @@ impl Tool for WebFetchTool {
     fn name(&self) -> &str { "web_fetch" }
 
     fn description(&self) -> &str {
-        "Fetch content from a URL and convert to readable text format.\n\n\
-         ## Usage\n\
-         - Fetch webpage content for analysis\n\
-         - Extract text from HTML pages\n\
-         - Retrieve documentation or reference material\n\
-         - URL must be fully-formed and valid\n\n\
-         ## Supported\n\
-         - HTTP and HTTPS URLs\n\
-         - HTML content conversion to markdown\n\
-         - Text-based content\n\
-         - Maximum 50,000 characters per request\n\n\
-         ## Limitations\n\
-         - No authentication support\n\
-         - No binary content fetching\n\
-         - No localhost or private IP access\n\
-         - Read-only (no requests with side effects)\n\n\
-         ## When to Use\n\
-         - Retrieve webpage content for analysis\n\
-         - Extract information from documentation\n\
-         - Get latest information from URLs\n\
-         - Analyze web-based resources\n\n\
-         ## When NOT to Use\n\
-         - Private/authenticated content → not supported\n\
-         - Binary files → use appropriate tool\n\
-         - Localhost/internal IPs → use file system instead\n\n\
-         ## Examples\n\
-         <example>\n\
-         Fetch documentation:\n\
-         web_fetch: url=\"https://docs.example.com/api\"\n\
-         </example>\n\
-         <example>\n\
-         Fetch with size limit:\n\
-         web_fetch: url=\"https://example.com\", max_chars=10000\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Valid http/https URLs only\n\
-         - Converts HTML to markdown automatically\n\
-         - Content limited to 50,000 chars (configurable)\n\
-         - No authentication or side effects\n\
-         - Read-only operation"
+        "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
+         Valid http/https only. No auth, no binary, no localhost/private IPs.\n\
+         max_chars: 50,000 by default. For non-webpage URLs use run_terminal_command."
     }
 
     fn parameters_schema(&self) -> Value {

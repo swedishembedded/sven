@@ -17,59 +17,11 @@ impl Tool for ReadFileTool {
     fn name(&self) -> &str { "read_file" }
 
     fn description(&self) -> &str {
-        "Reads a file from the local filesystem. You can access any file directly by using this tool.\n\
-         If the user provides a path to a file assume that path is valid. \
-         It is okay to read a file that does not exist; an error will be returned.\n\n\
-         ## Usage\n\
-         - Access any file directly using absolute or relative paths\n\
-         - Optionally specify line offset and limit for large files\n\
-         - Lines in output are numbered starting at 1\n\
-         - Empty files return 'File is empty.' message\n\n\
-         ## Parallel Reading\n\
-         It is always better to speculatively read multiple files as a batch that are potentially useful.\n\
-         Call multiple read_file tools in parallel when examining several files:\n\
-         - read_file: path=\"/project/src/main.rs\"\n\
-         - read_file: path=\"/project/Cargo.toml\"\n\
-         - read_file: path=\"/project/README.md\"\n\
-         Much more efficient than sequential reads.\n\n\
-         ## Image Support\n\
-         - Automatically detects and reads: png, jpg, jpeg, gif, webp, bmp, tiff\n\
-         - Returns base64-encoded data URLs (data:image/...;base64,...)\n\
-         - Images are automatically recognized by vision models\n\n\
-         ## PDF Support\n\
-         - PDF files are converted into text content automatically\n\
-         - Subject to the same character limits as other files\n\n\
-         ## When to Use\n\
-         - Reading source code files\n\
-         - Examining configuration files\n\
-         - Reading markdown documents or PDFs\n\
-         - Looking at image files\n\
-         - Getting file contents for analysis\n\n\
-         ## When NOT to Use\n\
-         - Finding files by name → use glob tool instead\n\
-         - Searching file contents for patterns → use grep tool instead\n\
-         - Creating files → use write tool instead\n\n\
-         ## Examples\n\
-         <example>\n\
-         Read entire file:\n\
-         read_file: path=\"/project/src/main.rs\"\n\
-         </example>\n\
-         <example>\n\
-         Read specific lines from large file:\n\
-         read_file: path=\"/project/large_log.txt\", offset=1000, limit=50\n\
-         </example>\n\
-         <example>\n\
-         Parallel reads for efficiency:\n\
-         - read_file: path=\"/project/src/main.rs\"\n\
-         - read_file: path=\"/project/Cargo.toml\"\n\
-         All happen in parallel.\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Recommend reading entire file when possible (offset/limit for huge files only)\n\
-         - Line numbers start at 1 (not 0)\n\
-         - Output limited to 200,000 characters\n\
-         - Safe to attempt reading files that don't exist (returns error, not crash)\n\
-         - Image and PDF files automatically detected and converted"
+        "Reads any file. If the user provides a path, assume it is valid; nonexistent file returns error.\n\
+         Always batch multiple reads in parallel — speculatively read potentially relevant files together.\n\
+         Lines formatted as L{n}:content (1-indexed). Pagination: offset + limit window into large files.\n\
+         Truncation notice shown when file exceeds 200,000 chars; use offset/limit to page through.\n\
+         Images (png/jpg/gif/webp/bmp/tiff) → auto-detected and returned as base64 data URL."
     }
 
     fn parameters_schema(&self) -> Value {

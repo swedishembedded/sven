@@ -17,44 +17,11 @@ impl Tool for WriteTool {
     fn name(&self) -> &str { "write" }
 
     fn description(&self) -> &str {
-        "Writes a file to the local filesystem.\n\n\
-         ## CRITICAL Warnings\n\
-         - ALWAYS prefer edit_file for modifying existing files (preserves context)\n\
-         - NEVER write new files unless explicitly required by the user\n\
-         - NEVER proactively create documentation, README, or config files\n\
-         - Always check if file exists before writing\n\n\
-         ## Usage\n\
-         - Creates parent directories automatically\n\
-         - Overwrites existing files by default\n\
-         - Set append=true to add to end of file instead of overwriting\n\
-         - Respects file permissions\n\n\
-         ## When to Use\n\
-         - Creating genuinely new files (explicitly requested)\n\
-         - Generating output files (build artifacts, reports, exports)\n\
-         - Writing to append mode for logs or sequential data\n\n\
-         ## When NOT to Use\n\
-         - Modifying existing code → use edit_file instead\n\
-         - Making small changes → use edit_file for context preservation\n\
-         - Creating docs proactively → only if explicitly requested\n\n\
-         ## Examples\n\
-         <example>\n\
-         Create new source file:\n\
-         write: path=\"src/new_module.rs\", content=\"pub fn new() { ... }\"\n\
-         </example>\n\
-         <example>\n\
-         Generate output file:\n\
-         write: path=\"build/report.html\", content=\"<html>...</html>\"\n\
-         </example>\n\
-         <example>\n\
-         Append to log:\n\
-         write: path=\"debug.log\", content=\"timestamp: message\", append=true\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Only create files explicitly requested by user\n\
-         - Do NOT create documentation unless requested\n\
-         - For existing file modification, use edit_file tool\n\
-         - Parent directories created automatically\n\
-         - Use append=true for logs or sequential writes"
+        "Write content to a file. Overwrites by default; append=true to extend.\n\
+         Parent directories created automatically.\n\
+         ALWAYS prefer edit_file for modifying existing files.\n\
+         NEVER proactively create documentation, README, or config files.\n\
+         NEVER write new files unless explicitly requested by the user."
     }
 
     fn parameters_schema(&self) -> Value {

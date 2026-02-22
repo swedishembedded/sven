@@ -15,40 +15,9 @@ impl Tool for ReadImageTool {
     fn name(&self) -> &str { "read_image" }
 
     fn description(&self) -> &str {
-        "Reads an image file and returns base64-encoded data URL for visual analysis.\n\n\
-         ## Supported Formats\n\
-         - PNG, JPEG, GIF, WebP, BMP, TIFF\n\
-         - Automatically detects format\n\
-         - Resizes large images (max 2048×2048)\n\n\
-         ## Usage\n\
-         - Visually inspect image files\n\
-         - Analyze screenshots or diagrams\n\
-         - Extract information from images\n\
-         - Include images in analysis\n\n\
-         ## When to Use\n\
-         - Need to analyze image content visually\n\
-         - Model supports image input (GPT-4V, Claude, etc.)\n\
-         - Extracting text or information from screenshots\n\
-         - Examining diagrams or visual data\n\n\
-         ## When NOT to Use\n\
-         - Model doesn't support images\n\
-         - Need image metadata (use run_terminal_command + file tools)\n\
-         - Converting formats (use appropriate tool)\n\n\
-         ## Examples\n\
-         <example>\n\
-         Read and analyze screenshot:\n\
-         read_image: path=\"/tmp/screenshot.png\"\n\
-         </example>\n\
-         <example>\n\
-         Analyze diagram:\n\
-         read_image: path=\"/project/docs/architecture.png\"\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Only works if model supports image input\n\
-         - Large images auto-resized to 2048×2048 max\n\
-         - Returns base64-encoded data URL\n\
-         - Works with PNG, JPEG, GIF, WebP, BMP, TIFF\n\
-         - Good for visual analysis and OCR tasks"
+        "Read an image and return it as a base64 data URL for visual analysis.\n\
+         Supports: PNG, JPEG, GIF, WebP, BMP, TIFF. Auto-resized to max 2048×2048.\n\
+         Note: read_file also handles images — use read_image when you want explicit control."
     }
 
     fn parameters_schema(&self) -> Value {

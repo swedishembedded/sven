@@ -15,46 +15,13 @@ impl Tool for GrepTool {
     fn name(&self) -> &str { "grep" }
 
     fn description(&self) -> &str {
-        "A powerful search tool built on ripgrep.\n\n\
-         ## Usage\n\
-         - Supports full regex syntax (e.g., 'log.*Error', 'fn\\s+\\w+')\n\
-         - Filter files with include parameter (e.g., '*.rs', '**/*.{ts,tsx}')\n\
-         - Pattern uses ripgrep syntax — escape literal braces (use interface\\{\\} to match interface{})\n\
-         - Results capped at limit parameter (default 100) for responsiveness\n\
-         - Prefer using grep for search tasks when you know the exact symbols or strings to search for\n\n\
-         ## Output Modes\n\
-         - 'content': Shows matching lines (default). Use when you need to see actual code/text.\n\
-         - 'files_with_matches': Shows only file paths. Use for initial discovery before reading files.\n\
-         - 'count': Shows match counts per file. Use to understand pattern distribution.\n\n\
-         ## When to Use\n\
-         - Finding patterns across multiple files\n\
-         - Discovering which files contain specific code\n\
-         - Searching within specific file types (use include parameter)\n\
-         - Case-insensitive searches (set case_sensitive=false)\n\n\
-         ## When NOT to Use\n\
-         - Finding files by name → use glob tool instead\n\
-         - Reading entire file contents → use read_file tool instead\n\
-         - Broad codebase search with build artifacts excluded → use search_codebase instead\n\n\
-         ## Examples\n\
-         <example>\n\
-         Discovery workflow:\n\
-         1. grep: pattern=\"TODO\", output_mode=\"files_with_matches\" → Find files with TODOs\n\
-         2. read_file: path=\"/path/to/found/file\" → Read specific file for details\n\
-         </example>\n\
-         <example>\n\
-         Case-insensitive search in TypeScript files:\n\
-         grep: pattern=\"useEffect\", path=\"/project/src\", include=\"*.{ts,tsx}\", case_sensitive=false\n\
-         </example>\n\
-         <example>\n\
-         Find all test functions and count per file:\n\
-         grep: pattern=\"#\\[test\\]\", include=\"*.rs\", output_mode=\"count\"\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Default output_mode is 'content' which shows matching lines\n\
-         - Use limit parameter to control result size\n\
-         - Include parameter uses glob syntax: '*.rs' or '**/*.{js,ts}'\n\
-         - Pattern is case-sensitive by default; set case_sensitive=false for case-insensitive\n\
-         - Results are capped to avoid overwhelming output; when truncated, a notice is shown"
+        "Pattern search built on ripgrep. Prefer over search_codebase when you know the exact symbol or string.\n\
+         pattern: full regex (escape literal braces: \\{\\}). include: glob filter (*.rs, **/*.{ts,tsx}).\n\
+         case_sensitive: true by default. limit: 100 by default.\n\
+         output_mode: content (default, shows file:line:col:text) | files_with_matches | count\n\
+         context_lines: lines of context before+after each match (default 0).\n\
+         Use files_with_matches for discovery, then read_file for details.\n\
+         For whole-codebase search with .git/target/node_modules auto-excluded → use search_codebase."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -80,6 +47,15 @@ impl Tool for GrepTool {
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of matches to return (default 100)"
+                },
+                "output_mode": {
+                    "type": "string",
+                    "enum": ["content", "files_with_matches", "count"],
+                    "description": "Output format: content (default), files_with_matches, or count"
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "Lines of context before and after each match (default 0)"
                 }
             },
             "required": ["pattern"],
@@ -105,10 +81,12 @@ impl Tool for GrepTool {
         let include = call.args.get("include").and_then(|v| v.as_str()).map(str::to_string);
         let case_sensitive = call.args.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(true);
         let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let output_mode = call.args.get("output_mode").and_then(|v| v.as_str()).unwrap_or("content");
+        let context_lines = call.args.get("context_lines").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
-        debug!(pattern = %pattern, path = %path, "grep tool");
+        debug!(pattern = %pattern, path = %path, output_mode = %output_mode, "grep tool");
 
-        let result = run_rg(&pattern, &path, include.as_deref(), case_sensitive, limit).await;
+        let result = run_rg(&pattern, &path, include.as_deref(), case_sensitive, limit, output_mode, context_lines).await;
 
         match result {
             Ok(output) if output.trim().is_empty() => {
@@ -126,8 +104,9 @@ async fn run_rg(
     include: Option<&str>,
     case_sensitive: bool,
     limit: usize,
+    output_mode: &str,
+    context_lines: usize,
 ) -> anyhow::Result<String> {
-    // Check if rg is available
     let has_rg = tokio::process::Command::new("which")
         .arg("rg")
         .output()
@@ -136,13 +115,27 @@ async fn run_rg(
         .unwrap_or(false);
 
     let output = if has_rg {
-        let mut args = vec![
-            "--vimgrep".to_string(),
-            "--color".to_string(), "never".to_string(),
-            "--no-heading".to_string(),
-        ];
+        let mut args = vec!["--color".to_string(), "never".to_string()];
+
+        match output_mode {
+            "files_with_matches" => {
+                args.push("-l".to_string());
+            }
+            "count" => {
+                args.push("-c".to_string());
+            }
+            _ => {
+                // content mode: vimgrep format for unambiguous file:line:col:text output
+                args.push("--vimgrep".to_string());
+                args.push("--no-heading".to_string());
+            }
+        }
+
         if !case_sensitive {
             args.push("--ignore-case".to_string());
+        }
+        if context_lines > 0 && output_mode == "content" {
+            args.push(format!("-C{}", context_lines));
         }
         if let Some(glob) = include {
             args.push("-g".to_string());
@@ -158,8 +151,16 @@ async fn run_rg(
     } else {
         // Fallback to grep
         let mut args = vec!["-rn".to_string()];
+        match output_mode {
+            "files_with_matches" => { args.push("-l".to_string()); }
+            "count" => { args.push("-c".to_string()); }
+            _ => {}
+        }
         if !case_sensitive {
             args.push("-i".to_string());
+        }
+        if context_lines > 0 && output_mode == "content" {
+            args.push(format!("-C{}", context_lines));
         }
         if let Some(glob) = include {
             args.push("--include".to_string());

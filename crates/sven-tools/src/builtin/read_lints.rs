@@ -15,37 +15,10 @@ impl Tool for ReadLintsTool {
     fn name(&self) -> &str { "read_lints" }
 
     fn description(&self) -> &str {
-        "Read and display linter errors from the current workspace.\n\n\
-         ## Usage\n\
-         - Provide paths to specific files or directories\n\
-         - Omit paths to get diagnostics for all files\n\
-         - Single file: returns diagnostics for that file only\n\
-         - Directory: returns diagnostics for all files within\n\n\
-         ## When to Use\n\
-         - After making code changes to catch errors\n\
-         - Before committing to ensure code quality\n\
-         - To understand project-wide lint violations\n\n\
-         ## When NOT to Use\n\
-         - On files you haven't edited (returns pre-existing errors)\n\
-         - With very wide scope (check specific files/dirs instead)\n\n\
-         ## Examples\n\
-         <example>\n\
-         Check specific file:\n\
-         read_lints: paths=[\"/project/src/main.rs\"]\n\
-         </example>\n\
-         <example>\n\
-         Check directory:\n\
-         read_lints: paths=[\"/project/src\"]\n\
-         </example>\n\
-         <example>\n\
-         Check all files:\n\
-         read_lints\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - NEVER call unless you've edited files\n\
-         - Avoid wide scope (check specific files instead)\n\
-         - Returns pre-existing errors if not filtered by file\n\
-         - Focus on errors from your recent changes"
+        "Get linter diagnostics for files or directories. No paths → whole workspace.\n\
+         workdir: set to project root for correct relative path resolution.\n\
+         ONLY call on files you've just edited — pre-existing errors will also appear.\n\
+         Prefer paths=[specific file or dir you just changed] to avoid noise."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -17,51 +17,12 @@ impl Tool for EditFileTool {
     fn name(&self) -> &str { "edit_file" }
 
     fn description(&self) -> &str {
-        "Performs exact string replacements in files.\n\n\
-         ## Usage\n\
-         - Edit FAILS if old_str not found or not unique in file\n\
-         - Provide 2-5 lines of surrounding context for uniqueness\n\
-         - Include exact whitespace and indentation as it appears in the file\n\
-         - For renaming symbols throughout a single file, use replace_all=true\n\n\
-         ## When to Use\n\
-         - Modifying existing code with surrounding context known\n\
-         - Making surgical changes to specific locations\n\
-         - Renaming symbols in a single file (with replace_all=true)\n\n\
-         ## When NOT to Use\n\
-         - Creating new files → use write tool instead\n\
-         - Making changes to multiple files → call edit_file multiple times\n\
-         - Large-scale refactoring → consider apply_patch tool\n\n\
-         ## How to Succeed\n\
-         1. ALWAYS read the file first with read_file to see exact formatting\n\
-         2. Copy 2-5 lines surrounding your target change\n\
-         3. Include exact indentation and all whitespace\n\
-         4. Ensure old_str appears exactly once in the file (check carefully)\n\
-         5. If edit fails with 'not found', copy MORE context lines\n\
-         6. If edit fails with 'appears N times', add UNIQUE context\n\n\
-         ## Examples\n\
-         <example>\n\
-         Good - includes 3 lines of context:\n\
-         edit_file(\n\
-           path=\"src/main.rs\",\n\
-           old_str=\"fn main() {\\n    println!(\\\"Hello\\\");\\n}\",\n\
-           new_str=\"fn main() {\\n    println!(\\\"Hello, World!\\\");\\n}\"\n\
-         )\n\
-         </example>\n\
-         <example>\n\
-         Bad - insufficient context (will fail if println! appears elsewhere):\n\
-         edit_file(path=\"src/main.rs\", old_str=\"println!\", new_str=\"eprintln!\")\n\
-         </example>\n\
-         <example>\n\
-         Good workflow - read first, then edit:\n\
-         1. read_file: path=\"src/processor.rs\" → See exact formatting\n\
-         2. edit_file with 2-5 lines of context from the read output\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - ALWAYS read the file first to see exact formatting\n\
-         - Include 2-5 context lines above and below your change\n\
-         - Respect existing indentation precisely\n\
-         - For new files, use write tool\n\
-         - Parent directories are created automatically if needed"
+        "Exact string replacement in existing files. For new files, use write instead.\n\
+         ALWAYS read the file first — exact formatting and whitespace are required.\n\
+         old_str must be unique in the file; include 2-5 lines of surrounding context.\n\
+         Copy old_str verbatim from read_file output (whitespace/indentation exact).\n\
+         replace_all=true: replace every occurrence (e.g., rename a symbol across a file).\n\
+         Edit fails 'not found' → add more context lines. 'N times' → add unique context."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -74,11 +35,15 @@ impl Tool for EditFileTool {
                 },
                 "old_str": {
                     "type": "string",
-                    "description": "Exact string to find and replace (must be unique in the file)"
+                    "description": "Exact string to find and replace (must be unique unless replace_all=true)"
                 },
                 "new_str": {
                     "type": "string",
                     "description": "Replacement string"
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences instead of requiring uniqueness (default false)"
                 }
             },
             "required": ["path", "old_str", "new_str"],
@@ -125,7 +90,9 @@ impl Tool for EditFileTool {
             }
         };
 
-        debug!(path = %path, "edit_file tool");
+        let replace_all = call.args.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        debug!(path = %path, replace_all = %replace_all, "edit_file tool");
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
@@ -139,14 +106,18 @@ impl Tool for EditFileTool {
                 format!("old_str not found in {path}"),
             );
         }
-        if count > 1 {
+        if count > 1 && !replace_all {
             return ToolOutput::err(
                 &call.id,
-                format!("old_str appears {count} times in {path}; provide more context to make it unique"),
+                format!("old_str appears {count} times in {path}; provide more context to make it unique, or use replace_all=true"),
             );
         }
 
-        let new_content = content.replacen(&old_str as &str, &new_str, 1);
+        let new_content = if replace_all {
+            content.replace(&old_str as &str, &new_str)
+        } else {
+            content.replacen(&old_str as &str, &new_str, 1)
+        };
 
         if let Some(parent) = std::path::Path::new(&path).parent() {
             if !parent.as_os_str().is_empty() {
@@ -155,7 +126,14 @@ impl Tool for EditFileTool {
         }
 
         match tokio::fs::write(&path, &new_content).await {
-            Ok(_) => ToolOutput::ok(&call.id, format!("edited {path}")),
+            Ok(_) => {
+                let msg = if replace_all && count > 1 {
+                    format!("edited {path} ({count} occurrences replaced)")
+                } else {
+                    format!("edited {path}")
+                };
+                ToolOutput::ok(&call.id, msg)
+            }
             Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
         }
     }

@@ -15,34 +15,9 @@ impl Tool for ListDirTool {
     fn name(&self) -> &str { "list_dir" }
 
     fn description(&self) -> &str {
-        "List directory contents recursively up to a specified depth.\n\n\
-         ## Usage\n\
-         - Lists all files and directories in specified path\n\
-         - Directories shown with trailing '/'\n\
-         - Recursion depth configurable (default 2, max 5)\n\
-         - Automatically excludes .git/, target/, node_modules/\n\n\
-         ## When to Use\n\
-         - Getting an overview of directory structure\n\
-         - Understanding project layout\n\
-         - Locating files in specific directories\n\n\
-         ## When NOT to Use\n\
-         - Finding files by pattern → use glob tool instead\n\
-         - Searching file contents → use grep tool instead\n\
-         - Deep recursive listing → set depth limit appropriately\n\n\
-         ## Examples\n\
-         <example>\n\
-         List project structure:\n\
-         list_dir: path=\"/project/src\", depth=2\n\
-         </example>\n\
-         <example>\n\
-         List just immediate contents:\n\
-         list_dir: path=\"/project\", depth=1\n\
-         </example>\n\n\
-         ## IMPORTANT\n\
-         - Maximum recursion depth is 5 to prevent large outputs\n\
-         - Default depth is 2\n\
-         - Results limited to specified number of entries\n\
-         - Common build/version control directories automatically excluded"
+        "List directory contents. depth: default 2, max 5. limit: 100 entries by default.\n\
+         Excludes .git/ target/ node_modules/. Directories have trailing /.\n\
+         For file pattern search use glob; for content search use grep."
     }
 
     fn parameters_schema(&self) -> Value {
