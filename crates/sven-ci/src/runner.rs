@@ -12,7 +12,7 @@ use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
-    history, parse_frontmatter, parse_markdown_steps, extract_h1_title,
+    history, parse_frontmatter, parse_workflow,
     serialize_conversation_turn, serialize_conversation_turn_with_metadata,
     TurnMetadata, Step, StepQueue,
 };
@@ -123,9 +123,11 @@ impl CiRunner {
         vars.extend(frontmatter.vars.unwrap_or_default());
         vars.extend(opts.vars.clone());
 
-        // ── Resolve title ────────────────────────────────────────────────────
-        let title = frontmatter.title
-            .or_else(|| extract_h1_title(markdown_body));
+        // ── Parse workflow (title, preamble, steps) ──────────────────────────
+        let workflow = parse_workflow(markdown_body);
+
+        // Frontmatter title takes priority over H1; H1 is the fallback.
+        let title = frontmatter.title.or(workflow.title);
 
         // ── Build step queue ─────────────────────────────────────────────────
         let mut queue: StepQueue = if opts.input.trim().is_empty() {
@@ -136,7 +138,7 @@ impl CiRunner {
                 options: Default::default(),
             }])
         } else {
-            let mut q = parse_markdown_steps(markdown_body);
+            let mut q = workflow.steps;
             if let Some(prompt) = &opts.extra_prompt {
                 let mut prepended = StepQueue::from(vec![Step {
                     label: None,
@@ -152,6 +154,20 @@ impl CiRunner {
             }
         };
 
+        // ── Merge workflow preamble into system prompt ────────────────────────
+        // Document preamble (text between H1 and first ##) goes first, then
+        // any CLI --append-system-prompt, so the document's own context is
+        // always present at the top of the appended block.
+        let workflow_system_prompt_append = if opts.input.trim().is_empty() {
+            None
+        } else {
+            workflow.system_prompt_append
+        };
+        let combined_append = match (workflow_system_prompt_append, opts.append_system_prompt.clone()) {
+            (Some(p), Some(a)) => Some(format!("{p}\n\n{a}")),
+            (p, a) => p.or(a),
+        };
+
         let total = queue.len();
 
         // ── Dry-run mode ─────────────────────────────────────────────────────
@@ -165,11 +181,12 @@ impl CiRunner {
                 i += 1;
                 let label = step.label.as_deref().unwrap_or("(unlabelled)");
                 let mode_hint = step.options.mode.as_deref().unwrap_or("(inherit)");
+                let model_hint = step.options.model.as_deref().unwrap_or("(inherit)");
                 let timeout_hint = step.options.timeout_secs
                     .map(|t| format!("{t}s"))
                     .unwrap_or_else(|| "(inherit)".to_string());
                 write_progress(&format!(
-                    "[sven:dry-run] Step {i}/{total}: label={label:?} mode={mode_hint} timeout={timeout_hint}"
+                    "[sven:dry-run] Step {i}/{total}: label={label:?} mode={mode_hint} model={model_hint} timeout={timeout_hint}"
                 ));
             }
             return Ok(());
@@ -206,7 +223,7 @@ impl CiRunner {
             ci_context: Some(ci_ctx),
             project_context_file: opts.project_root.as_ref()
                 .and_then(|r| sven_runtime::load_project_context_file(r)),
-            append_system_prompt: opts.append_system_prompt.clone(),
+            append_system_prompt: combined_append,
             system_prompt_override: None,
         };
 

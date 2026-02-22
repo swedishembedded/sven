@@ -179,17 +179,17 @@ sven "Implement the caching layer we just designed."
 
 ## Workflow files
 
-For multi-step tasks, write a markdown workflow file where each `##` heading
-is a step:
+For multi-step tasks, write a markdown workflow file.  Each `##` heading is a
+step (user message).  The first `#` H1 heading is the conversation title, and
+any text before the first `##` is appended to the agent system prompt:
 
 ```markdown
----
-title: Code Review
-mode: research
-step_timeout_secs: 120
----
+# Code Review
+
+Automated review workflow. Be concise and cite file/line numbers.
 
 ## Understand the change
+<!-- sven: mode=research -->
 Read the most recently modified files and summarise what changed.
 
 ## Review for issues

@@ -80,10 +80,19 @@ sven --file workflow.md --output-format json | jq '.steps[].success'
 
 ## Workflow Files
 
-Workflow files are plain markdown.  Each `##` heading starts a new step.
+Workflow files are plain markdown with a defined structure:
+
+| Element | Meaning |
+|---------|---------|
+| `#` H1 heading | Conversation title (not sent to the model) |
+| Text between H1 and first `##` | Appended to the agent system prompt |
+| `##` H2 heading | Starts a new step (user message) |
+| `<!-- sven: key=value ... -->` | Per-step options; stripped from body |
 
 ```markdown
-# My Workflow
+# Codebase Improvement
+
+Review and improve the codebase in three passes.
 
 ## Analyse codebase
 Read the top-level directory and summarise what each folder contains.
@@ -131,23 +140,25 @@ Supported frontmatter fields:
 
 ### Per-Step Configuration
 
-Override settings for individual steps using HTML comments:
+Use `<!-- sven: ... -->` directives immediately after the `##` heading to
+override settings for that step:
 
 ```markdown
 ## Deep research
-<!-- step: mode=research timeout=600 -->
+<!-- sven: mode=research timeout=600 -->
 Read and summarise every file in the codebase.
 
 ## Implement changes
-<!-- step: mode=agent timeout=300 -->
+<!-- sven: mode=agent timeout=300 -->
 Apply the changes identified in the research phase.
 ```
 
-Supported per-step options:
+Supported directive options:
 
 | Option | Values | Description |
 |--------|--------|-------------|
 | `mode` | `research`, `plan`, `agent` | Agent mode for this step only |
+| `model` | e.g. `anthropic/claude-opus-4-5` | Model override for this step |
 | `timeout` | integer (seconds) | Step-level timeout override |
 | `cache_key` | string | Cache key for step result reuse (future) |
 

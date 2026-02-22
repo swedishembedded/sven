@@ -19,15 +19,13 @@ sven treats markdown files as first-class workflow definitions.  No other
 agent-CLI has an equivalent:
 
 ```markdown
----
-title: Security Audit
-mode: research
-step_timeout_secs: 120
----
+# Security Audit
+
+Systematic security review of the codebase.
 
 ## Understand the codebase
+<!-- sven: timeout=60 -->
 Read the project structure and summarise the architecture.
-<!-- step: timeout=60 -->
 
 ## Identify risks
 {{context}}
@@ -49,7 +47,7 @@ Key capabilities the workflow format provides:
 |---------|------|-------|-------------|----------|
 | Markdown workflow files (`##` steps) | ✅ native | ❌ | ❌ | ❌ |
 | YAML frontmatter (mode, timeouts, vars) | ✅ | ❌ | ❌ | ❌ |
-| Per-step options (`<!-- step: ... -->`) | ✅ | ❌ | ❌ | ❌ |
+| Per-step options (`<!-- sven: ... -->`) | ✅ | ❌ | ❌ | ❌ |
 | Variable templating (`{{key}}`) | ✅ | ❌ | ❌ | ❌ |
 | Pipeable conversation output | ✅ full conv. | last msg only | last msg only | ❌ |
 | `sven validate --file` dry-run | ✅ | ❌ | ❌ | ❌ |
@@ -175,9 +173,12 @@ you configure.
 ### CI / pipeline mode
 
 When stdin is not a TTY, or when `--headless` is passed, sven enters headless
-mode. Input is parsed as markdown: each `##` section becomes a separate step
-that is queued and sent to the model only after the previous step finishes.
-This lets a single markdown file describe a multi-step workflow.
+mode. Input is parsed as a workflow markdown document:
+
+- The first `#` H1 heading is the conversation title.
+- Text between the H1 and the first `##` heading is appended to the system prompt.
+- Each `##` H2 heading starts a step sent to the model as a user message.
+- `<!-- sven: mode=X model=Y timeout=Z -->` directives inside a step set options for that step.
 
 Output is full conversation markdown on stdout by default. Errors go to stderr.
 A failed step exits non-zero, so the pipeline aborts naturally under `set -e`.

@@ -149,21 +149,6 @@ fn unquote(s: &str) -> &str {
     }
 }
 
-/// Extract the first H1 title from a markdown string (line starting with `# `
-/// that is not `## `).  Used as a fallback title when frontmatter is absent.
-pub fn extract_h1_title(md: &str) -> Option<String> {
-    for line in md.lines() {
-        let t = line.trim();
-        if t.starts_with("# ") && !t.starts_with("## ") {
-            return Some(t[2..].trim().to_string());
-        }
-        if t.starts_with("## ") {
-            break;
-        }
-    }
-    None
-}
-
 // ─── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -221,24 +206,6 @@ mod tests {
         let (meta, rest) = parse_frontmatter(md);
         assert!(meta.is_none());
         assert_eq!(rest, md);
-    }
-
-    #[test]
-    fn extract_h1_from_preamble() {
-        let md = "# My Project\n\n## Step one\nDo it.";
-        assert_eq!(extract_h1_title(md).as_deref(), Some("My Project"));
-    }
-
-    #[test]
-    fn no_h1_returns_none() {
-        let md = "## Step one\nDo it.";
-        assert!(extract_h1_title(md).is_none());
-    }
-
-    #[test]
-    fn h2_does_not_count_as_h1() {
-        let md = "## Step one\nDo it.";
-        assert!(extract_h1_title(md).is_none());
     }
 
     #[test]

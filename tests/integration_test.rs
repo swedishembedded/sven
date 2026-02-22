@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use sven_config::{AgentConfig, AgentMode, Config};
 use sven_core::{Agent, AgentRuntimeContext};
-use sven_input::{parse_markdown_steps, parse_conversation, serialize_conversation_turn};
+use sven_input::{parse_workflow, parse_conversation, serialize_conversation_turn};
 use sven_model::{MockProvider, Message, Role};
 use sven_tools::{ToolRegistry, events::ToolEvent};
 use tokio::sync::{mpsc, Mutex};
@@ -34,28 +34,39 @@ async fn agent_returns_mock_response() {
 }
 
 #[test]
-fn markdown_step_parsing_single_step() {
-    let q = parse_markdown_steps("Do something useful.");
-    assert_eq!(q.len(), 1);
+fn workflow_parsing_single_step_fallback() {
+    // Plain text with no H2 headings → single fallback step
+    let w = parse_workflow("Do something useful.");
+    assert_eq!(w.steps.len(), 1);
 }
 
 #[test]
-fn markdown_step_parsing_multiple_h2() {
+fn workflow_parsing_multiple_h2() {
     let md = "## First\nContent one.\n\n## Second\nContent two.";
-    let mut q = parse_markdown_steps(md);
-    assert_eq!(q.len(), 2);
-    let s = q.pop().unwrap();
+    let mut w = parse_workflow(md);
+    assert_eq!(w.steps.len(), 2);
+    let s = w.steps.pop().unwrap();
     assert_eq!(s.label.as_deref(), Some("First"));
 }
 
 #[test]
-fn markdown_step_parsing_preamble() {
+fn workflow_parsing_preamble_goes_to_system_prompt() {
+    // Preamble text is NOT a step; it becomes system_prompt_append
     let md = "Intro text.\n\n## Step A\nDo this.";
-    let mut q = parse_markdown_steps(md);
-    assert_eq!(q.len(), 2);
-    let first = q.pop().unwrap();
-    assert!(first.label.is_none());
-    assert!(first.content.contains("Intro"));
+    let mut w = parse_workflow(md);
+    assert_eq!(w.steps.len(), 1, "preamble must not become a step");
+    assert!(w.system_prompt_append.as_deref()
+        .map(|s| s.contains("Intro"))
+        .unwrap_or(false));
+    assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Step A"));
+}
+
+#[test]
+fn workflow_parsing_h1_is_title_not_step() {
+    let md = "# My Project\n\nContext text.\n\n## Do work\nThe task.";
+    let w = parse_workflow(md);
+    assert_eq!(w.title.as_deref(), Some("My Project"));
+    assert_eq!(w.steps.len(), 1, "H1 must not create a step");
 }
 
 #[test]

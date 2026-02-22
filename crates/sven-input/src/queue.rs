@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-/// Per-step configuration parsed from inline `<!-- step: ... -->` HTML comments.
+/// Per-step configuration parsed from inline `<!-- sven: ... -->` HTML comments.
 #[derive(Debug, Clone, Default)]
 pub struct StepOptions {
     /// Override agent mode for this step (e.g. "research", "plan", "agent")
@@ -20,7 +20,7 @@ pub struct Step {
     pub label: Option<String>,
     /// The actual content of the step
     pub content: String,
-    /// Per-step configuration parsed from `<!-- step: ... -->` comments
+    /// Per-step configuration parsed from `<!-- sven: ... -->` comments
     pub options: StepOptions,
 }
 

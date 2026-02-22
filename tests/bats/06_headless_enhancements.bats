@@ -7,7 +7,7 @@
 #   • --output-last-message
 #   • --system-prompt-file and --append-system-prompt
 #   • YAML frontmatter (title, mode, step_timeout_secs)
-#   • Per-step options via <!-- step: ... --> comments
+#   • Per-step options via <!-- sven: ... --> comments
 #   • Variable templating ({{key}})
 #   • --artifacts-dir (per-step and conversation files created)
 #   • Progress reporting on stderr ([sven:step:start] etc.)
@@ -250,7 +250,7 @@ EOF
     wf="$(tmp_file)"
     cat > "${wf}" << 'EOF'
 ## Per-step test
-<!-- step: mode=research timeout=120 -->
+<!-- sven: mode=research timeout=120 -->
 Run the per-step test now.
 EOF
     run bash -c '"$BIN" --headless --model mock --file "$1" 2>/dev/null' -- "${wf}"
@@ -263,12 +263,12 @@ EOF
     wf="$(tmp_file)"
     cat > "${wf}" << 'EOF'
 ## Per-step test
-<!-- step: mode=research timeout=120 -->
+<!-- sven: mode=research timeout=120 -->
 Run the per-step test now.
 EOF
     run_split_output bash -c '"$BIN" --headless --model mock --file "$1"' -- "${wf}"
     # The HTML comment should NOT appear in the user section of the output
-    [[ "${STDOUT_OUT}" != *"<!-- step:"* ]]
+    [[ "${STDOUT_OUT}" != *"<!-- sven:"* ]]
     rm -f "${wf}"
 }
 
@@ -612,7 +612,7 @@ EOF
     wf="$(tmp_file)"
     cat > "${wf}" << 'EOF'
 ## Research step
-<!-- step: mode=research timeout=60 -->
+<!-- sven: mode=research timeout=60 -->
 Analyse the codebase.
 EOF
     run bash -c '"$BIN" validate --file "$1"' -- "${wf}"

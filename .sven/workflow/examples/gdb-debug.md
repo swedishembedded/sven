@@ -20,7 +20,7 @@ The firmware must already be flashed to the target before running this workflow.
 
 ## Discover target and ELF
 
-<!-- step: mode=research timeout=90 -->
+<!-- sven: mode=research timeout=90 -->
 
 Gather the information needed to start a debug session.
 
@@ -69,7 +69,7 @@ If not found, construct:
 
 ## Start GDB server
 
-<!-- step: mode=agent timeout=90 -->
+<!-- sven: mode=agent timeout=90 -->
 
 Start the GDB server using the command discovered in the previous step.
 
@@ -92,7 +92,7 @@ The `force` flag kills the zombie process and starts fresh.
 
 ## Connect and inspect
 
-<!-- step: mode=agent timeout=90 -->
+<!-- sven: mode=agent timeout=90 -->
 
 Connect gdb-multiarch to the running GDB server.
 
@@ -115,7 +115,7 @@ Report the register values and flag anything unexpected:
 
 ## Set breakpoints and run
 
-<!-- step: mode=agent timeout=120 -->
+<!-- sven: mode=agent timeout=120 -->
 
 Set a breakpoint and run to it.
 
@@ -136,7 +136,7 @@ Report:
 
 ## Stop session
 
-<!-- step: mode=agent timeout=30 -->
+<!-- sven: mode=agent timeout=30 -->
 
 Call `gdb_stop` to disconnect gdb-multiarch and kill the GDB server.
 

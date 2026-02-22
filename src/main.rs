@@ -14,7 +14,7 @@ use sven_ci::{
     CiOptions, CiRunner, ConversationOptions, ConversationRunner,
     OutputFormat, find_project_root,
 };
-use sven_input::{history, parse_frontmatter, parse_markdown_steps};
+use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
 use sven_tui::{App, AppOptions};
 
@@ -69,11 +69,17 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
 
     let (frontmatter, markdown_body) = parse_frontmatter(&content);
 
+    let workflow = parse_workflow(markdown_body);
+
+    // Title: frontmatter overrides H1
+    let title = frontmatter.as_ref().and_then(|fm| fm.title.as_deref())
+        .or(workflow.title.as_deref());
+    if let Some(t) = title {
+        println!("Title: {t}");
+    }
+
     if let Some(fm) = &frontmatter {
         println!("Frontmatter: OK");
-        if let Some(t) = &fm.title {
-            println!("  title: {t}");
-        }
         if let Some(m) = &fm.mode {
             println!("  mode: {m}");
         }
@@ -96,7 +102,11 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
         println!("Frontmatter: (none)");
     }
 
-    let mut queue = parse_markdown_steps(markdown_body);
+    if let Some(preamble) = &workflow.system_prompt_append {
+        println!("Preamble: {} chars (appended to system prompt)", preamble.chars().count());
+    }
+
+    let mut queue = workflow.steps;
     let total = queue.len();
     println!("Steps: {total}");
 
@@ -105,10 +115,11 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
         i += 1;
         let label = step.label.as_deref().unwrap_or("(unlabelled)");
         let mode = step.options.mode.as_deref().unwrap_or("(inherit)");
+        let model = step.options.model.as_deref().unwrap_or("(inherit)");
         let timeout = step.options.timeout_secs
             .map(|t| format!("{t}s"))
             .unwrap_or_else(|| "(inherit)".to_string());
-        println!("  Step {i}/{total}: {label:?}  mode={mode}  timeout={timeout}");
+        println!("  Step {i}/{total}: {label:?}  mode={mode}  model={model}  timeout={timeout}");
         if !step.content.is_empty() {
             let preview = step.content.chars().take(80).collect::<String>();
             let ellipsis = if step.content.chars().count() > 80 { "…" } else { "" };

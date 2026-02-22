@@ -3,17 +3,53 @@ use tracing::debug;
 
 use crate::{Step, StepOptions, StepQueue};
 
-/// Parse a markdown document into a [`StepQueue`].
+/// The result of parsing a workflow markdown document.
+///
+/// ```markdown
+/// # Title                          ← title field
+///
+/// Preamble text before first ##    ← system_prompt_append field
+///
+/// ## Step label                    ← first step
+/// <!-- sven: mode=research -->
+/// Step body…
+/// ```
+pub struct ParsedWorkflow {
+    /// Text of the first `#` H1 heading, used as the conversation title.
+    pub title: Option<String>,
+    /// Body text between the H1 and the first `##` heading.
+    /// Appended to the agent system prompt, not sent as a user message.
+    pub system_prompt_append: Option<String>,
+    /// The ordered queue of steps derived from `##` H2 sections.
+    pub steps: StepQueue,
+}
+
+/// Parse a markdown workflow document into a [`ParsedWorkflow`].
 ///
 /// Rules:
-/// - Every `##` heading starts a new step; the heading text becomes the label.
-/// - Content before the first `##` heading (or the entire document if there are
-///   no `##` headings) is treated as a single unlabelled step.
+/// - The first `#` H1 heading becomes the conversation title and is not
+///   included in any step or in the system prompt append.
+/// - Content between the H1 (or document start) and the first `##` H2
+///   heading is collected as `system_prompt_append`.
+/// - Every `##` H2 heading starts a new step; the heading text is the label.
 /// - `#` and `###`+ headings are kept as body text inside the current step.
-/// - HTML comments of the form `<!-- step: key=value ... -->` are parsed as
-///   per-step options and removed from the body text.
-pub fn parse_markdown_steps(input: &str) -> StepQueue {
+/// - `<!-- sven: key=value ... -->` comments set per-step options and are
+///   removed from the step body.
+/// - All other HTML comments are stripped from output.
+/// - **Fallback**: if the document contains no `##` H2 headings, the entire
+///   body (after the H1, if any) is returned as a single unlabelled step so
+///   that plain-text piped input continues to work.
+pub fn parse_workflow(input: &str) -> ParsedWorkflow {
+    let mut title: Option<String> = None;
+    let mut preamble = String::new();
     let mut steps: Vec<Step> = Vec::new();
+
+    // Phase tracking
+    let mut inside_h1 = false;
+    let mut h1_text = String::new();
+    let mut h1_done = false; // once H1 is consumed, preamble collection begins
+    let mut in_step = false; // true once the first H2 has been seen
+
     let mut current_label: Option<String> = None;
     let mut current_body = String::new();
     let mut current_opts = StepOptions::default();
@@ -21,13 +57,35 @@ pub fn parse_markdown_steps(input: &str) -> StepQueue {
     let mut h2_text = String::new();
 
     let parser = Parser::new(input);
+
     for event in parser {
         match event {
+            // ── H1: title ────────────────────────────────────────────────────
+            Event::Start(Tag::Heading { level: HeadingLevel::H1, .. }) => {
+                inside_h1 = true;
+                h1_text.clear();
+            }
+            Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
+                inside_h1 = false;
+                if !h1_done {
+                    title = Some(h1_text.trim().to_string());
+                    h1_done = true;
+                }
+                // Either way, do not add H1 text to preamble or step body.
+            }
+            Event::Text(t) | Event::Code(t) if inside_h1 => {
+                h1_text.push_str(&t);
+            }
+
+            // ── H2: step boundary ────────────────────────────────────────────
             Event::Start(Tag::Heading { level: HeadingLevel::H2, .. }) => {
-                // Flush previous step
-                flush_step(&mut steps, current_label.take(), &mut current_body, std::mem::take(&mut current_opts));
+                if in_step {
+                    flush_step(&mut steps, current_label.take(), &mut current_body,
+                               std::mem::take(&mut current_opts));
+                }
                 inside_h2 = true;
                 h2_text.clear();
+                in_step = true;
             }
             Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
                 inside_h2 = false;
@@ -36,58 +94,96 @@ pub fn parse_markdown_steps(input: &str) -> StepQueue {
             Event::Text(t) | Event::Code(t) if inside_h2 => {
                 h2_text.push_str(&t);
             }
+
+            // ── Body text ────────────────────────────────────────────────────
             Event::Text(t) => {
-                current_body.push_str(&t);
+                if in_step {
+                    current_body.push_str(&t);
+                } else {
+                    h1_done = true; // any text before H1 or after H1 counts
+                    preamble.push_str(&t);
+                }
             }
             Event::SoftBreak | Event::HardBreak => {
-                current_body.push('\n');
+                if in_step {
+                    current_body.push('\n');
+                } else {
+                    preamble.push('\n');
+                }
             }
             Event::Code(t) => {
-                current_body.push('`');
-                current_body.push_str(&t);
-                current_body.push('`');
+                let s = format!("`{t}`");
+                if in_step { current_body.push_str(&s); } else { preamble.push_str(&s); }
             }
             Event::Start(Tag::Paragraph) => {}
             Event::End(TagEnd::Paragraph) => {
-                current_body.push_str("\n\n");
+                if in_step { current_body.push_str("\n\n"); } else { preamble.push_str("\n\n"); }
             }
             Event::Start(Tag::CodeBlock(_)) => {
-                current_body.push_str("```\n");
+                let s = "```\n";
+                if in_step { current_body.push_str(s); } else { preamble.push_str(s); }
             }
             Event::End(TagEnd::CodeBlock) => {
-                current_body.push_str("```\n\n");
+                let s = "```\n\n";
+                if in_step { current_body.push_str(s); } else { preamble.push_str(s); }
             }
-            // Raw HTML: capture `<!-- step: ... -->` option comments, drop others
+
+            // ── Sven directives and HTML comments ────────────────────────────
             Event::Html(html) => {
                 let trimmed = html.trim();
-                if trimmed.starts_with("<!-- step:") && trimmed.contains("-->") {
-                    parse_step_comment_into(trimmed, &mut current_opts);
+                if trimmed.starts_with("<!-- sven:") && trimmed.contains("-->") {
+                    if in_step {
+                        parse_sven_comment_into(trimmed, &mut current_opts);
+                    }
+                    // Directives in preamble are silently ignored for now.
                 }
-                // All HTML comments are stripped from body text
+                // All HTML comments (including non-sven) are stripped from output.
             }
+
             _ => {}
         }
     }
 
-    // Final flush
-    flush_step(&mut steps, current_label, &mut current_body, std::mem::take(&mut current_opts));
-
-    debug!(steps = steps.len(), "parsed markdown steps");
-
-    // If nothing was found (empty input) create one empty step so the caller
-    // always has something to process.
-    if steps.is_empty() {
-        steps.push(Step { label: None, content: input.trim().to_string(), options: StepOptions::default() });
+    // Final flush of the last step (if any)
+    if in_step {
+        flush_step(&mut steps, current_label, &mut current_body,
+                   std::mem::take(&mut current_opts));
     }
 
-    StepQueue::from(steps)
+    debug!(steps = steps.len(), "parsed workflow steps");
+
+    // Fallback: no H2 sections found → treat entire body as one unlabelled
+    // step so plain-text stdin continues to work.
+    if steps.is_empty() {
+        let content = if preamble.trim().is_empty() {
+            input.trim().to_string()
+        } else {
+            preamble.trim().to_string()
+        };
+        steps.push(Step { label: None, content, options: StepOptions::default() });
+        return ParsedWorkflow {
+            title,
+            system_prompt_append: None,
+            steps: StepQueue::from(steps),
+        };
+    }
+
+    let system_prompt_append = {
+        let t = preamble.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    };
+
+    ParsedWorkflow {
+        title,
+        system_prompt_append,
+        steps: StepQueue::from(steps),
+    }
 }
 
-/// Parse a `<!-- step: key=value key2=value2 -->` comment into `opts`.
-fn parse_step_comment_into(comment: &str, opts: &mut StepOptions) {
-    // Find everything between "<!-- step:" and "-->"
-    let start = match comment.find("<!-- step:") {
-        Some(i) => i + "<!-- step:".len(),
+/// Parse a `<!-- sven: key=value key2=value2 -->` comment into `opts`.
+fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
+    let start = match comment.find("<!-- sven:") {
+        Some(i) => i + "<!-- sven:".len(),
         None => return,
     };
     let end = match comment[start..].find("-->") {
@@ -100,9 +196,9 @@ fn parse_step_comment_into(comment: &str, opts: &mut StepOptions) {
         if let Some((key, val)) = token.split_once('=') {
             let val = val.trim_matches('"').trim_matches('\'');
             match key {
-                "mode" => opts.mode = Some(val.to_string()),
-                "model" => opts.model = Some(val.to_string()),
-                "timeout" => opts.timeout_secs = val.parse().ok(),
+                "mode"      => opts.mode = Some(val.to_string()),
+                "model"     => opts.model = Some(val.to_string()),
+                "timeout"   => opts.timeout_secs = val.parse().ok(),
                 "cache_key" => opts.cache_key = Some(val.to_string()),
                 _ => {}
             }
@@ -114,12 +210,12 @@ fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String, opt
     let content = body.trim().to_string();
     body.clear();
 
-    // Skip empty steps with no label
+    // Skip completely empty steps with no label
     if content.is_empty() && label.is_none() {
         return;
     }
 
-    // If the step only has a label but no body, use the label as content
+    // If a step only has a label, use the label as content
     let content = if content.is_empty() {
         label.clone().unwrap_or_default()
     } else {
@@ -129,78 +225,110 @@ fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String, opt
     out.push(Step { label, content, options });
 }
 
+// ─── Unit tests ───────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── Basic parsing ─────────────────────────────────────────────────────────
+    // ── Fallback / plain-text ─────────────────────────────────────────────────
 
     #[test]
-    fn single_step_no_heading() {
-        let q = parse_markdown_steps("hello world");
-        assert_eq!(q.len(), 1);
+    fn plain_text_no_headings_gives_single_fallback_step() {
+        let w = parse_workflow("hello world");
+        assert_eq!(w.steps.len(), 1);
+        assert!(w.title.is_none());
+        assert!(w.system_prompt_append.is_none());
     }
 
     #[test]
-    fn empty_input_gives_single_empty_step() {
-        let q = parse_markdown_steps("");
-        assert_eq!(q.len(), 1);
+    fn empty_input_gives_single_fallback_step() {
+        let w = parse_workflow("");
+        assert_eq!(w.steps.len(), 1);
     }
 
     #[test]
-    fn whitespace_only_input_gives_one_step() {
-        let q = parse_markdown_steps("   \n\n   ");
-        assert_eq!(q.len(), 1);
+    fn whitespace_only_gives_single_fallback_step() {
+        let w = parse_workflow("   \n\n   ");
+        assert_eq!(w.steps.len(), 1);
     }
 
-    // ── H2 section splitting ──────────────────────────────────────────────────
+    // ── H1 title extraction ───────────────────────────────────────────────────
 
     #[test]
-    fn multiple_h2_sections() {
+    fn h1_becomes_title_not_a_step() {
+        let md = "# My Workflow\n\n## Step one\nDo this.";
+        let mut w = parse_workflow(md);
+        assert_eq!(w.title.as_deref(), Some("My Workflow"));
+        assert_eq!(w.steps.len(), 1);
+        assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Step one"));
+    }
+
+    #[test]
+    fn no_h1_gives_no_title() {
+        let md = "## Only a step\nContent.";
+        let w = parse_workflow(md);
+        assert!(w.title.is_none());
+        assert_eq!(w.steps.len(), 1);
+    }
+
+    #[test]
+    fn h1_text_not_in_step_content() {
+        let md = "# The Title\n\n## Step\nBody text.";
+        let mut w = parse_workflow(md);
+        let step = w.steps.pop().unwrap();
+        assert!(!step.content.contains("The Title"), "H1 text must not appear in step content");
+    }
+
+    // ── Preamble → system_prompt_append ──────────────────────────────────────
+
+    #[test]
+    fn preamble_goes_to_system_prompt_not_step() {
+        let md = "# Title\n\nIntroductory context.\n\n## Do work\nThe task.";
+        let mut w = parse_workflow(md);
+        assert_eq!(w.steps.len(), 1, "preamble must NOT become a step");
+        assert!(w.system_prompt_append.as_deref()
+            .map(|s| s.contains("Introductory context"))
+            .unwrap_or(false));
+        assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Do work"));
+    }
+
+    #[test]
+    fn no_preamble_gives_none_system_prompt_append() {
+        let md = "# Title\n\n## Step\nDo it.";
+        let w = parse_workflow(md);
+        assert!(w.system_prompt_append.is_none());
+    }
+
+    #[test]
+    fn preamble_without_h1_still_goes_to_system_prompt() {
+        let md = "Some context before any step.\n\n## Step\nContent.";
+        let w = parse_workflow(md);
+        assert!(w.system_prompt_append.as_deref()
+            .map(|s| s.contains("Some context"))
+            .unwrap_or(false));
+        assert_eq!(w.steps.len(), 1);
+    }
+
+    // ── H2 sections → steps ───────────────────────────────────────────────────
+
+    #[test]
+    fn multiple_h2_sections_each_become_a_step() {
         let md = "## Step one\nDo this.\n\n## Step two\nDo that.";
-        let mut q = parse_markdown_steps(md);
-        assert_eq!(q.len(), 2);
-        let s1 = q.pop().unwrap();
+        let mut w = parse_workflow(md);
+        assert_eq!(w.steps.len(), 2);
+        let s1 = w.steps.pop().unwrap();
         assert_eq!(s1.label.as_deref(), Some("Step one"));
         assert!(s1.content.contains("Do this"));
-        let s2 = q.pop().unwrap();
+        let s2 = w.steps.pop().unwrap();
         assert_eq!(s2.label.as_deref(), Some("Step two"));
-    }
-
-    #[test]
-    fn preamble_before_h2() {
-        let md = "Preamble text.\n\n## Section A\nContent.";
-        let mut q = parse_markdown_steps(md);
-        assert_eq!(q.len(), 2);
-        let first = q.pop().unwrap();
-        assert!(first.label.is_none());
-        assert!(first.content.contains("Preamble"));
-    }
-
-    #[test]
-    fn h1_heading_does_not_split_steps() {
-        // H1 is document title, not a step boundary
-        let md = "# Title\n\nSome content.\n\n## Real Step\nDo it.";
-        let mut q = parse_markdown_steps(md);
-        // Preamble (H1 + content) + 1 H2 step
-        assert_eq!(q.len(), 2);
-        let last = { let _ = q.pop(); q.pop().unwrap() };
-        assert_eq!(last.label.as_deref(), Some("Real Step"));
-    }
-
-    #[test]
-    fn h3_heading_does_not_split_steps() {
-        let md = "## Parent\nIntro.\n\n### Sub-section\nDetails.";
-        let q = parse_markdown_steps(md);
-        // Only 1 H2 step; H3 is part of its body
-        assert_eq!(q.len(), 1);
     }
 
     #[test]
     fn step_label_strips_whitespace() {
         let md = "##   Trimmed Label   \nContent.";
-        let mut q = parse_markdown_steps(md);
-        assert_eq!(q.pop().unwrap().label.as_deref(), Some("Trimmed Label"));
+        let mut w = parse_workflow(md);
+        assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Trimmed Label"));
     }
 
     #[test]
@@ -209,12 +337,27 @@ mod tests {
             .map(|i| format!("## Step {i}\nDo step {i}."))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let mut q = parse_markdown_steps(&md);
-        assert_eq!(q.len(), 5);
+        let mut w = parse_workflow(&md);
+        assert_eq!(w.steps.len(), 5);
         for i in 1..=5usize {
-            let s = q.pop().unwrap();
+            let s = w.steps.pop().unwrap();
             assert_eq!(s.label.as_deref(), Some(format!("Step {i}").as_str()));
         }
+    }
+
+    #[test]
+    fn h3_heading_does_not_split_steps() {
+        let md = "## Parent\nIntro.\n\n### Sub-section\nDetails.";
+        let w = parse_workflow(md);
+        assert_eq!(w.steps.len(), 1);
+    }
+
+    #[test]
+    fn step_without_body_uses_label_as_content() {
+        let md = "## Only A Label";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert!(!s.content.is_empty());
     }
 
     // ── Content preservation ──────────────────────────────────────────────────
@@ -222,8 +365,8 @@ mod tests {
     #[test]
     fn step_content_contains_body_text() {
         let md = "## My Step\nLine one.\nLine two.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert!(s.content.contains("Line one"));
         assert!(s.content.contains("Line two"));
     }
@@ -231,74 +374,103 @@ mod tests {
     #[test]
     fn step_content_includes_code_block_markers() {
         let md = "## Step\n```rust\nfn main() {}\n```";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert!(s.content.contains("```"), "code block markers should be preserved");
     }
 
-    #[test]
-    fn step_without_body_uses_label_as_content() {
-        // H2 heading with no following text
-        let md = "## Only A Label";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
-        assert!(!s.content.is_empty(), "step must have non-empty content");
-    }
-
-    // ── Per-step HTML comment options ─────────────────────────────────────────
+    // ── <!-- sven: ... --> directives ─────────────────────────────────────────
 
     #[test]
-    fn step_comment_sets_mode() {
-        let md = "## My Step\n<!-- step: mode=research -->\nDo some reading.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+    fn sven_comment_sets_mode() {
+        let md = "## My Step\n<!-- sven: mode=research -->\nDo some reading.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert_eq!(s.options.mode.as_deref(), Some("research"));
-        // Comment should not appear in body
-        assert!(!s.content.contains("<!-- step:"));
+        assert!(!s.content.contains("<!-- sven:"));
     }
 
     #[test]
-    fn step_comment_sets_timeout() {
-        let md = "## Heavy Step\n<!-- step: timeout=600 -->\nExpensive work.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+    fn sven_comment_sets_timeout() {
+        let md = "## Heavy Step\n<!-- sven: timeout=600 -->\nExpensive work.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert_eq!(s.options.timeout_secs, Some(600));
     }
 
     #[test]
-    fn step_comment_sets_multiple_options() {
-        let md = "## Step\n<!-- step: mode=agent timeout=120 cache_key=abc -->\nWork.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+    fn sven_comment_sets_multiple_options() {
+        let md = "## Step\n<!-- sven: mode=agent timeout=120 cache_key=abc -->\nWork.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert_eq!(s.options.mode.as_deref(), Some("agent"));
         assert_eq!(s.options.timeout_secs, Some(120));
         assert_eq!(s.options.cache_key.as_deref(), Some("abc"));
     }
 
     #[test]
-    fn step_comment_sets_model() {
-        let md = "## Step\n<!-- step: model=gpt-4o -->\nDo the work.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+    fn sven_comment_sets_model() {
+        let md = "## Step\n<!-- sven: model=gpt-4o -->\nDo the work.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert_eq!(s.options.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
-    fn step_comment_sets_model_with_provider_prefix() {
-        let md = "## Step\n<!-- step: mode=research model=anthropic/claude-opus-4-5 -->\nResearch.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+    fn sven_comment_sets_model_with_provider_prefix() {
+        let md = "## Step\n<!-- sven: mode=research model=anthropic/claude-opus-4-5 -->\nResearch.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert_eq!(s.options.mode.as_deref(), Some("research"));
         assert_eq!(s.options.model.as_deref(), Some("anthropic/claude-opus-4-5"));
     }
 
     #[test]
-    fn step_without_comment_has_default_options() {
+    fn step_without_sven_comment_has_default_options() {
         let md = "## My Step\nJust do it.";
-        let mut q = parse_markdown_steps(md);
-        let s = q.pop().unwrap();
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
         assert!(s.options.mode.is_none());
         assert!(s.options.timeout_secs.is_none());
         assert!(s.options.cache_key.is_none());
+    }
+
+    #[test]
+    fn old_step_comment_syntax_not_parsed_as_options() {
+        // <!-- step: ... --> is no longer recognized; options stay None
+        let md = "## Step\n<!-- step: mode=research -->\nContent.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert!(s.options.mode.is_none(), "old <!-- step: --> syntax must not be parsed");
+        // The comment itself should still be stripped from body
+        assert!(!s.content.contains("<!-- step:"), "old comment should be stripped from body");
+    }
+
+    // ── Full document: H1 + preamble + steps ─────────────────────────────────
+
+    #[test]
+    fn full_workflow_document() {
+        let md = concat!(
+            "# Token Usage Support\n\n",
+            "Investigate how token usage is tracked.\n\n",
+            "## Research\n",
+            "<!-- sven: mode=research model=gpt-4o -->\n",
+            "Investigate codex, openclaw, and claude-code.\n\n",
+            "## Implement\n",
+            "<!-- sven: mode=agent -->\n",
+            "Apply what you found.\n",
+        );
+        let mut w = parse_workflow(md);
+        assert_eq!(w.title.as_deref(), Some("Token Usage Support"));
+        assert!(w.system_prompt_append.as_deref()
+            .map(|s| s.contains("Investigate how token usage"))
+            .unwrap_or(false));
+        assert_eq!(w.steps.len(), 2);
+        let s1 = w.steps.pop().unwrap();
+        assert_eq!(s1.label.as_deref(), Some("Research"));
+        assert_eq!(s1.options.mode.as_deref(), Some("research"));
+        let s2 = w.steps.pop().unwrap();
+        assert_eq!(s2.label.as_deref(), Some("Implement"));
+        assert_eq!(s2.options.mode.as_deref(), Some("agent"));
     }
 }

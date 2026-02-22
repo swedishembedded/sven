@@ -5,28 +5,40 @@
 /// a real network connection.
 #[cfg(test)]
 mod tests {
-    use sven_input::{parse_markdown_steps, StepQueue};
+    use sven_input::{parse_workflow, StepQueue};
 
     // ── Input parsing (re-validates sven-input from the CI consumer's perspective) ──
 
     #[test]
-    fn plain_text_input_becomes_one_step() {
-        let mut q = parse_markdown_steps("Do something useful.");
-        assert_eq!(q.len(), 1);
-        assert!(q.pop().unwrap().content.contains("Do something useful"));
+    fn plain_text_input_becomes_one_fallback_step() {
+        let mut w = parse_workflow("Do something useful.");
+        assert_eq!(w.steps.len(), 1);
+        assert!(w.steps.pop().unwrap().content.contains("Do something useful"));
     }
 
     #[test]
     fn markdown_with_three_sections_becomes_three_steps() {
         let md = "## A\nStep A.\n\n## B\nStep B.\n\n## C\nStep C.";
-        let q = parse_markdown_steps(md);
-        assert_eq!(q.len(), 3);
+        let w = parse_workflow(md);
+        assert_eq!(w.steps.len(), 3);
     }
 
     #[test]
-    fn empty_input_gives_single_step() {
-        let q = parse_markdown_steps("");
-        assert_eq!(q.len(), 1);
+    fn empty_input_gives_single_fallback_step() {
+        let w = parse_workflow("");
+        assert_eq!(w.steps.len(), 1);
+    }
+
+    #[test]
+    fn h1_becomes_title_and_preamble_goes_to_system_prompt() {
+        let md = "# My Workflow\n\nThis context goes to the system prompt.\n\n## Step one\nDo it.";
+        let mut w = parse_workflow(md);
+        assert_eq!(w.title.as_deref(), Some("My Workflow"));
+        assert!(w.system_prompt_append.as_deref()
+            .map(|s| s.contains("context goes to the system prompt"))
+            .unwrap_or(false));
+        assert_eq!(w.steps.len(), 1);
+        assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Step one"));
     }
 
     // ── Extra prompt prepend logic ────────────────────────────────────────────
@@ -34,14 +46,13 @@ mod tests {
     #[test]
     fn extra_prompt_can_be_prepended_to_queue() {
         // Simulate what CiRunner does when extra_prompt is Some
-        let base = parse_markdown_steps("## Step 1\nDo it.");
+        let mut base = parse_workflow("## Step 1\nDo it.").steps;
         let extra_step = sven_input::Step {
             label: None,
             content: "Extra context.".into(),
             options: sven_input::StepOptions::default(),
         };
         let mut prepended = StepQueue::from(vec![extra_step]);
-        let mut base = base;
         while let Some(s) = base.pop() {
             prepended.push(s);
         }
@@ -52,8 +63,8 @@ mod tests {
 
     #[test]
     fn queue_without_extra_prompt_preserves_step_count() {
-        let q = parse_markdown_steps("## A\none\n\n## B\ntwo");
-        assert_eq!(q.len(), 2);
+        let w = parse_workflow("## A\none\n\n## B\ntwo");
+        assert_eq!(w.steps.len(), 2);
     }
 
     // ── Model name parsing (provider/model format) ────────────────────────────
@@ -77,16 +88,15 @@ mod tests {
     #[test]
     fn step_label_preserved_for_logging() {
         let md = "## Analyse codebase\nRead the files.";
-        let mut q = parse_markdown_steps(md);
-        let step = q.pop().unwrap();
+        let mut w = parse_workflow(md);
+        let step = w.steps.pop().unwrap();
         assert_eq!(step.label.as_deref(), Some("Analyse codebase"));
     }
 
     #[test]
-    fn unlabelled_step_has_none_label() {
-        let q = parse_markdown_steps("Just text, no heading.");
-        let mut q = q;
-        let step = q.pop().unwrap();
+    fn plain_text_fallback_step_has_none_label() {
+        let mut w = parse_workflow("Just text, no heading.");
+        let step = w.steps.pop().unwrap();
         assert!(step.label.is_none());
     }
 }
