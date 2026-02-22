@@ -135,6 +135,7 @@ pub struct Cli {
 
 /// JSONL output format for fine-tuning datasets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+#[value(rename_all = "lowercase")]
 pub enum JsonlFormatArg {
     /// OpenAI format with tool_calls array (compatible with most APIs)
     #[default]

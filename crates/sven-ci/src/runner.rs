@@ -322,7 +322,6 @@ impl CiRunner {
         let mut step_idx = 0usize;
         let mut collected: Vec<Message> = Vec::new();
         let mut json_steps: Vec<JsonStep> = Vec::new();
-        let mut current_mode = opts.mode;
 
         while let Some(step) = queue.pop() {
             step_idx += 1;
@@ -343,7 +342,6 @@ impl CiRunner {
             if let Some(mode_str) = &step.options.mode {
                 if let Some(mode) = parse_agent_mode(mode_str) {
                     agent.set_mode(mode).await;
-                    current_mode = mode;
                 } else {
                     write_stderr(&format!(
                         "[sven:warn] Unknown mode {:?} in step {step_idx}, continuing with current mode",
