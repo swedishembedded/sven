@@ -287,26 +287,36 @@ needed for a basic build.
 
 ## Configuration
 
-sven looks for a TOML config file at (first match wins):
+sven looks for YAML config files and merges them from lowest to highest priority:
 
-1. Path given with `--config`
-2. `$SVEN_CONFIG`
-3. `$XDG_CONFIG_HOME/sven/config.toml`
-4. `~/.config/sven/config.toml`
+1. `/etc/sven/config.yaml` (system-wide)
+2. `~/.config/sven/config.yaml` (user-level)
+3. `.sven/config.yaml` (workspace-local)
+4. `sven.yaml` (project root)
+5. Path given with `--config` (highest priority)
 
 Run `sven show-config` to see the full resolved configuration with all defaults
 filled in. The schema is defined in `crates/sven-config/src/schema.rs`.
 
 Key sections:
 
-- `[model]` — provider, model name, API key env var, base URL override for
+- `model` — provider, model name, API key env var, base URL override for
   local proxies (e.g. LiteLLM), token limits.
-- `[agent]` — default mode, maximum autonomous tool rounds, compaction
+- `agent` — default mode, maximum autonomous tool rounds, compaction
   threshold, optional system prompt override.
-- `[tools]` — tool timeout, Docker sandbox toggle, auto-approve and deny glob
+- `tools` — tool timeout, Docker sandbox toggle, auto-approve and deny glob
   patterns.
-- `[tui]` — theme, markdown wrap width, ASCII-border fallback for terminals
+- `tui` — theme, markdown wrap width, ASCII-border fallback for terminals
   with limited font support.
+
+### Listing available models
+
+```sh
+sven list-models                    # static built-in catalog
+sven list-models --provider openai  # filter by provider
+sven list-models --refresh          # query provider API for live list
+sven list-models --json             # JSON output
+```
 
 ### Model providers
 

@@ -15,6 +15,7 @@ use sven_ci::{
     OutputFormat, find_project_root,
 };
 use sven_input::{history, parse_frontmatter, parse_markdown_steps};
+use sven_model::catalog::ModelCatalogEntry;
 use sven_tui::{App, AppOptions};
 
 #[tokio::main]
@@ -32,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::ShowConfig => {
                 let config = sven_config::load(cli.config.as_deref())?;
-                println!("{}", toml::to_string_pretty(&config).unwrap_or_default());
+                println!("{}", serde_yaml::to_string(&config).unwrap_or_default());
                 return Ok(());
             }
             Commands::Chats { limit } => {
@@ -41,6 +42,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Validate { file } => {
                 return validate_workflow(file);
+            }
+            Commands::ListModels { provider, refresh, json } => {
+                let config = sven_config::load(cli.config.as_deref())?;
+                return list_models_cmd(&config, provider.as_deref(), *refresh, *json).await;
             }
         }
     }
@@ -109,6 +114,74 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
     }
 
     println!("\nWorkflow is valid.");
+    Ok(())
+}
+
+/// List available models, optionally querying the provider API for live data.
+async fn list_models_cmd(
+    config: &sven_config::Config,
+    provider_filter: Option<&str>,
+    refresh: bool,
+    as_json: bool,
+) -> anyhow::Result<()> {
+    let entries: Vec<ModelCatalogEntry> = if refresh {
+        // Query the configured provider's live API and merge with catalog.
+        let model = sven_model::from_config(&config.model)?;
+        let mut live = model.list_models().await?;
+        // If a filter is applied, restrict to that provider.
+        if let Some(prov) = provider_filter {
+            live.retain(|e| e.provider == prov);
+        }
+        live
+    } else {
+        // Use static catalog only.
+        let mut all = sven_model::catalog::static_catalog();
+        if let Some(prov) = provider_filter {
+            all.retain(|e| e.provider == prov);
+        }
+        all.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.id.cmp(&b.id)));
+        all
+    };
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No models found.");
+        return Ok(());
+    }
+
+    // Determine column widths.
+    let id_w = entries.iter().map(|e| e.id.len()).max().unwrap_or(10).max(10);
+    let prov_w = entries.iter().map(|e| e.provider.len()).max().unwrap_or(8).max(8);
+
+    println!(
+        "{:<id_w$}  {:<prov_w$}  {:>12}  {:>16}  DESCRIPTION",
+        "ID", "PROVIDER", "CTX WINDOW", "MAX OUT TOKENS",
+        id_w = id_w, prov_w = prov_w,
+    );
+    println!("{}", "-".repeat(id_w + prov_w + 50));
+
+    for e in &entries {
+        let ctx = if e.context_window == 0 {
+            "  -".to_string()
+        } else {
+            format!("{:>12}", e.context_window)
+        };
+        let max_out = if e.max_output_tokens == 0 {
+            "  -".to_string()
+        } else {
+            format!("{:>16}", e.max_output_tokens)
+        };
+        println!(
+            "{:<id_w$}  {:<prov_w$}  {}  {}  {}",
+            e.id, e.provider, ctx, max_out, e.description,
+            id_w = id_w, prov_w = prov_w,
+        );
+    }
+    println!("\nTotal: {} model(s)", entries.len());
     Ok(())
 }
 

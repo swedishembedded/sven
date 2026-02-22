@@ -214,6 +214,34 @@ sven --file review.md | sven "Summarise the main findings in one sentence."
 
 ---
 
+## Configuring sven
+
+Create `~/.config/sven/config.yaml` to set your default model and other options:
+
+```yaml
+model:
+  provider: openai
+  name: gpt-4o
+  api_key_env: OPENAI_API_KEY
+```
+
+To use Anthropic Claude instead:
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-opus-4-5
+  api_key_env: ANTHROPIC_API_KEY
+```
+
+See all available models:
+
+```sh
+sven list-models
+```
+
+---
+
 ## What next?
 
 - [User Guide](03-user-guide.md) — full details on the TUI, modes, tools, and

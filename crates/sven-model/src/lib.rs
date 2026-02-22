@@ -1,3 +1,4 @@
+pub mod catalog;
 mod types;
 mod provider;
 mod openai;
@@ -5,6 +6,7 @@ mod anthropic;
 mod mock;
 mod yaml_mock;
 
+pub use catalog::ModelCatalogEntry;
 pub use types::*;
 pub use provider::ModelProvider;
 pub use openai::OpenAiProvider;
@@ -22,21 +24,30 @@ use sven_config::ModelConfig;
 /// - `"anthropic"` → [`AnthropicProvider`]
 /// - `"mock"` → [`YamlMockProvider`] if a responses file is configured,
 ///   otherwise [`MockProvider`] (echo-back)
+///
+/// When `max_tokens` is not set in config, the model's `max_output_tokens`
+/// is resolved from the static catalog.  If the model is not found there,
+/// a safe default (4096) is used.
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
     let key = resolve_api_key(cfg);
+    // Resolve max_tokens: explicit config > catalog > safe default.
+    let resolved_max_tokens = cfg.max_tokens.or_else(|| {
+        catalog::lookup(&cfg.provider, &cfg.name)
+            .map(|e| e.max_output_tokens)
+    });
     match cfg.provider.as_str() {
         "openai" => Ok(Box::new(OpenAiProvider::new(
             cfg.name.clone(),
             key,
             cfg.base_url.clone(),
-            cfg.max_tokens,
+            resolved_max_tokens,
             cfg.temperature,
         ))),
         "anthropic" => Ok(Box::new(AnthropicProvider::new(
             cfg.name.clone(),
             key,
             cfg.base_url.clone(),
-            cfg.max_tokens,
+            resolved_max_tokens,
             cfg.temperature,
         ))),
         "mock" => {

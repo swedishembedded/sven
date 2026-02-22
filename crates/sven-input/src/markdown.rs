@@ -101,6 +101,7 @@ fn parse_step_comment_into(comment: &str, opts: &mut StepOptions) {
             let val = val.trim_matches('"').trim_matches('\'');
             match key {
                 "mode" => opts.mode = Some(val.to_string()),
+                "model" => opts.model = Some(val.to_string()),
                 "timeout" => opts.timeout_secs = val.parse().ok(),
                 "cache_key" => opts.cache_key = Some(val.to_string()),
                 _ => {}
@@ -272,6 +273,23 @@ mod tests {
         assert_eq!(s.options.mode.as_deref(), Some("agent"));
         assert_eq!(s.options.timeout_secs, Some(120));
         assert_eq!(s.options.cache_key.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn step_comment_sets_model() {
+        let md = "## Step\n<!-- step: model=gpt-4o -->\nDo the work.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert_eq!(s.options.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn step_comment_sets_model_with_provider_prefix() {
+        let md = "## Step\n<!-- step: mode=research model=anthropic/claude-opus-4-5 -->\nResearch.";
+        let mut q = parse_markdown_steps(md);
+        let s = q.pop().unwrap();
+        assert_eq!(s.options.mode.as_deref(), Some("research"));
+        assert_eq!(s.options.model.as_deref(), Some("anthropic/claude-opus-4-5"));
     }
 
     #[test]

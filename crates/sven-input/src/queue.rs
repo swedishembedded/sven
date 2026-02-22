@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 pub struct StepOptions {
     /// Override agent mode for this step (e.g. "research", "plan", "agent")
     pub mode: Option<String>,
+    /// Override model for this step (e.g. "gpt-4o" or "anthropic/claude-opus-4-5")
+    pub model: Option<String>,
     /// Step-level timeout in seconds (overrides the runner default)
     pub timeout_secs: Option<u64>,
     /// Optional cache key — if set, a matching cached result is reused

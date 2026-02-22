@@ -4,7 +4,11 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use crate::{provider::ResponseStream, CompletionRequest, MessageContent, ResponseEvent, Role};
+use crate::{
+    catalog::{static_catalog, ModelCatalogEntry},
+    provider::ResponseStream,
+    CompletionRequest, MessageContent, ResponseEvent, Role,
+};
 
 pub struct AnthropicProvider {
     model: String,
@@ -38,6 +42,17 @@ impl AnthropicProvider {
 impl crate::ModelProvider for AnthropicProvider {
     fn name(&self) -> &str { "anthropic" }
     fn model_name(&self) -> &str { &self.model }
+
+    /// Anthropic does not expose a public list-models endpoint with full
+    /// metadata, so we return the static catalog entries for this provider.
+    async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
+        let mut entries: Vec<ModelCatalogEntry> = static_catalog()
+            .into_iter()
+            .filter(|e| e.provider == "anthropic")
+            .collect();
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(entries)
+    }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let key = self.api_key.as_deref().context("ANTHROPIC_API_KEY not set")?;

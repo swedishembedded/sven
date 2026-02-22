@@ -1,6 +1,66 @@
 use serde::{Deserialize, Serialize};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 
+/// Per-turn metadata stored in `<!-- ... -->` comments before assistant sections.
+///
+/// Example in markdown:
+/// ```markdown
+/// <!-- provider: openai, model: gpt-4o -->
+/// ## Sven
+/// Response here.
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnMetadata {
+    /// Provider name, e.g. "openai" or "anthropic"
+    pub provider: Option<String>,
+    /// Model id, e.g. "gpt-4o"
+    pub model: Option<String>,
+    /// ISO-8601 timestamp of this turn
+    pub timestamp: Option<String>,
+}
+
+impl TurnMetadata {
+    /// Format as a markdown HTML comment suitable for embedding before a section.
+    pub fn to_comment(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(p) = &self.provider {
+            parts.push(format!("provider: {p}"));
+        }
+        if let Some(m) = &self.model {
+            parts.push(format!("model: {m}"));
+        }
+        if let Some(t) = &self.timestamp {
+            parts.push(format!("timestamp: {t}"));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(format!("<!-- {} -->", parts.join(", ")))
+        }
+    }
+
+    /// Parse a `<!-- key: value, key: value -->` comment into a `TurnMetadata`.
+    pub fn from_comment(s: &str) -> Option<Self> {
+        let inner = s.trim().strip_prefix("<!--")?.strip_suffix("-->")?;
+        let mut meta = TurnMetadata::default();
+        for part in inner.split(',') {
+            if let Some((k, v)) = part.trim().split_once(':') {
+                match k.trim() {
+                    "provider" => meta.provider = Some(v.trim().to_string()),
+                    "model" => meta.model = Some(v.trim().to_string()),
+                    "timestamp" => meta.timestamp = Some(v.trim().to_string()),
+                    _ => {}
+                }
+            }
+        }
+        if meta.provider.is_some() || meta.model.is_some() || meta.timestamp.is_some() {
+            Some(meta)
+        } else {
+            None
+        }
+    }
+}
+
 /// Parsed representation of a conversation markdown file.
 #[derive(Debug, Default)]
 pub struct ParsedConversation {
@@ -295,9 +355,25 @@ fn extract_code_block_content(content: &str) -> String {
 /// The output is suitable for appending to an existing conversation file.
 /// System messages are skipped (they are injected by the agent automatically).
 pub fn serialize_conversation_turn(messages: &[Message]) -> String {
+    serialize_conversation_turn_with_metadata(messages, None)
+}
+
+/// Serialize a slice of messages into conversation markdown, including optional
+/// provider/model metadata as an HTML comment before each assistant text turn.
+///
+/// Example output:
+/// ```markdown
+/// <!-- provider: openai, model: gpt-4o -->
+/// ## Sven
+/// Response here.
+/// ```
+pub fn serialize_conversation_turn_with_metadata(
+    messages: &[Message],
+    metadata: Option<&TurnMetadata>,
+) -> String {
     let mut result = String::new();
     for msg in messages {
-        result.push_str(&message_to_section(msg));
+        result.push_str(&message_to_section_with_metadata(msg, metadata));
     }
     result
 }
@@ -313,7 +389,12 @@ pub fn serialize_conversation(title: Option<&str>, messages: &[Message]) -> Stri
     result
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn message_to_section(msg: &Message) -> String {
+    message_to_section_with_metadata(msg, None)
+}
+
+fn message_to_section_with_metadata(msg: &Message, metadata: Option<&TurnMetadata>) -> String {
     match (&msg.role, &msg.content) {
         (Role::System, _) => String::new(), // skip — agent injects system message
 
@@ -322,7 +403,11 @@ fn message_to_section(msg: &Message) -> String {
         }
 
         (Role::Assistant, MessageContent::Text(t)) => {
-            format!("## Sven\n{}\n\n", t.trim())
+            let prefix = metadata
+                .and_then(|m| m.to_comment())
+                .map(|c| format!("{c}\n"))
+                .unwrap_or_default();
+            format!("{prefix}## Sven\n{}\n\n", t.trim())
         }
 
         (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {

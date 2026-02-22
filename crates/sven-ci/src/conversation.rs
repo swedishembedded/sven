@@ -11,7 +11,7 @@ use tracing::debug;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, ToolSetProfile};
-use sven_input::{parse_conversation, serialize_conversation_turn};
+use sven_input::{parse_conversation, serialize_conversation_turn_with_metadata, TurnMetadata};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::TodoItem;
 
@@ -60,23 +60,33 @@ impl ConversationRunner {
             "starting conversation turn"
         );
 
-        // Build model
-        let mut model_cfg = self.config.model.clone();
-        if let Some(name) = &opts.model_override {
+        // Build model (reuse resolve_model_cfg logic inline here)
+        let model_cfg = if let Some(name) = &opts.model_override {
             const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
+            let mut cfg = self.config.model.clone();
             if let Some((provider, model)) = name.split_once('/') {
-                model_cfg.provider = provider.to_string();
-                model_cfg.name = model.to_string();
+                cfg.provider = provider.to_string();
+                cfg.name = model.to_string();
             } else if PROVIDER_KEYWORDS.contains(&name.as_str()) {
-                model_cfg.provider = name.clone();
+                cfg.provider = name.clone();
             } else {
-                model_cfg.name = name.clone();
+                cfg.name = name.clone();
             }
-        }
+            cfg
+        } else {
+            self.config.model.clone()
+        };
 
         let model = sven_model::from_config(&model_cfg)
             .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
+
+        // Build metadata for turn annotation
+        let turn_metadata = TurnMetadata {
+            provider: Some(model_cfg.provider.clone()),
+            model: Some(model_cfg.name.clone()),
+            timestamp: None,
+        };
 
         // The mode lock and tool-event channel are created inside
         // AgentBuilder::build() so that SwitchModeTool and the agent loop
@@ -142,7 +152,7 @@ impl ConversationRunner {
         // Append new turn to the file (skip the User message — it's already there)
         let to_append = &new_messages[1..]; // skip the user message we prepended
         if !to_append.is_empty() {
-            let md = serialize_conversation_turn(to_append);
+            let md = serialize_conversation_turn_with_metadata(to_append, Some(&turn_metadata));
             let mut file = OpenOptions::new()
                 .append(true)
                 .open(&opts.file_path)

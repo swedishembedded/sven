@@ -355,52 +355,40 @@ mod tests {
         assert_ne!(AgentMode::Research, AgentMode::Plan);
     }
 
-    // ── TOML round-trip ───────────────────────────────────────────────────────
+    // ── YAML round-trip ───────────────────────────────────────────────────────
 
     #[test]
-    fn config_serialises_to_valid_toml() {
+    fn config_serialises_to_valid_yaml() {
         let c = Config::default();
-        let toml_str = toml::to_string(&c).unwrap();
-        assert!(toml_str.contains("provider"));
-        assert!(toml_str.contains("openai"));
+        let yaml_str = serde_yaml::to_string(&c).unwrap();
+        assert!(yaml_str.contains("provider"));
+        assert!(yaml_str.contains("openai"));
     }
 
     #[test]
-    fn config_deserialises_from_toml() {
-        let toml_str = r#"
-[model]
-provider = "anthropic"
-name = "claude-opus-4-5"
-max_tokens = 8192
-"#;
-        let c: Config = toml::from_str(toml_str).unwrap();
+    fn config_deserialises_from_yaml() {
+        let yaml_str = "model:\n  provider: anthropic\n  name: claude-opus-4-5\n  max_tokens: 8192\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
         assert_eq!(c.model.provider, "anthropic");
         assert_eq!(c.model.name, "claude-opus-4-5");
         assert_eq!(c.model.max_tokens, Some(8192));
     }
 
     #[test]
-    fn config_partial_toml_fills_in_defaults() {
-        // Only override one field; all others should get defaults
-        let toml_str = r#"
-[model]
-name = "gpt-4o-mini"
-provider = "openai"
-"#;
-        let c: Config = toml::from_str(toml_str).unwrap();
-        // Explicitly set field is preserved
+    fn config_partial_yaml_fills_in_defaults() {
+        let yaml_str = "model:\n  name: gpt-4o-mini\n  provider: openai\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
         assert_eq!(c.model.name, "gpt-4o-mini");
-        // Unset fields fall back to defaults via serde
         assert_eq!(c.agent.max_tool_rounds, AgentConfig::default().max_tool_rounds);
     }
 
     #[test]
-    fn agent_mode_toml_serde_roundtrip() {
+    fn agent_mode_yaml_serde_roundtrip() {
         #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
         struct Wrap { mode: AgentMode }
         let w = Wrap { mode: AgentMode::Plan };
-        let s = toml::to_string(&w).unwrap();
-        let back: Wrap = toml::from_str(&s).unwrap();
+        let s = serde_yaml::to_string(&w).unwrap();
+        let back: Wrap = serde_yaml::from_str(&s).unwrap();
         assert_eq!(back.mode, AgentMode::Plan);
     }
 }

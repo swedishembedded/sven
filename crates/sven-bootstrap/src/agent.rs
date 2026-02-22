@@ -90,6 +90,9 @@ impl AgentBuilder {
             runtime.clone(),
         );
 
+        // Resolve context window from the static catalog; fall back to 128 000.
+        let context_window = model.catalog_context_window().unwrap_or(128_000) as usize;
+
         Agent::new(
             model,
             Arc::new(registry),
@@ -97,7 +100,7 @@ impl AgentBuilder {
             runtime,
             mode_lock,
             tool_event_rx,
-            128_000,
+            context_window,
         )
     }
 }

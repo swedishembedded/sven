@@ -64,6 +64,18 @@ impl Agent {
         }
     }
 
+    /// Replace the model provider for subsequent completions.
+    ///
+    /// Used by the CI runner to switch models mid-workflow (per-step model
+    /// overrides).  The session history is preserved.
+    pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {
+        // Update context window from the new model's catalog entry.
+        if let Some(cw) = model.catalog_context_window() {
+            self.session.max_tokens = cw as usize;
+        }
+        self.model = model;
+    }
+
     /// Push a user message, run the agent loop, and stream events through the sender.
     /// The caller drops the receiver when it is no longer interested.
     pub async fn submit(

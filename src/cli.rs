@@ -140,6 +140,21 @@ pub enum Commands {
         #[arg(long, short = 'f', required = true)]
         file: PathBuf,
     },
+    /// List available models for the configured provider(s).
+    ///
+    /// By default the static built-in catalog is shown.
+    /// With --refresh the configured provider API is queried for live data.
+    ListModels {
+        /// Filter by provider name (e.g. "openai", "anthropic")
+        #[arg(long, short = 'p')]
+        provider: Option<String>,
+        /// Query the provider API for the live list of available models
+        #[arg(long)]
+        refresh: bool,
+        /// Output as JSON instead of a formatted table
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl Cli {

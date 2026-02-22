@@ -23,9 +23,9 @@ The default variable name is `OPENAI_API_KEY` for the OpenAI provider and
 `ANTHROPIC_API_KEY` for Anthropic. You can change which variable is read in the
 config file:
 
-```toml
-[model]
-api_key_env = "MY_CUSTOM_KEY_VAR"
+```yaml
+model:
+  api_key_env: MY_CUSTOM_KEY_VAR
 ```
 
 ### "401 Unauthorized" or "invalid API key"
@@ -52,9 +52,9 @@ SVEN_ASCII_BORDERS=1 sven
 # Or add to your config file permanently
 ```
 
-```toml
-[tui]
-ascii_borders = true
+```yaml
+tui:
+  ascii_borders: true
 ```
 
 ### The TUI is garbled or not rendering at all
@@ -69,9 +69,9 @@ ascii_borders = true
 
 Set the theme to match your terminal background:
 
-```toml
-[tui]
-theme = "light"    # or "dark", "solarized"
+```yaml
+tui:
+  theme: light    # or "dark", "solarized"
 ```
 
 ---
@@ -114,13 +114,12 @@ Check the `auto_approve_patterns` list in your config. If the command matches a
 pattern there, it is approved automatically. Adjust the list to remove patterns
 you want to be prompted for:
 
-```toml
-[tools]
-auto_approve_patterns = [
-    "cat *",
-    "ls *",
+```yaml
+tools:
+  auto_approve_patterns:
+    - "cat *"
+    - "ls *"
     # Remove "rg *" if you want to confirm grep-style searches
-]
 ```
 
 ### A command I want to run is being blocked
@@ -128,12 +127,11 @@ auto_approve_patterns = [
 Check the `deny_patterns` list. If the command matches a deny rule it will
 always be blocked. Remove the relevant pattern:
 
-```toml
-[tools]
-deny_patterns = [
-    "rm -rf /*",
+```yaml
+tools:
+  deny_patterns:
+    - "rm -rf /*"
     # Remove any pattern that is blocking commands you want to allow
-]
 ```
 
 ### The agent keeps running commands I did not expect
@@ -153,9 +151,9 @@ key points. This is expected behaviour.
 
 To preserve more history before compaction triggers, increase the threshold:
 
-```toml
-[agent]
-compaction_threshold = 0.95    # compact only when 95% full
+```yaml
+agent:
+  compaction_threshold: 0.95    # compact only when 95% full
 ```
 
 To see how full the context is at any time, check the status bar: `ctx:X%`.
@@ -165,9 +163,9 @@ To see how full the context is at any time, check the status bar: `ctx:X%`.
 sven stopped because it hit the configured limit on autonomous tool calls per
 turn. Increase the limit if your tasks legitimately require more steps:
 
-```toml
-[agent]
-max_tool_rounds = 100
+```yaml
+agent:
+  max_tool_rounds: 100
 ```
 
 ---
@@ -226,10 +224,10 @@ echo "ping" | sven --model mock --headless
 
 Or specify the file in the config:
 
-```toml
-[model]
-provider = "mock"
-mock_responses_file = "/path/to/responses.yaml"
+```yaml
+model:
+  provider: mock
+  mock_responses_file: /path/to/responses.yaml
 ```
 
 ---
@@ -258,12 +256,12 @@ Add timeouts to prevent indefinite runs:
 sven --file workflow.md --step-timeout 300 --run-timeout 1800
 ```
 
-Or set defaults in `~/.config/sven/config.toml`:
+Or set defaults in `~/.config/sven/config.yaml`:
 
-```toml
-[agent]
-max_step_timeout_secs = 300
-max_run_timeout_secs  = 1800
+```yaml
+agent:
+  max_step_timeout_secs: 300
+  max_run_timeout_secs: 1800
 ```
 
 Sven exits with code `124` when a timeout is exceeded.

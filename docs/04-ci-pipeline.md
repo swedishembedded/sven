@@ -301,12 +301,12 @@ sven --file workflow.md --run-timeout 1800
 sven --file workflow.md --step-timeout 300 --run-timeout 1800
 ```
 
-Or set defaults in `~/.config/sven/config.toml`:
+Or set defaults in `~/.config/sven/config.yaml`:
 
-```toml
-[agent]
-max_step_timeout_secs = 300
-max_run_timeout_secs = 1800
+```yaml
+agent:
+  max_step_timeout_secs: 300
+  max_run_timeout_secs: 1800
 ```
 
 ---
@@ -500,18 +500,18 @@ Each stage receives the full conversation from the previous stage on stdin
 
 ## Configuration Reference
 
-Config file path: `~/.config/sven/config.toml`
+Config file path: `~/.config/sven/config.yaml`
 
-```toml
-[agent]
-default_mode          = "agent"
-max_tool_rounds       = 50
-max_step_timeout_secs = 0      # 0 = no limit
-max_run_timeout_secs  = 0      # 0 = no limit
+```yaml
+agent:
+  default_mode: agent
+  max_tool_rounds: 50
+  max_step_timeout_secs: 0    # 0 = no limit
+  max_run_timeout_secs: 0     # 0 = no limit
 
-[model]
-provider = "anthropic"
-name     = "claude-opus-4-5"
+model:
+  provider: anthropic
+  name: claude-opus-4-5
 ```
 
 CLI flags always take precedence over config file and frontmatter.

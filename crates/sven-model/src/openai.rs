@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::{
-    provider::ResponseStream, CompletionRequest, MessageContent, ResponseEvent, Role,
+    catalog::{static_catalog, ModelCatalogEntry},
+    provider::ResponseStream,
+    CompletionRequest, MessageContent, ResponseEvent, Role,
 };
 
 pub struct OpenAiProvider {
@@ -40,6 +42,65 @@ impl OpenAiProvider {
 impl crate::ModelProvider for OpenAiProvider {
     fn name(&self) -> &str { "openai" }
     fn model_name(&self) -> &str { &self.model }
+
+    /// List models by querying `GET /v1/models`, then enriching with static catalog metadata.
+    async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
+        let key = match &self.api_key {
+            Some(k) => k.clone(),
+            None => {
+                // No key: return static catalog entries only.
+                return Ok(static_catalog()
+                    .into_iter()
+                    .filter(|e| e.provider == "openai")
+                    .collect());
+            }
+        };
+
+        let resp = self
+            .client
+            .get(format!("{}/v1/models", self.base_url))
+            .bearer_auth(&key)
+            .send()
+            .await
+            .context("OpenAI list-models request failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            bail!("OpenAI list-models error {status}: {text}");
+        }
+
+        let body: Value = resp.json().await.context("OpenAI list-models parse failed")?;
+        let catalog = static_catalog();
+
+        let mut entries: Vec<ModelCatalogEntry> = Vec::new();
+        if let Some(data) = body["data"].as_array() {
+            for item in data {
+                let id = match item["id"].as_str() {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                // Enrich with static catalog metadata if available.
+                if let Some(cat) = catalog.iter().find(|e| e.provider == "openai" && e.id == id) {
+                    entries.push(cat.clone());
+                } else {
+                    // Unknown model — add a minimal entry.
+                    entries.push(ModelCatalogEntry {
+                        id: id.clone(),
+                        name: id.clone(),
+                        provider: "openai".into(),
+                        context_window: 0,
+                        max_output_tokens: 0,
+                        description: String::new(),
+                    });
+                }
+            }
+        }
+
+        // Sort by name for stable output.
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(entries)
+    }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let key = self.api_key.as_deref().context("OPENAI_API_KEY not set")?;

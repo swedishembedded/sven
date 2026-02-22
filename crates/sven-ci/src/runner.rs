@@ -8,12 +8,13 @@ use anyhow::Context;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
-use sven_config::{AgentMode, Config};
+use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
     history, parse_frontmatter, parse_markdown_steps, extract_h1_title,
-    serialize_conversation_turn, Step, StepQueue,
+    serialize_conversation_turn, serialize_conversation_turn_with_metadata,
+    TurnMetadata, Step, StepQueue,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::TodoItem;
@@ -175,25 +176,27 @@ impl CiRunner {
         }
 
         // ── Build model config ───────────────────────────────────────────────
-        let mut model_cfg = self.config.model.clone();
         let model_override = opts.model_override
             .clone()
             .or(frontmatter.model.clone());
-        if let Some(name) = &model_override {
-            const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
-            if let Some((provider, model)) = name.split_once('/') {
-                model_cfg.provider = provider.to_string();
-                model_cfg.name = model.to_string();
-            } else if PROVIDER_KEYWORDS.contains(&name.as_str()) {
-                model_cfg.provider = name.clone();
-            } else {
-                model_cfg.name = name.clone();
-            }
-        }
+        let model_cfg = if let Some(ref name) = model_override {
+            resolve_model_cfg(&self.config.model, name)
+        } else {
+            self.config.model.clone()
+        };
 
         let model = sven_model::from_config(&model_cfg)
             .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
+
+        // ── Base turn metadata (updated per step if model changes) ────────────
+        let base_turn_metadata = TurnMetadata {
+            provider: Some(model_cfg.provider.clone()),
+            model: Some(model_cfg.name.clone()),
+            timestamp: None,
+        };
+        // Tracks metadata for the currently active model; updated on per-step override.
+        let mut turn_metadata = base_turn_metadata;
 
         // ── Build runtime context ─────────────────────────────────────────────
         let mut runtime_ctx = RuntimeContext {
@@ -322,6 +325,27 @@ impl CiRunner {
                 }
             }
 
+            // Apply per-step model override
+            if let Some(model_str) = &step.options.model {
+                let step_model_cfg = resolve_model_cfg(&self.config.model, model_str);
+                match sven_model::from_config(&step_model_cfg) {
+                    Ok(m) => {
+                        // Update metadata to reflect the new model for this step.
+                        turn_metadata = TurnMetadata {
+                            provider: Some(step_model_cfg.provider.clone()),
+                            model: Some(step_model_cfg.name.clone()),
+                            timestamp: None,
+                        };
+                        agent.set_model(Arc::from(m));
+                    }
+                    Err(e) => {
+                        write_stderr(&format!(
+                            "[sven:warn] Failed to build model {model_str:?} for step {step_idx}: {e}, using current model"
+                        ));
+                    }
+                }
+            }
+
             // Resolve step timeout
             let step_timeout_secs = step.options.timeout_secs
                 .or(global_step_timeout_secs);
@@ -430,7 +454,7 @@ impl CiRunner {
             match opts.output_format {
                 OutputFormat::Conversation => {
                     let turn = &collected[step_msg_start..];
-                    let md = serialize_conversation_turn(turn);
+                    let md = serialize_conversation_turn_with_metadata(turn, Some(&turn_metadata));
                     write_stdout(&md);
                 }
                 OutputFormat::Compact => {
@@ -671,4 +695,27 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
         "agent" => Some(AgentMode::Agent),
         _ => None,
     }
+}
+
+/// Build a [`ModelConfig`] from `base`, overriding provider/name from `override_str`.
+///
+/// The override string may be:
+/// - `"provider/model"` → sets both provider and name  (e.g. `"anthropic/claude-opus-4-5"`)
+/// - `"model"` with no `/` → sets name only, keeps base provider
+/// - A bare provider keyword (`"openai"`, `"anthropic"`, `"mock"`) → sets provider only
+fn resolve_model_cfg(
+    base: &ModelConfig,
+    override_str: &str,
+) -> ModelConfig {
+    const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
+    let mut cfg = base.clone();
+    if let Some((provider, model)) = override_str.split_once('/') {
+        cfg.provider = provider.to_string();
+        cfg.name = model.to_string();
+    } else if PROVIDER_KEYWORDS.contains(&override_str) {
+        cfg.provider = override_str.to_string();
+    } else {
+        cfg.name = override_str.to_string();
+    }
+    cfg
 }
