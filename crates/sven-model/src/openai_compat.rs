@@ -329,27 +329,57 @@ impl crate::ModelProvider for OpenAICompatProvider {
         }
 
         let byte_stream = resp.bytes_stream();
-        let event_stream = byte_stream.flat_map(|chunk| {
-            let lines = match chunk {
-                Ok(b) => String::from_utf8_lossy(&b).to_string(),
-                Err(e) => return futures::stream::iter(vec![Err(anyhow::anyhow!(e))]),
-            };
-            let events: Vec<anyhow::Result<ResponseEvent>> = lines
-                .lines()
-                .filter_map(|line| {
-                    let line = line.strip_prefix("data: ")?.trim();
-                    if line == "[DONE]" {
-                        return Some(Ok(ResponseEvent::Done));
+        // SSE events can be split across multiple TCP packets.  Maintain a
+        // line buffer across chunks; emit events only for complete lines.
+        let event_stream = byte_stream
+            .scan(String::new(), |buf, chunk| {
+                let events: Vec<anyhow::Result<ResponseEvent>> = match chunk {
+                    Ok(b) => {
+                        buf.push_str(&String::from_utf8_lossy(&b));
+                        drain_complete_sse_lines(buf)
                     }
-                    let v: Value = serde_json::from_str(line).ok()?;
-                    Some(parse_sse_chunk(&v))
-                })
-                .collect();
-            futures::stream::iter(events)
-        });
+                    Err(e) => vec![Err(anyhow::anyhow!(e))],
+                };
+                std::future::ready(Some(events))
+            })
+            .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
     }
+}
+
+/// Parse a single complete SSE `data:` line into a [`ResponseEvent`].
+///
+/// Returns `None` for empty lines, comment lines, or unparseable data.
+fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseEvent>> {
+    let data = line.strip_prefix("data: ")?.trim();
+    if data.is_empty() {
+        return None;
+    }
+    if data == "[DONE]" {
+        return Some(Ok(ResponseEvent::Done));
+    }
+    let v: Value = serde_json::from_str(data).ok()?;
+    Some(parse_sse_chunk(&v))
+}
+
+/// Drain all complete `\n`-terminated SSE lines from `buf`.
+///
+/// Any trailing incomplete line (bytes not yet terminated by `\n`) is left
+/// in `buf` so it can be extended by the next TCP chunk.  This is necessary
+/// because a single SSE event may be split across multiple TCP packets.
+pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<ResponseEvent>> {
+    let mut events = Vec::new();
+    while let Some(nl_pos) = buf.find('\n') {
+        // Strip the optional Windows-style \r before \n.
+        let line = buf[..nl_pos].trim_end_matches('\r').to_string();
+        // Advance buffer past the consumed line including the \n.
+        *buf = buf[nl_pos + 1..].to_string();
+        if let Some(ev) = parse_sse_data_line(&line) {
+            events.push(ev);
+        }
+    }
+    events
 }
 
 fn role_str(r: &Role) -> &'static str {
@@ -787,6 +817,148 @@ mod tests {
         assert_eq!(content[1]["type"], "image_url");
         // detail should be absent when None
         assert!(content[1]["image_url"]["detail"].is_null());
+    }
+
+    // ── SSE line-buffer regression tests ─────────────────────────────────────
+    //
+    // Root cause: the old `flat_map` processed each TCP byte chunk independently
+    // with `str::lines()`.  When an SSE event was split across two TCP packets
+    // the first half (no `\n`) was silently dropped because it couldn't be
+    // parsed as complete JSON, and the second half was dropped because it had
+    // no `data: ` prefix.  For parallel tool calls (many index values) this
+    // caused:
+    //   • `id` and `name` to be empty (those chunks were dropped)
+    //   • argument fragments to fall into slot 0 via `unwrap_or(0)`
+    //   • corrupted JSON argument strings in the session history
+    //   • OpenAI 400 "empty string" error on the next round
+    //
+    // The fix: `drain_complete_sse_lines` maintains a persistent buffer across
+    // chunks; only complete `\n`-terminated lines are parsed.
+
+    #[test]
+    fn drain_complete_lines_handles_single_complete_line() {
+        let line = r#"{"choices":[{"delta":{"content":"hi"}}]}"#;
+        let mut buf = format!("data: {line}\n");
+        let events = drain_complete_sse_lines(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == "hi"));
+        assert!(buf.is_empty(), "buffer should be drained");
+    }
+
+    #[test]
+    fn drain_complete_lines_retains_incomplete_last_line() {
+        let partial = "data: {\"choices\":[{\"delta\":{\"content\":\"hel";
+        let mut buf = partial.to_string();
+        let events = drain_complete_sse_lines(&mut buf);
+        assert!(events.is_empty(), "no complete line yet");
+        assert_eq!(buf, partial, "partial line must stay in buffer");
+    }
+
+    #[test]
+    fn sse_event_split_across_two_chunks_is_parsed_correctly() {
+        // Simulate an SSE event for a tool call where the JSON is delivered
+        // in two TCP packets.  The old code would drop BOTH halves silently.
+        let full_line = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"shell","arguments":""}}]}}]}"#;
+        let split = full_line.len() / 2;
+        let chunk1 = &full_line[..split];
+        let chunk2 = &full_line[split..];
+
+        let mut buf = String::new();
+
+        // First chunk: no newline yet — no events emitted
+        buf.push_str(chunk1);
+        let events1 = drain_complete_sse_lines(&mut buf);
+        assert!(events1.is_empty(), "should not emit partial event");
+        assert!(!buf.is_empty(), "buffer must hold partial line");
+
+        // Second chunk + newline: completes the event
+        buf.push_str(chunk2);
+        buf.push('\n');
+        let events2 = drain_complete_sse_lines(&mut buf);
+        assert_eq!(events2.len(), 1, "should emit exactly one event");
+        assert!(buf.is_empty());
+
+        match &events2[0] {
+            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
+                assert_eq!(*index, 0, "index should be 0");
+                assert_eq!(id, "call_1", "id should be preserved");
+                assert_eq!(name, "shell", "name should be preserved");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multiple_sse_events_in_one_tcp_chunk_all_parsed() {
+        // Two complete SSE events in a single TCP packet.
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\"function\":{\"name\":\"glob\",\"arguments\":\"\"}}]}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"c1\",\"function\":{\"name\":\"grep\",\"arguments\":\"\"}}]}}]}\n",
+        );
+        let mut buf = chunk.to_string();
+        let events = drain_complete_sse_lines(&mut buf);
+        assert_eq!(events.len(), 2, "both events should be parsed");
+        assert!(buf.is_empty());
+
+        match &events[0] {
+            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
+                assert_eq!(*index, 0); assert_eq!(id, "c0"); assert_eq!(name, "glob");
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        match &events[1] {
+            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
+                assert_eq!(*index, 1); assert_eq!(id, "c1"); assert_eq!(name, "grep");
+            }
+            other => panic!("unexpected second event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn argument_chunk_split_does_not_corrupt_args() {
+        // Simulate a tool call where the arguments are streamed in pieces and
+        // the SSE line containing one argument fragment is split across two
+        // TCP chunks.  The accumulated args_buf must contain only the correct
+        // arguments for the right tool call.
+        let args_line = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"pattern\":"}}]}}]}"#;
+        let split = 60; // split inside the JSON arguments string
+        let chunk1 = &args_line[..split];
+        let chunk2 = &args_line[split..];
+
+        let mut buf = String::new();
+        buf.push_str(chunk1);
+        let e1 = drain_complete_sse_lines(&mut buf);
+        assert!(e1.is_empty());
+
+        buf.push_str(chunk2);
+        buf.push('\n');
+        let e2 = drain_complete_sse_lines(&mut buf);
+        assert_eq!(e2.len(), 1);
+
+        match &e2[0] {
+            Ok(ResponseEvent::ToolCall { index, arguments, .. }) => {
+                assert_eq!(*index, 0);
+                assert_eq!(arguments, r#"{"pattern":"#, "args should be the complete fragment, not mixed");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn done_event_is_parsed_correctly() {
+        let mut buf = "data: [DONE]\n".to_string();
+        let events = drain_complete_sse_lines(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Ok(ResponseEvent::Done)));
+    }
+
+    #[test]
+    fn windows_crlf_line_endings_are_handled() {
+        let line = r#"{"choices":[{"delta":{"content":"hi"}}]}"#;
+        let mut buf = format!("data: {line}\r\n");
+        let events = drain_complete_sse_lines(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == "hi"));
     }
 
     // ── Parallel tool call coalescing ────────────────────────────────────────

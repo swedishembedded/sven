@@ -10,7 +10,7 @@ mod agent_tests {
     use std::sync::Arc;
 
     use sven_config::{AgentConfig, AgentMode};
-    use sven_model::{ResponseEvent, ScriptedMockProvider};
+    use sven_model::{MessageContent, ResponseEvent, ScriptedMockProvider};
     use sven_tools::{FsTool, ReadImageTool, ShellTool, ToolRegistry, events::ToolEvent};
     use tokio::sync::{mpsc, Mutex};
 
@@ -439,5 +439,71 @@ mod agent_tests {
 
         assert!(agent.session().messages.len() > msgs_after_first,
             "second turn should append more messages");
+    }
+
+    // ── Parallel tool execution ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn parallel_tool_calls_execute_concurrently() {
+        // Model returns two tool calls in one turn (index 0 and 1).
+        // Both should execute in parallel and results preserved in order.
+        let scripts = vec![
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "call_1".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"command":"echo first"}"#.into(),
+                },
+                ResponseEvent::ToolCall {
+                    index: 1,
+                    id: "call_2".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"command":"echo second"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![
+                ResponseEvent::TextDelta("Both executed".into()),
+                ResponseEvent::Done,
+            ],
+        ];
+
+        let model = ScriptedMockProvider::new(scripts);
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool { timeout_secs: 5 });
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("run both commands", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        // Both tools should have finished
+        let finished: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolCallFinished { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(finished.len(), 2, "both tool calls should complete");
+        assert_eq!(finished[0], "call_1", "first result should be call_1");
+        assert_eq!(finished[1], "call_2", "second result should be call_2");
+
+        // Session history should have 2 tool-call messages + 2 tool-result messages
+        let tool_call_msgs = agent
+            .session()
+            .messages
+            .iter()
+            .filter(|m| matches!(&m.content, MessageContent::ToolCall { .. }))
+            .count();
+        let tool_result_msgs = agent
+            .session()
+            .messages
+            .iter()
+            .filter(|m| matches!(&m.content, MessageContent::ToolResult { .. }))
+            .count();
+        assert_eq!(tool_call_msgs, 2, "should have 2 tool call messages");
+        assert_eq!(tool_result_msgs, 2, "should have 2 tool result messages");
     }
 }

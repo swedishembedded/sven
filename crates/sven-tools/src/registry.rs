@@ -22,6 +22,13 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
 }
 
+// SAFETY: ToolRegistry is Sync because:
+// - HashMap<String, Arc<dyn Tool>> is Sync (String is Sync, Arc<T: Send + Sync> is Sync)
+// - Tools implement Send + Sync (required by the Tool trait)
+// - No interior mutability exists after construction (all methods take &self)
+// - Parallel tool execution is safe because tools are immutable after registration
+unsafe impl Sync for ToolRegistry {}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self { tools: HashMap::new() }

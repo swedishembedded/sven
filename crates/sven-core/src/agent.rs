@@ -13,7 +13,7 @@ use sven_config::{AgentConfig, AgentMode};
 use sven_model::{
     CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role,
 };
-use sven_tools::{events::ToolEvent, ToolCall, ToolRegistry};
+use sven_tools::{events::ToolEvent, ToolCall, ToolOutput, ToolRegistry};
 
 use crate::{
     compact::compact_session,
@@ -196,19 +196,43 @@ impl Agent {
                 });
             }
 
-            // Phase 2: execute all tools (sequentially for now — tools may
-            // have side effects and the registry is not Sync; concurrency can
-            // be added later if the registry is made Arc-safe).
+            // Phase 2: execute all tools in parallel using tokio::spawn.
+            // Each task gets a cloned Arc to the registry (cheap, atomic refcount).
+            // Tasks are isolated — one panic doesn't cancel others.
+            let mut tasks = Vec::with_capacity(tool_calls.len());
+            for tc in tool_calls.clone() {
+                let registry = Arc::clone(&self.tools);
+                let task = tokio::spawn(async move {
+                    registry.execute(&tc).await
+                });
+                tasks.push(task);
+            }
+
+            // Await all tasks in order, preserving result indices for correct
+            // conversation history serialization.
             let mut outputs = Vec::with_capacity(tool_calls.len());
-            for tc in &tool_calls {
-                let output = self.tools.execute(tc).await;
+            for (i, task) in tasks.into_iter().enumerate() {
+                let output = match task.await {
+                    Ok(output) => output,
+                    Err(e) => {
+                        // Task panicked — treat as tool error
+                        ToolOutput::err(
+                            &tool_calls[i].id,
+                            format!("tool execution panicked: {}", e),
+                        )
+                    }
+                };
+
+                // Drain tool events (may arrive from any task via shared channel)
                 self.drain_tool_events(&tx).await;
+
                 let _ = tx.send(AgentEvent::ToolCallFinished {
-                    call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
+                    call_id: tool_calls[i].id.clone(),
+                    tool_name: tool_calls[i].name.clone(),
                     output: output.content.clone(),
                     is_error: output.is_error,
                 }).await;
+
                 outputs.push(output);
             }
 
