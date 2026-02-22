@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
@@ -268,34 +268,14 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
 ///
 /// Shows all questions at once, with the current one highlighted.
 /// The answer input field is shown at the bottom.
-/// Return how many terminal rows a question entry will occupy when rendered
-/// at `available_width` columns (accounting for word-wrap).
-fn question_row_count(prefix_len: u16, q: &str, available_width: u16) -> u16 {
-    if available_width == 0 {
-        return 1;
-    }
-    // The first visual line has `available_width - prefix_len` chars available.
-    // Continuation lines have `available_width` chars (no hanging indent).
-    // We use a simple character-count approximation; unicode wide-chars are rare
-    // in question text and the slight error is acceptable.
-    let q_chars = q.chars().count() as u16;
-    let first_line_cap = available_width.saturating_sub(prefix_len);
-    if first_line_cap == 0 || q_chars == 0 {
-        return 1;
-    }
-    if q_chars <= first_line_cap {
-        return 1;
-    }
-    let remainder = q_chars - first_line_cap;
-    1 + remainder.div_ceil(available_width).max(1)
-}
-
 pub fn draw_question_modal(
     frame: &mut Frame,
-    questions: &[String],
+    questions: &[sven_tools::Question],
     current_q: usize,
-    answer_buf: &str,
-    answer_cursor: usize,
+    selected_options: &[usize],
+    other_selected: bool,
+    other_input: &str,
+    other_cursor: usize,
     ascii: bool,
 ) {
     let area = frame.area();
@@ -303,22 +283,17 @@ pub fn draw_question_modal(
 
     // Modal width: up to 80 columns, leaving 4 cols margin each side.
     let modal_w = (area.width.saturating_sub(8)).min(80).max(20);
-    // Inner width = modal_w minus 2 border columns.
-    let inner_w = modal_w.saturating_sub(2);
 
-    // Prefix width: "▶ N. " — up to 6 chars for ≥10 questions.
-    let prefix_w = if questions.len() >= 10 { 6u16 } else { 5u16 };
+    // Calculate rows needed: question prompt + options + "Other" line + hint
+    let current_question = questions.get(current_q);
+    let content_rows = if let Some(q) = current_question {
+        // 1 for prompt + options count + 1 for "Other" + 1 blank + 1 hint
+        1 + q.options.len() as u16 + 3
+    } else {
+        5
+    };
 
-    // Total rows needed for all question lines (with wrap).
-    let q_rows: u16 = questions
-        .iter()
-        .map(|q| question_row_count(prefix_w, q, inner_w))
-        .sum::<u16>()
-        .max(1);
-
-    // fixed rows: blank + "Answer X/N:" + input + hint = 4; borders = 2
-    let fixed = 4u16 + 2u16;
-    let modal_h = (q_rows + fixed).min(area.height.saturating_sub(2)).max(fixed + 1);
+    let modal_h = (content_rows + 2).min(area.height.saturating_sub(2)).max(10);
     let x = area.width.saturating_sub(modal_w) / 2;
     let y = area.height.saturating_sub(modal_h) / 2;
     let modal_area = Rect::new(x, y, modal_w, modal_h);
@@ -339,82 +314,78 @@ pub fn draw_question_modal(
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
 
-    // Split inner area: questions on top, fixed controls at bottom
-    let q_area_h = inner.height.saturating_sub(4).max(1); // leave room for 4 fixed rows
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(q_area_h), // question list (word-wrapped)
-            Constraint::Length(1),        // blank
-            Constraint::Length(1),        // "Answer X/N:"
-            Constraint::Length(1),        // input
-            Constraint::Length(1),        // hint
-        ])
-        .split(inner);
+    if let Some(q) = current_question {
+        let mut lines: Vec<Line> = Vec::new();
 
-    // Questions — one Line per question; Paragraph wraps long ones.
-    // The continuation indent matches the prefix width so wrapped text aligns.
-    let q_text: Vec<Line<'static>> = questions
-        .iter()
-        .enumerate()
-        .map(|(i, q)| {
-            let is_current = i == current_q;
-            let prefix = if is_current { "▶ " } else { "  " };
-            let num_style = if is_current {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        // Question prompt
+        lines.push(Line::from(Span::styled(
+            format!("Q{}/{}: {}", current_q + 1, questions.len(), q.prompt),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from("")); // blank
+
+        // Options with checkbox/radio indicators
+        let checkbox = if q.allow_multiple { "☐" } else { "○" };
+        let checked = if q.allow_multiple { "☑" } else { "●" };
+        
+        for (i, opt) in q.options.iter().enumerate() {
+            let is_selected = selected_options.contains(&i);
+            let indicator = if is_selected { checked } else { checkbox };
+            let style = if is_selected {
+                Style::default().fg(Color::Green)
             } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            let text_style = if is_current {
                 Style::default().fg(Color::White)
-            } else {
-                Style::default().fg(Color::DarkGray)
             };
-            Line::from(vec![
-                Span::styled(format!("{prefix}{}. ", i + 1), num_style),
-                Span::styled(q.clone(), text_style),
-            ])
-        })
-        .collect();
-    // Use word-wrap so long questions flow across multiple visual rows.
-    frame.render_widget(
-        Paragraph::new(q_text).wrap(Wrap { trim: false }),
-        chunks[0],
-    );
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{} ", indicator), style),
+                Span::styled(format!("{}. {}", i + 1, opt), style),
+            ]));
+        }
 
-    // "Answer X/N:" label
-    let label = format!(
-        "Answer {}/{}: ",
-        current_q + 1,
-        questions.len()
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            label,
-            Style::default().fg(Color::Yellow),
-        ))),
-        chunks[2],
-    );
+        // "Other" option
+        let other_indicator = if other_selected { checked } else { checkbox };
+        let other_style = if other_selected {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{} ", other_indicator), other_style),
+            Span::styled(format!("{}. Other: ", q.options.len() + 1), other_style),
+            Span::styled(other_input, Style::default().fg(Color::Cyan)),
+        ]));
 
-    // Input field
-    let input_area = chunks[3];
-    frame.render_widget(
-        Paragraph::new(answer_buf).style(Style::default().fg(Color::White)),
-        input_area,
-    );
-    // Cursor
-    let col = (answer_cursor % input_area.width as usize) as u16;
-    let row = (answer_cursor / input_area.width as usize) as u16;
-    frame.set_cursor_position((input_area.x + col, input_area.y + row));
+        lines.push(Line::from("")); // blank
 
-    // Hint
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "Enter: submit   Esc: cancel",
+        // Hint
+        let hint = if q.allow_multiple {
+            "1-9: toggle   O: Other   Enter: submit   Esc: cancel"
+        } else {
+            "1-9: select   O: Other   Enter: submit   Esc: cancel"
+        };
+        lines.push(Line::from(Span::styled(
+            hint,
             Style::default().fg(Color::DarkGray),
-        )),
-        chunks[4],
-    );
+        )));
+
+        frame.render_widget(
+            Paragraph::new(lines),
+            inner,
+        );
+
+        // Cursor for "Other" input when selected
+        if other_selected && !other_input.is_empty() {
+            // Position cursor after "Other: " text
+            let other_line_y = inner.y + 2 + q.options.len() as u16 + 1;
+            let other_prefix_len = format!("  {} {}. Other: ", checkbox, q.options.len() + 1).len();
+            let cursor_x = inner.x + other_prefix_len as u16 + other_cursor as u16;
+            if cursor_x < inner.x + inner.width {
+                frame.set_cursor_position((cursor_x, other_line_y));
+            }
+        }
+    }
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

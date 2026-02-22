@@ -327,8 +327,14 @@ impl App {
                 }
                 if let Some(modal) = &self.question_modal {
                     draw_question_modal(
-                        frame, &modal.questions, modal.current_q,
-                        &modal.input, modal.cursor, ascii,
+                        frame,
+                        &modal.questions,
+                        modal.current_q,
+                        &modal.selected_options,
+                        modal.other_selected,
+                        &modal.other_input,
+                        modal.other_cursor,
+                        ascii,
                     );
                 }
             })?;
@@ -681,32 +687,48 @@ impl App {
                     modal.finish();
                 }
             }
-            KeyCode::Backspace => {
-                if modal.cursor > 0 {
-                    let prev = prev_char_boundary(&modal.input, modal.cursor);
-                    modal.input.remove(prev);
-                    modal.cursor = prev;
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                modal.toggle_other();
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                // Option number (1-indexed from display, 0-indexed internally)
+                if let Some(idx) = c.to_digit(10) {
+                    let option_idx = idx as usize - 1;
+                    if modal.current_q < modal.questions.len() {
+                        let q = &modal.questions[modal.current_q];
+                        if option_idx < q.options.len() {
+                            modal.toggle_option(option_idx);
+                        }
+                    }
                 }
             }
-            KeyCode::Left => {
-                modal.cursor = prev_char_boundary(&modal.input, modal.cursor);
+            // Text input for "Other" field when Other is selected
+            KeyCode::Char(c) if modal.other_selected => {
+                modal.other_input.insert(modal.other_cursor, c);
+                modal.other_cursor += c.len_utf8();
             }
-            KeyCode::Right => {
-                if modal.cursor < modal.input.len() {
-                    let ch = modal.input[modal.cursor..]
+            KeyCode::Backspace if modal.other_selected => {
+                if modal.other_cursor > 0 {
+                    let prev = prev_char_boundary(&modal.other_input, modal.other_cursor);
+                    modal.other_input.remove(prev);
+                    modal.other_cursor = prev;
+                }
+            }
+            KeyCode::Left if modal.other_selected => {
+                modal.other_cursor = prev_char_boundary(&modal.other_input, modal.other_cursor);
+            }
+            KeyCode::Right if modal.other_selected => {
+                if modal.other_cursor < modal.other_input.len() {
+                    let ch = modal.other_input[modal.other_cursor..]
                         .chars()
                         .next()
                         .map(|c| c.len_utf8())
                         .unwrap_or(1);
-                    modal.cursor += ch;
+                    modal.other_cursor += ch;
                 }
             }
-            KeyCode::Home => { modal.cursor = 0; }
-            KeyCode::End  => { modal.cursor = modal.input.len(); }
-            KeyCode::Char(c) => {
-                modal.input.insert(modal.cursor, c);
-                modal.cursor += c.len_utf8();
-            }
+            KeyCode::Home if modal.other_selected => { modal.other_cursor = 0; }
+            KeyCode::End if modal.other_selected => { modal.other_cursor = modal.other_input.len(); }
             _ => {}
         }
         false

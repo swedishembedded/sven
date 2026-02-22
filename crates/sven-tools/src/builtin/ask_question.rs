@@ -6,11 +6,19 @@ use tracing::debug;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
+/// A single structured question with multiple-choice options.
+#[derive(Debug, Clone)]
+pub struct Question {
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub allow_multiple: bool,
+}
+
 /// Sent to the TUI when the agent asks a question; the TUI sends the answer
 /// back via `answer_tx`.
 pub struct QuestionRequest {
     pub id: String,
-    pub questions: Vec<String>,
+    pub questions: Vec<Question>,
     pub answer_tx: oneshot::Sender<String>,
 }
 
@@ -44,11 +52,9 @@ impl Tool for AskQuestionTool {
     fn name(&self) -> &str { "ask_question" }
 
     fn description(&self) -> &str {
-        "Collect structured multiple-choice answers from the user. Provide one or more \
-         questions with options, and set allow_multiple when multi-select is appropriate. \
-         Use this tool when you need to gather specific information from the user through \
-         a structured question format. Each question should have a unique id, a clear prompt, \
-         and at least 2 options for the user to choose from. \
+        "Collect structured multiple-choice answers from the user. Each question has a prompt \
+         and a list of options. The user selects one or more options (if allow_multiple is true), \
+         or can provide custom text via 'Other'. Use this when you need specific choices from the user. \
          In headless/CI/piped mode this tool is unavailable."
     }
 
@@ -58,8 +64,28 @@ impl Tool for AskQuestionTool {
             "properties": {
                 "questions": {
                     "type": "array",
-                    "items": { "type": "string" },
-                    "description": "List of 1-3 questions to ask the user",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {
+                                "type": "string",
+                                "description": "The question to ask"
+                            },
+                            "options": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "List of choices (an 'Other' option is always available)",
+                                "minItems": 2
+                            },
+                            "allow_multiple": {
+                                "type": "boolean",
+                                "description": "Whether multiple options can be selected (default: false)",
+                                "default": false
+                            }
+                        },
+                        "required": ["prompt", "options"]
+                    },
+                    "description": "List of 1-3 questions",
                     "minItems": 1,
                     "maxItems": 3
                 }
@@ -71,12 +97,44 @@ impl Tool for AskQuestionTool {
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let questions: Vec<String> = match call.args.get("questions").and_then(|v| v.as_array()) {
-            Some(arr) => arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect(),
+        let questions_json = match call.args.get("questions").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
             None => return ToolOutput::err(&call.id, "missing 'questions' array"),
         };
+
+        let mut questions: Vec<Question> = Vec::new();
+        for (i, q_val) in questions_json.iter().enumerate() {
+            let q_obj = match q_val.as_object() {
+                Some(o) => o,
+                None => return ToolOutput::err(&call.id, format!("question {} is not an object", i + 1)),
+            };
+
+            let prompt = match q_obj.get("prompt").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return ToolOutput::err(&call.id, format!("question {} missing 'prompt'", i + 1)),
+            };
+
+            let options: Vec<String> = match q_obj.get("options").and_then(|v| v.as_array()) {
+                Some(opts) => opts.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                None => return ToolOutput::err(&call.id, format!("question {} missing 'options'", i + 1)),
+            };
+
+            if options.len() < 2 {
+                return ToolOutput::err(&call.id, format!("question {} needs at least 2 options", i + 1));
+            }
+
+            let allow_multiple = q_obj.get("allow_multiple")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            questions.push(Question {
+                prompt,
+                options,
+                allow_multiple,
+            });
+        }
 
         if questions.is_empty() {
             return ToolOutput::err(&call.id, "questions array must not be empty");
@@ -108,9 +166,16 @@ impl Tool for AskQuestionTool {
         if !stdin_is_tty() {
             let question_list = questions.iter()
                 .enumerate()
-                .map(|(i, q)| format!("  {}. {}", i + 1, q))
+                .map(|(i, q)| {
+                    let opts = q.options.iter()
+                        .enumerate()
+                        .map(|(j, opt)| format!("    {}. {}", j + 1, opt))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("  {}. {}\n{}\n    {}. Other", i + 1, q.prompt, opts, q.options.len() + 1)
+                })
                 .collect::<Vec<_>>()
-                .join("\n");
+                .join("\n\n");
             return ToolOutput::err(
                 &call.id,
                 format!(
@@ -124,15 +189,23 @@ impl Tool for AskQuestionTool {
         eprintln!();
         eprintln!("╔══ Questions from agent ══════════════════════════╗");
         for (i, q) in questions.iter().enumerate() {
-            eprintln!("  {}. {}", i + 1, q);
+            eprintln!("  {}. {}", i + 1, q.prompt);
+            for (j, opt) in q.options.iter().enumerate() {
+                eprintln!("     {}. {}", j + 1, opt);
+            }
+            eprintln!("     {}. Other (type your answer)", q.options.len() + 1);
+            if q.allow_multiple {
+                eprintln!("     (You can select multiple: e.g. \"1,2\" or \"3\")");
+            }
         }
         eprintln!("╚══════════════════════════════════════════════════╝");
 
         let mut answers: Vec<String> = Vec::new();
         for (i, q) in questions.iter().enumerate() {
             eprint!("  Answer {}: ", i + 1);
-            let answer = read_stdin_line().await;
-            answers.push(format!("Q: {}\nA: {}", q, answer));
+            let input = read_stdin_line().await;
+            let answer = parse_stdin_answer(&input, &q.options, q.allow_multiple);
+            answers.push(format!("Q: {}\nA: {}", q.prompt, answer));
         }
         eprintln!();
 
@@ -163,6 +236,63 @@ async fn read_stdin_line() -> String {
     match reader.read_line(&mut line).await {
         Ok(_) => line.trim_end_matches('\n').trim_end_matches('\r').to_string(),
         Err(_) => String::new(),
+    }
+}
+
+/// Parse stdin input for multiple-choice questions.
+/// Input can be:
+/// - "1" for option 1
+/// - "1,2,3" for multiple options
+/// - "other: custom text" for custom answer
+fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> String {
+    let input = input.trim();
+    
+    // Check for "other:" prefix (case-insensitive)
+    if input.to_lowercase().starts_with("other:") || input.to_lowercase().starts_with("other ") {
+        let text = input[6..].trim();
+        if text.is_empty() {
+            return "Other (no text provided)".to_string();
+        }
+        return format!("Other: {}", text);
+    }
+    
+    // Try to parse as comma-separated numbers
+    let selections: Vec<usize> = input
+        .split(',')
+        .filter_map(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0 && n <= options.len() + 1)
+        .collect();
+    
+    if selections.is_empty() {
+        // If parsing failed, treat as "Other" with custom text
+        return if input.is_empty() {
+            "(no selection made)".to_string()
+        } else {
+            format!("Other: {}", input)
+        };
+    }
+    
+    // Check if "Other" option (last number) was selected
+    let other_idx = options.len() + 1;
+    if selections.contains(&other_idx) {
+        return "Other".to_string();
+    }
+    
+    // Map selections to option strings
+    let selected: Vec<String> = selections
+        .iter()
+        .filter_map(|&n| options.get(n - 1).cloned())
+        .collect();
+    
+    if selected.is_empty() {
+        return "(no valid selection)".to_string();
+    }
+    
+    if !allow_multiple && selected.len() > 1 {
+        // If multiple not allowed, take first
+        selected[0].clone()
+    } else {
+        selected.join(", ")
     }
 }
 
