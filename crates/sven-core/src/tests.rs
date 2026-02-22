@@ -8,10 +8,10 @@ mod agent_tests {
 
     use sven_config::{AgentConfig, AgentMode};
     use sven_model::{ResponseEvent, ScriptedMockProvider};
-    use sven_tools::{FsTool, ShellTool, ToolRegistry};
-    use tokio::sync::mpsc;
+    use sven_tools::{FsTool, ShellTool, ToolRegistry, events::ToolEvent};
+    use tokio::sync::{mpsc, Mutex};
 
-    use crate::{Agent, AgentEvent};
+    use crate::{Agent, AgentEvent, AgentRuntimeContext};
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -21,7 +21,9 @@ mod agent_tests {
         config: AgentConfig,
         mode: AgentMode,
     ) -> Agent {
-        Agent::new(Arc::new(model), Arc::new(tools), Arc::new(config), mode, 128_000)
+        let mode_lock = Arc::new(Mutex::new(mode));
+        let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+        Agent::new(Arc::new(model), Arc::new(tools), Arc::new(config), AgentRuntimeContext::default(), mode_lock, tool_event_rx, 128_000)
     }
 
     fn default_agent(model: ScriptedMockProvider) -> Agent {

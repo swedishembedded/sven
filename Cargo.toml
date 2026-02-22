@@ -7,6 +7,8 @@ members = [
     "crates/sven-input",
     "crates/sven-tools",
     "crates/sven-core",
+    "crates/sven-runtime",
+    "crates/sven-bootstrap",
     "crates/sven-ci",
     "crates/sven-tui",
 ]

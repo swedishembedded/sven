@@ -15,6 +15,7 @@ use crate::{
     compact::compact_session,
     events::AgentEvent,
     prompts::system_prompt,
+    runtime_context::AgentRuntimeContext,
     session::Session,
 };
 
@@ -24,42 +25,43 @@ pub struct Agent {
     tools: Arc<ToolRegistry>,
     model: Arc<dyn sven_model::ModelProvider>,
     config: Arc<AgentConfig>,
-    /// Shared mode, can be changed by switch_mode tool
+    runtime: AgentRuntimeContext,
+    /// Shared mode lock — the same Arc given to `SwitchModeTool` so that
+    /// tool-driven mode changes are immediately visible to the agent loop.
     current_mode: Arc<Mutex<AgentMode>>,
-    /// Receives events emitted by tools (todo updates, mode changes, etc.)
+    /// Receives `ToolEvent`s emitted by stateful tools (todo updates, mode
+    /// changes).  The paired sender is held by `TodoWriteTool` /
+    /// `SwitchModeTool` inside the registry.
     tool_event_rx: mpsc::Receiver<ToolEvent>,
-    /// Clone to pass to tools that need to emit events
-    tool_event_tx: mpsc::Sender<ToolEvent>,
 }
 
 impl Agent {
+    /// Construct an agent.
+    ///
+    /// `mode_lock` must be the **same** `Arc` that was given to any
+    /// `SwitchModeTool` in `tools`, so that mode changes propagate correctly.
+    ///
+    /// `tool_event_rx` must be the receiving end of the channel whose sender
+    /// was given to `TodoWriteTool` / `SwitchModeTool`, so that tool events
+    /// are drained by the agent loop.
     pub fn new(
         model: Arc<dyn sven_model::ModelProvider>,
         tools: Arc<ToolRegistry>,
         config: Arc<AgentConfig>,
-        mode: AgentMode,
+        runtime: AgentRuntimeContext,
+        mode_lock: Arc<Mutex<AgentMode>>,
+        tool_event_rx: mpsc::Receiver<ToolEvent>,
         max_context_tokens: usize,
     ) -> Self {
-        let (tool_event_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
         Self {
             session: Session::new(max_context_tokens),
             tools,
             model,
             config,
-            current_mode: Arc::new(Mutex::new(mode)),
+            runtime,
+            current_mode: mode_lock,
             tool_event_rx,
-            tool_event_tx,
         }
-    }
-
-    /// Get a sender for tool events — pass to tools that need to emit events.
-    pub fn tool_event_tx(&self) -> mpsc::Sender<ToolEvent> {
-        self.tool_event_tx.clone()
-    }
-
-    /// Get the shared mode lock — pass to switch_mode tool.
-    pub fn current_mode_arc(&self) -> Arc<Mutex<AgentMode>> {
-        self.current_mode.clone()
     }
 
     /// Push a user message, run the agent loop, and stream events through the sender.
@@ -281,15 +283,18 @@ impl Agent {
 
     fn system_message(&self, mode: AgentMode) -> Message {
         let ctx = crate::prompts::PromptContext {
-            project_root: self.config.project_root.as_deref(),
-            git_context: self.config.git_context_note.as_deref(),
-            project_context_file: self.config.project_context_file.as_deref(),
-            ci_context: self.config.ci_context_note.as_deref(),
-            append: self.config.append_system_prompt.as_deref(),
+            project_root: self.runtime.project_root.as_deref(),
+            git_context: self.runtime.git_context_note.as_deref(),
+            project_context_file: self.runtime.project_context_file.as_deref(),
+            ci_context: self.runtime.ci_context_note.as_deref(),
+            append: self.runtime.append_system_prompt.as_deref(),
         };
+        // Runtime override takes priority over the config-file system_prompt.
+        let custom = self.runtime.system_prompt_override.as_deref()
+            .or(self.config.system_prompt.as_deref());
         Message::system(system_prompt(
             mode,
-            self.config.system_prompt.as_deref(),
+            custom,
             &self.tools.names_for_mode(mode),
             ctx,
         ))

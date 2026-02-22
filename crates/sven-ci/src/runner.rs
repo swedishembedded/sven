@@ -9,23 +9,14 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, AgentEvent, TaskTool};
+use sven_core::AgentEvent;
+use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
     history, parse_frontmatter, parse_markdown_steps, extract_h1_title,
     serialize_conversation_turn, Step, StepQueue,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_tools::{
-    events::{TodoItem, ToolEvent},
-    AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
-    GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
-    RunTerminalCommandTool, SearchCodebaseTool, SwitchModeTool, TodoWriteTool,
-    UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool,
-    GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
-    GdbSessionState,
-    ToolRegistry,
-};
+use sven_tools::events::TodoItem;
 
 use crate::output::{write_stderr, write_stdout, write_progress};
 use crate::template::apply_template;
@@ -204,16 +195,27 @@ impl CiRunner {
             .context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
-        // ── Build agent config with project root + CI context ────────────────
-        let mut agent_cfg = self.config.agent.clone();
-        agent_cfg.project_root = opts.project_root.clone();
-        agent_cfg.ci_context_note = ci_ctx.to_prompt_section();
+        // ── Build runtime context ─────────────────────────────────────────────
+        let mut runtime_ctx = RuntimeContext {
+            project_root: opts.project_root.clone(),
+            git_context: opts.project_root.as_ref()
+                .map(|r| sven_runtime::collect_git_context(r)),
+            ci_context: Some(ci_ctx),
+            project_context_file: opts.project_root.as_ref()
+                .and_then(|r| sven_runtime::load_project_context_file(r)),
+            append_system_prompt: opts.append_system_prompt.clone(),
+            system_prompt_override: None,
+        };
+
+        if runtime_ctx.project_context_file.is_some() {
+            write_progress("[sven:info] Project context file loaded");
+        }
 
         // ── --system-prompt-file override ────────────────────────────────────
         if let Some(sp_file) = &opts.system_prompt_file {
             match std::fs::read_to_string(sp_file) {
                 Ok(content) => {
-                    agent_cfg.system_prompt = Some(content.trim().to_string());
+                    runtime_ctx.system_prompt_override = Some(content.trim().to_string());
                     write_progress(&format!(
                         "[sven:info] System prompt loaded from {}",
                         sp_file.display()
@@ -226,25 +228,6 @@ impl CiRunner {
                     ));
                     std::process::exit(EXIT_VALIDATION_ERROR);
                 }
-            }
-        }
-
-        // ── --append-system-prompt ────────────────────────────────────────────
-        if let Some(extra) = &opts.append_system_prompt {
-            agent_cfg.append_system_prompt = Some(extra.clone());
-        }
-
-        // ── Git context injection ─────────────────────────────────────────────
-        if let Some(root) = &opts.project_root {
-            let git_ctx = crate::context::collect_git_context(root);
-            agent_cfg.git_context_note = git_ctx.to_prompt_section();
-        }
-
-        // ── Project context file (AGENTS.md / .sven/context.md) ──────────────
-        if let Some(root) = &opts.project_root {
-            agent_cfg.project_context_file = crate::context::load_project_context_file(root);
-            if agent_cfg.project_context_file.is_some() {
-                write_progress("[sven:info] Project context file loaded");
             }
         }
 
@@ -265,32 +248,24 @@ impl CiRunner {
                 None
             });
 
-        let agent_cfg = Arc::new(agent_cfg);
-
-        // ── Shared state for stateful tools ──────────────────────────────────
-        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-
         // Resolve mode from frontmatter or CLI
         let initial_mode = frontmatter.mode
             .as_deref()
             .and_then(parse_agent_mode)
             .unwrap_or(opts.mode);
 
-        let current_mode: Arc<Mutex<AgentMode>> = Arc::new(Mutex::new(initial_mode));
-        let (tool_event_tx, _tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+        // ── Shared state for stateful tools ──────────────────────────────────
+        // The mode lock and tool-event channel are created inside
+        // AgentBuilder::build() so that SwitchModeTool and the agent loop
+        // share the same instances.  Only caller-owned state lives here.
+        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
         let task_depth = Arc::new(AtomicUsize::new(0));
 
-        let tools = Arc::new(build_registry(
-            &self.config,
-            todos,
-            current_mode,
-            tool_event_tx,
-            model.clone(),
-            agent_cfg.clone(),
-            task_depth,
-        ));
+        let profile = ToolSetProfile::Full { todos, task_depth };
 
-        let mut agent = Agent::new(model, tools, agent_cfg, initial_mode, 128_000);
+        let mut agent = AgentBuilder::new(self.config.clone())
+            .with_runtime_context(runtime_ctx)
+            .build(initial_mode, model, profile);
 
         // ── Set up Ctrl+C handler ────────────────────────────────────────────
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
@@ -696,61 +671,4 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
         "agent" => Some(AgentMode::Agent),
         _ => None,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_registry(
-    cfg: &Config,
-    todos: Arc<Mutex<Vec<TodoItem>>>,
-    current_mode: Arc<Mutex<AgentMode>>,
-    tool_event_tx: mpsc::Sender<ToolEvent>,
-    model: Arc<dyn sven_model::ModelProvider>,
-    agent_cfg: Arc<sven_config::AgentConfig>,
-    task_depth: Arc<AtomicUsize>,
-) -> ToolRegistry {
-    let mut reg = ToolRegistry::new();
-
-    reg.register(ReadFileTool);
-    reg.register(ListDirTool);
-    reg.register(GlobFileSearchTool);
-    reg.register(GrepTool);
-    reg.register(SearchCodebaseTool);
-    reg.register(WebFetchTool);
-    reg.register(WebSearchTool {
-        api_key: cfg.tools.web.search.api_key.clone(),
-    });
-    reg.register(ReadLintsTool);
-    reg.register(UpdateMemoryTool {
-        memory_file: cfg.tools.memory.memory_file.clone(),
-    });
-    reg.register(AskQuestionTool::new());
-
-    reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-    reg.register(SwitchModeTool::new(current_mode, tool_event_tx));
-
-    reg.register(WriteTool);
-    reg.register(EditFileTool);
-    reg.register(DeleteFileTool);
-    reg.register(ApplyPatchTool);
-    reg.register(RunTerminalCommandTool {
-        timeout_secs: cfg.tools.timeout_secs,
-    });
-
-    reg.register(TaskTool::new(
-        model,
-        Arc::new(cfg.clone()),
-        agent_cfg,
-        task_depth,
-    ));
-
-    let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-    reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-    reg.register(GdbConnectTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-    reg.register(GdbCommandTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-    reg.register(GdbInterruptTool::new(gdb_state.clone()));
-    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-    reg.register(GdbStatusTool::new(gdb_state.clone()));
-    reg.register(GdbStopTool::new(gdb_state));
-
-    reg
 }

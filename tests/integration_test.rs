@@ -2,17 +2,19 @@
 use std::sync::Arc;
 
 use sven_config::{AgentConfig, AgentMode, Config};
-use sven_core::Agent;
+use sven_core::{Agent, AgentRuntimeContext};
 use sven_input::{parse_markdown_steps, parse_conversation, serialize_conversation_turn};
 use sven_model::{MockProvider, Message, Role};
-use sven_tools::ToolRegistry;
-use tokio::sync::mpsc;
+use sven_tools::{ToolRegistry, events::ToolEvent};
+use tokio::sync::{mpsc, Mutex};
 
 fn mock_agent(mode: AgentMode) -> Agent {
     let model: Arc<dyn sven_model::ModelProvider> = Arc::new(MockProvider::default());
     let tools = Arc::new(ToolRegistry::default());
     let config = Arc::new(AgentConfig::default());
-    Agent::new(model, tools, config, mode, 128_000)
+    let mode_lock = Arc::new(Mutex::new(mode));
+    let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+    Agent::new(model, tools, config, AgentRuntimeContext::default(), mode_lock, tool_event_rx, 128_000)
 }
 
 #[tokio::test]

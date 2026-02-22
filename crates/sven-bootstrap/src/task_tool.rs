@@ -1,3 +1,9 @@
+//! TaskTool — spawns a sub-agent to complete a focused sub-task.
+//!
+//! Moved from `sven-core` to `sven-bootstrap` so that TaskTool can use
+//! `build_tool_registry` without creating a circular dependency
+//! (sven-core → sven-tools, sven-bootstrap → sven-core + sven-tools).
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -7,83 +13,38 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 use sven_config::{AgentConfig, AgentMode, Config};
+use sven_core::{Agent, AgentEvent, AgentRuntimeContext};
+
 use sven_tools::{
     events::{TodoItem, ToolEvent},
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
-    GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
-    RunTerminalCommandTool, SearchCodebaseTool, SwitchModeTool, TodoWriteTool,
-    UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool,
-    GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
-    GdbSessionState,
-    ToolRegistry,
 };
 
-use crate::agent::Agent;
-use crate::events::AgentEvent;
+use crate::context::ToolSetProfile;
+use crate::registry::build_tool_registry;
 
 const MAX_DEPTH: usize = 3;
 
+/// Spawns a sub-agent to complete a focused task and returns its text output.
 pub struct TaskTool {
     model: Arc<dyn sven_model::ModelProvider>,
     config: Arc<Config>,
-    agent_config: Arc<AgentConfig>,
     depth: Arc<AtomicUsize>,
+    /// Runtime context to pass to each sub-agent (project root, CI/git notes,
+    /// AGENTS.md content).  Sub-agents inherit the parent's context so they
+    /// know where to operate.
+    sub_agent_runtime: AgentRuntimeContext,
 }
 
 impl TaskTool {
     pub fn new(
         model: Arc<dyn sven_model::ModelProvider>,
         config: Arc<Config>,
-        agent_config: Arc<AgentConfig>,
         depth: Arc<AtomicUsize>,
+        sub_agent_runtime: AgentRuntimeContext,
     ) -> Self {
-        Self { model, config, agent_config, depth }
-    }
-
-    fn build_sub_registry(&self) -> ToolRegistry {
-        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-        let mode: Arc<Mutex<AgentMode>> = Arc::new(Mutex::new(AgentMode::Agent));
-        let (tx, _rx) = mpsc::channel::<ToolEvent>(64);
-
-        let mut reg = ToolRegistry::new();
-        reg.register(ReadFileTool);
-        reg.register(ListDirTool);
-        reg.register(GlobFileSearchTool);
-        reg.register(GrepTool);
-        reg.register(SearchCodebaseTool);
-        reg.register(ReadLintsTool);
-        reg.register(AskQuestionTool::new());
-        reg.register(WebFetchTool);
-        reg.register(WebSearchTool {
-            api_key: self.config.tools.web.search.api_key.clone(),
-        });
-        reg.register(UpdateMemoryTool {
-            memory_file: self.config.tools.memory.memory_file.clone(),
-        });
-        reg.register(TodoWriteTool::new(todos, tx.clone()));
-        reg.register(SwitchModeTool::new(mode, tx.clone()));
-        reg.register(WriteTool);
-        reg.register(EditFileTool);
-        reg.register(DeleteFileTool);
-        reg.register(ApplyPatchTool);
-        reg.register(RunTerminalCommandTool {
-            timeout_secs: self.config.tools.timeout_secs,
-        });
-        // Note: TaskTool is intentionally NOT registered here to limit nesting
-
-        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-        reg.register(GdbStartServerTool::new(gdb_state.clone(), self.config.tools.gdb.clone()));
-        reg.register(GdbConnectTool::new(gdb_state.clone(), self.config.tools.gdb.clone()));
-        reg.register(GdbCommandTool::new(gdb_state.clone(), self.config.tools.gdb.clone()));
-        reg.register(GdbInterruptTool::new(gdb_state.clone()));
-        reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-        reg.register(GdbStatusTool::new(gdb_state.clone()));
-        reg.register(GdbStopTool::new(gdb_state));
-
-        reg
+        Self { model, config, depth, sub_agent_runtime }
     }
 }
 
@@ -147,18 +108,38 @@ impl Tool for TaskTool {
         self.depth.fetch_add(1, Ordering::Relaxed);
         debug!(prompt = %prompt, mode = %mode, depth = current_depth + 1, "task: spawning sub-agent");
 
-        let mut sub_config = (*self.agent_config).clone();
+        let mut sub_config: AgentConfig = self.config.agent.clone();
         if let Some(max_rounds) = call.args.get("max_rounds").and_then(|v| v.as_u64()) {
             sub_config.max_tool_rounds = max_rounds as u32;
         }
 
-        let tools = Arc::new(self.build_sub_registry());
+        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let profile = ToolSetProfile::SubAgent { todos };
+
+        // Shared mode lock and tool-event channel wired through to the agent
+        // so SwitchModeTool and TodoWriteTool events are correctly observed.
+        let mode_lock = Arc::new(Mutex::new(mode));
+        let (tool_event_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+
+        // Sub-agents use SubAgent profile (no TaskTool), so sub_agent_runtime
+        // is unused — pass default.
+        let tools = Arc::new(build_tool_registry(
+            &self.config,
+            self.model.clone(),
+            profile,
+            mode_lock.clone(),
+            tool_event_tx,
+            AgentRuntimeContext::default(),
+        ));
 
         let mut agent = Agent::new(
             self.model.clone(),
             tools,
             Arc::new(sub_config),
-            mode,
+            self.sub_agent_runtime.clone(),
+            mode_lock,
+            tool_event_rx,
             128_000,
         );
 

@@ -2,15 +2,11 @@
 
 use std::sync::Arc;
 
+use sven_bootstrap::{AgentBuilder, ToolSetProfile};
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, AgentEvent};
+use sven_core::AgentEvent;
 use sven_model::Message;
-use sven_tools::{
-    AskQuestionTool, FsTool, GlobTool, QuestionRequest, ShellTool, ToolRegistry,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool, GdbInterruptTool,
-    GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
-    GdbSessionState,
-};
+use sven_tools::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -45,28 +41,10 @@ pub async fn agent_task(
         }
     };
 
-    let mut registry = ToolRegistry::new();
-    registry.register(ShellTool { timeout_secs: config.tools.timeout_secs });
-    registry.register(FsTool);
-    registry.register(GlobTool);
-    registry.register(AskQuestionTool::new_tui(question_tx));
+    let profile = ToolSetProfile::TuiMinimal { question_tx };
 
-    let gdb_state = Arc::new(tokio::sync::Mutex::new(GdbSessionState::default()));
-    registry.register(GdbStartServerTool::new(gdb_state.clone(), config.tools.gdb.clone()));
-    registry.register(GdbConnectTool::new(gdb_state.clone(), config.tools.gdb.clone()));
-    registry.register(GdbCommandTool::new(gdb_state.clone(), config.tools.gdb.clone()));
-    registry.register(GdbInterruptTool::new(gdb_state.clone()));
-    registry.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-    registry.register(GdbStatusTool::new(gdb_state.clone()));
-    registry.register(GdbStopTool::new(gdb_state));
-
-    let mut agent = Agent::new(
-        model,
-        Arc::new(registry),
-        Arc::new(config.agent.clone()),
-        mode,
-        128_000,
-    );
+    let mut agent = AgentBuilder::new(config)
+        .build(mode, model, profile);
 
     while let Some(req) = rx.recv().await {
         match req {

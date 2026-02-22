@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -69,35 +67,6 @@ pub struct AgentConfig {
     /// Total run wall-clock timeout in seconds (0 = no limit).
     #[serde(default)]
     pub max_run_timeout_secs: u64,
-
-    // ── Runtime-only fields (never persisted to TOML) ─────────────────────────
-
-    /// Absolute path to the project root (found by walking up to .git).
-    /// Set at runtime in headless mode; not read from / written to config.
-    #[serde(skip)]
-    pub project_root: Option<PathBuf>,
-
-    /// Pre-formatted CI environment context block appended to the system
-    /// prompt.  Set at runtime when a known CI environment is detected.
-    #[serde(skip)]
-    pub ci_context_note: Option<String>,
-
-    /// Pre-formatted git context block (branch, commit, dirty status).
-    /// Set at runtime by collecting live git metadata.
-    #[serde(skip)]
-    pub git_context_note: Option<String>,
-
-    /// Contents of the project context file (e.g. `.sven/context.md`,
-    /// `AGENTS.md`, or `CLAUDE.md`) injected into the system prompt.
-    /// Set at runtime; not persisted to TOML.
-    #[serde(skip)]
-    pub project_context_file: Option<String>,
-
-    /// Text appended to the default system prompt.
-    /// Set at runtime from `--append-system-prompt`.  Ignored when
-    /// `system_prompt` is set (the custom prompt is used verbatim).
-    #[serde(skip)]
-    pub append_system_prompt: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -109,11 +78,6 @@ impl Default for AgentConfig {
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: 0,
-            project_root: None,
-            ci_context_note: None,
-            git_context_note: None,
-            project_context_file: None,
-            append_system_prompt: None,
         }
     }
 }

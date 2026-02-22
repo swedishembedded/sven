@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sven-config = { path = "../sven-config" }
-sven-model  = { path = "../sven-model" }
-sven-input  = { path = "../sven-input" }
-sven-tools  = { path = "../sven-tools" }
-sven-core   = { path = "../sven-core" }
+sven-config    = { path = "../sven-config" }
+sven-model     = { path = "../sven-model" }
+sven-input     = { path = "../sven-input" }
+sven-tools     = { path = "../sven-tools" }
+sven-core      = { path = "../sven-core" }
+sven-bootstrap = { path = "../sven-bootstrap" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }
