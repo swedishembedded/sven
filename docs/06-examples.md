@@ -304,3 +304,55 @@ Stop the debugging session.
 ```sh
 sven --file firmware-debug.md --conversation
 ```
+
+---
+
+## Example 12 — Export conversation traces for fine-tuning
+
+When building fine-tuning datasets from real agent interactions, use
+`--jsonl-output` to capture the complete conversation including system prompts:
+
+```sh
+# Run a workflow and save the raw API trace (OpenAI format by default)
+sven --file code-review.md --jsonl-output traces/review-001.jsonl
+
+# Choose format explicitly
+sven --file code-review.md --jsonl-output traces/review-001.jsonl --jsonl-format openai
+sven --file code-review.md --jsonl-output traces/review-002.jsonl --jsonl-format anthropic
+
+# Inspect the trace
+cat traces/review-001.jsonl | head -3
+# {"role":"system","content":"You are Sven, an AI coding agent..."}
+# {"role":"user","content":"Review the authentication code..."}
+# {"role":"assistant","content":"I'll review the authentication code..."}
+```
+
+The JSONL output includes:
+- Complete system prompts with all injected context (project root, git info, CI context)
+- All user messages
+- Assistant responses (both text and tool calls in API-compatible format)
+- Tool results with proper `tool_call_id` linking
+- Everything in API-native format ready for fine-tuning
+
+Validate and analyze the trace:
+
+```sh
+# Validate JSON syntax
+python3 -m json.tool < traces/review-001.jsonl > /dev/null && echo "Valid"
+
+# Count messages by role
+grep -o '"role":"[^"]*"' traces/review-001.jsonl | sort | uniq -c
+
+# Extract just the system prompt
+head -1 traces/review-001.jsonl | jq -r '.content' | less
+
+# Collect multiple traces for a dataset
+for workflow in workflows/*.md; do
+    name=$(basename "$workflow" .md)
+    sven --file "$workflow" --jsonl-output "dataset/$name.jsonl" --jsonl-format openai
+done
+
+# Verify format compatibility
+head -1 dataset/review-001.jsonl | jq 'has("role") and has("content")'
+# Should output: true
+```

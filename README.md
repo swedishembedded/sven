@@ -183,6 +183,10 @@ mode. Input is parsed as a workflow markdown document:
 Output is full conversation markdown on stdout by default. Errors go to stderr.
 A failed step exits non-zero, so the pipeline aborts naturally under `set -e`.
 
+Use `--jsonl-output <path>` to save the complete raw conversation trace (including
+system prompts) as JSONL — one message per line in raw API format, suitable for
+creating fine-tuning datasets.
+
 ```sh
 # Simple pipe
 echo "Summarise the project" | sven
@@ -195,6 +199,9 @@ sven --file audit.md --output-format json
 
 # Save just the final answer to a file
 sven --file plan.md --output-last-message answer.txt
+
+# Save complete trace for fine-tuning (includes system prompts, OpenAI format)
+sven --file workflow.md --jsonl-output trace.jsonl
 
 # Chained agents: plan then implement
 sven --file plan.md | sven --mode agent "Implement the plan above."

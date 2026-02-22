@@ -312,18 +312,24 @@ Conversations are only saved when you run the interactive TUI. Headless runs do
 not write history files. The history directory is:
 
 ```sh
-ls ~/.config/sven/history/
+ls ~/.local/share/sven/history/
 ```
 
 ### I lost a conversation
 
 Conversations are written to disk on exit. If sven crashed before writing, the
-session may be incomplete. The raw files are JSONL format and can be opened in
-a text editor:
+session may be incomplete. Conversation files are stored as markdown:
 
 ```sh
-ls -t ~/.config/sven/history/ | head -5
-cat ~/.config/sven/history/<id>.jsonl | python3 -m json.tool | less
+ls -t ~/.local/share/sven/history/ | head -5
+cat ~/.local/share/sven/history/<timestamp>_<slug>.md
+```
+
+To capture the raw API trace for debugging or fine-tuning, use `--jsonl-output`:
+
+```sh
+sven --file workflow.md --jsonl-output trace.jsonl
+cat trace.jsonl | python3 -m json.tool | less
 ```
 
 ---

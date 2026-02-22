@@ -124,6 +124,8 @@ pub enum ParseError {
     InvalidToolJson(String),
     #[error("## Tool section missing JSON code block")]
     MissingToolJson,
+    #[error("JSONL line {line} contains invalid JSON: {error}")]
+    InvalidJsonlLine { line: usize, error: String },
 }
 
 /// Parse a conversation markdown file into history messages and optional pending input.
@@ -349,6 +351,85 @@ fn extract_code_block_content(content: &str) -> String {
         }
     }
     content.to_string()
+}
+
+// ── JSONL conversation format ─────────────────────────────────────────────────
+
+/// Parse a JSONL conversation file into history messages and optional pending input.
+///
+/// Each non-empty line must be a JSON object that deserializes to a `Message`.
+/// The format is the raw serde serialization of the internal `Message` type,
+/// which is what `--jsonl-output --jsonl-format raw` produces.
+///
+/// The last message is treated as pending input if its role is `user` (matching
+/// the same convention as the markdown format where a trailing `## User` section
+/// without a response is pending).
+///
+/// System messages in the file are skipped during history reconstruction;
+/// they are re-injected by the agent at runtime.
+pub fn parse_jsonl_conversation(content: &str) -> Result<ParsedConversation, ParseError> {
+    let mut messages: Vec<Message> = Vec::new();
+
+    for (line_no, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Message>(line) {
+            Ok(msg) => messages.push(msg),
+            Err(e) => {
+                return Err(ParseError::InvalidJsonlLine {
+                    line: line_no + 1,
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    // Skip system messages; they are injected by the agent.
+    let messages: Vec<Message> = messages
+        .into_iter()
+        .filter(|m| m.role != Role::System)
+        .collect();
+
+    // If the last message is a user message it has no response yet — treat as pending.
+    let (history, pending_user_input) = match messages.last() {
+        Some(m) if m.role == Role::User => {
+            let pending = m.as_text().unwrap_or("").to_string();
+            let history = messages[..messages.len() - 1].to_vec();
+            (history, Some(pending))
+        }
+        _ => (messages, None),
+    };
+
+    Ok(ParsedConversation {
+        title: None,
+        history,
+        pending_user_input,
+    })
+}
+
+/// Serialize a slice of messages as JSONL lines for appending to a conversation file.
+///
+/// System messages are skipped (they are re-injected by the agent at runtime).
+/// Each message is serialized as a single JSON line followed by a newline.
+pub fn serialize_jsonl_conversation_turn(messages: &[Message]) -> String {
+    let mut result = String::new();
+    for msg in messages {
+        if msg.role == Role::System {
+            continue;
+        }
+        match serde_json::to_string(msg) {
+            Ok(line) => {
+                result.push_str(&line);
+                result.push('\n');
+            }
+            Err(e) => {
+                tracing::warn!("failed to serialize message to JSONL: {e}");
+            }
+        }
+    }
+    result
 }
 
 // ── Serializer ────────────────────────────────────────────────────────────────
@@ -879,6 +960,129 @@ mod tests {
         assert_eq!(conv3.history[1].as_text(), Some("Done."));
         assert_eq!(conv3.history[2].as_text(), Some("Second request"));
         assert_eq!(conv3.history[3].as_text(), Some("Second task done."));
+    }
+
+    // ── JSONL conversation round-trips ────────────────────────────────────────
+
+    #[test]
+    fn jsonl_parse_pending_user_at_end() {
+        let messages = vec![
+            user_msg("First task"),
+            sven_msg("Done."),
+            user_msg("Second task"),
+        ];
+        let jsonl = messages.iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n") + "\n";
+
+        let conv = parse_jsonl_conversation(&jsonl).unwrap();
+        assert_eq!(conv.pending_user_input.as_deref(), Some("Second task"));
+        assert_eq!(conv.history.len(), 2);
+        assert_eq!(conv.history[0].as_text(), Some("First task"));
+        assert_eq!(conv.history[1].as_text(), Some("Done."));
+    }
+
+    #[test]
+    fn jsonl_parse_no_pending_when_last_is_assistant() {
+        let messages = vec![user_msg("Task"), sven_msg("Done.")];
+        let jsonl = messages.iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n") + "\n";
+
+        let conv = parse_jsonl_conversation(&jsonl).unwrap();
+        assert!(conv.pending_user_input.is_none());
+        assert_eq!(conv.history.len(), 2);
+    }
+
+    #[test]
+    fn jsonl_parse_skips_system_messages() {
+        let messages = vec![
+            Message::system("You are sven."),
+            user_msg("Hello"),
+            sven_msg("Hi"),
+        ];
+        let jsonl = messages.iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n") + "\n";
+
+        let conv = parse_jsonl_conversation(&jsonl).unwrap();
+        assert!(conv.pending_user_input.is_none());
+        assert_eq!(conv.history.len(), 2);
+        assert_eq!(conv.history[0].as_text(), Some("Hello"));
+    }
+
+    #[test]
+    fn jsonl_parse_empty_file() {
+        let conv = parse_jsonl_conversation("").unwrap();
+        assert!(conv.history.is_empty());
+        assert!(conv.pending_user_input.is_none());
+    }
+
+    #[test]
+    fn jsonl_parse_invalid_json_returns_error() {
+        let bad = "{\"role\":\"user\",\"content\":invalid}\n";
+        let err = parse_jsonl_conversation(bad).unwrap_err();
+        assert!(matches!(err, ParseError::InvalidJsonlLine { line: 1, .. }));
+    }
+
+    #[test]
+    fn jsonl_serialize_skips_system() {
+        let messages = vec![
+            Message::system("system prompt"),
+            user_msg("Hello"),
+            sven_msg("Hi"),
+        ];
+        let out = serialize_jsonl_conversation_turn(&messages);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2, "system message must be skipped");
+        let m0: Message = serde_json::from_str(lines[0]).unwrap();
+        let m1: Message = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(m0.role, Role::User);
+        assert_eq!(m1.role, Role::Assistant);
+    }
+
+    #[test]
+    fn jsonl_round_trip_with_tool_call() {
+        use sven_model::FunctionCall;
+        let messages = vec![
+            user_msg("Search"),
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall {
+                        name: "glob".into(),
+                        arguments: r#"{"pattern":"**/*.rs"}"#.into(),
+                    },
+                },
+            },
+            Message::tool_result("call_1", "src/main.rs"),
+            sven_msg("Found it."),
+            user_msg("Next task"),
+        ];
+
+        let jsonl = serialize_jsonl_conversation_turn(&messages);
+        let conv = parse_jsonl_conversation(&jsonl).unwrap();
+
+        assert_eq!(conv.pending_user_input.as_deref(), Some("Next task"));
+        assert_eq!(conv.history.len(), 4);
+
+        match &conv.history[1].content {
+            MessageContent::ToolCall { tool_call_id, function } => {
+                assert_eq!(tool_call_id, "call_1");
+                assert_eq!(function.name, "glob");
+            }
+            _ => panic!("expected ToolCall at index 1"),
+        }
+        match &conv.history[2].content {
+            MessageContent::ToolResult { tool_call_id, .. } => {
+                assert_eq!(tool_call_id, "call_1");
+            }
+            _ => panic!("expected ToolResult at index 2"),
+        }
     }
 
     // ── Whitespace edge cases ─────────────────────────────────────────────────

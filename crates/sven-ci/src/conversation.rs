@@ -14,7 +14,11 @@ use tracing::debug;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, ToolSetProfile};
-use sven_input::{parse_conversation, serialize_conversation_turn_with_metadata, TurnMetadata};
+use sven_input::{
+    parse_conversation, parse_jsonl_conversation,
+    serialize_conversation_turn_with_metadata, serialize_jsonl_conversation_turn,
+    TurnMetadata,
+};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::TodoItem;
 
@@ -25,10 +29,15 @@ use crate::output::{finalise_stdout, write_stderr, write_stdout};
 pub struct ConversationOptions {
     pub mode: AgentMode,
     pub model_override: Option<String>,
-    /// Path to the conversation markdown file to load and append to.
+    /// Path to the conversation file to load and append to.
+    /// Supports both `.md` (markdown) and `.jsonl` (raw serde JSONL) formats.
     pub file_path: PathBuf,
     /// The full file content (already read by the caller).
     pub content: String,
+    /// Write the complete raw conversation trace as JSONL.
+    pub jsonl_output: Option<PathBuf>,
+    /// Format for JSONL output.
+    pub jsonl_format: crate::JsonlFormat,
 }
 
 /// Headless runner for conversation files.
@@ -45,9 +54,21 @@ impl ConversationRunner {
     }
 
     pub async fn run(&self, opts: ConversationOptions) -> anyhow::Result<()> {
+        // Detect file format by extension; default to markdown.
+        let is_jsonl = opts.file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("jsonl"))
+            .unwrap_or(false);
+
         // Parse the conversation file
-        let parsed = parse_conversation(&opts.content)
-            .context("failed to parse conversation file")?;
+        let parsed = if is_jsonl {
+            parse_jsonl_conversation(&opts.content)
+                .context("failed to parse JSONL conversation file")?
+        } else {
+            parse_conversation(&opts.content)
+                .context("failed to parse conversation file")?
+        };
 
         let pending = match parsed.pending_user_input {
             Some(p) => p,
@@ -106,38 +127,45 @@ impl ConversationRunner {
         // replace_history_and_submit prepends the system message and then adds
         // the new user message, so we pass history (without pending) and the
         // pending string separately.
-        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-        let submit_fut = agent.replace_history_and_submit(parsed.history, &pending, tx);
+        //
+        // The submit_fut holds a mutable borrow on `agent`. Scoping it in a
+        // block ensures it is dropped before we need to call agent.session()
+        // for the --jsonl-output path below.
+        let (new_messages, failed) = {
+            let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+            let submit_fut = agent.replace_history_and_submit(parsed.history, &pending, tx);
 
-        // Collect events from agent into new messages for the file
-        let mut new_messages: Vec<Message> = Vec::new();
-        let mut failed = false;
+            let mut new_messages: Vec<Message> = Vec::new();
+            let mut failed = false;
 
-        // Append the pending user message first (it was not in history)
-        new_messages.push(Message::user(&pending));
+            // Append the pending user message first (it was not in history)
+            new_messages.push(Message::user(&pending));
 
-        tokio::pin!(submit_fut);
+            tokio::pin!(submit_fut);
 
-        loop {
-            tokio::select! {
-                biased;
+            loop {
+                tokio::select! {
+                    biased;
 
-                Some(event) = rx.recv() => {
-                    collect_event(event, &mut new_messages, &mut failed);
-                }
-
-                result = &mut submit_fut => {
-                    if let Err(e) = result {
-                        write_stderr(&format!("[fatal] {e:#}"));
-                        std::process::exit(1);
+                    Some(event) = rx.recv() => {
+                        collect_event(event, &mut new_messages, &mut failed);
                     }
-                    while let Ok(ev) = rx.try_recv() {
-                        collect_event(ev, &mut new_messages, &mut failed);
+
+                    result = &mut submit_fut => {
+                        if let Err(e) = result {
+                            write_stderr(&format!("[fatal] {e:#}"));
+                            std::process::exit(1);
+                        }
+                        while let Ok(ev) = rx.try_recv() {
+                            collect_event(ev, &mut new_messages, &mut failed);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
-        }
+            // submit_fut dropped here — mutable borrow on agent released
+            (new_messages, failed)
+        };
 
         // Finalise stdout (ensure trailing newline)
         let response_text: String = new_messages
@@ -155,14 +183,42 @@ impl ConversationRunner {
         // Append new turn to the file (skip the User message — it's already there)
         let to_append = &new_messages[1..]; // skip the user message we prepended
         if !to_append.is_empty() {
-            let md = serialize_conversation_turn_with_metadata(to_append, Some(&turn_metadata));
+            let serialized = if is_jsonl {
+                serialize_jsonl_conversation_turn(to_append)
+            } else {
+                serialize_conversation_turn_with_metadata(to_append, Some(&turn_metadata))
+            };
             let mut file = OpenOptions::new()
                 .append(true)
                 .open(&opts.file_path)
                 .with_context(|| format!("opening conversation file for append: {}", opts.file_path.display()))?;
-            file.write_all(md.as_bytes())
+            file.write_all(serialized.as_bytes())
                 .with_context(|| "writing to conversation file")?;
-            debug!(chars = md.len(), "appended to conversation file");
+            debug!(chars = serialized.len(), "appended to conversation file");
+        }
+
+        // ── --jsonl-output ────────────────────────────────────────────────────
+        if let Some(jsonl_path) = &opts.jsonl_output {
+            if let Some(parent) = jsonl_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            
+            // Get the complete conversation from the agent's session, which
+            // includes the system message and all history.
+            let all_messages = &agent.session().messages;
+            
+            match crate::jsonl_export::write_jsonl_trace(jsonl_path, all_messages, opts.jsonl_format) {
+                Ok(()) => write_stderr(&format!(
+                    "[conversation] JSONL trace written to {} ({} messages, format: {:?})",
+                    jsonl_path.display(),
+                    all_messages.len(),
+                    opts.jsonl_format
+                )),
+                Err(e) => write_stderr(&format!(
+                    "[conversation] Could not write --jsonl-output {}: {e}",
+                    jsonl_path.display()
+                )),
+            }
         }
 
         Ok(())
@@ -256,4 +312,3 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
         | AgentEvent::ThinkingComplete(_) => {}
     }
 }
-

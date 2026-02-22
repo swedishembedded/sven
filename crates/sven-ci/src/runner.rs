@@ -98,6 +98,11 @@ pub struct CiOptions {
     pub system_prompt_file: Option<PathBuf>,
     /// Text appended to the default system prompt (after Guidelines section).
     pub append_system_prompt: Option<String>,
+    /// Write the complete raw conversation trace as JSONL (one message per line).
+    /// Includes system prompts, all messages, tool calls, and tool results.
+    pub jsonl_output: Option<PathBuf>,
+    /// Format for JSONL output (OpenAI, Anthropic, or raw).
+    pub jsonl_format: crate::JsonlFormat,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -581,6 +586,28 @@ impl CiRunner {
             }
         }
 
+        // ── --jsonl-output ────────────────────────────────────────────────────
+        if let Some(jsonl_path) = &opts.jsonl_output {
+            if let Some(parent) = jsonl_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Get the complete conversation from the agent's session, which
+            // includes the system message and all messages.
+            let all_messages = &agent.session().messages;
+            match crate::jsonl_export::write_jsonl_trace(jsonl_path, all_messages, opts.jsonl_format) {
+                Ok(()) => write_progress(&format!(
+                    "[sven:info] JSONL trace written to {} ({} messages, format: {:?})",
+                    jsonl_path.display(),
+                    all_messages.len(),
+                    opts.jsonl_format
+                )),
+                Err(e) => write_stderr(&format!(
+                    "[sven:warn] Could not write --jsonl-output {}: {e}",
+                    jsonl_path.display()
+                )),
+            }
+        }
+
         // ── Save artifacts metadata ──────────────────────────────────────────
         if let Some(dir) = &opts.artifacts_dir {
             write_conversation_artifact(dir, &collected);
@@ -713,6 +740,7 @@ fn write_conversation_artifact(dir: &std::path::Path, messages: &[Message]) {
         write_stderr(&format!("[sven:warn] Could not write conversation artifact: {e}"));
     }
 }
+
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -11,11 +11,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
-use cli::{Cli, Commands, OutputFormatArg};
+use cli::{Cli, Commands, OutputFormatArg, JsonlFormatArg};
 use clap::Parser;
 use sven_ci::{
     CiOptions, CiRunner, ConversationOptions, ConversationRunner,
-    OutputFormat, find_project_root,
+    OutputFormat, JsonlFormat, find_project_root,
 };
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
@@ -409,27 +409,49 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
 
         let content = std::fs::read_to_string(&file_path)
             .with_context(|| format!("reading {}", file_path.display()))?;
+        let jsonl_format = match cli.jsonl_format {
+            JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
+            JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
+            JsonlFormatArg::Raw => JsonlFormat::Raw,
+        };
         let opts = ConversationOptions {
             mode: cli.mode,
             model_override: cli.model,
             file_path,
             content,
+            jsonl_output: cli.jsonl_output.clone(),
+            jsonl_format,
         };
         return ConversationRunner::new(config).run(opts).await;
     }
 
     // ── Conversation file mode ───────────────────────────────────────────────
-    if cli.conversation {
+    // Trigger when --conversation is set, OR when --file points to a .jsonl file
+    // (JSONL files are conversation files, not workflow files).
+    let file_is_jsonl = cli.file.as_ref()
+        .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("jsonl"))
+        .unwrap_or(false);
+
+    if cli.conversation || file_is_jsonl {
         let file_path = cli.file.as_ref()
             .ok_or_else(|| anyhow::anyhow!("--conversation requires --file <path>"))?
             .clone();
         let content = std::fs::read_to_string(&file_path)
             .with_context(|| format!("reading conversation file {}", file_path.display()))?;
+        let jsonl_format = match cli.jsonl_format {
+            JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
+            JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
+            JsonlFormatArg::Raw => JsonlFormat::Raw,
+        };
         let opts = ConversationOptions {
             mode: cli.mode,
             model_override: cli.model,
             file_path,
             content,
+            jsonl_output: cli.jsonl_output.clone(),
+            jsonl_format,
         };
         return ConversationRunner::new(config).run(opts).await;
     }
@@ -463,6 +485,13 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         OutputFormatArg::Compact => OutputFormat::Compact,
     };
 
+    // ── Map CLI JSONL format to JsonlFormat ───────────────────────────────────
+    let jsonl_format = match cli.jsonl_format {
+        JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
+        JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
+        JsonlFormatArg::Raw => JsonlFormat::Raw,
+    };
+
     let opts = CiOptions {
         mode: cli.mode,
         model_override: cli.model,
@@ -478,6 +507,8 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         output_last_message: cli.output_last_message,
         system_prompt_file: cli.system_prompt_file,
         append_system_prompt: cli.append_system_prompt,
+        jsonl_output: cli.jsonl_output,
+        jsonl_format,
     };
 
     CiRunner::new(config).run(opts).await
