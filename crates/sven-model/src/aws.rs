@@ -304,6 +304,20 @@ impl crate::ModelProvider for BedrockProvider {
                             let args = serde_json::to_string(&tu["input"]).unwrap_or_default();
                             events.push(Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args }));
                         }
+                        // Claude Extended Thinking via AWS Bedrock Converse API:
+                        // thinking content arrives as a `reasoningContent` block
+                        // containing a nested `reasoningText.text` field.
+                        // The accompanying `reasoningText.signature` is an
+                        // encrypted integrity blob — not human-readable; discard it.
+                        if let Some(rc) = part.get("reasoningContent") {
+                            if let Some(rt) = rc.get("reasoningText") {
+                                if let Some(text) = rt["text"].as_str() {
+                                    if !text.is_empty() {
+                                        events.push(Ok(ResponseEvent::ThinkingDelta(text.to_string())));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -457,5 +471,128 @@ mod tests {
         assert_eq!(p.name(), "aws");
         assert_eq!(p.region, "eu-west-1");
         assert_eq!(p.max_tokens, 4096);
+    }
+
+    // ── reasoningContent (Claude Extended Thinking via Bedrock) ───────────────
+
+    /// Helper: parse a Bedrock Converse response body into a flat event list.
+    fn parse_bedrock_events(body: serde_json::Value) -> Vec<crate::ResponseEvent> {
+        let mut events: Vec<anyhow::Result<crate::ResponseEvent>> = Vec::new();
+
+        if let Some(output) = body.get("output") {
+            if let Some(message) = output.get("message") {
+                if let Some(content_arr) = message["content"].as_array() {
+                    for part in content_arr {
+                        if let Some(text) = part["text"].as_str() {
+                            if !text.is_empty() {
+                                events.push(Ok(crate::ResponseEvent::TextDelta(text.to_string())));
+                            }
+                        }
+                        if let Some(rc) = part.get("reasoningContent") {
+                            if let Some(rt) = rc.get("reasoningText") {
+                                if let Some(text) = rt["text"].as_str() {
+                                    if !text.is_empty() {
+                                        events.push(Ok(crate::ResponseEvent::ThinkingDelta(text.to_string())));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        events.into_iter().filter_map(|r| r.ok()).collect()
+    }
+
+    #[test]
+    fn bedrock_reasoning_content_produces_thinking_delta() {
+        // Claude Extended Thinking on Bedrock: reasoning arrives in a
+        // `reasoningContent` block with a nested `reasoningText.text`.
+        let body = serde_json::json!({
+            "output": {
+                "message": {
+                    "content": [{
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "Let me think step by step.",
+                                "signature": "EqRkLm..."
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let events = parse_bedrock_events(body);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], crate::ResponseEvent::ThinkingDelta(t) if t == "Let me think step by step."),
+            "expected ThinkingDelta, got {:?}", events[0]
+        );
+    }
+
+    #[test]
+    fn bedrock_reasoning_content_and_text_both_emitted_in_order() {
+        // A response with reasoning first, then the answer.
+        let body = serde_json::json!({
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "reasoningContent": {
+                                "reasoningText": {
+                                    "text": "I need to reason here.",
+                                    "signature": "sig"
+                                }
+                            }
+                        },
+                        { "text": "The final answer is 42." }
+                    ]
+                }
+            }
+        });
+        let events = parse_bedrock_events(body);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], crate::ResponseEvent::ThinkingDelta(_)));
+        assert!(matches!(&events[1], crate::ResponseEvent::TextDelta(t) if t.contains("42")));
+    }
+
+    #[test]
+    fn bedrock_reasoning_content_without_reasoning_text_ignored() {
+        // A reasoningContent block without reasoningText should not crash.
+        let body = serde_json::json!({
+            "output": {
+                "message": {
+                    "content": [{
+                        "reasoningContent": {}
+                    }]
+                }
+            }
+        });
+        let events = parse_bedrock_events(body);
+        assert!(events.is_empty(), "no events expected for empty reasoningContent");
+    }
+
+    #[test]
+    fn bedrock_signature_not_emitted() {
+        // The `signature` field in `reasoningText` is an encrypted blob and
+        // must never be surfaced as a thinking or text event.
+        let body = serde_json::json!({
+            "output": {
+                "message": {
+                    "content": [{
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "",
+                                "signature": "EqRkLmSomeEncryptedBlob"
+                            }
+                        }
+                    }]
+                }
+            }
+        });
+        let events = parse_bedrock_events(body);
+        // Empty text → no events; signature is silently discarded.
+        assert!(events.is_empty(), "signature blob must not produce events");
     }
 }

@@ -510,6 +510,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         append_system_prompt: cli.append_system_prompt,
         jsonl_output: cli.jsonl_output,
         jsonl_format,
+        trace_level: cli.verbose,
     };
 
     CiRunner::new(config).run(opts).await

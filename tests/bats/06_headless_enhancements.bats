@@ -447,7 +447,7 @@ step_timeout_secs: 180
 Do work.
 EOF
     run bash -c '"$BIN" validate --file "$1"' -- "${wf}"
-    assert_output_contains "title: My Audit"
+    assert_output_contains "Title: My Audit"
     assert_output_contains "mode: research"
     assert_output_contains "step_timeout_secs: 180"
     rm -f "${wf}"

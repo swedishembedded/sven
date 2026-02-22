@@ -24,6 +24,10 @@ pub struct Session {
     pub token_count: usize,
     /// Maximum context tokens (set from model config / provider limits)
     pub max_tokens: usize,
+    /// Running total of cache-read tokens across all turns in this session.
+    pub cache_read_total: u32,
+    /// Running total of cache-write tokens across all turns in this session.
+    pub cache_write_total: u32,
 }
 
 impl Session {
@@ -33,7 +37,15 @@ impl Session {
             messages: Vec::new(),
             token_count: 0,
             max_tokens,
+            cache_read_total: 0,
+            cache_write_total: 0,
         }
+    }
+
+    /// Accumulate cache token usage from one model turn.
+    pub fn add_cache_usage(&mut self, read: u32, write: u32) {
+        self.cache_read_total += read;
+        self.cache_write_total += write;
     }
 
     pub fn push(&mut self, msg: Message) {
@@ -88,6 +100,43 @@ mod tests {
         let s = Session::new(1000);
         assert!(s.messages.is_empty());
         assert_eq!(s.token_count, 0);
+    }
+
+    #[test]
+    fn new_session_cache_totals_start_at_zero() {
+        let s = Session::new(1000);
+        assert_eq!(s.cache_read_total, 0);
+        assert_eq!(s.cache_write_total, 0);
+    }
+
+    // ── Cache usage accumulation ──────────────────────────────────────────────
+
+    #[test]
+    fn add_cache_usage_accumulates_across_calls() {
+        let mut s = Session::new(1000);
+        s.add_cache_usage(100, 20);
+        assert_eq!(s.cache_read_total, 100);
+        assert_eq!(s.cache_write_total, 20);
+        s.add_cache_usage(50, 10);
+        assert_eq!(s.cache_read_total, 150);
+        assert_eq!(s.cache_write_total, 30);
+    }
+
+    #[test]
+    fn add_cache_usage_zero_args_is_noop() {
+        let mut s = Session::new(1000);
+        s.add_cache_usage(50, 5);
+        s.add_cache_usage(0, 0);
+        assert_eq!(s.cache_read_total, 50);
+        assert_eq!(s.cache_write_total, 5);
+    }
+
+    #[test]
+    fn add_cache_usage_read_only_leaves_write_at_zero() {
+        let mut s = Session::new(1000);
+        s.add_cache_usage(300, 0);
+        assert_eq!(s.cache_read_total, 300);
+        assert_eq!(s.cache_write_total, 0);
     }
 
     // ── Token accounting ──────────────────────────────────────────────────────

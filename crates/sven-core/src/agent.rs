@@ -89,20 +89,54 @@ impl Agent {
     ) -> anyhow::Result<()> {
         let mode = *self.current_mode.lock().await;
 
-        // Proactive compaction before adding the new user message
+        // Proactive compaction before adding the new user message.
+        //
+        // Rolling strategy: preserve the `compaction_keep_recent` most recent
+        // non-system messages verbatim so the model always has immediate
+        // context, while older messages are condensed into a summary.
         if self.session.is_near_limit(self.config.compaction_threshold) {
             let sys = self.system_message(mode);
-            let before = compact_session(&mut self.session.messages, Some(sys.clone()));
+            let tokens_before = self.session.token_count;
+            let keep_n = self.config.compaction_keep_recent;
+
+            // Collect non-system messages and split into "to summarise" vs "to preserve".
+            let non_system: Vec<Message> = self.session.messages.iter()
+                .filter(|m| m.role != Role::System)
+                .cloned()
+                .collect();
+
+            // Preserve the recent tail only when there are at least 2× keep_n
+            // messages, so we always have a meaningful chunk to summarise.
+            // When the history is shorter than that threshold we summarise
+            // everything — the same behaviour as the original code — to avoid
+            // producing a summary of just 1–2 messages that barely reduces
+            // context usage and risks repeated compaction on every turn.
+            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
+            let summarize_count = non_system.len().saturating_sub(preserve_count);
+
+            // Messages to keep verbatim after compaction (the recent tail).
+            let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
+
+            // Build a temporary message list containing only the messages that
+            // need to be summarised, then hand it to compact_session.
+            let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
+            compact_session(&mut to_compact, Some(sys.clone()));
+            self.session.messages = to_compact;
             self.session.recalculate_tokens();
+
+            // Ask the model to produce the summary.
             let summary = self.run_single_turn(tx.clone(), mode).await?;
+
+            // Rebuild session: system → summary → preserved recent messages.
             self.session.messages.clear();
             self.session.messages.push(sys);
-            self.session.messages.push(Message::assistant(summary.clone()));
+            self.session.messages.push(Message::assistant(summary));
+            self.session.messages.extend(recent_messages);
             self.session.recalculate_tokens();
-            let after = self.session.token_count;
+
             let _ = tx.send(AgentEvent::ContextCompacted {
-                tokens_before: before,
-                tokens_after: after,
+                tokens_before,
+                tokens_after: self.session.token_count,
             }).await;
         }
 
@@ -131,6 +165,27 @@ impl Agent {
         }
         self.session.push(Message::user_with_parts(parts));
         self.run_agentic_loop(tx).await
+    }
+
+    /// Pre-load conversation history into the session without submitting.
+    ///
+    /// Used when piped input is detected to be conversation-format markdown:
+    /// the prior turns become context so the next `submit()` call continues
+    /// the conversation rather than starting fresh.
+    ///
+    /// System messages in `messages` are stripped — the correct system message
+    /// is injected automatically by `submit()` / `replace_history_and_submit`.
+    pub async fn seed_history(&mut self, messages: Vec<Message>) {
+        let mode = *self.current_mode.lock().await;
+        let mut msgs: Vec<Message> = messages
+            .into_iter()
+            .filter(|m| m.role != Role::System)
+            .collect();
+        if !msgs.is_empty() {
+            let sys = self.system_message(mode);
+            msgs.insert(0, sys);
+            self.session.replace_messages(msgs);
+        }
     }
 
     /// Replace session history with the given messages, then run with the new user message.
@@ -301,6 +356,9 @@ impl Agent {
             // support prompt caching (Anthropic) can put it in an uncached
             // system block while the stable prefix stays cached.
             system_dynamic_suffix: self.dynamic_context(),
+            // Stable session identifier forwarded to providers that support
+            // an explicit cache key (e.g. OpenRouter's prompt_cache_key).
+            cache_key: Some(self.session.id.clone()),
         };
 
         let mut stream = self.model.complete(req).await
@@ -312,10 +370,22 @@ impl Agent {
         // OpenAI interleaves chunks for different tool calls by index;
         // other providers always use index 0.
         let mut pending_tcs: HashMap<u32, PendingToolCall> = HashMap::new();
+        // Accumulate thinking deltas so we can emit a single ThinkingComplete
+        // event to consumers (CI runner, TUI) once the thinking block ends.
+        let mut thinking_buf = String::new();
 
         while let Some(event) = stream.next().await {
             match event? {
+                ResponseEvent::ThinkingDelta(delta) => {
+                    thinking_buf.push_str(&delta);
+                    let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
+                }
                 ResponseEvent::TextDelta(delta) if !delta.is_empty() => {
+                    // Flush accumulated thinking when text starts arriving.
+                    if !thinking_buf.is_empty() {
+                        let content = std::mem::take(&mut thinking_buf);
+                        let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                    }
                     full_text.push_str(&delta);
                     let _ = tx.send(AgentEvent::TextDelta(delta)).await;
                 }
@@ -330,15 +400,25 @@ impl Agent {
                     ptc.args_buf.push_str(&arguments);
                 }
                 ResponseEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
+                    self.session.add_cache_usage(cache_read_tokens, cache_write_tokens);
                     let _ = tx.send(AgentEvent::TokenUsage {
                         input: input_tokens,
                         output: output_tokens,
                         context_total: self.session.token_count,
                         cache_read: cache_read_tokens,
                         cache_write: cache_write_tokens,
+                        cache_read_total: self.session.cache_read_total,
+                        cache_write_total: self.session.cache_write_total,
                     }).await;
                 }
-                ResponseEvent::Done => break,
+                ResponseEvent::Done => {
+                    // Flush any trailing thinking block (model thought without responding).
+                    if !thinking_buf.is_empty() {
+                        let content = std::mem::take(&mut thinking_buf);
+                        let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                    }
+                    break;
+                }
                 ResponseEvent::Error(e) => {
                     warn!("model stream error: {e}");
                 }

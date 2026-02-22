@@ -343,6 +343,15 @@ pub struct CompletionRequest {
     /// system block *without* `cache_control`, so only the stable prefix is
     /// cached.  Other providers append it to the system message text.
     pub system_dynamic_suffix: Option<String>,
+    /// Stable session identifier forwarded to providers that support an
+    /// explicit cache key (e.g. OpenRouter's `prompt_cache_key`).  Using
+    /// the same key across all requests in a session encourages the provider
+    /// to reuse its prefix KV-cache for identical prefixes even when
+    /// automatic prefix caching would not otherwise trigger.
+    ///
+    /// Providers that do not use this field (OpenAI, Anthropic, Google, …)
+    /// silently ignore it.
+    pub cache_key: Option<String>,
 }
 
 /// A single streamed event from the model.

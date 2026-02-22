@@ -60,6 +60,10 @@ pub struct ResponseRule {
     /// Simple text reply (used when there are no tool_calls, or as the
     /// after-tool reply when tool_calls is also set).
     pub reply: Option<String>,
+    /// Optional thinking / chain-of-thought content emitted as
+    /// `ThinkingDelta` events before the `reply` text.  Used to test that
+    /// the CI runner and TUI correctly surface thinking blocks.
+    pub thinking: Option<String>,
     /// Tool calls to emit in the first round.
     #[serde(default)]
     pub tool_calls: Vec<ToolCallDef>,
@@ -152,14 +156,14 @@ impl crate::ModelProvider for YamlMockProvider {
             let text = rule
                 .and_then(|r| r.after_tool_reply.as_deref().or(r.reply.as_deref()))
                 .unwrap_or("[no after-tool reply configured]");
-            text_events(text)
+            text_events(text, None)
         } else {
             match rule {
-                None => text_events("[no mock rule matched]"),
+                None => text_events("[no mock rule matched]", None),
                 Some(r) if r.tool_calls.is_empty() => {
-                    // Simple text response
+                    // Simple text response (optionally preceded by thinking)
                     let text = r.reply.as_deref().unwrap_or("[no reply configured]");
-                    text_events(text)
+                    text_events(text, r.thinking.as_deref())
                 }
                 Some(r) => {
                     // Emit tool calls
@@ -213,12 +217,21 @@ impl YamlMockProvider {
 
 // ─── Event constructors ───────────────────────────────────────────────────────
 
-fn text_events(text: &str) -> Vec<anyhow::Result<ResponseEvent>> {
-    vec![
-        Ok(ResponseEvent::TextDelta(text.to_string())),
-        Ok(ResponseEvent::Usage { input_tokens: 5, output_tokens: text.len() as u32 / 4 + 1, cache_read_tokens: 0, cache_write_tokens: 0 }),
-        Ok(ResponseEvent::Done),
-    ]
+fn text_events(text: &str, thinking: Option<&str>) -> Vec<anyhow::Result<ResponseEvent>> {
+    let mut events: Vec<anyhow::Result<ResponseEvent>> = Vec::new();
+    // Emit thinking deltas before the text response, if the rule specifies it.
+    if let Some(thought) = thinking {
+        events.push(Ok(ResponseEvent::ThinkingDelta(thought.to_string())));
+    }
+    events.push(Ok(ResponseEvent::TextDelta(text.to_string())));
+    events.push(Ok(ResponseEvent::Usage {
+        input_tokens: 5,
+        output_tokens: text.len() as u32 / 4 + 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+    }));
+    events.push(Ok(ResponseEvent::Done));
+    events
 }
 
 fn tool_call_events(tool_calls: &[ToolCallDef]) -> Vec<anyhow::Result<ResponseEvent>> {

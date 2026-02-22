@@ -24,9 +24,19 @@ mod agent_tests {
         config: AgentConfig,
         mode: AgentMode,
     ) -> Agent {
+        agent_with_ctx(model, tools, config, mode, 128_000)
+    }
+
+    fn agent_with_ctx(
+        model: ScriptedMockProvider,
+        tools: ToolRegistry,
+        config: AgentConfig,
+        mode: AgentMode,
+        max_context_tokens: usize,
+    ) -> Agent {
         let mode_lock = Arc::new(Mutex::new(mode));
         let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
-        Agent::new(Arc::new(model), Arc::new(tools), Arc::new(config), AgentRuntimeContext::default(), mode_lock, tool_event_rx, 128_000)
+        Agent::new(Arc::new(model), Arc::new(tools), Arc::new(config), AgentRuntimeContext::default(), mode_lock, tool_event_rx, max_context_tokens)
     }
 
     fn default_agent(model: ScriptedMockProvider) -> Agent {
@@ -304,6 +314,62 @@ mod agent_tests {
         assert_eq!(cache, Some((800, 200)));
     }
 
+    #[tokio::test]
+    async fn session_cache_totals_accumulate_across_turns() {
+        // Two turns each with cache usage — totals must be the running sum.
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                ResponseEvent::Usage {
+                    input_tokens: 500,
+                    output_tokens: 10,
+                    cache_read_tokens: 400,
+                    cache_write_tokens: 50,
+                },
+                ResponseEvent::TextDelta("turn1".into()),
+                ResponseEvent::Done,
+            ],
+            vec![
+                ResponseEvent::Usage {
+                    input_tokens: 600,
+                    output_tokens: 20,
+                    cache_read_tokens: 550,
+                    cache_write_tokens: 0,
+                },
+                ResponseEvent::TextDelta("turn2".into()),
+                ResponseEvent::Done,
+            ],
+        ]);
+        let mut agent = default_agent(model);
+
+        // First turn
+        let (tx1, rx1) = mpsc::channel(64);
+        agent.submit("first", tx1).await.unwrap();
+        let events1 = collect_events(rx1).await;
+
+        let totals1 = events1.iter().find_map(|e| {
+            if let AgentEvent::TokenUsage { cache_read_total, cache_write_total, .. } = e {
+                Some((*cache_read_total, *cache_write_total))
+            } else {
+                None
+            }
+        });
+        assert_eq!(totals1, Some((400, 50)), "after turn 1 totals should be (400, 50)");
+
+        // Second turn — totals must accumulate, not reset
+        let (tx2, rx2) = mpsc::channel(64);
+        agent.submit("second", tx2).await.unwrap();
+        let events2 = collect_events(rx2).await;
+
+        let totals2 = events2.iter().find_map(|e| {
+            if let AgentEvent::TokenUsage { cache_read_total, cache_write_total, .. } = e {
+                Some((*cache_read_total, *cache_write_total))
+            } else {
+                None
+            }
+        });
+        assert_eq!(totals2, Some((950, 50)), "after turn 2 totals should be (950, 50)");
+    }
+
     // ── Multimodal input ─────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -505,5 +571,178 @@ mod agent_tests {
             .count();
         assert_eq!(tool_call_msgs, 2, "should have 2 tool call messages");
         assert_eq!(tool_result_msgs, 2, "should have 2 tool result messages");
+    }
+
+    // ── Rolling compaction ────────────────────────────────────────────────────
+
+    /// Seed the session with pre-existing messages so the agent starts with
+    /// a filled context, bypassing the need for many real turns.
+    fn seed_session(agent: &mut Agent, messages: Vec<sven_model::Message>) {
+        for msg in messages {
+            agent.session_mut().push(msg);
+        }
+    }
+
+    #[tokio::test]
+    async fn full_summarization_when_history_too_short_for_rolling() {
+        // When non_system.len() <= 2 * keep_n, the agent falls back to full
+        // summarization (same as pre-rolling behaviour).
+        // keep_n = 2, so rolling requires > 4 non-system messages.
+        // We seed 4 messages → full summarization expected.
+        let config = AgentConfig {
+            compaction_keep_recent: 2,
+            compaction_threshold: 0.5,
+            ..AgentConfig::default()
+        };
+        // Script: 1st call = summarization turn, 2nd = actual user reply
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("short summary".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("actual reply".into()), ResponseEvent::Done],
+        ]);
+        // max_context_tokens=20 so 4 short messages (~1 token each) easily
+        // exceed the 50% threshold (≥10 tokens).
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+
+        // Seed: system is pushed automatically on first turn, but we inject
+        // 4 non-system messages directly (4 tokens each char / 4 = ~1 each).
+        use sven_model::Message;
+        seed_session(&mut agent, vec![
+            Message::system("sys"),          // ~1 token
+            Message::user("m1 m1 m1 m1"),   // ~3 tokens
+            Message::assistant("m2 m2 m2"), // ~3 tokens
+            Message::user("m3 m3 m3 m3"),   // ~3 tokens
+            Message::assistant("m4 m4 m4"), // ~3 tokens
+        ]);
+        // With max=20 tokens and these ~13 tokens, fraction=0.65 > threshold=0.5.
+        assert!(agent.session().is_near_limit(0.5), "session must be over limit for test to be meaningful");
+
+        let (tx, mut rx) = mpsc::channel(64);
+        agent.submit("new question", tx).await.unwrap();
+
+        // Drain all events
+        let mut events: Vec<AgentEvent> = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            let done = matches!(ev, AgentEvent::TurnComplete);
+            events.push(ev);
+            if done { break; }
+        }
+
+        // ContextCompacted must have fired
+        let compacted = events.iter().any(|e| matches!(e, AgentEvent::ContextCompacted { .. }));
+        assert!(compacted, "ContextCompacted event must be emitted");
+
+        // After full compaction + new user message + reply:
+        //   [sys, assistant(summary), user(new question), assistant(reply)]
+        // The session should have NO messages from m1..m4 verbatim.
+        let msgs = &agent.session().messages;
+        // system + summary + user input + assistant reply = 4
+        assert_eq!(msgs.len(), 4, "expected [sys, summary, user, reply], got {:?}", msgs.iter().map(|m| m.role).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn rolling_compaction_preserves_recent_messages() {
+        // When non_system.len() > 2 * keep_n, rolling compaction fires:
+        // the most recent keep_n messages are preserved verbatim.
+        // keep_n = 2, rolling requires > 4 non-system messages → seed 6.
+        use sven_model::Message;
+        let config = AgentConfig {
+            compaction_keep_recent: 2,
+            compaction_threshold: 0.4,
+            ..AgentConfig::default()
+        };
+        // Script: summarization turn + actual turn
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("rolling summary".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("final reply".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 40,
+        );
+
+        // Seed 6 non-system messages. With ~3 tokens each = 18 tokens + sys~1 = 19.
+        // max=40, threshold=0.4 → limit=16 tokens. 19 > 16 → over limit.
+        let recent_user = "keep me 1";
+        let recent_asst = "keep me 2";
+        seed_session(&mut agent, vec![
+            Message::system("sys"),
+            Message::user("old1 old1 old1"),
+            Message::assistant("old2 old2 old2"),
+            Message::user("old3 old3 old3"),
+            Message::assistant("old4 old4 old4"),
+            Message::user(recent_user),      // should be preserved
+            Message::assistant(recent_asst), // should be preserved
+        ]);
+        assert!(agent.session().is_near_limit(0.4), "session must be over limit");
+
+        let (tx, mut rx) = mpsc::channel(64);
+        agent.submit("new input", tx).await.unwrap();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            let done = matches!(ev, AgentEvent::TurnComplete);
+            events.push(ev);
+            if done { break; }
+        }
+
+        let compacted = events.iter().any(|e| matches!(e, AgentEvent::ContextCompacted { .. }));
+        assert!(compacted, "ContextCompacted must be emitted for rolling compaction");
+
+        // After rolling compaction + new user message + reply:
+        //   [sys, assistant(summary), user(recent_user), assistant(recent_asst),
+        //    user(new input), assistant(final reply)]
+        let msgs = &agent.session().messages;
+        assert_eq!(msgs.len(), 6, "expected 6 messages after rolling compaction turn, got {}: {:?}",
+            msgs.len(), msgs.iter().map(|m| &m.role).collect::<Vec<_>>());
+
+        // The two preserved messages must be exactly present in the session
+        let has_recent_user = msgs.iter().any(|m| m.as_text() == Some(recent_user));
+        let has_recent_asst = msgs.iter().any(|m| m.as_text() == Some(recent_asst));
+        assert!(has_recent_user, "recently preserved user message must remain verbatim");
+        assert!(has_recent_asst, "recently preserved assistant message must remain verbatim");
+    }
+
+    #[tokio::test]
+    async fn context_compacted_event_has_correct_token_ordering() {
+        // tokens_before must be > tokens_after after compaction
+        use sven_model::Message;
+        let config = AgentConfig {
+            compaction_keep_recent: 0, // full summarization
+            compaction_threshold: 0.3,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("summary text".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("reply".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 30,
+        );
+        seed_session(&mut agent, vec![
+            Message::system("system"),
+            Message::user("aaaa aaaa aaaa"),
+            Message::assistant("bbbb bbbb bbbb"),
+        ]);
+        assert!(agent.session().is_near_limit(0.3));
+
+        let (tx, mut rx) = mpsc::channel(64);
+        agent.submit("q", tx).await.unwrap();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            let done = matches!(ev, AgentEvent::TurnComplete);
+            events.push(ev);
+            if done { break; }
+        }
+
+        let compaction_ev = events.iter().find_map(|e| {
+            if let AgentEvent::ContextCompacted { tokens_before, tokens_after } = e {
+                Some((*tokens_before, *tokens_after))
+            } else {
+                None
+            }
+        });
+        let (before, after) = compaction_ev.expect("ContextCompacted must be emitted");
+        assert!(before > after,
+            "tokens_before ({before}) must exceed tokens_after ({after}) after compaction");
     }
 }

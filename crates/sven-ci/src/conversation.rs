@@ -246,7 +246,8 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
 
         AgentEvent::ToolCallStarted(tc) => {
             write_stderr(&format!(
-                "[tool] {} ({})",
+                "[sven:tool:call] id=\"{}\" name=\"{}\" args={}",
+                tc.id,
                 tc.name,
                 serde_json::to_string(&tc.args).unwrap_or_default()
             ));
@@ -265,9 +266,14 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
 
         AgentEvent::ToolCallFinished { call_id, tool_name, output, is_error } => {
             if is_error {
-                write_stderr(&format!("[tool error] {tool_name}: {output}"));
+                write_stderr(&format!(
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
+                ));
             } else {
-                write_stderr(&format!("[tool ok] {tool_name}"));
+                write_stderr(&format!(
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=true size={}",
+                    output.len()
+                ));
             }
             // Record the tool result
             messages.push(Message::tool_result(&call_id, &output));
@@ -275,12 +281,12 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
 
         AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
             write_stderr(&format!(
-                "[compacted context: {tokens_before} → {tokens_after} tokens]"
+                "[sven:context:compacted] {tokens_before} → {tokens_after} tokens"
             ));
         }
 
         AgentEvent::Error(msg) => {
-            write_stderr(&format!("[agent error] {msg}"));
+            write_stderr(&format!("[sven:agent:error] {msg}"));
             *failed = true;
         }
 
@@ -294,21 +300,33 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
                 };
                 format!("  {icon} [{}] {}", t.id, t.content)
             }).collect();
-            write_stderr(&format!("[todos]\n{}", lines.join("\n")));
+            write_stderr(&format!("[sven:todos]\n{}", lines.join("\n")));
         }
 
         AgentEvent::ModeChanged(mode) => {
-            write_stderr(&format!("[mode changed] now in {mode} mode"));
+            write_stderr(&format!("[sven:mode:changed] now in {mode} mode"));
         }
 
         AgentEvent::Question { questions, .. } => {
-            write_stderr(&format!("[questions] {}", questions.join(" | ")));
+            write_stderr(&format!("[sven:questions] {}", questions.join(" | ")));
         }
 
-        AgentEvent::TurnComplete
-        | AgentEvent::TokenUsage { .. }
-        | AgentEvent::QuestionAnswer { .. }
-        | AgentEvent::ThinkingDelta(_)
-        | AgentEvent::ThinkingComplete(_) => {}
+        AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
+            if cache_read > 0 || cache_write > 0 {
+                write_stderr(&format!(
+                    "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
+                ));
+            } else {
+                write_stderr(&format!("[sven:tokens] input={input} output={output}"));
+            }
+        }
+
+        AgentEvent::ThinkingDelta(_) => {}
+
+        AgentEvent::ThinkingComplete(content) => {
+            write_stderr(&format!("[sven:thinking] {content}"));
+        }
+
+        AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
     }
 }

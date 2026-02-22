@@ -100,6 +100,55 @@ model:
   # Can also be set with the SVEN_MOCK_RESPONSES environment variable.
   # mock_responses_file: /path/to/responses.yaml
 
+  # ── Anthropic prompt caching ─────────────────────────────────────────────
+  #
+  # Sven uses all four of Anthropic's available cache breakpoints, making it
+  # the most cache-efficient agent available:
+  #
+  #   Breakpoint 1 (tools)        – tool definitions, stable per session
+  #   Breakpoint 2 (system)       – system prompt, stable per session
+  #   Breakpoint 3 (images/tools) – oldest image or large tool result in history
+  #   Breakpoint 4 (conversation) – automatic, advances each turn
+  #
+  # Reading from cache costs 10% of base input-token price; writing costs 125%.
+  # For a 50-turn session caching 10,000 tokens: ~88% savings on those tokens.
+
+  # Cache the stable system prompt (Anthropic only).  DEFAULT: true
+  # Saves ~90% on system prompt tokens after the first request.
+  # Charges a one-time 25% write premium, then 10% per read.
+  # cache_system_prompt: true
+
+  # Cache tool definitions (Anthropic only).  DEFAULT: true
+  # All tool definitions are cached as a prefix when true.
+  # Ideal for saving 5,000–10,000+ tokens per request when many tools are in use.
+  # cache_tools: true
+
+  # Enable automatic conversation caching (Anthropic only).  DEFAULT: true
+  # Adds a top-level cache_control marker so Anthropic automatically caches
+  # conversation history up to the last message.  The cache breakpoint advances
+  # with each turn — no manual management required.
+  # Delivers the largest savings for multi-turn agent sessions.
+  # cache_conversation: true
+
+  # Cache image content blocks in conversation history (Anthropic only).  DEFAULT: true
+  # Images cost hundreds of tokens each, every single turn.  Marking them
+  # with cache_control once reduces that cost by ~90% for all following turns.
+  # The oldest images are cached first; the budget is bounded to 4 total slots.
+  # cache_images: true
+
+  # Cache large tool results in conversation history (Anthropic only).  DEFAULT: true
+  # File reads, command output, and fetched documents that remain in context
+  # for many turns are cached once their content exceeds 4096 characters.
+  # Saves ~90% on those tokens every subsequent turn.
+  # cache_tool_results: true
+
+  # Use 1-hour cache TTL instead of the default 5-minute window.  DEFAULT: false
+  # Applies to system prompt, tool definitions, images, and tool results when
+  # their respective caching flags are enabled.  Sends the
+  # extended-cache-ttl-2025-04-11 beta header automatically.  Best for
+  # workflows where requests are spaced more than 5 minutes apart (e.g. CI).
+  # extended_cache_time: false
+
 
 # ── Agent ──────────────────────────────────────────────────────────────────
 
@@ -115,6 +164,11 @@ agent:
   # Fraction of the context window at which proactive compaction triggers.
   # 0.85 means sven starts compacting when 85% of the context is used.
   compaction_threshold: 0.85
+
+  # Number of recent non-system messages to keep verbatim after compaction.
+  # The oldest messages beyond this tail are summarised. Default: 6.
+  # Set to 0 to summarise the full history (original behaviour).
+  compaction_keep_recent: 6
 
   # Override the system prompt sent to the model.
   # Leave unset to use the built-in prompt.
@@ -218,6 +272,22 @@ Controls which language model sven talks to and how.
 | `max_tokens` | catalog max | Maximum tokens per response (defaults to model catalog value) |
 | `temperature` | `0.2` | Sampling temperature (0.0–2.0) |
 | `mock_responses_file` | — | Path to YAML mock responses (mock provider only) |
+| `cache_system_prompt` | `true` | **(Anthropic)** Cache the stable system prompt prefix — breakpoint 2 |
+| `cache_tools` | `true` | **(Anthropic)** Cache all tool definitions as a prefix — breakpoint 1 |
+| `cache_conversation` | `true` | **(Anthropic)** Automatically cache full conversation history each turn — breakpoint 4 |
+| `cache_images` | `true` | **(Anthropic)** Cache the oldest image blocks in conversation history — breakpoint 3 |
+| `cache_tool_results` | `true` | **(Anthropic)** Cache large (>4 096 chars) tool results in conversation history — breakpoint 3 |
+| `extended_cache_time` | `false` | **(Anthropic)** Use 1-hour TTL for system, tools, images, and tool-result caches instead of 5 minutes |
+
+#### Provider caching behaviour
+
+| Provider family | Cache mechanism | Notes |
+|-----------------|-----------------|-------|
+| **Anthropic** | Explicit `cache_control` breakpoints | Fully configured via the `cache_*` flags above. sven uses all 4 available breakpoints and separates volatile context (git/CI) into an uncached system block so the stable prefix always hits. |
+| **OpenAI / Azure** | Automatic prefix caching | No config needed. sven keeps the system message stable across turns so the model's automatic prefix cache hits reliably. Cache-read tokens appear in the `cache_read` field of `TokenUsage` events. |
+| **OpenRouter** | Automatic (gateway) + explicit cache key | sven sends the session UUID as `prompt_cache_key` in every request, pinning all turns in a session to the same cached prefix. |
+| **DeepSeek** | Automatic prefix caching | sven reads `prompt_cache_hit_tokens` from the response and surfaces it the same as other providers. |
+| **Google / Groq / Mistral / …** | Automatic or not supported | No explicit configuration required; cache savings are reflected in token usage where available. |
 
 #### Supported providers
 
@@ -248,10 +318,26 @@ Controls the agent's autonomy and defaults.
 | `default_mode` | `"agent"` | Mode used when `--mode` is not passed |
 | `max_tool_rounds` | `50` | Maximum autonomous tool-call rounds before stopping |
 | `compaction_threshold` | `0.85` | Context fraction that triggers history compaction |
+| `compaction_keep_recent` | `6` | Number of recent non-system messages preserved verbatim during compaction; older messages are summarised |
 | `system_prompt` | — | System prompt override (leave unset to use built-in) |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.
+
+#### Compaction and caching interplay
+
+When the conversation history approaches `compaction_threshold` of the model's
+context window, sven runs a *rolling compaction*:
+
+1. The oldest `(total – compaction_keep_recent)` non-system messages are
+   serialised and summarised by the model.
+2. The system prompt is re-issued (keeping its prompt-cache breakpoint intact).
+3. The `compaction_keep_recent` most recent messages are restored verbatim after
+   the summary so the model retains immediate context.
+
+Setting `compaction_keep_recent: 0` disables the rolling strategy and
+summarises the full history, which produces smaller sessions at the cost of
+losing recent context.
 
 ---
 
@@ -371,6 +457,37 @@ model:
   provider: anthropic
   name: claude-opus-4-5
   api_key_env: ANTHROPIC_API_KEY
+```
+
+**Use Anthropic Claude — all four cache breakpoints are on by default:**
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-5
+  api_key_env: ANTHROPIC_API_KEY
+  # Nothing extra needed: sven enables comprehensive caching out of the box.
+  # Add extended_cache_time: true for CI or any workflow with gaps > 5 minutes:
+  extended_cache_time: true    # 1-hour TTL for system/tools/images/tool-results
+```
+
+> **Cost note**: On a 10-turn agent session with 30 000 tokens of stable context,
+> full caching reduces per-turn input cost from ~$0.09 to ~$0.003 — roughly a 97%
+> reduction after the first (cache-write) request.  To opt out of a specific
+> layer, set the corresponding flag to `false` (e.g. `cache_images: false`).
+
+**Disable all caching (e.g. for cost-sensitive one-shot runs):**
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-5
+  api_key_env: ANTHROPIC_API_KEY
+  cache_system_prompt: false
+  cache_tools: false
+  cache_conversation: false
+  cache_images: false
+  cache_tool_results: false
 ```
 
 **Use a local Ollama model:**

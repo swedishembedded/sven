@@ -23,9 +23,30 @@ pub struct AnthropicProvider {
     /// caches the prompt prefix, reducing input-token costs on repeated calls.
     cache_system_prompt: bool,
     /// Use the 1-hour extended TTL instead of the default 5-minute window.
+    /// Applies to the system prompt and tool definitions when caching is enabled.
     extended_cache_time: bool,
+    /// Attach a `cache_control` marker to the last tool definition so all tool
+    /// definitions are cached as a single prefix.
+    cache_tools: bool,
+    /// Add a top-level `cache_control` to enable automatic conversation caching.
+    /// Anthropic automatically moves the cache breakpoint forward with each turn.
+    cache_conversation: bool,
+    /// Mark the oldest image content blocks in conversation history with
+    /// `cache_control` so Anthropic caches them.  Images cost hundreds of
+    /// tokens even when small; caching them once saves ~90% on every
+    /// subsequent turn they remain in context.
+    cache_images: bool,
+    /// Mark large tool result blocks (>= TOOL_RESULT_CACHE_CHARS) in
+    /// conversation history with `cache_control`.  File reads and command
+    /// outputs that persist across many turns are ideal candidates.
+    cache_tool_results: bool,
     client: reqwest::Client,
 }
+
+/// Minimum serialised content length (in bytes) for a tool result to be
+/// eligible for explicit caching.  Matches Anthropic's minimum cacheable
+/// prompt length for Sonnet-class models (~1 024 tokens × 4 chars/token).
+const TOOL_RESULT_CACHE_CHARS: usize = 4096;
 
 impl AnthropicProvider {
     pub fn new(
@@ -35,9 +56,10 @@ impl AnthropicProvider {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Self {
-        Self::with_cache(model, api_key, base_url, max_tokens, temperature, false, false)
+        Self::with_cache(model, api_key, base_url, max_tokens, temperature, false, false, false, false, false, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_cache(
         model: String,
         api_key: Option<String>,
@@ -46,6 +68,10 @@ impl AnthropicProvider {
         temperature: Option<f32>,
         cache_system_prompt: bool,
         extended_cache_time: bool,
+        cache_tools: bool,
+        cache_conversation: bool,
+        cache_images: bool,
+        cache_tool_results: bool,
     ) -> Self {
         Self {
             model,
@@ -55,6 +81,10 @@ impl AnthropicProvider {
             temperature: temperature.unwrap_or(0.2),
             cache_system_prompt,
             extended_cache_time,
+            cache_tools,
+            cache_conversation,
+            cache_images,
+            cache_tool_results,
             client: reqwest::Client::new(),
         }
     }
@@ -79,13 +109,94 @@ impl crate::ModelProvider for AnthropicProvider {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let key = self.api_key.as_deref().context("ANTHROPIC_API_KEY not set")?;
 
-        let (system_text, messages) = build_anthropic_messages(&req.messages);
+        let (system_text, mut messages) = build_anthropic_messages(&req.messages);
 
-        let tools: Vec<Value> = req.tools.iter().map(|t| json!({
-            "name": t.name,
-            "description": t.description,
-            "input_schema": t.parameters,
-        })).collect();
+        // Build the TTL-appropriate cache_control object.
+        // Tools and system prompt share the same TTL tier so the ordering
+        // constraint (longer TTL must precede shorter TTL) is always satisfied.
+        let cache_ctrl = if self.extended_cache_time {
+            json!({ "type": "ephemeral", "ttl": "1h" })
+        } else {
+            json!({ "type": "ephemeral" })
+        };
+
+        // ── Per-block history caching ────────────────────────────────────────
+        // Anthropic allows up to 4 cache breakpoints per request.  After
+        // allocating slots for system prompt, tools, and automatic conversation
+        // caching, any remaining slots can be used to cache expensive blocks
+        // that persist across many turns:
+        //
+        //   • Images     — hundreds of tokens each; stable once uploaded.
+        //   • Large tool results — file reads/command outputs that linger in
+        //     context for many turns after the tool call that produced them.
+        //
+        // We walk the messages array FORWARD (oldest first) so that the oldest
+        // stable content gets cached first — it will be present the longest and
+        // therefore yield the most cache hits.
+        //
+        // TTL ordering is preserved: images and tool results receive the same
+        // TTL tier as system/tools (`cache_ctrl`), which is always ≥ the 5-min
+        // TTL used by automatic conversation caching.
+        let slots_used = self.cache_system_prompt as u8
+            + self.cache_tools as u8
+            + self.cache_conversation as u8;
+        let avail = 4u8.saturating_sub(slots_used);
+
+        if avail > 0 && (self.cache_images || self.cache_tool_results) {
+            let mut added = 0u8;
+            'outer: for msg in messages.iter_mut() {
+                if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
+                    for block in content.iter_mut() {
+                        if added >= avail {
+                            break 'outer;
+                        }
+                        let btype = block["type"].as_str().unwrap_or("");
+                        if self.cache_images
+                            && btype == "image"
+                            && block.get("cache_control").is_none()
+                        {
+                            block["cache_control"] = cache_ctrl.clone();
+                            added += 1;
+                        } else if self.cache_tool_results
+                            && btype == "tool_result"
+                            && block.get("cache_control").is_none()
+                            && block["content"].to_string().len() >= TOOL_RESULT_CACHE_CHARS
+                        {
+                            block["cache_control"] = cache_ctrl.clone();
+                            added += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tools — optionally mark the last definition with cache_control so
+        // Anthropic caches the entire tools array as a prefix.
+        let tools: Vec<Value> = if !req.tools.is_empty() && self.cache_tools {
+            let last = req.tools.len() - 1;
+            req.tools.iter().enumerate().map(|(i, t)| {
+                if i == last {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                        "cache_control": cache_ctrl,
+                    })
+                } else {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    })
+                }
+            }).collect()
+        } else {
+            req.tools.iter().map(|t| json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters,
+            })).collect()
+        };
 
         let mut body = json!({
             "model": self.model,
@@ -94,6 +205,15 @@ impl crate::ModelProvider for AnthropicProvider {
             "temperature": self.temperature,
             "stream": req.stream,
         });
+
+        // Automatic conversation caching — add a top-level cache_control block.
+        // Anthropic automatically moves the breakpoint to the last cacheable
+        // block on each turn, so the growing conversation history is cached
+        // incrementally with no per-message bookkeeping.
+        if self.cache_conversation {
+            body["cache_control"] = json!({ "type": "ephemeral" });
+        }
+
         if !system_text.is_empty() || req.system_dynamic_suffix.is_some() {
             if self.cache_system_prompt {
                 // Build an array of system content blocks.
@@ -104,18 +224,12 @@ impl crate::ModelProvider for AnthropicProvider {
                 // Block 2 — volatile context WITHOUT cache_control (not cached).
                 //   Git/CI info that changes between sessions lives here so the
                 //   stable prefix can be reused across different sessions.
-                let cache_control = if self.extended_cache_time {
-                    json!({ "type": "ephemeral", "ttl": "1h" })
-                } else {
-                    json!({ "type": "ephemeral" })
-                };
-
                 let mut system_blocks: Vec<Value> = Vec::new();
                 if !system_text.is_empty() {
                     system_blocks.push(json!({
                         "type": "text",
                         "text": system_text,
-                        "cache_control": cache_control,
+                        "cache_control": cache_ctrl,
                     }));
                 }
                 // Dynamic context (git branch/commit, CI env) in a second block
@@ -148,9 +262,19 @@ impl crate::ModelProvider for AnthropicProvider {
             body["tools"] = json!(tools);
         }
 
+        let any_caching = self.cache_system_prompt
+            || self.cache_tools
+            || self.cache_conversation
+            || self.cache_images
+            || self.cache_tool_results;
         debug!(
             model = %self.model,
             cache_system_prompt = self.cache_system_prompt,
+            cache_tools = self.cache_tools,
+            cache_conversation = self.cache_conversation,
+            cache_images = self.cache_images,
+            cache_tool_results = self.cache_tool_results,
+            extended_cache_time = self.extended_cache_time,
             "sending anthropic request",
         );
 
@@ -159,12 +283,21 @@ impl crate::ModelProvider for AnthropicProvider {
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01");
 
-        // Prompt caching requires the beta header for Claude 3 / 3.5 Sonnet
-        // (original).  It is safe to send it unconditionally for all claude-3+
-        // models; newer models ignore it.
-        if self.cache_system_prompt {
+        // Build the anthropic-beta header.
+        //
+        // • `prompt-caching-2024-07-31` — required for prompt caching on older
+        //   Claude 3 / 3.5 Sonnet models.  Safe to send for all claude-3+ models;
+        //   newer models silently ignore it.
+        // • `extended-cache-ttl-2025-04-11` — required when using 1-hour TTL.
+        //
+        // Multiple beta features are enabled via a comma-separated value.
+        if any_caching {
+            let mut betas: Vec<&str> = vec!["prompt-caching-2024-07-31"];
+            if self.extended_cache_time {
+                betas.push("extended-cache-ttl-2025-04-11");
+            }
             request_builder = request_builder
-                .header("anthropic-beta", "prompt-caching-2024-07-31");
+                .header("anthropic-beta", betas.join(","));
         }
 
         let resp = request_builder
@@ -215,6 +348,21 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                     let partial = delta["partial_json"].as_str().unwrap_or("").to_string();
                     Ok(ResponseEvent::ToolCall { index, id: String::new(), name: String::new(), arguments: partial })
                 }
+                // Extended thinking: Claude streams the chain-of-thought as a
+                // separate delta type.  Map it to ThinkingDelta so the CI runner
+                // and TUI can surface it without mixing it into the answer text.
+                "thinking_delta" => {
+                    let thinking = delta["thinking"].as_str().unwrap_or("").to_string();
+                    if thinking.is_empty() {
+                        Ok(ResponseEvent::TextDelta(String::new()))
+                    } else {
+                        Ok(ResponseEvent::ThinkingDelta(thinking))
+                    }
+                }
+                // Anthropic sends an encrypted signature blob at the end of every
+                // thinking block so the server can verify integrity.  It is not
+                // human-readable and must never be shown or logged as plain text.
+                "signature_delta" => Ok(ResponseEvent::TextDelta(String::new())),
                 _ => Ok(ResponseEvent::TextDelta(String::new())),
             }
         }
@@ -514,10 +662,51 @@ mod tests {
     }
 
     #[test]
-    fn content_block_delta_unknown_type_is_empty_delta() {
+    fn content_block_delta_thinking_delta_produces_thinking_event() {
+        // Extended thinking: Claude emits `thinking_delta` blocks with the CoT text.
         let v = serde_json::json!({
             "type": "content_block_delta",
-            "delta": { "type": "thinking_delta", "thinking": "hmm" }
+            "delta": { "type": "thinking_delta", "thinking": "Let me reason through this." }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "Let me reason through this."),
+            "expected ThinkingDelta, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn content_block_delta_thinking_delta_empty_is_empty_text_delta() {
+        // An empty thinking delta should not produce a ThinkingDelta event.
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "thinking_delta", "thinking": "" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn content_block_delta_signature_delta_is_silently_discarded() {
+        // Anthropic sends an encrypted `signature_delta` at the end of each
+        // thinking block.  It must never be emitted as readable text or thinking.
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "signature_delta", "signature": "EqRkLm..." }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::TextDelta(ref t) if t.is_empty()),
+            "signature_delta must be silently discarded, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn content_block_delta_unknown_type_is_empty_delta() {
+        // Any other unknown delta type should produce an empty TextDelta.
+        let v = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "some_future_type", "data": "xyz" }
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));

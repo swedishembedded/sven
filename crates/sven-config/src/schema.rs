@@ -3,6 +3,13 @@
 // SPDX-License-Identifier: MIT
 use serde::{Deserialize, Serialize};
 
+/// Serde default helper — returns `true`.
+///
+/// Used for config fields that should be enabled unless the user explicitly
+/// sets them to `false`.  `#[serde(default)]` on a `bool` always falls back
+/// to `bool::default()` (i.e. `false`), so a named function is required.
+fn default_true() -> bool { true }
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -59,15 +66,75 @@ pub struct ModelConfig {
     ///
     /// **Other providers**: OpenAI and Google cache automatically; this flag
     /// has no effect for those providers.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub cache_system_prompt: bool,
 
     /// Use the extended (1-hour) cache TTL instead of the default 5-minute
-    /// window.  Only applies when `cache_system_prompt = true` and the
-    /// provider is Anthropic.  Requires the `anthropic-beta: extended-cache-ttl-2025-04-11`
-    /// header.
+    /// window.  Applies to the system prompt (when `cache_system_prompt = true`)
+    /// and to tool definitions (when `cache_tools = true`).  Only meaningful
+    /// for the Anthropic provider.  Sends the
+    /// `anthropic-beta: extended-cache-ttl-2025-04-11` header automatically.
+    ///
+    /// Conversation caching (`cache_conversation`) always uses the 5-minute
+    /// TTL regardless of this setting, because conversation turns are
+    /// typically frequent enough to keep the cache refreshed within 5 minutes.
     #[serde(default)]
     pub extended_cache_time: bool,
+
+    /// Cache tool definitions using Anthropic prompt caching.
+    ///
+    /// Tool definitions are stable across requests within a session, making
+    /// them ideal for caching.  The last tool in the list receives a
+    /// `cache_control` marker so Anthropic caches all tool definitions as a
+    /// prefix.  Uses the same TTL as `extended_cache_time` controls (1-hour
+    /// when true, 5-minute otherwise).
+    ///
+    /// With many tools (each ~200-500 tokens), this can save thousands of
+    /// tokens per request.
+    #[serde(default = "default_true")]
+    pub cache_tools: bool,
+
+    /// Enable automatic conversation caching (Anthropic only).
+    ///
+    /// Adds a top-level `cache_control` marker that instructs Anthropic to
+    /// automatically cache conversation history up to the last message.
+    /// Subsequent turns read prior context from cache at 10% of the base
+    /// token cost, dramatically reducing cost for multi-turn agent sessions.
+    ///
+    /// The cache breakpoint automatically advances with each new turn so no
+    /// manual management is needed.
+    #[serde(default = "default_true")]
+    pub cache_conversation: bool,
+
+    /// Cache image content blocks in conversation history (Anthropic only).
+    ///
+    /// Images are token-expensive: even a modest screenshot costs hundreds of
+    /// input tokens every turn it remains in context.  Marking the oldest image
+    /// blocks with `cache_control` preserves them across turns, saving ~90% on
+    /// those tokens for the rest of the session.
+    ///
+    /// Uses the same TTL tier as `extended_cache_time` controls.  The number
+    /// of cached images is bounded by the remaining Anthropic breakpoint budget
+    /// (maximum 4 breakpoints total across system, tools, conversation, and
+    /// images/tool-results).
+    #[serde(default = "default_true")]
+    pub cache_images: bool,
+
+    /// Cache large tool results in conversation history (Anthropic only).
+    ///
+    /// When an agent reads files, runs commands, or fetches documents, those
+    /// tool results can consume thousands of tokens on every subsequent turn.
+    /// Marking them with `cache_control` once saves ~90% on those tokens for
+    /// all following turns.
+    ///
+    /// A result is eligible when its serialised content exceeds 4 096
+    /// characters (~1 024 tokens, the Anthropic minimum cacheable length for
+    /// Sonnet-class models).  The oldest eligible results are cached first;
+    /// the count is bounded by the remaining breakpoint budget.
+    ///
+    /// Uses the same TTL tier as `extended_cache_time` controls.
+    #[serde(default = "default_true")]
+    pub cache_tool_results: bool,
 
     // ── Provider-specific extras ──────────────────────────────────────────────
     /// Free-form provider-specific options forwarded as-is to the driver.
@@ -101,8 +168,17 @@ impl Default for ModelConfig {
             azure_deployment: None,
             azure_api_version: None,
             aws_region: None,
-            cache_system_prompt: false,
+            // Comprehensive caching is on by default for every provider that
+            // supports it (currently Anthropic).  The flags are no-ops for
+            // providers such as OpenAI that cache automatically.  Only the
+            // extended (1-hour) TTL remains opt-in because it carries a 2×
+            // write cost that is only worthwhile when turns are >5 min apart.
+            cache_system_prompt: true,
             extended_cache_time: false,
+            cache_tools: true,
+            cache_conversation: true,
+            cache_images: true,
+            cache_tool_results: true,
             driver_options: serde_json::Value::Null,
             mock_responses_file: None,
         }
@@ -117,6 +193,16 @@ pub struct AgentConfig {
     pub max_tool_rounds: u32,
     /// Token fraction at which proactive compaction triggers (0.0–1.0)
     pub compaction_threshold: f32,
+    /// Number of recent non-system messages preserved verbatim during
+    /// compaction.  The oldest messages beyond this tail are summarised by
+    /// the LLM.  Higher values retain more recent context but reduce the
+    /// compression benefit.
+    ///
+    /// A value of 6 corresponds to roughly 3 back-and-forth turns
+    /// (user + assistant per turn, tool results excluded from the count).
+    /// Set to 0 to summarise the full history (original behaviour).
+    #[serde(default = "default_compaction_keep_recent")]
+    pub compaction_keep_recent: usize,
     /// System prompt override; leave None to use the built-in prompt
     pub system_prompt: Option<String>,
 
@@ -130,12 +216,15 @@ pub struct AgentConfig {
     pub max_run_timeout_secs: u64,
 }
 
+fn default_compaction_keep_recent() -> usize { 6 }
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             default_mode: AgentMode::Agent,
             max_tool_rounds: 50,
             compaction_threshold: 0.85,
+            compaction_keep_recent: default_compaction_keep_recent(),
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: 0,
@@ -373,6 +462,31 @@ mod tests {
     }
 
     #[test]
+    fn config_default_compaction_keep_recent_is_six() {
+        let c = Config::default();
+        assert_eq!(c.agent.compaction_keep_recent, 6);
+    }
+
+    #[test]
+    fn config_compaction_keep_recent_yaml_round_trip() {
+        let yaml_str = "agent:\n  compaction_keep_recent: 10\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+        assert_eq!(c.agent.compaction_keep_recent, 10);
+        // Round-trip
+        let back_yaml = serde_yaml::to_string(&c).unwrap();
+        let back: Config = serde_yaml::from_str(&back_yaml).unwrap();
+        assert_eq!(back.agent.compaction_keep_recent, 10);
+    }
+
+    #[test]
+    fn config_compaction_keep_recent_defaults_when_absent_from_yaml() {
+        // A YAML with an agent section but no compaction_keep_recent uses serde default.
+        let yaml_str = "agent:\n  max_tool_rounds: 30\n  default_mode: agent\n  compaction_threshold: 0.9\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+        assert_eq!(c.agent.compaction_keep_recent, 6, "serde default must fill in missing field");
+    }
+
+    #[test]
     fn config_default_no_system_prompt_override() {
         let c = Config::default();
         assert!(c.agent.system_prompt.is_none());
@@ -417,6 +531,79 @@ mod tests {
     fn agent_mode_equality() {
         assert_eq!(AgentMode::Agent, AgentMode::Agent);
         assert_ne!(AgentMode::Research, AgentMode::Plan);
+    }
+
+    // ── Prompt caching defaults ───────────────────────────────────────────────
+
+    #[test]
+    fn config_default_caching_enabled_except_extended_ttl() {
+        // All caching flags default to true — sven caches comprehensively
+        // out-of-the-box for every provider that supports explicit caching.
+        // extended_cache_time stays false: the 1-hour TTL has a 2× write cost
+        // and is only worthwhile when turns are more than 5 minutes apart.
+        let c = Config::default();
+        assert!(c.model.cache_system_prompt, "cache_system_prompt must default to true");
+        assert!(c.model.cache_tools, "cache_tools must default to true");
+        assert!(c.model.cache_conversation, "cache_conversation must default to true");
+        assert!(c.model.cache_images, "cache_images must default to true");
+        assert!(c.model.cache_tool_results, "cache_tool_results must default to true");
+        assert!(!c.model.extended_cache_time, "extended_cache_time must remain false by default");
+    }
+
+    #[test]
+    fn config_cache_flags_can_be_disabled_via_yaml() {
+        // Users may opt out of individual cache layers.
+        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n  \
+                        cache_system_prompt: false\n  cache_tools: false\n  \
+                        cache_conversation: false\n  cache_images: false\n  \
+                        cache_tool_results: false\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+        assert!(!c.model.cache_system_prompt);
+        assert!(!c.model.cache_tools);
+        assert!(!c.model.cache_conversation);
+        assert!(!c.model.cache_images);
+        assert!(!c.model.cache_tool_results);
+    }
+
+    #[test]
+    fn config_extended_cache_time_can_be_enabled_via_yaml() {
+        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n  \
+                        extended_cache_time: true\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+        assert!(c.model.extended_cache_time);
+    }
+
+    #[test]
+    fn config_cache_flags_omitted_yaml_uses_defaults() {
+        // When not specified in YAML the flags must use the struct defaults
+        // (true for caching flags, false for extended TTL).
+        let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n";
+        let c: Config = serde_yaml::from_str(yaml_str).unwrap();
+        assert!(c.model.cache_system_prompt, "cache_system_prompt must default to true");
+        assert!(c.model.cache_tools, "cache_tools must default to true");
+        assert!(c.model.cache_conversation, "cache_conversation must default to true");
+        assert!(!c.model.extended_cache_time, "extended_cache_time must default to false");
+        assert!(c.model.cache_images, "cache_images must default to true");
+        assert!(c.model.cache_tool_results, "cache_tool_results must default to true");
+    }
+
+    #[test]
+    fn config_cache_flags_round_trip_yaml() {
+        let mut c = Config::default();
+        c.model.provider = "anthropic".into();
+        // Flip all flags to the non-default values to verify round-trip fidelity.
+        c.model.cache_tools = false;
+        c.model.cache_conversation = false;
+        c.model.cache_images = false;
+        c.model.cache_tool_results = false;
+        c.model.extended_cache_time = true;
+        let yaml = serde_yaml::to_string(&c).unwrap();
+        let back: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert!(!back.model.cache_tools);
+        assert!(!back.model.cache_conversation);
+        assert!(!back.model.cache_images);
+        assert!(!back.model.cache_tool_results);
+        assert!(back.model.extended_cache_time);
     }
 
     // ── YAML round-trip ───────────────────────────────────────────────────────

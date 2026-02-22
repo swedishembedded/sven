@@ -290,6 +290,19 @@ impl crate::ModelProvider for OpenAICompatProvider {
             body["tools"] = json!(tools);
         }
 
+        // OpenRouter supports a `prompt_cache_key` body field that pins all
+        // requests sharing the same key to the same cached KV prefix.  Using
+        // the session ID ensures every turn within a session benefits from the
+        // cached system prompt + stable conversation prefix even across
+        // requests that would otherwise be treated as independent by the
+        // gateway.  Other providers that speak the same field (e.g. Venice)
+        // also benefit automatically.
+        if self.driver_name == "openrouter" {
+            if let Some(key) = &req.cache_key {
+                body["prompt_cache_key"] = json!(key);
+            }
+        }
+
         debug!(
             driver = %self.driver_name,
             model = %self.model,
@@ -394,16 +407,41 @@ fn role_str(r: &Role) -> &'static str {
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage-only chunk (emitted when stream_options.include_usage = true)
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-        // OpenAI reports cached tokens in prompt_tokens_details.cached_tokens
+        // OpenAI reports cached tokens in prompt_tokens_details.cached_tokens.
+        // DeepSeek V3 reports them as prompt_cache_hit_tokens on the root
+        // usage object.  We try OpenAI format first, then fall back to
+        // DeepSeek's format so both providers are covered without extra
+        // provider-specific dispatch.
         let cache_read_tokens = usage
             .get("prompt_tokens_details")
             .and_then(|d| d.get("cached_tokens"))
             .and_then(|t| t.as_u64())
+            .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(|t| t.as_u64()))
             .unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
+            cache_write_tokens: 0,
+        });
+    }
+
+    // llama.cpp performance metrics (top-level `timings` object)
+    // These arrive in the final SSE chunk with finish_reason=stop and provide
+    // cache hit counts and generation speed that are incredibly useful for CI
+    // debugging.  We convert them into a Usage event so the CI runner can emit
+    // them as `[sven:tokens]` trace output.
+    if let Some(timings) = v.get("timings") {
+        let cache_n = timings["cache_n"].as_u64().unwrap_or(0) as u32;
+        let prompt_n = timings["prompt_n"].as_u64().unwrap_or(0) as u32;
+        let predicted_n = timings["predicted_n"].as_u64().unwrap_or(0) as u32;
+
+        // llama.cpp reports cache hits + fresh tokens separately; combine them
+        // into input_tokens for consistency with standard Usage reporting.
+        return Ok(ResponseEvent::Usage {
+            input_tokens: cache_n + prompt_n,
+            output_tokens: predicted_n,
+            cache_read_tokens: cache_n,
             cache_write_tokens: 0,
         });
     }
@@ -422,6 +460,19 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
             let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
             return Ok(ResponseEvent::ToolCall { index, id, name, arguments: args });
+        }
+    }
+
+    // Thinking delta — two common field names for chain-of-thought reasoning:
+    //   • `reasoning_content` — llama.cpp, Qwen3, DeepSeek-R1, xAI Grok-3-mini
+    //   • `reasoning`         — OpenRouter (and some other aggregators)
+    // Both carry the same semantics: readable CoT text that arrived before the
+    // final answer.  Prefer `reasoning_content`; fall back to `reasoning`.
+    let thinking_text = delta.get("reasoning_content").and_then(|c| c.as_str())
+        .or_else(|| delta.get("reasoning").and_then(|c| c.as_str()));
+    if let Some(thinking) = thinking_text {
+        if !thinking.is_empty() {
+            return Ok(ResponseEvent::ThinkingDelta(thinking.to_string()));
         }
     }
 
@@ -998,6 +1049,56 @@ mod tests {
         assert_eq!(json[2]["tool_call_id"], "call_2");
     }
 
+    // ── DeepSeek cache hit token parsing ────────────────────────────────────
+
+    #[test]
+    fn parse_sse_deepseek_cache_hit_tokens_at_root() {
+        // DeepSeek V3 puts cache metrics directly on the usage object, not
+        // nested inside prompt_tokens_details.
+        let v = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 500,
+                "completion_tokens": 30,
+                "prompt_cache_hit_tokens": 400,
+                "prompt_cache_miss_tokens": 100,
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage {
+                input_tokens: 500,
+                output_tokens: 30,
+                cache_read_tokens: 400,
+                ..
+            }),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_openai_format_takes_priority_over_deepseek_fallback() {
+        // When both formats are present (hypothetical), the OpenAI nested
+        // format takes priority (first branch of .or_else chain wins).
+        let v = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 300,
+                "completion_tokens": 20,
+                "prompt_tokens_details": { "cached_tokens": 250 },
+                "prompt_cache_hit_tokens": 999,
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage {
+                cache_read_tokens: 250, // OpenAI nested value wins
+                ..
+            }),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    // ── Single tool call ─────────────────────────────────────────────────────
+
     #[test]
     fn single_tool_call_message_still_works() {
         use crate::{FunctionCall, Message, MessageContent, Role};
@@ -1017,5 +1118,211 @@ mod tests {
         let calls = json[0]["tool_calls"].as_array().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0]["id"], "call_1");
+    }
+
+    // ── reasoning_content (llama.cpp / Qwen3 thinking) ───────────────────────
+
+    #[test]
+    fn reasoning_content_produces_thinking_delta() {
+        // llama.cpp emits thinking via `reasoning_content` on the delta.
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "",
+                    "reasoning_content": "Let me think about this..."
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "Let me think about this..."),
+            "expected ThinkingDelta, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn reasoning_content_empty_string_falls_through_to_text_delta() {
+        // When reasoning_content is present but empty, we should fall through
+        // to the text content (e.g. the transition chunk when thinking ends).
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "The answer is 42.",
+                    "reasoning_content": ""
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::TextDelta(t) if t == "The answer is 42."),
+            "expected TextDelta after empty reasoning_content, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn reasoning_content_null_falls_through_to_text_delta() {
+        // Some providers send `"reasoning_content": null` when not thinking.
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "hello",
+                    "reasoning_content": null
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::TextDelta(t) if t == "hello"),
+            "expected TextDelta when reasoning_content is null, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn reasoning_content_only_no_text_content() {
+        // Pure thinking chunk — no content field at all.
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "reasoning_content": "Step 1: analyse the problem."
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "Step 1: analyse the problem."),
+            "expected ThinkingDelta, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn reasoning_content_sse_round_trip_through_line_buffer() {
+        // Verify that a split SSE line carrying reasoning_content is handled
+        // the same way as a split text-delta line (the buffer reassembles it).
+        let full_line = r#"data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}"#;
+        let split = full_line.len() / 2;
+        let chunk1 = &full_line[..split];
+        let chunk2 = &full_line[split..];
+
+        let mut buf = String::new();
+        buf.push_str(chunk1);
+        let e1 = drain_complete_sse_lines(&mut buf);
+        assert!(e1.is_empty(), "should not emit partial event");
+
+        buf.push_str(chunk2);
+        buf.push('\n');
+        let e2 = drain_complete_sse_lines(&mut buf);
+        assert_eq!(e2.len(), 1);
+        assert!(
+            matches!(&e2[0], Ok(ResponseEvent::ThinkingDelta(t)) if t == "thinking..."),
+            "unexpected event: {:?}", e2[0]
+        );
+    }
+
+    // ── llama.cpp timings ─────────────────────────────────────────────────────
+    // llama.cpp emits performance metrics in a top-level `timings` object in
+    // the final SSE chunk.  We parse this into a Usage event.
+
+    #[test]
+    fn llama_cpp_timings_produces_usage_event() {
+        let v = serde_json::json!({
+            "choices": [{"finish_reason": "stop", "index": 0, "delta": {}}],
+            "timings": {
+                "cache_n": 40,
+                "prompt_n": 1,
+                "prompt_ms": 109.438,
+                "predicted_n": 60,
+                "predicted_ms": 5783.6,
+                "predicted_per_token_ms": 96.39,
+                "predicted_per_second": 10.37
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::Usage {
+                input_tokens: 41,      // cache_n + prompt_n
+                output_tokens: 60,     // predicted_n
+                cache_read_tokens: 40, // cache_n
+                ..
+            }),
+            "expected Usage from llama.cpp timings, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn llama_cpp_timings_with_no_cache_hits() {
+        let v = serde_json::json!({
+            "choices": [{"finish_reason": "stop", "index": 0, "delta": {}}],
+            "timings": {
+                "cache_n": 0,
+                "prompt_n": 50,
+                "predicted_n": 30
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::Usage {
+                input_tokens: 50,
+                output_tokens: 30,
+                cache_read_tokens: 0,
+                ..
+            }),
+            "expected Usage with no cache hits, got {ev:?}"
+        );
+    }
+
+    // ── OpenRouter `reasoning` field ─────────────────────────────────────────
+    // OpenRouter aggregator exposes reasoning via a `reasoning` field on the
+    // delta (different name from llama.cpp's `reasoning_content`).
+
+    #[test]
+    fn openrouter_reasoning_field_produces_thinking_delta() {
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "",
+                    "reasoning": "I should consider both sides."
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "I should consider both sides."),
+            "expected ThinkingDelta from OpenRouter reasoning field, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn reasoning_content_takes_priority_over_reasoning() {
+        // When both fields are present (hypothetical), `reasoning_content` wins.
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "reasoning_content": "preferred",
+                    "reasoning": "fallback"
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "preferred"),
+            "reasoning_content should take priority, got {ev:?}"
+        );
+    }
+
+    #[test]
+    fn openrouter_reasoning_empty_falls_through_to_text() {
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "hello",
+                    "reasoning": ""
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::TextDelta(t) if t == "hello"),
+            "empty reasoning should fall through to text delta, got {ev:?}"
+        );
     }
 }

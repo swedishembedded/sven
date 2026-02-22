@@ -67,6 +67,10 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             cfg.cache_system_prompt,
             cfg.extended_cache_time,
+            cfg.cache_tools,
+            cfg.cache_conversation,
+            cfg.cache_images,
+            cfg.cache_tool_results,
         ))),
         "google" => Ok(Box::new(google::GoogleProvider::new(
             cfg.name.clone(),

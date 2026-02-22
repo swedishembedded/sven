@@ -15,7 +15,7 @@ use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
-    history, parse_frontmatter, parse_workflow,
+    history, parse_conversation, parse_frontmatter, parse_workflow,
     serialize_conversation_turn, serialize_conversation_turn_with_metadata,
     TurnMetadata, Step, StepQueue,
 };
@@ -103,6 +103,11 @@ pub struct CiOptions {
     pub jsonl_output: Option<PathBuf>,
     /// Format for JSONL output (OpenAI, Anthropic, or raw).
     pub jsonl_format: crate::JsonlFormat,
+    /// Stderr trace verbosity (mirrors CLI --verbose count).
+    /// 0 = minimal (default): tool name, success/fail, size.
+    /// 1 = verbose (-v): include truncated tool output and thinking blocks.
+    /// 2+ = trace (-vv): reserved for future expanded tracing.
+    pub trace_level: u8,
 }
 
 // ── Helper: Write JSONL trace ────────────────────────────────────────────────
@@ -159,6 +164,29 @@ impl CiRunner {
         vars.extend(frontmatter.vars.unwrap_or_default());
         vars.extend(opts.vars.clone());
 
+        // ── Detect piped conversation format ─────────────────────────────────
+        // When a prior sven run is piped in (stdout is conversation markdown),
+        // we must NOT treat it as a workflow (that would send ## Sven / ## Tool
+        // sections as user steps).  Instead, parse as conversation history and
+        // build a fresh single-step queue from extra_prompt.
+        let is_conversation_input = !opts.input.trim().is_empty()
+            && is_conversation_format(markdown_body);
+
+        let conversation_history = if is_conversation_input {
+            match parse_conversation(markdown_body) {
+                Ok(conv) => conv.history,
+                Err(e) => {
+                    write_stderr(&format!(
+                        "[sven:warn] Failed to parse piped input as conversation ({e}), \
+                         treating as workflow"
+                    ));
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
         // ── Parse workflow (title, preamble, steps) ──────────────────────────
         let workflow = parse_workflow(markdown_body);
 
@@ -167,6 +195,16 @@ impl CiRunner {
 
         // ── Build step queue ─────────────────────────────────────────────────
         let mut queue: StepQueue = if opts.input.trim().is_empty() {
+            // No input at all — use the positional prompt as the sole step.
+            let content = opts.extra_prompt.clone().unwrap_or_default();
+            StepQueue::from(vec![Step {
+                label: None,
+                content,
+                options: Default::default(),
+            }])
+        } else if is_conversation_input {
+            // Piped conversation: ignore the workflow steps parsed from the
+            // markdown (they'd be wrong); use only the positional prompt.
             let content = opts.extra_prompt.clone().unwrap_or_default();
             StepQueue::from(vec![Step {
                 label: None,
@@ -194,7 +232,9 @@ impl CiRunner {
         // Document preamble (text between H1 and first ##) goes first, then
         // any CLI --append-system-prompt, so the document's own context is
         // always present at the top of the appended block.
-        let workflow_system_prompt_append = if opts.input.trim().is_empty() {
+        // Skip preamble when input is empty or conversation format (no useful
+        // preamble exists in those cases).
+        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input {
             None
         } else {
             workflow.system_prompt_append
@@ -323,6 +363,15 @@ impl CiRunner {
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_runtime_context(runtime_ctx)
             .build(initial_mode, model, profile);
+
+        // ── Seed history from piped conversation ─────────────────────────────
+        if !conversation_history.is_empty() {
+            agent.seed_history(conversation_history).await;
+            write_progress(&format!(
+                "[sven:info] Loaded {} prior message(s) from piped conversation",
+                agent.session().messages.len().saturating_sub(1) // subtract system msg
+            ));
+        }
 
         // ── Set up Ctrl+C handler ────────────────────────────────────────────
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
@@ -505,6 +554,7 @@ impl CiRunner {
                             &mut failed,
                             &mut collected,
                             &mut consecutive_tool_errors,
+                            opts.trace_level,
                         );
                         
                         // Abort if too many consecutive tool errors
@@ -540,6 +590,7 @@ impl CiRunner {
                                 &mut failed,
                                 &mut collected,
                                 &mut consecutive_tool_errors,
+                                opts.trace_level,
                             );
                         }
                         break;
@@ -671,6 +722,7 @@ fn handle_event(
     failed: &mut bool,
     collected: &mut Vec<Message>,
     consecutive_tool_errors: &mut u32,
+    trace_level: u8,
 ) {
     match event {
         AgentEvent::TextDelta(delta) => {
@@ -684,8 +736,11 @@ fn handle_event(
             }
         }
         AgentEvent::ToolCallStarted(tc) => {
+            // Include the call id so parallel tool calls can be correlated
+            // with their results in the log.
             write_stderr(&format!(
-                "[sven:tool:call] name=\"{}\" args={}",
+                "[sven:tool:call] id=\"{}\" name=\"{}\" args={}",
+                tc.id,
                 tc.name,
                 serde_json::to_string(&tc.args).unwrap_or_default()
             ));
@@ -701,11 +756,36 @@ fn handle_event(
         }
         AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
             if is_error {
-                write_stderr(&format!("[sven:tool:error] name=\"{tool_name}\" output={output:?}"));
+                // Always show error output so CI logs are self-sufficient.
+                write_stderr(&format!(
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
+                ));
                 *consecutive_tool_errors += 1;
             } else {
-                write_stderr(&format!("[sven:tool:ok] name=\"{tool_name}\""));
-                *consecutive_tool_errors = 0; // Reset on success
+                // At default verbosity: show id, name, and byte size so the
+                // call↔result pair is traceable without flooding the log.
+                // At -v (trace_level ≥ 1): also show truncated output content.
+                let output_snippet = if trace_level >= 1 && !output.is_empty() {
+                    const LIMIT: usize = 1500;
+                    let preview: String = output.chars().take(LIMIT).collect();
+                    if output.chars().count() > LIMIT {
+                        format!(
+                            " output={:?}...[+{} chars]",
+                            preview,
+                            output.chars().count() - LIMIT
+                        )
+                    } else {
+                        format!(" output={output:?}")
+                    }
+                } else {
+                    String::new()
+                };
+                write_stderr(&format!(
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=true size={}{}",
+                    output.len(),
+                    output_snippet
+                ));
+                *consecutive_tool_errors = 0;
             }
             collected.push(Message::tool_result(&call_id, &output));
         }
@@ -740,17 +820,42 @@ fn handle_event(
             ));
         }
         AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
+            // Always report token usage — it's essential CI diagnostic data.
             if cache_read > 0 || cache_write > 0 {
                 write_stderr(&format!(
                     "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
                 ));
+            } else {
+                write_stderr(&format!("[sven:tokens] input={input} output={output}"));
             }
         }
-        AgentEvent::TurnComplete
-        | AgentEvent::QuestionAnswer { .. }
-        | AgentEvent::ThinkingDelta(_)
-        | AgentEvent::ThinkingComplete(_) => {}
+        AgentEvent::ThinkingDelta(_) => {
+            // Individual deltas are accumulated in the agent; we only surface
+            // the completed block (ThinkingComplete) to keep the log readable.
+        }
+        AgentEvent::ThinkingComplete(content) => {
+            // Default (0): show full content — thinking is valuable CI signal.
+            // At -v (trace_level ≥ 1): same (full content, kept for compat).
+            write_stderr(&format!("[sven:thinking] {content}"));
+        }
+        AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Return true if the markdown string looks like conversation-format output
+/// (produced by `--output-format conversation`), containing recognised H2
+/// section headings at line start.
+///
+/// This is used to detect when a prior sven run is piped into the next one so
+/// the runner can parse the input as conversation history rather than as a
+/// workflow, which would misinterpret `## Sven` as a workflow step label.
+pub(crate) fn is_conversation_format(s: &str) -> bool {
+    s.lines().any(|line| {
+        let t = line.trim_end();
+        matches!(t, "## User" | "## Sven" | "## Tool" | "## Tool Result")
+    })
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────────

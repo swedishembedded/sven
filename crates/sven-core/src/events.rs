@@ -41,6 +41,10 @@ pub enum AgentEvent {
         cache_read: u32,
         /// Tokens written into the provider's prompt cache this turn.
         cache_write: u32,
+        /// Running total of cache-read tokens across the whole session.
+        cache_read_total: u32,
+        /// Running total of cache-write tokens across the whole session.
+        cache_write_total: u32,
     },
     /// The agent has finished processing the current user turn
     TurnComplete,

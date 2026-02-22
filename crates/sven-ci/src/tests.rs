@@ -10,6 +10,85 @@
 mod tests {
     use sven_input::{parse_workflow, StepQueue};
 
+    // ── is_conversation_format ────────────────────────────────────────────────
+    // The heuristic is used to detect when a prior sven stdout (conversation
+    // markdown) is piped into a new sven instance, so history can be seeded
+    // rather than re-processed as a workflow.
+
+    fn is_conv(s: &str) -> bool {
+        crate::runner::is_conversation_format(s)
+    }
+
+    #[test]
+    fn conversation_format_detected_by_user_heading() {
+        let md = "## User\n\nping\n\n## Sven\n\npong\n";
+        assert!(is_conv(md), "## User heading should mark conversation format");
+    }
+
+    #[test]
+    fn conversation_format_detected_by_sven_heading() {
+        let md = "Some preamble.\n\n## Sven\n\nThe answer.\n";
+        assert!(is_conv(md), "## Sven heading should mark conversation format");
+    }
+
+    #[test]
+    fn conversation_format_detected_by_tool_heading() {
+        let md = "## Tool\n\n```json\n{}\n```\n";
+        assert!(is_conv(md), "## Tool heading should mark conversation format");
+    }
+
+    #[test]
+    fn conversation_format_detected_by_tool_result_heading() {
+        let md = "## Tool Result\n\n```\nok\n```\n";
+        assert!(is_conv(md), "## Tool Result heading should mark conversation format");
+    }
+
+    #[test]
+    fn plain_text_not_conversation_format() {
+        assert!(!is_conv("Just a plain prompt with no markdown headings."));
+    }
+
+    #[test]
+    fn workflow_markdown_not_conversation_format() {
+        // Standard workflow markdown uses H2 headings for step labels but
+        // none of the reserved conversation heading names.
+        let md = "# My Workflow\n\n## Step one\nDo it.\n\n## Step two\nAnd this.";
+        assert!(!is_conv(md), "workflow markdown should not be detected as conversation");
+    }
+
+    #[test]
+    fn empty_string_not_conversation_format() {
+        assert!(!is_conv(""));
+        assert!(!is_conv("   \n  "));
+    }
+
+    #[test]
+    fn h2_user_anywhere_in_document_is_sufficient() {
+        // The detection must not require the heading to be on the first line.
+        let md = "# Title\n\nSome preamble text.\n\n## User\n\nhello\n";
+        assert!(is_conv(md));
+    }
+
+    #[test]
+    fn partial_match_user_in_body_not_detected() {
+        // "## UserLogin" should not match "## User"
+        let md = "## UserLogin\n\nsome content\n";
+        assert!(!is_conv(md));
+    }
+
+    #[test]
+    fn conversation_format_full_multi_turn() {
+        // Simulate the exact stdout produced by a two-turn sven run.
+        let md = concat!(
+            "## User\n\nping\n\n",
+            "<!-- provider: mock, model: gpt-4o -->\n",
+            "## Sven\n\npong\n\n",
+            "## User\n\nsummarise the above\n\n",
+            "## Sven\n\nSummary: pong was the response.\n",
+        );
+        assert!(is_conv(md));
+    }
+
     // ── Input parsing (re-validates sven-input from the CI consumer's perspective) ──
 
     #[test]

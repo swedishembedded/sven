@@ -361,6 +361,17 @@ responses:
       - Registers captured: pc=0x08000000, sp=0x20080000
       - Session stopped cleanly.
 
+  # ── Thinking / reasoning traces ──────────────────────────────────────────────
+  # Used by tests that verify [sven:thinking] appears in CI stderr output.
+
+  - match_type: contains
+    pattern: "think deeply"
+    thinking: |
+      Let me carefully reason through this.
+      First, I need to understand the request.
+      Then I will formulate an answer.
+    reply: "After careful reasoning, the answer is: forty-two."
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default
