@@ -314,6 +314,7 @@ impl CiRunner {
         let mut step_idx = 0usize;
         let mut collected: Vec<Message> = Vec::new();
         let mut json_steps: Vec<JsonStep> = Vec::new();
+        let mut current_mode = opts.mode;
 
         while let Some(step) = queue.pop() {
             step_idx += 1;
@@ -329,11 +330,12 @@ impl CiRunner {
                     std::process::exit(EXIT_TIMEOUT);
                 }
             }
-
+            
             // Apply per-step mode override
             if let Some(mode_str) = &step.options.mode {
                 if let Some(mode) = parse_agent_mode(mode_str) {
                     agent.set_mode(mode).await;
+                    current_mode = mode;
                 } else {
                     write_stderr(&format!(
                         "[sven:warn] Unknown mode {:?} in step {step_idx}, continuing with current mode",
@@ -345,6 +347,18 @@ impl CiRunner {
             // Apply per-step model override
             if let Some(model_str) = &step.options.model {
                 let step_model_cfg = resolve_model_cfg(&self.config.model, model_str);
+                
+                // Warn about weak models in research mode
+                if current_mode == AgentMode::Research {
+                    let model_name = &step_model_cfg.name;
+                    if model_name.contains("nano") || model_name.contains("mini") {
+                        write_stderr(&format!(
+                            "[sven:warn] Model {model_name:?} may be too weak for research mode. \
+                             Consider using a more capable model (e.g., gpt-5, gpt-4o, claude-opus)"
+                        ));
+                    }
+                }
+                
                 match sven_model::from_config(&step_model_cfg) {
                     Ok(m) => {
                         // Update metadata to reflect the new model for this step.
@@ -393,6 +407,7 @@ impl CiRunner {
             let mut response_text = String::new();
             let mut tools_used: Vec<String> = Vec::new();
             let mut failed = false;
+            let mut consecutive_tool_errors = 0;
 
             tokio::pin!(submit_fut);
 
@@ -441,13 +456,29 @@ impl CiRunner {
                             &mut tools_used,
                             &mut failed,
                             &mut collected,
+                            &mut consecutive_tool_errors,
                         );
+                        
+                        // Abort if too many consecutive tool errors
+                        const MAX_CONSECUTIVE_TOOL_ERRORS: u32 = 20;
+                        if consecutive_tool_errors >= MAX_CONSECUTIVE_TOOL_ERRORS {
+                            write_stderr(&format!(
+                                "[sven:fatal] Step {step_idx} ({label:?}) aborted: \
+                                 {MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool errors. \
+                                 This often indicates the model is using wrong parameter names \
+                                 or is confused. Consider using a more capable model."
+                            ));
+                            if !collected.is_empty() {
+                                let _ = history::save(&collected);
+                            }
+                            std::process::exit(EXIT_AGENT_ERROR);
+                        }
                     }
 
                     result = &mut submit_fut => {
                         if let Err(e) = result {
                             write_stderr(&format!(
-                                "[sven:fatal] Step {step_idx} ({label:?}) failed: {e}"
+                                "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
                             ));
                             std::process::exit(EXIT_AGENT_ERROR);
                         }
@@ -458,6 +489,7 @@ impl CiRunner {
                                 &mut tools_used,
                                 &mut failed,
                                 &mut collected,
+                                &mut consecutive_tool_errors,
                             );
                         }
                         break;
@@ -582,6 +614,7 @@ fn handle_event(
     tools_used: &mut Vec<String>,
     failed: &mut bool,
     collected: &mut Vec<Message>,
+    consecutive_tool_errors: &mut u32,
 ) {
     match event {
         AgentEvent::TextDelta(delta) => {
@@ -613,8 +646,10 @@ fn handle_event(
         AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
             if is_error {
                 write_stderr(&format!("[sven:tool:error] name=\"{tool_name}\" output={output:?}"));
+                *consecutive_tool_errors += 1;
             } else {
                 write_stderr(&format!("[sven:tool:ok] name=\"{tool_name}\""));
+                *consecutive_tool_errors = 0; // Reset on success
             }
             collected.push(Message::tool_result(&call_id, &output));
         }

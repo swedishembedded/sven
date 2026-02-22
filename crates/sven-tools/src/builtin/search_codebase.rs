@@ -55,7 +55,14 @@ impl Tool for SearchCodebaseTool {
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let query = match call.args.get("query").and_then(|v| v.as_str()) {
             Some(q) => q.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'query'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'query'. Received: {}", args_preview)
+                );
+            }
         };
         let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
         let include = call.args.get("include").and_then(|v| v.as_str()).map(str::to_string);
@@ -165,7 +172,7 @@ mod tests {
     async fn missing_query_is_error() {
         let out = SearchCodebaseTool.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'query'"));
+        assert!(out.content.contains("missing required parameter 'query'"));
     }
 
     #[tokio::test]

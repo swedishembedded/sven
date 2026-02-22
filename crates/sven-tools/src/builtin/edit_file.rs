@@ -25,7 +25,7 @@ impl Tool for EditFileTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": {
+                "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the file"
                 },
@@ -38,7 +38,7 @@ impl Tool for EditFileTool {
                     "description": "Replacement string"
                 }
             },
-            "required": ["file_path", "old_str", "new_str"]
+            "required": ["path", "old_str", "new_str"]
         })
     }
 
@@ -47,17 +47,38 @@ impl Tool for EditFileTool {
     fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("file_path").and_then(|v| v.as_str()) {
+        let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'file_path'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                );
+            }
         };
         let old_str = match call.args.get("old_str").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'old_str'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'old_str'. Received: {}", args_preview)
+                );
+            }
         };
         let new_str = match call.args.get("new_str").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'new_str'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'new_str'. Received: {}", args_preview)
+                );
+            }
         };
 
         debug!(path = %path, "edit_file tool");
@@ -121,7 +142,7 @@ mod tests {
         let path = tmp_file("hello world\n");
         let t = EditFileTool;
         let out = t.execute(&call(json!({
-            "file_path": path,
+            "path": path,
             "old_str": "world",
             "new_str": "rust"
         }))).await;
@@ -136,7 +157,7 @@ mod tests {
         let path = tmp_file("hello world\n");
         let t = EditFileTool;
         let out = t.execute(&call(json!({
-            "file_path": path,
+            "path": path,
             "old_str": "xyz",
             "new_str": "abc"
         }))).await;
@@ -150,7 +171,7 @@ mod tests {
         let path = tmp_file("foo foo foo\n");
         let t = EditFileTool;
         let out = t.execute(&call(json!({
-            "file_path": path,
+            "path": path,
             "old_str": "foo",
             "new_str": "bar"
         }))).await;
@@ -164,7 +185,7 @@ mod tests {
         let t = EditFileTool;
         let out = t.execute(&call(json!({"old_str": "a", "new_str": "b"}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'file_path'"));
+        assert!(out.content.contains("missing required parameter 'path'"));
     }
 
     #[test]

@@ -23,12 +23,12 @@ impl Tool for DeleteFileTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": {
+                "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the file to delete"
                 }
             },
-            "required": ["file_path"]
+            "required": ["path"]
         })
     }
 
@@ -37,9 +37,16 @@ impl Tool for DeleteFileTool {
     fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("file_path").and_then(|v| v.as_str()) {
+        let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'file_path'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                );
+            }
         };
 
         debug!(path = %path, "delete_file tool");
@@ -84,7 +91,7 @@ mod tests {
         };
         std::fs::write(&path, "bye").unwrap();
         let t = DeleteFileTool;
-        let out = t.execute(&call(json!({"file_path": path}))).await;
+        let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("deleted"));
     }
@@ -92,14 +99,14 @@ mod tests {
     #[tokio::test]
     async fn missing_file_is_error() {
         let t = DeleteFileTool;
-        let out = t.execute(&call(json!({"file_path": "/tmp/sven_no_such_delete_xyz.txt"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_delete_xyz.txt"}))).await;
         assert!(out.is_error);
     }
 
     #[tokio::test]
     async fn directory_is_error() {
         let t = DeleteFileTool;
-        let out = t.execute(&call(json!({"file_path": "/tmp"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("directory"));
     }
@@ -109,7 +116,7 @@ mod tests {
         let t = DeleteFileTool;
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'file_path'"));
+        assert!(out.content.contains("missing required parameter 'path'"));
     }
 
     #[test]

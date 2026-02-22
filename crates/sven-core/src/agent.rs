@@ -263,8 +263,8 @@ impl Agent {
         );
 
         let req = CompletionRequest {
-            messages,
-            tools,
+            messages: messages.clone(),
+            tools: tools.clone(),
             stream: true,
             // Carry volatile context (git/CI) separately so providers that
             // support prompt caching (Anthropic) can put it in an uncached
@@ -404,7 +404,28 @@ struct PendingToolCall {
 
 impl PendingToolCall {
     fn finish(self) -> ToolCall {
-        let args = serde_json::from_str(&self.args_buf).unwrap_or(serde_json::Value::Null);
+        let args = if self.args_buf.is_empty() {
+            warn!(
+                tool_name = %self.name,
+                tool_call_id = %self.id,
+                "model sent tool call with empty arguments"
+            );
+            serde_json::Value::Null
+        } else {
+            match serde_json::from_str(&self.args_buf) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(
+                        tool_name = %self.name,
+                        tool_call_id = %self.id,
+                        args_buf = %self.args_buf,
+                        error = %e,
+                        "model sent tool call with invalid JSON arguments"
+                    );
+                    serde_json::Value::Null
+                }
+            }
+        };
         ToolCall { id: self.id, name: self.name, args }
     }
 }

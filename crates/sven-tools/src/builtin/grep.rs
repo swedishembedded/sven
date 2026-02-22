@@ -54,7 +54,14 @@ impl Tool for GrepTool {
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'pattern'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'pattern'. Received: {}", args_preview)
+                );
+            }
         };
         let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
         let include = call.args.get("include").and_then(|v| v.as_str()).map(str::to_string);

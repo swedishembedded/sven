@@ -27,7 +27,7 @@ impl Tool for ReadFileTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": {
+                "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the file"
                 },
@@ -40,16 +40,23 @@ impl Tool for ReadFileTool {
                     "description": "Maximum number of lines to return (default 2000)"
                 }
             },
-            "required": ["file_path"]
+            "required": ["path"]
         })
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("file_path").and_then(|v| v.as_str()) {
+        let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'file_path'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                );
+            }
         };
         let offset = call.args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
         let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
@@ -136,7 +143,7 @@ mod tests {
     async fn reads_file_with_line_numbers() {
         let path = tmp_file("alpha\nbeta\ngamma\n");
         let t = ReadFileTool;
-        let out = t.execute(&call(json!({"file_path": path}))).await;
+        let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("L1:alpha"));
         assert!(out.content.contains("L2:beta"));
@@ -149,7 +156,7 @@ mod tests {
         let path = tmp_file("line1\nline2\nline3\nline4\nline5\n");
         let t = ReadFileTool;
         let out = t.execute(&call(json!({
-            "file_path": path,
+            "path": path,
             "offset": 2,
             "limit": 2
         }))).await;
@@ -164,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn missing_file_is_error() {
         let t = ReadFileTool;
-        let out = t.execute(&call(json!({"file_path": "/tmp/sven_no_such_file_xyz.txt"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_file_xyz.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("read error"));
     }
@@ -174,6 +181,6 @@ mod tests {
         let t = ReadFileTool;
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'file_path'"));
+        assert!(out.content.contains("missing required parameter 'path'"));
     }
 }

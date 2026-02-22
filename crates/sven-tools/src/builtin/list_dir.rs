@@ -21,7 +21,7 @@ impl Tool for ListDirTool {
         json!({
             "type": "object",
             "properties": {
-                "dir_path": {
+                "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the directory"
                 },
@@ -34,33 +34,40 @@ impl Tool for ListDirTool {
                     "description": "Maximum number of entries to return (default 100)"
                 }
             },
-            "required": ["dir_path"]
+            "required": ["path"]
         })
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let dir_path = match call.args.get("dir_path").and_then(|v| v.as_str()) {
+        let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'dir_path'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                );
+            }
         };
         let depth = call.args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2).min(5) as usize;
         let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
-        debug!(dir_path = %dir_path, depth, limit, "list_dir tool");
+        debug!(path = %path, depth, limit, "list_dir tool");
 
         // Fail early if the path doesn't exist or isn't a directory
-        match tokio::fs::metadata(&dir_path).await {
+        match tokio::fs::metadata(&path).await {
             Ok(m) if m.is_dir() => {}
-            Ok(_) => return ToolOutput::err(&call.id, format!("not a directory: {dir_path}")),
-            Err(e) => return ToolOutput::err(&call.id, format!("cannot access {dir_path}: {e}")),
+            Ok(_) => return ToolOutput::err(&call.id, format!("not a directory: {path}")),
+            Err(e) => return ToolOutput::err(&call.id, format!("cannot access {path}: {e}")),
         }
 
         let mut entries: Vec<String> = Vec::new();
         let mut truncated = false;
 
-        collect_entries(&dir_path, &dir_path, 0, depth, limit, &mut entries, &mut truncated).await;
+        collect_entries(&path, &path, 0, depth, limit, &mut entries, &mut truncated).await;
 
         if entries.is_empty() {
             return ToolOutput::ok(&call.id, "(empty directory)");
@@ -152,7 +159,7 @@ mod tests {
     #[tokio::test]
     async fn lists_directory_contents() {
         let t = ListDirTool;
-        let out = t.execute(&call(json!({"dir_path": "/tmp"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp"}))).await;
         assert!(!out.is_error, "{}", out.content);
     }
 
@@ -166,7 +173,7 @@ mod tests {
         std::fs::write(format!("{dir}/file.txt"), "x").unwrap();
 
         let t = ListDirTool;
-        let out = t.execute(&call(json!({"dir_path": dir}))).await;
+        let out = t.execute(&call(json!({"path": dir}))).await;
         assert!(out.content.contains("subdir/"), "dirs should have trailing slash");
         assert!(out.content.contains("file.txt"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -177,7 +184,7 @@ mod tests {
         let t = ListDirTool;
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'dir_path'"));
+        assert!(out.content.contains("missing required parameter 'path'"));
     }
 
     #[tokio::test]
@@ -192,7 +199,7 @@ mod tests {
 
         let t = ListDirTool;
         // depth=0 means no recursion: only show immediate children
-        let out = t.execute(&call(json!({"dir_path": dir, "depth": 0}))).await;
+        let out = t.execute(&call(json!({"path": dir, "depth": 0}))).await;
         assert!(out.content.contains("top.txt"));
         assert!(out.content.contains("subdir/"));
         assert!(!out.content.contains("inner.txt"), "inner.txt should not appear at depth=0");
@@ -202,7 +209,7 @@ mod tests {
     #[tokio::test]
     async fn nonexistent_dir_is_error() {
         let t = ListDirTool;
-        let out = t.execute(&call(json!({"dir_path": "/tmp/sven_no_such_dir_xyzzy_99999"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_dir_xyzzy_99999"}))).await;
         assert!(out.is_error);
     }
 }

@@ -125,7 +125,7 @@ impl ConversationRunner {
 
                 result = &mut submit_fut => {
                     if let Err(e) = result {
-                        write_stderr(&format!("[fatal] {e}"));
+                        write_stderr(&format!("[fatal] {e:#}"));
                         std::process::exit(1);
                     }
                     while let Ok(ev) = rx.try_recv() {

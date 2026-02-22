@@ -23,21 +23,28 @@ impl Tool for ReadImageTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": {
+                "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the image file"
                 }
             },
-            "required": ["file_path"]
+            "required": ["path"]
         })
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path_str = match call.args.get("file_path").and_then(|v| v.as_str()) {
+        let path_str = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'file_path'"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                );
+            }
         };
 
         debug!(path = %path_str, "read_image tool");
@@ -104,7 +111,7 @@ mod tests {
     async fn reads_png_returns_data_url() {
         let path = tmp_png();
         let t = ReadImageTool;
-        let out = t.execute(&call(json!({"file_path": path}))).await;
+        let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "unexpected error: {}", out.content);
         assert!(out.has_images(), "should have an image part");
         // The image URL in parts should start with data:
@@ -121,13 +128,13 @@ mod tests {
         let t = ReadImageTool;
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'file_path'"));
+        assert!(out.content.contains("missing required parameter 'path'"));
     }
 
     #[tokio::test]
     async fn non_image_extension_returns_error() {
         let t = ReadImageTool;
-        let out = t.execute(&call(json!({"file_path": "/tmp/test.rs"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp/test.rs"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("does not appear to be an image"));
     }
@@ -135,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn missing_file_returns_error() {
         let t = ReadImageTool;
-        let out = t.execute(&call(json!({"file_path": "/tmp/no_such_image_xyz.png"}))).await;
+        let out = t.execute(&call(json!({"path": "/tmp/no_such_image_xyz.png"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("failed to read image"));
     }

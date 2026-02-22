@@ -255,19 +255,48 @@ impl crate::ModelProvider for OpenAICompatProvider {
             }
         })).collect();
 
+        // OpenAI's API now uses "max_completion_tokens" for newer models (gpt-5, o1, etc.)
+        // Other providers still use "max_tokens"
+        let max_tokens_key = if self.driver_name == "openai" {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        
+        // GPT-5 models only support temperature=1 (the default)
+        // Reasoning models (o1, o3) don't support temperature parameter at all
+        let use_temperature = if self.driver_name == "openai" {
+            !(self.model.starts_with("o1-") 
+                || self.model.starts_with("o3-")
+                || self.model.starts_with("gpt-5"))
+        } else {
+            true
+        };
+        
         let mut body = json!({
             "model": self.model,
             "messages": messages,
             "stream": req.stream,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
+            max_tokens_key: self.max_tokens,
             "stream_options": { "include_usage": true },
         });
+        if use_temperature {
+            body["temperature"] = json!(self.temperature);
+        }
         if !tools.is_empty() {
             body["tools"] = json!(tools);
         }
 
-        debug!(driver = %self.driver_name, model = %self.model, "sending completion request");
+        debug!(
+            driver = %self.driver_name,
+            model = %self.model,
+            tool_count = tools.len(),
+            message_count = messages.len(),
+            "sending completion request"
+        );
+        
+        // Log full request body at trace level for debugging schema issues
+        tracing::trace!(request_body = ?body, "full completion request");
 
         let mut http_req = self.client.post(&self.chat_url).json(&body);
         http_req = match self.auth_style {

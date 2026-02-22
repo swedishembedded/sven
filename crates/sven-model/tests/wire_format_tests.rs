@@ -130,7 +130,8 @@ async fn openai_compat_sends_correct_request_body() {
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, "/v1/chat/completions");
     assert_eq!(req.body["model"], "gpt-4o-mini");
-    assert_eq!(req.body["max_tokens"], 32);
+    // OpenAI now uses "max_completion_tokens" instead of "max_tokens"
+    assert_eq!(req.body["max_completion_tokens"], 32);
     assert!((req.body["temperature"].as_f64().unwrap() - 0.5).abs() < 0.01);
     assert_eq!(req.body["stream"], true);
     let msgs = req.body["messages"].as_array().expect("messages array");

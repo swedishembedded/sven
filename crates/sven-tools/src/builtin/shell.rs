@@ -55,7 +55,14 @@ impl Tool for ShellTool {
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("command").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'command' argument"),
+            None => {
+                let args_preview = serde_json::to_string(&call.args)
+                    .unwrap_or_else(|_| "null".to_string());
+                return ToolOutput::err(
+                    &call.id,
+                    format!("missing required parameter 'command'. Received: {}", args_preview)
+                );
+            }
         };
         let workdir = call.args.get("workdir").and_then(|v| v.as_str()).map(str::to_string);
         let timeout = call.args
