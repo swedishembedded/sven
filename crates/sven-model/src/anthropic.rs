@@ -5,7 +5,7 @@ use anyhow::{bail, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     catalog::{static_catalog, ModelCatalogEntry},
@@ -318,11 +318,26 @@ pub(crate) fn build_anthropic_messages(
                 out.push(json!({ "role": role, "content": "" }));
             }
             MessageContent::ToolCall { tool_call_id, function } => {
+                // Anthropic requires tool_use.id to match `^[a-zA-Z0-9_-]+$`.
+                // An empty id can arise when a content_block_start event was
+                // missing from the stream.  Rather than sending an invalid
+                // request (which yields a 400), use a stable fallback so the
+                // conversation remains coherent.
+                let safe_id = if tool_call_id.is_empty() {
+                    warn!(
+                        tool_name = %function.name,
+                        "ToolCall message has empty tool_call_id when building \
+                         Anthropic request; substituting fallback id"
+                    );
+                    "tc_fallback".to_string()
+                } else {
+                    tool_call_id.clone()
+                };
                 out.push(json!({
                     "role": "assistant",
                     "content": [{
                         "type": "tool_use",
-                        "id": tool_call_id,
+                        "id": safe_id,
                         "name": function.name,
                         "input": serde_json::from_str::<Value>(&function.arguments)
                             .unwrap_or(json!({})),

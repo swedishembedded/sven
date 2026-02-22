@@ -280,16 +280,16 @@ models:
     input_modalities: [text, image]
 
   # ── Google Gemini ─────────────────────────────────────────────────────────────
-  - id: gemini-2.5-pro-preview-05-06
-    name: Gemini 2.5 Pro Preview
+  - id: gemini-2.5-pro
+    name: Gemini 2.5 Pro
     provider: google
     context_window: 1048576
     max_output_tokens: 65536
     description: Most capable Gemini 2.5 Pro model with thinking
     input_modalities: [text, image]
 
-  - id: gemini-2.5-flash-preview-04-17
-    name: Gemini 2.5 Flash Preview
+  - id: gemini-2.5-flash
+    name: Gemini 2.5 Flash
     provider: google
     context_window: 1048576
     max_output_tokens: 65536
@@ -352,7 +352,9 @@ models:
     description: Gemini 1.0 Pro
 
   # ── AWS Bedrock ───────────────────────────────────────────────────────────────
-  - id: anthropic.claude-opus-4-6-v1:0
+  # Bedrock model ID (no :0 suffix — that belongs only on `:0`-versioned snapshots
+  # like Sonnet 4.5).  Inference profile users prefix with us./eu./global. in config.
+  - id: anthropic.claude-opus-4-6-v1
     name: Claude Opus 4.6 (Bedrock)
     provider: aws
     context_window: 200000
@@ -360,12 +362,13 @@ models:
     description: Anthropic Claude Opus 4.6 via AWS Bedrock
     input_modalities: [text, image]
 
-  - id: anthropic.claude-sonnet-4-6
+  # Inference profile ID — callers may prefix with us./eu./global. in their config.
+  - id: us.anthropic.claude-sonnet-4-6
     name: Claude Sonnet 4.6 (Bedrock)
     provider: aws
     context_window: 200000
     max_output_tokens: 64000
-    description: Anthropic Claude Sonnet 4.6 via AWS Bedrock
+    description: Anthropic Claude Sonnet 4.6 via AWS Bedrock inference profile
     input_modalities: [text, image]
 
   - id: anthropic.claude-sonnet-4-5-20250929-v1:0
@@ -639,7 +642,7 @@ models:
     max_output_tokens: 4096
     description: Mistral Small — fast and affordable
 
-  - id: mistral-nemo
+  - id: open-mistral-nemo
     name: Mistral NeMo
     provider: mistral
     context_window: 131072
@@ -1142,21 +1145,22 @@ models:
     description: Set model.name to any model loaded in LM Studio
 
   # ── OpenRouter (popular gateway models) ───────────────────────────────────────
-  - id: anthropic/claude-opus-4-6
+  # OpenRouter uses dot notation for model version numbers (4.6, 3.5, etc.)
+  - id: anthropic/claude-opus-4.6
     name: Claude Opus 4.6 (OpenRouter)
     provider: openrouter
     context_window: 200000
     max_output_tokens: 128000
     description: Claude Opus 4.6 via OpenRouter
 
-  - id: anthropic/claude-sonnet-4-6
+  - id: anthropic/claude-sonnet-4.6
     name: Claude Sonnet 4.6 (OpenRouter)
     provider: openrouter
     context_window: 200000
     max_output_tokens: 64000
     description: Claude Sonnet 4.6 via OpenRouter
 
-  - id: anthropic/claude-haiku-4-5
+  - id: anthropic/claude-haiku-4.5
     name: Claude Haiku 4.5 (OpenRouter)
     provider: openrouter
     context_window: 200000
@@ -1213,6 +1217,11 @@ models:
     description: xAI Grok 3 via OpenRouter
 
   # ── Azure (OpenAI models via Azure deployments) ────────────────────────────────
+  # Azure OpenAI identifies a model by the DEPLOYMENT NAME, not a global model
+  # string.  The `id` field here is the conventional default deployment name
+  # (matching the underlying model name).  Users who named their deployment
+  # differently must override `model.name` in their sven config to match their
+  # actual deployment name.
   - id: gpt-5.2
     name: GPT-5.2 (Azure)
     provider: azure

@@ -217,12 +217,13 @@ impl CiRunner {
                 i += 1;
                 let label = step.label.as_deref().unwrap_or("(unlabelled)");
                 let mode_hint = step.options.mode.as_deref().unwrap_or("(inherit)");
+                let provider_hint = step.options.provider.as_deref().unwrap_or("(inherit)");
                 let model_hint = step.options.model.as_deref().unwrap_or("(inherit)");
                 let timeout_hint = step.options.timeout_secs
                     .map(|t| format!("{t}s"))
                     .unwrap_or_else(|| "(inherit)".to_string());
                 write_progress(&format!(
-                    "[sven:dry-run] Step {i}/{total}: label={label:?} mode={mode_hint} model={model_hint} timeout={timeout_hint}"
+                    "[sven:dry-run] Step {i}/{total}: label={label:?} mode={mode_hint} provider={provider_hint} model={model_hint} timeout={timeout_hint}"
                 ));
             }
             return Ok(());
@@ -380,8 +381,23 @@ impl CiRunner {
                 }
             }
 
-            // Apply per-step model override
-            if let Some(model_str) = &step.options.model {
+            // Apply per-step provider and/or model override.
+            // Combine provider= and model= into a single compound string so that
+            // resolve_model_cfg handles all cases uniformly:
+            //   - "provider=anthropic model=claude-sonnet-4-5"  → "anthropic/claude-sonnet-4-5"
+            //   - "provider=anthropic"                          → "anthropic"  (keep model name)
+            //   - "model=claude-sonnet-4-5"                     → "claude-sonnet-4-5"
+            //   - "model=anthropic/claude-sonnet-4-5"           → "anthropic/claude-sonnet-4-5"
+            let effective_model_str: Option<String> = match (
+                step.options.provider.as_deref(),
+                step.options.model.as_deref(),
+            ) {
+                (Some(prov), Some(model)) => Some(format!("{prov}/{model}")),
+                (Some(prov), None)        => Some(prov.to_string()),
+                (None, Some(model))       => Some(model.to_string()),
+                (None, None)              => None,
+            };
+            if let Some(model_str) = &effective_model_str {
                 let step_model_cfg = resolve_model_cfg(&self.config.model, model_str);
                 
                 
@@ -802,19 +818,34 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
 /// - `"provider/model"` → sets both provider and name  (e.g. `"anthropic/claude-opus-4-5"`)
 /// - `"model"` with no `/` → sets name only, keeps base provider
 /// - A bare registered provider id (e.g. `"groq"`, `"ollama"`) → sets provider only
-fn resolve_model_cfg(
+pub(crate) fn resolve_model_cfg(
     base: &ModelConfig,
     override_str: &str,
 ) -> ModelConfig {
     let mut cfg = base.clone();
+    let provider_changed;
     if let Some((provider, model)) = override_str.split_once('/') {
+        provider_changed = provider != base.provider;
         cfg.provider = provider.to_string();
         cfg.name = model.to_string();
     } else if sven_model::get_driver(override_str).is_some() {
         // Bare provider id — change provider, keep the current model name.
+        provider_changed = override_str != base.provider;
         cfg.provider = override_str.to_string();
     } else {
         cfg.name = override_str.to_string();
+        provider_changed = false;
     }
+
+    // When the provider changes the inherited api_key / api_key_env belong to
+    // the original provider (e.g. OPENAI_API_KEY on the default config).
+    // Sending them to a different provider produces "invalid x-api-key" errors.
+    // Clear them so resolve_api_key() falls through to the new provider's
+    // registry default env var (e.g. ANTHROPIC_API_KEY for "anthropic").
+    if provider_changed {
+        cfg.api_key = None;
+        cfg.api_key_env = None;
+    }
+
     cfg
 }

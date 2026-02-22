@@ -134,13 +134,15 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
             // ── Sven directives and HTML comments ────────────────────────────
             Event::Html(html) => {
                 let trimmed = html.trim();
-                if trimmed.starts_with("<!-- sven:") && trimmed.contains("-->") {
-                    if in_step {
-                        parse_sven_comment_into(trimmed, &mut current_opts);
-                    }
-                    // Directives in preamble are silently ignored for now.
+                // Pass every HTML comment to the parser; it handles both the
+                // explicit `<!-- sven: key=val -->` form and the implicit
+                // `<!-- key=val -->` form (when known keys are present).
+                // Non-option comments (no '=' or no known key) are ignored
+                // inside parse_sven_comment_into.
+                if in_step && trimmed.starts_with("<!--") && trimmed.contains("-->") {
+                    parse_sven_comment_into(trimmed, &mut current_opts);
                 }
-                // All HTML comments (including non-sven) are stripped from output.
+                // All HTML comments are stripped from the step body output.
             }
 
             _ => {}
@@ -203,12 +205,19 @@ fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
             match comment[start..].find("-->") {
                 Some(e) => {
                     let potential_content = comment[start..start + e].trim();
-                    // Only parse if it looks like key=value pairs (contains '=' and known keys)
-                    if potential_content.contains('=') && 
-                       (potential_content.contains("mode") || 
-                        potential_content.contains("model") ||
-                        potential_content.contains("timeout") ||
-                        potential_content.contains("cache_key")) {
+                    // Only parse if the content looks like pure key=value pairs:
+                    // every whitespace-split token must contain '=' (no bare words
+                    // like "step:"), and at least one must be a known sven key.
+                    // This keeps "<!-- model=gpt-4o -->" working while correctly
+                    // ignoring old formats like "<!-- step: mode=research -->".
+                    let all_kv = potential_content.split_whitespace()
+                        .all(|t| t.contains('='));
+                    let has_known_key = potential_content.split_whitespace()
+                        .any(|t| matches!(
+                            t.split_once('=').map(|(k, _)| k),
+                            Some("mode" | "model" | "provider" | "timeout" | "cache_key")
+                        ));
+                    if potential_content.contains('=') && all_kv && has_known_key {
                         (start, start + e)
                     } else {
                         return; // Not a step options comment
@@ -228,6 +237,7 @@ fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
             let val = val.trim_matches('"').trim_matches('\'');
             match key {
                 "mode"      => opts.mode = Some(val.to_string()),
+                "provider"  => opts.provider = Some(val.to_string()),
                 "model"     => opts.model = Some(val.to_string()),
                 "timeout"   => opts.timeout_secs = val.parse().ok(),
                 "cache_key" => opts.cache_key = Some(val.to_string()),
@@ -494,6 +504,40 @@ mod tests {
         let mut w = parse_workflow(md);
         let s = w.steps.pop().unwrap();
         assert_eq!(s.options.model.as_deref(), Some("gpt-5.2"));
+    }
+
+    // ── provider= key (regression: was silently discarded) ──────────────────
+
+    #[test]
+    fn sven_comment_sets_provider_and_model_separately() {
+        // This is the exact pattern that triggered the bug:
+        // provider= was parsed but silently dropped (missing match arm).
+        let md = "## Say Hi\n<!-- sven: provider=anthropic model=claude-sonnet-4-5 -->\nHi Claude!";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert_eq!(s.options.provider.as_deref(), Some("anthropic"),
+            "provider should be parsed from sven comment");
+        assert_eq!(s.options.model.as_deref(), Some("claude-sonnet-4-5"),
+            "model should be parsed from sven comment");
+    }
+
+    #[test]
+    fn sven_comment_provider_only_works() {
+        let md = "## Step\n<!-- sven: provider=anthropic -->\nHello.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert_eq!(s.options.provider.as_deref(), Some("anthropic"));
+        assert!(s.options.model.is_none());
+    }
+
+    #[test]
+    fn implicit_comment_provider_and_model() {
+        // <!-- provider=anthropic model=claude-sonnet-4-5 --> without sven: prefix
+        let md = "## Step\n<!-- provider=anthropic model=claude-sonnet-4-5 -->\nHello.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert_eq!(s.options.provider.as_deref(), Some("anthropic"));
+        assert_eq!(s.options.model.as_deref(), Some("claude-sonnet-4-5"));
     }
 
     #[test]

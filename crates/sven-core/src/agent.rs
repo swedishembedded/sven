@@ -347,10 +347,31 @@ impl Agent {
         }
 
         // Flush all accumulated parallel tool calls, ordered by index.
+        // Tool calls with an empty name cannot be dispatched and are dropped —
+        // storing them would corrupt the conversation history sent back to the
+        // API on the next turn.  An empty id (which violates Anthropic's
+        // `^[a-zA-Z0-9_-]+$` constraint) gets a synthetic fallback so the
+        // turn can still be completed without a spurious 400 error.
         let mut pending_sorted: Vec<(u32, PendingToolCall)> = pending_tcs.into_iter().collect();
         pending_sorted.sort_by_key(|(idx, _)| *idx);
-        for (_, ptc) in pending_sorted {
-            tool_calls.push(ptc.finish());
+        for (i, (_, ptc)) in pending_sorted.into_iter().enumerate() {
+            if ptc.name.is_empty() {
+                warn!(
+                    tool_call_id = %ptc.id,
+                    "dropping tool call with empty name from model; cannot dispatch"
+                );
+                continue;
+            }
+            let mut tc = ptc.finish();
+            if tc.id.is_empty() {
+                tc.id = format!("tc_synthetic_{i}");
+                warn!(
+                    tool_name = %tc.name,
+                    tool_call_id = %tc.id,
+                    "tool call from model had empty id; generated synthetic id"
+                );
+            }
+            tool_calls.push(tc);
         }
 
         if !full_text.is_empty() {

@@ -8,7 +8,12 @@ use std::collections::VecDeque;
 pub struct StepOptions {
     /// Override agent mode for this step (e.g. "research", "plan", "agent")
     pub mode: Option<String>,
-    /// Override model for this step (e.g. "gpt-4o" or "anthropic/claude-opus-4-5")
+    /// Override provider for this step (e.g. "anthropic", "openai").
+    /// Combined with `model` to route the step to the correct backend.
+    pub provider: Option<String>,
+    /// Override model for this step (e.g. "gpt-4o").
+    /// Write `model=claude-sonnet-4-5` together with `provider=anthropic`, OR
+    /// use the compound form `model=anthropic/claude-sonnet-4-5` on its own.
     pub model: Option<String>,
     /// Step-level timeout in seconds (overrides the runner default)
     pub timeout_secs: Option<u64>,

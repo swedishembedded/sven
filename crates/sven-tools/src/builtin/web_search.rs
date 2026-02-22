@@ -67,7 +67,7 @@ impl Tool for WebSearchTool {
             return ToolOutput::err(
                 &call.id,
                 "No Brave Search API key configured. Set the BRAVE_API_KEY environment variable \
-                 or configure tools.web.search.api_key in sven.toml.",
+                 or configure tools.web.search.api_key in sven.yaml.",
             );
         };
 

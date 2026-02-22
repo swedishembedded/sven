@@ -86,7 +86,13 @@ impl Default for ModelConfig {
         Self {
             provider: "openai".into(),
             name: "gpt-4o".into(),
-            api_key_env: Some("OPENAI_API_KEY".into()),
+            // api_key_env is intentionally None here.  resolve_api_key() falls
+            // through to the driver registry, which already knows the canonical
+            // env-var name for each provider (OPENAI_API_KEY, ANTHROPIC_API_KEY,
+            // etc.).  Hard-coding it here would shadow the registry lookup and
+            // cause the wrong key to be sent whenever the provider is overridden
+            // at the step level (e.g. <!-- sven: provider=anthropic -->).
+            api_key_env: None,
             api_key: None,
             base_url: None,
             max_tokens: Some(4096),
@@ -333,9 +339,12 @@ mod tests {
     }
 
     #[test]
-    fn config_default_api_key_env_is_set() {
+    fn config_default_api_key_env_is_none() {
+        // api_key_env must be None in the default config so that resolve_api_key()
+        // falls through to the driver registry.  A hard-coded value here would
+        // shadow the registry and send the wrong key on per-step provider overrides.
         let c = Config::default();
-        assert_eq!(c.model.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+        assert!(c.model.api_key_env.is_none());
     }
 
     #[test]

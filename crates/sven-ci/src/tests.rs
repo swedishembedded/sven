@@ -70,7 +70,22 @@ mod tests {
         assert_eq!(w.steps.len(), 2);
     }
 
-    // ── Model name parsing (provider/model format) ────────────────────────────
+    // ── resolve_model_cfg ─────────────────────────────────────────────────────
+
+    use crate::runner::resolve_model_cfg;
+    use sven_config::ModelConfig;
+
+    fn openai_base() -> ModelConfig {
+        // This is what the default Config produces: provider=openai with
+        // api_key_env pointing at OPENAI_API_KEY.
+        ModelConfig {
+            provider: "openai".into(),
+            name: "gpt-4o".into(),
+            api_key_env: Some("OPENAI_API_KEY".into()),
+            api_key: None,
+            ..ModelConfig::default()
+        }
+    }
 
     #[test]
     fn slash_separated_model_splits_provider_and_name() {
@@ -84,6 +99,42 @@ mod tests {
     fn bare_model_name_has_no_slash() {
         let spec = "gpt-4o";
         assert!(spec.split_once('/').is_none(), "bare name has no slash");
+    }
+
+    #[test]
+    fn provider_change_clears_inherited_api_key_env() {
+        // Regression: switching provider=openai → anthropic must NOT carry over
+        // OPENAI_API_KEY; doing so sends the wrong key and gets a 401.
+        let cfg = resolve_model_cfg(&openai_base(), "anthropic/claude-sonnet-4-5");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.name, "claude-sonnet-4-5");
+        assert!(
+            cfg.api_key_env.is_none(),
+            "api_key_env must be cleared when provider changes (was OPENAI_API_KEY, now anthropic)"
+        );
+        assert!(cfg.api_key.is_none(), "api_key must be cleared when provider changes");
+    }
+
+    #[test]
+    fn same_provider_model_override_keeps_api_key_env() {
+        // When only the model name changes within the same provider, the key config
+        // must be preserved (user may have set a custom key for their OpenAI account).
+        let cfg = resolve_model_cfg(&openai_base(), "gpt-4o-mini");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o-mini");
+        assert_eq!(
+            cfg.api_key_env.as_deref(),
+            Some("OPENAI_API_KEY"),
+            "api_key_env must be kept when provider does not change"
+        );
+    }
+
+    #[test]
+    fn bare_provider_override_clears_api_key_env() {
+        // "anthropic" alone (no model) should still clear the inherited key env.
+        let cfg = resolve_model_cfg(&openai_base(), "anthropic");
+        assert_eq!(cfg.provider, "anthropic");
+        assert!(cfg.api_key_env.is_none(), "api_key_env must be cleared for bare provider change");
     }
 
     // ── Step label extraction ─────────────────────────────────────────────────

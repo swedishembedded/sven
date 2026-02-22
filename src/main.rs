@@ -118,11 +118,12 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
         i += 1;
         let label = step.label.as_deref().unwrap_or("(unlabelled)");
         let mode = step.options.mode.as_deref().unwrap_or("(inherit)");
+        let provider = step.options.provider.as_deref().unwrap_or("(inherit)");
         let model = step.options.model.as_deref().unwrap_or("(inherit)");
         let timeout = step.options.timeout_secs
             .map(|t| format!("{t}s"))
             .unwrap_or_else(|| "(inherit)".to_string());
-        println!("  Step {i}/{total}: {label:?}  mode={mode}  model={model}  timeout={timeout}");
+        println!("  Step {i}/{total}: {label:?}  mode={mode}  provider={provider}  model={model}  timeout={timeout}");
         if !step.content.is_empty() {
             let preview = step.content.chars().take(80).collect::<String>();
             let ellipsis = if step.content.chars().count() > 80 { "…" } else { "" };
