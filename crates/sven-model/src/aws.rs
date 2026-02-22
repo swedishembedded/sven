@@ -88,6 +88,14 @@ impl crate::ModelProvider for BedrockProvider {
         for m in &req.messages {
             if m.role == Role::System {
                 if let Some(t) = m.as_text() {
+                    // Bedrock Converse has a single system array; append dynamic
+                    // context to the first system text block.
+                    if let Some(suffix) = &req.system_dynamic_suffix {
+                        if !suffix.trim().is_empty() {
+                            system_parts.push(json!({ "text": format!("{t}\n\n{suffix}") }));
+                            continue;
+                        }
+                    }
                     system_parts.push(json!({ "text": t }));
                 }
                 continue;
@@ -302,6 +310,8 @@ impl crate::ModelProvider for BedrockProvider {
             events.push(Ok(ResponseEvent::Usage {
                 input_tokens: usage["inputTokens"].as_u64().unwrap_or(0) as u32,
                 output_tokens: usage["outputTokens"].as_u64().unwrap_or(0) as u32,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
             }));
         }
 

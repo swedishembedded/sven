@@ -257,7 +257,7 @@ mod agent_tests {
     async fn token_usage_event_emitted() {
         let model = ScriptedMockProvider::new(vec![vec![
             ResponseEvent::TextDelta("reply".into()),
-            ResponseEvent::Usage { input_tokens: 42, output_tokens: 17 },
+            ResponseEvent::Usage { input_tokens: 42, output_tokens: 17, cache_read_tokens: 0, cache_write_tokens: 0 },
             ResponseEvent::Done,
         ]]);
         let mut agent = default_agent(model);
@@ -270,6 +270,34 @@ mod agent_tests {
             if let AgentEvent::TokenUsage { input, output, .. } = e { Some((*input, *output)) } else { None }
         });
         assert_eq!(usage, Some((42, 17)));
+    }
+
+    #[tokio::test]
+    async fn cache_tokens_propagated_to_agent_event() {
+        let model = ScriptedMockProvider::new(vec![vec![
+            ResponseEvent::TextDelta("cached reply".into()),
+            ResponseEvent::Usage {
+                input_tokens: 1000,
+                output_tokens: 50,
+                cache_read_tokens: 800,
+                cache_write_tokens: 200,
+            },
+            ResponseEvent::Done,
+        ]]);
+        let mut agent = default_agent(model);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit("q", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        let cache = events.iter().find_map(|e| {
+            if let AgentEvent::TokenUsage { cache_read, cache_write, .. } = e {
+                Some((*cache_read, *cache_write))
+            } else {
+                None
+            }
+        });
+        assert_eq!(cache, Some((800, 200)));
     }
 
     // ── Multimodal input ─────────────────────────────────────────────────────

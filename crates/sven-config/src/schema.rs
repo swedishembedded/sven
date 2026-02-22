@@ -46,6 +46,26 @@ pub struct ModelConfig {
     /// AWS region override (also honoured via AWS_DEFAULT_REGION env var).
     pub aws_region: Option<String>,
 
+    // ── Prompt caching ────────────────────────────────────────────────────────
+    /// Attach an explicit cache-control marker to the system message.
+    ///
+    /// **Anthropic**: adds `"cache_control": {"type": "ephemeral"}` to the
+    /// system block, which tells the API to cache the prefix up to and
+    /// including that block.  Anthropic charges a one-time write fee and
+    /// subsequent calls save ~90% on cached input tokens.
+    ///
+    /// **Other providers**: OpenAI and Google cache automatically; this flag
+    /// has no effect for those providers.
+    #[serde(default)]
+    pub cache_system_prompt: bool,
+
+    /// Use the extended (1-hour) cache TTL instead of the default 5-minute
+    /// window.  Only applies when `cache_system_prompt = true` and the
+    /// provider is Anthropic.  Requires the `anthropic-beta: extended-cache-ttl-2025-04-11`
+    /// header.
+    #[serde(default)]
+    pub extended_cache_time: bool,
+
     // ── Provider-specific extras ──────────────────────────────────────────────
     /// Free-form provider-specific options forwarded as-is to the driver.
     /// Useful for headers or parameters not covered by the standard fields.
@@ -72,6 +92,8 @@ impl Default for ModelConfig {
             azure_deployment: None,
             azure_api_version: None,
             aws_region: None,
+            cache_system_prompt: false,
+            extended_cache_time: false,
             driver_options: serde_json::Value::Null,
             mock_responses_file: None,
         }

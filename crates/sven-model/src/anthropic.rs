@@ -16,6 +16,11 @@ pub struct AnthropicProvider {
     base_url: String,
     max_tokens: u32,
     temperature: f32,
+    /// Attach a `cache_control` block to the system message so Anthropic
+    /// caches the prompt prefix, reducing input-token costs on repeated calls.
+    cache_system_prompt: bool,
+    /// Use the 1-hour extended TTL instead of the default 5-minute window.
+    extended_cache_time: bool,
     client: reqwest::Client,
 }
 
@@ -27,12 +32,26 @@ impl AnthropicProvider {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Self {
+        Self::with_cache(model, api_key, base_url, max_tokens, temperature, false, false)
+    }
+
+    pub fn with_cache(
+        model: String,
+        api_key: Option<String>,
+        base_url: Option<String>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        cache_system_prompt: bool,
+        extended_cache_time: bool,
+    ) -> Self {
         Self {
             model,
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
             max_tokens: max_tokens.unwrap_or(4096),
             temperature: temperature.unwrap_or(0.2),
+            cache_system_prompt,
+            extended_cache_time,
             client: reqwest::Client::new(),
         }
     }
@@ -72,19 +91,80 @@ impl crate::ModelProvider for AnthropicProvider {
             "temperature": self.temperature,
             "stream": req.stream,
         });
-        if !system_text.is_empty() {
-            body["system"] = json!(system_text);
+        if !system_text.is_empty() || req.system_dynamic_suffix.is_some() {
+            if self.cache_system_prompt {
+                // Build an array of system content blocks.
+                //
+                // Block 1 — stable prefix WITH cache_control (gets cached).
+                //   • Default (5-min TTL): {"type": "ephemeral"} – no ttl field.
+                //   • Extended (1-hour TTL): {"type": "ephemeral", "ttl": "1h"}.
+                // Block 2 — volatile context WITHOUT cache_control (not cached).
+                //   Git/CI info that changes between sessions lives here so the
+                //   stable prefix can be reused across different sessions.
+                let cache_control = if self.extended_cache_time {
+                    json!({ "type": "ephemeral", "ttl": "1h" })
+                } else {
+                    json!({ "type": "ephemeral" })
+                };
+
+                let mut system_blocks: Vec<Value> = Vec::new();
+                if !system_text.is_empty() {
+                    system_blocks.push(json!({
+                        "type": "text",
+                        "text": system_text,
+                        "cache_control": cache_control,
+                    }));
+                }
+                // Dynamic context (git branch/commit, CI env) in a second block
+                // without cache_control so it does not pollute the cached prefix.
+                if let Some(dynamic) = &req.system_dynamic_suffix {
+                    if !dynamic.trim().is_empty() {
+                        system_blocks.push(json!({
+                            "type": "text",
+                            "text": dynamic,
+                        }));
+                    }
+                }
+                if !system_blocks.is_empty() {
+                    body["system"] = json!(system_blocks);
+                }
+            } else {
+                // Caching disabled: merge dynamic suffix into system text.
+                let combined = match &req.system_dynamic_suffix {
+                    Some(d) if !d.trim().is_empty() => {
+                        format!("{}\n\n{}", system_text, d)
+                    }
+                    _ => system_text,
+                };
+                if !combined.is_empty() {
+                    body["system"] = json!(combined);
+                }
+            }
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);
         }
 
-        debug!(model = %self.model, "sending anthropic request");
+        debug!(
+            model = %self.model,
+            cache_system_prompt = self.cache_system_prompt,
+            "sending anthropic request",
+        );
 
-        let resp = self.client
+        let mut request_builder = self.client
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", key)
-            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-version", "2023-06-01");
+
+        // Prompt caching requires the beta header for Claude 3 / 3.5 Sonnet
+        // (original).  It is safe to send it unconditionally for all claude-3+
+        // models; newer models ignore it.
+        if self.cache_system_prompt {
+            request_builder = request_builder
+                .header("anthropic-beta", "prompt-caching-2024-07-31");
+        }
+
+        let resp = request_builder
             .json(&body)
             .send()
             .await
@@ -149,6 +229,8 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                 return Ok(ResponseEvent::Usage {
                     input_tokens: 0,
                     output_tokens: usage["output_tokens"].as_u64().unwrap_or(0) as u32,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
                 });
             }
             Ok(ResponseEvent::TextDelta(String::new()))
@@ -158,6 +240,11 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                 return Ok(ResponseEvent::Usage {
                     input_tokens: usage["input_tokens"].as_u64().unwrap_or(0) as u32,
                     output_tokens: 0,
+                    // Anthropic reports these only in message_start.
+                    cache_read_tokens: usage["cache_read_input_tokens"]
+                        .as_u64().unwrap_or(0) as u32,
+                    cache_write_tokens: usage["cache_creation_input_tokens"]
+                        .as_u64().unwrap_or(0) as u32,
                 });
             }
             Ok(ResponseEvent::TextDelta(String::new()))
@@ -307,7 +394,32 @@ mod tests {
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 42, output_tokens: 0 }),
+            matches!(ev, ResponseEvent::Usage { input_tokens: 42, output_tokens: 0, .. }),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn message_start_parses_cache_tokens() {
+        let v = serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": 80,
+                    "cache_creation_input_tokens": 20
+                }
+            }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage {
+                input_tokens: 100,
+                cache_read_tokens: 80,
+                cache_write_tokens: 20,
+                ..
+            }),
             "unexpected: {ev:?}"
         );
     }
@@ -384,7 +496,7 @@ mod tests {
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 0, output_tokens: 88 }),
+            matches!(ev, ResponseEvent::Usage { input_tokens: 0, output_tokens: 88, .. }),
             "unexpected: {ev:?}"
         );
     }

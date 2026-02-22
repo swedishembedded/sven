@@ -327,11 +327,19 @@ pub struct ToolSchema {
 }
 
 /// Request sent to a model provider.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSchema>,
     pub stream: bool,
+    /// Dynamic context (e.g. git branch/commit, CI info) that should NOT be
+    /// included in the cached portion of the system prompt.
+    ///
+    /// When `None`, all context is already in `messages[0]` (system message)
+    /// as usual.  When `Some`, the Anthropic provider appends this as a second
+    /// system block *without* `cache_control`, so only the stable prefix is
+    /// cached.  Other providers append it to the system message text.
+    pub system_dynamic_suffix: Option<String>,
 }
 
 /// A single streamed event from the model.
@@ -350,7 +358,14 @@ pub enum ResponseEvent {
     /// Accumulated into a Thinking segment and collapsed by default in the UI.
     ThinkingDelta(String),
     /// Final usage statistics
-    Usage { input_tokens: u32, output_tokens: u32 },
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+        /// Tokens served from the provider's prompt cache (read hit).
+        cache_read_tokens: u32,
+        /// Tokens written into the provider's prompt cache (write/creation).
+        cache_write_tokens: u32,
+    },
     /// The stream finished normally
     Done,
     /// A recoverable error (non-fatal warning)
@@ -362,6 +377,10 @@ pub enum ResponseEvent {
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Tokens served from the provider's prompt cache (read hit).
+    pub cache_read_tokens: u32,
+    /// Tokens written into the provider's prompt cache (write/creation).
+    pub cache_write_tokens: u32,
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

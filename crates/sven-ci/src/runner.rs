@@ -648,8 +648,14 @@ fn handle_event(
                 questions.join(" | ")
             ));
         }
+        AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
+            if cache_read > 0 || cache_write > 0 {
+                write_stderr(&format!(
+                    "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
+                ));
+            }
+        }
         AgentEvent::TurnComplete
-        | AgentEvent::TokenUsage { .. }
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::ThinkingDelta(_)
         | AgentEvent::ThinkingComplete(_) => {}

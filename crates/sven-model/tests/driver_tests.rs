@@ -51,6 +51,7 @@ impl DriverTestHarness {
             messages: vec![Message::user("Reply with exactly: 'hello'")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         };
 
         let mut stream = provider.complete(req).await?;
@@ -90,6 +91,7 @@ impl DriverTestHarness {
             )],
             tools: vec![],
             stream: true,
+            ..Default::default()
         };
 
         let mut stream = provider.complete(req).await?;
@@ -143,6 +145,7 @@ impl DriverTestHarness {
             )],
             tools: vec![tool],
             stream: true,
+            ..Default::default()
         };
 
         let mut stream = provider.complete(req).await?;

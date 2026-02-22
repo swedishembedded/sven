@@ -266,6 +266,10 @@ impl Agent {
             messages,
             tools,
             stream: true,
+            // Carry volatile context (git/CI) separately so providers that
+            // support prompt caching (Anthropic) can put it in an uncached
+            // system block while the stable prefix stays cached.
+            system_dynamic_suffix: self.dynamic_context(),
         };
 
         let mut stream = self.model.complete(req).await
@@ -296,11 +300,13 @@ impl Agent {
                         if !name.is_empty() { ptc.name = name; }
                     }
                 }
-                ResponseEvent::Usage { input_tokens, output_tokens } => {
+                ResponseEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
                     let _ = tx.send(AgentEvent::TokenUsage {
                         input: input_tokens,
                         output: output_tokens,
                         context_total: self.session.token_count,
+                        cache_read: cache_read_tokens,
+                        cache_write: cache_write_tokens,
                     }).await;
                 }
                 ResponseEvent::Done => break,
@@ -334,22 +340,43 @@ impl Agent {
     }
 
     fn system_message(&self, mode: AgentMode) -> Message {
-        let ctx = crate::prompts::PromptContext {
-            project_root: self.runtime.project_root.as_deref(),
-            git_context: self.runtime.git_context_note.as_deref(),
-            project_context_file: self.runtime.project_context_file.as_deref(),
-            ci_context: self.runtime.ci_context_note.as_deref(),
-            append: self.runtime.append_system_prompt.as_deref(),
-        };
-        // Runtime override takes priority over the config-file system_prompt.
+        let ctx = self.prompt_context();
+        // Use the STABLE portion only — volatile context (git/CI) is injected
+        // per-request via `system_dynamic_suffix` so it does not break prompt
+        // caching across sessions.
+        let stable_ctx = ctx.stable_only();
         let custom = self.runtime.system_prompt_override.as_deref()
             .or(self.config.system_prompt.as_deref());
         Message::system(system_prompt(
             mode,
             custom,
             &self.tools.names_for_mode(mode),
-            ctx,
+            stable_ctx,
         ))
+    }
+
+    /// Build a `PromptContext` from the current runtime environment.
+    fn prompt_context(&self) -> crate::prompts::PromptContext<'_> {
+        crate::prompts::PromptContext {
+            project_root: self.runtime.project_root.as_deref(),
+            git_context: self.runtime.git_context_note.as_deref(),
+            project_context_file: self.runtime.project_context_file.as_deref(),
+            ci_context: self.runtime.ci_context_note.as_deref(),
+            append: self.runtime.append_system_prompt.as_deref(),
+        }
+    }
+
+    /// Volatile context (git + CI) formatted for injection as an uncached
+    /// system block.  Returns `None` when no dynamic context is configured.
+    fn dynamic_context(&self) -> Option<String> {
+        // When a custom system prompt override is in use, the caller controls
+        // all content — skip the dynamic injection to avoid duplication.
+        if self.runtime.system_prompt_override.is_some()
+            || self.config.system_prompt.is_some()
+        {
+            return None;
+        }
+        self.prompt_context().dynamic_block()
     }
 
     pub fn session(&self) -> &Session { &self.session }

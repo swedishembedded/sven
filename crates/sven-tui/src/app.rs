@@ -84,6 +84,8 @@ pub struct App {
     /// Name of the tool currently executing (shown in status bar).
     current_tool: Option<String>,
     context_pct: u8,
+    /// Cache hit rate for the last turn (0–100), shown when > 0.
+    cache_hit_pct: u8,
     agent_tx: Option<mpsc::Sender<AgentRequest>>,
     event_rx: Option<mpsc::Receiver<AgentEvent>>,
     pending_nav: bool,
@@ -134,6 +136,7 @@ impl App {
             agent_busy: false,
             current_tool: None,
             context_pct: 0,
+            cache_hit_pct: 0,
             agent_tx: None,
             event_rx: None,
             pending_nav: false,
@@ -298,7 +301,7 @@ impl App {
 
                 draw_status(
                     frame, layout.status_bar, &self.config.model.name,
-                    self.mode, self.context_pct, self.agent_busy,
+                    self.mode, self.context_pct, self.cache_hit_pct, self.agent_busy,
                     self.current_tool.as_deref(), ascii,
                 );
 
@@ -449,13 +452,22 @@ impl App {
                 self.chat_segments.push(ChatSegment::ContextCompacted { tokens_before, tokens_after });
                 self.rerender_chat().await;
             }
-            AgentEvent::TokenUsage { input, output, .. } => {
+            AgentEvent::TokenUsage { input, output, cache_read, .. } => {
                 let max = 128_000u32;
                 self.context_pct = ((input + output) * 100 / max.max(1)).min(100) as u8;
+                // Cache hit rate = cached / total_input * 100
+                self.cache_hit_pct = if input > 0 && cache_read > 0 {
+                    (cache_read * 100 / input).min(100) as u8
+                } else {
+                    0
+                };
             }
             AgentEvent::TurnComplete => {
                 self.agent_busy = false;
                 self.current_tool = None;
+                // Clear per-turn cache indicator so it only shows when the
+                // provider actively reports cache hits for the current turn.
+                self.cache_hit_pct = 0;
                 if let Some(nvim_bridge) = &self.nvim_bridge {
                     let mut bridge = nvim_bridge.lock().await;
                     if let Err(e) = bridge.set_modifiable(true).await {

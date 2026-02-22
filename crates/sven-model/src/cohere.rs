@@ -69,7 +69,15 @@ impl crate::ModelProvider for CohereProvider {
             match m.role {
                 Role::System => {
                     if let Some(t) = m.as_text() {
-                        system_text = t.to_string();
+                        system_text = if let Some(suffix) = &req.system_dynamic_suffix {
+                            if !suffix.trim().is_empty() {
+                                format!("{t}\n\n{suffix}")
+                            } else {
+                                t.to_string()
+                            }
+                        } else {
+                            t.to_string()
+                        };
                     }
                 }
                 _ => {
@@ -218,7 +226,12 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
                     .as_u64()
                     .or_else(|| usage["tokens"]["output_tokens"].as_u64())
                     .unwrap_or(0) as u32;
-                return Ok(ResponseEvent::Usage { input_tokens, output_tokens });
+                return Ok(ResponseEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                });
             }
             Ok(ResponseEvent::Done)
         }
@@ -274,7 +287,7 @@ mod tests {
         });
         let ev = parse_cohere_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 20, output_tokens: 10 }),
+            matches!(ev, ResponseEvent::Usage { input_tokens: 20, output_tokens: 10, .. }),
             "unexpected: {ev:?}"
         );
     }

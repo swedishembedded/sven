@@ -86,6 +86,14 @@ impl crate::ModelProvider for GoogleProvider {
             match m.role {
                 Role::System => {
                     if let Some(t) = m.as_text() {
+                        // Append dynamic context directly to the system text;
+                        // Gemini does not have a separate uncached-block concept.
+                        if let Some(suffix) = &req.system_dynamic_suffix {
+                            if !suffix.trim().is_empty() {
+                                system_parts.push(json!({ "text": format!("{t}\n\n{suffix}") }));
+                                continue;
+                            }
+                        }
                         system_parts.push(json!({ "text": t }));
                     }
                 }
@@ -273,9 +281,14 @@ fn message_to_gemini_parts(
 fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage metadata
     if let Some(meta) = v.get("usageMetadata") {
+        // Google Gemini reports cached tokens in cachedContentTokenCount
+        let cache_read_tokens = meta["cachedContentTokenCount"]
+            .as_u64().unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: meta["promptTokenCount"].as_u64().unwrap_or(0) as u32,
             output_tokens: meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens,
+            cache_write_tokens: 0,
         });
     }
 
@@ -344,7 +357,7 @@ mod tests {
             }
         });
         let ev = parse_gemini_chunk(&v).unwrap();
-        assert!(matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50 }));
+        assert!(matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50, .. }));
     }
 
     #[test]

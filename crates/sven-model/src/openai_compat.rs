@@ -227,7 +227,24 @@ impl crate::ModelProvider for OpenAICompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        let messages: Vec<Value> = build_openai_messages(&req.messages);
+        // Merge dynamic suffix into the system message before serialization.
+        // OpenAI has a single "system" message; there is no separate uncached
+        // block concept, so we simply append the volatile context to the text.
+        let messages: Vec<Value> = if let Some(suffix) = &req.system_dynamic_suffix {
+            let mut msgs = req.messages.clone();
+            if let Some(sys) = msgs.first_mut() {
+                if sys.role == crate::Role::System {
+                    use crate::MessageContent;
+                    if let MessageContent::Text(t) = &sys.content {
+                        let combined = format!("{t}\n\n{suffix}");
+                        sys.content = MessageContent::Text(combined);
+                    }
+                }
+            }
+            build_openai_messages(&msgs)
+        } else {
+            build_openai_messages(&req.messages)
+        };
 
         let tools: Vec<Value> = req.tools.iter().map(|t| json!({
             "type": "function",
@@ -315,9 +332,17 @@ fn role_str(r: &Role) -> &'static str {
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage-only chunk (emitted when stream_options.include_usage = true)
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
+        // OpenAI reports cached tokens in prompt_tokens_details.cached_tokens
+        let cache_read_tokens = usage
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens,
+            cache_write_tokens: 0,
         });
     }
 
@@ -543,7 +568,28 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50 }),
+            matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50, .. }),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_usage_event_with_cached_tokens() {
+        let v = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 200,
+                "completion_tokens": 40,
+                "prompt_tokens_details": { "cached_tokens": 150 }
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(ev, ResponseEvent::Usage {
+                input_tokens: 200,
+                output_tokens: 40,
+                cache_read_tokens: 150,
+                ..
+            }),
             "unexpected event: {ev:?}"
         );
     }

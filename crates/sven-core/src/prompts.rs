@@ -8,13 +8,54 @@ pub struct PromptContext<'a> {
     /// Absolute path to the project root (from `.git` detection).
     pub project_root: Option<&'a Path>,
     /// Pre-formatted git context (branch, commit, dirty status).
+    ///
+    /// **Caching note**: this field is *volatile* — it changes on every commit
+    /// and with every file edit (dirty count).  When prompt caching is enabled
+    /// this content is placed in a *separate, uncached* system block so that
+    /// the stable prefix remains cacheable across sessions.
     pub git_context: Option<&'a str>,
     /// Contents of the project context file (AGENTS.md / .sven/context.md).
     pub project_context_file: Option<&'a str>,
     /// Pre-formatted CI environment block.
+    ///
+    /// **Caching note**: like `git_context`, this is volatile between CI runs.
     pub ci_context: Option<&'a str>,
     /// Text appended verbatim after the default Guidelines section.
     pub append: Option<&'a str>,
+}
+
+impl<'a> PromptContext<'a> {
+    /// Return a version of this context with the volatile fields cleared.
+    ///
+    /// Used to build the *stable* (cacheable) portion of the system prompt.
+    pub fn stable_only(&self) -> Self {
+        Self {
+            project_root: self.project_root,
+            git_context: None,
+            project_context_file: self.project_context_file,
+            ci_context: None,
+            append: self.append,
+        }
+    }
+
+    /// Format the volatile fields (git + CI context) as a block suitable for
+    /// appending to the system prompt outside the cached region.
+    ///
+    /// Returns `None` when neither git nor CI context is present.
+    pub fn dynamic_block(&self) -> Option<String> {
+        let git = self.git_context
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string());
+        let ci = self.ci_context
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string());
+        match (git, ci) {
+            (None, None) => None,
+            (Some(g), None) => Some(g),
+            (None, Some(c)) => Some(c),
+            (Some(g), Some(c)) => Some(format!("{g}\n\n{c}")),
+        }
+    }
 }
 
 /// Build the system prompt for the given agent mode.

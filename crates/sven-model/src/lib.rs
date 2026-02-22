@@ -56,12 +56,14 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             resolved_max_tokens,
             cfg.temperature,
         ))),
-        "anthropic" => Ok(Box::new(AnthropicProvider::new(
+        "anthropic" => Ok(Box::new(AnthropicProvider::with_cache(
             cfg.name.clone(),
             key(),
             cfg.base_url.clone(),
             resolved_max_tokens,
             cfg.temperature,
+            cfg.cache_system_prompt,
+            cfg.extended_cache_time,
         ))),
         "google" => Ok(Box::new(google::GoogleProvider::new(
             cfg.name.clone(),

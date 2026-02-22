@@ -213,7 +213,7 @@ impl YamlMockProvider {
 fn text_events(text: &str) -> Vec<anyhow::Result<ResponseEvent>> {
     vec![
         Ok(ResponseEvent::TextDelta(text.to_string())),
-        Ok(ResponseEvent::Usage { input_tokens: 5, output_tokens: text.len() as u32 / 4 + 1 }),
+        Ok(ResponseEvent::Usage { input_tokens: 5, output_tokens: text.len() as u32 / 4 + 1, cache_read_tokens: 0, cache_write_tokens: 0 }),
         Ok(ResponseEvent::Done),
     ]
 }
@@ -272,8 +272,8 @@ responses:
     fn req(user: &str) -> CompletionRequest {
         CompletionRequest {
             messages: vec![Message::user(user)],
-            tools: vec![],
             stream: true,
+            ..Default::default()
         }
     }
 
@@ -283,8 +283,8 @@ responses:
                 Message::user(user),
                 Message::tool_result("tc-1", "ok"),
             ],
-            tools: vec![],
             stream: true,
+            ..Default::default()
         }
     }
 

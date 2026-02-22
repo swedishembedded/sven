@@ -120,6 +120,7 @@ async fn openai_compat_sends_correct_request_body() {
             messages: vec![Message::system("be brief"), Message::user("hello")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -157,6 +158,7 @@ async fn openai_compat_sends_bearer_auth_header() {
             messages: vec![Message::user("hi")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -195,6 +197,7 @@ async fn openai_compat_formats_tools_correctly() {
             messages: vec![Message::user("run ls")],
             tools: vec![tool],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -236,6 +239,7 @@ async fn openai_compat_text_and_usage_events_collected() {
             messages: vec![Message::user("say hello")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -246,7 +250,7 @@ async fn openai_compat_text_and_usage_events_collected() {
     while let Some(ev) = stream.next().await {
         match ev.unwrap() {
             ResponseEvent::TextDelta(t) if !t.is_empty() => text.push_str(&t),
-            ResponseEvent::Usage { input_tokens: 10, output_tokens: 5 } => usage_seen = true,
+            ResponseEvent::Usage { input_tokens: 10, output_tokens: 5, .. } => usage_seen = true,
             ResponseEvent::Done => { done_seen = true; break; }
             _ => {}
         }
@@ -283,6 +287,7 @@ async fn openai_compat_tool_call_events_collected() {
                 parameters: serde_json::json!({"type":"object"}),
             }],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -329,6 +334,7 @@ async fn openai_compat_non_200_response_returns_error() {
             messages: vec![Message::user("hi")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await;
 
@@ -361,6 +367,7 @@ async fn azure_sends_api_key_header_not_bearer() {
             messages: vec![Message::user("hi")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -411,6 +418,7 @@ async fn anthropic_sends_correct_request_format() {
             messages: vec![Message::system("be brief"), Message::user("hello")],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -479,6 +487,7 @@ async fn anthropic_tools_use_input_schema_not_parameters() {
                 parameters: serde_json::json!({"type":"object","properties":{"cmd":{"type":"string"}}}),
             }],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -516,6 +525,7 @@ async fn anthropic_tool_result_message_mapped_to_user_role() {
             ],
             tools: vec![],
             stream: true,
+            ..Default::default()
         })
         .await
         .unwrap();

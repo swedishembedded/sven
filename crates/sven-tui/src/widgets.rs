@@ -42,6 +42,7 @@ pub fn draw_status(
     model_name: &str,
     mode: AgentMode,
     context_pct: u8,
+    cache_hit_pct: u8,
     agent_busy: bool,
     current_tool: Option<&str>,
     ascii: bool,
@@ -60,6 +61,16 @@ pub fn draw_status(
         Span::raw("")
     };
 
+    // Show cache hit rate only when the provider is reporting cached tokens.
+    let cache_span: Span<'static> = if cache_hit_pct > 0 {
+        Span::styled(
+            format!(" {separator} cache:{cache_hit_pct}%"),
+            Style::default().fg(Color::Green),
+        )
+    } else {
+        Span::raw("")
+    };
+
     let line = Line::from(vec![
         Span::styled(
             format!(" {busy_indicator}"),
@@ -70,6 +81,7 @@ pub fn draw_status(
         Span::styled(format!(" {mode_str} "), mode_style(mode)),
         Span::styled(separator, Style::default().fg(Color::DarkGray)),
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
+        cache_span,
         tool_span,
         Span::styled(
             "  F1:help  ^w k:↑chat  ^w j:↓input  click/e:edit  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",

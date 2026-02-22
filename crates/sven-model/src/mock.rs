@@ -24,7 +24,7 @@ impl crate::ModelProvider for MockProvider {
 
         let events: Vec<anyhow::Result<ResponseEvent>> = vec![
             Ok(ResponseEvent::TextDelta(format!("MOCK: {reply}"))),
-            Ok(ResponseEvent::Usage { input_tokens: 10, output_tokens: 10 }),
+            Ok(ResponseEvent::Usage { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0 }),
             Ok(ResponseEvent::Done),
         ];
         Ok(Box::pin(stream::iter(events)))
@@ -72,7 +72,7 @@ impl ScriptedMockProvider {
         let r = reply.into();
         Self::new(vec![vec![
             ResponseEvent::TextDelta(r),
-            ResponseEvent::Usage { input_tokens: 5, output_tokens: 5 },
+            ResponseEvent::Usage { input_tokens: 5, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0 },
             ResponseEvent::Done,
         ]])
     }
@@ -141,7 +141,7 @@ mod tests {
     use crate::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 
     fn empty_req() -> CompletionRequest {
-        CompletionRequest { messages: vec![Message::user("hi")], tools: vec![], stream: true }
+        CompletionRequest { messages: vec![Message::user("hi")], stream: true, ..Default::default() }
     }
 
     #[tokio::test]

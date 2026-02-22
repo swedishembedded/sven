@@ -30,7 +30,15 @@ pub enum AgentEvent {
         tokens_after: usize,
     },
     /// Current token usage update
-    TokenUsage { input: u32, output: u32, context_total: usize },
+    TokenUsage {
+        input: u32,
+        output: u32,
+        context_total: usize,
+        /// Tokens served from the provider's prompt cache this turn.
+        cache_read: u32,
+        /// Tokens written into the provider's prompt cache this turn.
+        cache_write: u32,
+    },
     /// The agent has finished processing the current user turn
     TurnComplete,
     /// A recoverable error occurred
