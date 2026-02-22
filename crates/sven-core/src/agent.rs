@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -178,10 +179,11 @@ impl Agent {
                 break;
             }
 
-            // Execute tool calls and push results
+            // Phase 1: push all assistant tool-call messages (must all come
+            // before any tool-result messages for OpenAI's parallel-tool-call
+            // wire format).
             for tc in &tool_calls {
                 let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
-
                 self.session.push(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {
@@ -192,29 +194,31 @@ impl Agent {
                         },
                     },
                 });
+            }
 
+            // Phase 2: execute all tools (sequentially for now — tools may
+            // have side effects and the registry is not Sync; concurrency can
+            // be added later if the registry is made Arc-safe).
+            let mut outputs = Vec::with_capacity(tool_calls.len());
+            for tc in &tool_calls {
                 let output = self.tools.execute(tc).await;
-
-                // Drain any tool events emitted during this execution
                 self.drain_tool_events(&tx).await;
-
                 let _ = tx.send(AgentEvent::ToolCallFinished {
                     call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
                     output: output.content.clone(),
                     is_error: output.is_error,
                 }).await;
+                outputs.push(output);
+            }
 
-                // Build a tool result message — multipart when the output has images.
+            // Phase 3: push all tool-result messages.
+            for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
                     let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
-                        sven_tools::ToolOutputPart::Text(t) => {
-                            ToolContentPart::Text { text: t.clone() }
-                        }
-                        sven_tools::ToolOutputPart::Image(url) => {
-                            ToolContentPart::Image { image_url: url.clone() }
-                        }
+                        sven_tools::ToolOutputPart::Text(t) => ToolContentPart::Text { text: t.clone() },
+                        sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image { image_url: url.clone() },
                     }).collect();
                     Message::tool_result_with_parts(&tc.id, parts)
                 } else {
@@ -280,7 +284,10 @@ impl Agent {
 
         let mut full_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut pending_tc: Option<PendingToolCall> = None;
+        // Keyed by the parallel-tool-call index from the provider.
+        // OpenAI interleaves chunks for different tool calls by index;
+        // other providers always use index 0.
+        let mut pending_tcs: HashMap<u32, PendingToolCall> = HashMap::new();
 
         while let Some(event) = stream.next().await {
             match event? {
@@ -288,20 +295,15 @@ impl Agent {
                     full_text.push_str(&delta);
                     let _ = tx.send(AgentEvent::TextDelta(delta)).await;
                 }
-                ResponseEvent::ToolCall { id, name, arguments } => {
-                    if !id.is_empty() {
-                        if let Some(ptc) = pending_tc.take() {
-                            tool_calls.push(ptc.finish());
-                        }
-                        pending_tc = Some(PendingToolCall {
-                            id,
-                            name,
-                            args_buf: arguments,
-                        });
-                    } else if let Some(ptc) = &mut pending_tc {
-                        ptc.args_buf.push_str(&arguments);
-                        if !name.is_empty() { ptc.name = name; }
-                    }
+                ResponseEvent::ToolCall { index, id, name, arguments } => {
+                    let ptc = pending_tcs.entry(index).or_insert_with(|| PendingToolCall {
+                        id: String::new(),
+                        name: String::new(),
+                        args_buf: String::new(),
+                    });
+                    if !id.is_empty() { ptc.id = id; }
+                    if !name.is_empty() { ptc.name = name; }
+                    ptc.args_buf.push_str(&arguments);
                 }
                 ResponseEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
                     let _ = tx.send(AgentEvent::TokenUsage {
@@ -320,7 +322,10 @@ impl Agent {
             }
         }
 
-        if let Some(ptc) = pending_tc {
+        // Flush all accumulated parallel tool calls, ordered by index.
+        let mut pending_sorted: Vec<(u32, PendingToolCall)> = pending_tcs.into_iter().collect();
+        pending_sorted.sort_by_key(|(idx, _)| *idx);
+        for (_, ptc) in pending_sorted {
             tool_calls.push(ptc.finish());
         }
 
@@ -418,17 +423,69 @@ impl PendingToolCall {
             match serde_json::from_str(&self.args_buf) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!(
-                        tool_name = %self.name,
-                        tool_call_id = %self.id,
-                        args_buf = %self.args_buf,
-                        error = %e,
-                        "model sent tool call with invalid JSON arguments"
-                    );
-                    serde_json::Value::Null
+                    // Attempt to repair common JSON errors before giving up
+                    match attempt_json_repair(&self.args_buf) {
+                        Ok(v) => {
+                            warn!(
+                                tool_name = %self.name,
+                                tool_call_id = %self.id,
+                                "repaired invalid JSON arguments from model"
+                            );
+                            v
+                        }
+                        Err(_) => {
+                            warn!(
+                                tool_name = %self.name,
+                                tool_call_id = %self.id,
+                                args_buf = %self.args_buf,
+                                error = %e,
+                                "model sent tool call with invalid JSON arguments"
+                            );
+                            serde_json::Value::Null
+                        }
+                    }
                 }
             }
         };
         ToolCall { id: self.id, name: self.name, args }
     }
+}
+
+/// Attempt to repair common JSON syntax errors.
+/// 
+/// This handles issues like:
+/// - Missing commas between key-value pairs
+/// - Missing quotes around keys or values
+/// - Truncated strings
+fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
+    // Try simple repairs in sequence
+    
+    // 1. Fix missing comma between key-value pairs like: "key1"value": "...
+    // Pattern: "key"VALUE": where VALUE is alphanumeric
+    let repaired = regex::Regex::new(r#""([^"]+)"([a-zA-Z_][a-zA-Z0-9_]*)":\s*"#)
+        .unwrap()
+        .replace_all(json_str, r#""$1", "$2": "#);
+    
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&repaired) {
+        return Ok(v);
+    }
+    
+    // 2. Try adding missing closing quote and brace if JSON ends abruptly
+    if !json_str.trim().ends_with('}') {
+        let mut completed = json_str.to_string();
+        // Count quotes to see if we need a closing quote
+        let quote_count = json_str.chars().filter(|&c| c == '"').count();
+        if quote_count % 2 == 1 {
+            completed.push('"');
+        }
+        if !completed.trim().ends_with('}') {
+            completed.push('}');
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&completed) {
+            return Ok(v);
+        }
+    }
+    
+    // All repair attempts failed
+    anyhow::bail!("JSON repair failed: all repair strategies exhausted")
 }

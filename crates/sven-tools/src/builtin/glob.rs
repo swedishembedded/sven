@@ -54,9 +54,12 @@ impl Tool for GlobTool {
 
         debug!(pattern = %pattern, root = %root, "glob tool");
 
+        // Normalize glob pattern: strip **/ prefix since find is recursive by default
+        let normalized_pattern = pattern.strip_prefix("**/").unwrap_or(&pattern);
+
         let cmd_str = format!(
             "find {} -name '{}' -not -path '*/target/*' -not -path '*/.git/*' | head -{}",
-            root, pattern, max
+            root, normalized_pattern, max
         );
 
         let output = tokio::process::Command::new("sh")
@@ -140,6 +143,32 @@ mod tests {
         assert!(!out.is_error);
         let lines: Vec<&str> = out.content.lines().collect();
         assert!(lines.len() <= 2, "expected at most 2 results, got {}", lines.len());
+    }
+
+    // ── Pattern normalization ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn strips_double_star_prefix() {
+        let t = GlobTool;
+        let out = t.execute(&call(json!({
+            "pattern": "**/*.toml",
+            "root": "/data/agents/sven",
+            "max_results": 5
+        }))).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Cargo.toml"));
+    }
+
+    #[tokio::test]
+    async fn handles_bare_double_star_slash_star() {
+        let t = GlobTool;
+        let out = t.execute(&call(json!({
+            "pattern": "**/*",
+            "root": "/data/agents/sven/crates/sven-tools",
+            "max_results": 10
+        }))).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.content.contains("no matches"));
     }
 
     // ── Error cases ───────────────────────────────────────────────────────────

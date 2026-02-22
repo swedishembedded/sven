@@ -320,6 +320,7 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             let name = fc["name"].as_str().unwrap_or("").to_string();
             let args = serde_json::to_string(&fc["args"]).unwrap_or_default();
             return Ok(ResponseEvent::ToolCall {
+                index: 0,
                 id: name.clone(),
                 name,
                 arguments: args,

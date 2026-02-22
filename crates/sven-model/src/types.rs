@@ -350,11 +350,19 @@ pub struct CompletionRequest {
 pub enum ResponseEvent {
     /// A text delta streamed from the model
     TextDelta(String),
-    /// The model wants to call a tool
+    /// The model wants to call a tool.
+    ///
+    /// OpenAI streams parallel tool calls interleaved by `index` — chunks for
+    /// the same tool call share an index and must be accumulated separately.
+    /// Providers that do not support parallel streaming (Anthropic, Cohere,
+    /// AWS) always emit index 0.
     ToolCall {
+        /// Parallel slot index (0-based).  Chunks belonging to the same tool
+        /// call always carry the same index.
+        index: u32,
         id: String,
         name: String,
-        /// Accumulated JSON arguments (may arrive across multiple deltas)
+        /// Partial JSON arguments for this chunk (accumulate across deltas)
         arguments: String,
     },
     /// A thinking/reasoning delta from the model (extended thinking API).

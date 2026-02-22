@@ -91,6 +91,7 @@ impl ScriptedMockProvider {
             // Round 1 – model emits a tool call
             vec![
                 ResponseEvent::ToolCall {
+                    index: 0,
                     id: tool_id.into(),
                     name: tool_name.into(),
                     arguments: args_json.into(),

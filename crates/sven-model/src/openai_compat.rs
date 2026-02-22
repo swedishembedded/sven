@@ -381,13 +381,17 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     let choice = &v["choices"][0];
     let delta = &choice["delta"];
 
-    // Tool call delta
+    // Tool call delta — OpenAI may send multiple parallel tool calls in one
+    // chunk, each identified by an "index" field.  We only emit the first
+    // element here because each SSE chunk carries exactly one tool-call delta
+    // in practice; the index routes accumulation in the agent.
     if let Some(tool_calls) = delta.get("tool_calls") {
         if let Some(tc) = tool_calls.get(0) {
+            let index = tc["index"].as_u64().unwrap_or(0) as u32;
             let id = tc["id"].as_str().unwrap_or("").to_string();
             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
             let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
-            return Ok(ResponseEvent::ToolCall { id, name, arguments: args });
+            return Ok(ResponseEvent::ToolCall { index, id, name, arguments: args });
         }
     }
 
@@ -403,11 +407,69 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
 ///
 /// Extracted as a free function so it can be unit-tested without making HTTP
 /// requests.
+///
+/// **Parallel tool call coalescing**: OpenAI requires that all tool calls from
+/// one assistant turn appear inside a *single* assistant message as a
+/// `tool_calls` array.  Sven stores each tool call as a separate
+/// `MessageContent::ToolCall` entry internally (easier to work with), so this
+/// function merges consecutive `ToolCall` messages into one JSON object before
+/// sending them to the API.
 pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
     use crate::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
 
-    messages.iter().map(|m| {
-        match &m.content {
+    fn tool_call_to_json(tool_call_id: &str, function: &crate::FunctionCall) -> Value {
+        json!({
+            "id": tool_call_id,
+            "type": "function",
+            "function": {
+                "name": function.name,
+                "arguments": function.arguments,
+            }
+        })
+    }
+
+    fn tool_result_to_json(tool_call_id: &str, content: &ToolResultContent) -> Value {
+        let wire_content: Value = match content {
+            ToolResultContent::Text(t) => json!(t),
+            ToolResultContent::Parts(parts) if !parts.is_empty() => {
+                let arr: Vec<Value> = parts.iter().map(|p| match p {
+                    ToolContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                    ToolContentPart::Image { image_url } => json!({
+                        "type": "image_url",
+                        "image_url": { "url": image_url },
+                    }),
+                }).collect();
+                json!(arr)
+            }
+            ToolResultContent::Parts(_) => json!(""),
+        };
+        json!({ "role": "tool", "tool_call_id": tool_call_id, "content": wire_content })
+    }
+
+    let mut result: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut i = 0;
+
+    while i < messages.len() {
+        let m = &messages[i];
+
+        // Merge consecutive ToolCall messages into one assistant message so
+        // the wire format satisfies OpenAI's parallel-tool-call contract.
+        if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
+            let mut calls = vec![tool_call_to_json(tool_call_id, function)];
+            i += 1;
+            while i < messages.len() {
+                if let MessageContent::ToolCall { tool_call_id, function } = &messages[i].content {
+                    calls.push(tool_call_to_json(tool_call_id, function));
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            result.push(json!({ "role": "assistant", "tool_calls": calls }));
+            continue;
+        }
+
+        let v = match &m.content {
             MessageContent::Text(t) => json!({
                 "role": role_str(&m.role),
                 "content": t,
@@ -426,45 +488,18 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
                 json!({ "role": role_str(&m.role), "content": content })
             }
             MessageContent::ContentParts(_) => {
-                // Empty parts — serialize as empty text to avoid invalid API payloads.
                 json!({ "role": role_str(&m.role), "content": "" })
             }
-            MessageContent::ToolCall { tool_call_id, function } => json!({
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": function.name,
-                        "arguments": function.arguments,
-                    }
-                }]
-            }),
+            MessageContent::ToolCall { .. } => unreachable!("handled above"),
             MessageContent::ToolResult { tool_call_id, content } => {
-                let wire_content: Value = match content {
-                    ToolResultContent::Text(t) => json!(t),
-                    ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                        let arr: Vec<Value> = parts.iter().map(|p| match p {
-                            ToolContentPart::Text { text } => {
-                                json!({ "type": "text", "text": text })
-                            }
-                            ToolContentPart::Image { image_url } => json!({
-                                "type": "image_url",
-                                "image_url": { "url": image_url },
-                            }),
-                        }).collect();
-                        json!(arr)
-                    }
-                    ToolResultContent::Parts(_) => json!(""),
-                };
-                json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": wire_content,
-                })
+                tool_result_to_json(tool_call_id, content)
             }
-        }
-    }).collect()
+        };
+        result.push(v);
+        i += 1;
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -560,6 +595,7 @@ mod tests {
             "choices": [{
                 "delta": {
                     "tool_calls": [{
+                        "index": 0,
                         "id": "call_abc",
                         "function": { "name": "shell", "arguments": "" }
                     }]
@@ -568,8 +604,29 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(&ev, ResponseEvent::ToolCall { id, name, arguments }
-                if id == "call_abc" && name == "shell" && arguments.is_empty()),
+            matches!(&ev, ResponseEvent::ToolCall { index, id, name, arguments }
+                if *index == 0 && id == "call_abc" && name == "shell" && arguments.is_empty()),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_tool_call_nonzero_index() {
+        let v = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 2,
+                        "id": "call_xyz",
+                        "function": { "name": "read_file", "arguments": "" }
+                    }]
+                }
+            }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { index, id, .. }
+                if *index == 2 && id == "call_xyz"),
             "unexpected event: {ev:?}"
         );
     }
@@ -730,5 +787,63 @@ mod tests {
         assert_eq!(content[1]["type"], "image_url");
         // detail should be absent when None
         assert!(content[1]["image_url"]["detail"].is_null());
+    }
+
+    // ── Parallel tool call coalescing ────────────────────────────────────────
+
+    #[test]
+    fn two_consecutive_tool_call_messages_coalesced_into_one_assistant_message() {
+        use crate::{FunctionCall, Message, MessageContent, Role};
+        let msgs = vec![
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall { name: "glob".into(), arguments: r#"{"pattern":"*.c"}"#.into() },
+                },
+            },
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_2".into(),
+                    function: FunctionCall { name: "read_file".into(), arguments: r#"{"path":"main.c"}"#.into() },
+                },
+            },
+            Message::tool_result("call_1", "found 3 files"),
+            Message::tool_result("call_2", "int main() {}"),
+        ];
+        let json = build_openai_messages(&msgs);
+        // Two tool calls → one assistant message + two tool messages = 3 total
+        assert_eq!(json.len(), 3, "expected 3 wire messages, got {}", json.len());
+        assert_eq!(json[0]["role"], "assistant");
+        let calls = json[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["id"], "call_1");
+        assert_eq!(calls[1]["id"], "call_2");
+        assert_eq!(json[1]["role"], "tool");
+        assert_eq!(json[1]["tool_call_id"], "call_1");
+        assert_eq!(json[2]["role"], "tool");
+        assert_eq!(json[2]["tool_call_id"], "call_2");
+    }
+
+    #[test]
+    fn single_tool_call_message_still_works() {
+        use crate::{FunctionCall, Message, MessageContent, Role};
+        let msgs = vec![
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall { name: "shell".into(), arguments: r#"{"command":"ls"}"#.into() },
+                },
+            },
+            Message::tool_result("call_1", "file.txt"),
+        ];
+        let json = build_openai_messages(&msgs);
+        assert_eq!(json.len(), 2);
+        assert_eq!(json[0]["role"], "assistant");
+        let calls = json[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["id"], "call_1");
     }
 }

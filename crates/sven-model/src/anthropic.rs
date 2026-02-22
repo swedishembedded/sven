@@ -204,6 +204,7 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
     let event_type = v["type"].as_str().unwrap_or("");
     match event_type {
         "content_block_delta" => {
+            let index = v["index"].as_u64().unwrap_or(0) as u32;
             let delta = &v["delta"];
             match delta["type"].as_str().unwrap_or("") {
                 "text_delta" => {
@@ -212,17 +213,18 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                 }
                 "input_json_delta" => {
                     let partial = delta["partial_json"].as_str().unwrap_or("").to_string();
-                    Ok(ResponseEvent::ToolCall { id: String::new(), name: String::new(), arguments: partial })
+                    Ok(ResponseEvent::ToolCall { index, id: String::new(), name: String::new(), arguments: partial })
                 }
                 _ => Ok(ResponseEvent::TextDelta(String::new())),
             }
         }
         "content_block_start" => {
+            let index = v["index"].as_u64().unwrap_or(0) as u32;
             let block = &v["content_block"];
             if block["type"].as_str() == Some("tool_use") {
                 let id = block["id"].as_str().unwrap_or("").to_string();
                 let name = block["name"].as_str().unwrap_or("").to_string();
-                Ok(ResponseEvent::ToolCall { id, name, arguments: String::new() })
+                Ok(ResponseEvent::ToolCall { index, id, name, arguments: String::new() })
             } else {
                 Ok(ResponseEvent::TextDelta(String::new()))
             }
@@ -438,12 +440,27 @@ mod tests {
     fn content_block_start_tool_use_emits_tool_call() {
         let v = serde_json::json!({
             "type": "content_block_start",
+            "index": 0,
             "content_block": { "type": "tool_use", "id": "toolu_01", "name": "shell" }
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(&ev, ResponseEvent::ToolCall { id, name, arguments }
-                if id == "toolu_01" && name == "shell" && arguments.is_empty()),
+            matches!(&ev, ResponseEvent::ToolCall { index, id, name, arguments }
+                if *index == 0 && id == "toolu_01" && name == "shell" && arguments.is_empty()),
+            "unexpected: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn content_block_start_tool_use_preserves_index() {
+        let v = serde_json::json!({
+            "type": "content_block_start",
+            "index": 2,
+            "content_block": { "type": "tool_use", "id": "toolu_02", "name": "read_file" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(
+            matches!(&ev, ResponseEvent::ToolCall { index, .. } if *index == 2),
             "unexpected: {ev:?}"
         );
     }

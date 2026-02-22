@@ -224,6 +224,7 @@ mod agent_tests {
         // Scripted to always return a tool call – will exhaust rounds
         let scripts: Vec<Vec<ResponseEvent>> = (0..=5).map(|_| vec![
             ResponseEvent::ToolCall {
+                index: 0,
                 id: "x".into(),
                 name: "shell".into(),
                 arguments: r#"{"command":"echo loop"}"#.into(),

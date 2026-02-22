@@ -183,16 +183,44 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
     }
 }
 
-/// Parse a `<!-- sven: key=value key2=value2 -->` comment into `opts`.
+/// Parse a `<!-- sven: key=value key2=value2 -->` or `<!-- key=value key2=value2 -->` comment into `opts`.
+/// 
+/// Supports both formats:
+/// - `<!-- sven: mode=agent model=gpt-4o -->` (explicit sven: prefix)
+/// - `<!-- mode=agent model=gpt-4o -->` (implicit, auto-detected by presence of known keys)
 fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
-    let start = match comment.find("<!-- sven:") {
-        Some(i) => i + "<!-- sven:".len(),
-        None => return,
+    // Try explicit <!-- sven: ... --> format first
+    let (start, end) = if let Some(i) = comment.find("<!-- sven:") {
+        let start = i + "<!-- sven:".len();
+        match comment[start..].find("-->") {
+            Some(e) => (start, start + e),
+            None => return,
+        }
+    } else {
+        // Try implicit <!-- key=value --> format (must contain at least one known key)
+        if let Some(start_idx) = comment.find("<!--") {
+            let start = start_idx + "<!--".len();
+            match comment[start..].find("-->") {
+                Some(e) => {
+                    let potential_content = comment[start..start + e].trim();
+                    // Only parse if it looks like key=value pairs (contains '=' and known keys)
+                    if potential_content.contains('=') && 
+                       (potential_content.contains("mode") || 
+                        potential_content.contains("model") ||
+                        potential_content.contains("timeout") ||
+                        potential_content.contains("cache_key")) {
+                        (start, start + e)
+                    } else {
+                        return; // Not a step options comment
+                    }
+                }
+                None => return,
+            }
+        } else {
+            return;
+        }
     };
-    let end = match comment[start..].find("-->") {
-        Some(i) => start + i,
-        None => return,
-    };
+
     let inner = comment[start..end].trim();
 
     for token in inner.split_whitespace() {
@@ -447,6 +475,35 @@ mod tests {
         assert!(s.options.mode.is_none(), "old <!-- step: --> syntax must not be parsed");
         // The comment itself should still be stripped from body
         assert!(!s.content.contains("<!-- step:"), "old comment should be stripped from body");
+    }
+
+    #[test]
+    fn implicit_comment_format_works_without_sven_prefix() {
+        // <!-- model=gpt-4o mode=agent --> should work (no sven: prefix needed)
+        let md = "## Step\n<!-- model=gpt-4o mode=agent -->\nDo work.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert_eq!(s.options.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(s.options.mode.as_deref(), Some("agent"));
+        assert!(!s.content.contains("<!--"));
+    }
+
+    #[test]
+    fn implicit_comment_with_only_model_works() {
+        let md = "## Step\n<!-- model=gpt-5.2 -->\nContent.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert_eq!(s.options.model.as_deref(), Some("gpt-5.2"));
+    }
+
+    #[test]
+    fn non_option_html_comments_are_ignored() {
+        // Regular HTML comments without known keys should not be parsed as options
+        let md = "## Step\n<!-- This is just a regular comment -->\nContent.";
+        let mut w = parse_workflow(md);
+        let s = w.steps.pop().unwrap();
+        assert!(s.options.model.is_none());
+        assert!(s.options.mode.is_none());
     }
 
     // ── Full document: H1 + preamble + steps ─────────────────────────────────

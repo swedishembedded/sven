@@ -225,6 +225,7 @@ fn tool_call_events(tool_calls: &[ToolCallDef]) -> Vec<anyhow::Result<ResponseEv
     let mut events: Vec<anyhow::Result<ResponseEvent>> = tool_calls
         .iter()
         .map(|tc| Ok(ResponseEvent::ToolCall {
+            index: 0,
             id: tc.id.clone(),
             name: tc.tool.clone(),
             arguments: tc.args.to_string(),

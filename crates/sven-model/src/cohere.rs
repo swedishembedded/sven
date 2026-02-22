@@ -217,7 +217,7 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
             let id = tc["id"].as_str().unwrap_or("").to_string();
             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
             let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
-            Ok(ResponseEvent::ToolCall { id, name, arguments: args })
+            Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args })
         }
         "message-end" => {
             if let Some(usage) = v.get("delta").and_then(|d| d.get("usage")) {

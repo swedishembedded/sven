@@ -248,7 +248,10 @@ fn convert_sections_to_conversation(
             }
 
             SectionKind::Sven => {
-                history.push(Message::assistant(section.content.to_string().trim()));
+                // Strip HTML metadata comments (<!-- provider: openai, model: gpt-4o -->)
+                // that appear at the start of Sven sections
+                let content = strip_leading_html_comment(&section.content);
+                history.push(Message::assistant(content.trim()));
             }
 
             SectionKind::Tool => {
@@ -332,6 +335,28 @@ fn extract_fenced_block(content: &str, lang: &str) -> Option<String> {
     }
 
     if in_block { Some(result) } else { None }
+}
+
+/// Strip leading HTML comment (metadata) from section content.
+/// 
+/// Example:
+/// ```text
+/// <!-- provider: openai, model: gpt-4o -->
+/// Response text here
+/// ```
+/// 
+/// Returns: `"Response text here"`
+fn strip_leading_html_comment(content: &str) -> String {
+    let trimmed = content.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("<!--") {
+        if let Some(end_pos) = rest.find("-->") {
+            // Found a complete comment, return content after it
+            let after_comment = &rest[end_pos + 3..];
+            return after_comment.to_string();
+        }
+    }
+    // No comment found or incomplete, return as-is
+    content.to_string()
 }
 
 /// Extract the content of a code block from section body (for Tool Result).
@@ -1102,5 +1127,35 @@ mod tests {
         let md = "## User  \nHello\n\n## Sven\nOk\n";
         let conv = parse_conversation(md).unwrap();
         assert_eq!(conv.history.len(), 2);
+    }
+
+    // ── HTML comment stripping ────────────────────────────────────────────────
+
+    #[test]
+    fn strips_html_metadata_comment_from_sven_section() {
+        let md = r#"## User
+What is 2+2?
+
+<!-- provider: openai, model: gpt-4o -->
+## Sven
+The answer is 4.
+"#;
+        let conv = parse_conversation(md).unwrap();
+        assert_eq!(conv.history.len(), 2);
+        assert_eq!(conv.history[1].as_text(), Some("The answer is 4."));
+        // Ensure the HTML comment is NOT in the message
+        assert!(!conv.history[1].as_text().unwrap().contains("<!--"));
+    }
+
+    #[test]
+    fn preserves_sven_response_without_html_comment() {
+        let md = r#"## User
+Hello
+
+## Sven
+Hi there!
+"#;
+        let conv = parse_conversation(md).unwrap();
+        assert_eq!(conv.history[1].as_text(), Some("Hi there!"));
     }
 }

@@ -302,7 +302,7 @@ impl crate::ModelProvider for BedrockProvider {
                             let id = tu["toolUseId"].as_str().unwrap_or("").to_string();
                             let name = tu["name"].as_str().unwrap_or("").to_string();
                             let args = serde_json::to_string(&tu["input"]).unwrap_or_default();
-                            events.push(Ok(ResponseEvent::ToolCall { id, name, arguments: args }));
+                            events.push(Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args }));
                         }
                     }
                 }

@@ -39,15 +39,10 @@ impl Tool for GlobFileSearchTool {
     fn description(&self) -> &str {
         "Search for files matching a glob pattern recursively under a root directory. \
          Returns matching file paths sorted by modification time (newest first).\n\
-         \n\
-         Pattern tips:\n\
-         - Use '*.elf' to find all ELF files (not '**/*.elf' — path prefix is stripped automatically)\n\
-         - Use '*.toml' for TOML files, 'zephyr.elf' for exact filename\n\
-         - The search already recurses into all subdirectories\n\
-         \n\
-         Examples:\n\
-           glob_file_search({\"pattern\": \"*.elf\", \"root\": \"/project\"})\n\
-           glob_file_search({\"pattern\": \"*.toml\"})"
+         Pattern tips: use '*.elf', '*.toml', 'zephyr.elf' — path prefix stripped automatically.\n\
+         IMPORTANT: pattern must be a single string, not a comma-separated list.\n\
+         Right: {\"pattern\": \"*.c\", \"root\": \"/data/ng-iot-platform\", \"max_results\": 200}\n\
+         Wrong: {\"pattern\": \"CMakeLists.txt,west.yml\"} (comma list won't match any files)"
     }
 
     fn parameters_schema(&self) -> Value {
