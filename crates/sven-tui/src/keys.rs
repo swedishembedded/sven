@@ -40,6 +40,10 @@ pub enum Action {
     InputMoveWordRight,
     InputMoveLineStart,
     InputMoveLineEnd,
+    InputMoveLineUp,
+    InputMoveLineDown,
+    InputPageUp,
+    InputPageDown,
     InputDeleteToEnd,
     InputDeleteToStart,
     Submit,
@@ -52,6 +56,8 @@ pub enum Action {
     EditMessageAtCursor,
     EditMessageConfirm,
     EditMessageCancel,
+    /// Delete the queued message at the current chat scroll position.
+    DeleteQueuedMessage,
 
     // Buffer submit (Neovim integration)
     SubmitBufferToAgent,
@@ -109,6 +115,10 @@ pub fn map_key(
             KeyCode::Right if ctrl => Some(Action::InputMoveWordRight),
             KeyCode::Left  => Some(Action::InputMoveCursorLeft),
             KeyCode::Right => Some(Action::InputMoveCursorRight),
+            KeyCode::Up    => Some(Action::InputMoveLineUp),
+            KeyCode::Down  => Some(Action::InputMoveLineDown),
+            KeyCode::PageUp   => Some(Action::InputPageUp),
+            KeyCode::PageDown => Some(Action::InputPageDown),
             KeyCode::Home  => Some(Action::InputMoveLineStart),
             KeyCode::End   => Some(Action::InputMoveLineEnd),
             KeyCode::Char('u') if ctrl => Some(Action::InputDeleteToStart),
@@ -151,6 +161,10 @@ pub fn map_key(
         KeyCode::Right if in_input && ctrl      => Some(Action::InputMoveWordRight),
         KeyCode::Left  if in_input              => Some(Action::InputMoveCursorLeft),
         KeyCode::Right if in_input              => Some(Action::InputMoveCursorRight),
+        KeyCode::Up    if in_input              => Some(Action::InputMoveLineUp),
+        KeyCode::Down  if in_input              => Some(Action::InputMoveLineDown),
+        KeyCode::PageUp   if in_input           => Some(Action::InputPageUp),
+        KeyCode::PageDown if in_input           => Some(Action::InputPageDown),
         KeyCode::Home  if in_input              => Some(Action::InputMoveLineStart),
         KeyCode::End   if in_input              => Some(Action::InputMoveLineEnd),
         // Printable characters — only when no ctrl/alt modifier
@@ -171,8 +185,9 @@ pub fn map_key(
         KeyCode::Char('n') if !in_input && plain => Some(Action::SearchNextMatch),
         KeyCode::Char('N') if !in_input          => Some(Action::SearchPrevMatch),
 
-        // Edit message at cursor (chat pane)
+        // Edit / delete message at cursor (chat pane)
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
+        KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteQueuedMessage),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
         KeyCode::Enter if !in_input && ctrl => Some(Action::SubmitBufferToAgent),

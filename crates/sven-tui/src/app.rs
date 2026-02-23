@@ -28,7 +28,10 @@ use crate::{
             parse_markdown_to_messages, segment_bar_style, segment_to_markdown,
         },
         search::SearchState,
-        segment::{messages_for_resubmit, segment_at_line, segment_editable_text, ChatSegment},
+        segment::{
+            messages_for_resubmit, queued_deque_index, segment_at_line, segment_editable_text,
+            ChatSegment,
+        },
     },
     input::{is_reserved_key, to_nvim_notation},
     keys::{map_key, Action},
@@ -132,6 +135,13 @@ pub struct App {
     nvim_quit_notify:   Option<Arc<tokio::sync::Notify>>,
     history_path: Option<PathBuf>,
     no_nvim: bool,
+    /// When `true`, new content from the agent automatically scrolls the chat
+    /// pane to the bottom.  Set to `false` when the user manually scrolls up
+    /// so that streaming does not fight the user's scroll position.
+    auto_scroll: bool,
+    /// Last known rect of the input pane (populated each frame).  Used by the
+    /// mouse handler to route scroll-wheel events to the correct pane.
+    last_input_pane: Rect,
 }
 
 impl App {
@@ -194,6 +204,8 @@ impl App {
             nvim_quit_notify: None,
             history_path,
             no_nvim: opts.no_nvim,
+            auto_scroll: true,
+            last_input_pane: Rect::default(),
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(prompt);
@@ -302,11 +314,12 @@ impl App {
                     self.search.active,
                 );
                 self.chat_height = layout.chat_inner_height().max(1);
-                // Track input pane inner dimensions for scroll adjustment.
+                // Track input pane dimensions for scroll adjustment and mouse routing.
                 self.last_input_inner_width =
                     layout.input_pane.width.saturating_sub(2);
                 self.last_input_inner_height =
                     layout.input_pane.height.saturating_sub(2);
+                self.last_input_pane = layout.input_pane;
             }
 
             // Keep the cursor visible inside the input / edit box before drawing.
@@ -529,9 +542,18 @@ impl App {
                 }
                 self.save_history_async();
                 if let Some(next) = self.queued.pop_front() {
-                    let tx = self.agent_tx.clone().unwrap();
-                    tokio::spawn(async move { let _ = tx.send(AgentRequest::Submit(next)).await; });
-                    self.agent_busy = true;
+                    // Promote the first Queued segment to a committed user message.
+                    if let Some(pos) = self.chat_segments.iter().position(
+                        |s| matches!(s, ChatSegment::Queued(_))
+                    ) {
+                        self.chat_segments[pos] = ChatSegment::Message(Message::user(&next));
+                    } else {
+                        self.chat_segments.push(ChatSegment::Message(Message::user(&next)));
+                    }
+                    self.rerender_chat().await;
+                    self.auto_scroll = true;
+                    self.scroll_to_bottom();
+                    self.send_to_agent(next).await;
                 }
             }
             AgentEvent::Error(msg) => {
@@ -630,9 +652,19 @@ impl App {
 
             Event::Mouse(mouse) => {
                 if self.pager.is_none() {
+                    let over_input = mouse.row >= self.last_input_pane.y
+                        && mouse.row < self.last_input_pane.y + self.last_input_pane.height;
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
-                            if self.nvim_bridge.is_some() {
+                            if over_input {
+                                if self.editing_message_index.is_some() {
+                                    self.edit_scroll_offset =
+                                        self.edit_scroll_offset.saturating_sub(3);
+                                } else {
+                                    self.input_scroll_offset =
+                                        self.input_scroll_offset.saturating_sub(3);
+                                }
+                            } else if self.nvim_bridge.is_some() {
                                 if let Some(nvim_bridge) = &self.nvim_bridge {
                                     let mut bridge = nvim_bridge.lock().await;
                                     let _ = bridge.send_input("<C-y><C-y><C-y>").await;
@@ -642,7 +674,28 @@ impl App {
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            if self.nvim_bridge.is_some() {
+                            if over_input {
+                                let w = self.last_input_inner_width as usize;
+                                let h = self.last_input_inner_height as usize;
+                                if w > 0 && h > 0 {
+                                    let total = crate::input_wrap::wrap_content(
+                                        if self.editing_message_index.is_some() {
+                                            &self.edit_buffer
+                                        } else {
+                                            &self.input_buffer
+                                        },
+                                        w, 0,
+                                    ).lines.len();
+                                    let max = total.saturating_sub(h);
+                                    if self.editing_message_index.is_some() {
+                                        self.edit_scroll_offset =
+                                            (self.edit_scroll_offset + 3).min(max);
+                                    } else {
+                                        self.input_scroll_offset =
+                                            (self.input_scroll_offset + 3).min(max);
+                                    }
+                                }
+                            } else if self.nvim_bridge.is_some() {
                                 if let Some(nvim_bridge) = &self.nvim_bridge {
                                     let mut bridge = nvim_bridge.lock().await;
                                     let _ = bridge.send_input("<C-e><C-e><C-e>").await;
@@ -882,6 +935,17 @@ impl App {
                     }
                 }
             }
+
+            Action::DeleteQueuedMessage => {
+                let line = self.scroll_offset as usize;
+                if let Some(seg_idx) = segment_at_line(&self.segment_line_ranges, line) {
+                    if let Some(q_idx) = queued_deque_index(&self.chat_segments, seg_idx) {
+                        self.queued.remove(q_idx);
+                        self.chat_segments.remove(seg_idx);
+                        self.rerender_chat().await;
+                    }
+                }
+            }
             Action::EditMessageConfirm => {
                 if let Some(i) = self.editing_message_index {
                     let new_content = self.edit_buffer.trim().to_string();
@@ -891,6 +955,15 @@ impl App {
                     self.edit_scroll_offset = 0;
                     self.edit_original_text = None;
                     if new_content.is_empty() {
+                        return false;
+                    }
+                    // Handle Queued segment: update both the segment and the VecDeque.
+                    if let Some(q_idx) = queued_deque_index(&self.chat_segments, i) {
+                        if let Some(entry) = self.queued.get_mut(q_idx) {
+                            *entry = new_content.clone();
+                        }
+                        self.chat_segments[i] = ChatSegment::Queued(new_content);
+                        self.rerender_chat().await;
                         return false;
                     }
                     let seg = match self.chat_segments.get(i) {
@@ -921,13 +994,17 @@ impl App {
             }
             Action::EditMessageCancel => {
                 if let Some(idx) = self.editing_message_index {
-                    if let Some(original) = &self.edit_original_text {
-                        if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
-                            match (&m.role, &mut m.content) {
-                                (Role::User, MessageContent::Text(t)) => { *t = original.clone(); }
-                                (Role::Assistant, MessageContent::Text(t)) => { *t = original.clone(); }
-                                _ => {}
+                    if let Some(original) = self.edit_original_text.clone() {
+                        match self.chat_segments.get_mut(idx) {
+                            Some(ChatSegment::Message(m)) => {
+                                match (&m.role, &mut m.content) {
+                                    (Role::User, MessageContent::Text(t)) => { *t = original; }
+                                    (Role::Assistant, MessageContent::Text(t)) => { *t = original; }
+                                    _ => {}
+                                }
                             }
+                            Some(ChatSegment::Queued(t)) => { *t = original; }
+                            _ => {}
                         }
                         self.build_display_from_segments();
                         self.search.update_matches(&self.chat_lines);
@@ -1031,9 +1108,11 @@ impl App {
                     let _ = bridge.send_input("gg").await;
                 } else {
                     self.scroll_offset = 0;
+                    self.auto_scroll = false;
                 }
             }
             Action::ScrollBottom => {
+                self.auto_scroll = true;
                 self.scroll_to_bottom();
                 self.nvim_scroll_to_bottom().await;
             }
@@ -1134,6 +1213,51 @@ impl App {
             }
             Action::InputMoveLineStart => self.input_cursor = 0,
             Action::InputMoveLineEnd   => self.input_cursor = self.input_buffer.len(),
+            Action::InputMoveLineUp => {
+                let w = self.last_input_inner_width as usize;
+                if w > 0 {
+                    let ws = crate::input_wrap::wrap_content(&self.input_buffer, w, self.input_cursor);
+                    if ws.cursor_row > 0 {
+                        self.input_cursor = crate::input_wrap::byte_offset_at_row_col(
+                            &self.input_buffer, w, ws.cursor_row - 1, ws.cursor_col,
+                        );
+                    }
+                }
+            }
+            Action::InputMoveLineDown => {
+                let w = self.last_input_inner_width as usize;
+                if w > 0 {
+                    let ws = crate::input_wrap::wrap_content(&self.input_buffer, w, self.input_cursor);
+                    if ws.cursor_row + 1 < ws.lines.len() {
+                        self.input_cursor = crate::input_wrap::byte_offset_at_row_col(
+                            &self.input_buffer, w, ws.cursor_row + 1, ws.cursor_col,
+                        );
+                    }
+                }
+            }
+            Action::InputPageUp => {
+                let h = self.last_input_inner_height as usize;
+                if self.editing_message_index.is_some() {
+                    self.edit_scroll_offset = self.edit_scroll_offset.saturating_sub(h);
+                } else {
+                    self.input_scroll_offset = self.input_scroll_offset.saturating_sub(h);
+                }
+            }
+            Action::InputPageDown => {
+                let w = self.last_input_inner_width as usize;
+                let h = self.last_input_inner_height as usize;
+                if w > 0 && h > 0 {
+                    let in_edit = self.editing_message_index.is_some();
+                    let content = if in_edit { &self.edit_buffer } else { &self.input_buffer };
+                    let ws = crate::input_wrap::wrap_content(content, w, 0);
+                    let max = ws.lines.len().saturating_sub(h);
+                    if in_edit {
+                        self.edit_scroll_offset = (self.edit_scroll_offset + h).min(max);
+                    } else {
+                        self.input_scroll_offset = (self.input_scroll_offset + h).min(max);
+                    }
+                }
+            }
             Action::InputDeleteToEnd   => self.input_buffer.truncate(self.input_cursor),
             Action::InputDeleteToStart => {
                 self.input_buffer = self.input_buffer[self.input_cursor..].to_string();
@@ -1148,8 +1272,13 @@ impl App {
                     return true;
                 }
                 if !text.is_empty() {
+                    self.auto_scroll = true;
                     if self.agent_busy {
+                        // Show the queued message immediately in the chat pane.
+                        self.chat_segments.push(ChatSegment::Queued(text.clone()));
                         self.queued.push_back(text);
+                        self.rerender_chat().await;
+                        self.scroll_to_bottom();
                     } else {
                         self.sync_nvim_buffer_to_segments().await;
                         let history = messages_for_resubmit(&self.chat_segments);
@@ -1279,11 +1408,15 @@ impl App {
 
     fn scroll_up(&mut self, n: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
+        self.auto_scroll = false;
     }
 
     fn scroll_down(&mut self, n: u16) {
         let max = (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
         self.scroll_offset = (self.scroll_offset + n).min(max);
+        if self.scroll_offset >= max {
+            self.auto_scroll = true;
+        }
     }
 
     /// Persist the conversation to disk asynchronously.
@@ -1320,7 +1453,7 @@ impl App {
     }
 
     fn scroll_to_bottom(&mut self) {
-        if self.nvim_bridge.is_none() {
+        if self.nvim_bridge.is_none() && self.auto_scroll {
             self.scroll_offset =
                 (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
         }
@@ -1410,12 +1543,17 @@ impl App {
     /// (live preview while the user types).
     fn update_editing_segment_live(&mut self) {
         if let Some(idx) = self.editing_message_index {
-            if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
-                match (&m.role, &mut m.content) {
-                    (Role::User, MessageContent::Text(t)) => { *t = self.edit_buffer.clone(); }
-                    (Role::Assistant, MessageContent::Text(t)) => { *t = self.edit_buffer.clone(); }
-                    _ => {}
+            let new_text = self.edit_buffer.clone();
+            match self.chat_segments.get_mut(idx) {
+                Some(ChatSegment::Message(m)) => {
+                    match (&m.role, &mut m.content) {
+                        (Role::User, MessageContent::Text(t)) => { *t = new_text; }
+                        (Role::Assistant, MessageContent::Text(t)) => { *t = new_text; }
+                        _ => {}
+                    }
                 }
+                Some(ChatSegment::Queued(t)) => { *t = new_text; }
+                _ => {}
             }
             self.build_display_from_segments();
             self.search.update_matches(&self.chat_lines);
@@ -1462,6 +1600,28 @@ impl App {
             Action::InputMoveWordRight => cur = next_word_boundary(&buf, cur),
             Action::InputMoveLineStart => cur = 0,
             Action::InputMoveLineEnd   => cur = buf.len(),
+            Action::InputMoveLineUp => {
+                let w = self.last_input_inner_width as usize;
+                if w > 0 {
+                    let ws = crate::input_wrap::wrap_content(&buf, w, cur);
+                    if ws.cursor_row > 0 {
+                        cur = crate::input_wrap::byte_offset_at_row_col(
+                            &buf, w, ws.cursor_row - 1, ws.cursor_col,
+                        );
+                    }
+                }
+            }
+            Action::InputMoveLineDown => {
+                let w = self.last_input_inner_width as usize;
+                if w > 0 {
+                    let ws = crate::input_wrap::wrap_content(&buf, w, cur);
+                    if ws.cursor_row + 1 < ws.lines.len() {
+                        cur = crate::input_wrap::byte_offset_at_row_col(
+                            &buf, w, ws.cursor_row + 1, ws.cursor_col,
+                        );
+                    }
+                }
+            }
             Action::InputDeleteToEnd   => buf.truncate(cur),
             Action::InputDeleteToStart => {
                 buf = buf[cur..].to_string();

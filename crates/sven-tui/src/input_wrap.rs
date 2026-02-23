@@ -109,6 +109,65 @@ pub fn wrap_content(content: &str, width: usize, cursor_byte: usize) -> WrapStat
     WrapState { lines, cursor_row: c_row, cursor_col: c_col }
 }
 
+/// Given an already-computed `WrapState`, return the byte offset in `content`
+/// that corresponds to visual `(target_row, target_col)`.
+///
+/// If `target_col` exceeds the length of the target visual line the cursor is
+/// placed at the end of that line (clamped).  This matches the behaviour of
+/// most editors when moving vertically across lines of different lengths.
+pub fn byte_offset_at_row_col(content: &str, width: usize, target_row: usize, target_col: usize) -> usize {
+    // Re-run the wrap loop, stopping when we enter the target row and have
+    // consumed `target_col` display columns (or the line ends).
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur_line = String::new();
+    let mut cur_col: usize = 0;
+    let mut cur_byte: usize = 0;
+    // byte-start of each visual line
+    let mut line_start_bytes: Vec<usize> = vec![0];
+
+    for ch in content.chars() {
+        let ch_bytes = ch.len_utf8();
+        let ch_width = if ch == '\n' {
+            0
+        } else {
+            UnicodeWidthChar::width(ch).unwrap_or(1)
+        };
+        let soft_wrap = width > 0 && ch != '\n' && ch_width > 0 && cur_col + ch_width > width;
+        if soft_wrap {
+            lines.push(std::mem::take(&mut cur_line));
+            cur_col = 0;
+            line_start_bytes.push(cur_byte);
+        }
+        if ch == '\n' {
+            lines.push(std::mem::take(&mut cur_line));
+            cur_col = 0;
+            line_start_bytes.push(cur_byte + ch_bytes);
+        } else {
+            cur_line.push(ch);
+            cur_col += ch_width;
+        }
+        cur_byte += ch_bytes;
+    }
+    lines.push(cur_line);
+
+    // Clamp target_row to valid range.
+    let target_row = target_row.min(lines.len().saturating_sub(1));
+    let line_start = line_start_bytes[target_row];
+    let line_text = &lines[target_row];
+
+    // Walk the target line until we reach target_col display columns.
+    let mut col = 0usize;
+    let mut byte_off = line_start;
+    for ch in line_text.chars() {
+        if col >= target_col {
+            break;
+        }
+        col += UnicodeWidthChar::width(ch).unwrap_or(1);
+        byte_off += ch.len_utf8();
+    }
+    byte_off.min(content.len())
+}
+
 /// Adjust `scroll_offset` so that `cursor_row` is inside the visible window.
 ///
 /// * If the cursor is above the window, the window scrolls up.

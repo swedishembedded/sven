@@ -43,6 +43,9 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         ChatSegment::Thinking { content } => {
             format!("\n**Agent:thinking**\n💭 **Thought**\n```\n{}\n```\n", content)
         }
+        ChatSegment::Queued(text) => {
+            format!("---\n\n**You (queued):** {}\n", text)
+        }
     }
 }
 
@@ -143,6 +146,8 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
         },
         ChatSegment::Thinking { .. } =>
             (Some(Style::default().fg(Color::Rgb(160, 100, 200))), false),
+        ChatSegment::Queued(_) =>
+            (Some(Style::default().fg(Color::DarkGray)), true),
         _ => (None, false),
     }
 }
