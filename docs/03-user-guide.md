@@ -115,15 +115,15 @@ buffer. This gives the chat pane full Neovim editing capabilities:
 - Press `Ctrl+Enter` from the chat pane to submit the buffer content as a
   message
 
-If your terminal does not support the Neovim embed, or if you simply prefer the
-plain ratatui view, pass `--no-nvim`:
+Sven defaults to the plain ratatui view.  To enable the embedded Neovim chat
+pane instead, pass `--nvim`:
 
 ```sh
-sven --no-nvim
+sven --nvim
 ```
 
-In `--no-nvim` mode, tool calls and thinking blocks in the history are collapsed
-by default to keep the view compact.
+In the default ratatui mode, tool calls and thinking blocks in the history are
+collapsed by default to keep the view compact.
 
 ---
 

@@ -7,11 +7,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     // Navigation
-    FocusChat,
     FocusInput,
     /// First key of the Ctrl+w nav chord (vim-style window navigation).
     /// The App will watch for a follow-up key to decide the target pane.
     NavPrefix,
+    /// Navigate to the pane above the current one (Ctrl+w k).
+    NavUp,
+    /// Navigate to the pane below the current one (Ctrl+w j).
+    NavDown,
 
     // Scrolling (in chat pane)
     ScrollUp,
@@ -56,8 +59,16 @@ pub enum Action {
     EditMessageAtCursor,
     EditMessageConfirm,
     EditMessageCancel,
-    /// Delete the queued message at the current chat scroll position.
+    /// Delete the currently selected queued message.
     DeleteQueuedMessage,
+    /// Focus the queue panel (shown above the input when there are queued messages).
+    FocusQueue,
+    /// Navigate the queue panel selection up.
+    QueueNavUp,
+    /// Navigate the queue panel selection down.
+    QueueNavDown,
+    /// Start editing the currently selected queued message.
+    QueueEditSelected,
 
     // Buffer submit (Neovim integration)
     SubmitBufferToAgent,
@@ -71,13 +82,15 @@ pub enum Action {
 ///
 /// `pending_nav` — true when a Ctrl+w prefix has been received but not yet
 /// resolved.  In that state only j/k (and Esc to cancel) are meaningful.
-/// `in_edit_mode` — true when editing a message; Enter/Esc confirm/cancel, rest goes to input.
+/// `in_edit_mode` — true when editing a queued message; Enter/Esc confirm/cancel, rest goes to input.
+/// `in_queue` — true when the queue panel has keyboard focus.
 pub fn map_key(
     event: KeyEvent,
     in_search: bool,
     in_input: bool,
     pending_nav: bool,
     in_edit_mode: bool,
+    in_queue: bool,
 ) -> Option<Action> {
     let ctrl  = event.modifiers.contains(KeyModifiers::CONTROL);
     let alt   = event.modifiers.contains(KeyModifiers::ALT);
@@ -86,13 +99,15 @@ pub fn map_key(
     let plain = !ctrl && !alt;
 
     // ── Pending Ctrl+w chord ──────────────────────────────────────────────────
-    // After a Ctrl+w prefix, we only look for j/k/h/l to pick a pane.
+    // After a Ctrl+w prefix, we only look for j/k to pick the next pane.
+    // The direction is context-aware: if a queue panel is visible it will be
+    // included in the cycle (Input ↔ Queue ↔ Chat).
     // Any other key cancels the prefix (returning None causes the App to clear
     // the flag without acting).
     if pending_nav {
         return match event.code {
-            KeyCode::Char('k') | KeyCode::Up   => Some(Action::FocusChat),
-            KeyCode::Char('j') | KeyCode::Down => Some(Action::FocusInput),
+            KeyCode::Char('k') | KeyCode::Up   => Some(Action::NavUp),
+            KeyCode::Char('j') | KeyCode::Down => Some(Action::NavDown),
             _ => None, // cancel without action
         };
     }
@@ -124,6 +139,19 @@ pub fn map_key(
             KeyCode::Char('u') if ctrl => Some(Action::InputDeleteToStart),
             KeyCode::Char('k') if ctrl => Some(Action::InputDeleteToEnd),
             KeyCode::Char(c) if plain => Some(Action::InputChar(c)),
+            _ => None,
+        };
+    }
+
+    // ── Queue panel focus ─────────────────────────────────────────────────────
+    if in_queue {
+        return match event.code {
+            KeyCode::Up   | KeyCode::Char('k') => Some(Action::QueueNavUp),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::QueueNavDown),
+            KeyCode::Char('e') | KeyCode::Enter => Some(Action::QueueEditSelected),
+            KeyCode::Char('d') | KeyCode::Delete => Some(Action::DeleteQueuedMessage),
+            KeyCode::Esc | KeyCode::Char('q') => Some(Action::FocusInput),
+            KeyCode::Char('w') if event.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::NavPrefix),
             _ => None,
         };
     }
@@ -188,6 +216,8 @@ pub fn map_key(
         // Edit / delete message at cursor (chat pane)
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
         KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteQueuedMessage),
+        // Focus queue panel when in chat pane
+        KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
         KeyCode::Enter if !in_input && ctrl => Some(Action::SubmitBufferToAgent),
@@ -235,33 +265,33 @@ mod tests {
     #[test]
     fn ctrl_w_returns_nav_prefix() {
         let ev = ctrl_key('w');
-        assert_eq!(map_key(ev, false, false, false, false), Some(Action::NavPrefix));
-        assert_eq!(map_key(ev, false, true,  false, false), Some(Action::NavPrefix));
+        assert_eq!(map_key(ev, false, false, false, false, false), Some(Action::NavPrefix));
+        assert_eq!(map_key(ev, false, true,  false, false, false), Some(Action::NavPrefix));
     }
 
     #[test]
-    fn pending_nav_k_focuses_chat() {
+    fn pending_nav_k_returns_nav_up() {
         let ev = plain_key('k');
-        assert_eq!(map_key(ev, false, false, true, false), Some(Action::FocusChat));
-        assert_eq!(map_key(ev, false, true,  true, false), Some(Action::FocusChat));
+        assert_eq!(map_key(ev, false, false, true, false, false), Some(Action::NavUp));
+        assert_eq!(map_key(ev, false, true,  true, false, false), Some(Action::NavUp));
     }
 
     #[test]
-    fn pending_nav_j_focuses_input() {
+    fn pending_nav_j_returns_nav_down() {
         let ev = plain_key('j');
-        assert_eq!(map_key(ev, false, false, true, false), Some(Action::FocusInput));
+        assert_eq!(map_key(ev, false, false, true, false, false), Some(Action::NavDown));
     }
 
     #[test]
-    fn pending_nav_up_focuses_chat() {
+    fn pending_nav_up_returns_nav_up() {
         let ev = key(KeyCode::Up, KeyModifiers::NONE);
-        assert_eq!(map_key(ev, false, false, true, false), Some(Action::FocusChat));
+        assert_eq!(map_key(ev, false, false, true, false, false), Some(Action::NavUp));
     }
 
     #[test]
     fn pending_nav_other_key_cancels() {
         let ev = plain_key('x');
-        assert_eq!(map_key(ev, false, false, true, false), None);
+        assert_eq!(map_key(ev, false, false, true, false, false), None);
     }
 
     // ── Ctrl modifier should NOT type a character ─────────────────────────────
@@ -270,7 +300,7 @@ mod tests {
     fn ctrl_w_in_input_does_not_type_w() {
         let ev = ctrl_key('w');
         // Should be NavPrefix, not InputChar('w')
-        let action = map_key(ev, false, true, false, false);
+        let action = map_key(ev, false, true, false, false, false);
         assert_ne!(action, Some(Action::InputChar('w')));
         assert_eq!(action, Some(Action::NavPrefix));
     }
@@ -278,13 +308,13 @@ mod tests {
     #[test]
     fn ctrl_x_unbound_does_not_type_x() {
         let ev = ctrl_key('x');
-        assert_eq!(map_key(ev, false, true, false, false), None);
+        assert_eq!(map_key(ev, false, true, false, false, false), None);
     }
 
     #[test]
     fn alt_char_in_input_does_not_type() {
         let ev = key(KeyCode::Char('a'), KeyModifiers::ALT);
-        assert_eq!(map_key(ev, false, true, false, false), None);
+        assert_eq!(map_key(ev, false, true, false, false, false), None);
     }
 
     // ── Normal typing ─────────────────────────────────────────────────────────
@@ -292,13 +322,13 @@ mod tests {
     #[test]
     fn plain_char_in_input_types() {
         let ev = plain_key('h');
-        assert_eq!(map_key(ev, false, true, false, false), Some(Action::InputChar('h')));
+        assert_eq!(map_key(ev, false, true, false, false, false), Some(Action::InputChar('h')));
     }
 
     #[test]
     fn plain_char_not_in_input_does_not_type() {
         let ev = plain_key('x');
-        assert_eq!(map_key(ev, false, false, false, false), None);
+        assert_eq!(map_key(ev, false, false, false, false, false), None);
     }
 
     // ── Ctrl+k in input deletes to end ────────────────────────────────────────
@@ -306,14 +336,14 @@ mod tests {
     #[test]
     fn ctrl_k_in_input_deletes_to_end() {
         let ev = ctrl_key('k');
-        assert_eq!(map_key(ev, false, true, false, false), Some(Action::InputDeleteToEnd));
+        assert_eq!(map_key(ev, false, true, false, false, false), Some(Action::InputDeleteToEnd));
     }
 
     #[test]
     fn ctrl_k_in_chat_does_not_fire() {
         // Ctrl+k is no longer a pane-switch key; in chat pane it's unbound
         let ev = ctrl_key('k');
-        assert_eq!(map_key(ev, false, false, false, false), None);
+        assert_eq!(map_key(ev, false, false, false, false, false), None);
     }
 
     // ── Global quit ───────────────────────────────────────────────────────────
@@ -322,14 +352,14 @@ mod tests {
     fn ctrl_c_outside_input_not_reserved() {
         // Quit is via :q/:qa in chat and /quit in input; Ctrl+C outside input is not bound (forwarded to Neovim)
         let ev = ctrl_key('c');
-        assert_eq!(map_key(ev, false, false, false, false), None);
+        assert_eq!(map_key(ev, false, false, false, false, false), None);
     }
 
     #[test]
     fn ctrl_c_interrupts_inside_input() {
         // In input pane Ctrl+c is InterruptAgent
         let ev = ctrl_key('c');
-        assert_eq!(map_key(ev, false, true, false, false), Some(Action::InterruptAgent));
+        assert_eq!(map_key(ev, false, true, false, false, false), Some(Action::InterruptAgent));
     }
 
     // ── Chat scrolling ────────────────────────────────────────────────────────
@@ -337,13 +367,13 @@ mod tests {
     #[test]
     fn j_in_chat_scrolls_down() {
         let ev = plain_key('j');
-        assert_eq!(map_key(ev, false, false, false, false), Some(Action::ScrollDown));
+        assert_eq!(map_key(ev, false, false, false, false, false), Some(Action::ScrollDown));
     }
 
     #[test]
     fn ctrl_u_in_chat_page_up() {
         let ev = ctrl_key('u');
-        assert_eq!(map_key(ev, false, false, false, false), Some(Action::ScrollPageUp));
+        assert_eq!(map_key(ev, false, false, false, false, false), Some(Action::ScrollPageUp));
     }
 
     // ── Edit message mode ────────────────────────────────────────────────────
@@ -352,7 +382,7 @@ mod tests {
     fn e_in_chat_opens_edit() {
         let ev = plain_key('e');
         assert_eq!(
-            map_key(ev, false, false, false, false),
+            map_key(ev, false, false, false, false, false),
             Some(Action::EditMessageAtCursor)
         );
     }
@@ -361,7 +391,7 @@ mod tests {
     fn edit_mode_enter_confirms() {
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, true),
+            map_key(ev, false, true, false, true, false),
             Some(Action::EditMessageConfirm)
         );
     }
@@ -370,7 +400,7 @@ mod tests {
     fn edit_mode_esc_cancels() {
         let ev = key(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, true),
+            map_key(ev, false, true, false, true, false),
             Some(Action::EditMessageCancel)
         );
     }
@@ -379,7 +409,7 @@ mod tests {
     fn edit_mode_char_goes_to_input() {
         let ev = plain_key('x');
         assert_eq!(
-            map_key(ev, false, true, false, true),
+            map_key(ev, false, true, false, true, false),
             Some(Action::InputChar('x'))
         );
     }

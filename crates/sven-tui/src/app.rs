@@ -29,7 +29,7 @@ use crate::{
         },
         search::SearchState,
         segment::{
-            messages_for_resubmit, queued_deque_index, segment_at_line, segment_editable_text,
+            messages_for_resubmit, segment_at_line, segment_editable_text,
             ChatSegment,
         },
     },
@@ -40,7 +40,7 @@ use crate::{
     nvim::NvimBridge,
     overlay::question::QuestionModal,
     pager::PagerOverlay,
-    widgets::{draw_chat, draw_help, draw_input, draw_question_modal, draw_search, draw_status},
+    widgets::{draw_chat, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -66,6 +66,8 @@ pub struct AppOptions {
 pub enum FocusPane {
     Chat,
     Input,
+    /// The compact queue panel shown above the input when there are pending messages.
+    Queue,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -86,6 +88,10 @@ pub struct App {
     chat_segments: Vec<ChatSegment>,
     /// Accumulated assistant text during streaming until `TextComplete`.
     streaming_assistant_buffer: String,
+    /// True when the streaming buffer is receiving `ThinkingDelta` events
+    /// rather than `TextDelta` events.  Controls how the buffer is rendered
+    /// in the chat pane while the turn is in progress.
+    streaming_is_thinking: bool,
     /// For each segment index: `(start_line, end_line)` in `chat_lines`.
     /// Rebuilt whenever `build_display_from_segments` runs.
     segment_line_ranges: Vec<(usize, usize)>,
@@ -102,6 +108,10 @@ pub struct App {
     /// handling without needing a frame reference.
     last_input_inner_width: u16,
     last_input_inner_height: u16,
+    /// Last known inner width of the chat pane (sans border).  Used by
+    /// `build_display_from_segments` to pre-wrap content to the exact
+    /// available width so that Ratatui does not need a second wrap pass.
+    last_chat_inner_width: u16,
     queued: VecDeque<String>,
     search: SearchState,
     show_help: bool,
@@ -123,8 +133,16 @@ pub struct App {
     tool_args_cache: HashMap<String, String>,
     /// Segment indices that are collapsed (ratatui-only mode).
     collapsed_segments: std::collections::HashSet<usize>,
-    /// When set, we are in inline edit mode.
+    /// When set, we are in inline edit mode (editing a chat segment).
     editing_message_index: Option<usize>,
+    /// When set, the queue item at this index is being edited in the input box.
+    /// Dequeueing is paused while this is `Some`.
+    editing_queue_index: Option<usize>,
+    /// Which queue item is keyboard-selected in the queue panel.
+    queue_selected: Option<usize>,
+    /// Last known rect of the queue panel (populated each frame).  Used by the
+    /// mouse handler to detect clicks on the queue panel.
+    last_queue_pane: Rect,
     edit_buffer: String,
     edit_cursor: usize,
     /// Original text saved for cancel/restore.
@@ -170,6 +188,7 @@ impl App {
             chat_lines: Vec::new(),
             chat_segments: initial_segments,
             streaming_assistant_buffer: String::new(),
+            streaming_is_thinking: false,
             segment_line_ranges: Vec::new(),
             scroll_offset: 0,
             input_buffer: String::new(),
@@ -179,6 +198,7 @@ impl App {
             // Reasonable defaults before the first frame is drawn.
             last_input_inner_width: 78,
             last_input_inner_height: 3,
+            last_chat_inner_width: 78,
             queued: VecDeque::new(),
             search: SearchState::default(),
             show_help: false,
@@ -195,6 +215,9 @@ impl App {
             tool_args_cache: HashMap::new(),
             collapsed_segments: std::collections::HashSet::new(),
             editing_message_index: None,
+            editing_queue_index: None,
+            queue_selected: None,
+            last_queue_pane: Rect::default(),
             edit_buffer: String::new(),
             edit_cursor: 0,
             edit_original_text: None,
@@ -269,6 +292,7 @@ impl App {
                 let layout = AppLayout::compute(
                     Rect::new(0, 0, size.width, size.height),
                     false,
+                    0,
                 );
                 (
                     layout.chat_pane.width.saturating_sub(2),
@@ -312,14 +336,19 @@ impl App {
                 let layout = AppLayout::compute(
                     Rect::new(0, 0, size.width, size.height),
                     self.search.active,
+                    self.queued.len(),
                 );
                 self.chat_height = layout.chat_inner_height().max(1);
+                // Track chat pane inner width for pre-wrap in the markdown renderer.
+                self.last_chat_inner_width =
+                    layout.chat_pane.width.saturating_sub(2).max(20);
                 // Track input pane dimensions for scroll adjustment and mouse routing.
                 self.last_input_inner_width =
                     layout.input_pane.width.saturating_sub(2);
                 self.last_input_inner_height =
                     layout.input_pane.height.saturating_sub(2);
                 self.last_input_pane = layout.input_pane;
+                self.last_queue_pane = layout.queue_pane;
             }
 
             // Keep the cursor visible inside the input / edit box before drawing.
@@ -362,7 +391,7 @@ impl App {
                     return;
                 }
 
-                let layout = AppLayout::new(frame, self.search.active);
+                let layout = AppLayout::new(frame, self.search.active, self.queued.len());
 
                 draw_status(
                     frame, layout.status_bar, &self.effective_model_name,
@@ -377,14 +406,33 @@ impl App {
                     &self.search.query, &self.search.matches, self.search.current,
                     self.search.regex.as_ref(), nvim_cursor,
                 );
+                let edit_mode = if self.editing_queue_index.is_some() {
+                    InputEditMode::Queue
+                } else if self.editing_message_index.is_some() {
+                    InputEditMode::Segment
+                } else {
+                    InputEditMode::Normal
+                };
+                let in_edit = edit_mode != InputEditMode::Normal;
                 draw_input(
                     frame, layout.input_pane,
-                    if self.editing_message_index.is_some() { &self.edit_buffer } else { &self.input_buffer },
-                    if self.editing_message_index.is_some() { self.edit_cursor } else { self.input_cursor },
-                    if self.editing_message_index.is_some() { self.edit_scroll_offset } else { self.input_scroll_offset },
-                    self.focus == FocusPane::Input || self.editing_message_index.is_some(),
-                    self.queued.len(), ascii, self.editing_message_index.is_some(),
+                    if in_edit { &self.edit_buffer } else { &self.input_buffer },
+                    if in_edit { self.edit_cursor } else { self.input_cursor },
+                    if in_edit { self.edit_scroll_offset } else { self.input_scroll_offset },
+                    self.focus == FocusPane::Input || in_edit,
+                    ascii, edit_mode,
                 );
+                if !self.queued.is_empty() {
+                    let queued_items: Vec<String> = self.queued.iter().cloned().collect();
+                    draw_queue_panel(
+                        frame, layout.queue_pane,
+                        &queued_items,
+                        self.queue_selected,
+                        self.editing_queue_index,
+                        self.focus == FocusPane::Queue,
+                        ascii,
+                    );
+                }
                 if self.search.active {
                     draw_search(
                         frame, layout.search_bar, &self.search.query,
@@ -450,6 +498,7 @@ impl App {
     async fn handle_agent_event(&mut self, event: AgentEvent) -> bool {
         match event {
             AgentEvent::TextDelta(delta) => {
+                self.streaming_is_thinking = false;
                 self.streaming_assistant_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -461,6 +510,7 @@ impl App {
             AgentEvent::TextComplete(full_text) => {
                 self.chat_segments.push(ChatSegment::Message(Message::assistant(&full_text)));
                 self.streaming_assistant_buffer.clear();
+                self.streaming_is_thinking = false;
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
                 self.nvim_scroll_to_bottom().await;
@@ -541,19 +591,23 @@ impl App {
                     }
                 }
                 self.save_history_async();
-                if let Some(next) = self.queued.pop_front() {
-                    // Promote the first Queued segment to a committed user message.
-                    if let Some(pos) = self.chat_segments.iter().position(
-                        |s| matches!(s, ChatSegment::Queued(_))
-                    ) {
-                        self.chat_segments[pos] = ChatSegment::Message(Message::user(&next));
-                    } else {
+                // Only dequeue the next message if no queue item is being edited.
+                if self.editing_queue_index.is_none() {
+                    if let Some(next) = self.queued.pop_front() {
+                        // Shift the selection down by one since the front was removed.
+                        self.queue_selected = self.queue_selected
+                            .map(|s| s.saturating_sub(1))
+                            .filter(|_| !self.queued.is_empty());
+                        // If queue is now empty and we were focused on it, return to Input.
+                        if self.queued.is_empty() && self.focus == FocusPane::Queue {
+                            self.focus = FocusPane::Input;
+                        }
                         self.chat_segments.push(ChatSegment::Message(Message::user(&next)));
+                        self.rerender_chat().await;
+                        self.auto_scroll = true;
+                        self.scroll_to_bottom();
+                        self.send_to_agent(next).await;
                     }
-                    self.rerender_chat().await;
-                    self.auto_scroll = true;
-                    self.scroll_to_bottom();
-                    self.send_to_agent(next).await;
                 }
             }
             AgentEvent::Error(msg) => {
@@ -574,11 +628,14 @@ impl App {
                 }
             }
             AgentEvent::ThinkingDelta(delta) => {
+                self.streaming_is_thinking = true;
                 self.streaming_assistant_buffer.push_str(&delta);
                 self.rerender_chat().await;
+                self.scroll_to_bottom();
             }
             AgentEvent::ThinkingComplete(content) => {
                 self.streaming_assistant_buffer.clear();
+                self.streaming_is_thinking = false;
                 let seg_idx = self.chat_segments.len();
                 self.chat_segments.push(ChatSegment::Thinking { content });
                 if self.no_nvim {
@@ -619,6 +676,7 @@ impl App {
 
                 let in_search = self.search.active;
                 let in_input  = self.focus == FocusPane::Input;
+                let in_queue  = self.focus == FocusPane::Queue;
 
                 if self.focus == FocusPane::Chat
                     && !in_search
@@ -637,8 +695,9 @@ impl App {
                     }
                 }
 
-                let in_edit_mode = self.editing_message_index.is_some();
-                if let Some(action) = map_key(k, in_search, in_input, self.pending_nav, in_edit_mode) {
+                let in_edit_mode = self.editing_message_index.is_some()
+                    || self.editing_queue_index.is_some();
+                if let Some(action) = map_key(k, in_search, in_input, self.pending_nav, in_edit_mode, in_queue) {
                     if action == Action::NavPrefix {
                         self.pending_nav = true;
                         return false;
@@ -654,10 +713,14 @@ impl App {
                 if self.pager.is_none() {
                     let over_input = mouse.row >= self.last_input_pane.y
                         && mouse.row < self.last_input_pane.y + self.last_input_pane.height;
+                    let over_queue = self.last_queue_pane.height > 0
+                        && mouse.row >= self.last_queue_pane.y
+                        && mouse.row < self.last_queue_pane.y + self.last_queue_pane.height;
+                    let in_edit = self.editing_message_index.is_some() || self.editing_queue_index.is_some();
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if over_input {
-                                if self.editing_message_index.is_some() {
+                                if in_edit {
                                     self.edit_scroll_offset =
                                         self.edit_scroll_offset.saturating_sub(3);
                                 } else {
@@ -679,15 +742,11 @@ impl App {
                                 let h = self.last_input_inner_height as usize;
                                 if w > 0 && h > 0 {
                                     let total = crate::input_wrap::wrap_content(
-                                        if self.editing_message_index.is_some() {
-                                            &self.edit_buffer
-                                        } else {
-                                            &self.input_buffer
-                                        },
+                                        if in_edit { &self.edit_buffer } else { &self.input_buffer },
                                         w, 0,
                                     ).lines.len();
                                     let max = total.saturating_sub(h);
-                                    if self.editing_message_index.is_some() {
+                                    if in_edit {
                                         self.edit_scroll_offset =
                                             (self.edit_scroll_offset + 3).min(max);
                                     } else {
@@ -707,8 +766,30 @@ impl App {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left)
                             if self.no_nvim =>
                         {
+                            // ── Click on queue panel ──────────────────────────────
+                            if over_queue && !self.queued.is_empty() {
+                                let inner_y = self.last_queue_pane.y + 1; // skip border
+                                if mouse.row >= inner_y {
+                                    let item_idx = (mouse.row - inner_y) as usize;
+                                    if item_idx < self.queued.len() {
+                                        self.queue_selected = Some(item_idx);
+                                        self.focus = FocusPane::Queue;
+                                        // Double-click or single click: open edit
+                                        if let Some(text) = self.queued.get(item_idx) {
+                                            let text = text.clone();
+                                            self.editing_queue_index = Some(item_idx);
+                                            self.edit_cursor = text.len();
+                                            self.edit_original_text = Some(text.clone());
+                                            self.edit_buffer = text;
+                                            self.focus = FocusPane::Input;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── Click on chat pane ───────────────────────────────
                             let content_start_row: u16 = 2;
-                            if mouse.row >= content_start_row {
+                            if mouse.row >= content_start_row && !over_queue && !over_input {
                                 let click_line = (mouse.row - content_start_row) as usize
                                     + self.scroll_offset as usize;
                                 if let Some(seg_idx) =
@@ -764,6 +845,7 @@ impl App {
                     let layout = AppLayout::compute(
                         Rect::new(0, 0, width, height),
                         self.search.active,
+                        self.queued.len(),
                     );
                     let chat_width  = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();
@@ -909,19 +991,101 @@ impl App {
     // ── Action dispatcher ─────────────────────────────────────────────────────
 
     async fn dispatch(&mut self, action: Action) -> bool {
-        if self.editing_message_index.is_some() {
+        // Route input-manipulation actions to the edit buffer whenever we are in
+        // any edit mode — both chat-segment edits and queue-item edits.
+        if self.editing_message_index.is_some() || self.editing_queue_index.is_some() {
             if let Some((buf, cur)) = self.apply_input_to_edit(&action) {
                 self.edit_buffer = buf;
                 self.edit_cursor = cur;
-                self.update_editing_segment_live();
-                self.rerender_chat().await;
+                // Live-preview only makes sense for chat segments (not queue items).
+                if self.editing_message_index.is_some() {
+                    self.update_editing_segment_live();
+                    self.rerender_chat().await;
+                }
                 return false;
             }
         }
 
         match action {
-            Action::FocusChat  => self.focus = FocusPane::Chat,
-            Action::FocusInput => self.focus = FocusPane::Input,
+            Action::FocusInput => {
+                self.focus = FocusPane::Input;
+            }
+            Action::NavUp => {
+                // Ctrl+w k: move focus upward through visible panes
+                match self.focus {
+                    FocusPane::Input => {
+                        if !self.queued.is_empty() {
+                            if self.queue_selected.is_none() {
+                                self.queue_selected = Some(0);
+                            }
+                            self.focus = FocusPane::Queue;
+                        } else {
+                            self.focus = FocusPane::Chat;
+                        }
+                    }
+                    FocusPane::Queue => {
+                        self.focus = FocusPane::Chat;
+                    }
+                    FocusPane::Chat => {
+                        // Already at the top; stay in Chat
+                    }
+                }
+            }
+            Action::NavDown => {
+                // Ctrl+w j: move focus downward through visible panes
+                match self.focus {
+                    FocusPane::Chat => {
+                        if !self.queued.is_empty() {
+                            if self.queue_selected.is_none() {
+                                self.queue_selected = Some(0);
+                            }
+                            self.focus = FocusPane::Queue;
+                        } else {
+                            self.focus = FocusPane::Input;
+                        }
+                    }
+                    FocusPane::Queue => {
+                        self.focus = FocusPane::Input;
+                    }
+                    FocusPane::Input => {
+                        // Already at the bottom; stay in Input
+                    }
+                }
+            }
+            Action::FocusQueue => {
+                if !self.queued.is_empty() {
+                    if self.queue_selected.is_none() {
+                        self.queue_selected = Some(0);
+                    }
+                    self.focus = FocusPane::Queue;
+                }
+            }
+            Action::QueueNavUp => {
+                if let Some(sel) = self.queue_selected {
+                    self.queue_selected = Some(sel.saturating_sub(1));
+                } else if !self.queued.is_empty() {
+                    self.queue_selected = Some(0);
+                }
+            }
+            Action::QueueNavDown => {
+                let len = self.queued.len();
+                if len > 0 {
+                    let sel = self.queue_selected.unwrap_or(0);
+                    self.queue_selected = Some((sel + 1).min(len - 1));
+                }
+            }
+            Action::QueueEditSelected => {
+                if let Some(idx) = self.queue_selected {
+                    if let Some(text) = self.queued.get(idx) {
+                        let text = text.clone();
+                        self.editing_queue_index = Some(idx);
+                        self.edit_cursor = text.len();
+                        self.edit_original_text = Some(text.clone());
+                        self.edit_buffer = text;
+                        self.focus = FocusPane::Input;
+                    }
+                }
+            }
 
             Action::EditMessageAtCursor => {
                 let line = self.scroll_offset as usize;
@@ -937,16 +1101,54 @@ impl App {
             }
 
             Action::DeleteQueuedMessage => {
-                let line = self.scroll_offset as usize;
-                if let Some(seg_idx) = segment_at_line(&self.segment_line_ranges, line) {
-                    if let Some(q_idx) = queued_deque_index(&self.chat_segments, seg_idx) {
-                        self.queued.remove(q_idx);
-                        self.chat_segments.remove(seg_idx);
-                        self.rerender_chat().await;
+                if let Some(idx) = self.queue_selected {
+                    if idx < self.queued.len() {
+                        // If we were editing this item, cancel the edit first.
+                        if self.editing_queue_index == Some(idx) {
+                            self.editing_queue_index = None;
+                            self.edit_buffer.clear();
+                            self.edit_cursor = 0;
+                            self.edit_scroll_offset = 0;
+                            self.edit_original_text = None;
+                        }
+                        self.queued.remove(idx);
+                        // Keep selection in bounds.
+                        if self.queued.is_empty() {
+                            self.queue_selected = None;
+                            if self.focus == FocusPane::Queue {
+                                self.focus = FocusPane::Input;
+                            }
+                        } else {
+                            self.queue_selected = Some(idx.min(self.queued.len() - 1));
+                        }
                     }
                 }
             }
             Action::EditMessageConfirm => {
+                // Handle queue-item edit confirm.
+                if let Some(q_idx) = self.editing_queue_index {
+                    let new_content = self.edit_buffer.trim().to_string();
+                    self.editing_queue_index = None;
+                    self.edit_buffer.clear();
+                    self.edit_cursor = 0;
+                    self.edit_scroll_offset = 0;
+                    self.edit_original_text = None;
+                    if !new_content.is_empty() {
+                        if let Some(entry) = self.queued.get_mut(q_idx) {
+                            *entry = new_content;
+                        }
+                    }
+                    // Return focus to Queue if it still has items, otherwise Input.
+                    self.focus = if self.queued.is_empty() {
+                        FocusPane::Input
+                    } else {
+                        FocusPane::Queue
+                    };
+                    // If the agent finished while we were editing, pick up the queue now.
+                    self.try_dequeue_next().await;
+                    return false;
+                }
+                // Handle chat-segment edit confirm.
                 if let Some(i) = self.editing_message_index {
                     let new_content = self.edit_buffer.trim().to_string();
                     self.editing_message_index = None;
@@ -955,15 +1157,6 @@ impl App {
                     self.edit_scroll_offset = 0;
                     self.edit_original_text = None;
                     if new_content.is_empty() {
-                        return false;
-                    }
-                    // Handle Queued segment: update both the segment and the VecDeque.
-                    if let Some(q_idx) = queued_deque_index(&self.chat_segments, i) {
-                        if let Some(entry) = self.queued.get_mut(q_idx) {
-                            *entry = new_content.clone();
-                        }
-                        self.chat_segments[i] = ChatSegment::Queued(new_content);
-                        self.rerender_chat().await;
                         return false;
                     }
                     let seg = match self.chat_segments.get(i) {
@@ -993,6 +1186,31 @@ impl App {
                 }
             }
             Action::EditMessageCancel => {
+                // Cancel queue-item edit — restore original text if available.
+                if self.editing_queue_index.is_some() {
+                    if let (Some(q_idx), Some(original)) =
+                        (self.editing_queue_index, self.edit_original_text.clone())
+                    {
+                        if let Some(entry) = self.queued.get_mut(q_idx) {
+                            *entry = original;
+                        }
+                    }
+                    self.editing_queue_index = None;
+                    self.edit_buffer.clear();
+                    self.edit_cursor = 0;
+                    self.edit_scroll_offset = 0;
+                    self.edit_original_text = None;
+                    // Return focus to Queue if it still has items, otherwise Input.
+                    self.focus = if self.queued.is_empty() {
+                        FocusPane::Input
+                    } else {
+                        FocusPane::Queue
+                    };
+                    // If the agent finished while we were editing, pick up the queue now.
+                    self.try_dequeue_next().await;
+                    return false;
+                }
+                // Cancel chat-segment edit.
                 if let Some(idx) = self.editing_message_index {
                     if let Some(original) = self.edit_original_text.clone() {
                         match self.chat_segments.get_mut(idx) {
@@ -1003,7 +1221,6 @@ impl App {
                                     _ => {}
                                 }
                             }
-                            Some(ChatSegment::Queued(t)) => { *t = original; }
                             _ => {}
                         }
                         self.build_display_from_segments();
@@ -1237,7 +1454,7 @@ impl App {
             }
             Action::InputPageUp => {
                 let h = self.last_input_inner_height as usize;
-                if self.editing_message_index.is_some() {
+                if self.editing_message_index.is_some() || self.editing_queue_index.is_some() {
                     self.edit_scroll_offset = self.edit_scroll_offset.saturating_sub(h);
                 } else {
                     self.input_scroll_offset = self.input_scroll_offset.saturating_sub(h);
@@ -1247,7 +1464,7 @@ impl App {
                 let w = self.last_input_inner_width as usize;
                 let h = self.last_input_inner_height as usize;
                 if w > 0 && h > 0 {
-                    let in_edit = self.editing_message_index.is_some();
+                    let in_edit = self.editing_message_index.is_some() || self.editing_queue_index.is_some();
                     let content = if in_edit { &self.edit_buffer } else { &self.input_buffer };
                     let ws = crate::input_wrap::wrap_content(content, w, 0);
                     let max = ws.lines.len().saturating_sub(h);
@@ -1274,11 +1491,10 @@ impl App {
                 if !text.is_empty() {
                     self.auto_scroll = true;
                     if self.agent_busy {
-                        // Show the queued message immediately in the chat pane.
-                        self.chat_segments.push(ChatSegment::Queued(text.clone()));
+                        // Push to queue only — displayed in the dedicated queue panel.
                         self.queued.push_back(text);
-                        self.rerender_chat().await;
-                        self.scroll_to_bottom();
+                        // Select the newly added item.
+                        self.queue_selected = Some(self.queued.len() - 1);
                     } else {
                         self.sync_nvim_buffer_to_segments().await;
                         let history = messages_for_resubmit(&self.chat_segments);
@@ -1335,6 +1551,27 @@ impl App {
         }
     }
 
+    /// If the agent is currently idle and there are queued messages waiting,
+    /// dequeue the first one and send it.  Called after a queue-item edit ends
+    /// so that a turn that completed while the user was editing isn't dropped.
+    async fn try_dequeue_next(&mut self) {
+        if !self.agent_busy && self.editing_queue_index.is_none() {
+            if let Some(next) = self.queued.pop_front() {
+                self.queue_selected = self.queue_selected
+                    .map(|s| s.saturating_sub(1))
+                    .filter(|_| !self.queued.is_empty());
+                if self.queued.is_empty() && self.focus == FocusPane::Queue {
+                    self.focus = FocusPane::Input;
+                }
+                self.chat_segments.push(ChatSegment::Message(Message::user(&next)));
+                self.rerender_chat().await;
+                self.auto_scroll = true;
+                self.scroll_to_bottom();
+                self.send_to_agent(next).await;
+            }
+        }
+    }
+
     // ── Chat display ──────────────────────────────────────────────────────────
 
     /// Rebuild `chat_lines` and `segment_line_ranges` from `chat_segments` and
@@ -1343,7 +1580,19 @@ impl App {
         let mut all_lines = Vec::new();
         let mut ranges    = Vec::new();
         let mut line_start = 0usize;
-        let bar_char = if self.ascii() { "| " } else { "▌ " };
+        let ascii = self.ascii();
+        let bar_char = if ascii { "| " } else { "▌ " };
+
+        // The bar prefix is 2 display columns wide ("| " or "▌ ").
+        // Subtract that so the markdown renderer fills exactly the inner width
+        // and Ratatui's Paragraph does not need a second wrap pass.
+        let bar_cols: u16 = 2;
+        let effective_width = self.last_chat_inner_width.saturating_sub(bar_cols).max(20);
+        let render_width = if self.config.tui.wrap_width == 0 {
+            effective_width
+        } else {
+            self.config.tui.wrap_width.min(effective_width)
+        };
 
         for (i, seg) in self.chat_segments.iter().enumerate() {
             let s = if self.no_nvim && self.collapsed_segments.contains(&i) {
@@ -1351,7 +1600,7 @@ impl App {
             } else {
                 segment_to_markdown(seg, &self.tool_args_cache)
             };
-            let lines = render_markdown(&s, self.config.tui.wrap_width, self.ascii());
+            let lines = render_markdown(&s, render_width, ascii);
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
             let n = styled.len();
@@ -1360,15 +1609,21 @@ impl App {
             line_start += n;
         }
         if !self.streaming_assistant_buffer.is_empty() {
-            let prefix = if self.chat_segments.is_empty() { "**Agent:** " } else { "\n**Agent:** " };
-            let s = format!("{}{}", prefix, self.streaming_assistant_buffer);
-            let lines = render_markdown(&s, self.config.tui.wrap_width, self.ascii());
-            let styled = apply_bar_and_dim(
-                lines,
-                Some(Style::default().fg(Color::Blue)),
-                false,
-                bar_char,
-            );
+            let (s, bar_color) = if self.streaming_is_thinking {
+                let prefix = if self.chat_segments.is_empty() { "💭 **Thinking…**\n" } else { "\n💭 **Thinking…**\n" };
+                (
+                    format!("{}{}", prefix, self.streaming_assistant_buffer),
+                    Some(Style::default().fg(Color::Rgb(160, 100, 200))),
+                )
+            } else {
+                let prefix = if self.chat_segments.is_empty() { "**Agent:** " } else { "\n**Agent:** " };
+                (
+                    format!("{}{}", prefix, self.streaming_assistant_buffer),
+                    Some(Style::default().fg(Color::Blue)),
+                )
+            };
+            let lines = render_markdown(&s, render_width, ascii);
+            let styled = apply_bar_and_dim(lines, bar_color, false, bar_char);
             all_lines.extend(styled);
         }
         self.chat_lines = all_lines;
@@ -1552,7 +1807,6 @@ impl App {
                         _ => {}
                     }
                 }
-                Some(ChatSegment::Queued(t)) => { *t = new_text; }
                 _ => {}
             }
             self.build_display_from_segments();

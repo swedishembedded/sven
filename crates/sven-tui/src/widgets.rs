@@ -8,7 +8,6 @@ use ratatui::{
     widgets::{
         Block, BorderType, Borders, Clear, Paragraph,
         Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Wrap,
     },
     Frame,
 };
@@ -145,19 +144,12 @@ pub fn draw_chat(
         })
         .collect();
 
-    // When Neovim is the content source (nvim_cursor is Some), the lines are
-    // already grid rows of exactly bridge.width columns — never rewrap them.
-    // Ratatui's `Wrap` can miscount unicode wide-char display widths and add
-    // an unexpected extra visual row, which shifts every subsequent row down
-    // by 1 and clips the bottom of the grid from view.
-    //
-    // For the non-Neovim fallback (chat_lines from markdown renderer), we
-    // keep wrapping on so that unusually long words are not hard-truncated.
-    let para = if nvim_cursor.is_some() {
-        Paragraph::new(visible)
-    } else {
-        Paragraph::new(visible).wrap(Wrap { trim: false })
-    };
+    // Never re-wrap content here. In the Neovim path the lines are exact grid
+    // rows from the bridge.  In the ratatui path the markdown renderer already
+    // wraps to `effective_width` (chat inner width minus the 2-column bar), so
+    // a second Ratatui-level wrap would push bar characters onto the next visual
+    // row and corrupt `segment_line_ranges`, causing wrong click targets.
+    let para = Paragraph::new(visible);
     frame.render_widget(para, inner);
 
     // Draw Neovim cursor if provided and focused
@@ -185,7 +177,17 @@ pub fn draw_chat(
 ///   than the visible area.
 /// * The terminal cursor is placed at the exact column/row of `cursor_pos`
 ///   (a UTF-8 byte index), accounting for wrapping and the scroll offset.
-#[allow(clippy::too_many_arguments)]
+/// What kind of content the input box is currently editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputEditMode {
+    /// Normal message composition.
+    Normal,
+    /// Editing an existing chat-history segment.
+    Segment,
+    /// Editing a pending queue item.
+    Queue,
+}
+
 pub fn draw_input(
     frame: &mut Frame,
     area: Rect,
@@ -193,16 +195,13 @@ pub fn draw_input(
     cursor_pos: usize,
     scroll_offset: usize,
     focused: bool,
-    queued_steps: usize,
     ascii: bool,
-    edit_mode: bool,
+    edit_mode: InputEditMode,
 ) {
-    let title = if edit_mode {
-        "Edit  [Enter:confirm  Esc:cancel]".into()
-    } else if queued_steps > 0 {
-        format!("Input  [{queued_steps} queued]")
-    } else {
-        "Input  [Enter:send  Shift+Enter:newline  ^w k:↑chat]".into()
+    let title: String = match edit_mode {
+        InputEditMode::Queue   => "Edit queue  [Enter:update  Esc:cancel]".to_string(),
+        InputEditMode::Segment => "Edit  [Enter:confirm  Esc:cancel]".to_string(),
+        InputEditMode::Normal  => "Input  [Enter:send  Shift+Enter:newline  ^w k:↑chat]".to_string(),
     };
 
     let block = pane_block(&title, focused, ascii);
@@ -480,6 +479,75 @@ pub fn draw_question_modal(
             }
         }
     }
+}
+
+/// Draw the queue panel showing pending messages above the input box.
+///
+/// `items` — the queue contents (in order).
+/// `selected` — the currently highlighted row index, if any.
+/// `editing` — the row index currently being edited, if any.
+/// `focused` — whether the queue pane has keyboard focus.
+pub fn draw_queue_panel(
+    frame: &mut Frame,
+    area: Rect,
+    items: &[String],
+    selected: Option<usize>,
+    editing: Option<usize>,
+    focused: bool,
+    ascii: bool,
+) {
+    if area.height == 0 || items.is_empty() {
+        return;
+    }
+    let count = items.len();
+    let title = format!("Queue  [{count}]  [↑↓:select  e:edit  d:delete  Esc:close]");
+    let block = pane_block(&title, focused, ascii);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let visible: Vec<Line<'static>> = items
+        .iter()
+        .enumerate()
+        .take(inner.height as usize)
+        .map(|(i, text)| {
+            let is_selected = selected == Some(i);
+            let is_editing  = editing  == Some(i);
+
+            let num_span = Span::styled(
+                format!(" {} ", i + 1),
+                if is_selected || is_editing {
+                    Style::default().fg(Color::Black).bg(Color::LightBlue).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            );
+
+            // Truncate preview to fit the inner width minus the number badge (4 chars).
+            let max_text = inner.width.saturating_sub(6) as usize;
+            let preview: String = text.lines().next().unwrap_or("").chars().take(max_text).collect();
+            let ellipsis = if text.len() > preview.len() + 1 || text.contains('\n') { "…" } else { "" };
+            let text_content = format!(" {preview}{ellipsis}");
+
+            let text_span = Span::styled(
+                text_content,
+                if is_editing {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC)
+                } else if is_selected {
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            );
+
+            Line::from(vec![num_span, text_span])
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(visible), inner);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

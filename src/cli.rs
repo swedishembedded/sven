@@ -69,9 +69,9 @@ pub struct Cli {
     #[arg(long, short = 'c')]
     pub config: Option<PathBuf>,
 
-    /// Disable embedded Neovim; use ratatui-only chat view (no :w/:q in buffer).
-    #[arg(long)]
-    pub no_nvim: bool,
+    /// Enable embedded Neovim chat view (default: plain ratatui).
+    #[arg(long, alias = "no-nvim")]
+    pub nvim: bool,
 
     /// Output format for headless runs (conversation | json | compact)
     #[arg(long, value_enum, default_value = "conversation")]

@@ -239,14 +239,15 @@ impl MarkdownRenderer {
                     let mut col = current_col(&self.current_spans);
                     let mut buf = String::new();
                     for word in t.split_inclusive(' ') {
-                        if col + word.len() > width && !buf.is_empty() {
+                        let word_w = unicode_width::UnicodeWidthStr::width(word);
+                        if col + word_w > width && !buf.is_empty() {
                             self.current_spans.push(Span::styled(buf.clone(), style));
                             buf.clear();
                             self.push_line();
                             col = 0;
                         }
                         buf.push_str(word);
-                        col += word.len();
+                        col += word_w;
                     }
                     if !buf.is_empty() {
                         self.current_spans.push(Span::styled(buf, style));
@@ -316,7 +317,7 @@ fn heading_style(level: HeadingLevel) -> Style {
 }
 
 fn current_col(spans: &[Span<'_>]) -> usize {
-    spans.iter().map(|s| s.content.chars().count()).sum()
+    spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum()
 }
 
 // ── Syntect code highlighting ─────────────────────────────────────────────────

@@ -62,8 +62,8 @@ tui:
 - Check that your terminal reports a colour depth of at least 256: `echo $TERM`
   should show something like `xterm-256color`, `screen-256color`, or `tmux-256color`.
 - If inside a multiplexer (tmux, screen), ensure it is configured for 256 colours.
-- Try `sven --no-nvim` to disable the Neovim embed, which rules out Neovim as
-  the source of the issue.
+- The default mode is plain ratatui (no Neovim embed).  If you launched with
+  `--nvim`, try omitting that flag to rule out Neovim as the source of the issue.
 
 ### Colours look wrong or washed out
 
@@ -87,16 +87,12 @@ which nvim     # should print a path
 nvim --version # should show Neovim 0.9 or later
 ```
 
-If Neovim is not installed, either install it or disable the embed:
+If Neovim is not installed, either install it or simply omit `--nvim` (the
+default ratatui mode does not require Neovim):
 
 ```sh
-sven --no-nvim
-```
-
-To always use the plain ratatui view, set an alias:
-
-```sh
-alias sven='sven --no-nvim'
+sven          # runs in ratatui mode by default
+sven --nvim   # opt-in Neovim embed
 ```
 
 ### `:q` does not quit sven
