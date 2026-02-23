@@ -151,7 +151,7 @@ mod tests {
 
     // ── resolve_model_cfg ─────────────────────────────────────────────────────
 
-    use crate::runner::resolve_model_cfg;
+    use sven_model::resolve_model_cfg;
     use sven_config::ModelConfig;
 
     fn openai_base() -> ModelConfig {

@@ -5,6 +5,7 @@ mod agent;
 mod app;
 mod chat;
 mod input;
+mod input_wrap;
 mod keys;
 mod layout;
 mod markdown;

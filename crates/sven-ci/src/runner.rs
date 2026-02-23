@@ -11,7 +11,7 @@ use anyhow::Context;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
-use sven_config::{AgentMode, Config, ModelConfig};
+use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
@@ -274,7 +274,7 @@ impl CiRunner {
             .clone()
             .or(frontmatter.model.clone());
         let model_cfg = if let Some(ref name) = model_override {
-            resolve_model_cfg(&self.config.model, name)
+            sven_model::resolve_model_from_config(&self.config, name)
         } else {
             self.config.model.clone()
         };
@@ -447,7 +447,7 @@ impl CiRunner {
                 (None, None)              => None,
             };
             if let Some(model_str) = &effective_model_str {
-                let step_model_cfg = resolve_model_cfg(&self.config.model, model_str);
+                let step_model_cfg = sven_model::resolve_model_from_config(&self.config, model_str);
                 
                 
                 match sven_model::from_config(&step_model_cfg) {
@@ -917,40 +917,5 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
     }
 }
 
-/// Build a [`ModelConfig`] from `base`, overriding provider/name from `override_str`.
-///
-/// The override string may be:
-/// - `"provider/model"` → sets both provider and name  (e.g. `"anthropic/claude-opus-4-5"`)
-/// - `"model"` with no `/` → sets name only, keeps base provider
-/// - A bare registered provider id (e.g. `"groq"`, `"ollama"`) → sets provider only
-pub(crate) fn resolve_model_cfg(
-    base: &ModelConfig,
-    override_str: &str,
-) -> ModelConfig {
-    let mut cfg = base.clone();
-    let provider_changed;
-    if let Some((provider, model)) = override_str.split_once('/') {
-        provider_changed = provider != base.provider;
-        cfg.provider = provider.to_string();
-        cfg.name = model.to_string();
-    } else if sven_model::get_driver(override_str).is_some() {
-        // Bare provider id — change provider, keep the current model name.
-        provider_changed = override_str != base.provider;
-        cfg.provider = override_str.to_string();
-    } else {
-        cfg.name = override_str.to_string();
-        provider_changed = false;
-    }
-
-    // When the provider changes the inherited api_key / api_key_env belong to
-    // the original provider (e.g. OPENAI_API_KEY on the default config).
-    // Sending them to a different provider produces "invalid x-api-key" errors.
-    // Clear them so resolve_api_key() falls through to the new provider's
-    // registry default env var (e.g. ANTHROPIC_API_KEY for "anthropic").
-    if provider_changed {
-        cfg.api_key = None;
-        cfg.api_key_env = None;
-    }
-
-    cfg
-}
+// resolve_model_cfg has been moved to sven_model::resolve_model_cfg.
+// resolve_model_from_config (config-aware variant) lives at sven_model::resolve_model_from_config.

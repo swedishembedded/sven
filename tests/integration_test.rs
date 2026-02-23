@@ -12,7 +12,7 @@ use sven_tools::{ToolRegistry, events::ToolEvent};
 use tokio::sync::{mpsc, Mutex};
 
 fn mock_agent(mode: AgentMode) -> Agent {
-    let model: Arc<dyn sven_model::ModelProvider> = Arc::new(MockProvider::default());
+    let model: Arc<dyn sven_model::ModelProvider> = Arc::new(MockProvider);
     let tools = Arc::new(ToolRegistry::default());
     let config = Arc::new(AgentConfig::default());
     let mode_lock = Arc::new(Mutex::new(mode));

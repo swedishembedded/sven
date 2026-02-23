@@ -52,6 +52,10 @@ pub struct AppOptions {
     pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
     /// If true, do not spawn embedded Neovim; use ratatui-only chat view.
     pub no_nvim: bool,
+    /// Optional model override from `--model` CLI flag.
+    /// Supports the same syntax as the CI runner: `"provider/name"`,
+    /// bare provider id, bare model name, or a key defined in `config.providers`.
+    pub model_override: Option<String>,
 }
 
 /// Which pane currently holds keyboard focus.
@@ -63,10 +67,15 @@ pub enum FocusPane {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
-/// The top-level TUI application state.
+    /// The top-level TUI application state.
 pub struct App {
     config: Arc<Config>,
     mode: AgentMode,
+    /// Model name shown in the status bar (the *effective* model after any
+    /// `--model` override has been applied, formatted as `"provider/name"`).
+    effective_model_name: String,
+    /// Optional model override forwarded to the agent task.
+    model_override: Option<String>,
     focus: FocusPane,
     chat_lines: StyledLines,
     /// Structured segments (messages + context-compacted notes).
@@ -80,6 +89,16 @@ pub struct App {
     scroll_offset: u16,
     input_buffer: String,
     input_cursor: usize,
+    /// Scroll offset for the input box (index of the first visible wrapped line).
+    input_scroll_offset: usize,
+    /// Scroll offset for the edit box (used in inline edit mode).
+    edit_scroll_offset: usize,
+    /// Last known inner dimensions of the input pane (content area, sans
+    /// border).  Populated each frame from `terminal.size()` so that
+    /// `adjust_input_scroll` / `adjust_edit_scroll` can run during event
+    /// handling without needing a frame reference.
+    last_input_inner_width: u16,
+    last_input_inner_height: u16,
     queued: VecDeque<String>,
     search: SearchState,
     show_help: bool,
@@ -122,9 +141,21 @@ impl App {
             .map(|(segs, path)| (segs, Some(path)))
             .unwrap_or_else(|| (Vec::new(), None));
 
+        // Compute the display name for the status bar.
+        let effective_model_name = if let Some(ref mo) = opts.model_override {
+            let resolved = sven_model::resolve_model_from_config(&config, mo);
+            format!("{}/{}", resolved.provider, resolved.name)
+        } else {
+            config.model.name.clone()
+        };
+
+        let model_override = opts.model_override;
+
         let mut app = Self {
             config,
             mode: opts.mode,
+            effective_model_name,
+            model_override,
             focus: FocusPane::Input,
             chat_lines: Vec::new(),
             chat_segments: initial_segments,
@@ -133,6 +164,11 @@ impl App {
             scroll_offset: 0,
             input_buffer: String::new(),
             input_cursor: 0,
+            input_scroll_offset: 0,
+            edit_scroll_offset: 0,
+            // Reasonable defaults before the first frame is drawn.
+            last_input_inner_width: 78,
+            last_input_inner_height: 3,
             queued: VecDeque::new(),
             search: SearchState::default(),
             show_help: false,
@@ -192,10 +228,11 @@ impl App {
         self.agent_tx = Some(submit_tx.clone());
         self.event_rx = Some(event_rx);
 
-        let cfg  = self.config.clone();
-        let mode = self.mode;
+        let cfg            = self.config.clone();
+        let mode           = self.mode;
+        let model_override = self.model_override.clone();
         tokio::spawn(async move {
-            agent_task(cfg, mode, submit_rx, event_tx, question_tx).await;
+            agent_task(cfg, mode, submit_rx, event_tx, question_tx, model_override).await;
         });
 
         // When resuming, prime the agent with the loaded history.
@@ -265,6 +302,18 @@ impl App {
                     self.search.active,
                 );
                 self.chat_height = layout.chat_inner_height().max(1);
+                // Track input pane inner dimensions for scroll adjustment.
+                self.last_input_inner_width =
+                    layout.input_pane.width.saturating_sub(2);
+                self.last_input_inner_height =
+                    layout.input_pane.height.saturating_sub(2);
+            }
+
+            // Keep the cursor visible inside the input / edit box before drawing.
+            if self.editing_message_index.is_some() {
+                self.adjust_edit_scroll();
+            } else {
+                self.adjust_input_scroll();
             }
 
             let ascii = self.ascii();
@@ -303,7 +352,7 @@ impl App {
                 let layout = AppLayout::new(frame, self.search.active);
 
                 draw_status(
-                    frame, layout.status_bar, &self.config.model.name,
+                    frame, layout.status_bar, &self.effective_model_name,
                     self.mode, self.context_pct, self.cache_hit_pct, self.agent_busy,
                     self.current_tool.as_deref(), ascii,
                 );
@@ -319,6 +368,7 @@ impl App {
                     frame, layout.input_pane,
                     if self.editing_message_index.is_some() { &self.edit_buffer } else { &self.input_buffer },
                     if self.editing_message_index.is_some() { self.edit_cursor } else { self.input_cursor },
+                    if self.editing_message_index.is_some() { self.edit_scroll_offset } else { self.input_scroll_offset },
                     self.focus == FocusPane::Input || self.editing_message_index.is_some(),
                     self.queued.len(), ascii, self.editing_message_index.is_some(),
                 );
@@ -838,6 +888,7 @@ impl App {
                     self.editing_message_index = None;
                     self.edit_buffer.clear();
                     self.edit_cursor = 0;
+                    self.edit_scroll_offset = 0;
                     self.edit_original_text = None;
                     if new_content.is_empty() {
                         return false;
@@ -885,6 +936,7 @@ impl App {
                 self.editing_message_index = None;
                 self.edit_buffer.clear();
                 self.edit_cursor = 0;
+                self.edit_scroll_offset = 0;
                 self.edit_original_text = None;
             }
 
@@ -1091,6 +1143,7 @@ impl App {
             Action::Submit => {
                 let text = std::mem::take(&mut self.input_buffer).trim().to_string();
                 self.input_cursor = 0;
+                self.input_scroll_offset = 0;
                 if text.eq_ignore_ascii_case("/quit") {
                     return true;
                 }
@@ -1271,6 +1324,47 @@ impl App {
             self.scroll_offset =
                 (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
         }
+    }
+
+    /// Adjust `input_scroll_offset` so the cursor row is within the visible
+    /// window of the input pane.  Must be called after any change to
+    /// `input_buffer` or `input_cursor`.
+    fn adjust_input_scroll(&mut self) {
+        let w = self.last_input_inner_width as usize;
+        let h = self.last_input_inner_height as usize;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let wrap = crate::input_wrap::wrap_content(
+            &self.input_buffer,
+            w,
+            self.input_cursor,
+        );
+        crate::input_wrap::adjust_scroll(
+            wrap.cursor_row,
+            h,
+            &mut self.input_scroll_offset,
+        );
+    }
+
+    /// Adjust `edit_scroll_offset` so the cursor row is within the visible
+    /// window of the input pane when in inline edit mode.
+    fn adjust_edit_scroll(&mut self) {
+        let w = self.last_input_inner_width as usize;
+        let h = self.last_input_inner_height as usize;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let wrap = crate::input_wrap::wrap_content(
+            &self.edit_buffer,
+            w,
+            self.edit_cursor,
+        );
+        crate::input_wrap::adjust_scroll(
+            wrap.cursor_row,
+            h,
+            &mut self.edit_scroll_offset,
+        );
     }
 
     /// Read the Neovim buffer and update `chat_segments` from its current

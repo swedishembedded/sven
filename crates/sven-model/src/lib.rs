@@ -58,6 +58,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.base_url.clone(),
             resolved_max_tokens,
             cfg.temperature,
+            cfg.driver_options.clone(),
         ))),
         "anthropic" => Ok(Box::new(AnthropicProvider::with_cache(
             cfg.name.clone(),
@@ -115,6 +116,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 cfg.temperature,
                 vec![],
                 openai_compat::AuthStyle::ApiKeyHeader,
+                cfg.driver_options.clone(),
             )))
         }
 
@@ -131,6 +133,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 ("X-Title".into(), "sven".into()),
             ],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "litellm" => {
             let b = cfg.base_url.as_deref()
@@ -144,6 +147,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 cfg.temperature,
                 vec![],
                 AuthStyle::Bearer,
+                cfg.driver_options.clone(),
             )))
         }
         "portkey" => Ok(Box::new(OpenAICompatProvider::new(
@@ -156,6 +160,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             // Portkey virtual key can be passed via driver_options.portkey_virtual_key
             portkey_extra_headers(cfg),
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "vercel" => Ok(Box::new(OpenAICompatProvider::new(
             "vercel",
@@ -166,6 +171,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "cloudflare" => {
             let b = cfg.base_url.as_deref()
@@ -179,6 +185,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 cfg.temperature,
                 vec![],
                 AuthStyle::Bearer,
+                cfg.driver_options.clone(),
             )))
         }
 
@@ -192,6 +199,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "cerebras" => Ok(Box::new(OpenAICompatProvider::new(
             "cerebras",
@@ -202,6 +210,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
 
         // ── Open model platforms ──────────────────────────────────────────────
@@ -214,6 +223,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "fireworks" => Ok(Box::new(OpenAICompatProvider::new(
             "fireworks",
@@ -224,6 +234,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "deepinfra" => Ok(Box::new(OpenAICompatProvider::new(
             "deepinfra",
@@ -234,6 +245,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "nebius" => Ok(Box::new(OpenAICompatProvider::new(
             "nebius",
@@ -244,6 +256,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "sambanova" => Ok(Box::new(OpenAICompatProvider::new(
             "sambanova",
@@ -254,6 +267,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "huggingface" => Ok(Box::new(OpenAICompatProvider::new(
             "huggingface",
@@ -264,6 +278,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "nvidia" => Ok(Box::new(OpenAICompatProvider::new(
             "nvidia",
@@ -274,6 +289,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
 
         // ── Specialized ───────────────────────────────────────────────────────
@@ -286,6 +302,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "mistral" => Ok(Box::new(OpenAICompatProvider::new(
             "mistral",
@@ -296,6 +313,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "xai" => Ok(Box::new(OpenAICompatProvider::new(
             "xai",
@@ -306,6 +324,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
 
         // ── Regional providers ────────────────────────────────────────────────
@@ -318,6 +337,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "moonshot" => Ok(Box::new(OpenAICompatProvider::new(
             "moonshot",
@@ -328,6 +348,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "dashscope" => Ok(Box::new(OpenAICompatProvider::new(
             "dashscope",
@@ -338,6 +359,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "glm" => Ok(Box::new(OpenAICompatProvider::new(
             "glm",
@@ -348,6 +370,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "minimax" => Ok(Box::new(OpenAICompatProvider::new(
             "minimax",
@@ -358,6 +381,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
         "qianfan" => Ok(Box::new(OpenAICompatProvider::new(
             "qianfan",
@@ -368,6 +392,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::Bearer,
+            cfg.driver_options.clone(),
         ))),
 
         // ── Local / OSS ───────────────────────────────────────────────────────
@@ -380,6 +405,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::None,
+            cfg.driver_options.clone(),
         ))),
         "vllm" => Ok(Box::new(OpenAICompatProvider::new(
             "vllm",
@@ -391,6 +417,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             vec![],
             // vLLM accepts an optional bearer token
             if key().is_some() { AuthStyle::Bearer } else { AuthStyle::None },
+            cfg.driver_options.clone(),
         ))),
         "lmstudio" => Ok(Box::new(OpenAICompatProvider::new(
             "lmstudio",
@@ -401,6 +428,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             AuthStyle::None,
+            cfg.driver_options.clone(),
         ))),
 
         // ── Testing / Mock ────────────────────────────────────────────────────
@@ -450,6 +478,86 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
     headers
 }
 
+// ── Model-config resolution ───────────────────────────────────────────────────
+
+/// Build a [`ModelConfig`] by applying `override_str` on top of `base`.
+///
+/// The override string may be:
+/// - `"provider/model"` → sets both provider and name (e.g. `"anthropic/claude-opus-4-5"`)
+/// - bare registered provider id (e.g. `"groq"`, `"ollama"`) → changes provider, keeps model name
+/// - bare model name (no `/`, not a known provider id) → changes model name, keeps provider
+///
+/// When the provider changes, inherited `api_key` / `api_key_env` fields are
+/// cleared so the correct credential env-var for the new provider is looked up.
+pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig {
+    let mut cfg = base.clone();
+    let provider_changed;
+    if let Some((provider, model)) = override_str.split_once('/') {
+        provider_changed = provider != base.provider;
+        cfg.provider = provider.to_string();
+        cfg.name = model.to_string();
+    } else if get_driver(override_str).is_some() {
+        // Bare provider id — change provider, keep the current model name.
+        provider_changed = override_str != base.provider;
+        cfg.provider = override_str.to_string();
+    } else {
+        cfg.name = override_str.to_string();
+        provider_changed = false;
+    }
+    // When the provider changes the inherited api_key / api_key_env belong to
+    // the original provider.  Clear them so resolve_api_key() falls through to
+    // the new provider's registry default env var.
+    if provider_changed {
+        cfg.api_key = None;
+        cfg.api_key_env = None;
+    }
+    cfg
+}
+
+/// Resolve a [`ModelConfig`] using `override_str`, checking
+/// `config.providers` for named custom providers first.
+///
+/// If the prefix of `override_str` (the part before an optional `/`) matches
+/// a key in `config.providers`, that named config is used as the base and
+/// only the model name portion is optionally overridden.
+///
+/// Otherwise the call falls back to [`resolve_model_cfg`] with
+/// `config.model` as the base, supporting the same `"provider/name"` /
+/// bare-provider / bare-name syntax.
+///
+/// # Example
+/// ```yaml
+/// providers:
+///   my_ollama:
+///     provider: openai   # openai-compatible endpoint
+///     base_url: http://localhost:11434/v1
+///     name: llama3.2
+/// ```
+/// `--model my_ollama` uses the whole named config;
+/// `--model my_ollama/codellama` overrides just the model name.
+pub fn resolve_model_from_config(
+    config: &sven_config::Config,
+    override_str: &str,
+) -> ModelConfig {
+    let (provider_key, model_suffix) =
+        if let Some((p, m)) = override_str.split_once('/') {
+            (p, Some(m))
+        } else {
+            (override_str, None)
+        };
+
+    // Named custom provider in config.providers takes precedence.
+    if let Some(named) = config.providers.get(provider_key) {
+        let mut cfg = named.clone();
+        if let Some(model) = model_suffix {
+            cfg.name = model.to_string();
+        }
+        return cfg;
+    }
+
+    // Fall back to standard resolution with config.model as base.
+    resolve_model_cfg(&config.model, override_str)
+}
 
 #[cfg(test)]
 mod tests {
@@ -560,5 +668,108 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── resolve_model_cfg ─────────────────────────────────────────────────────
+
+    fn openai_base() -> ModelConfig {
+        ModelConfig {
+            provider: "openai".into(),
+            name: "gpt-4o".into(),
+            api_key_env: Some("OPENAI_API_KEY".into()),
+            ..ModelConfig::default()
+        }
+    }
+
+    #[test]
+    fn resolve_slash_separated_sets_provider_and_name() {
+        let cfg = resolve_model_cfg(&openai_base(), "anthropic/claude-opus-4-5");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.name, "claude-opus-4-5");
+    }
+
+    #[test]
+    fn resolve_slash_separated_clears_api_key_on_provider_change() {
+        let cfg = resolve_model_cfg(&openai_base(), "anthropic/claude-opus-4-5");
+        assert!(cfg.api_key_env.is_none(), "key env must be cleared when provider changes");
+        assert!(cfg.api_key.is_none());
+    }
+
+    #[test]
+    fn resolve_bare_model_name_keeps_provider() {
+        let cfg = resolve_model_cfg(&openai_base(), "gpt-4o-mini");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o-mini");
+        assert_eq!(cfg.api_key_env.as_deref(), Some("OPENAI_API_KEY"),
+            "key env must be preserved when provider does not change");
+    }
+
+    #[test]
+    fn resolve_bare_provider_id_changes_provider_and_clears_key() {
+        let cfg = resolve_model_cfg(&openai_base(), "anthropic");
+        assert_eq!(cfg.provider, "anthropic");
+        assert!(cfg.api_key_env.is_none());
+    }
+
+    #[test]
+    fn resolve_same_provider_bare_id_keeps_key() {
+        let cfg = resolve_model_cfg(&openai_base(), "openai");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.api_key_env.as_deref(), Some("OPENAI_API_KEY"),
+            "key env must not be cleared when provider is unchanged");
+    }
+
+    // ── resolve_model_from_config ─────────────────────────────────────────────
+
+    fn config_with_named_provider() -> sven_config::Config {
+        use std::collections::HashMap;
+        let mut providers = HashMap::new();
+        providers.insert("my_ollama".into(), ModelConfig {
+            provider: "openai".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            name: "llama3.2".into(),
+            api_key: Some("ollama".into()),
+            ..ModelConfig::default()
+        });
+        sven_config::Config {
+            providers,
+            ..sven_config::Config::default()
+        }
+    }
+
+    #[test]
+    fn resolve_from_config_named_provider_used_as_base() {
+        let config = config_with_named_provider();
+        let cfg = resolve_model_from_config(&config, "my_ollama");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "llama3.2");
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn resolve_from_config_named_provider_with_model_override() {
+        let config = config_with_named_provider();
+        let cfg = resolve_model_from_config(&config, "my_ollama/codellama");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "codellama");
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"),
+            "base_url from named provider must be kept");
+    }
+
+    #[test]
+    fn resolve_from_config_falls_back_to_standard_resolution() {
+        let config = config_with_named_provider();
+        // "anthropic/claude-opus-4-5" is not a named provider
+        let cfg = resolve_model_from_config(&config, "anthropic/claude-opus-4-5");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.name, "claude-opus-4-5");
+    }
+
+    #[test]
+    fn resolve_from_config_bare_model_name_uses_config_model_as_base() {
+        let config = config_with_named_provider(); // default model = openai/gpt-4o
+        let cfg = resolve_model_from_config(&config, "gpt-4o-mini");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o-mini");
     }
 }

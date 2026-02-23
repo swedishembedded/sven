@@ -61,6 +61,15 @@ pub struct OpenAICompatProvider {
     /// Additional HTTP headers (e.g. `HTTP-Referer` for OpenRouter).
     extra_headers: Vec<(String, String)>,
     auth_style: AuthStyle,
+    /// Extra key-value pairs merged verbatim into the request body.
+    ///
+    /// Populated from `ModelConfig.driver_options`.  Use this to pass
+    /// provider-specific parameters that sven does not model natively, e.g.:
+    ///   • `parse_tool_calls: false` — disable llama.cpp grammar constraints
+    ///     so the model can emit reasoning text alongside tool calls
+    ///   • `reasoning_format: "deepseek"` — enable thinking extraction on
+    ///     llama.cpp for reasoning-capable models (QwQ, DeepSeek-R1, Qwen3)
+    extra_body: serde_json::Value,
 }
 
 impl OpenAICompatProvider {
@@ -76,6 +85,7 @@ impl OpenAICompatProvider {
     /// - `temperature` — `None` defaults to 0.2
     /// - `extra_headers` — additional `(name, value)` pairs sent on every request
     /// - `auth_style` — how the key is attached to requests
+    /// - `extra_body` — JSON object merged verbatim into the request body
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver_name: &'static str,
@@ -86,6 +96,7 @@ impl OpenAICompatProvider {
         temperature: Option<f32>,
         extra_headers: Vec<(String, String)>,
         auth_style: AuthStyle,
+        extra_body: serde_json::Value,
     ) -> Self {
         let base = base_url.trim_end_matches('/');
         Self {
@@ -99,6 +110,7 @@ impl OpenAICompatProvider {
             client: reqwest::Client::new(),
             extra_headers,
             auth_style,
+            extra_body,
         }
     }
 
@@ -121,6 +133,7 @@ impl OpenAICompatProvider {
         temperature: Option<f32>,
         extra_headers: Vec<(String, String)>,
         auth_style: AuthStyle,
+        extra_body: serde_json::Value,
     ) -> Self {
         Self {
             driver_name,
@@ -133,6 +146,7 @@ impl OpenAICompatProvider {
             client: reqwest::Client::new(),
             extra_headers,
             auth_style,
+            extra_body,
         }
     }
 }
@@ -300,6 +314,21 @@ impl crate::ModelProvider for OpenAICompatProvider {
         if self.driver_name == "openrouter" {
             if let Some(key) = &req.cache_key {
                 body["prompt_cache_key"] = json!(key);
+            }
+        }
+
+        // Merge driver_options (extra_body) into the request.  Keys from the
+        // user-supplied JSON object override anything sven set above, so users
+        // can fine-tune provider-specific behaviour without code changes:
+        //
+        //   • `parse_tool_calls: false`      – disable llama.cpp grammar so
+        //                                      the model can emit reasoning
+        //                                      text alongside tool calls
+        //   • `reasoning_format: "deepseek"` – extract <think> → reasoning_content
+        //   • any other provider-specific key that sven doesn't model natively
+        if let Some(map) = self.extra_body.as_object() {
+            for (k, v) in map {
+                body[k] = v.clone();
             }
         }
 
@@ -598,6 +627,7 @@ mod tests {
             Some(0.0),
             vec![],
             AuthStyle::None,
+            serde_json::Value::Null,
         )
     }
 
@@ -625,6 +655,7 @@ mod tests {
             "x", "m".into(), None,
             "http://localhost:1234/v1/",
             None, None, vec![], AuthStyle::None,
+            serde_json::Value::Null,
         );
         assert_eq!(p.chat_url, "http://localhost:1234/v1/chat/completions");
     }
@@ -636,9 +667,82 @@ mod tests {
             "https://openrouter.ai/api/v1", None, None,
             vec![("HTTP-Referer".into(), "https://example.com".into())],
             AuthStyle::Bearer,
+            serde_json::Value::Null,
         );
         assert_eq!(p.extra_headers.len(), 1);
         assert_eq!(p.extra_headers[0].0, "HTTP-Referer");
+    }
+
+    // ── extra_body (driver_options) ───────────────────────────────────────────
+
+    /// Verify that keys in extra_body are merged into the request JSON.
+    #[test]
+    fn extra_body_keys_are_merged_into_request() {
+        use serde_json::json;
+
+        let extra = json!({ "parse_tool_calls": false, "reasoning_format": "deepseek" });
+        let p = OpenAICompatProvider::new(
+            "llama", "qwen2.5".into(), None,
+            "http://localhost:8080/v1", None, None,
+            vec![], AuthStyle::None,
+            extra,
+        );
+
+        // Simulate what complete() does: build a base body and merge extra_body.
+        let mut body = json!({
+            "model": p.model,
+            "stream": true,
+            "max_tokens": p.max_tokens,
+        });
+        if let Some(map) = p.extra_body.as_object() {
+            for (k, v) in map {
+                body[k] = v.clone();
+            }
+        }
+
+        assert_eq!(body["parse_tool_calls"], json!(false));
+        assert_eq!(body["reasoning_format"], json!("deepseek"));
+        assert_eq!(body["model"], json!("qwen2.5"));
+    }
+
+    /// Verify that Null extra_body does not alter the request JSON.
+    #[test]
+    fn null_extra_body_does_not_alter_request() {
+        use serde_json::json;
+
+        let p = make_provider();
+        let mut body = json!({ "model": p.model, "stream": true });
+        if let Some(map) = p.extra_body.as_object() {
+            for (k, v) in map {
+                body[k] = v.clone();
+            }
+        }
+
+        let obj = body.as_object().unwrap();
+        assert_eq!(obj.len(), 2, "no extra keys should be inserted");
+    }
+
+    /// Verify that extra_body keys override sven-computed keys (user wins).
+    #[test]
+    fn extra_body_overrides_computed_keys() {
+        use serde_json::json;
+
+        let extra = json!({ "stream": false, "temperature": 0.9 });
+        let p = OpenAICompatProvider::new(
+            "test", "m".into(), None,
+            "http://localhost/v1", None, Some(0.2), vec![], AuthStyle::None,
+            extra,
+        );
+
+        let mut body = json!({ "stream": true, "temperature": p.temperature });
+        if let Some(map) = p.extra_body.as_object() {
+            for (k, v) in map {
+                body[k] = v.clone();
+            }
+        }
+
+        assert_eq!(body["stream"], json!(false), "extra_body should override stream");
+        assert_eq!(body["temperature"], json!(0.9), "extra_body should override temperature");
     }
 
     // ── parse_sse_chunk ───────────────────────────────────────────────────────

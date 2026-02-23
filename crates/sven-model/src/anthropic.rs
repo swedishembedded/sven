@@ -151,17 +151,14 @@ impl crate::ModelProvider for AnthropicProvider {
                             break 'outer;
                         }
                         let btype = block["type"].as_str().unwrap_or("");
-                        if self.cache_images
+                        let should_cache = (self.cache_images
                             && btype == "image"
-                            && block.get("cache_control").is_none()
-                        {
-                            block["cache_control"] = cache_ctrl.clone();
-                            added += 1;
-                        } else if self.cache_tool_results
-                            && btype == "tool_result"
-                            && block.get("cache_control").is_none()
-                            && block["content"].to_string().len() >= TOOL_RESULT_CACHE_CHARS
-                        {
+                            && block.get("cache_control").is_none())
+                            || (self.cache_tool_results
+                                && btype == "tool_result"
+                                && block.get("cache_control").is_none()
+                                && block["content"].to_string().len() >= TOOL_RESULT_CACHE_CHARS);
+                        if should_cache {
                             block["cache_control"] = cache_ctrl.clone();
                             added += 1;
                         }

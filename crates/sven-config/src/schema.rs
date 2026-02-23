@@ -20,6 +20,24 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+    /// Named provider configurations.
+    ///
+    /// Define custom endpoints, local models, or additional accounts here and
+    /// reference them by name with `--model <key>` or `--model <key>/<model>`.
+    ///
+    /// ```yaml
+    /// providers:
+    ///   my_ollama:
+    ///     provider: openai        # uses the OpenAI-compatible wire format
+    ///     base_url: http://localhost:11434/v1
+    ///     name: llama3.2          # default model for this provider
+    ///   work_anthropic:
+    ///     provider: anthropic
+    ///     api_key_env: WORK_ANTHROPIC_KEY
+    ///     name: claude-opus-4-5
+    /// ```
+    #[serde(default)]
+    pub providers: std::collections::HashMap<String, ModelConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,13 +203,20 @@ impl Default for ModelConfig {
     }
 }
 
+fn default_agent_mode() -> AgentMode { AgentMode::Agent }
+fn default_max_tool_rounds() -> u32 { 50 }
+fn default_compaction_threshold() -> f32 { 0.85 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Default mode when none is specified on the CLI
+    #[serde(default = "default_agent_mode")]
     pub default_mode: AgentMode,
     /// Maximum number of autonomous tool-call rounds before stopping
+    #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
     /// Token fraction at which proactive compaction triggers (0.0–1.0)
+    #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during
     /// compaction.  The oldest messages beyond this tail are summarised by
@@ -204,6 +229,7 @@ pub struct AgentConfig {
     #[serde(default = "default_compaction_keep_recent")]
     pub compaction_keep_recent: usize,
     /// System prompt override; leave None to use the built-in prompt
+    #[serde(default)]
     pub system_prompt: Option<String>,
 
     /// Per-step wall-clock timeout in seconds (0 = no limit).
@@ -641,5 +667,54 @@ mod tests {
         let s = serde_yaml::to_string(&w).unwrap();
         let back: Wrap = serde_yaml::from_str(&s).unwrap();
         assert_eq!(back.mode, AgentMode::Plan);
+    }
+
+    // ── providers map ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn config_default_providers_is_empty() {
+        let c = Config::default();
+        assert!(c.providers.is_empty(), "providers must be empty by default");
+    }
+
+    #[test]
+    fn config_providers_deserialised_from_yaml() {
+        let yaml = r#"
+providers:
+  my_ollama:
+    provider: openai
+    base_url: http://localhost:11434/v1
+    name: llama3.2
+"#;
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(c.providers.len(), 1);
+        let p = c.providers.get("my_ollama").unwrap();
+        assert_eq!(p.provider, "openai");
+        assert_eq!(p.base_url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(p.name, "llama3.2");
+    }
+
+    #[test]
+    fn config_providers_round_trip_yaml() {
+        let yaml = r#"
+providers:
+  local:
+    provider: openai
+    base_url: http://127.0.0.1:8080/v1
+    name: phi-3
+"#;
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        let serialised = serde_yaml::to_string(&c).unwrap();
+        let back: Config = serde_yaml::from_str(&serialised).unwrap();
+        let p = back.providers.get("local").unwrap();
+        assert_eq!(p.name, "phi-3");
+        assert_eq!(p.base_url.as_deref(), Some("http://127.0.0.1:8080/v1"));
+    }
+
+    #[test]
+    fn config_providers_absent_in_yaml_uses_empty_default() {
+        let yaml = "model:\n  provider: openai\n  name: gpt-4o\n";
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(c.providers.is_empty());
     }
 }

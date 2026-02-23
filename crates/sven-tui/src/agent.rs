@@ -30,14 +30,25 @@ pub enum AgentRequest {
 }
 
 /// Background task that owns the `Agent` and forwards events back to the TUI.
+///
+/// When `model_override` is `Some`, the effective model configuration is
+/// resolved using the same logic as the CI runner (including the
+/// `config.providers` map for named custom providers).
 pub async fn agent_task(
     config: Arc<Config>,
     mode: AgentMode,
     mut rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
+    model_override: Option<String>,
 ) {
-    let model = match sven_model::from_config(&config.model) {
+    let model_cfg = if let Some(ref mo) = model_override {
+        sven_model::resolve_model_from_config(&config, mo)
+    } else {
+        config.model.clone()
+    };
+
+    let model = match sven_model::from_config(&model_cfg) {
         Ok(m) => Arc::from(m),
         Err(e) => {
             let _ = tx.send(AgentEvent::Error(format!("model init: {e}"))).await;

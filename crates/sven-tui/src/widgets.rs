@@ -5,7 +5,11 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Paragraph,
+        Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Wrap,
+    },
     Frame,
 };
 
@@ -174,12 +178,20 @@ pub fn draw_chat(
 }
 
 /// Draw the input box at the bottom.
+///
+/// The input is rendered as a properly scrollable multi-line text area:
+/// * Text is wrapped by display columns (respecting wide / multibyte chars).
+/// * A vertical scrollbar appears on the right when the content is taller
+///   than the visible area.
+/// * The terminal cursor is placed at the exact column/row of `cursor_pos`
+///   (a UTF-8 byte index), accounting for wrapping and the scroll offset.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_input(
     frame: &mut Frame,
     area: Rect,
     content: &str,
     cursor_pos: usize,
+    scroll_offset: usize,
     focused: bool,
     queued_steps: usize,
     ascii: bool,
@@ -197,13 +209,73 @@ pub fn draw_input(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let para = Paragraph::new(content).wrap(Wrap { trim: false });
-    frame.render_widget(para, inner);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
 
+    use crate::input_wrap::wrap_content;
+
+    let visible_height = inner.height as usize;
+
+    // First pass with full width to decide whether a scrollbar is needed.
+    let probe = wrap_content(content, inner.width as usize, cursor_pos);
+    let needs_scrollbar = probe.lines.len() > visible_height;
+
+    // When a scrollbar is shown, the text area is 1 column narrower.
+    let text_width = if needs_scrollbar && inner.width > 1 {
+        inner.width - 1
+    } else {
+        inner.width
+    };
+
+    // Recompute with the final text width (only when it changed).
+    let wrap = if needs_scrollbar && inner.width > 1 {
+        wrap_content(content, text_width as usize, cursor_pos)
+    } else {
+        probe
+    };
+
+    let total_lines = wrap.lines.len();
+    let scroll = scroll_offset.min(total_lines.saturating_sub(visible_height));
+
+    // Text area (may be narrower when scrollbar is shown).
+    let text_area = Rect::new(inner.x, inner.y, text_width, inner.height);
+
+    // Render the visible slice of wrapped lines (no Paragraph-level wrap
+    // because we handle wrapping ourselves).
+    let visible: Vec<Line<'static>> = wrap
+        .lines
+        .iter()
+        .skip(scroll)
+        .take(visible_height)
+        .map(|l| Line::from(l.clone()))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), text_area);
+
+    // Scrollbar (only when content overflows).
+    if needs_scrollbar && inner.width > 1 {
+        let sb_area = Rect::new(inner.x + text_width, inner.y, 1, inner.height);
+        let mut sb_state = ScrollbarState::new(total_lines)
+            .position(scroll)
+            .viewport_content_length(visible_height);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None),
+            sb_area,
+            &mut sb_state,
+        );
+    }
+
+    // Terminal cursor — only placed when focused and cursor row is visible.
     if focused {
-        let col = (cursor_pos % inner.width as usize) as u16;
-        let row = (cursor_pos / inner.width as usize) as u16;
-        frame.set_cursor_position((inner.x + col, inner.y + row));
+        let cursor_row = wrap.cursor_row;
+        if cursor_row >= scroll && cursor_row < scroll + visible_height {
+            let vis_row = (cursor_row - scroll) as u16;
+            // Clamp column to the text area width to avoid writing past it.
+            let col = (wrap.cursor_col as u16).min(text_area.width.saturating_sub(1));
+            frame.set_cursor_position((text_area.x + col, text_area.y + vis_row));
+        }
     }
 }
 

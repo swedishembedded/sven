@@ -84,19 +84,9 @@ impl ConversationRunner {
             "starting conversation turn"
         );
 
-        // Build model (reuse resolve_model_cfg logic inline here)
+        // Build model config, respecting config.providers for named overrides.
         let model_cfg = if let Some(name) = &opts.model_override {
-            const PROVIDER_KEYWORDS: &[&str] = &["mock", "openai", "anthropic"];
-            let mut cfg = self.config.model.clone();
-            if let Some((provider, model)) = name.split_once('/') {
-                cfg.provider = provider.to_string();
-                cfg.name = model.to_string();
-            } else if PROVIDER_KEYWORDS.contains(&name.as_str()) {
-                cfg.provider = name.clone();
-            } else {
-                cfg.name = name.clone();
-            }
-            cfg
+            sven_model::resolve_model_from_config(&self.config, name)
         } else {
             self.config.model.clone()
         };

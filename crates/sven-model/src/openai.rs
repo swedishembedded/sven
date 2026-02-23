@@ -27,6 +27,7 @@ impl OpenAiProvider {
         base_url: Option<String>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
+        driver_options: serde_json::Value,
     ) -> Self {
         Self {
             inner: OpenAICompatProvider::new(
@@ -38,6 +39,7 @@ impl OpenAiProvider {
                 temperature,
                 vec![],
                 AuthStyle::Bearer,
+                driver_options,
             ),
         }
     }

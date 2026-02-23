@@ -220,7 +220,7 @@ mod tests {
     async fn missing_pattern_is_error() {
         let out = GrepTool.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'pattern'"));
+        assert!(out.content.contains("missing required parameter 'pattern'"));
     }
 
     #[tokio::test]

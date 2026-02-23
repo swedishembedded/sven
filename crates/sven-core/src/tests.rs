@@ -454,7 +454,7 @@ mod agent_tests {
 
         // Vision model so images are not stripped
         let mock = ScriptedMockProvider::tool_then_text(
-            "ri-1", "read_image", &format!(r#"{{"file_path":"{path}"}}"#), "I see a red pixel",
+            "ri-1", "read_image", &format!(r#"{{"path":"{path}"}}"#), "I see a red pixel",
         ).with_vision();
         let mut reg = ToolRegistry::new();
         reg.register(ReadImageTool);
@@ -599,10 +599,10 @@ mod agent_tests {
             vec![ResponseEvent::TextDelta("short summary".into()), ResponseEvent::Done],
             vec![ResponseEvent::TextDelta("actual reply".into()), ResponseEvent::Done],
         ]);
-        // max_context_tokens=20 so 4 short messages (~1 token each) easily
-        // exceed the 50% threshold (≥10 tokens).
+        // max_context_tokens=16: the 5 seeded messages produce 9 approx-tokens
+        // (1+2+2+2+2), giving 9/16 = 0.5625 ≥ threshold 0.5.
         let mut agent = agent_with_ctx(
-            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+            model, ToolRegistry::default(), config, AgentMode::Agent, 16,
         );
 
         // Seed: system is pushed automatically on first turn, but we inject
@@ -638,7 +638,7 @@ mod agent_tests {
         // The session should have NO messages from m1..m4 verbatim.
         let msgs = &agent.session().messages;
         // system + summary + user input + assistant reply = 4
-        assert_eq!(msgs.len(), 4, "expected [sys, summary, user, reply], got {:?}", msgs.iter().map(|m| m.role).collect::<Vec<_>>());
+        assert_eq!(msgs.len(), 4, "expected [sys, summary, user, reply], got {:?}", msgs.iter().map(|m| m.role.clone()).collect::<Vec<_>>());
     }
 
     #[tokio::test]
@@ -715,8 +715,10 @@ mod agent_tests {
             vec![ResponseEvent::TextDelta("summary text".into()), ResponseEvent::Done],
             vec![ResponseEvent::TextDelta("reply".into()), ResponseEvent::Done],
         ]);
+        // max_context_tokens=20: the 3 seeded messages produce 7 approx-tokens
+        // (1+3+3), giving 7/20 = 0.35 ≥ threshold 0.3.
         let mut agent = agent_with_ctx(
-            model, ToolRegistry::default(), config, AgentMode::Agent, 30,
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
         );
         seed_session(&mut agent, vec![
             Message::system("system"),
@@ -742,7 +744,20 @@ mod agent_tests {
             }
         });
         let (before, after) = compaction_ev.expect("ContextCompacted must be emitted");
-        assert!(before > after,
-            "tokens_before ({before}) must exceed tokens_after ({after}) after compaction");
+        // `tokens_before` is the count of the seeded session; must be > 0.
+        assert!(before > 0, "tokens_before must be positive (was {before})");
+        // `tokens_after` includes the real (full) system prompt which is much
+        // larger than the tiny seeded "system" message — comparing raw totals
+        // is not meaningful.  Instead, verify the old history was replaced by
+        // checking that neither "aaaa" nor "bbbb" appear in any session message.
+        let old_history_remains = agent.session().messages.iter().any(|m| {
+            m.as_text().map(|t| t.contains("aaaa") || t.contains("bbbb")).unwrap_or(false)
+        });
+        assert!(
+            !old_history_remains,
+            "original history must have been compacted away (tokens_before={before}, tokens_after={after})"
+        );
+        // The event fields must at least be non-zero.
+        assert!(after > 0, "tokens_after must be positive (was {after})");
     }
 }

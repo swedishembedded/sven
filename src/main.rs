@@ -565,6 +565,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         initial_prompt: cli.prompt,
         initial_history,
         no_nvim: cli.no_nvim,
+        model_override: cli.model,
     };
 
     let app = App::new(config, opts);

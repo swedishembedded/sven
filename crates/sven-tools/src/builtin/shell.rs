@@ -188,7 +188,7 @@ mod tests {
         let t = ShellTool::default();
         let out = t.execute(&call("1", json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'command'"));
+        assert!(out.content.contains("missing required parameter 'command'"));
     }
 
     #[tokio::test]
