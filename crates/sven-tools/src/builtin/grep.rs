@@ -180,7 +180,10 @@ async fn run_rg(
     let mut result = lines.join("\n");
     let total_lines = stdout.lines().count();
     if total_lines > limit {
-        result.push_str(&format!("\n...[{} more matches not shown]", total_lines - limit));
+        result.push_str(&format!(
+            "\n...[{} more matches not shown — narrow with path= or include= to see all results]",
+            total_lines - limit
+        ));
     }
     Ok(result)
 }

@@ -36,6 +36,94 @@ pub fn find_project_root() -> Result<PathBuf> {
     Ok(std::fs::canonicalize(&start)?)
 }
 
+/// Workspace root markers checked in priority order.
+///
+/// A *workspace root* is the directory that sits above one or more git
+/// repositories and contains shared tooling — knowledge bases, IDE
+/// configuration, build system bootstrapping, etc.  It is distinct from the
+/// *project root* (the git repository found by `find_project_root()`).
+///
+/// Each entry is a directory name whose presence at a given ancestor level is
+/// treated as the workspace boundary.  Markers are checked in order; the first
+/// match wins:
+///
+/// | Marker    | Created by                      | Reliability |
+/// |-----------|----------------------------------|-------------|
+/// | `.west`   | `west init` (Zephyr build system) | High — purpose-built workspace marker, always above git repos |
+/// | `.cursor` | Cursor IDE                        | Medium — IDE workspace dir, commonly at the repo-collection level |
+///
+/// Note: `.sven/` is intentionally **not** a workspace marker because it is
+/// a project-level directory that lives *inside* the git repository.
+const WORKSPACE_MARKERS: &[&str] = &[
+    ".west",    // Zephyr West workspace root (west init)
+    ".cursor",  // Cursor IDE workspace root
+];
+
+/// Heuristically locate the workspace root — the directory above the git
+/// repository that contains shared tooling used by multiple projects.
+///
+/// **This function uses heuristics** (see [`WORKSPACE_MARKERS`]) and may
+/// return an incorrect result when the filesystem layout is unusual.  Callers
+/// should treat the result as a best-effort hint, not a guarantee.
+///
+/// ## How it works
+///
+/// Starting one level *above* `project_root`, the function ascends the
+/// directory tree checking for the presence of each [`WORKSPACE_MARKERS`]
+/// entry.  The search is capped at [`MAX_WORKSPACE_ASCENT`] levels to avoid
+/// false positives far up the filesystem.  If no marker is found, the
+/// function returns `project_root` unchanged as a safe fallback.
+///
+/// Starting above the project root ensures that workspace markers present
+/// *inside* the git repository (e.g. a `.cursor/` directory checked in to a
+/// repo) are never mistaken for a workspace boundary.
+///
+/// ## Example layout
+///
+/// ```text
+/// /data/                         ← has .west/ or .cursor/ → workspace root
+///   .west/
+///   zephyr/          (git repo)
+///   ng-iot-platform/ (git repo)  ← project root passed to this function
+///     .git/
+///     .sven/         ← project-level, NOT a workspace marker
+/// ```
+///
+/// `find_workspace_root("/data/ng-iot-platform")` → `"/data"`
+pub fn find_workspace_root(project_root: &Path) -> PathBuf {
+    // Begin one level above project_root so that any workspace markers that
+    // happen to exist *inside* the project are never matched.
+    let start = match project_root.parent() {
+        Some(p) => p,
+        None => return project_root.to_path_buf(),
+    };
+
+    let mut current = start;
+    for _ in 0..MAX_WORKSPACE_ASCENT {
+        for marker in WORKSPACE_MARKERS {
+            if current.join(marker).exists() {
+                return current.to_path_buf();
+            }
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+
+    // No workspace marker found — fall back to project_root so callers always
+    // get a usable path rather than an error.
+    project_root.to_path_buf()
+}
+
+/// Maximum number of directory levels to ascend when searching for a
+/// workspace root above the project root.
+///
+/// Keeping this small (5) prevents the heuristic from matching unrelated
+/// system directories (e.g. a `.cursor/` that happens to exist somewhere far
+/// up the hierarchy).
+const MAX_WORKSPACE_ASCENT: usize = 5;
+
 // ─── Git context ──────────────────────────────────────────────────────────────
 
 /// Maximum bytes read from a single git sub-command output.
@@ -335,6 +423,80 @@ mod tests {
     fn find_project_root_returns_a_directory() {
         let root = find_project_root().expect("find_project_root should not fail");
         assert!(root.is_dir(), "project root should be a directory");
+    }
+
+    #[test]
+    fn find_workspace_root_detects_west_workspace() {
+        // .west/ is the Zephyr West workspace marker and should be found first.
+        let tmp = std::env::temp_dir().join("sven_wsroot_west_test");
+        let project = tmp.join("ng-iot-platform");
+        let west_dir = tmp.join(".west");
+        let _ = std::fs::create_dir_all(&project);
+        let _ = std::fs::create_dir_all(&west_dir);
+
+        let ws = find_workspace_root(&project);
+        assert_eq!(ws, tmp, ".west/ should be recognised as workspace root");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_workspace_root_detects_cursor_workspace() {
+        let tmp = std::env::temp_dir().join("sven_wsroot_cursor_test");
+        let project = tmp.join("myproject");
+        let cursor_dir = tmp.join(".cursor");
+        let _ = std::fs::create_dir_all(&project);
+        let _ = std::fs::create_dir_all(&cursor_dir);
+
+        let ws = find_workspace_root(&project);
+        assert_eq!(ws, tmp, ".cursor/ should be recognised as workspace root");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_workspace_root_west_takes_priority_over_cursor() {
+        // When both .west/ and .cursor/ exist at the same ancestor, .west/ wins
+        // because it appears first in WORKSPACE_MARKERS.
+        let tmp = std::env::temp_dir().join("sven_wsroot_priority_test");
+        let project = tmp.join("myproject");
+        let _ = std::fs::create_dir_all(&project);
+        let _ = std::fs::create_dir_all(tmp.join(".west"));
+        let _ = std::fs::create_dir_all(tmp.join(".cursor"));
+
+        let ws = find_workspace_root(&project);
+        assert_eq!(ws, tmp, "marker at same level should be found regardless of order");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_workspace_root_ignores_markers_inside_project_root() {
+        // A .cursor/ inside the project itself must not be mistaken for the
+        // workspace root — the search starts *above* project_root.
+        let tmp = std::env::temp_dir().join("sven_wsroot_inside_test");
+        let project = tmp.join("myproject");
+        let cursor_inside_project = project.join(".cursor");
+        let _ = std::fs::create_dir_all(&cursor_inside_project);
+        // No marker exists above `project`, so we expect a fallback.
+
+        let ws = find_workspace_root(&project);
+        assert_eq!(ws, project,
+            "markers inside the project root should not be treated as workspace boundary");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_workspace_root_falls_back_to_project_root_when_no_marker() {
+        let tmp = std::env::temp_dir().join("sven_wsroot_fallback_test");
+        let project = tmp.join("myproject");
+        let _ = std::fs::create_dir_all(&project);
+
+        let ws = find_workspace_root(&project);
+        assert_eq!(ws, project, "should fall back to project root when no marker found");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

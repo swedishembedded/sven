@@ -10,8 +10,7 @@ use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
-
-const OUTPUT_LIMIT: usize = 100_000;
+use crate::builtin::shell::head_tail_truncate;
 
 pub struct RunTerminalCommandTool {
     pub timeout_secs: u64,
@@ -33,7 +32,8 @@ impl Tool for RunTerminalCommandTool {
          If search is unavoidable in a command, use rg (ripgrep), never grep/find/cat/sed/awk.\n\n\
          Before mkdir: verify parent exists with ls. Quote paths with spaces. \
          Chain dependent commands with &&; call in parallel for independent ones. \
-         Increase timeout_secs (default 30s) for slow builds. Output capped at 100,000 chars.\n\n\
+         Increase timeout_secs (default 30s) for slow builds. Output capped at ~20 KB;\n\
+         first and last 100 lines preserved when truncated — errors at the end are never lost.\n\n\
          ## Git Safety\n\
          - NEVER: update git config / force push / skip hooks (--no-verify/--no-gpg-sign) without explicit ask\n\
          - NEVER commit or push unless explicitly asked\n\
@@ -107,12 +107,12 @@ impl Tool for RunTerminalCommandTool {
                 let stderr = String::from_utf8_lossy(&output.stderr);
 
                 if !stdout.is_empty() {
-                    content.push_str(&truncate(&stdout, OUTPUT_LIMIT));
+                    content.push_str(&head_tail_truncate(&stdout));
                 }
                 if !stderr.is_empty() {
                     if !content.is_empty() { content.push('\n'); }
                     content.push_str("[stderr]\n");
-                    content.push_str(&truncate(&stderr, OUTPUT_LIMIT));
+                    content.push_str(&head_tail_truncate(&stderr));
                 }
                 if content.is_empty() {
                     content = format!("[exit {}]", output.status.code().unwrap_or(-1));
@@ -128,14 +128,6 @@ impl Tool for RunTerminalCommandTool {
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("spawn error: {e}")),
             Err(_) => ToolOutput::err(&call.id, format!("timeout after {timeout}s")),
         }
-    }
-}
-
-fn truncate(s: &str, limit: usize) -> String {
-    if s.len() <= limit {
-        s.to_string()
-    } else {
-        format!("{}...[truncated {} bytes]", &s[..limit], s.len() - limit)
     }
 }
 

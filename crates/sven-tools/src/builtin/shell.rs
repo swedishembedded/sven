@@ -9,8 +9,17 @@ use tracing::debug;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
-/// Maximum bytes captured from a command's stdout/stderr.
-const OUTPUT_LIMIT: usize = 100_000;
+/// Hard byte ceiling for combined stdout + stderr returned to the model.
+/// 20 KB ≈ 5,000 tokens — keeps output well within a 40 K-token context window.
+const OUTPUT_LIMIT_BYTES: usize = 20_000;
+
+/// Number of lines to keep from the head of oversized output.
+const HEAD_LINES: usize = 100;
+
+/// Number of lines to keep from the tail of oversized output.
+/// Errors and summaries almost always appear at the end of build/test output,
+/// so preserving the tail is at least as important as preserving the head.
+const TAIL_LINES: usize = 100;
 
 /// Built-in tool that runs a shell command.
 pub struct ShellTool {
@@ -28,8 +37,17 @@ impl Tool for ShellTool {
     fn name(&self) -> &str { "shell" }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return stdout + stderr.  \
-         Prefer non-interactive commands. Avoid commands that require a TTY."
+        "Execute a shell command and return stdout + stderr.\n\
+         Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
+         preserved with an omission marker in the middle — errors at the end are never lost.\n\
+         Prefer non-interactive commands. Avoid commands that require a TTY.\n\
+         IMPORTANT: do NOT use shell for file operations:\n\
+         - Read files  → use read_file  (not cat / head / tail)\n\
+         - Search text → use grep tool  (not grep / rg / ack)\n\
+         - Find files  → use glob tool  (not find / ls -R)\n\
+         - Edit files  → use edit_file  (not sed / awk / patch)\n\
+         For large outputs (builds, test runs), pipe through `tail -200` or\n\
+         `grep -E 'error:|warning:' 2>&1` to keep only what matters."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -94,12 +112,12 @@ impl Tool for ShellTool {
                 let stderr = String::from_utf8_lossy(&output.stderr);
 
                 if !stdout.is_empty() {
-                    content.push_str(&truncate(&stdout, OUTPUT_LIMIT));
+                    content.push_str(&head_tail_truncate(&stdout));
                 }
                 if !stderr.is_empty() {
                     if !content.is_empty() { content.push('\n'); }
                     content.push_str("[stderr]\n");
-                    content.push_str(&truncate(&stderr, OUTPUT_LIMIT));
+                    content.push_str(&head_tail_truncate(&stderr));
                 }
                 if content.is_empty() {
                     content = format!("[exit {}]", output.status.code().unwrap_or(-1));
@@ -121,12 +139,51 @@ impl Tool for ShellTool {
     }
 }
 
-fn truncate(s: &str, limit: usize) -> String {
-    if s.len() <= limit {
-        s.to_string()
-    } else {
-        format!("{}...[truncated {} bytes]", &s[..limit], s.len() - limit)
+/// Truncate `s` to fit within `OUTPUT_LIMIT_BYTES`.
+///
+/// When truncation is needed the first `HEAD_LINES` and last `TAIL_LINES` are
+/// kept verbatim, with an omission marker in the middle showing how many lines
+/// and bytes were dropped.  This ensures the model always sees both the
+/// beginning of the output (command headers, progress start) and the end
+/// (errors, summaries, exit messages) even for very long builds or test runs.
+pub(crate) fn head_tail_truncate(s: &str) -> String {
+    if s.len() <= OUTPUT_LIMIT_BYTES {
+        return s.to_string();
     }
+
+    let lines: Vec<&str> = s.lines().collect();
+    let total = lines.len();
+
+    if total <= HEAD_LINES + TAIL_LINES {
+        // Enough lines to show everything but byte budget exceeded (very long lines).
+        // Fall back to a simple byte-level truncation with a tail window.
+        let tail_start = s.len().saturating_sub(OUTPUT_LIMIT_BYTES / 2);
+        // Align to a line boundary
+        let tail_str = &s[tail_start..];
+        let head_end = OUTPUT_LIMIT_BYTES / 2;
+        let head_str = &s[..head_end.min(s.len())];
+        let omitted_bytes = s.len() - head_str.len() - tail_str.len();
+        return format!(
+            "{}\n...[{} bytes omitted]...\n{}",
+            head_str, omitted_bytes, tail_str
+        );
+    }
+
+    let head: Vec<&str> = lines[..HEAD_LINES].to_vec();
+    let tail: Vec<&str> = lines[total - TAIL_LINES..].to_vec();
+    let omitted_lines = total - HEAD_LINES - TAIL_LINES;
+
+    // Approximate omitted bytes for the informational marker.
+    let shown_bytes = head.join("\n").len() + tail.join("\n").len();
+    let omitted_bytes = s.len().saturating_sub(shown_bytes);
+
+    format!(
+        "{}\n...[{} lines / ~{} bytes omitted]...\n{}",
+        head.join("\n"),
+        omitted_lines,
+        omitted_bytes,
+        tail.join("\n")
+    )
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
@@ -148,7 +205,7 @@ mod tests {
     async fn executes_echo_and_returns_stdout() {
         let t = ShellTool::default();
         let out = t.execute(&call("1", json!({"command": "echo hello"}))).await;
-        assert!(!out.is_error);
+        assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("hello"));
     }
 
@@ -202,20 +259,38 @@ mod tests {
         assert!(out.content.contains("timeout"));
     }
 
-    // ── Output truncation ─────────────────────────────────────────────────────
+    // ── Head+tail truncation ──────────────────────────────────────────────────
 
     #[test]
-    fn truncate_does_nothing_within_limit() {
-        let s = "hello";
-        assert_eq!(truncate(s, 100), "hello");
+    fn short_output_passes_through_unchanged() {
+        let s = "hello\nworld\n";
+        assert_eq!(head_tail_truncate(s), s);
     }
 
     #[test]
-    fn truncate_shortens_and_appends_note() {
-        let s = "abcdefghij"; // 10 chars
-        let result = truncate(s, 5);
-        assert!(result.starts_with("abcde"));
-        assert!(result.contains("truncated"));
+    fn large_output_is_truncated_with_omission_marker() {
+        // 1000 lines × 30 bytes ≈ 30 KB > OUTPUT_LIMIT_BYTES (20 KB)
+        let line = "x".repeat(29);
+        let content: String = (0..1000).map(|i| format!("line{i}: {line}\n")).collect();
+        let result = head_tail_truncate(&content);
+        assert!(result.contains("omitted"), "should contain omission marker: {result}");
+        assert!(result.len() < content.len(), "result should be shorter");
+    }
+
+    #[test]
+    fn head_and_tail_are_both_preserved() {
+        // Build output where first line is "BUILD START" and last is "BUILD ERROR"
+        let mut lines: Vec<String> = vec!["BUILD START".to_string()];
+        for i in 0..800 {
+            lines.push(format!("middle line {i} padding padding padding padding padding"));
+        }
+        lines.push("BUILD ERROR".to_string());
+        let content = lines.join("\n");
+
+        let result = head_tail_truncate(&content);
+        assert!(result.contains("BUILD START"), "head should be preserved");
+        assert!(result.contains("BUILD ERROR"), "tail should be preserved");
+        assert!(result.contains("omitted"), "should have omission marker");
     }
 
     // ── Schema ────────────────────────────────────────────────────────────────

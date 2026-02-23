@@ -155,12 +155,25 @@ impl CiRunner {
         let (frontmatter, markdown_body) = parse_frontmatter(&opts.input);
         let frontmatter = frontmatter.unwrap_or_default();
 
-        // ── Merge template vars (CI env < frontmatter < CLI) ────────────────
+        // ── Merge template vars (CI env < workspace < frontmatter < CLI) ───────
         // CI environment variables are injected at the lowest priority so
         // workflows can reference {{branch}}, {{commit}}, {{GITHUB_SHA}}, etc.
         // without any explicit --var flag.
         let ci_ctx = crate::context::detect_ci_context();
         let mut vars: HashMap<String, String> = crate::context::ci_template_vars(&ci_ctx);
+
+        // Inject built-in workspace path vars so workflows can reference
+        // {{PROJECT_ROOT}} and {{WORKSPACE_ROOT}} without needing --var flags.
+        // WORKSPACE_ROOT is the nearest ancestor of the project root that
+        // contains a recognised workspace marker (see find_workspace_root).
+        if let Some(ref root) = opts.project_root {
+            vars.entry("PROJECT_ROOT".into())
+                .or_insert_with(|| root.to_string_lossy().into_owned());
+            let ws_root = crate::context::find_workspace_root(root);
+            vars.entry("WORKSPACE_ROOT".into())
+                .or_insert_with(|| ws_root.to_string_lossy().into_owned());
+        }
+
         vars.extend(frontmatter.vars.unwrap_or_default());
         vars.extend(opts.vars.clone());
 
@@ -395,6 +408,11 @@ impl CiRunner {
             }
         }
 
+        // ── Cache directory for cache_key step skipping ──────────────────────
+        let cache_dir: PathBuf = opts.project_root.as_deref()
+            .map(|r| r.join(".sven").join("cache"))
+            .unwrap_or_else(|| PathBuf::from(".sven/cache"));
+
         // ── Run step loop ────────────────────────────────────────────────────
         let run_start = Instant::now();
         let mut step_idx = 0usize;
@@ -492,99 +510,92 @@ impl CiRunner {
             // Record the user turn before submitting
             collected.push(Message::user(&step_content));
 
-            // Take a snapshot of all messages for potential JSONL writing on early exit.
-            // This avoids borrow checker issues when submit_fut holds a mutable borrow of agent.
-            let messages_snapshot = agent.session().messages.clone();
-
-            let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-            let submit_fut = agent.submit(&step_content, tx);
-
+            // Per-step output accumulators — declared here so both the cache-hit
+            // path and the agent path share the same downstream output logic.
             let mut response_text = String::new();
             let mut tools_used: Vec<String> = Vec::new();
             let mut failed = false;
-            let mut consecutive_tool_errors = 0;
+            let mut step_duration_ms = 0u64;
 
-            tokio::pin!(submit_fut);
-
-            // Build a step-level timeout future
-            // If no timeout set, use a future that never resolves.
-            let step_timeout_fut = async {
-                if let Some(t) = step_timeout_secs {
-                    tokio::time::sleep(Duration::from_secs(t)).await;
-                    true // timed out
-                } else {
-                    futures::future::pending::<bool>().await
+            // ── cache_key: skip agent call if cached output exists ────────────
+            // Keys are sanitized before building a filesystem path to prevent
+            // any path-traversal via malicious or accidental key values.
+            let cache_hit = 'cache: {
+                if let Some(ref key) = step.options.cache_key {
+                    let safe_key = sanitize_cache_key(key);
+                    let cache_path = cache_dir.join(format!("{}.md", safe_key));
+                    if cache_path.exists() {
+                        if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+                            write_progress(&format!(
+                                "[sven:cache:hit] {}/{} key={:?} path={}",
+                                step_idx, total, key, cache_path.display()
+                            ));
+                            collected.push(Message::assistant(&cached));
+                            response_text = cached;
+                            break 'cache true;
+                        }
+                    }
                 }
+                false
             };
-            tokio::pin!(step_timeout_fut);
 
-            loop {
-                tokio::select! {
-                    biased;
+            // Run the agent only when there was no cache hit.
+            if !cache_hit {
+                // Take a snapshot of all messages for potential JSONL writing on
+                // early exit (timeout / cancel).  Must be done before submit_fut
+                // takes a mutable borrow of agent.
+                let messages_snapshot = agent.session().messages.clone();
 
-                    timed_out = &mut step_timeout_fut => {
-                        if timed_out {
-                            write_stderr(&format!(
-                                "[sven:error] Step {step_idx} ({label:?}) timed out after {}s",
-                                step_timeout_secs.unwrap_or(0)
-                            ));
-                            // Save partial conversation and JSONL trace before aborting
+                let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+                let submit_fut = agent.submit(&step_content, tx);
+
+                let mut consecutive_tool_errors = 0;
+
+                tokio::pin!(submit_fut);
+
+                // Build a step-level timeout future.
+                // If no timeout set, use a future that never resolves.
+                let step_timeout_fut = async {
+                    if let Some(t) = step_timeout_secs {
+                        tokio::time::sleep(Duration::from_secs(t)).await;
+                        true // timed out
+                    } else {
+                        futures::future::pending::<bool>().await
+                    }
+                };
+                tokio::pin!(step_timeout_fut);
+
+                loop {
+                    tokio::select! {
+                        biased;
+
+                        timed_out = &mut step_timeout_fut => {
+                            if timed_out {
+                                write_stderr(&format!(
+                                    "[sven:error] Step {step_idx} ({label:?}) timed out after {}s",
+                                    step_timeout_secs.unwrap_or(0)
+                                ));
+                                // Save partial conversation and JSONL trace before aborting
+                                if !collected.is_empty() {
+                                    let _ = history::save(&collected);
+                                }
+                                write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
+                                std::process::exit(EXIT_TIMEOUT);
+                            }
+                        }
+
+                        _ = cancel_rx.recv() => {
+                            write_stderr("[sven:interrupted] Ctrl+C received — saving partial conversation");
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
                             }
                             write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
-                            std::process::exit(EXIT_TIMEOUT);
+                            std::process::exit(EXIT_INTERRUPT);
                         }
-                    }
 
-                    _ = cancel_rx.recv() => {
-                        write_stderr("[sven:interrupted] Ctrl+C received — saving partial conversation");
-                        if !collected.is_empty() {
-                            let _ = history::save(&collected);
-                        }
-                        write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
-                        std::process::exit(EXIT_INTERRUPT);
-                    }
-
-                    Some(event) = rx.recv() => {
-                        handle_event(
-                            event,
-                            &mut response_text,
-                            &mut tools_used,
-                            &mut failed,
-                            &mut collected,
-                            &mut consecutive_tool_errors,
-                            opts.trace_level,
-                        );
-                        
-                        // Abort if too many consecutive tool errors
-                        const MAX_CONSECUTIVE_TOOL_ERRORS: u32 = 20;
-                        if consecutive_tool_errors >= MAX_CONSECUTIVE_TOOL_ERRORS {
-                            write_stderr(&format!(
-                                "[sven:fatal] Step {step_idx} ({label:?}) aborted: \
-                                 {MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool errors. \
-                                 This often indicates the model is using wrong parameter names \
-                                 or is confused. Consider using a more capable model."
-                            ));
-                            if !collected.is_empty() {
-                                let _ = history::save(&collected);
-                            }
-                            write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
-                            std::process::exit(EXIT_AGENT_ERROR);
-                        }
-                    }
-
-                    result = &mut submit_fut => {
-                        if let Err(e) = result {
-                            write_stderr(&format!(
-                                "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
-                            ));
-                            write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
-                            std::process::exit(EXIT_AGENT_ERROR);
-                        }
-                        while let Ok(ev) = rx.try_recv() {
+                        Some(event) = rx.recv() => {
                             handle_event(
-                                ev,
+                                event,
                                 &mut response_text,
                                 &mut tools_used,
                                 &mut failed,
@@ -592,13 +603,78 @@ impl CiRunner {
                                 &mut consecutive_tool_errors,
                                 opts.trace_level,
                             );
+
+                            // Abort if too many consecutive tool errors
+                            const MAX_CONSECUTIVE_TOOL_ERRORS: u32 = 20;
+                            if consecutive_tool_errors >= MAX_CONSECUTIVE_TOOL_ERRORS {
+                                write_stderr(&format!(
+                                    "[sven:fatal] Step {step_idx} ({label:?}) aborted: \
+                                     {MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool errors. \
+                                     This often indicates the model is using wrong parameter names \
+                                     or is confused. Consider using a more capable model."
+                                ));
+                                if !collected.is_empty() {
+                                    let _ = history::save(&collected);
+                                }
+                                write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
+                                std::process::exit(EXIT_AGENT_ERROR);
+                            }
                         }
-                        break;
+
+                        result = &mut submit_fut => {
+                            if let Err(e) = result {
+                                write_stderr(&format!(
+                                    "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
+                                ));
+                                write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
+                                std::process::exit(EXIT_AGENT_ERROR);
+                            }
+                            while let Ok(ev) = rx.try_recv() {
+                                handle_event(
+                                    ev,
+                                    &mut response_text,
+                                    &mut tools_used,
+                                    &mut failed,
+                                    &mut collected,
+                                    &mut consecutive_tool_errors,
+                                    opts.trace_level,
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                step_duration_ms = step_start.elapsed().as_millis() as u64;
+
+                // ── Write to cache after a successful agent run ───────────────
+                if let Some(ref key) = step.options.cache_key {
+                    if !failed && !response_text.is_empty() {
+                        let safe_key = sanitize_cache_key(key);
+                        let cache_path = cache_dir.join(format!("{}.md", safe_key));
+                        if let Some(parent) = cache_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        match std::fs::write(&cache_path, &response_text) {
+                            Ok(()) => write_progress(&format!(
+                                "[sven:cache:write] key={:?} path={}",
+                                key, cache_path.display()
+                            )),
+                            Err(e) => write_stderr(&format!(
+                                "[sven:warn] Failed to write cache {}: {e}",
+                                cache_path.display()
+                            )),
+                        }
                     }
                 }
             }
 
-            let step_duration_ms = step_start.elapsed().as_millis() as u64;
+            // ── Inject step output into template vars for subsequent steps ───
+            // Makes {{step.<label>.output}} and {{step.<N>.output}} available
+            // in all following steps without any file I/O.
+            let norm = normalize_label(label);
+            vars.insert(format!("step.{}.output", norm), response_text.clone());
+            vars.insert(format!("step.{}.output", step_idx), response_text.clone());
 
             // ── Write step output to stdout ──────────────────────────────────
             match opts.output_format {
@@ -634,21 +710,22 @@ impl CiRunner {
             }
 
             // ── Progress report ──────────────────────────────────────────────
+            let cache_suffix = if cache_hit { " (cached)" } else { "" };
             write_progress(&format!(
-                "[sven:step:complete] {}/{} label=\"{}\" duration_ms={} tools={} success={}",
-                step_idx, total, label, step_duration_ms, tools_used.len(), !failed
+                "[sven:step:complete] {}/{} label=\"{}\" duration_ms={} tools={} success={}{}",
+                step_idx, total, label, step_duration_ms, tools_used.len(), !failed, cache_suffix
             ));
 
             if failed {
                 write_stderr(&format!(
                     "[sven:error] Step {step_idx} ({label:?}) reported an error. Aborting."
                 ));
-                // Save partial conversation and JSONL trace
+                // Save partial conversation and JSONL trace.
+                // submit_fut is out of scope here so we can borrow agent directly.
                 if !collected.is_empty() {
                     let _ = history::save(&collected);
                 }
-                // Use snapshot to avoid borrow conflict (submit_fut is still in scope)
-                write_jsonl_snapshot(&messages_snapshot, &opts.jsonl_output, opts.jsonl_format);
+                write_jsonl_snapshot(&agent.session().messages, &opts.jsonl_output, opts.jsonl_format);
                 std::process::exit(EXIT_AGENT_ERROR);
             }
 
@@ -914,6 +991,71 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
         "plan" => Some(AgentMode::Plan),
         "agent" => Some(AgentMode::Agent),
         _ => None,
+    }
+}
+
+/// Sanitize a `cache_key` value into a safe filesystem component.
+///
+/// Only alphanumerics, hyphens, and underscores are kept; everything else
+/// becomes `_`.  This prevents path traversal (e.g. `../../etc/passwd`) from
+/// landing outside `.sven/cache/`.
+fn sanitize_cache_key(key: &str) -> String {
+    key.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Normalise a step label into a snake_case identifier suitable for use as a
+/// template variable key.
+///
+/// ```text
+/// "Gather Information" → "gather_information"
+/// "Step 01: List Files" → "step_01_list_files"
+/// "(unlabelled)" → "unlabelled"
+/// ```
+fn normalize_label(label: &str) -> String {
+    let mut result = String::new();
+    let mut last_was_sep = true; // start true to avoid leading underscore
+    for c in label.chars() {
+        if c.is_alphanumeric() {
+            for lc in c.to_lowercase() {
+                result.push(lc);
+            }
+            last_was_sep = false;
+        } else if !last_was_sep {
+            result.push('_');
+            last_was_sep = true;
+        }
+    }
+    // Trim trailing underscore
+    if result.ends_with('_') {
+        result.pop();
+    }
+    result
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize_label;
+
+    #[test]
+    fn spaces_become_underscores() {
+        assert_eq!(normalize_label("Gather Information"), "gather_information");
+    }
+
+    #[test]
+    fn numbers_preserved() {
+        assert_eq!(normalize_label("Step 01: List Files"), "step_01_list_files");
+    }
+
+    #[test]
+    fn parens_stripped() {
+        assert_eq!(normalize_label("(unlabelled)"), "unlabelled");
+    }
+
+    #[test]
+    fn already_snake_case() {
+        assert_eq!(normalize_label("my_step"), "my_step");
     }
 }
 

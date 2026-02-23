@@ -9,6 +9,7 @@
 
 pub use sven_runtime::{
     find_project_root,
+    find_workspace_root,
     collect_git_context,
     detect_ci_context,
     load_project_context_file,
