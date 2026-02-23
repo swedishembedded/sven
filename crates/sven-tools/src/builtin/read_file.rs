@@ -19,8 +19,9 @@ impl Tool for ReadFileTool {
     fn description(&self) -> &str {
         "Reads any file. If the user provides a path, assume it is valid; nonexistent file returns error.\n\
          Always batch multiple reads in parallel — speculatively read potentially relevant files together.\n\
-         Lines formatted as L{n}:content (1-indexed). Pagination: offset + limit window into large files.\n\
-         Truncation notice shown when file exceeds 200,000 chars; use offset/limit to page through.\n\
+         Lines formatted as L{n}:content (1-indexed). The L{n}: prefix is display-only; for edit_file old_str\n\
+         use only the content part (strip the L{n}: prefix from each line). Pagination: offset + limit.\n\
+         Truncation notice when file exceeds 200,000 chars; use offset/limit to page through.\n\
          Images (png/jpg/gif/webp/bmp/tiff) → auto-detected and returned as base64 data URL."
     }
 

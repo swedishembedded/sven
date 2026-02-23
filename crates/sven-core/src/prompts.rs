@@ -97,8 +97,11 @@ mod guidelines {
 
     pub fn error_handling() -> &'static str {
         "- When a tool fails, read the error message carefully and adjust your approach.\n\
-         - `edit_file` 'not found': old_str must match the file exactly — strip 'L<n>:' prefixes from read_file output; re-read after each edit before the next.\n\
-         - `edit_file` 'N times': add unique surrounding context, or use replace_all=true if intentional.\n\
+         - `edit_file` tries exact → strip-prefixes → indent-normalized → fuzzy automatically.\n\
+         - `edit_file` 'not found': all strategies failed — check the 'Most similar sections' in\n\
+           the error to see the actual file content, then copy old_str from there.\n\
+           Re-read the file after each successful edit before making the next one.\n\
+         - `edit_file` 'N times': add more unique surrounding context, or use replace_all=true.\n\
          - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
          - NEVER skip git hooks or force-push without explicit user permission."
     }
@@ -131,7 +134,8 @@ fn build_tool_examples_section() -> &'static str {
      <example>\n\
      1. grep: pattern=\"fn process_data\", output_mode=\"files_with_matches\" → Discover which files contain it\n\
      2. read_file: path=\"/project/src/processor.rs\" → Read full file for context\n\
-     3. edit_file: old_str=\"<exact file lines; from read_file strip the Ln: prefix>\", new_str=\"...\" → Apply change\n\
+     3. edit_file: old_str=\"<lines from the file — strip Ln: prefix if copied from read_file>\", new_str=\"...\" → Apply change\n\
+     Note: edit_file auto-corrects minor indent/prefix differences; on failure it shows 'Most similar sections'.\n\
      4. read_lints: paths=[\"/project/src/processor.rs\"] → Verify no new errors\n\
      </example>\n\n\
      Example 2: Rename a symbol across a file\n\

@@ -22,6 +22,7 @@ async-recursion = { workspace = true }
 dirs        = { workspace = true }
 libc        = { workspace = true }
 gdbmi       = "0.0.2"
+similar     = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
