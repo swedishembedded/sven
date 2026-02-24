@@ -116,35 +116,19 @@ pub struct Cli {
     #[arg(long, short = 'o', value_name = "PATH")]
     pub output_last_message: Option<PathBuf>,
 
-    /// Write the complete raw conversation trace as JSONL (one message per line).
-    /// Includes system prompts, user messages, assistant responses, tool calls,
-    /// and tool results in the API format suitable for fine-tuning datasets.
-    /// Use --jsonl-format to specify the output format (openai, anthropic, raw).
+    /// JSONL conversation file: load existing conversation from file on startup,
+    /// and update the file after every turn or message edit.
+    /// If the file does not exist it is created automatically.
+    /// In headless mode a pending user message must already be in the file, or
+    /// supply one as a positional argument.
     #[arg(long, value_name = "PATH")]
-    pub jsonl_output: Option<PathBuf>,
-
-    /// JSONL output format: openai (default), anthropic, or raw.
-    /// OpenAI format is compatible with most fine-tuning APIs.
-    #[arg(long, value_name = "FORMAT", default_value = "openai")]
-    pub jsonl_format: JsonlFormatArg,
+    pub jsonl: Option<PathBuf>,
 
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
 }
 
-/// JSONL output format for fine-tuning datasets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
-#[value(rename_all = "lowercase")]
-pub enum JsonlFormatArg {
-    /// OpenAI format with tool_calls array (compatible with most APIs)
-    #[default]
-    OpenAI,
-    /// Anthropic format with content blocks
-    Anthropic,
-    /// Raw sven internal format (for debugging)
-    Raw,
-}
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {

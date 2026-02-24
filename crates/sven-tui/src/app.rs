@@ -59,6 +59,10 @@ pub struct AppOptions {
     /// Supports the same syntax as the CI runner: `"provider/name"`,
     /// bare provider id, bare model name, or a key defined in `config.providers`.
     pub model_override: Option<String>,
+    /// JSONL conversation file: if set, the existing conversation is loaded from
+    /// this file on startup, and the file is overwritten after every turn or
+    /// message edit to keep it in sync with the in-memory conversation.
+    pub jsonl_path: Option<PathBuf>,
 }
 
 /// Which pane currently holds keyboard focus.
@@ -152,6 +156,9 @@ pub struct App {
     nvim_submit_notify: Option<Arc<tokio::sync::Notify>>,
     nvim_quit_notify:   Option<Arc<tokio::sync::Notify>>,
     history_path: Option<PathBuf>,
+    /// When set, the full conversation is written to this JSONL file after
+    /// every turn and every message edit.
+    jsonl_path: Option<PathBuf>,
     no_nvim: bool,
     /// When `true`, new content from the agent automatically scrolls the chat
     /// pane to the bottom.  Set to `false` when the user manually scrolls up
@@ -168,6 +175,33 @@ impl App {
             .initial_history
             .map(|(segs, path)| (segs, Some(path)))
             .unwrap_or_else(|| (Vec::new(), None));
+
+        // Override initial segments from the JSONL conversation file when given.
+        let initial_segments = if let Some(ref jsonl) = opts.jsonl_path {
+            if jsonl.exists() {
+                match std::fs::read_to_string(jsonl) {
+                    Ok(content) => match sven_input::parse_jsonl_conversation(&content) {
+                        Ok(parsed) => parsed
+                            .history
+                            .into_iter()
+                            .map(ChatSegment::Message)
+                            .collect(),
+                        Err(e) => {
+                            debug!("failed to parse JSONL conversation file: {e}");
+                            initial_segments
+                        }
+                    },
+                    Err(e) => {
+                        debug!("failed to read JSONL conversation file: {e}");
+                        initial_segments
+                    }
+                }
+            } else {
+                initial_segments
+            }
+        } else {
+            initial_segments
+        };
 
         // Compute the display name for the status bar.
         let effective_model_name = if let Some(ref mo) = opts.model_override {
@@ -226,6 +260,7 @@ impl App {
             nvim_submit_notify: None,
             nvim_quit_notify: None,
             history_path,
+            jsonl_path: opts.jsonl_path,
             no_nvim: opts.no_nvim,
             auto_scroll: true,
             last_input_pane: Rect::default(),
@@ -1180,6 +1215,7 @@ impl App {
                             self.build_display_from_segments();
                             self.search.update_matches(&self.chat_lines);
                             self.rerender_chat().await;
+                            self.save_history_async();
                         }
                         _ => {}
                     }
@@ -1686,6 +1722,17 @@ impl App {
         if messages.is_empty() {
             return;
         }
+
+        // Write to the JSONL conversation file (full overwrite) when set.
+        if let Some(jsonl_path) = self.jsonl_path.clone() {
+            let serialized = sven_input::serialize_jsonl_conversation_turn(&messages);
+            tokio::spawn(async move {
+                if let Err(e) = std::fs::write(&jsonl_path, &serialized) {
+                    tracing::debug!("failed to update JSONL conversation file: {e}");
+                }
+            });
+        }
+
         let path_opt = self.history_path.clone();
         match path_opt {
             None => {

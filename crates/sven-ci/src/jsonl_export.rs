@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 //! JSONL trace export for fine-tuning datasets.
+#![allow(dead_code)]
 //!
 //! This module converts sven's internal message format to various fine-tuning
 //! formats expected by different model providers.

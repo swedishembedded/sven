@@ -11,14 +11,15 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
-use cli::{Cli, Commands, OutputFormatArg, JsonlFormatArg};
+use cli::{Cli, Commands, OutputFormatArg};
 use clap::Parser;
 use sven_ci::{
     CiOptions, CiRunner, ConversationOptions, ConversationRunner,
-    OutputFormat, JsonlFormat, find_project_root,
+    OutputFormat, find_project_root,
 };
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
+use sven_model::Message as SvenMessage;
 use sven_tui::{App, AppOptions};
 
 #[tokio::main]
@@ -387,6 +388,46 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     // ── Detect project root (used in all CI modes) ───────────────────────────
     let project_root = find_project_root().ok();
 
+    // ── --jsonl conversation file ─────────────────────────────────────────────
+    if let Some(jsonl_path) = &cli.jsonl {
+        let file_path = jsonl_path.clone();
+
+        // Create parent directories and the file if it does not exist yet.
+        if !file_path.exists() {
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating parent dirs for {}", file_path.display()))?;
+            }
+            std::fs::write(&file_path, "")
+                .with_context(|| format!("creating {}", file_path.display()))?;
+        }
+
+        // If a positional prompt was given, append it as a JSONL user message.
+        if let Some(prompt) = &cli.prompt {
+            let user_msg = SvenMessage::user(prompt.trim());
+            let line = serde_json::to_string(&user_msg).context("serializing user message")?;
+            let mut content = std::fs::read_to_string(&file_path)
+                .with_context(|| format!("reading {}", file_path.display()))?;
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&line);
+            content.push('\n');
+            std::fs::write(&file_path, &content)
+                .with_context(|| format!("appending user message to {}", file_path.display()))?;
+        }
+
+        let content = std::fs::read_to_string(&file_path)
+            .with_context(|| format!("reading {}", file_path.display()))?;
+        let opts = ConversationOptions {
+            mode: cli.mode,
+            model_override: cli.model,
+            file_path,
+            content,
+        };
+        return ConversationRunner::new(config).run(opts).await;
+    }
+
     // ── --resume in headless mode ────────────────────────────────────────────
     if let Some(id) = &cli.resume {
         if id.is_empty() {
@@ -410,18 +451,11 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
 
         let content = std::fs::read_to_string(&file_path)
             .with_context(|| format!("reading {}", file_path.display()))?;
-        let jsonl_format = match cli.jsonl_format {
-            JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
-            JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
-            JsonlFormatArg::Raw => JsonlFormat::Raw,
-        };
         let opts = ConversationOptions {
             mode: cli.mode,
             model_override: cli.model,
             file_path,
             content,
-            jsonl_output: cli.jsonl_output.clone(),
-            jsonl_format,
         };
         return ConversationRunner::new(config).run(opts).await;
     }
@@ -441,18 +475,11 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             .clone();
         let content = std::fs::read_to_string(&file_path)
             .with_context(|| format!("reading conversation file {}", file_path.display()))?;
-        let jsonl_format = match cli.jsonl_format {
-            JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
-            JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
-            JsonlFormatArg::Raw => JsonlFormat::Raw,
-        };
         let opts = ConversationOptions {
             mode: cli.mode,
             model_override: cli.model,
             file_path,
             content,
-            jsonl_output: cli.jsonl_output.clone(),
-            jsonl_format,
         };
         return ConversationRunner::new(config).run(opts).await;
     }
@@ -486,13 +513,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         OutputFormatArg::Compact => OutputFormat::Compact,
     };
 
-    // ── Map CLI JSONL format to JsonlFormat ───────────────────────────────────
-    let jsonl_format = match cli.jsonl_format {
-        JsonlFormatArg::OpenAI => JsonlFormat::OpenAI,
-        JsonlFormatArg::Anthropic => JsonlFormat::Anthropic,
-        JsonlFormatArg::Raw => JsonlFormat::Raw,
-    };
-
     let opts = CiOptions {
         mode: cli.mode,
         model_override: cli.model,
@@ -508,8 +528,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         output_last_message: cli.output_last_message,
         system_prompt_file: cli.system_prompt_file,
         append_system_prompt: cli.append_system_prompt,
-        jsonl_output: cli.jsonl_output,
-        jsonl_format,
         trace_level: cli.verbose,
     };
 
@@ -566,6 +584,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         initial_history,
         no_nvim: !cli.nvim,
         model_override: cli.model,
+        jsonl_path: cli.jsonl,
     };
 
     let app = App::new(config, opts);

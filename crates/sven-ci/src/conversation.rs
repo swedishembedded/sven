@@ -34,10 +34,6 @@ pub struct ConversationOptions {
     pub file_path: PathBuf,
     /// The full file content (already read by the caller).
     pub content: String,
-    /// Write the complete raw conversation trace as JSONL.
-    pub jsonl_output: Option<PathBuf>,
-    /// Format for JSONL output.
-    pub jsonl_format: crate::JsonlFormat,
 }
 
 /// Headless runner for conversation files.
@@ -185,30 +181,6 @@ impl ConversationRunner {
             file.write_all(serialized.as_bytes())
                 .with_context(|| "writing to conversation file")?;
             debug!(chars = serialized.len(), "appended to conversation file");
-        }
-
-        // ── --jsonl-output ────────────────────────────────────────────────────
-        if let Some(jsonl_path) = &opts.jsonl_output {
-            if let Some(parent) = jsonl_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            
-            // Get the complete conversation from the agent's session, which
-            // includes the system message and all history.
-            let all_messages = &agent.session().messages;
-            
-            match crate::jsonl_export::write_jsonl_trace(jsonl_path, all_messages, opts.jsonl_format) {
-                Ok(()) => write_stderr(&format!(
-                    "[conversation] JSONL trace written to {} ({} messages, format: {:?})",
-                    jsonl_path.display(),
-                    all_messages.len(),
-                    opts.jsonl_format
-                )),
-                Err(e) => write_stderr(&format!(
-                    "[conversation] Could not write --jsonl-output {}: {e}",
-                    jsonl_path.display()
-                )),
-            }
         }
 
         Ok(())
