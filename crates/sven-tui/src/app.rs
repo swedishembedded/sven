@@ -177,14 +177,35 @@ impl App {
             .unwrap_or_else(|| (Vec::new(), None));
 
         // Override initial segments from the JSONL conversation file when given.
+        // Uses the full-fidelity format which restores thinking blocks,
+        // context-compaction notes, and all message types.
         let initial_segments = if let Some(ref jsonl) = opts.jsonl_path {
             if jsonl.exists() {
                 match std::fs::read_to_string(jsonl) {
-                    Ok(content) => match sven_input::parse_jsonl_conversation(&content) {
+                    Ok(content) => match sven_input::parse_jsonl_full(&content) {
                         Ok(parsed) => parsed
-                            .history
+                            .records
                             .into_iter()
-                            .map(ChatSegment::Message)
+                            .filter_map(|r| match r {
+                                sven_input::ConversationRecord::Message(m) => {
+                                    // Skip system messages — agent re-injects its own.
+                                    if m.role != sven_model::Role::System {
+                                        Some(ChatSegment::Message(m))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                sven_input::ConversationRecord::Thinking { content } => {
+                                    Some(ChatSegment::Thinking { content })
+                                }
+                                sven_input::ConversationRecord::ContextCompacted {
+                                    tokens_before,
+                                    tokens_after,
+                                } => Some(ChatSegment::ContextCompacted {
+                                    tokens_before,
+                                    tokens_after,
+                                }),
+                            })
                             .collect(),
                         Err(e) => {
                             debug!("failed to parse JSONL conversation file: {e}");
@@ -1712,25 +1733,55 @@ impl App {
 
     /// Persist the conversation to disk asynchronously.
     fn save_history_async(&mut self) {
-        let messages: Vec<sven_model::Message> = self
+        // Collect all segment types as ConversationRecord for full-fidelity JSONL.
+        let records: Vec<sven_input::ConversationRecord> = self
             .chat_segments
             .iter()
-            .filter_map(|seg| {
-                if let ChatSegment::Message(m) = seg { Some(m.clone()) } else { None }
+            .filter_map(|seg| match seg {
+                ChatSegment::Message(m) => {
+                    Some(sven_input::ConversationRecord::Message(m.clone()))
+                }
+                ChatSegment::Thinking { content } => {
+                    Some(sven_input::ConversationRecord::Thinking { content: content.clone() })
+                }
+                ChatSegment::ContextCompacted { tokens_before, tokens_after } => {
+                    Some(sven_input::ConversationRecord::ContextCompacted {
+                        tokens_before: *tokens_before,
+                        tokens_after: *tokens_after,
+                    })
+                }
+                ChatSegment::Error(_) => None, // transient; not worth persisting
             })
             .collect();
-        if messages.is_empty() {
+
+        if records.is_empty() {
             return;
         }
 
-        // Write to the JSONL conversation file (full overwrite) when set.
+        // Derive plain messages for the markdown history (existing code path).
+        let messages: Vec<sven_model::Message> = records
+            .iter()
+            .filter_map(|r| {
+                if let sven_input::ConversationRecord::Message(m) = r {
+                    Some(m.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Write full-fidelity JSONL file (complete overwrite) when --jsonl is set.
         if let Some(jsonl_path) = self.jsonl_path.clone() {
-            let serialized = sven_input::serialize_jsonl_conversation_turn(&messages);
+            let serialized = sven_input::serialize_jsonl_records(&records);
             tokio::spawn(async move {
                 if let Err(e) = std::fs::write(&jsonl_path, &serialized) {
                     tracing::debug!("failed to update JSONL conversation file: {e}");
                 }
             });
+        }
+
+        if messages.is_empty() {
+            return;
         }
 
         let path_opt = self.history_path.clone();

@@ -87,7 +87,9 @@ pub async fn agent_task(
             }
             AgentRequest::LoadHistory(messages) => {
                 debug!(n = messages.len(), "agent task loading history");
-                agent.session_mut().replace_messages(messages);
+                // seed_history strips system messages and prepends a fresh one,
+                // ensuring the agent always has the correct system prompt.
+                agent.seed_history(messages).await;
             }
         }
     }

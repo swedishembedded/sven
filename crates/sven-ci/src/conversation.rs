@@ -15,9 +15,9 @@ use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_bootstrap::{AgentBuilder, ToolSetProfile};
 use sven_input::{
-    parse_conversation, parse_jsonl_conversation,
-    serialize_conversation_turn_with_metadata, serialize_jsonl_conversation_turn,
-    TurnMetadata,
+    parse_conversation, parse_jsonl_full,
+    serialize_conversation_turn_with_metadata, serialize_jsonl_records,
+    ConversationRecord, TurnMetadata,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::TodoItem;
@@ -57,25 +57,39 @@ impl ConversationRunner {
             .map(|e| e.eq_ignore_ascii_case("jsonl"))
             .unwrap_or(false);
 
-        // Parse the conversation file
-        let parsed = if is_jsonl {
-            parse_jsonl_conversation(&opts.content)
-                .context("failed to parse JSONL conversation file")?
+        // Parse the conversation file.
+        // For JSONL files: use the full-fidelity parser which handles both
+        // the new ConversationRecord format and the legacy raw-Message format.
+        let (history, pending, existing_jsonl_records) = if is_jsonl {
+            let parsed = parse_jsonl_full(&opts.content)
+                .context("failed to parse JSONL conversation file")?;
+            let pending = match parsed.pending_user_input {
+                Some(p) => p,
+                None => {
+                    write_stderr(
+                        "[conversation] no pending ## User section found — nothing to execute",
+                    );
+                    return Ok(());
+                }
+            };
+            (parsed.history, pending, Some(parsed.records))
         } else {
-            parse_conversation(&opts.content)
-                .context("failed to parse conversation file")?
-        };
-
-        let pending = match parsed.pending_user_input {
-            Some(p) => p,
-            None => {
-                write_stderr("[conversation] no pending ## User section found — nothing to execute");
-                return Ok(());
-            }
+            let parsed = parse_conversation(&opts.content)
+                .context("failed to parse conversation file")?;
+            let pending = match parsed.pending_user_input {
+                Some(p) => p,
+                None => {
+                    write_stderr(
+                        "[conversation] no pending ## User section found — nothing to execute",
+                    );
+                    return Ok(());
+                }
+            };
+            (parsed.history, pending, None)
         };
 
         debug!(
-            history_messages = parsed.history.len(),
+            history_messages = history.len(),
             pending_len = pending.len(),
             "starting conversation turn"
         );
@@ -116,16 +130,17 @@ impl ConversationRunner {
         //
         // The submit_fut holds a mutable borrow on `agent`. Scoping it in a
         // block ensures it is dropped before we need to call agent.session()
-        // for the --jsonl-output path below.
-        let (new_messages, failed) = {
+        // for subsequent operations below.
+        let (new_records, failed) = {
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-            let submit_fut = agent.replace_history_and_submit(parsed.history, &pending, tx);
+            let submit_fut = agent.replace_history_and_submit(history, &pending, tx);
 
-            let mut new_messages: Vec<Message> = Vec::new();
+            // Collect full-fidelity records including thinking blocks.
+            // The pending user message is first (not yet in the file for md format;
+            // already in the file for JSONL format — handled at write time below).
+            let mut new_records: Vec<ConversationRecord> = Vec::new();
+            new_records.push(ConversationRecord::Message(Message::user(&pending)));
             let mut failed = false;
-
-            // Append the pending user message first (it was not in history)
-            new_messages.push(Message::user(&pending));
 
             tokio::pin!(submit_fut);
 
@@ -134,7 +149,7 @@ impl ConversationRunner {
                     biased;
 
                     Some(event) = rx.recv() => {
-                        collect_event(event, &mut new_messages, &mut failed);
+                        collect_event_full(event, &mut new_records, &mut failed);
                     }
 
                     result = &mut submit_fut => {
@@ -143,21 +158,23 @@ impl ConversationRunner {
                             std::process::exit(1);
                         }
                         while let Ok(ev) = rx.try_recv() {
-                            collect_event(ev, &mut new_messages, &mut failed);
+                            collect_event_full(ev, &mut new_records, &mut failed);
                         }
                         break;
                     }
                 }
             }
             // submit_fut dropped here — mutable borrow on agent released
-            (new_messages, failed)
+            (new_records, failed)
         };
 
         // Finalise stdout (ensure trailing newline)
-        let response_text: String = new_messages
+        let response_text: String = new_records
             .iter()
-            .filter(|m| m.role == Role::Assistant)
-            .filter_map(|m| m.as_text())
+            .filter_map(|r| match r {
+                ConversationRecord::Message(m) if m.role == Role::Assistant => m.as_text(),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join("\n");
         finalise_stdout(&response_text);
@@ -166,44 +183,79 @@ impl ConversationRunner {
             std::process::exit(1);
         }
 
-        // Append new turn to the file (skip the User message — it's already there)
-        let to_append = &new_messages[1..]; // skip the user message we prepended
-        if !to_append.is_empty() {
-            let serialized = if is_jsonl {
-                serialize_jsonl_conversation_turn(to_append)
-            } else {
-                serialize_conversation_turn_with_metadata(to_append, Some(&turn_metadata))
-            };
-            let mut file = OpenOptions::new()
-                .append(true)
-                .open(&opts.file_path)
-                .with_context(|| format!("opening conversation file for append: {}", opts.file_path.display()))?;
-            file.write_all(serialized.as_bytes())
-                .with_context(|| "writing to conversation file")?;
-            debug!(chars = serialized.len(), "appended to conversation file");
+        // Write the updated conversation back to the file.
+        if is_jsonl {
+            // For JSONL: rewrite the entire file so that thinking blocks and
+            // new-format records are included.  Start from the existing records
+            // already in the file, then append the new turn (skip the user
+            // record — it is already present as the last line of the file).
+            let mut all_records = existing_jsonl_records.unwrap_or_default();
+            // Skip the first new_record (the user message that was already in the file)
+            all_records.extend_from_slice(&new_records[1..]);
+            let serialized = serialize_jsonl_records(&all_records);
+            std::fs::write(&opts.file_path, serialized.as_bytes())
+                .with_context(|| format!("writing JSONL conversation file: {}", opts.file_path.display()))?;
+            debug!(records = all_records.len(), "rewrote JSONL conversation file");
+        } else {
+            // For markdown: append new messages only (excluding the user, which
+            // is already present), using the legacy serializer.
+            let new_messages: Vec<Message> = new_records[1..]
+                .iter()
+                .filter_map(|r| {
+                    if let ConversationRecord::Message(m) = r { Some(m.clone()) } else { None }
+                })
+                .collect();
+            if !new_messages.is_empty() {
+                let serialized =
+                    serialize_conversation_turn_with_metadata(&new_messages, Some(&turn_metadata));
+                let mut file = OpenOptions::new()
+                    .append(true)
+                    .open(&opts.file_path)
+                    .with_context(|| {
+                        format!(
+                            "opening conversation file for append: {}",
+                            opts.file_path.display()
+                        )
+                    })?;
+                file.write_all(serialized.as_bytes())
+                    .with_context(|| "writing to conversation file")?;
+                debug!(chars = serialized.len(), "appended to conversation file");
+            }
         }
 
         Ok(())
     }
 }
 
-// ── Event → Message collector ─────────────────────────────────────────────────
+// ── Full-fidelity event → ConversationRecord collector ────────────────────────
 
-/// Translate an `AgentEvent` into messages/stdout, accumulating new `Message`
-/// structs that will be serialised back into the conversation file.
-fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bool) {
+/// Translate an `AgentEvent` into `ConversationRecord`s, capturing every
+/// element of the conversation including thinking/reasoning blocks, tool calls,
+/// tool results (with image parts), and assistant text.
+///
+/// This replaces the old `collect_event` which only captured `Message`s and
+/// silently discarded thinking traces.
+fn collect_event_full(
+    event: AgentEvent,
+    records: &mut Vec<ConversationRecord>,
+    failed: &mut bool,
+) {
     match event {
         AgentEvent::TextDelta(delta) => {
             write_stdout(&delta);
         }
 
         AgentEvent::TextComplete(text) => {
-            // Merge consecutive assistant text messages (streaming produces one
-            // TextComplete per turn; tool calls produce interleaved ones).
-            // Push as a new assistant message only if non-empty.
             if !text.is_empty() {
-                messages.push(Message::assistant(&text));
+                records.push(ConversationRecord::Message(Message::assistant(&text)));
             }
+        }
+
+        AgentEvent::ThinkingDelta(_) => {}
+
+        AgentEvent::ThinkingComplete(content) => {
+            write_stderr(&format!("[sven:thinking] {content}"));
+            records.push(ConversationRecord::Thinking { content });
         }
 
         AgentEvent::ToolCallStarted(tc) => {
@@ -213,8 +265,7 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
                 tc.name,
                 serde_json::to_string(&tc.args).unwrap_or_default()
             ));
-            // Record the tool call message so it appears in the file
-            messages.push(Message {
+            records.push(ConversationRecord::Message(Message {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: tc.id,
@@ -223,28 +274,32 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
                         arguments: tc.args.to_string(),
                     },
                 },
-            });
+            }));
         }
 
         AgentEvent::ToolCallFinished { call_id, tool_name, output, is_error } => {
             if is_error {
                 write_stderr(&format!(
-                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" \
+                     success=false output={output:?}"
                 ));
             } else {
                 write_stderr(&format!(
-                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=true size={}",
+                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" \
+                     success=true size={}",
                     output.len()
                 ));
             }
-            // Record the tool result
-            messages.push(Message::tool_result(&call_id, &output));
+            records.push(ConversationRecord::Message(Message::tool_result(
+                &call_id, &output,
+            )));
         }
 
         AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
             write_stderr(&format!(
                 "[sven:context:compacted] {tokens_before} → {tokens_after} tokens"
             ));
+            records.push(ConversationRecord::ContextCompacted { tokens_before, tokens_after });
         }
 
         AgentEvent::Error(msg) => {
@@ -253,15 +308,18 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
         }
 
         AgentEvent::TodoUpdate(todos) => {
-            let lines: Vec<String> = todos.iter().map(|t| {
-                let icon = match t.status.as_str() {
-                    "completed" => "✓",
-                    "in_progress" => "→",
-                    "cancelled" => "✗",
-                    _ => "○",
-                };
-                format!("  {icon} [{}] {}", t.id, t.content)
-            }).collect();
+            let lines: Vec<String> = todos
+                .iter()
+                .map(|t| {
+                    let icon = match t.status.as_str() {
+                        "completed" => "✓",
+                        "in_progress" => "→",
+                        "cancelled" => "✗",
+                        _ => "○",
+                    };
+                    format!("  {icon} [{}] {}", t.id, t.content)
+                })
+                .collect();
             write_stderr(&format!("[sven:todos]\n{}", lines.join("\n")));
         }
 
@@ -276,17 +334,12 @@ fn collect_event(event: AgentEvent, messages: &mut Vec<Message>, failed: &mut bo
         AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
             if cache_read > 0 || cache_write > 0 {
                 write_stderr(&format!(
-                    "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
+                    "[sven:tokens] input={input} output={output} \
+                     cache_read={cache_read} cache_write={cache_write}"
                 ));
             } else {
                 write_stderr(&format!("[sven:tokens] input={input} output={output}"));
             }
-        }
-
-        AgentEvent::ThinkingDelta(_) => {}
-
-        AgentEvent::ThinkingComplete(content) => {
-            write_stderr(&format!("[sven:thinking] {content}"));
         }
 
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}

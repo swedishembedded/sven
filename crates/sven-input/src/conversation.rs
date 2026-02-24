@@ -434,6 +434,126 @@ pub fn parse_jsonl_conversation(content: &str) -> Result<ParsedConversation, Par
     })
 }
 
+// ── Full-fidelity JSONL record format ─────────────────────────────────────────
+
+/// A single record in a full-fidelity JSONL conversation file.
+///
+/// Unlike the old raw-`Message` JSONL format this type captures every element
+/// that can appear in a conversation, including thinking/reasoning traces and
+/// context-compaction notes, making it possible to restore a session exactly.
+///
+/// Wire format (adjacently tagged, one record per line):
+/// - Message:          `{"type":"message","data":{<Message fields>}}`
+/// - Thinking:         `{"type":"thinking","data":{"content":"..."}}`
+/// - ContextCompacted: `{"type":"context_compacted","data":{"tokens_before":N,"tokens_after":M}}`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ConversationRecord {
+    /// Any conversation message (system / user / assistant / tool).
+    ///
+    /// System messages are stored for completeness; callers must strip them
+    /// before seeding the agent (the agent always regenerates a fresh system
+    /// message at runtime from the current config and tools).
+    Message(Message),
+    /// A reasoning / thinking block produced by the model during a turn.
+    Thinking { content: String },
+    /// A marker left when the session history was compacted to save context.
+    ContextCompacted { tokens_before: usize, tokens_after: usize },
+}
+
+/// Result of parsing a full-fidelity JSONL conversation file.
+pub struct ParsedJsonlConversation {
+    /// All records in file order (messages, thinking blocks, compaction notes).
+    pub records: Vec<ConversationRecord>,
+    /// Non-system messages only, with the pending user turn stripped.
+    /// Pass to `agent.seed_history()` when resuming.
+    pub history: Vec<Message>,
+    /// The text of the last user message if it has no following assistant
+    /// response.  `None` when there is nothing pending.
+    pub pending_user_input: Option<String>,
+}
+
+/// Parse a full-fidelity JSONL conversation file.
+///
+/// Handles both the new `ConversationRecord` tagged format and the legacy raw
+/// `Message` format so that files written by older versions of sven still load.
+pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseError> {
+    let mut records: Vec<ConversationRecord> = Vec::new();
+
+    for (line_no, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
+            ParseError::InvalidJsonlLine { line: line_no + 1, error: e.to_string() }
+        })?;
+
+        if v.get("type").is_some() {
+            // New tagged format.
+            let record: ConversationRecord =
+                serde_json::from_value(v).map_err(|e| ParseError::InvalidJsonlLine {
+                    line: line_no + 1,
+                    error: e.to_string(),
+                })?;
+            records.push(record);
+        } else {
+            // Legacy format — raw Message JSON.
+            let msg: Message =
+                serde_json::from_value(v).map_err(|e| ParseError::InvalidJsonlLine {
+                    line: line_no + 1,
+                    error: e.to_string(),
+                })?;
+            records.push(ConversationRecord::Message(msg));
+        }
+    }
+
+    // Build history: only Message records, system messages stripped, pending stripped.
+    let messages: Vec<Message> = records
+        .iter()
+        .filter_map(|r| {
+            if let ConversationRecord::Message(m) = r {
+                if m.role != Role::System {
+                    return Some(m.clone());
+                }
+            }
+            None
+        })
+        .collect();
+
+    let (history, pending_user_input) = match messages.last() {
+        Some(m) if m.role == Role::User => {
+            let pending = m.as_text().unwrap_or("").to_string();
+            let history = messages[..messages.len() - 1].to_vec();
+            (history, Some(pending))
+        }
+        _ => (messages, None),
+    };
+
+    Ok(ParsedJsonlConversation { records, history, pending_user_input })
+}
+
+/// Serialize a slice of `ConversationRecord`s to JSONL.
+///
+/// Each record becomes one line.  Suitable for both full-file writes and
+/// append-only updates.
+pub fn serialize_jsonl_records(records: &[ConversationRecord]) -> String {
+    let mut result = String::new();
+    for record in records {
+        match serde_json::to_string(record) {
+            Ok(line) => {
+                result.push_str(&line);
+                result.push('\n');
+            }
+            Err(e) => {
+                tracing::warn!("failed to serialize ConversationRecord to JSONL: {e}");
+            }
+        }
+    }
+    result
+}
+
 /// Serialize a slice of messages as JSONL lines for appending to a conversation file.
 ///
 /// System messages are skipped (they are re-injected by the agent at runtime).
