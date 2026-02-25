@@ -1,0 +1,55 @@
+[package]
+name    = "sven-p2p"
+version = "0.1.0"
+edition = "2021"
+description = "libp2p-based peer discovery and task-routing for sven agents"
+
+[features]
+default       = ["git-discovery"]
+git-discovery = ["dep:git2"]
+
+[[bin]]
+name              = "sven-relay"
+path              = "src/bin/relay.rs"
+required-features = ["git-discovery"]
+
+[[bin]]
+name = "sven-p2p-client"
+path = "src/bin/client.rs"
+
+[dependencies]
+libp2p = { version = "0.56", features = [
+    "tokio",
+    "tcp",
+    "noise",
+    "yamux",
+    "identify",
+    "ping",
+    "relay",
+    "dcutr",
+    "autonat",
+    "request-response",
+    "macros",
+] }
+
+ciborium    = "0.2"
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tokio       = { workspace = true }
+futures     = { workspace = true }
+async-trait = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+uuid        = { workspace = true, features = ["serde"] }
+rand        = "0.8"
+clap        = { workspace = true }
+ratatui     = { workspace = true }
+crossterm   = { workspace = true }
+
+git2 = { version = "0.20", features = ["vendored-libgit2"], optional = true }
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = { workspace = true }

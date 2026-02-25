@@ -1,11 +1,12 @@
 CARGO   ?= cargo
 # Use the user-writable registry when the system CARGO_HOME is read-only.
 # Override with: make CARGO_HOME=/path/to/cargo
-export CARGO_HOME ?= $(HOME)/.cargo
+export CARGO_HOME = $(HOME)/.cargo
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 DEB_OUT := target/debian
 
-.PHONY: all build release test bats bats-fast deb clean help fmt check docs docs-pdf
+.PHONY: all build release test bats bats-fast deb clean help fmt check docs docs-pdf \
+        relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test
 
 all: build
 
@@ -92,6 +93,39 @@ fmt:
 ## check     – lint without building
 check:
 	$(CARGO) clippy --all-targets -- -D warnings
+
+## relay     – build the sven-relay server (requires git-discovery feature)
+relay:
+	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery
+	@echo "Binary: target/debug/sven-relay"
+	@echo "Usage:  sven-relay --listen /ip4/0.0.0.0/tcp/4001 --repo /path/to/git/repo"
+
+## relay-release – release-optimised relay binary
+relay-release:
+	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery --release
+	@echo "Binary: target/release/sven-relay"
+
+## p2p-client – build the sven-p2p-client TUI/chat client
+p2p-client:
+	$(CARGO) build -p sven-p2p --bin sven-p2p-client
+	@echo "Binary: target/debug/sven-p2p-client"
+	@echo "Usage:  sven-p2p-client --repo . --room <room> --name <name>"
+	@echo "        sven-p2p-client --repo . --room <room> --name <name> -m '@peer hello'"
+
+## p2p-client-release – release-optimised client binary
+p2p-client-release:
+	$(CARGO) build -p sven-p2p --bin sven-p2p-client --release
+	@echo "Binary: target/release/sven-p2p-client"
+
+## p2p      – build both relay and client debug binaries
+p2p: relay p2p-client
+
+## p2p-release – build both relay and client release binaries
+p2p-release: relay-release p2p-client-release
+
+## p2p-test – run sven-p2p unit and integration tests
+p2p-test:
+	$(CARGO) test -p sven-p2p
 
 ## clean     – remove build artefacts
 clean:

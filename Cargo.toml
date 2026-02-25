@@ -12,6 +12,7 @@ members = [
     "crates/sven-bootstrap",
     "crates/sven-ci",
     "crates/sven-tui",
+    "crates/sven-p2p",
 ]
 
 [workspace.dependencies]
