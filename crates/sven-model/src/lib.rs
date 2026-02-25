@@ -555,29 +555,53 @@ pub fn resolve_model_from_config(
         return cfg;
     }
 
-    // Smart catalog lookup: if a bare model name (no '/') exists in the static
-    // catalog, use the catalog's provider with its default settings.  This
-    // prevents custom base_url / api_key values from leaking across providers
-    // when the user writes e.g. `--model gpt-4o` while `.sven.yaml` has a
-    // custom local model configured.
-    if model_suffix.is_none() && get_driver(override_str).is_none() {
-        if let Some(catalog_entry) = catalog::lookup_by_model_name(override_str) {
-            let mut cfg = ModelConfig {
-                provider: catalog_entry.provider.clone(),
-                name: catalog_entry.id.clone(),
-                ..ModelConfig::default()
-            };
-            // Preserve api_key credentials when the resolved provider matches
-            // the config's provider (same service, different model).
-            if cfg.provider == config.model.provider {
-                cfg.api_key = config.model.api_key.clone();
-                cfg.api_key_env = config.model.api_key_env.clone();
-            }
-            return cfg;
+    // Smart catalog lookup: start from a clean default ModelConfig whenever
+    // the requested model is found in the static catalog.  This prevents
+    // custom base_url / api_key values from leaking across providers when the
+    // user's config.model points at a local/custom endpoint.
+    //
+    // Two forms are handled:
+    //   "gpt-4o"          — bare model name, no provider prefix
+    //   "openai/gpt-4o"   — explicit provider/model from a known driver
+    //
+    // In both cases, if the model is in the catalog we start from a fresh
+    // ModelConfig (provider defaults, no base_url) and only inherit
+    // credentials from config.model when the provider matches.
+    let catalog_entry = if let Some(model_name) = model_suffix {
+        // "provider/model" form — look up by provider+name in catalog.
+        // Only apply catalog defaults when provider_key is a known driver
+        // (not a custom provider alias that wasn't caught above).
+        if get_driver(provider_key).is_some() {
+            catalog::lookup(provider_key, model_name)
+        } else {
+            None
         }
+    } else if get_driver(override_str).is_none() {
+        // Bare model name (not a provider id) — look up by model name alone.
+        catalog::lookup_by_model_name(override_str)
+    } else {
+        None
+    };
+
+    if let Some(entry) = catalog_entry {
+        let mut cfg = ModelConfig {
+            provider: entry.provider.clone(),
+            name: entry.id.clone(),
+            ..ModelConfig::default()
+        };
+        // Preserve api_key credentials when the resolved provider matches
+        // the config's provider (same service, different model).
+        if cfg.provider == config.model.provider {
+            cfg.api_key = config.model.api_key.clone();
+            cfg.api_key_env = config.model.api_key_env.clone();
+        }
+        return cfg;
     }
 
     // Fall back to standard resolution with config.model as base.
+    // This path handles provider ids without catalog entries (e.g. a bare
+    // "anthropic" to switch provider while keeping the current model name)
+    // and any custom-endpoint models not listed in the catalog.
     resolve_model_cfg(&config.model, override_str)
 }
 
@@ -819,6 +843,35 @@ mod tests {
         assert!(
             cfg.base_url.is_none(),
             "custom base_url must NOT be inherited when switching to a catalog model: {:?}",
+            cfg.base_url
+        );
+    }
+
+    /// Regression: selecting "openai/gpt-4o" (slash form) while config.model
+    /// has a local endpoint must NOT inherit the custom base_url.
+    #[test]
+    fn catalog_model_slash_form_does_not_inherit_custom_base_url() {
+        use std::collections::HashMap;
+        let config = sven_config::Config {
+            model: ModelConfig {
+                provider: "openai".into(),
+                name: "llama3.2".into(),
+                base_url: Some("http://localhost:11434/v1".into()),
+                ..ModelConfig::default()
+            },
+            providers: HashMap::new(),
+            ..sven_config::Config::default()
+        };
+
+        // The completion list shows "openai/gpt-4o"; selecting it must produce
+        // a clean config pointing at the real OpenAI endpoint.
+        let cfg = resolve_model_from_config(&config, "openai/gpt-4o");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o");
+        assert!(
+            cfg.base_url.is_none(),
+            "local Ollama base_url must NOT be inherited when switching to a catalog model \
+             via 'provider/model' form: {:?}",
             cfg.base_url
         );
     }

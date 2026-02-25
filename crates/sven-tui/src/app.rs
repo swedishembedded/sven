@@ -13,7 +13,7 @@ use futures::StreamExt;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::DefaultTerminal;
-use sven_config::{AgentMode, Config};
+use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::QuestionRequest;
@@ -105,6 +105,10 @@ pub struct App {
     /// Model name shown in the status bar (the *effective* model after any
     /// `--model` override has been applied, formatted as `"provider/name"`).
     effective_model_name: String,
+    /// Resolved config for the currently effective model.  Updated whenever
+    /// the model is changed via `/model` or `--model`.  Used to populate
+    /// `CommandContext` so completion can highlight the active model.
+    effective_model_cfg: ModelConfig,
     /// Optional model override forwarded to the agent task.
     model_override: Option<String>,
     focus: FocusPane,
@@ -256,13 +260,13 @@ impl App {
             initial_segments
         };
 
-        // Compute the display name for the status bar.
-        let effective_model_name = if let Some(ref mo) = opts.model_override {
-            let resolved = sven_model::resolve_model_from_config(&config, mo);
-            format!("{}/{}", resolved.provider, resolved.name)
+        // Compute the resolved effective model config and display name.
+        let effective_model_cfg = if let Some(ref mo) = opts.model_override {
+            sven_model::resolve_model_from_config(&config, mo)
         } else {
-            config.model.name.clone()
+            config.model.clone()
         };
+        let effective_model_name = format!("{}/{}", effective_model_cfg.provider, effective_model_cfg.name);
 
         let model_override = opts.model_override;
 
@@ -273,6 +277,7 @@ impl App {
             config,
             mode: opts.mode,
             effective_model_name,
+            effective_model_cfg,
             model_override,
             focus: FocusPane::Input,
             chat_lines: Vec::new(),
@@ -1668,11 +1673,14 @@ impl App {
                         // Store per-message overrides.
                         if let Some(model) = result.model_override {
                             self.pending_model_override = Some(model);
-                            // Update the status bar display name.
+                            // Resolve and cache the effective model config so
+                            // CommandContext (completions) always reflects the
+                            // currently-selected model, not the YAML baseline.
                             let resolved = sven_model::resolve_model_from_config(
                                 &self.config, self.pending_model_override.as_ref().unwrap()
                             );
-                            // Show the pending override in the effective_model_name if not busy.
+                            self.effective_model_cfg = resolved.clone();
+                            // Show the pending override in the status bar if not busy.
                             if !self.agent_busy {
                                 self.effective_model_name =
                                     format!("{}/{}", resolved.provider, resolved.name);
@@ -1844,8 +1852,8 @@ impl App {
         let parsed = parse(&self.input_buffer);
         let ctx = CommandContext {
             config: self.config.clone(),
-            current_model_provider: self.config.model.provider.clone(),
-            current_model_name: self.config.model.name.clone(),
+            current_model_provider: self.effective_model_cfg.provider.clone(),
+            current_model_name: self.effective_model_cfg.name.clone(),
         };
         let items = self.completion_manager.get_completions(&parsed, &ctx);
         if items.is_empty() {
