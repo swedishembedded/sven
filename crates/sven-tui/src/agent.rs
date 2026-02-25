@@ -77,19 +77,25 @@ pub async fn agent_task(
         .with_runtime_context(RuntimeContext::auto_detect())
         .build(mode, model.clone(), profile);
 
+    // Model/mode overrides are applied permanently: no revert after the turn.
+    // `agent.set_model` / `agent.set_mode` update the agent's internal state
+    // and the new values persist for all subsequent messages.
+    // The initial `model` / `mode` captured above are intentionally unused after
+    // the first override; `_model` and `_mode` suppress "unused variable" lints
+    // while making it clear these were the original startup values.
+    let _ = model;
+    let _ = mode;
+
     while let Some(req) = rx.recv().await {
         match req {
             AgentRequest::Submit { content, model_override: msg_model_override, mode_override: msg_mode_override } => {
                 debug!(msg_len = content.len(), "agent task received message");
 
-                // Apply per-message model override: swap model in, run, swap back.
-                let model_switched = if let Some(ref mo) = msg_model_override {
+                // Permanently switch the model when an override is supplied.
+                if let Some(ref mo) = msg_model_override {
                     let msg_model_cfg = sven_model::resolve_model_from_config(&config, mo);
                     match sven_model::from_config(&msg_model_cfg) {
-                        Ok(m) => {
-                            agent.set_model(Arc::from(m));
-                            true
-                        }
+                        Ok(m) => { agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>); }
                         Err(e) => {
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))
@@ -97,23 +103,14 @@ pub async fn agent_task(
                             continue;
                         }
                     }
-                } else {
-                    false
-                };
+                }
 
-                // Apply per-message mode override.
-                let mode_switched = if let Some(m) = msg_mode_override {
+                // Permanently switch the mode when an override is supplied.
+                if let Some(m) = msg_mode_override {
                     agent.set_mode(m).await;
-                    true
-                } else {
-                    false
-                };
+                }
 
                 let result = agent.submit(&content, tx.clone()).await;
-
-                // Restore baseline model/mode after the turn.
-                if model_switched { agent.set_model(model.clone()); }
-                if mode_switched  { agent.set_mode(mode).await; }
 
                 if let Err(e) = result {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
@@ -122,13 +119,10 @@ pub async fn agent_task(
             AgentRequest::Resubmit { messages, new_user_content, model_override: msg_model_override, mode_override: msg_mode_override } => {
                 debug!("agent task received resubmit");
 
-                let model_switched = if let Some(ref mo) = msg_model_override {
+                if let Some(ref mo) = msg_model_override {
                     let msg_model_cfg = sven_model::resolve_model_from_config(&config, mo);
                     match sven_model::from_config(&msg_model_cfg) {
-                        Ok(m) => {
-                            agent.set_model(Arc::from(m));
-                            true
-                        }
+                        Ok(m) => { agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>); }
                         Err(e) => {
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))
@@ -136,23 +130,15 @@ pub async fn agent_task(
                             continue;
                         }
                     }
-                } else {
-                    false
-                };
+                }
 
-                let mode_switched = if let Some(m) = msg_mode_override {
+                if let Some(m) = msg_mode_override {
                     agent.set_mode(m).await;
-                    true
-                } else {
-                    false
-                };
+                }
 
                 let result = agent
                     .replace_history_and_submit(messages, &new_user_content, tx.clone())
                     .await;
-
-                if model_switched { agent.set_model(model.clone()); }
-                if mode_switched  { agent.set_mode(mode).await; }
 
                 if let Err(e) = result {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;

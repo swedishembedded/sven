@@ -68,3 +68,42 @@ impl SlashCommand for ProviderCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_known_provider_sets_model_override() {
+        // The provider id is forwarded as a model_override; resolve_model_from_config
+        // recognises bare provider ids and keeps the current model name.
+        let result = ProviderCommand.execute(vec!["anthropic".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("anthropic"));
+        assert!(result.mode_override.is_none());
+        assert!(result.immediate_action.is_none());
+    }
+
+    #[test]
+    fn execute_openai_provider_sets_model_override() {
+        let result = ProviderCommand.execute(vec!["openai".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn execute_named_custom_provider_sets_model_override() {
+        let result = ProviderCommand.execute(vec!["my_ollama".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("my_ollama"));
+    }
+
+    #[test]
+    fn execute_empty_args_returns_no_override() {
+        let result = ProviderCommand.execute(vec![]);
+        assert!(result.model_override.is_none());
+    }
+
+    #[test]
+    fn execute_empty_string_returns_no_override() {
+        let result = ProviderCommand.execute(vec!["".into()]);
+        assert!(result.model_override.is_none());
+    }
+}

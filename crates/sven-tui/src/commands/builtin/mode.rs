@@ -59,3 +59,92 @@ impl SlashCommand for ModeCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_research_sets_research_mode() {
+        let result = ModeCommand.execute(vec!["research".into()]);
+        assert_eq!(result.mode_override, Some(AgentMode::Research));
+    }
+
+    #[test]
+    fn execute_plan_sets_plan_mode() {
+        let result = ModeCommand.execute(vec!["plan".into()]);
+        assert_eq!(result.mode_override, Some(AgentMode::Plan));
+    }
+
+    #[test]
+    fn execute_agent_sets_agent_mode() {
+        let result = ModeCommand.execute(vec!["agent".into()]);
+        assert_eq!(result.mode_override, Some(AgentMode::Agent));
+    }
+
+    #[test]
+    fn execute_unknown_mode_returns_no_override() {
+        // An unrecognised mode name must not silently set any override.
+        let result = ModeCommand.execute(vec!["invalid".into()]);
+        assert!(result.mode_override.is_none(), "unknown mode must not set override");
+    }
+
+    #[test]
+    fn execute_empty_args_returns_no_override() {
+        let result = ModeCommand.execute(vec![]);
+        assert!(result.mode_override.is_none());
+    }
+
+    #[test]
+    fn execute_does_not_set_model_or_immediate_action() {
+        let result = ModeCommand.execute(vec!["plan".into()]);
+        assert!(result.model_override.is_none());
+        assert!(result.immediate_action.is_none());
+        assert!(result.message_to_send.is_none());
+    }
+
+    #[test]
+    fn complete_returns_all_three_modes_when_filter_is_empty() {
+        use crate::commands::{CommandContext, CompletionItem};
+        use std::sync::Arc;
+        use sven_config::Config;
+        let ctx = CommandContext {
+            config: Arc::new(Config::default()),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        let items = ModeCommand.complete(0, "", &ctx);
+        let names: Vec<&str> = items.iter().map(|i| i.value.as_str()).collect();
+        assert!(names.contains(&"research"), "research must be listed");
+        assert!(names.contains(&"plan"),     "plan must be listed");
+        assert!(names.contains(&"agent"),    "agent must be listed");
+    }
+
+    #[test]
+    fn complete_filters_by_prefix() {
+        use crate::commands::CommandContext;
+        use std::sync::Arc;
+        use sven_config::Config;
+        let ctx = CommandContext {
+            config: Arc::new(Config::default()),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        let items = ModeCommand.complete(0, "res", &ctx);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].value, "research");
+    }
+
+    #[test]
+    fn complete_wrong_arg_index_returns_empty() {
+        use crate::commands::CommandContext;
+        use std::sync::Arc;
+        use sven_config::Config;
+        let ctx = CommandContext {
+            config: Arc::new(Config::default()),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        assert!(ModeCommand.complete(1, "", &ctx).is_empty());
+    }
+}

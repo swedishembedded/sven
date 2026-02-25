@@ -197,8 +197,12 @@ impl CompletionManager {
             ParsedCommand::CompletingArgs { command, arg_index, partial } => {
                 match self.registry.get(command) {
                     Some(cmd) => {
-                        let items = cmd.complete(*arg_index, partial, ctx);
-                        filter_and_rank(items, partial)
+                        // The command is responsible for filtering and ranking
+                        // its own completions (it may also pin items at specific
+                        // positions, e.g. the current model at index 0).
+                        // Do NOT re-rank here: a second filter_and_rank with an
+                        // empty partial would alphabetically sort away pinned items.
+                        cmd.complete(*arg_index, partial, ctx)
                     }
                     None => vec![],
                 }
@@ -284,5 +288,41 @@ mod tests {
         // "mod" matches "mode" much better than "anthropic/claude-opus"
         let result = filter_and_rank(items, "mode");
         assert_eq!(result[0].value, "mode");
+    }
+
+    /// Regression: CompletionManager must NOT re-rank arg completions.
+    /// A second filter_and_rank with empty partial alphabetically sorts items,
+    /// displacing pinned entries (e.g. the current model at index 0).
+    #[test]
+    fn get_completions_preserves_cmd_complete_ordering() {
+        use std::sync::Arc;
+        use crate::commands::{CommandContext, CommandRegistry, ParsedCommand};
+        use sven_config::Config;
+
+        let registry = Arc::new(CommandRegistry::with_builtins());
+        let manager = CompletionManager::new(registry);
+
+        // Simulate "/model " (empty partial) — the current model should be first.
+        let parsed = ParsedCommand::CompletingArgs {
+            command: "model".to_string(),
+            arg_index: 0,
+            partial: "".to_string(),
+        };
+        let ctx = CommandContext {
+            config: Arc::new(Config::default()),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        let items = manager.get_completions(&parsed, &ctx);
+        assert!(!items.is_empty(), "must return completions for /model");
+        assert_eq!(
+            items[0].value, "openai/gpt-4o",
+            "current model must be the first completion item, got: {:?}",
+            items.iter().take(3).map(|i| &i.value).collect::<Vec<_>>()
+        );
+        assert!(
+            items[0].display.contains("current"),
+            "first item display must mention (current)"
+        );
     }
 }

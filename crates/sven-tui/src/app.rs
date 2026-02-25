@@ -34,8 +34,8 @@ use crate::{
         },
     },
     commands::{
-        parse, CommandContext, CommandRegistry, CompletionManager,
-        ParsedCommand,
+        parse, try_dispatch, CommandContext, CommandRegistry, CompletionManager,
+        ImmediateAction, ParsedCommand,
         completion::CompletionItem,
     },
     input::{is_reserved_key, to_nvim_notation},
@@ -105,9 +105,11 @@ pub struct App {
     /// Model name shown in the status bar (the *effective* model after any
     /// `--model` override has been applied, formatted as `"provider/name"`).
     effective_model_name: String,
-    /// Resolved config for the currently effective model.  Updated whenever
-    /// the model is changed via `/model` or `--model`.  Used to populate
-    /// `CommandContext` so completion can highlight the active model.
+    /// Resolved config for the currently effective model.  Tracks the *baseline*
+    /// model the agent uses when there is no per-message override.  Updated by
+    /// `--model` at startup and by `CommandContext` so completions highlight the
+    /// active model.  NOT changed by the `/model` slash command — that only sets
+    /// `pending_model_override`.
     effective_model_cfg: ModelConfig,
     /// Optional model override forwarded to the agent task.
     model_override: Option<String>,
@@ -151,6 +153,11 @@ pub struct App {
     completion_overlay: Option<CompletionOverlay>,
     /// Model override for the *next* message to be queued.
     pending_model_override: Option<String>,
+    /// Human-readable resolved display name for `pending_model_override`
+    /// (e.g. `"openai/gpt-4o"`).  Shown in the status bar as "next: …" so the
+    /// user can see what the next message will use without the status-bar
+    /// baseline changing.  Cleared when the override is consumed.
+    pending_model_display: Option<String>,
     /// Mode override for the *next* message to be queued.
     pending_mode_override: Option<AgentMode>,
     search: SearchState,
@@ -299,6 +306,7 @@ impl App {
             completion_manager,
             completion_overlay: None,
             pending_model_override: None,
+            pending_model_display: None,
             pending_mode_override: None,
             search: SearchState::default(),
             show_help: false,
@@ -498,7 +506,7 @@ impl App {
                     frame, layout.status_bar, &self.effective_model_name,
                     self.mode, self.context_pct, self.cache_hit_pct, self.agent_busy,
                     self.current_tool.as_deref(),
-                    self.pending_model_override.as_deref(),
+                    self.pending_model_display.as_deref(),
                     self.pending_mode_override,
                     ascii,
                 );
@@ -1400,6 +1408,36 @@ impl App {
                                 tracing::warn!("No user message found in buffer");
                                 return false;
                             }
+
+                            // If the new user content is a slash command, dispatch
+                            // it instead of sending as a chat message.
+                            let trimmed = new_user_content.trim();
+                            if trimmed.starts_with('/') {
+                                if let Some((_name, result)) = try_dispatch(trimmed, &self.command_registry) {
+                                    if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
+                                        return true;
+                                    }
+                                    if let Some(model) = result.model_override {
+                                        self.pending_model_override = Some(model);
+                                        let resolved = sven_model::resolve_model_from_config(
+                                            &self.config, self.pending_model_override.as_ref().unwrap()
+                                        );
+                                        self.effective_model_cfg = resolved.clone();
+                                        self.effective_model_name = format!("{}/{}", resolved.provider, resolved.name);
+                                        self.pending_model_display = None;
+                                    }
+                                    if let Some(mode) = result.mode_override {
+                                        self.pending_mode_override = Some(mode);
+                                        self.mode = mode;
+                                    }
+                                    if result.message_to_send.is_none() {
+                                        return false;
+                                    }
+                                }
+                                // Unknown slash command from nvim buffer — don't send.
+                                return false;
+                            }
+
                             self.chat_segments = messages
                                 .iter()
                                 .map(|m| ChatSegment::Message(m.clone()))
@@ -1641,86 +1679,90 @@ impl App {
                     return false;
                 }
 
-                // Parse as slash command.
-                let parsed = parse(&text);
-
-                // Handle a fully-complete slash command (or a bare "/name" with no space).
-                // Also handles "/name " (CompletingArgs arg 0 empty = command entered, no args).
-                let is_slash_command = match &parsed {
-                    ParsedCommand::Complete { .. } => true,
-                    ParsedCommand::PartialCommand { .. } => true,
-                    ParsedCommand::CompletingArgs { arg_index, partial, .. } => {
-                        *arg_index == 0 && partial.is_empty()
-                    }
-                    ParsedCommand::NotCommand => false,
-                };
-                if is_slash_command {
-                    let (cmd_name, cmd_args) = match &parsed {
-                        ParsedCommand::Complete { command, args } => (command.as_str(), args.clone()),
-                        ParsedCommand::PartialCommand { partial } => (partial.as_str(), vec![]),
-                        ParsedCommand::CompletingArgs { command, .. } => (command.as_str(), vec![]),
-                        ParsedCommand::NotCommand => unreachable!(),
-                    };
-
-                    if let Some(cmd) = self.command_registry.get(cmd_name) {
-                        let result = cmd.execute(cmd_args);
-
-                        // Handle immediate actions first (e.g. quit).
-                        if let Some(crate::commands::ImmediateAction::Quit) = result.immediate_action {
-                            return true;
-                        }
-
-                        // Store per-message overrides.
-                        if let Some(model) = result.model_override {
-                            self.pending_model_override = Some(model);
-                            // Resolve and cache the effective model config so
-                            // CommandContext (completions) always reflects the
-                            // currently-selected model, not the YAML baseline.
-                            let resolved = sven_model::resolve_model_from_config(
-                                &self.config, self.pending_model_override.as_ref().unwrap()
-                            );
-                            self.effective_model_cfg = resolved.clone();
-                            // Show the pending override in the status bar if not busy.
-                            if !self.agent_busy {
-                                self.effective_model_name =
-                                    format!("{}/{}", resolved.provider, resolved.name);
-                            }
-                        }
-                        if let Some(mode) = result.mode_override {
-                            self.pending_mode_override = Some(mode);
-                            if !self.agent_busy {
-                                self.mode = mode;
-                            }
-                        }
-
-                        // If the command wants to send a message, use it; otherwise just exit.
-                        if result.message_to_send.is_none() {
-                            return false;
-                        }
-                        // Fall through with the command-provided message (not used by built-ins yet).
-                    }
-                }
-
-                // If the text is a slash command that didn't match a known command name
-                // (e.g. just typed "/" or "/unknown"), don't send.
+                // Dispatch slash commands via the shared try_dispatch helper.
+                // This is the same pure logic tested in commands::dispatch_tests.
                 if text.starts_with('/') {
-                    match &parsed {
-                        ParsedCommand::PartialCommand { partial } => {
-                            if self.command_registry.get(partial.as_str()).is_none() {
-                                // Unknown or incomplete command.
-                                return false;
+                    match try_dispatch(&text, &self.command_registry) {
+                        Some((_name, result)) => {
+                            // Immediate actions take priority (e.g. quit).
+                            if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
+                                return true;
+                            }
+
+                            // Store model override and resolve the display name.
+                            if let Some(model) = result.model_override {
+                                self.pending_model_override = Some(model);
+                                let resolved = sven_model::resolve_model_from_config(
+                                    &self.config, self.pending_model_override.as_ref().unwrap()
+                                );
+                                // Update completion context so /model again shows
+                                // the newly-selected model as "(current)".
+                                self.effective_model_cfg = resolved.clone();
+                                // Show resolved name in status bar as "next: …"
+                                // until the override is consumed by the next message.
+                                self.pending_model_display =
+                                    Some(format!("{}/{}", resolved.provider, resolved.name));
+                            }
+
+                            // Store mode override.
+                            if let Some(mode) = result.mode_override {
+                                self.pending_mode_override = Some(mode);
+                                if !self.agent_busy {
+                                    self.mode = mode;
+                                }
+                            }
+
+                            // A command can optionally inject a message to send.
+                            // If it does, replace `text` with that message so the
+                            // slash command itself is never sent as chat content.
+                            // If no message, the command is complete — clear input.
+                            match result.message_to_send {
+                                None => return false,
+                                Some(msg) => {
+                                    // Re-assign so the message-building code below
+                                    // uses the command's content, not the raw "/…".
+                                    // Safety: `text` is already owned (mem::take).
+                                    // We shadow it with the injected message.
+                                    let text = msg;
+                                    self.auto_scroll = true;
+                                    if let Some(display) = self.pending_model_display.take() {
+                                        self.effective_model_name = display;
+                                    }
+                                    let qm = QueuedMessage {
+                                        content: text.clone(),
+                                        model_override: self.pending_model_override.take(),
+                                        mode_override: self.pending_mode_override.take(),
+                                    };
+                                    if self.agent_busy {
+                                        self.queued.push_back(qm);
+                                        self.queue_selected = Some(self.queued.len() - 1);
+                                    } else {
+                                        self.sync_nvim_buffer_to_segments().await;
+                                        let history = messages_for_resubmit(&self.chat_segments);
+                                        self.chat_segments.push(ChatSegment::Message(Message::user(&text)));
+                                        self.rerender_chat().await;
+                                        self.scroll_to_bottom();
+                                        self.send_resubmit_to_agent(history, qm).await;
+                                    }
+                                    return false;
+                                }
                             }
                         }
-                        ParsedCommand::CompletingArgs { command, .. } => {
-                            // Still completing args — don't send yet.
-                            let _ = command;
+                        None => {
+                            // Unknown command or bare "/" — never send as plain text.
                             return false;
                         }
-                        _ => {}
                     }
                 }
 
                 self.auto_scroll = true;
+                // When a model override is being consumed, promote it to the
+                // permanent baseline so the status bar reflects the switch for
+                // all subsequent messages (the agent task also applies it
+                // permanently — no revert after the turn).
+                if let Some(display) = self.pending_model_display.take() {
+                    self.effective_model_name = display;
+                }
                 let qm = QueuedMessage {
                     content: text.clone(),
                     model_override: self.pending_model_override.take(),

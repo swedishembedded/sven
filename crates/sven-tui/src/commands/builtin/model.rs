@@ -23,7 +23,7 @@ impl SlashCommand for ModelCommand {
     fn name(&self) -> &str { "model" }
 
     fn description(&self) -> &str {
-        "Switch model for the next message (e.g. /model anthropic/claude-opus-4-6)"
+        "Switch model permanently (e.g. /model anthropic/claude-opus-4-6)"
     }
 
     fn arguments(&self) -> Vec<CommandArgument> {
@@ -103,5 +103,57 @@ impl SlashCommand for ModelCommand {
             model_override: Some(model),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_bare_model_name_sets_override() {
+        let result = ModelCommand.execute(vec!["gpt-4o".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("gpt-4o"));
+        assert!(result.mode_override.is_none());
+        assert!(result.immediate_action.is_none());
+    }
+
+    #[test]
+    fn execute_provider_slash_model_sets_override() {
+        let result = ModelCommand.execute(vec!["anthropic/claude-opus-4-6".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("anthropic/claude-opus-4-6"));
+    }
+
+    #[test]
+    fn execute_openai_catalog_model_sets_override() {
+        let result = ModelCommand.execute(vec!["openai/gpt-4o".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("openai/gpt-4o"));
+    }
+
+    #[test]
+    fn execute_named_custom_provider_sets_override() {
+        let result = ModelCommand.execute(vec!["my_ollama".into()]);
+        assert_eq!(result.model_override.as_deref(), Some("my_ollama"));
+    }
+
+    #[test]
+    fn execute_empty_arg_list_returns_no_override() {
+        let result = ModelCommand.execute(vec![]);
+        assert!(result.model_override.is_none(), "no override when no args");
+    }
+
+    #[test]
+    fn execute_empty_string_arg_returns_no_override() {
+        // Happens when user presses Enter after "/model " with nothing typed.
+        let result = ModelCommand.execute(vec!["".into()]);
+        assert!(result.model_override.is_none(), "empty string must not set override");
+    }
+
+    #[test]
+    fn execute_does_not_set_mode_or_immediate_action() {
+        let result = ModelCommand.execute(vec!["gpt-4o".into()]);
+        assert!(result.mode_override.is_none());
+        assert!(result.immediate_action.is_none());
+        assert!(result.message_to_send.is_none());
     }
 }

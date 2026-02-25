@@ -27,3 +27,46 @@ impl SlashCommand for QuitCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_returns_quit_immediate_action() {
+        let result = QuitCommand.execute(vec![]);
+        assert!(
+            matches!(result.immediate_action, Some(ImmediateAction::Quit)),
+            "quit must return ImmediateAction::Quit"
+        );
+    }
+
+    #[test]
+    fn execute_ignores_unexpected_args() {
+        // /quit should quit regardless of any trailing arguments.
+        let result = QuitCommand.execute(vec!["now".into(), "please".into()]);
+        assert!(matches!(result.immediate_action, Some(ImmediateAction::Quit)));
+    }
+
+    #[test]
+    fn execute_does_not_set_model_or_mode_override() {
+        let result = QuitCommand.execute(vec![]);
+        assert!(result.model_override.is_none());
+        assert!(result.mode_override.is_none());
+        assert!(result.message_to_send.is_none());
+    }
+
+    #[test]
+    fn complete_always_returns_empty() {
+        use crate::commands::CommandContext;
+        use std::sync::Arc;
+        use sven_config::Config;
+        let ctx = CommandContext {
+            config: Arc::new(Config::default()),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        assert!(QuitCommand.complete(0, "", &ctx).is_empty());
+        assert!(QuitCommand.complete(0, "any", &ctx).is_empty());
+    }
+}
