@@ -6,7 +6,7 @@ description = "libp2p-based peer discovery and task-routing for sven agents"
 
 [features]
 default       = ["git-discovery"]
-git-discovery = ["dep:git2"]
+git-discovery = ["dep:git2", "dep:sha2"]
 
 [[bin]]
 name              = "sven-relay"
@@ -49,6 +49,7 @@ ratatui     = { workspace = true }
 crossterm   = { workspace = true }
 
 git2 = { version = "0.20", features = ["vendored-libgit2"], optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tokio    = { workspace = true }

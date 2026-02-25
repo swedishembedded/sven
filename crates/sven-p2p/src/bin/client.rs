@@ -81,12 +81,12 @@ struct Args {
     repo: Option<PathBuf>,
 
     /// Room to join (can be specified multiple times).
-    #[arg(long = "room", short = 'r', required = true)]
+    #[arg(long = "room", short = 'r', required_unless_present = "list_relays")]
     rooms: Vec<String>,
 
     /// Your display name. Must not contain spaces.
-    #[arg(long, short = 'n')]
-    name: String,
+    #[arg(long, short = 'n', required_unless_present = "list_relays")]
+    name: Option<String>,
 
     /// TCP listen address.
     #[arg(long, default_value = "/ip4/0.0.0.0/tcp/0")]
@@ -100,6 +100,11 @@ struct Args {
     /// Use `@name message` to target a specific peer; omit `@name` to broadcast.
     #[arg(long = "message", short = 'm')]
     message: Option<String>,
+
+    /// Debug: list the relay servers found in the discovery backend and exit.
+    /// Shows each relay's peer ID and all its listen addresses.
+    #[arg(long, conflicts_with_all = ["message"])]
+    list_relays: bool,
 }
 
 // ── App state (shared between TUI and event handler) ─────────────────────────
@@ -169,8 +174,17 @@ impl AppState {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    // --list-relays is a debug command: open discovery, print relays, exit.
+    if args.list_relays {
+        let discovery = open_discovery(&args.repo)?;
+        return list_relays_cmd(&*discovery);
+    }
+
+    // name and rooms are required for all other modes (clap enforces this).
+    let name = args.name.as_deref().expect("--name is required");
+
     // Basic validation.
-    if args.name.contains(' ') {
+    if name.contains(' ') {
         anyhow::bail!("--name must not contain spaces");
     }
 
@@ -184,27 +198,12 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
 
-    // Build discovery provider.
-    let discovery: Arc<dyn DiscoveryProvider> = match &args.repo {
-        #[cfg(feature = "git-discovery")]
-        Some(path) => Arc::new(
-            GitDiscoveryProvider::open(path)
-                .map_err(|e| anyhow::anyhow!("git repo error: {e}"))?,
-        ),
-        _ => {
-            // No --repo or git-discovery feature disabled: warn if one-shot,
-            // since there's nobody to discover.
-            if args.repo.is_some() {
-                eprintln!("warning: --repo given but git-discovery feature is disabled; using in-memory backend");
-            }
-            Arc::new(InMemoryDiscovery::new())
-        }
-    };
+    let discovery = open_discovery(&args.repo)?;
 
     let card = AgentCard {
         peer_id: String::new(), // filled in by P2pNode::run
-        name: args.name.clone(),
-        description: format!("{} (sven-p2p-client)", args.name),
+        name: name.to_string(),
+        description: format!("{} (sven-p2p-client)", name),
         capabilities: vec!["chat".into()],
         version: env!("CARGO_PKG_VERSION").into(),
     };
@@ -228,10 +227,81 @@ async fn main() -> anyhow::Result<()> {
     });
 
     if let Some(msg) = args.message {
-        run_oneshot(handle, &args.name, &args.rooms[0], msg).await
+        run_oneshot(handle, name, &args.rooms[0], msg).await
     } else {
-        run_tui(handle, &args.name, &args.rooms).await
+        run_tui(handle, name, &args.rooms).await
     }
+}
+
+// ── Setup helpers ────────────────────────────────────────────────────────────
+
+/// Open the discovery backend selected by `--repo`.
+fn open_discovery(repo: &Option<PathBuf>) -> anyhow::Result<Arc<dyn DiscoveryProvider>> {
+    match repo {
+        #[cfg(feature = "git-discovery")]
+        Some(path) => Ok(Arc::new(
+            GitDiscoveryProvider::open(path)
+                .map_err(|e| anyhow::anyhow!("git repo error: {e}"))?,
+        )),
+        _ => {
+            if repo.is_some() {
+                eprintln!("warning: --repo given but git-discovery feature is disabled; using in-memory backend");
+            }
+            Ok(Arc::new(InMemoryDiscovery::new()))
+        }
+    }
+}
+
+/// `--list-relays`: fetch relay addresses from the discovery backend and print
+/// them grouped by relay peer ID, then return.
+///
+/// Each `refs/relay/<sha256>` blob in git contains one Multiaddr of the form:
+///   `/ip4/<ip>/tcp/<port>/p2p/<peer-id>`
+///
+/// The `/p2p/<peer-id>` component is the relay's libp2p identity; libp2p's
+/// Noise handshake verifies it on every connection.
+fn list_relays_cmd(discovery: &dyn DiscoveryProvider) -> anyhow::Result<()> {
+    match discovery.fetch_relay_addrs() {
+        Ok(addrs) => {
+            if addrs.is_empty() {
+                println!("No relay addresses found.");
+                return Ok(());
+            }
+
+            // Group by peer ID (extracted from the /p2p/<peer-id> component).
+            let mut by_peer: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            for addr in &addrs {
+                let peer_id = relay_peer_id_str(addr);
+                by_peer.entry(peer_id).or_default().push(addr.to_string());
+            }
+
+            println!("Relay server(s) found: {}", by_peer.len());
+            for (i, (peer_id, peer_addrs)) in by_peer.iter().enumerate() {
+                println!("  [{}] PeerId: {}", i + 1, peer_id);
+                for addr in peer_addrs {
+                    println!("       {addr}");
+                }
+            }
+        }
+        Err(e) => {
+            println!("No relays found in discovery backend: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// Extract the peer ID string from the `/p2p/<peer-id>` component of a Multiaddr.
+fn relay_peer_id_str(addr: &libp2p::Multiaddr) -> String {
+    use libp2p::multiaddr::Protocol;
+    addr.iter()
+        .find_map(|p| match p {
+            Protocol::P2p(mh) => libp2p::PeerId::from_multihash(mh.into())
+                .ok()
+                .map(|pid| pid.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "(no peer id)".to_string())
 }
 
 // ── One-shot mode ─────────────────────────────────────────────────────────────
@@ -252,34 +322,39 @@ async fn run_oneshot(
 
     println!("Connecting to room '{room}'…");
 
-    // Wait for our own ExternalAddr / relay connection to be usable.
-    // We detect this by waiting for either a PeerDiscovered event (there are
-    // already peers) or a timeout and then sending anyway.
-    let mut ready = false;
+    // Wait for the relay circuit to be confirmed (RelayCircuitEstablished) and
+    // then for a peer to be discovered, or time out after 30 s and send with
+    // whoever is currently in the room.
+    //
+    // We deliberately do NOT break on the raw `Connected` event: that fires the
+    // instant the TCP connection to the relay opens — long before the circuit
+    // reservation is accepted, our address is published to git, or any peer
+    // dials us back.
     loop {
         tokio::select! {
             Ok(ev) = events.recv() => {
                 match ev {
-                    P2pEvent::Connected { .. } => {
-                        // Give a brief moment for relay to set up.
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        ready = true;
-                        break;
+                    P2pEvent::RelayCircuitEstablished { relay_peer_id } => {
+                        let pid = relay_peer_id
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "?".into());
+                        println!("Relay circuit ready (via {pid}), looking for peers…");
+                        // Stay in the loop: peers that are already in the room
+                        // will be dialled immediately after we publish our address.
                     }
                     P2pEvent::PeerDiscovered { .. } => {
-                        ready = true;
-                        break;
+                        break; // a peer dialled us — send immediately
                     }
                     _ => {}
                 }
             }
-            _ = &mut timeout => { break; }
+            _ = &mut timeout => {
+                // 30 s elapsed; proceed to send with whoever is in the room now.
+                break;
+            }
         }
     }
 
-    if !ready {
-        anyhow::bail!("timed out waiting for connection");
-    }
 
     // Send.
     let peers = handle.room_peers(room);
@@ -441,6 +516,12 @@ async fn listen_events(handle: P2pHandle, state: AppState, room: String) {
                 P2pEvent::PeerLeft { peer_id, .. } => {
                     state.remove_peer(&peer_id.to_string());
                     state.push(ChatLine::sys(format!("* {} left", peer_id)));
+                }
+                P2pEvent::RelayCircuitEstablished { relay_peer_id } => {
+                    let pid = relay_peer_id
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "?".into());
+                    state.push(ChatLine::sys(format!("~ relay circuit ready (via {pid})")));
                 }
                 P2pEvent::Connected { peer_id, via_relay } => {
                     let how = if via_relay { "via relay" } else { "direct" };

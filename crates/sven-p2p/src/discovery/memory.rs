@@ -15,8 +15,13 @@ use super::{DiscoveryProvider, PeerInfo};
 
 #[derive(Debug, Default)]
 struct Inner {
-    relay_addrs: Vec<Multiaddr>,
-    /// room → peer_id_string → relay_addr
+    /// relay peer_id (string) → list of that relay's listen addresses.
+    ///
+    /// Keyed by peer_id so each relay's addresses are isolated: publishing a
+    /// new set replaces only that relay's entries, and deletion removes exactly
+    /// the addresses that were registered for that relay.
+    relay_addrs: HashMap<String, Vec<Multiaddr>>,
+    /// room → peer_id_string → relay_circuit_addr
     peers: HashMap<String, HashMap<String, Multiaddr>>,
 }
 
@@ -35,19 +40,48 @@ impl InMemoryDiscovery {
     }
 }
 
+/// Extract the peer_id from a multiaddr that contains a `/p2p/<peer-id>` component.
+fn peer_id_from_addr(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter().find_map(|p| match p {
+        libp2p::multiaddr::Protocol::P2p(mh) => PeerId::from_multihash(mh.into()).ok(),
+        _ => None,
+    })
+}
+
 impl DiscoveryProvider for InMemoryDiscovery {
     fn publish_relay_addrs(&self, addrs: &[Multiaddr]) -> Result<(), P2pError> {
+        // All addresses in a single publish call share the same relay peer_id.
+        let peer_id = addrs
+            .iter()
+            .find_map(peer_id_from_addr)
+            .map(|p| p.to_string())
+            .unwrap_or_default();
+
         let mut g = self.inner.lock().unwrap();
-        g.relay_addrs = addrs.to_vec();
+        g.relay_addrs.insert(peer_id, addrs.to_vec());
         Ok(())
     }
 
     fn fetch_relay_addrs(&self) -> Result<Vec<Multiaddr>, P2pError> {
         let g = self.inner.lock().unwrap();
-        if g.relay_addrs.is_empty() {
+        let addrs: Vec<Multiaddr> = g.relay_addrs.values().flatten().cloned().collect();
+        if addrs.is_empty() {
             return Err(P2pError::NoRelayAddrs);
         }
-        Ok(g.relay_addrs.clone())
+        Ok(addrs)
+    }
+
+    fn delete_relay_addrs(&self, addrs: &[Multiaddr]) -> Result<(), P2pError> {
+        // Derive the peer_id from the addresses being removed (same as publish).
+        let peer_id = addrs
+            .iter()
+            .find_map(peer_id_from_addr)
+            .map(|p| p.to_string())
+            .unwrap_or_default();
+
+        let mut g = self.inner.lock().unwrap();
+        g.relay_addrs.remove(&peer_id);
+        Ok(())
     }
 
     fn publish_peer(

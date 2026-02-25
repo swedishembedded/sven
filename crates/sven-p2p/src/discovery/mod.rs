@@ -31,10 +31,21 @@ pub trait DiscoveryProvider: Send + Sync + 'static {
     // ── Relay ────────────────────────────────────────────────────────────────
 
     /// Persist the relay server's listen addresses so clients can find it.
+    ///
+    /// Each address is stored under a key derived from the address itself (e.g.
+    /// SHA-256 in the git backend), so concurrent calls from different relay
+    /// servers never conflict and do not overwrite each other.
     fn publish_relay_addrs(&self, addrs: &[Multiaddr]) -> Result<(), P2pError>;
 
-    /// Retrieve relay server addresses previously published.
+    /// Retrieve all relay addresses published by any relay server.
     fn fetch_relay_addrs(&self) -> Result<Vec<Multiaddr>, P2pError>;
+
+    /// Remove exactly the relay addresses that were previously published.
+    ///
+    /// The caller passes the same slice that was given to `publish_relay_addrs`
+    /// so implementations can derive the exact storage keys without scanning.
+    /// Other relays' addresses are never touched.
+    fn delete_relay_addrs(&self, addrs: &[Multiaddr]) -> Result<(), P2pError>;
 
     // ── Peers ────────────────────────────────────────────────────────────────
 

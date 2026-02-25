@@ -55,10 +55,14 @@ pub async fn run(config: RelayConfig) -> Result<(), P2pError> {
                         let disc = Arc::clone(&discovery);
                         let addrs = server_addrs.clone();
                         tokio::task::spawn_blocking(move || {
-                            if let Err(e) = disc.publish_relay_addrs(&addrs) {
-                                tracing::warn!("publish_relay_addrs failed: {e}");
-                            } else {
-                                tracing::info!("Published {} relay addr(s)", addrs.len());
+                            match disc.publish_relay_addrs(&addrs) {
+                                Ok(()) => tracing::info!("Published {} relay addr(s) to git", addrs.len()),
+                                Err(e) => tracing::error!(
+                                    "FATAL: publish_relay_addrs failed: {e}\n  \
+                                     Clients will not be able to find this relay.\n  \
+                                     Check that the git repo has a working 'origin' remote \
+                                     and that SSH credentials are available."
+                                ),
                             }
                         });
                     }
@@ -82,6 +86,20 @@ pub async fn run(config: RelayConfig) -> Result<(), P2pError> {
             }
         }
     }
+
+    // Cleanup: remove exactly the addresses we published — other relays are
+    // unaffected because each address has its own ref keyed by its SHA-256.
+    tracing::info!("Cleaning up {} relay address(es) from discovery…", server_addrs.len());
+    let disc = Arc::clone(&config.discovery);
+    tokio::task::spawn_blocking(move || {
+        if let Err(e) = disc.delete_relay_addrs(&server_addrs) {
+            tracing::warn!("Failed to cleanup relay addresses: {e}");
+        } else {
+            tracing::info!("Relay addresses removed from discovery");
+        }
+    })
+    .await
+    .ok();
 
     Ok(())
 }
