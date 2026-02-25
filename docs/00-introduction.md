@@ -31,6 +31,10 @@ code, and running shell commands. Common uses include:
 - Writing and running tests
 - Reviewing a pull request diff and suggesting improvements
 - Automating multi-step CI tasks that normally require manual intervention
+- **Autonomous embedded hardware debugging** via native GDB integration — sven
+  is the first AI agent that can start a GDB server, connect to a physical
+  device, set breakpoints, inspect memory and variables, and report findings
+  entirely on its own
 
 ---
 

@@ -3,17 +3,64 @@
 A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works in
 two modes that share the same agent core:
 
-- **Interactive TUI** — a full-screen terminal interface with a scrollable markdown
+- **Interactive TUI** -- a full-screen terminal interface with a scrollable markdown
   chat log, vim-style navigation, and live-streamed responses.
-- **Headless / CI** — reads instructions from stdin or a markdown file, writes
+- **Headless / CI** -- reads instructions from stdin or a markdown file, writes
   clean text to stdout, and exits with a meaningful code. Designed to compose
   with other tools via pipes.
 
 ---
 
+## GDB-native hardware debugging
+
+Sven is the **first AI agent with native GDB integration** for autonomous
+embedded hardware debugging. Give it a plain-English task and it will start
+a GDB server, connect, load your firmware, set breakpoints, inspect registers
+and variables, and report its findings -- all without leaving your terminal.
+
+```
+You: Use gdb tools to connect to the target, reset it, and set a breakpoint on
+     nrf uart tx function. Then inspect the parameters that are passed to it the
+     first time and show me what they are. Use zephyr.elf as the executable.
+```
+
+The agent then autonomously calls the five GDB tools in sequence:
+
+```
+gdb_start_server -> gdb_connect -> gdb_command (xN) -> gdb_stop
+```
+
+**Ratatui TUI** -- task start and target discovery:
+
+![sven GDB session start](docs/sven-gdb-1.png)
+
+**Ratatui TUI** -- inspecting UART parameters and final summary:
+
+![sven GDB session result](docs/sven-gdb-2.png)
+
+**Neovim buffer** -- the same session with the embedded Neovim chat view (with proper folds!):
+
+![sven GDB session in Neovim](docs/sven-gdb-nvim.png)
+
+The five GDB tools form a complete debug lifecycle:
+
+| Tool | What it does |
+|------|-------------|
+| `gdb_start_server` | Start JLinkGDBServer / OpenOCD in the background (auto-discovers config from project files) |
+| `gdb_connect` | Connect `gdb-multiarch --interpreter=mi3` and optionally load an ELF |
+| `gdb_command` | Run any GDB/MI command and return structured output |
+| `gdb_interrupt` | Send Ctrl+C to a running target |
+| `gdb_stop` | Kill the debug session and free the probe |
+
+See [Example 11](docs/06-examples.md#example-11--embedded-gdb-debugging-session)
+and the [User Guide GDB section](docs/03-user-guide.md#gdb-debugging-tools) for
+full details.
+
+---
+
 ## Features
 
-### Workflow files — unique to sven
+### Workflow files -- unique to sven
 
 sven treats markdown files as first-class workflow definitions.  No other
 agent-CLI has an equivalent:
@@ -45,27 +92,28 @@ Key capabilities the workflow format provides:
 
 | Feature | sven | Codex | Claude Code | OpenClaw |
 |---------|------|-------|-------------|----------|
-| Markdown workflow files (`##` steps) | ✅ native | ❌ | ❌ | ❌ |
-| YAML frontmatter (mode, timeouts, vars) | ✅ | ❌ | ❌ | ❌ |
-| Per-step options (`<!-- sven: ... -->`) | ✅ | ❌ | ❌ | ❌ |
-| Variable templating (`{{key}}`) | ✅ | ❌ | ❌ | ❌ |
-| Pipeable conversation output | ✅ full conv. | last msg only | last msg only | ❌ |
-| `sven validate --file` dry-run | ✅ | ❌ | ❌ | ❌ |
-| Per-step artifacts directory | ✅ | ❌ | ❌ | ❌ |
-| `conversation` / `json` / `compact` output | ✅ | `json` only | `stream-json` | `json` |
-| Auto-detect CI environment | ✅ GA/GL/Jenkins | ❌ | ❌ | ❌ |
-| Git context injection (branch/commit/dirty) | ✅ | ✅ | partial | ❌ |
-| Auto-load `AGENTS.md` / `.sven/context.md` | ✅ | ✅ | `CLAUDE.md` | `AGENTS.md` |
-| Zero runtime dependencies | ✅ native Rust | Node.js | Node.js | Node.js |
-| TUI + headless in one binary | ✅ | separate | separate | separate |
+| Markdown workflow files (`##` steps) | [x] native | [ ] | [ ] | [ ] |
+| YAML frontmatter (mode, timeouts, vars) | [x] | [ ] | [ ] | [ ] |
+| Per-step options (`<!-- sven: ... -->`) | [x] | [ ] | [ ] | [ ] |
+| Variable templating (`{{key}}`) | [x] | [ ] | [ ] | [ ] |
+| Pipeable conversation output | [x] full conv. | last msg only | last msg only | [ ] |
+| `sven validate --file` dry-run | [x] | [ ] | [ ] | [ ] |
+| Per-step artifacts directory | [x] | [ ] | [ ] | [ ] |
+| `conversation` / `json` / `compact` output | [x] | `json` only | `stream-json` | `json` |
+| Auto-detect CI environment | [x] GA/GL/Jenkins | [ ] | [ ] | [ ] |
+| Git context injection (branch/commit/dirty) | [x] | [x] | partial | [ ] |
+| Auto-load `AGENTS.md` / `.sven/context.md` | [x] | [x] | `CLAUDE.md` | `AGENTS.md` |
+| **Native GDB hardware debugging** | [x] first-class | [ ] | [ ] | [ ] |
+| Zero runtime dependencies | [x] native Rust | Node.js | Node.js | Node.js |
+| TUI + headless in one binary | [x] | separate | separate | separate |
 
 ### Pipeable conversations
 
-sven headless output is valid sven conversation markdown — it can be piped
+sven headless output is valid sven conversation markdown -- it can be piped
 directly into another sven instance or loaded back with `--conversation`:
 
 ```sh
-# Chain agents: plan → implement
+# Chain agents: plan -> implement
 sven --file plan.md | sven --mode agent "Implement the plan above."
 
 # Save and resume
@@ -78,7 +126,7 @@ sven --file review.conv.md --conversation  # continue from where you left off
 When a workflow runs, sven automatically:
 
 1. Walks up the directory tree to find the `.git` root.
-2. Injects the absolute project path into the system prompt — tools use it for
+2. Injects the absolute project path into the system prompt -- tools use it for
    all file operations.
 3. Collects live git metadata (branch, commit, remote, dirty status) and injects
    it so the agent knows the repository context without being asked.
@@ -89,7 +137,7 @@ When a workflow runs, sven automatically:
 
 ## Model Providers
 
-Sven supports **35+ model providers** natively in Rust — no external gateway
+Sven supports **35+ model providers** natively in Rust -- no external gateway
 required.  Every provider is registered in the driver registry, so `sven
 list-providers` always shows a complete, up-to-date list.
 
@@ -103,7 +151,7 @@ list-providers` always shows a complete, up-to-date list.
 | Regional | DeepSeek, Moonshot, Qwen/DashScope, GLM, MiniMax, Baidu Qianfan |
 | Local / OSS | Ollama, vLLM, LM Studio |
 
-All drivers implement the same `ModelProvider` trait — tool calling, streaming,
+All drivers implement the same `ModelProvider` trait -- tool calling, streaming,
 and catalog metadata work consistently across providers.  See
 [docs/providers.md](docs/providers.md) for configuration details and
 [crates/sven-model/DRIVERS.md](crates/sven-model/DRIVERS.md) for adding new
@@ -125,8 +173,8 @@ The `docs/` directory contains the full user guide split into focused sections.
 Build it locally with:
 
 ```sh
-make docs        # single markdown file → target/docs/sven-user-guide.md
-make docs-pdf    # PDF (requires pandoc) → target/docs/sven-user-guide.pdf
+make docs        # single markdown file -> target/docs/sven-user-guide.md
+make docs-pdf    # PDF (requires pandoc) -> target/docs/sven-user-guide.pdf
 ```
 
 | Section | Topic |
@@ -161,10 +209,10 @@ The mode can be set on the command line (`--mode`) or cycled live in the TUI.
 
 The agent has access to three built-in tools:
 
-- **shell** — runs arbitrary shell commands with a configurable timeout and an
+- **shell** -- runs arbitrary shell commands with a configurable timeout and an
   optional Docker sandbox.
-- **fs** — reads, writes, appends, and lists files.
-- **glob** — searches the filesystem by pattern.
+- **fs** -- reads, writes, appends, and lists files.
+- **glob** -- searches the filesystem by pattern.
 
 Each tool call goes through an approval policy before it executes. Commands can
 be auto-approved, denied, or presented for confirmation based on glob patterns
@@ -184,7 +232,7 @@ Output is full conversation markdown on stdout by default. Errors go to stderr.
 A failed step exits non-zero, so the pipeline aborts naturally under `set -e`.
 
 Use `--jsonl-output <path>` to save the complete raw conversation trace (including
-system prompts) as JSONL — one message per line in raw API format, suitable for
+system prompts) as JSONL -- one message per line in raw API format, suitable for
 creating fine-tuning datasets.
 
 ```sh
@@ -220,7 +268,7 @@ sven validate --file plan.md
 sven --file plan.md --dry-run
 ```
 
-**Exit codes:** `0` success · `1` agent error · `2` validation error · `124` timeout · `130` interrupt
+**Exit codes:** `0` success . `1` agent error . `2` validation error . `124` timeout . `130` interrupt
 
 ### Conversation files
 
@@ -239,7 +287,7 @@ The format uses H2 sections as turn boundaries:
 
 An optional H1 line at the top is treated as the conversation title.
 
-Everything inside a section is plain markdown — code blocks, lists, and
+Everything inside a section is plain markdown -- code blocks, lists, and
 headings at H3 or below are all safe to use without escaping.
 
 **Execution rule:** if the file ends with a `## User` section that has no
@@ -255,13 +303,13 @@ cat > work.md << 'EOF'
 Summarise the project structure.
 EOF
 
-# First run — sven executes the ## User section and appends ## Sven (+ any tool sections)
+# First run -- sven executes the ## User section and appends ## Sven (+ any tool sections)
 sven --file work.md --conversation
 
 # You can then append a follow-up yourself
 printf '\n## User\nNow list all public API entry points.\n' >> work.md
 
-# Second run — history is loaded, only the new ## User is executed
+# Second run -- history is loaded, only the new ## User is executed
 sven --file work.md --conversation
 ```
 
@@ -340,13 +388,13 @@ filled in. The schema is defined in `crates/sven-config/src/schema.rs`.
 
 Key sections:
 
-- `model` — provider, model name, API key env var, base URL override for
+- `model` -- provider, model name, API key env var, base URL override for
   local proxies (e.g. LiteLLM), token limits.
-- `agent` — default mode, maximum autonomous tool rounds, compaction
+- `agent` -- default mode, maximum autonomous tool rounds, compaction
   threshold, optional system prompt override.
-- `tools` — tool timeout, Docker sandbox toggle, auto-approve and deny glob
+- `tools` -- tool timeout, Docker sandbox toggle, auto-approve and deny glob
   patterns.
-- `tui` — theme, markdown wrap width, ASCII-border fallback for terminals
+- `tui` -- theme, markdown wrap width, ASCII-border fallback for terminals
   with limited font support.
 
 ### Listing available models
@@ -366,7 +414,7 @@ Set `model.provider` to one of:
 |----------|-------|
 | `openai` | Default. Set `OPENAI_API_KEY`. |
 | `anthropic` | Set `ANTHROPIC_API_KEY`. |
-| `mock` | Returns scripted responses from a YAML file — useful for tests and offline work. |
+| `mock` | Returns scripted responses from a YAML file -- useful for tests and offline work. |
 
 The `base_url` field lets you point any provider at a compatible proxy without
 changing anything else.
@@ -425,18 +473,18 @@ matching, and multi-stage pipeline composition.
 
 ```
 sven/
-├── src/                    # binary entry-point
-├── crates/
-│   ├── sven-config/        # TOML schema and config loader
-│   ├── sven-model/         # model provider trait + OpenAI, Anthropic, mock
-│   ├── sven-core/          # agent loop, session, context compaction
-│   ├── sven-tools/         # shell / fs / glob tools and approval policy
-│   ├── sven-input/         # markdown step parser and message queue
-│   ├── sven-ci/            # headless runner and output formatting
-│   └── sven-tui/           # Ratatui TUI: layout, widgets, key bindings
-└── tests/
-    ├── bats/               # end-to-end bats tests
-    └── fixtures/           # shared test data (mock responses, sample plans)
++-- src/                    # binary entry-point
++-- crates/
+|   +-- sven-config/        # TOML schema and config loader
+|   +-- sven-model/         # model provider trait + OpenAI, Anthropic, mock
+|   +-- sven-core/          # agent loop, session, context compaction
+|   +-- sven-tools/         # shell / fs / glob tools and approval policy
+|   +-- sven-input/         # markdown step parser and message queue
+|   +-- sven-ci/            # headless runner and output formatting
+|   +-- sven-tui/           # Ratatui TUI: layout, widgets, key bindings
++-- tests/
+    +-- bats/               # end-to-end bats tests
+    +-- fixtures/           # shared test data (mock responses, sample plans)
 ```
 
 Each crate has a focused responsibility and its own unit tests. The dependency

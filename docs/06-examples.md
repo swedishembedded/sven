@@ -262,6 +262,29 @@ sven "Fetch the API documentation from https://api.example.com/docs and generate
 
 ## Example 11 — Embedded GDB debugging session
 
+Sven is the **first AI agent with native GDB integration** for autonomous
+embedded hardware debugging. Give it a plain-English task and it orchestrates
+the entire debug lifecycle on its own.
+
+The screenshots below show a real session against an nRF-based Zephyr target.
+The user asks sven to find the parameters passed to the UART TX function the
+first time it is called — sven discovers the target configuration, starts the
+server, connects, sets a breakpoint, and reports back.
+
+**Task start — agent discovers the target and connects** (ratatui TUI):
+
+![sven GDB session — start](sven-gdb-1.png)
+
+**Agent inspects parameters with `gdb_command`, stops the session, and
+summarises findings** (ratatui TUI):
+
+![sven GDB session — result](sven-gdb-2.png)
+
+**Same session in the embedded Neovim chat view** — tool calls are shown as
+collapsed single-line entries, the Neovim cursor is visible at the bottom:
+
+![sven GDB session — Neovim view](sven-gdb-nvim.png)
+
 Flash firmware and step through an embedded target using sven's integrated GDB
 tools. The agent discovers the device automatically from project files, or you
 can tell it the device explicitly.

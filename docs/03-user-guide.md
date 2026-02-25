@@ -199,12 +199,33 @@ sven has a set of built-in tools it can call to complete tasks:
 
 ### GDB debugging tools
 
-sven includes integrated GDB debugging support aimed at embedded development
-workflows. The five GDB tools form a lifecycle:
+Sven is the **first AI agent with native GDB integration** for autonomous
+embedded hardware debugging. Give it a plain-English task and it handles the
+entire debug lifecycle — from starting the server and loading firmware through
+setting breakpoints, inspecting state, and cleaning up — without any manual
+intervention.
+
+The five GDB tools form a lifecycle:
 
 ```
 gdb_start_server → gdb_connect → gdb_command / gdb_interrupt → gdb_stop
 ```
+
+The screenshots below show a real session: the user asks sven to find the
+parameters passed to an nRF UART TX function, and the agent works through the
+full debug cycle autonomously.
+
+**Task start and target discovery** (ratatui TUI):
+
+![sven GDB session — task start](sven-gdb-1.png)
+
+**Inspecting parameters and final summary** (ratatui TUI):
+
+![sven GDB session — result](sven-gdb-2.png)
+
+**Same session in the embedded Neovim view**:
+
+![sven GDB session — Neovim](sven-gdb-nvim.png)
 
 **Starting a server**
 
