@@ -26,7 +26,12 @@ use sven_tui::{App, AppOptions};
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    init_logging(cli.verbose);
+    // In TUI mode writing to stderr corrupts the ratatui display.
+    // Suppress all tracing output unless the caller explicitly opts in by
+    // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
+    // (writes to stderr — only useful with headless / CI mode).
+    let is_tui = !cli.is_headless() && cli.command.is_none();
+    init_logging(cli.verbose, is_tui);
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
@@ -567,16 +572,107 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         }
     };
 
+    // Install a panic hook that restores the terminal to a usable state before
+    // printing the panic message.  Without this, a panic while in raw-mode /
+    // alternate-screen leaves the terminal permanently garbled.
+    // Use stdout (same fd as ratatui) — stderr may be redirected to /dev/null
+    // below so escape sequences written there would never reach the terminal.
+    {
+        use ratatui::crossterm::{
+            execute,
+            event::DisableMouseCapture,
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
+        };
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                std::io::stdout(),
+                LeaveAlternateScreen,
+                DisableMouseCapture,
+            );
+            original_hook(info);
+        }));
+    }
+
     let terminal = ratatui::init();
-    let _ = execute!(std::io::stderr(), EnableMouseCapture);
+    // Send all terminal control sequences on stdout — the same fd that ratatui
+    // uses for the alternate screen.  We will redirect stderr to /dev/null
+    // shortly, so using stderr for control sequences would break cleanup.
+    let _ = execute!(std::io::stdout(), EnableMouseCapture);
     let _ = execute!(
-        std::io::stderr(),
+        std::io::stdout(),
         PushKeyboardEnhancementFlags(
             KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                 | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
                 | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
         )
     );
+
+    // Redirect stderr to /dev/null (or SVEN_LOG_FILE) now that all setup is
+    // done.  This is the belt-and-suspenders defence against subprocess output
+    // corrupting the TUI: even if a subprocess inherits our stderr fd its
+    // output goes to /dev/null instead of the raw terminal.
+    // Tracing is already suppressed via LevelFilter::OFF above; this catches
+    // anything else (dynamic libraries, C extensions, etc.).
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::IntoRawFd;
+        let sink_path = std::env::var("SVEN_LOG_FILE")
+            .unwrap_or_else(|_| "/dev/null".to_string());
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .write(true).create(true).append(true)
+            .open(&sink_path)
+        {
+            unsafe {
+                let fd = f.into_raw_fd();
+                libc::dup2(fd, libc::STDERR_FILENO);
+                libc::close(fd);
+            }
+        }
+    }
+
+    // Spawn a background task that listens for SIGTERM / SIGINT from the OS
+    // (e.g. `kill <pid>` or systemd shutdown).  These signals bypass the
+    // normal Rust panic/drop machinery, so we must handle them explicitly to
+    // restore the terminal before the process exits.  In raw-mode, Ctrl-C is
+    // received as a key event and handled by the TUI; real SIGINT only arrives
+    // when the process is sent the signal from outside.
+    // Uses stdout for all escape sequences (stderr is now /dev/null).
+    tokio::spawn(async move {
+        use ratatui::crossterm::{
+            execute,
+            event::DisableMouseCapture,
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
+        };
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            tokio::select! {
+                _ = sigterm.recv() => {}
+                _ = sigint.recv()  => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            std::io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+        );
+        std::process::exit(1);
+    });
 
     let opts = AppOptions {
         mode: cli.mode,
@@ -590,14 +686,45 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let app = App::new(config, opts);
     let result = app.run(terminal).await;
 
-    let _ = execute!(std::io::stderr(), PopKeyboardEnhancementFlags);
-    let _ = execute!(std::io::stderr(), DisableMouseCapture);
+    let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
 
     result
 }
 
-fn init_logging(verbosity: u8) {
+fn init_logging(verbosity: u8, is_tui: bool) {
+    // In TUI mode tracing output written to stderr corrupts the ratatui
+    // display.  We suppress all logging unless the caller opts in:
+    //   • Set SVEN_LOG_FILE=/path/to/file  → logs go to that file (any mode)
+    //   • Set RUST_LOG=...                 → respects the env filter
+    //   • Pass --verbose (-v)              → enables debug/trace (headless only)
+    if is_tui {
+        // Check for an explicit log file — advanced debugging only.
+        if let Ok(log_path) = std::env::var("SVEN_LOG_FILE") {
+            use std::sync::Mutex;
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(&log_path)
+            {
+                let filter = EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| EnvFilter::new("debug"));
+                let _ = tracing_subscriber::registry()
+                    .with(fmt::layer()
+                        .with_target(true)
+                        .with_ansi(false)
+                        .with_writer(Mutex::new(file)))
+                    .with(filter)
+                    .try_init();
+                return;
+            }
+        }
+        // No log file: suppress all output so the TUI is not corrupted.
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::filter::LevelFilter::OFF)
+            .try_init();
+        return;
+    }
+
     let level = match verbosity {
         0 => "warn",
         1 => "debug",
@@ -606,10 +733,10 @@ fn init_logging(verbosity: u8) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(level));
 
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_target(false).with_writer(std::io::stderr))
         .with(filter)
-        .init();
+        .try_init();
 }
 
 fn is_stdin_tty() -> bool {

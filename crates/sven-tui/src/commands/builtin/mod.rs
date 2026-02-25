@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 //! Built-in slash commands shipped with sven.
 
+pub mod abort;
 pub mod mode;
 pub mod model;
 pub mod provider;

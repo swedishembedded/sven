@@ -13,6 +13,32 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Walk up from the current directory looking for a `.sven` subdirectory.
+/// Returns `{sven_dir}/logs/<YYYY-MM-DD_HH-MM-SS>.jsonl` when found.
+/// Creates the `logs/` subdirectory if it does not yet exist.
+fn resolve_auto_log_path() -> Option<PathBuf> {
+    let start = std::env::current_dir().ok()?;
+    let mut current: &std::path::Path = &start;
+    loop {
+        let candidate = current.join(".sven");
+        if candidate.is_dir() {
+            let logs_dir = candidate.join("logs");
+            if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+                tracing::warn!("could not create .sven/logs: {e}");
+                return None;
+            }
+            let now = chrono::Local::now();
+            let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".jsonl";
+            return Some(logs_dir.join(filename));
+        }
+        match current.parent() {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+    None
+}
+
 use crossterm::event::EventStream;
 use futures::StreamExt;
 use ratatui::layout::Rect;
@@ -178,6 +204,14 @@ pub struct App {
     pub(crate) cache_hit_pct: u8,
     pub(crate) agent_tx: Option<mpsc::Sender<AgentRequest>>,
     pub(crate) event_rx: Option<mpsc::Receiver<AgentEvent>>,
+    /// Shared cancel handle: holds the sender half of the current submission's
+    /// oneshot channel.  Dropping or sending on it cancels the running turn.
+    pub(crate) cancel_handle:
+        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// When `true` after an abort, new messages typed in the input box are
+    /// queued rather than sent directly, and auto-dequeue is suppressed.
+    /// Cleared when the user manually submits a message.
+    pub(crate) abort_pending: bool,
     pub(crate) pending_nav: bool,
     pub(crate) chat_height: u16,
     /// Full-screen pager overlay (Ctrl+T).
@@ -218,6 +252,11 @@ pub struct App {
     /// Last known rect of the input pane (populated each frame).  Used by the
     /// mouse handler to route scroll-wheel events to the correct pane.
     pub(crate) last_input_pane: Rect,
+    /// Set to `true` after a tool call completes, prompting the run-loop to
+    /// verify and restore terminal state (raw mode, cursor visibility) before
+    /// the next draw.  Subprocesses that are not fully isolated may alter
+    /// terminal settings; this flag triggers a lightweight recovery pass.
+    pub(crate) needs_terminal_recover: bool,
 }
 
 impl App {
@@ -315,6 +354,8 @@ impl App {
             cache_hit_pct: 0,
             agent_tx: None,
             event_rx: None,
+            cancel_handle: Arc::new(tokio::sync::Mutex::new(None)),
+            abort_pending: false,
             pending_nav: false,
             chat_height: 24,
             pager: None,
@@ -333,10 +374,11 @@ impl App {
             nvim_submit_notify: None,
             nvim_quit_notify: None,
             history_path,
-            jsonl_path: opts.jsonl_path,
+            jsonl_path: opts.jsonl_path.or_else(resolve_auto_log_path),
             no_nvim: opts.no_nvim,
             auto_scroll: true,
             last_input_pane: Rect::default(),
+            needs_terminal_recover: false,
         };
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(QueuedMessage::plain(prompt));
@@ -374,8 +416,18 @@ impl App {
         let cfg                = self.config.clone();
         let mode               = self.session.mode;
         let startup_model_cfg  = self.session.model_cfg.clone();
+        let cancel_handle_task = self.cancel_handle.clone();
         tokio::spawn(async move {
-            agent_task(cfg, startup_model_cfg, mode, submit_rx, event_tx, question_tx).await;
+            agent_task(
+                cfg,
+                startup_model_cfg,
+                mode,
+                submit_rx,
+                event_tx,
+                question_tx,
+                cancel_handle_task,
+            )
+            .await;
         });
 
         // When resuming, prime the agent with the loaded history.
@@ -464,6 +516,21 @@ impl App {
                 self.adjust_edit_scroll();
             } else {
                 self.adjust_input_scroll();
+            }
+
+            // After a tool call, a subprocess may have left the terminal in a
+            // degraded state (raw mode disabled, cursor visible, etc.).  Check
+            // once per frame and re-enable raw mode + hide cursor if needed.
+            // This is cheap (one syscall) so we always do it when the flag is
+            // set rather than trying to detect corruption another way.
+            if self.needs_terminal_recover {
+                self.needs_terminal_recover = false;
+                if !crossterm::terminal::is_raw_mode_enabled().unwrap_or(true) {
+                    let _ = crossterm::terminal::enable_raw_mode();
+                    // Force a complete redraw so any garbage written to the
+                    // display buffer by the subprocess is overwritten cleanly.
+                    let _ = terminal.clear();
+                }
             }
 
             let ascii = self.ascii();
@@ -674,5 +741,46 @@ impl App {
     /// Simulate turn completion (agent becomes idle again).
     pub fn simulate_turn_complete(&mut self) {
         self.agent_busy = false;
+    }
+
+    /// Push a user message segment directly into the chat history.
+    /// Returns the segment index.
+    pub fn inject_chat_user_message(&mut self, text: &str) -> usize {
+        let idx = self.chat_segments.len();
+        self.chat_segments.push(crate::chat::segment::ChatSegment::Message(
+            sven_model::Message::user(text),
+        ));
+        idx
+    }
+
+    /// Put the app into inline-edit mode for the chat segment at `seg_idx`,
+    /// pre-filling `edit_buffer` with `new_text`.
+    pub fn start_editing_segment(&mut self, seg_idx: usize, new_text: &str) {
+        self.editing_message_index = Some(seg_idx);
+        self.edit_buffer = new_text.to_string();
+        self.edit_cursor = new_text.len();
+        self.edit_original_text = Some(new_text.to_string());
+        self.focus = crate::app::FocusPane::Input;
+    }
+
+    /// Expose `abort_pending` for test assertions.
+    pub fn is_abort_pending(&self) -> bool {
+        self.abort_pending
+    }
+
+    /// Simulate an `AgentEvent::Aborted` arriving (agent run stopped mid-stream).
+    /// `partial_text` is whatever was streamed before the abort.
+    pub async fn simulate_aborted(&mut self, partial_text: &str) {
+        use crate::chat::segment::ChatSegment;
+        use sven_model::Message;
+
+        self.streaming_assistant_buffer.clear();
+        self.streaming_is_thinking = false;
+        if !partial_text.is_empty() {
+            self.chat_segments
+                .push(ChatSegment::Message(Message::assistant(partial_text)));
+        }
+        self.agent_busy = false;
+        self.current_tool = None;
     }
 }

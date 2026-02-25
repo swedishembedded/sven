@@ -68,7 +68,9 @@ pub struct CommandResult {
 #[derive(Debug)]
 pub enum ImmediateAction {
     Quit,
-    // Future: RefreshMcp, ReloadSkills, ShowHelp, etc.
+    /// Abort the current model run and set abort_pending so queued messages
+    /// do not auto-advance.
+    Abort,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -385,6 +387,29 @@ mod dispatch_tests {
     #[test]
     fn quit_command_does_not_set_model_or_mode() {
         let (_, result) = try_dispatch("/quit", &registry()).unwrap();
+        assert!(result.model_override.is_none());
+        assert!(result.mode_override.is_none());
+        assert!(result.message_to_send.is_none());
+    }
+
+    // ── /abort ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn abort_no_trailing_space_triggers_abort() {
+        let (name, result) = try_dispatch("/abort", &registry()).unwrap();
+        assert_eq!(name, "abort");
+        assert!(matches!(result.immediate_action, Some(ImmediateAction::Abort)));
+    }
+
+    #[test]
+    fn abort_with_trailing_space_triggers_abort() {
+        let (_, result) = try_dispatch("/abort ", &registry()).unwrap();
+        assert!(matches!(result.immediate_action, Some(ImmediateAction::Abort)));
+    }
+
+    #[test]
+    fn abort_does_not_set_model_mode_or_message() {
+        let (_, result) = try_dispatch("/abort", &registry()).unwrap();
         assert!(result.model_override.is_none());
         assert!(result.mode_override.is_none());
         assert!(result.message_to_send.is_none());

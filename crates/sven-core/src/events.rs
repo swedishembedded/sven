@@ -32,11 +32,18 @@ pub enum AgentEvent {
         tokens_before: usize,
         tokens_after: usize,
     },
-    /// Current token usage update
+    /// Current token usage update.
+    ///
+    /// Providers may emit this multiple times per turn with different fields
+    /// populated (e.g. Anthropic sends input stats on `message_start` and
+    /// output stats on `message_delta`).  Fields that were not reported for
+    /// this particular event are zero; consumers should only update their
+    /// display when the relevant field is non-zero.
     TokenUsage {
+        /// Input tokens processed this request (does NOT include cache hits).
         input: u32,
+        /// Output tokens generated this request.
         output: u32,
-        context_total: usize,
         /// Tokens served from the provider's prompt cache this turn.
         cache_read: u32,
         /// Tokens written into the provider's prompt cache this turn.
@@ -45,9 +52,17 @@ pub enum AgentEvent {
         cache_read_total: u32,
         /// Running total of cache-write tokens across the whole session.
         cache_write_total: u32,
+        /// The model's maximum context window (tokens).  Zero means unknown.
+        max_tokens: usize,
     },
     /// The agent has finished processing the current user turn
     TurnComplete,
+    /// The current run was aborted (via Ctrl+C or /abort).
+    /// `partial_text` contains any assistant text that was streamed before the
+    /// abort; it may be empty if the model had not yet produced any output.
+    /// The agent has committed `partial_text` (when non-empty) to its session
+    /// history so a follow-up Resubmit will see it.
+    Aborted { partial_text: String },
     /// A recoverable error occurred
     Error(String),
     /// The todo list was updated

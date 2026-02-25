@@ -32,6 +32,7 @@ impl CommandRegistry {
     pub fn with_builtins() -> Self {
         use super::builtin;
         let mut reg = Self::empty();
+        reg.register(Arc::new(builtin::abort::AbortCommand));
         reg.register(Arc::new(builtin::model::ModelCommand));
         reg.register(Arc::new(builtin::provider::ProviderCommand));
         reg.register(Arc::new(builtin::mode::ModeCommand));
@@ -102,6 +103,7 @@ mod tests {
         assert!(reg.get("provider").is_some(), "provider command must be registered");
         assert!(reg.get("mode").is_some(), "mode command must be registered");
         assert!(reg.get("quit").is_some(), "quit command must be registered");
+        assert!(reg.get("abort").is_some(), "abort command must be registered");
     }
 
     #[test]

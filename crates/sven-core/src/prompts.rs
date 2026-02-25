@@ -105,6 +105,18 @@ mod guidelines {
          - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
          - NEVER skip git hooks or force-push without explicit user permission."
     }
+
+    pub fn debugging() -> &'static str {
+        "- When asked to debug, diagnose a crash, inspect runtime state, or step through code on a \
+           target device: you MUST use the GDB tools (`gdb_start_server`, `gdb_connect`, \
+           `gdb_command`, `gdb_interrupt`, `gdb_stop`). \
+           Do NOT substitute reading source code for actual runtime debugging — source reading \
+           answers 'what does the code say', GDB answers 'what is the program actually doing'.\n\
+         - Lifecycle: `gdb_start_server` (or skip if server already running) → `gdb_connect` → \
+           `gdb_command` (load / break / continue / step / info registers / backtrace) → `gdb_stop`.\n\
+         - If `gdb_start_server` reports a server is already running, call `gdb_connect` directly.\n\
+         - Use `gdb_wait_stopped` after `continue` or `step` commands before issuing the next command."
+    }
 }
 
 fn build_guidelines_section() -> String {
@@ -119,12 +131,15 @@ fn build_guidelines_section() -> String {
          ### Workflow Efficiency\n\
          {}\n\n\
          ### Error Handling\n\
+         {}\n\n\
+         ### Debugging\n\
          {}",
         guidelines::general(),
         guidelines::tool_usage(),
         guidelines::code_quality(),
         guidelines::workflow_efficiency(),
-        guidelines::error_handling()
+        guidelines::error_handling(),
+        guidelines::debugging()
     )
 }
 
@@ -354,6 +369,27 @@ mod tests {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
             let pr = system_prompt(mode, None, &no_tools(), empty());
             assert!(pr.contains("Guidelines"), "prompt should contain a Guidelines section");
+        }
+    }
+
+    #[test]
+    fn guidelines_include_debugging_section_with_gdb() {
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        assert!(pr.contains("Debugging"), "prompt should contain a Debugging section");
+        assert!(pr.contains("gdb_start_server"), "debugging section must mention gdb_start_server");
+        assert!(pr.contains("gdb_connect"), "debugging section must mention gdb_connect");
+        assert!(
+            pr.contains("MUST use the GDB tools") || pr.contains("you MUST use the GDB tools"),
+            "debugging section must mandate GDB tool use"
+        );
+    }
+
+    #[test]
+    fn debugging_guideline_present_in_all_modes() {
+        for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
+            let pr = system_prompt(mode, None, &no_tools(), empty());
+            assert!(pr.contains("gdb_connect"),
+                "mode {mode} prompt should mention gdb_connect in debugging guideline");
         }
     }
 

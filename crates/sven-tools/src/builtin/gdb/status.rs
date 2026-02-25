@@ -69,7 +69,12 @@ impl Tool for GdbStatusTool {
         if !state.has_client() {
             return ToolOutput::ok(
                 &call.id,
-                format!("{server_status}\nGDB: not connected\nCall gdb_start_server then gdb_connect to start a session."),
+                format!(
+                    "{server_status}\nGDB: not connected\n\
+                     Call gdb_start_server then gdb_connect to start a session. \
+                     If the server is already running externally, \
+                     gdb_start_server will detect it automatically."
+                ),
             );
         }
 

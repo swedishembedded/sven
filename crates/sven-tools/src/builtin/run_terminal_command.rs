@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::process::Stdio;
 use tokio::process::Command;
 use tracing::debug;
 
@@ -91,6 +92,10 @@ impl Tool for RunTerminalCommandTool {
 
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&command);
+        // Isolate the subprocess from the TUI's terminal.  See shell.rs for
+        // the detailed rationale.
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }

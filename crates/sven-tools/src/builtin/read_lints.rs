@@ -118,6 +118,7 @@ async fn run_cargo_check(workdir: &str) -> String {
     let output = tokio::process::Command::new("cargo")
         .args(["check", "--message-format", "short"])
         .current_dir(workdir)
+        .stdin(std::process::Stdio::null())
         .output()
         .await;
 
@@ -144,6 +145,7 @@ async fn run_tsc(workdir: &str, _paths: &[String]) -> String {
     let output = tokio::process::Command::new("npx")
         .args(["tsc", "--noEmit", "--pretty", "false"])
         .current_dir(workdir)
+        .stdin(std::process::Stdio::null())
         .output()
         .await;
 
@@ -169,6 +171,7 @@ async fn run_ruff(workdir: &str, paths: &[String]) -> String {
     let output = tokio::process::Command::new("ruff")
         .args(&args)
         .current_dir(workdir)
+        .stdin(std::process::Stdio::null())
         .output()
         .await;
 

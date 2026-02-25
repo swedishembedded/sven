@@ -343,5 +343,13 @@ fn collect_event_full(
         }
 
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
+        AgentEvent::Aborted { partial_text } => {
+            if !partial_text.is_empty() {
+                write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
+                records.push(ConversationRecord::Message(Message::assistant(&partial_text)));
+            } else {
+                write_stderr("[sven:agent:aborted]");
+            }
+        }
     }
 }

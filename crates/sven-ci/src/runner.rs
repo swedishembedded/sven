@@ -867,6 +867,14 @@ fn handle_event(
             write_stderr(&format!("[sven:thinking] {content}"));
         }
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
+        AgentEvent::Aborted { partial_text } => {
+            if !partial_text.is_empty() {
+                write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
+                collected.push(Message::assistant(&partial_text));
+            } else {
+                write_stderr("[sven:agent:aborted]");
+            }
+        }
     }
 }
 

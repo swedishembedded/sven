@@ -204,7 +204,7 @@ impl Default for ModelConfig {
 }
 
 fn default_agent_mode() -> AgentMode { AgentMode::Agent }
-fn default_max_tool_rounds() -> u32 { 50 }
+fn default_max_tool_rounds() -> u32 { 200 }
 fn default_compaction_threshold() -> f32 { 0.85 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,7 +248,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             default_mode: AgentMode::Agent,
-            max_tool_rounds: 50,
+            max_tool_rounds: 200,
             compaction_threshold: 0.85,
             compaction_keep_recent: default_compaction_keep_recent(),
             system_prompt: None,

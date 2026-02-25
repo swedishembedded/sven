@@ -103,6 +103,12 @@ impl App {
                         return true;
                     }
 
+                    if matches!(result.immediate_action, Some(ImmediateAction::Abort)) {
+                        self.abort_pending = true;
+                        self.send_abort_signal().await;
+                        return false;
+                    }
+
                     if let Some(model_str) = result.model_override {
                         let resolved =
                             sven_model::resolve_model_from_config(&self.config, &model_str);
@@ -141,13 +147,17 @@ impl App {
             model_transition: staged_model.map(ModelDirective::SwitchTo),
             mode_transition: staged_mode,
         };
-        if self.agent_busy {
+        // When abort_pending the user explicitly stopped the queue from
+        // auto-advancing.  New messages are queued rather than sent directly
+        // even when the agent appears idle, until the user manually submits.
+        if self.agent_busy || self.abort_pending {
             self.queued.push_back(qm);
             self.queue_selected = Some(self.queued.len() - 1);
         } else {
             self.sync_nvim_buffer_to_segments().await;
             let history = messages_for_resubmit(&self.chat_segments);
             self.chat_segments.push(ChatSegment::Message(Message::user(text)));
+            self.save_history_async();
             self.rerender_chat().await;
             self.scroll_to_bottom();
             self.send_resubmit_to_agent(history, qm).await;
@@ -220,7 +230,7 @@ impl App {
     /// dequeue the first one and send it.  Called after a queue-item edit ends
     /// so that a turn that completed while the user was editing isn't dropped.
     pub(crate) async fn try_dequeue_next(&mut self) {
-        if !self.agent_busy && self.editing_queue_index.is_none() {
+        if !self.agent_busy && self.editing_queue_index.is_none() && !self.abort_pending {
             if let Some(next) = self.queued.pop_front() {
                 self.queue_selected = self.queue_selected
                     .map(|s| s.saturating_sub(1))
@@ -234,6 +244,64 @@ impl App {
                 self.scroll_to_bottom();
                 self.send_to_agent(next).await;
             }
+        }
+    }
+
+    /// Signal the currently running agent turn to abort.
+    ///
+    /// Dropping the sender half of the oneshot channel causes the receiver
+    /// inside `submit_with_cancel` to resolve, triggering the abort branch.
+    pub(crate) async fn send_abort_signal(&self) {
+        let sender = self.cancel_handle.lock().await.take();
+        // Dropping the sender without sending signals cancellation via Err on the receiver.
+        drop(sender);
+    }
+
+    /// Force-submit the queue item at `idx`.
+    ///
+    /// If the agent is currently busy, the running turn is aborted first.  The
+    /// partial streamed content is preserved in the chat (via `AgentEvent::Aborted`).
+    /// After the abort the selected message is sent as a full resubmit so the
+    /// model sees the complete conversation history including any partial text.
+    ///
+    /// If the agent is idle, the message is sent immediately (same as a normal
+    /// manual-dequeue submit).
+    pub(crate) async fn force_submit_queued_message(&mut self, idx: usize) {
+        if idx >= self.queued.len() {
+            return;
+        }
+        let qm = match self.queued.remove(idx) {
+            Some(qm) => qm,
+            None => return,
+        };
+        // Keep selection in bounds.
+        self.queue_selected = if self.queued.is_empty() {
+            None
+        } else {
+            Some(idx.min(self.queued.len() - 1))
+        };
+        if self.queued.is_empty() && self.focus == FocusPane::Queue {
+            self.focus = FocusPane::Input;
+        }
+
+        if self.agent_busy {
+            // Abort the current run.  The Aborted event will commit partial text
+            // to chat_segments.  Store the message at the front of the queue
+            // so the Aborted handler picks it up and auto-sends it.
+            // abort_pending stays false so auto-dequeue fires after the abort.
+            self.queued.push_front(qm);
+            self.queue_selected = Some(0);
+            self.abort_pending = false;
+            self.send_abort_signal().await;
+        } else {
+            // Agent idle: send immediately as a resubmit with full history.
+            let history = messages_for_resubmit(&self.chat_segments);
+            self.chat_segments.push(ChatSegment::Message(Message::user(&qm.content)));
+            self.save_history_async();
+            self.rerender_chat().await;
+            self.auto_scroll = true;
+            self.scroll_to_bottom();
+            self.send_resubmit_to_agent(history, qm).await;
         }
     }
 }
@@ -432,6 +500,73 @@ mod submit_integration_tests {
         );
     }
 
+    // ── Edit-and-resubmit model override ─────────────────────────────────────
+
+    /// Regression: staged model override must be applied when editing an old
+    /// chat message and resubmitting, not silently discarded.
+    #[tokio::test]
+    async fn edit_resubmit_applies_staged_model_override() {
+        let (mut app, mut rx) = App::for_testing();
+
+        // Seed a user message in the chat (simulate prior conversation).
+        let seg_idx = app.inject_chat_user_message("original message");
+
+        // Stage a model switch — user typed /model but hasn't sent a new message yet.
+        app.inject_input("/model anthropic/claude-opus-4-6");
+        app.dispatch_action(Action::Submit).await;
+        // No resubmit should have been sent (it's just a model switch command).
+        assert!(rx.try_recv().is_err(), "/model alone must not send a request");
+
+        // Now start editing the existing chat message and confirm.
+        app.start_editing_segment(seg_idx, "edited message");
+        app.dispatch_action(Action::EditMessageConfirm).await;
+
+        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        assert_eq!(resubmit_content(&req), "edited message");
+        assert_eq!(
+            resubmit_model(&req).as_deref(),
+            Some("anthropic/claude-opus-4-6"),
+            "staged model must be forwarded to the agent on edit-resubmit"
+        );
+    }
+
+    /// When no model is staged, editing an old message resubmits without any
+    /// model override (agent keeps whatever model it was last using).
+    #[tokio::test]
+    async fn edit_resubmit_without_staged_model_sends_no_override() {
+        let (mut app, mut rx) = App::for_testing();
+
+        let seg_idx = app.inject_chat_user_message("hello");
+        app.start_editing_segment(seg_idx, "hello edited");
+        app.dispatch_action(Action::EditMessageConfirm).await;
+
+        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        assert_eq!(resubmit_content(&req), "hello edited");
+        assert!(
+            resubmit_model(&req).is_none(),
+            "no staged model means no model override in resubmit"
+        );
+    }
+
+    /// Staged mode override is also forwarded on edit-resubmit.
+    #[tokio::test]
+    async fn edit_resubmit_applies_staged_mode_override() {
+        let (mut app, mut rx) = App::for_testing();
+
+        let seg_idx = app.inject_chat_user_message("do some research");
+
+        app.inject_input("/mode research");
+        app.dispatch_action(Action::Submit).await;
+        assert!(rx.try_recv().is_err(), "/mode alone must not send a request");
+
+        app.start_editing_segment(seg_idx, "do some research — edited");
+        app.dispatch_action(Action::EditMessageConfirm).await;
+
+        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        assert_eq!(resubmit_mode(&req), Some(AgentMode::Research),
+            "staged mode must be forwarded to the agent on edit-resubmit");
+    }
+
     /// Empty input: nothing is sent.
     #[tokio::test]
     async fn empty_input_sends_nothing() {
@@ -439,5 +574,126 @@ mod submit_integration_tests {
         app.inject_input("   ");
         app.dispatch_action(Action::Submit).await;
         assert!(rx.try_recv().is_err(), "empty/whitespace input must not send to agent");
+    }
+
+    // ── /abort command ────────────────────────────────────────────────────────
+
+    /// `/abort` while the agent is busy sets abort_pending.
+    #[tokio::test]
+    async fn abort_command_sets_abort_pending_when_busy() {
+        let (mut app, mut rx) = App::for_testing();
+
+        // First message goes to agent (makes it busy).
+        app.inject_input("first");
+        app.dispatch_action(Action::Submit).await;
+        let _first = rx.try_recv().expect("first message sent");
+        assert!(app.is_agent_busy());
+
+        // /abort while busy should set abort_pending.
+        app.inject_input("/abort");
+        app.dispatch_action(Action::Submit).await;
+        assert!(app.is_abort_pending(), "abort_pending must be set after /abort");
+    }
+
+    /// After /abort new messages are queued (not sent directly) even when agent is idle.
+    #[tokio::test]
+    async fn abort_pending_queues_new_messages_when_idle() {
+        let (mut app, mut rx) = App::for_testing();
+
+        // Simulate: agent was busy, got aborted, now idle.
+        app.inject_input("first");
+        app.dispatch_action(Action::Submit).await;
+        let _first = rx.try_recv().expect("first message sent");
+
+        // Manually set abort_pending to simulate post-abort state.
+        app.simulate_aborted("partial response").await;
+        // abort_pending not set by simulate_aborted — set it manually.
+        // (In real life, InterruptAgent or /abort would set it before the abort signal.)
+        // Use the dispatch path to set it properly.
+        app.inject_input("/abort");
+        app.dispatch_action(Action::Submit).await;
+        // Now agent is NOT busy (simulate_aborted cleared it) and abort_pending is set.
+        assert!(app.is_abort_pending());
+        assert!(!app.is_agent_busy());
+
+        app.inject_input("new message after abort");
+        app.dispatch_action(Action::Submit).await;
+        assert_eq!(app.queued_len(), 1, "message should be queued when abort_pending");
+        assert!(rx.try_recv().is_err(), "message must not go to agent directly");
+    }
+
+    /// After abort, auto-dequeue is suppressed; queued messages stay queued after TurnComplete.
+    #[tokio::test]
+    async fn abort_pending_suppresses_auto_dequeue() {
+        let (mut app, mut rx) = App::for_testing();
+
+        // First message.
+        app.inject_input("first");
+        app.dispatch_action(Action::Submit).await;
+        let _first = rx.try_recv().expect("first message sent");
+
+        // Queue a second message while busy.
+        app.inject_input("second");
+        app.dispatch_action(Action::Submit).await;
+        assert_eq!(app.queued_len(), 1, "second should be queued");
+
+        // Set abort_pending.
+        // Simulate the abort completing (agent becomes idle).
+        app.simulate_aborted("").await;
+        // Force abort_pending = true to simulate the /abort path.
+        // (We call the abort command handler path here via dispatch.)
+        // Since agent is now idle (simulate_aborted set agent_busy=false),
+        // use the internal flag directly.
+        // The real path goes through Action::InterruptAgent or /abort which
+        // sets abort_pending before calling send_abort_signal.
+        // For test purposes, set the flag directly.
+        // (This mirrors what InterruptAgent does: set abort_pending = true then signal.)
+        let _ = app.dispatch_action(Action::InterruptAgent).await;
+        // Note: InterruptAgent only sends signal if agent_busy; here it's not busy,
+        // so we set abort_pending manually via the /abort path.
+        app.inject_input("/abort");
+        app.dispatch_action(Action::Submit).await;
+        assert!(app.is_abort_pending());
+
+        // simulate_turn_complete with abort_pending should NOT dequeue.
+        // (In real life this is handled in TurnComplete; here agent is already idle.)
+        // Verify: queue still has the "second" message.
+        assert_eq!(app.queued_len(), 1, "queue should not have been drained while abort_pending");
+        assert!(rx.try_recv().is_err(), "no message should have been sent automatically");
+    }
+
+    // ── Force-submit ──────────────────────────────────────────────────────────
+
+    /// Force-submit while idle sends the selected message immediately.
+    #[tokio::test]
+    async fn force_submit_while_idle_sends_immediately() {
+        let (mut app, mut rx) = App::for_testing();
+
+        // Queue a message (agent is idle so just push directly).
+        // Use busy agent to queue.
+        app.inject_input("first");
+        app.dispatch_action(Action::Submit).await;
+        let _first = rx.try_recv().expect("first sent");
+
+        app.inject_input("queued message");
+        app.dispatch_action(Action::Submit).await;
+        assert_eq!(app.queued_len(), 1);
+
+        // Simulate turn complete: agent is now idle with queued message waiting.
+        // Use abort_pending to prevent auto-dequeue.
+        app.inject_input("/abort");
+        app.dispatch_action(Action::Submit).await;
+        app.simulate_aborted("").await;
+
+        assert!(app.is_abort_pending());
+        assert_eq!(app.queued_len(), 1);
+
+        // Select queue item 0 and force-submit it.
+        app.dispatch_action(Action::FocusQueue).await;
+        app.dispatch_action(Action::ForceSubmitQueuedMessage).await;
+
+        let req = rx.try_recv().expect("force-submit should send a request");
+        assert_eq!(resubmit_content(&req), "queued message");
+        assert_eq!(app.queued_len(), 0, "queue should be empty after force-submit");
     }
 }

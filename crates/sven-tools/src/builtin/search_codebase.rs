@@ -79,6 +79,7 @@ impl Tool for SearchCodebaseTool {
         // Build rg command with exclusions
         let has_rg = tokio::process::Command::new("which")
             .arg("rg")
+            .stdin(std::process::Stdio::null())
             .output()
             .await
             .map(|o| o.status.success())
@@ -109,6 +110,7 @@ impl Tool for SearchCodebaseTool {
 
             tokio::process::Command::new("rg")
                 .args(&args)
+                .stdin(std::process::Stdio::null())
                 .output()
                 .await
         } else {
@@ -124,6 +126,7 @@ impl Tool for SearchCodebaseTool {
             tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd_parts.join(" "))
+                .stdin(std::process::Stdio::null())
                 .output()
                 .await
         };

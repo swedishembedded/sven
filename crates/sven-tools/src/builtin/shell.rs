@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::process::Stdio;
 use tokio::process::Command;
 use tracing::debug;
 
@@ -96,6 +97,21 @@ impl Tool for ShellTool {
 
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&command);
+        // Isolate the subprocess from the TUI's terminal.
+        //
+        // `stdin(Stdio::null())` prevents the subprocess (and any programs it
+        // spawns) from accessing the controlling terminal via fd 0.  Most
+        // terminal-manipulation code calls `isatty(0)` first; with stdin
+        // pointing at /dev/null that returns false and the code is skipped.
+        // This is the primary defence against terminal-mode corruption (raw
+        // mode being disabled, mouse-reporting strings appearing as text, etc.)
+        //
+        // `kill_on_drop(true)` ensures that when the timeout fires and the
+        // tokio future is dropped, tokio sends SIGKILL to the child before
+        // releasing the process handle, preventing zombie processes from
+        // continuing to run and potentially interacting with the terminal.
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }

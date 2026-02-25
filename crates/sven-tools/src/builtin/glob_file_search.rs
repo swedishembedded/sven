@@ -93,6 +93,7 @@ impl Tool for GlobFileSearchTool {
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(&cmd_str)
+            .stdin(std::process::Stdio::null())
             .output()
             .await;
 

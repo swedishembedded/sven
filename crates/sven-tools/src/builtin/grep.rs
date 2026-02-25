@@ -109,6 +109,7 @@ async fn run_rg(
 ) -> anyhow::Result<String> {
     let has_rg = tokio::process::Command::new("which")
         .arg("rg")
+        .stdin(std::process::Stdio::null())
         .output()
         .await
         .map(|o| o.status.success())
@@ -146,6 +147,7 @@ async fn run_rg(
 
         tokio::process::Command::new("rg")
             .args(&args)
+            .stdin(std::process::Stdio::null())
             .output()
             .await?
     } else {
@@ -171,6 +173,7 @@ async fn run_rg(
 
         tokio::process::Command::new("grep")
             .args(&args)
+            .stdin(std::process::Stdio::null())
             .output()
             .await?
     };

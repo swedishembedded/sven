@@ -24,3 +24,4 @@ serde_json  = { workspace = true }
 nvim-rs     = { workspace = true }
 rmpv        = { workspace = true }
 async-trait = { workspace = true }
+chrono      = { workspace = true }

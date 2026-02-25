@@ -158,8 +158,9 @@ agent:
   default_mode: agent
 
   # Maximum number of tool-call rounds before sven stops and reports.
-  # Increase this for very long autonomous tasks.
-  max_tool_rounds: 50
+  # When the limit is reached, the model gets one final tool-free turn to
+  # summarise progress before the turn ends.  Increase for very long tasks.
+  max_tool_rounds: 200
 
   # Fraction of the context window at which proactive compaction triggers.
   # 0.85 means sven starts compacting when 85% of the context is used.
@@ -316,7 +317,7 @@ Controls the agent's autonomy and defaults.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `default_mode` | `"agent"` | Mode used when `--mode` is not passed |
-| `max_tool_rounds` | `50` | Maximum autonomous tool-call rounds before stopping |
+| `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
 | `compaction_threshold` | `0.85` | Context fraction that triggers history compaction |
 | `compaction_keep_recent` | `6` | Number of recent non-system messages preserved verbatim during compaction; older messages are summarised |
 | `system_prompt` | — | System prompt override (leave unset to use built-in) |

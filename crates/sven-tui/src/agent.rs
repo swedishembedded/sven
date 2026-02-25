@@ -48,6 +48,12 @@ pub enum AgentRequest {
 /// applied the CLI `--model` override before spawning).  Per-message model
 /// overrides in `AgentRequest` variants are also pre-resolved `ModelConfig`
 /// values; this task only calls `from_config` to instantiate the provider.
+///
+/// `cancel_handle` is a shared slot that holds the sender half of a
+/// per-submission `oneshot` channel.  The TUI drops (or sends on) the sender
+/// to interrupt the current run.  The task creates a fresh channel before
+/// every Submit/Resubmit and stores the sender in the slot; it is cleared
+/// when the submission completes.
 pub async fn agent_task(
     config: Arc<Config>,
     startup_model_cfg: ModelConfig,
@@ -55,6 +61,7 @@ pub async fn agent_task(
     mut rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
+    cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> = match sven_model::from_config(&startup_model_cfg) {
         Ok(m) => Arc::from(m),
@@ -101,7 +108,10 @@ pub async fn agent_task(
                     agent.set_mode(m).await;
                 }
 
-                let result = agent.submit(&content, tx.clone()).await;
+                let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+                *cancel_handle.lock().await = Some(cancel_tx);
+                let result = agent.submit_with_cancel(&content, tx.clone(), cancel_rx).await;
+                cancel_handle.lock().await.take();
                 if let Err(e) = result {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
                 }
@@ -125,9 +135,17 @@ pub async fn agent_task(
                     agent.set_mode(m).await;
                 }
 
+                let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+                *cancel_handle.lock().await = Some(cancel_tx);
                 let result = agent
-                    .replace_history_and_submit(messages, &new_user_content, tx.clone())
+                    .replace_history_and_submit_with_cancel(
+                        messages,
+                        &new_user_content,
+                        tx.clone(),
+                        cancel_rx,
+                    )
                     .await;
+                cancel_handle.lock().await.take();
                 if let Err(e) = result {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
                 }

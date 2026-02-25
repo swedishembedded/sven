@@ -43,6 +43,7 @@ async fn kill_process_on_port(port: u16) {
     // Locate PID via ss
     if let Ok(out) = tokio::process::Command::new("ss")
         .args(["-tlnp"])
+        .stdin(std::process::Stdio::null())
         .output()
         .await
     {
@@ -67,9 +68,14 @@ async fn kill_process_on_port(port: u16) {
     tokio::time::sleep(Duration::from_millis(400)).await;
 
     // Hard SIGKILL on common GDB-server binary names to ensure cleanup.
+    // Redirect stdout/stderr to null so pkill's diagnostic messages don't
+    // leak onto the TUI screen.
     for name in ["JLinkGDBServer", "JLinkGDBServerCL", "openocd", "pyocd"] {
         let _ = tokio::process::Command::new("pkill")
             .args(["-9", "-x", name])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .await;
     }
@@ -157,6 +163,25 @@ impl Tool for GdbStartServerTool {
         };
 
         let port = extract_port_from_command(&command).unwrap_or(2331);
+
+        // Before spawning, check whether a server is already listening on the target
+        // port.  This covers the common case where the user started JLinkGDBServer or
+        // OpenOCD manually outside the agent.  We treat this as success and store the
+        // address so that gdb_connect can infer the port exactly as if we had started
+        // the server ourselves.  force=true bypasses this and kills the existing process.
+        if !force && is_port_listening(port).await {
+            debug!(port, "gdb_start_server: server already listening, reusing");
+            let addr = format!("localhost:{port}");
+            self.state.lock().await.server_addr = Some(addr.clone());
+            return ToolOutput::ok(
+                &call.id,
+                format!(
+                    "GDB server already running on {addr}.\n\
+                     Call gdb_connect to attach. \
+                     Use force=true to kill it and start a fresh server."
+                ),
+            );
+        }
 
         // When force=true, evict any external process already on the port.
         if force {
@@ -325,23 +350,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn port_occupied_message_when_already_listening() {
-        // Start a listener ourselves so is_port_listening returns true,
-        // then verify the error message guides the user.
+    async fn succeeds_when_port_already_listening_externally() {
+        // Simulate an externally-started GDB server by binding a real listener.
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let occupied_port = listener.local_addr().unwrap().port();
-        // Keep the listener alive for the duration of the test.
-        let _listener = listener;
+        let _listener = listener; // keep alive for the duration of the test
 
-        assert!(is_port_listening(occupied_port).await);
+        let state = Arc::new(Mutex::new(GdbSessionState::default()));
+        let t = GdbStartServerTool::new(state.clone(), GdbConfig::default());
+        let cmd = format!("JLinkGDBServer -device STM32F4 -port {occupied_port}");
+        let out = t.execute(&call(json!({"command": cmd}))).await;
+
+        // Should succeed (not error) because the port is already occupied.
+        assert!(!out.is_error, "expected success, got: {}", out.content);
+        assert!(out.content.contains("already running"), "got: {}", out.content);
+        assert!(out.content.contains("gdb_connect"), "got: {}", out.content);
+
+        // server_addr must be stored so gdb_connect can infer the port.
+        let s = state.lock().await;
+        assert_eq!(
+            s.server_addr.as_deref(),
+            Some(format!("localhost:{occupied_port}").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn force_bypasses_external_server_and_kills_it() {
+        // With force=true the early-exit path is skipped; spawning `false` then
+        // exits immediately, confirming the guard was bypassed.
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let occupied_port = listener.local_addr().unwrap().port();
+        let _listener = listener;
 
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbStartServerTool::new(state, GdbConfig::default());
-        let cmd = format!("sleep 0"); // exits immediately with port occupied
-        // We can't easily test the full path without a real port clash, so just
-        // verify the helper works correctly.
-        assert!(is_port_listening(occupied_port).await);
-        let _ = cmd; // suppress unused warning
+        let cmd = format!("false"); // exits immediately — proves we didn't return early
+        let out = t.execute(&call(json!({"command": cmd, "force": true}))).await;
+
+        // force=true should skip the idempotent check, attempt to spawn, and fail.
+        assert!(out.is_error);
+        assert!(out.content.contains("exited immediately"), "got: {}", out.content);
     }
 }

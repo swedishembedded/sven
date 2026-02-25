@@ -545,7 +545,7 @@ Config file path: `~/.config/sven/config.yaml`
 ```yaml
 agent:
   default_mode: agent
-  max_tool_rounds: 50
+  max_tool_rounds: 200
   max_step_timeout_secs: 0    # 0 = no limit
   max_run_timeout_secs: 0     # 0 = no limit
 

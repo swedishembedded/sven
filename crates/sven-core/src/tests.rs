@@ -230,9 +230,11 @@ mod agent_tests {
     // ── Max rounds enforcement ────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn max_rounds_emits_error_event() {
-        // Scripted to always return a tool call – will exhaust rounds
-        let scripts: Vec<Vec<ResponseEvent>> = (0..=5).map(|_| vec![
+    async fn max_rounds_wraps_up_and_emits_turn_complete() {
+        // Rounds 1..=max: always return a tool call (will exhaust the budget).
+        // Round max+1 (wrap-up): return a plain text summary — no tools available.
+        let max: usize = 2;
+        let mut scripts: Vec<Vec<ResponseEvent>> = (0..max).map(|_| vec![
             ResponseEvent::ToolCall {
                 index: 0,
                 id: "x".into(),
@@ -241,9 +243,15 @@ mod agent_tests {
             },
             ResponseEvent::Done,
         ]).collect();
+        // Wrap-up turn: model receives the budget-exhausted message and
+        // responds with a text summary (no tool calls).
+        scripts.push(vec![
+            ResponseEvent::TextDelta("Here is a summary of what was done.".into()),
+            ResponseEvent::Done,
+        ]);
 
         let model = ScriptedMockProvider::new(scripts);
-        let config = AgentConfig { max_tool_rounds: 2, ..AgentConfig::default() };
+        let config = AgentConfig { max_tool_rounds: max as u32, ..AgentConfig::default() };
         let mut reg = ToolRegistry::new();
         reg.register(ShellTool::default());
         let mut agent = agent_with(model, reg, config, AgentMode::Agent);
@@ -255,14 +263,26 @@ mod agent_tests {
         while let Ok(ev) = rx.try_recv() {
             events.push(ev);
         }
-        // Drain any remaining
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         while let Ok(ev) = rx.try_recv() {
             events.push(ev);
         }
 
-        let has_error = events.iter().any(|e| matches!(e, AgentEvent::Error(msg) if msg.contains("max tool rounds")));
-        assert!(has_error, "should emit Error event when max rounds exceeded; got: {events:?}");
+        // Must NOT emit an Error about max rounds — the turn ends gracefully.
+        let has_round_error = events.iter().any(|e| {
+            matches!(e, AgentEvent::Error(msg) if msg.contains("max tool rounds"))
+        });
+        assert!(!has_round_error, "should not emit Error for max rounds; got: {events:?}");
+
+        // Must end with TurnComplete so the TUI shows a clean turn end.
+        let has_complete = events.iter().any(|e| matches!(e, AgentEvent::TurnComplete));
+        assert!(has_complete, "should emit TurnComplete after wrap-up; got: {events:?}");
+
+        // The wrap-up summary text must have been streamed.
+        let text: String = events.iter().filter_map(|e| {
+            if let AgentEvent::TextDelta(d) = e { Some(d.as_str()) } else { None }
+        }).collect();
+        assert!(text.contains("summary"), "wrap-up text should reach the stream; got: {text:?}");
     }
 
     // ── Token usage events ────────────────────────────────────────────────────

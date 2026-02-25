@@ -198,6 +198,17 @@ impl App {
                     };
                     match (&seg.role, &seg.content) {
                         (Role::User, MessageContent::Text(_)) => {
+                            // Consume any staged model/mode override so that
+                            // "/model X" typed before editing takes effect on
+                            // this resubmit (same behaviour as sending a new
+                            // message via enqueue_or_send_text).
+                            let (staged_model, staged_mode) = self.session.consume_staged();
+                            let qm = crate::app::QueuedMessage {
+                                content: new_content.clone(),
+                                model_transition: staged_model
+                                    .map(crate::app::ModelDirective::SwitchTo),
+                                mode_transition: staged_mode,
+                            };
                             self.chat_segments.truncate(i + 1);
                             self.chat_segments.pop();
                             self.chat_segments
@@ -205,11 +216,7 @@ impl App {
                             let messages = messages_for_resubmit(&self.chat_segments);
                             self.rerender_chat().await;
                             self.scroll_to_bottom();
-                            self.send_resubmit_to_agent(
-                                messages,
-                                QueuedMessage::plain(new_content),
-                            )
-                            .await;
+                            self.send_resubmit_to_agent(messages, qm).await;
                         }
                         (Role::Assistant, MessageContent::Text(_)) => {
                             if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(i) {
@@ -602,7 +609,46 @@ impl App {
             }
 
             Action::InterruptAgent => {
-                // TODO: send cancellation signal
+                if self.agent_busy {
+                    // Set abort_pending so the queue does not auto-advance after
+                    // the run stops.
+                    self.abort_pending = true;
+                    self.send_abort_signal().await;
+                }
+            }
+
+            Action::ForceSubmitQueuedMessage => {
+                if let Some(idx) = self.queue_selected {
+                    self.force_submit_queued_message(idx).await;
+                }
+            }
+
+            Action::QueueSubmitSelected => {
+                if let Some(idx) = self.queue_selected {
+                    if !self.agent_busy && idx < self.queued.len() {
+                        // Clear abort_pending: user is manually resuming the queue.
+                        self.abort_pending = false;
+                        if let Some(qm) = self.queued.remove(idx) {
+                            self.queue_selected = if self.queued.is_empty() {
+                                None
+                            } else {
+                                Some(idx.min(self.queued.len() - 1))
+                            };
+                            if self.queued.is_empty() && self.focus == FocusPane::Queue {
+                                self.focus = FocusPane::Input;
+                            }
+                            let history = messages_for_resubmit(&self.chat_segments);
+                            self.chat_segments.push(ChatSegment::Message(
+                                Message::user(&qm.content),
+                            ));
+                            self.save_history_async();
+                            self.rerender_chat().await;
+                            self.auto_scroll = true;
+                            self.scroll_to_bottom();
+                            self.send_resubmit_to_agent(history, qm).await;
+                        }
+                    }
+                }
             }
 
             Action::CycleMode => {

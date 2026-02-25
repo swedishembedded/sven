@@ -80,6 +80,97 @@ impl Agent {
         self.model = model;
     }
 
+    /// Like [`submit`] but accepts a cancellation channel.
+    ///
+    /// When the sender half is dropped (or sends `()`) the current model
+    /// streaming turn is interrupted at the next `await` point.  Any text
+    /// already streamed is committed to the session as a partial assistant
+    /// message and `AgentEvent::Aborted { partial_text }` is emitted so the
+    /// TUI can handle it (e.g. keep it in the chat pane and suppress
+    /// auto-dequeue).
+    ///
+    /// If `cancel` is already resolved on entry the submit is skipped
+    /// entirely and `Aborted { partial_text: "" }` is emitted immediately.
+    pub async fn submit_with_cancel(
+        &mut self,
+        user_input: &str,
+        tx: mpsc::Sender<AgentEvent>,
+        mut cancel: tokio::sync::oneshot::Receiver<()>,
+    ) -> anyhow::Result<()> {
+        // If already cancelled, emit Aborted immediately without touching history.
+        if cancel.try_recv().is_ok() {
+            let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+            return Ok(());
+        }
+
+        // All the same setup as `submit`, including compaction, system message
+        // injection, and user message push — only the final loop call differs.
+        let mode = *self.current_mode.lock().await;
+
+        if self.session.is_near_limit(self.config.compaction_threshold) {
+            let sys = self.system_message(mode);
+            let tokens_before = self.session.token_count;
+            let keep_n = self.config.compaction_keep_recent;
+
+            let non_system: Vec<Message> = self.session.messages.iter()
+                .filter(|m| m.role != Role::System)
+                .cloned()
+                .collect();
+
+            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
+            let summarize_count = non_system.len().saturating_sub(preserve_count);
+            let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
+            let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
+            compact_session(&mut to_compact, Some(sys.clone()));
+            self.session.messages = to_compact;
+            self.session.recalculate_tokens();
+
+            let summary = self.run_single_turn(tx.clone(), mode).await?;
+            self.session.messages.clear();
+            self.session.messages.push(sys);
+            self.session.messages.push(Message::assistant(summary));
+            self.session.messages.extend(recent_messages);
+            self.session.recalculate_tokens();
+
+            let _ = tx.send(AgentEvent::ContextCompacted {
+                tokens_before,
+                tokens_after: self.session.token_count,
+            }).await;
+        }
+
+        if self.session.messages.is_empty() {
+            self.session.push(self.system_message(mode));
+        }
+        self.session.push(Message::user(user_input));
+
+        self.run_agentic_loop_cancellable(tx, &mut cancel).await
+    }
+
+    /// Like [`replace_history_and_submit`] but accepts a cancellation channel.
+    pub async fn replace_history_and_submit_with_cancel(
+        &mut self,
+        messages: Vec<Message>,
+        new_user_content: &str,
+        tx: mpsc::Sender<AgentEvent>,
+        mut cancel: tokio::sync::oneshot::Receiver<()>,
+    ) -> anyhow::Result<()> {
+        if cancel.try_recv().is_ok() {
+            let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+            return Ok(());
+        }
+
+        let mode = *self.current_mode.lock().await;
+        let mut msgs = messages;
+        if msgs.is_empty() || msgs[0].role != Role::System {
+            let sys = self.system_message(mode);
+            msgs.insert(0, sys);
+        }
+        self.session.replace_messages(msgs);
+        self.session.push(Message::user(new_user_content));
+
+        self.run_agentic_loop_cancellable(tx, &mut cancel).await
+    }
+
     /// Push a user message, run the agent loop, and stream events through the sender.
     /// The caller drops the receiver when it is no longer interested.
     pub async fn submit(
@@ -208,6 +299,152 @@ impl Agent {
         self.run_agentic_loop(tx).await
     }
 
+    /// Cancellable version of [`run_agentic_loop`].
+    ///
+    /// Checks `cancel` at the top of every iteration and inside
+    /// `stream_one_turn` via `select!`.  When cancelled, any text already
+    /// streamed is committed to the session and `AgentEvent::Aborted` is sent.
+    async fn run_agentic_loop_cancellable(
+        &mut self,
+        tx: mpsc::Sender<AgentEvent>,
+        cancel: &mut tokio::sync::oneshot::Receiver<()>,
+    ) -> anyhow::Result<()> {
+        let mut rounds = 0u32;
+        let mut partial_text = String::new();
+
+        loop {
+            // Check cancel before each round.
+            if cancel.try_recv().is_ok() {
+                if !partial_text.is_empty() {
+                    self.session.push(Message::assistant(&partial_text));
+                }
+                let _ = tx.send(AgentEvent::Aborted { partial_text }).await;
+                return Ok(());
+            }
+
+            rounds += 1;
+            if rounds > self.config.max_tool_rounds {
+                // Instead of hard-stopping with an error, give the model one
+                // final tool-free turn so it can summarise what it completed.
+                // This avoids leaving the task in a half-finished state and
+                // keeps the turn ending as `TurnComplete` (not `Error`), so
+                // the TUI does not show a red error and the user can continue.
+                let wrap_msg = format!(
+                    "You have reached the maximum tool-call budget ({} rounds). \
+                     Do not call any more tools. \
+                     Write a concise summary of: (1) what has been completed, \
+                     (2) what still remains to be done, and (3) how to continue.",
+                    self.config.max_tool_rounds
+                );
+                self.session.push(Message::user(&wrap_msg));
+
+                let mode = *self.current_mode.lock().await;
+                let wrap_turn = tokio::select! {
+                    biased;
+                    _ = &mut *cancel => None,
+                    result = self.stream_one_turn(tx.clone(), mode, false) => Some(result),
+                };
+                if let Some(Ok((text, _, _))) = wrap_turn {
+                    if !text.is_empty() {
+                        self.session.push(Message::assistant(&text));
+                    }
+                }
+                let _ = tx.send(AgentEvent::TurnComplete).await;
+                break;
+            }
+
+            let mode = *self.current_mode.lock().await;
+
+            // stream_one_turn_cancellable returns None when the cancel channel fires.
+            let turn = tokio::select! {
+                biased;
+                _ = &mut *cancel => None,
+                result = self.stream_one_turn(tx.clone(), mode, true) => Some(result),
+            };
+
+            let (text, tool_calls, had_tool_calls) = match turn {
+                None => {
+                    // Aborted mid-stream.  The streaming buffer has the partial text.
+                    if !partial_text.is_empty() {
+                        self.session.push(Message::assistant(&partial_text));
+                    }
+                    let _ = tx.send(AgentEvent::Aborted { partial_text }).await;
+                    return Ok(());
+                }
+                Some(Err(e)) => return Err(e),
+                Some(Ok(t)) => t,
+            };
+
+            // Accumulate text for abort recovery.
+            if !text.is_empty() {
+                partial_text.push_str(&text);
+                self.session.push(Message::assistant(&text));
+            }
+
+            if !had_tool_calls {
+                let _ = tx.send(AgentEvent::TurnComplete).await;
+                break;
+            }
+
+            // Phase 1: push all assistant tool-call messages.
+            for tc in &tool_calls {
+                let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+                self.session.push(Message {
+                    role: Role::Assistant,
+                    content: MessageContent::ToolCall {
+                        tool_call_id: tc.id.clone(),
+                        function: FunctionCall {
+                            name: tc.name.clone(),
+                            arguments: tc.args.to_string(),
+                        },
+                    },
+                });
+            }
+
+            // Phase 2: execute tools in parallel.
+            let mut tasks = Vec::with_capacity(tool_calls.len());
+            for tc in tool_calls.clone() {
+                let registry = Arc::clone(&self.tools);
+                tasks.push(tokio::spawn(async move { registry.execute(&tc).await }));
+            }
+
+            let mut outputs = Vec::with_capacity(tool_calls.len());
+            for (i, task) in tasks.into_iter().enumerate() {
+                let output = match task.await {
+                    Ok(o) => o,
+                    Err(e) => ToolOutput::err(&tool_calls[i].id, format!("tool panicked: {e}")),
+                };
+                self.drain_tool_events(&tx).await;
+                let _ = tx.send(AgentEvent::ToolCallFinished {
+                    call_id: tool_calls[i].id.clone(),
+                    tool_name: tool_calls[i].name.clone(),
+                    output: output.content.clone(),
+                    is_error: output.is_error,
+                }).await;
+                outputs.push(output);
+            }
+
+            // Phase 3: push tool-result messages.
+            for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
+                let tool_msg = if output.has_images() {
+                    use sven_model::ToolContentPart;
+                    let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
+                        sven_tools::ToolOutputPart::Text(t) =>
+                            ToolContentPart::Text { text: t.clone() },
+                        sven_tools::ToolOutputPart::Image(url) =>
+                            ToolContentPart::Image { image_url: url.clone() },
+                    }).collect();
+                    Message::tool_result_with_parts(&tc.id, parts)
+                } else {
+                    Message::tool_result(&tc.id, &output.content)
+                };
+                self.session.push(tool_msg);
+            }
+        }
+
+        Ok(())
+    }
+
     /// The main agent loop: model call → optional tool calls → repeat
     async fn run_agentic_loop(&mut self, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
         let mut rounds = 0u32;
@@ -215,15 +452,29 @@ impl Agent {
         loop {
             rounds += 1;
             if rounds > self.config.max_tool_rounds {
-                let _ = tx.send(AgentEvent::Error(format!(
-                    "exceeded max tool rounds ({})", self.config.max_tool_rounds
-                ))).await;
+                // Give the model one final tool-free turn to summarise its
+                // progress rather than stopping abruptly with an error.
+                let wrap_msg = format!(
+                    "You have reached the maximum tool-call budget ({} rounds). \
+                     Do not call any more tools. \
+                     Write a concise summary of: (1) what has been completed, \
+                     (2) what still remains to be done, and (3) how to continue.",
+                    self.config.max_tool_rounds
+                );
+                self.session.push(Message::user(&wrap_msg));
+
+                let mode = *self.current_mode.lock().await;
+                let (text, _, _) = self.stream_one_turn(tx.clone(), mode, false).await?;
+                if !text.is_empty() {
+                    self.session.push(Message::assistant(&text));
+                }
+                let _ = tx.send(AgentEvent::TurnComplete).await;
                 break;
             }
 
             let mode = *self.current_mode.lock().await;
             let (text, tool_calls, had_tool_calls) =
-                self.stream_one_turn(tx.clone(), mode).await?;
+                self.stream_one_turn(tx.clone(), mode, true).await?;
 
             if !text.is_empty() {
                 self.session.push(Message::assistant(&text));
@@ -331,15 +582,20 @@ impl Agent {
         &mut self,
         tx: mpsc::Sender<AgentEvent>,
         mode: AgentMode,
+        with_tools: bool,
     ) -> anyhow::Result<(String, Vec<ToolCall>, bool)> {
-        let tools: Vec<sven_model::ToolSchema> = self.tools.schemas_for_mode(mode)
-            .into_iter()
-            .map(|s| sven_model::ToolSchema {
-                name: s.name,
-                description: s.description,
-                parameters: s.parameters,
-            })
-            .collect();
+        let tools: Vec<sven_model::ToolSchema> = if with_tools {
+            self.tools.schemas_for_mode(mode)
+                .into_iter()
+                .map(|s| sven_model::ToolSchema {
+                    name: s.name,
+                    description: s.description,
+                    parameters: s.parameters,
+                })
+                .collect()
+        } else {
+            vec![]
+        };
 
         // Strip image content when the current model does not support images.
         let modalities = self.model.input_modalities();
@@ -404,11 +660,11 @@ impl Agent {
                     let _ = tx.send(AgentEvent::TokenUsage {
                         input: input_tokens,
                         output: output_tokens,
-                        context_total: self.session.token_count,
                         cache_read: cache_read_tokens,
                         cache_write: cache_write_tokens,
                         cache_read_total: self.session.cache_read_total,
                         cache_write_total: self.session.cache_write_total,
+                        max_tokens: self.session.max_tokens,
                     }).await;
                 }
                 ResponseEvent::Done => {
@@ -468,7 +724,7 @@ impl Agent {
         tx: mpsc::Sender<AgentEvent>,
         mode: AgentMode,
     ) -> anyhow::Result<String> {
-        let (text, _, _) = self.stream_one_turn(tx, mode).await?;
+        let (text, _, _) = self.stream_one_turn(tx, mode, true).await?;
         Ok(text)
     }
 
@@ -537,13 +793,16 @@ struct PendingToolCall {
 
 impl PendingToolCall {
     fn finish(self) -> ToolCall {
+        // Always resolve to a JSON object.  Model providers (notably Anthropic)
+        // require tool_use input to be an object; sending `null` causes a 400
+        // on the *next* completion request and surfaces as "model completion failed".
         let args = if self.args_buf.is_empty() {
             warn!(
                 tool_name = %self.name,
                 tool_call_id = %self.id,
-                "model sent tool call with empty arguments"
+                "model sent tool call with empty arguments; substituting {{}}"
             );
-            serde_json::Value::Null
+            serde_json::Value::Object(Default::default())
         } else {
             match serde_json::from_str(&self.args_buf) {
                 Ok(v) => v,
@@ -564,9 +823,9 @@ impl PendingToolCall {
                                 tool_call_id = %self.id,
                                 args_buf = %self.args_buf,
                                 error = %e,
-                                "model sent tool call with invalid JSON arguments"
+                                "model sent tool call with invalid JSON arguments; substituting {{}}"
                             );
-                            serde_json::Value::Null
+                            serde_json::Value::Object(Default::default())
                         }
                     }
                 }
