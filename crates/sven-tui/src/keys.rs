@@ -73,6 +73,16 @@ pub enum Action {
     // Buffer submit (Neovim integration)
     SubmitBufferToAgent,
 
+    // Completion overlay
+    /// Select the next completion item (Tab / Down when overlay visible).
+    CompletionNext,
+    /// Select the previous completion item (Shift+Tab / Up when overlay visible).
+    CompletionPrev,
+    /// Accept the currently highlighted completion item (Enter when overlay visible).
+    CompletionSelect,
+    /// Dismiss the completion overlay without selecting (Esc when overlay visible).
+    CompletionCancel,
+
     // App
     Help,
     OpenPager,
@@ -177,6 +187,10 @@ pub fn map_key(
         KeyCode::Char('t') if ctrl => Some(Action::OpenPager),
 
         // ── Rest of input pane ────────────────────────────────────────────────
+        // Tab / Shift+Tab cycle completions when the input buffer starts with '/'
+        // The App decides at dispatch time whether the overlay is active.
+        KeyCode::Tab if in_input && !shift => Some(Action::CompletionNext),
+        KeyCode::BackTab if in_input => Some(Action::CompletionPrev),
         KeyCode::Enter    if in_input && !shift => Some(Action::Submit),
         KeyCode::Enter    if in_input &&  shift => Some(Action::InputNewline),
         // Some terminals send Shift+Enter as KeyCode::Char(' ') with Shift; treat as newline

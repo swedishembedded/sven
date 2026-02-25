@@ -68,6 +68,20 @@ pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
         .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
 }
 
+/// Look up a model by bare model name (without provider prefix).
+///
+/// Checks `id` and `name` fields.  Returns the first matching entry from the
+/// static catalog or `None` if not found.
+///
+/// Used by `resolve_model_from_config` to detect when a bare model name (e.g.
+/// `"gpt-4o"`) should be resolved against the catalog provider rather than
+/// inheriting the custom `base_url` from the user's config.
+pub fn lookup_by_model_name(model_name: &str) -> Option<ModelCatalogEntry> {
+    static_catalog()
+        .into_iter()
+        .find(|e| e.id == model_name || e.name == model_name)
+}
+
 /// Return `true` if the model supports image input, defaulting to `false` when
 /// the model is not found in the catalog.
 pub fn supports_images(provider: &str, model_id: &str) -> bool {

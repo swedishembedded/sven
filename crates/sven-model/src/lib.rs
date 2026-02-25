@@ -555,6 +555,28 @@ pub fn resolve_model_from_config(
         return cfg;
     }
 
+    // Smart catalog lookup: if a bare model name (no '/') exists in the static
+    // catalog, use the catalog's provider with its default settings.  This
+    // prevents custom base_url / api_key values from leaking across providers
+    // when the user writes e.g. `--model gpt-4o` while `.sven.yaml` has a
+    // custom local model configured.
+    if model_suffix.is_none() && get_driver(override_str).is_none() {
+        if let Some(catalog_entry) = catalog::lookup_by_model_name(override_str) {
+            let mut cfg = ModelConfig {
+                provider: catalog_entry.provider.clone(),
+                name: catalog_entry.id.clone(),
+                ..ModelConfig::default()
+            };
+            // Preserve api_key credentials when the resolved provider matches
+            // the config's provider (same service, different model).
+            if cfg.provider == config.model.provider {
+                cfg.api_key = config.model.api_key.clone();
+                cfg.api_key_env = config.model.api_key_env.clone();
+            }
+            return cfg;
+        }
+    }
+
     // Fall back to standard resolution with config.model as base.
     resolve_model_cfg(&config.model, override_str)
 }
@@ -771,5 +793,56 @@ mod tests {
         let cfg = resolve_model_from_config(&config, "gpt-4o-mini");
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "gpt-4o-mini");
+    }
+
+    /// Regression test: when the base config has a custom `base_url` (e.g. a
+    /// local LLM endpoint) and the user overrides with a bare catalog model
+    /// name (e.g. `gpt-4o`), the custom base_url must NOT be inherited.
+    /// The resolved config should use the catalog's provider defaults.
+    #[test]
+    fn catalog_model_override_does_not_inherit_custom_base_url() {
+        use std::collections::HashMap;
+        let config = sven_config::Config {
+            model: ModelConfig {
+                provider: "openai".into(),
+                name: "Qweb3-14B-Q8_0.gguf".into(),
+                base_url: Some("https://my-local-llm.example.com/v1".into()),
+                ..ModelConfig::default()
+            },
+            providers: HashMap::new(),
+            ..sven_config::Config::default()
+        };
+
+        let cfg = resolve_model_from_config(&config, "gpt-4o");
+        assert_eq!(cfg.provider, "openai", "provider must be openai (from catalog)");
+        assert_eq!(cfg.name, "gpt-4o", "model name must be gpt-4o");
+        assert!(
+            cfg.base_url.is_none(),
+            "custom base_url must NOT be inherited when switching to a catalog model: {:?}",
+            cfg.base_url
+        );
+    }
+
+    /// When the user overrides with a catalog model from a *different* provider
+    /// (e.g. `claude-opus-4-6` while config has openai), the provider changes
+    /// and credentials are not inherited.
+    #[test]
+    fn catalog_model_different_provider_clears_credentials() {
+        use std::collections::HashMap;
+        let config = sven_config::Config {
+            model: ModelConfig {
+                provider: "openai".into(),
+                name: "gpt-4o".into(),
+                api_key: Some("sk-openai-secret".into()),
+                ..ModelConfig::default()
+            },
+            providers: HashMap::new(),
+            ..sven_config::Config::default()
+        };
+
+        let cfg = resolve_model_from_config(&config, "claude-opus-4-6");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.name, "claude-opus-4-6");
+        assert!(cfg.api_key.is_none(), "OpenAI api_key must not leak to anthropic config");
     }
 }

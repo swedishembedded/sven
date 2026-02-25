@@ -33,17 +33,39 @@ use crate::{
             ChatSegment,
         },
     },
+    commands::{
+        parse, CommandContext, CommandRegistry, CompletionManager,
+        ParsedCommand,
+        completion::CompletionItem,
+    },
     input::{is_reserved_key, to_nvim_notation},
     keys::{map_key, Action},
     layout::AppLayout,
     markdown::{render_markdown, StyledLines},
     nvim::NvimBridge,
-    overlay::question::QuestionModal,
+    overlay::{completion::CompletionOverlay, question::QuestionModal},
     pager::PagerOverlay,
-    widgets::{draw_chat, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
+    widgets::{draw_chat, draw_completion_overlay, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
+
+/// A message waiting in the queue, with optional per-message overrides.
+///
+/// Overrides apply only to the single agent turn when this message is dequeued.
+/// They do not persist across turns.
+#[derive(Debug, Clone)]
+pub struct QueuedMessage {
+    pub content: String,
+    pub model_override: Option<String>,
+    pub mode_override: Option<AgentMode>,
+}
+
+impl QueuedMessage {
+    pub fn plain(content: String) -> Self {
+        Self { content, model_override: None, mode_override: None }
+    }
+}
 
 /// Options passed when constructing the TUI app.
 pub struct AppOptions {
@@ -116,7 +138,17 @@ pub struct App {
     /// `build_display_from_segments` to pre-wrap content to the exact
     /// available width so that Ratatui does not need a second wrap pass.
     last_chat_inner_width: u16,
-    queued: VecDeque<String>,
+    queued: VecDeque<QueuedMessage>,
+    /// Slash command registry (built-in + future MCP/skill discovery).
+    command_registry: Arc<CommandRegistry>,
+    /// Fuzzy completion manager backed by the command registry.
+    completion_manager: CompletionManager,
+    /// Active completion overlay.  `None` when not in command-completion mode.
+    completion_overlay: Option<CompletionOverlay>,
+    /// Model override for the *next* message to be queued.
+    pending_model_override: Option<String>,
+    /// Mode override for the *next* message to be queued.
+    pending_mode_override: Option<AgentMode>,
     search: SearchState,
     show_help: bool,
     agent_busy: bool,
@@ -234,6 +266,9 @@ impl App {
 
         let model_override = opts.model_override;
 
+        let registry = Arc::new(CommandRegistry::with_builtins());
+        let completion_manager = CompletionManager::new(registry.clone());
+
         let mut app = Self {
             config,
             mode: opts.mode,
@@ -255,6 +290,11 @@ impl App {
             last_input_inner_height: 3,
             last_chat_inner_width: 78,
             queued: VecDeque::new(),
+            command_registry: registry,
+            completion_manager,
+            completion_overlay: None,
+            pending_model_override: None,
+            pending_mode_override: None,
             search: SearchState::default(),
             show_help: false,
             agent_busy: false,
@@ -287,7 +327,7 @@ impl App {
             last_input_pane: Rect::default(),
         };
         if let Some(prompt) = opts.initial_prompt {
-            app.queued.push_back(prompt);
+            app.queued.push_back(QueuedMessage::plain(prompt));
         }
         // In ratatui-only mode, pre-collapse tool call/result/thinking segments
         // loaded from history so the conversation starts compact.
@@ -379,10 +419,10 @@ impl App {
             }
         }
 
-        if let Some(p) = self.queued.pop_front() {
-            self.chat_segments.push(ChatSegment::Message(Message::user(&p)));
+        if let Some(qm) = self.queued.pop_front() {
+            self.chat_segments.push(ChatSegment::Message(Message::user(&qm.content)));
             self.rerender_chat().await;
-            self.send_to_agent(p).await;
+            self.send_to_agent(qm).await;
         }
 
         let mut crossterm_events = EventStream::new();
@@ -452,7 +492,10 @@ impl App {
                 draw_status(
                     frame, layout.status_bar, &self.effective_model_name,
                     self.mode, self.context_pct, self.cache_hit_pct, self.agent_busy,
-                    self.current_tool.as_deref(), ascii,
+                    self.current_tool.as_deref(),
+                    self.pending_model_override.as_deref(),
+                    self.pending_mode_override,
+                    ascii,
                 );
 
                 let lines_to_draw = if !nvim_lines.is_empty() { &nvim_lines } else { &self.chat_lines };
@@ -479,7 +522,11 @@ impl App {
                     ascii, edit_mode,
                 );
                 if !self.queued.is_empty() {
-                    let queued_items: Vec<String> = self.queued.iter().cloned().collect();
+                    let queued_items: Vec<(String, Option<String>, Option<AgentMode>)> = self
+                        .queued
+                        .iter()
+                        .map(|qm| (qm.content.clone(), qm.model_override.clone(), qm.mode_override))
+                        .collect();
                     draw_queue_panel(
                         frame, layout.queue_pane,
                         &queued_items,
@@ -488,6 +535,9 @@ impl App {
                         self.focus == FocusPane::Queue,
                         ascii,
                     );
+                }
+                if let Some(ref overlay) = self.completion_overlay {
+                    draw_completion_overlay(frame, layout.input_pane, overlay, ascii);
                 }
                 if self.search.active {
                     draw_search(
@@ -658,7 +708,7 @@ impl App {
                         if self.queued.is_empty() && self.focus == FocusPane::Queue {
                             self.focus = FocusPane::Input;
                         }
-                        self.chat_segments.push(ChatSegment::Message(Message::user(&next)));
+                        self.chat_segments.push(ChatSegment::Message(Message::user(&next.content)));
                         self.rerender_chat().await;
                         self.auto_scroll = true;
                         self.scroll_to_bottom();
@@ -751,6 +801,31 @@ impl App {
                     }
                 }
 
+                // When the completion overlay is visible and the input pane
+                // has focus, intercept navigation and accept/dismiss keys
+                // before they reach the normal input handlers.
+                if self.completion_overlay.is_some()
+                    && in_input
+                    && !in_search
+                    && !self.pending_nav
+                {
+                    use crossterm::event::KeyCode;
+                    let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+                    let overlay_action = match k.code {
+                        KeyCode::Enter => Some(Action::CompletionSelect),
+                        KeyCode::Esc   => Some(Action::CompletionCancel),
+                        KeyCode::Down  => Some(Action::CompletionNext),
+                        KeyCode::Up    => Some(Action::CompletionPrev),
+                        KeyCode::Tab if !shift => Some(Action::CompletionNext),
+                        KeyCode::BackTab       => Some(Action::CompletionPrev),
+                        _ => None,
+                    };
+                    if let Some(action) = overlay_action {
+                        self.pending_nav = false;
+                        return self.dispatch(action).await;
+                    }
+                }
+
                 let in_edit_mode = self.editing_message_index.is_some()
                     || self.editing_queue_index.is_some();
                 if let Some(action) = map_key(k, in_search, in_input, self.pending_nav, in_edit_mode, in_queue) {
@@ -831,8 +906,8 @@ impl App {
                                         self.queue_selected = Some(item_idx);
                                         self.focus = FocusPane::Queue;
                                         // Double-click or single click: open edit
-                                        if let Some(text) = self.queued.get(item_idx) {
-                                            let text = text.clone();
+                                        if let Some(qm) = self.queued.get(item_idx) {
+                                            let text = qm.content.clone();
                                             self.editing_queue_index = Some(item_idx);
                                             self.edit_cursor = text.len();
                                             self.edit_original_text = Some(text.clone());
@@ -1132,8 +1207,8 @@ impl App {
             }
             Action::QueueEditSelected => {
                 if let Some(idx) = self.queue_selected {
-                    if let Some(text) = self.queued.get(idx) {
-                        let text = text.clone();
+                    if let Some(qm) = self.queued.get(idx) {
+                        let text = qm.content.clone();
                         self.editing_queue_index = Some(idx);
                         self.edit_cursor = text.len();
                         self.edit_original_text = Some(text.clone());
@@ -1191,7 +1266,7 @@ impl App {
                     self.edit_original_text = None;
                     if !new_content.is_empty() {
                         if let Some(entry) = self.queued.get_mut(q_idx) {
-                            *entry = new_content;
+                            entry.content = new_content;
                         }
                     }
                     // Return focus to Queue if it still has items, otherwise Input.
@@ -1227,7 +1302,7 @@ impl App {
                             let messages = messages_for_resubmit(&self.chat_segments);
                             self.rerender_chat().await;
                             self.scroll_to_bottom();
-                            self.send_resubmit_to_agent(messages, new_content).await;
+                            self.send_resubmit_to_agent(messages, QueuedMessage::plain(new_content)).await;
                         }
                         (Role::Assistant, MessageContent::Text(_)) => {
                             if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(i) {
@@ -1249,7 +1324,7 @@ impl App {
                         (self.editing_queue_index, self.edit_original_text.clone())
                     {
                         if let Some(entry) = self.queued.get_mut(q_idx) {
-                            *entry = original;
+                            entry.content = original;
                         }
                     }
                     self.editing_queue_index = None;
@@ -1332,7 +1407,7 @@ impl App {
                             }
                             self.rerender_chat().await;
                             self.scroll_to_bottom();
-                            self.send_resubmit_to_agent(messages, new_user_content).await;
+                            self.send_resubmit_to_agent(messages, QueuedMessage::plain(new_user_content)).await;
                         }
                         Err(e) => {
                             tracing::error!("Failed to parse buffer markdown: {}", e);
@@ -1449,6 +1524,12 @@ impl App {
             Action::InputChar(c) => {
                 self.input_buffer.insert(self.input_cursor, c);
                 self.input_cursor += c.len_utf8();
+                // Auto-trigger / update completion overlay when typing a slash command.
+                if self.input_buffer.starts_with('/') {
+                    self.update_completion_overlay();
+                } else {
+                    self.completion_overlay = None;
+                }
             }
             Action::InputNewline => {
                 self.input_buffer.insert(self.input_cursor, '\n');
@@ -1459,6 +1540,11 @@ impl App {
                     let prev = prev_char_boundary(&self.input_buffer, self.input_cursor);
                     self.input_buffer.remove(prev);
                     self.input_cursor = prev;
+                }
+                if self.input_buffer.starts_with('/') {
+                    self.update_completion_overlay();
+                } else {
+                    self.completion_overlay = None;
                 }
             }
             Action::InputDelete => {
@@ -1539,28 +1625,138 @@ impl App {
             }
 
             Action::Submit => {
+                // Dismiss completion overlay when Enter is pressed.
+                self.completion_overlay = None;
+
                 let text = std::mem::take(&mut self.input_buffer).trim().to_string();
                 self.input_cursor = 0;
                 self.input_scroll_offset = 0;
-                if text.eq_ignore_ascii_case("/quit") {
-                    return true;
+
+                if text.is_empty() {
+                    return false;
                 }
-                if !text.is_empty() {
-                    self.auto_scroll = true;
-                    if self.agent_busy {
-                        // Push to queue only — displayed in the dedicated queue panel.
-                        self.queued.push_back(text);
-                        // Select the newly added item.
-                        self.queue_selected = Some(self.queued.len() - 1);
-                    } else {
-                        self.sync_nvim_buffer_to_segments().await;
-                        let history = messages_for_resubmit(&self.chat_segments);
-                        self.chat_segments.push(ChatSegment::Message(Message::user(&text)));
-                        self.rerender_chat().await;
-                        self.scroll_to_bottom();
-                        self.send_resubmit_to_agent(history, text).await;
+
+                // Parse as slash command.
+                let parsed = parse(&text);
+
+                // Handle a fully-complete slash command (or a bare "/name" with no space).
+                // Also handles "/name " (CompletingArgs arg 0 empty = command entered, no args).
+                let is_slash_command = match &parsed {
+                    ParsedCommand::Complete { .. } => true,
+                    ParsedCommand::PartialCommand { .. } => true,
+                    ParsedCommand::CompletingArgs { arg_index, partial, .. } => {
+                        *arg_index == 0 && partial.is_empty()
+                    }
+                    ParsedCommand::NotCommand => false,
+                };
+                if is_slash_command {
+                    let (cmd_name, cmd_args) = match &parsed {
+                        ParsedCommand::Complete { command, args } => (command.as_str(), args.clone()),
+                        ParsedCommand::PartialCommand { partial } => (partial.as_str(), vec![]),
+                        ParsedCommand::CompletingArgs { command, .. } => (command.as_str(), vec![]),
+                        ParsedCommand::NotCommand => unreachable!(),
+                    };
+
+                    if let Some(cmd) = self.command_registry.get(cmd_name) {
+                        let result = cmd.execute(cmd_args);
+
+                        // Handle immediate actions first (e.g. quit).
+                        if let Some(crate::commands::ImmediateAction::Quit) = result.immediate_action {
+                            return true;
+                        }
+
+                        // Store per-message overrides.
+                        if let Some(model) = result.model_override {
+                            self.pending_model_override = Some(model);
+                            // Update the status bar display name.
+                            let resolved = sven_model::resolve_model_from_config(
+                                &self.config, self.pending_model_override.as_ref().unwrap()
+                            );
+                            // Show the pending override in the effective_model_name if not busy.
+                            if !self.agent_busy {
+                                self.effective_model_name =
+                                    format!("{}/{}", resolved.provider, resolved.name);
+                            }
+                        }
+                        if let Some(mode) = result.mode_override {
+                            self.pending_mode_override = Some(mode);
+                            if !self.agent_busy {
+                                self.mode = mode;
+                            }
+                        }
+
+                        // If the command wants to send a message, use it; otherwise just exit.
+                        if result.message_to_send.is_none() {
+                            return false;
+                        }
+                        // Fall through with the command-provided message (not used by built-ins yet).
                     }
                 }
+
+                // If the text is a slash command that didn't match a known command name
+                // (e.g. just typed "/" or "/unknown"), don't send.
+                if text.starts_with('/') {
+                    match &parsed {
+                        ParsedCommand::PartialCommand { partial } => {
+                            if self.command_registry.get(partial.as_str()).is_none() {
+                                // Unknown or incomplete command.
+                                return false;
+                            }
+                        }
+                        ParsedCommand::CompletingArgs { command, .. } => {
+                            // Still completing args — don't send yet.
+                            let _ = command;
+                            return false;
+                        }
+                        _ => {}
+                    }
+                }
+
+                self.auto_scroll = true;
+                let qm = QueuedMessage {
+                    content: text.clone(),
+                    model_override: self.pending_model_override.take(),
+                    mode_override: self.pending_mode_override.take(),
+                };
+
+                if self.agent_busy {
+                    self.queued.push_back(qm);
+                    self.queue_selected = Some(self.queued.len() - 1);
+                } else {
+                    self.sync_nvim_buffer_to_segments().await;
+                    let history = messages_for_resubmit(&self.chat_segments);
+                    self.chat_segments.push(ChatSegment::Message(Message::user(&text)));
+                    self.rerender_chat().await;
+                    self.scroll_to_bottom();
+                    self.send_resubmit_to_agent(history, qm).await;
+                }
+            }
+
+            Action::CompletionNext => {
+                if let Some(overlay) = &mut self.completion_overlay {
+                    overlay.select_next();
+                } else if self.input_buffer.starts_with('/') {
+                    self.update_completion_overlay();
+                }
+            }
+
+            Action::CompletionPrev => {
+                if let Some(overlay) = &mut self.completion_overlay {
+                    overlay.select_prev();
+                }
+            }
+
+            Action::CompletionSelect => {
+                if let Some(overlay) = self.completion_overlay.take() {
+                    if let Some(item) = overlay.selected_item() {
+                        let item = item.clone();
+                        self.apply_completion(&item);
+                    }
+                }
+            }
+
+            Action::CompletionCancel => {
+                self.completion_overlay = None;
             }
 
             Action::InterruptAgent => {
@@ -1592,17 +1788,28 @@ impl App {
         false
     }
 
-    async fn send_to_agent(&mut self, text: String) {
+    async fn send_to_agent(&mut self, qm: QueuedMessage) {
         if let Some(tx) = &self.agent_tx {
-            let _ = tx.send(AgentRequest::Submit(text)).await;
+            let _ = tx
+                .send(AgentRequest::Submit {
+                    content: qm.content,
+                    model_override: qm.model_override,
+                    mode_override: qm.mode_override,
+                })
+                .await;
             self.agent_busy = true;
         }
     }
 
-    async fn send_resubmit_to_agent(&mut self, messages: Vec<Message>, new_user_content: String) {
+    async fn send_resubmit_to_agent(&mut self, messages: Vec<Message>, qm: QueuedMessage) {
         if let Some(tx) = &self.agent_tx {
             let _ = tx
-                .send(AgentRequest::Resubmit { messages, new_user_content })
+                .send(AgentRequest::Resubmit {
+                    messages,
+                    new_user_content: qm.content,
+                    model_override: qm.model_override,
+                    mode_override: qm.mode_override,
+                })
                 .await;
             self.agent_busy = true;
         }
@@ -1620,13 +1827,72 @@ impl App {
                 if self.queued.is_empty() && self.focus == FocusPane::Queue {
                     self.focus = FocusPane::Input;
                 }
-                self.chat_segments.push(ChatSegment::Message(Message::user(&next)));
+                self.chat_segments.push(ChatSegment::Message(Message::user(&next.content)));
                 self.rerender_chat().await;
                 self.auto_scroll = true;
                 self.scroll_to_bottom();
                 self.send_to_agent(next).await;
             }
         }
+    }
+
+    // ── Slash command completion ──────────────────────────────────────────────
+
+    /// Regenerate completions from the current `input_buffer` and update (or
+    /// dismiss) the `completion_overlay`.
+    fn update_completion_overlay(&mut self) {
+        let parsed = parse(&self.input_buffer);
+        let ctx = CommandContext {
+            config: self.config.clone(),
+            current_model_provider: self.config.model.provider.clone(),
+            current_model_name: self.config.model.name.clone(),
+        };
+        let items = self.completion_manager.get_completions(&parsed, &ctx);
+        if items.is_empty() {
+            self.completion_overlay = None;
+        } else {
+            let prev_selected = self.completion_overlay.as_ref().map(|o| o.selected).unwrap_or(0);
+            let mut overlay = CompletionOverlay::new(items);
+            // Keep the previously-selected index in bounds.
+            overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
+            overlay.adjust_scroll_pub();
+            self.completion_overlay = Some(overlay);
+        }
+    }
+
+    /// Apply the selected completion item to `input_buffer`.
+    ///
+    /// Replaces either the command name or the current argument with the
+    /// selected value, then positions the cursor appropriately.
+    fn apply_completion(&mut self, item: &CompletionItem) {
+        let parsed = parse(&self.input_buffer);
+        match parsed {
+            ParsedCommand::PartialCommand { .. } => {
+                // Replace everything after the leading '/' with the command name.
+                self.input_buffer = format!("/{} ", item.value.trim_start_matches('/'));
+                self.input_cursor = self.input_buffer.len();
+            }
+            ParsedCommand::CompletingArgs { command, arg_index, partial: _ } => {
+                // Build new buffer: "/command arg0 … argN-1 <selected>"
+                // We only have arg_index here but we know partial is the last
+                // word.  Reconstruct by keeping everything up to the partial.
+                let prefix = if arg_index == 0 {
+                    format!("/{} ", command)
+                } else {
+                    // Keep existing args up to arg_index — simple: re-split
+                    // We strip the partial from the buffer end and replace.
+                    let body = self.input_buffer.trim_end();
+                    // Find last space to strip partial
+                    let base = body.rfind(' ').map(|i| &body[..=i]).unwrap_or(&body);
+                    base.to_string()
+                };
+                self.input_buffer = format!("{}{} ", prefix, item.value);
+                self.input_cursor = self.input_buffer.len();
+            }
+            _ => {}
+        }
+        // Update completions for the new buffer state.
+        self.update_completion_overlay();
     }
 
     // ── Chat display ──────────────────────────────────────────────────────────

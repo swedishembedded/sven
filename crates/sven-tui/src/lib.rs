@@ -4,6 +4,7 @@
 mod agent;
 mod app;
 mod chat;
+mod commands;
 mod input;
 mod input_wrap;
 mod keys;

@@ -12,6 +12,8 @@ use ratatui::{
     Frame,
 };
 
+use crate::overlay::completion::CompletionOverlay;
+
 use sven_config::AgentMode;
 
 use crate::markdown::StyledLines;
@@ -51,6 +53,8 @@ pub fn draw_status(
     cache_hit_pct: u8,
     agent_busy: bool,
     current_tool: Option<&str>,
+    pending_model: Option<&str>,
+    pending_mode: Option<AgentMode>,
     ascii: bool,
 ) {
     let busy_indicator = if agent_busy { busy_char(ascii) } else { "  " };
@@ -77,6 +81,23 @@ pub fn draw_status(
         Span::raw("")
     };
 
+    // Show pending model/mode overrides when set.
+    let pending_span: Span<'static> = match (pending_model, pending_mode) {
+        (Some(m), Some(pm)) => Span::styled(
+            format!(" {separator} next: {m} [{}]", pm),
+            Style::default().fg(Color::Magenta),
+        ),
+        (Some(m), None) => Span::styled(
+            format!(" {separator} next: {m}"),
+            Style::default().fg(Color::Magenta),
+        ),
+        (None, Some(pm)) => Span::styled(
+            format!(" {separator} next: [{}]", pm),
+            Style::default().fg(Color::Magenta),
+        ),
+        (None, None) => Span::raw(""),
+    };
+
     let line = Line::from(vec![
         Span::styled(
             format!(" {busy_indicator}"),
@@ -89,6 +110,7 @@ pub fn draw_status(
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
         cache_span,
         tool_span,
+        pending_span,
         Span::styled(
             "  F1:help  ^w k:↑chat  ^w j:↓input  click/e:edit  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",
             Style::default().fg(Color::DarkGray),
@@ -490,7 +512,7 @@ pub fn draw_question_modal(
 pub fn draw_queue_panel(
     frame: &mut Frame,
     area: Rect,
-    items: &[String],
+    items: &[(String, Option<String>, Option<AgentMode>)],
     selected: Option<usize>,
     editing: Option<usize>,
     focused: bool,
@@ -513,7 +535,7 @@ pub fn draw_queue_panel(
         .iter()
         .enumerate()
         .take(inner.height as usize)
-        .map(|(i, text)| {
+        .map(|(i, (text, model_ov, mode_ov))| {
             let is_selected = selected == Some(i);
             let is_editing  = editing  == Some(i);
 
@@ -526,8 +548,17 @@ pub fn draw_queue_panel(
                 },
             );
 
-            // Truncate preview to fit the inner width minus the number badge (4 chars).
-            let max_text = inner.width.saturating_sub(6) as usize;
+            // Build override badge when present (e.g. "[gpt-4o, research]")
+            let badge: String = match (model_ov.as_deref(), mode_ov) {
+                (Some(m), Some(mo)) => format!("[{m}, {mo}] "),
+                (Some(m), None)     => format!("[{m}] "),
+                (None, Some(mo))    => format!("[{mo}] "),
+                (None, None)        => String::new(),
+            };
+
+            // Truncate preview to fit the inner width minus the number badge and badge.
+            let badge_len = badge.chars().count();
+            let max_text = inner.width.saturating_sub(6 + badge_len as u16) as usize;
             let preview: String = text.lines().next().unwrap_or("").chars().take(max_text).collect();
             let ellipsis = if text.len() > preview.len() + 1 || text.contains('\n') { "…" } else { "" };
             let text_content = format!(" {preview}{ellipsis}");
@@ -543,11 +574,146 @@ pub fn draw_queue_panel(
                 },
             );
 
-            Line::from(vec![num_span, text_span])
+            let badge_span = if badge.is_empty() {
+                Span::raw("")
+            } else {
+                Span::styled(badge, Style::default().fg(Color::Magenta))
+            };
+
+            Line::from(vec![num_span, badge_span, text_span])
         })
         .collect();
 
     frame.render_widget(Paragraph::new(visible), inner);
+}
+
+/// Draw the completion overlay for slash commands.
+///
+/// The overlay is positioned above `input_pane` if there is room, otherwise
+/// below it.  The selected item is highlighted; descriptions are shown in a
+/// muted colour.  A scroll indicator is appended when there are more items
+/// than `max_visible`.
+pub fn draw_completion_overlay(
+    frame: &mut Frame,
+    input_pane: Rect,
+    overlay: &CompletionOverlay,
+    ascii: bool,
+) {
+    if overlay.items.is_empty() {
+        return;
+    }
+
+    let visible = overlay.visible_items();
+    let item_count = visible.len();
+
+    // Overlay width: at least 40, at most 70, but not wider than terminal
+    let width = 70u16.min(input_pane.width.max(40));
+
+    // Height: item rows + top/bottom border
+    let height = (item_count as u16 + 2).min(frame.area().height.saturating_sub(2));
+
+    // Prefer above the input pane; fall back to below
+    let y = if input_pane.y >= height {
+        input_pane.y - height
+    } else {
+        input_pane.y + input_pane.height
+    };
+
+    let x = input_pane.x;
+    let area = Rect::new(
+        x.min(frame.area().width.saturating_sub(width)),
+        y.min(frame.area().height.saturating_sub(height)),
+        width,
+        height,
+    );
+
+    frame.render_widget(Clear, area);
+
+    let bt = border_type(ascii);
+    let total = overlay.items.len();
+    let scroll_indicator = if total > overlay.max_visible {
+        format!(
+            " [{}/{}]",
+            overlay.selected + 1,
+            total,
+        )
+    } else {
+        String::new()
+    };
+
+    let title = format!(" Commands{scroll_indicator} ");
+    let block = Block::default()
+        .title(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        .borders(Borders::ALL)
+        .border_type(bt)
+        .border_style(Style::default().fg(Color::Cyan))
+        .style(Style::default().bg(Color::Black));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let max_val_width = (inner.width as usize).saturating_sub(2);
+
+    let lines: Vec<Line<'static>> = visible
+        .iter()
+        .enumerate()
+        .map(|(vis_idx, item)| {
+            let actual_idx = overlay.scroll_offset + vis_idx;
+            let is_selected = actual_idx == overlay.selected;
+
+            // Truncate display to fit
+            let display: String = if item.display.is_empty() {
+                item.value.clone()
+            } else {
+                item.display.clone()
+            };
+
+            // Build value + optional description
+            let desc_str = item.description.as_deref().unwrap_or("");
+            let sep = if desc_str.is_empty() { "" } else { "  " };
+            let full = format!("{}{}{}", display, sep, desc_str);
+            let truncated: String = full.chars().take(max_val_width).collect();
+
+            if is_selected {
+                Line::from(Span::styled(
+                    format!(" {truncated} "),
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                // Split display from description for colour differentiation
+                let disp_chars: String = display.chars().take(max_val_width).collect();
+                let remaining = max_val_width.saturating_sub(disp_chars.len());
+
+                if !desc_str.is_empty() && remaining > 3 {
+                    let short_desc: String = desc_str.chars().take(remaining.saturating_sub(2)).collect();
+                    Line::from(vec![
+                        Span::styled(
+                            format!(" {disp_chars}"),
+                            Style::default().fg(Color::White),
+                        ),
+                        Span::styled(
+                            format!("  {short_desc}"),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ])
+                } else {
+                    Line::from(Span::styled(
+                        format!(" {disp_chars}"),
+                        Style::default().fg(Color::Gray),
+                    ))
+                }
+            }
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

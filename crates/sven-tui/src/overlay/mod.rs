@@ -3,4 +3,5 @@
 // SPDX-License-Identifier: MIT
 //! Overlay widgets that render on top of the normal TUI layout.
 
+pub mod completion;
 pub mod question;
