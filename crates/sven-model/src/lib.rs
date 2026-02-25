@@ -478,6 +478,122 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
     headers
 }
 
+// ── ModelResolver ─────────────────────────────────────────────────────────────
+
+/// Resolves a user-supplied model string to a [`ModelConfig`].
+///
+/// Resolution happens in four ordered steps; the first one that succeeds wins:
+///
+/// 1. **Named provider** — if the prefix of `override_str` matches a key in
+///    `config.providers`, use that named config (optionally overriding the
+///    model name with the suffix after `/`).
+/// 2. **Catalog lookup `provider/name`** — when `override_str` contains `/`
+///    and the prefix is a known driver, look up `(provider, name)` in the
+///    static model catalog.  A fresh `ModelConfig` is built from catalog
+///    metadata; credentials are inherited only when the resolved provider
+///    matches `config.model.provider`.
+/// 3. **Catalog lookup by bare model name** — when `override_str` has no `/`
+///    and is not a known provider id, search the catalog for that model name
+///    alone (provider is inferred from the catalog entry).
+/// 4. **Fallback** — call [`resolve_model_cfg`] with `config.model` as the
+///    base, which handles bare provider ids and custom/unknown endpoints.
+pub struct ModelResolver<'a> {
+    config: &'a sven_config::Config,
+    override_str: &'a str,
+}
+
+impl<'a> ModelResolver<'a> {
+    pub fn new(config: &'a sven_config::Config, override_str: &'a str) -> Self {
+        Self { config, override_str }
+    }
+
+    /// Run all four resolution steps in priority order.
+    pub fn resolve(self) -> ModelConfig {
+        let (provider_key, model_suffix) = self.parse_override();
+        if let Some(cfg) = self.try_named_provider(provider_key, model_suffix) {
+            return cfg;
+        }
+        if let Some(cfg) = self.try_catalog_by_provider_name(provider_key, model_suffix) {
+            return cfg;
+        }
+        if let Some(cfg) = self.try_catalog_by_bare_model_name(provider_key, model_suffix) {
+            return cfg;
+        }
+        self.fallback()
+    }
+
+    /// Step 0 (pre-processing): split `override_str` at the first `/`.
+    fn parse_override(&self) -> (&str, Option<&str>) {
+        if let Some((p, m)) = self.override_str.split_once('/') {
+            (p, Some(m))
+        } else {
+            (self.override_str, None)
+        }
+    }
+
+    /// Step 1: check `config.providers` for a named custom provider.
+    fn try_named_provider(
+        &self,
+        provider_key: &str,
+        model_suffix: Option<&str>,
+    ) -> Option<ModelConfig> {
+        let named = self.config.providers.get(provider_key)?;
+        let mut cfg = named.clone();
+        if let Some(model) = model_suffix {
+            cfg.name = model.to_string();
+        }
+        Some(cfg)
+    }
+
+    /// Step 2: catalog lookup by `provider/name` when the provider is a
+    /// known driver.
+    fn try_catalog_by_provider_name(
+        &self,
+        provider_key: &str,
+        model_suffix: Option<&str>,
+    ) -> Option<ModelConfig> {
+        let model_name = model_suffix?;
+        if get_driver(provider_key).is_none() {
+            return None;
+        }
+        let entry = catalog::lookup(provider_key, model_name)?;
+        Some(self.catalog_entry_to_config(&entry))
+    }
+
+    /// Step 3: catalog lookup by bare model name (no `/`, not a provider id).
+    fn try_catalog_by_bare_model_name(
+        &self,
+        provider_key: &str,
+        model_suffix: Option<&str>,
+    ) -> Option<ModelConfig> {
+        if model_suffix.is_some() || get_driver(provider_key).is_some() {
+            return None;
+        }
+        let entry = catalog::lookup_by_model_name(self.override_str)?;
+        Some(self.catalog_entry_to_config(&entry))
+    }
+
+    /// Step 4: fall back to [`resolve_model_cfg`] with `config.model` as base.
+    fn fallback(&self) -> ModelConfig {
+        resolve_model_cfg(&self.config.model, self.override_str)
+    }
+
+    /// Convert a catalog entry to a [`ModelConfig`], inheriting credentials
+    /// from `config.model` when the provider matches.
+    fn catalog_entry_to_config(&self, entry: &catalog::ModelCatalogEntry) -> ModelConfig {
+        let mut cfg = ModelConfig {
+            provider: entry.provider.clone(),
+            name: entry.id.clone(),
+            ..ModelConfig::default()
+        };
+        if cfg.provider == self.config.model.provider {
+            cfg.api_key = self.config.model.api_key.clone();
+            cfg.api_key_env = self.config.model.api_key_env.clone();
+        }
+        cfg
+    }
+}
+
 // ── Model-config resolution ───────────────────────────────────────────────────
 
 /// Build a [`ModelConfig`] by applying `override_str` on top of `base`.
@@ -535,74 +651,14 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
 /// ```
 /// `--model my_ollama` uses the whole named config;
 /// `--model my_ollama/codellama` overrides just the model name.
+/// Thin wrapper around [`ModelResolver`] for backwards-compatible call sites.
+///
+/// Prefer `ModelResolver::new(config, override_str).resolve()` for new code.
 pub fn resolve_model_from_config(
     config: &sven_config::Config,
     override_str: &str,
 ) -> ModelConfig {
-    let (provider_key, model_suffix) =
-        if let Some((p, m)) = override_str.split_once('/') {
-            (p, Some(m))
-        } else {
-            (override_str, None)
-        };
-
-    // Named custom provider in config.providers takes precedence.
-    if let Some(named) = config.providers.get(provider_key) {
-        let mut cfg = named.clone();
-        if let Some(model) = model_suffix {
-            cfg.name = model.to_string();
-        }
-        return cfg;
-    }
-
-    // Smart catalog lookup: start from a clean default ModelConfig whenever
-    // the requested model is found in the static catalog.  This prevents
-    // custom base_url / api_key values from leaking across providers when the
-    // user's config.model points at a local/custom endpoint.
-    //
-    // Two forms are handled:
-    //   "gpt-4o"          — bare model name, no provider prefix
-    //   "openai/gpt-4o"   — explicit provider/model from a known driver
-    //
-    // In both cases, if the model is in the catalog we start from a fresh
-    // ModelConfig (provider defaults, no base_url) and only inherit
-    // credentials from config.model when the provider matches.
-    let catalog_entry = if let Some(model_name) = model_suffix {
-        // "provider/model" form — look up by provider+name in catalog.
-        // Only apply catalog defaults when provider_key is a known driver
-        // (not a custom provider alias that wasn't caught above).
-        if get_driver(provider_key).is_some() {
-            catalog::lookup(provider_key, model_name)
-        } else {
-            None
-        }
-    } else if get_driver(override_str).is_none() {
-        // Bare model name (not a provider id) — look up by model name alone.
-        catalog::lookup_by_model_name(override_str)
-    } else {
-        None
-    };
-
-    if let Some(entry) = catalog_entry {
-        let mut cfg = ModelConfig {
-            provider: entry.provider.clone(),
-            name: entry.id.clone(),
-            ..ModelConfig::default()
-        };
-        // Preserve api_key credentials when the resolved provider matches
-        // the config's provider (same service, different model).
-        if cfg.provider == config.model.provider {
-            cfg.api_key = config.model.api_key.clone();
-            cfg.api_key_env = config.model.api_key_env.clone();
-        }
-        return cfg;
-    }
-
-    // Fall back to standard resolution with config.model as base.
-    // This path handles provider ids without catalog entries (e.g. a bare
-    // "anthropic" to switch provider while keeping the current model name)
-    // and any custom-endpoint models not listed in the catalog.
-    resolve_model_cfg(&config.model, override_str)
+    ModelResolver::new(config, override_str).resolve()
 }
 
 #[cfg(test)]
@@ -897,5 +953,152 @@ mod tests {
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.name, "claude-opus-4-6");
         assert!(cfg.api_key.is_none(), "OpenAI api_key must not leak to anthropic config");
+    }
+
+    // ── ModelResolver per-step unit tests ─────────────────────────────────────
+
+    fn make_config(provider: &str, model: &str) -> sven_config::Config {
+        use std::collections::HashMap;
+        sven_config::Config {
+            model: ModelConfig {
+                provider: provider.into(),
+                name: model.into(),
+                ..ModelConfig::default()
+            },
+            providers: HashMap::new(),
+            ..sven_config::Config::default()
+        }
+    }
+
+    fn make_config_with_named(
+        base_provider: &str,
+        base_model: &str,
+        alias: &str,
+        named: ModelConfig,
+    ) -> sven_config::Config {
+        let mut config = make_config(base_provider, base_model);
+        config.providers.insert(alias.into(), named);
+        config
+    }
+
+    // ── Step 1: named provider ─────────────────────────────────────────────────
+
+    /// Step 1: a named provider alias resolves to its stored config.
+    #[test]
+    fn step1_named_provider_used_as_base() {
+        let named = ModelConfig {
+            provider: "openai".into(),
+            name: "llama3.2".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            ..ModelConfig::default()
+        };
+        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", named);
+        let cfg = ModelResolver::new(&config, "my_ollama").resolve();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "llama3.2");
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    /// Step 1: `alias/model` form overrides the model name inside the named config.
+    #[test]
+    fn step1_named_provider_with_model_suffix() {
+        let named = ModelConfig {
+            provider: "openai".into(),
+            name: "llama3.2".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            ..ModelConfig::default()
+        };
+        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", named);
+        let cfg = ModelResolver::new(&config, "my_ollama/codellama").resolve();
+        assert_eq!(cfg.name, "codellama");
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"),
+            "base_url from named provider preserved with model suffix");
+    }
+
+    /// Step 1 skip: an unknown prefix falls through to later steps.
+    #[test]
+    fn step1_unknown_prefix_falls_through() {
+        let config = make_config("openai", "gpt-4o");
+        // "anthropic" is not in config.providers, so step 1 is skipped.
+        // The call should still succeed via catalog or fallback.
+        let cfg = ModelResolver::new(&config, "anthropic/claude-opus-4-5").resolve();
+        assert_eq!(cfg.provider, "anthropic");
+    }
+
+    // ── Step 2: catalog lookup by provider/name ────────────────────────────────
+
+    /// Step 2: `provider/name` form resolves via catalog when provider is a known driver.
+    #[test]
+    fn step2_slash_form_resolves_via_catalog() {
+        let config = make_config("anthropic", "claude-opus-4-5");
+        // openai/gpt-4o should be in the static catalog.
+        let cfg = ModelResolver::new(&config, "openai/gpt-4o").resolve();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o");
+        assert!(cfg.base_url.is_none(), "catalog model must not inherit custom base_url");
+    }
+
+    /// Step 2: unknown provider in `provider/name` form bypasses catalog (step 2) and falls through.
+    #[test]
+    fn step2_unknown_provider_slash_form_falls_through_to_fallback() {
+        let config = make_config("openai", "gpt-4o");
+        // "mylocal/some-model" — "mylocal" is not a known driver.
+        let cfg = ModelResolver::new(&config, "mylocal/some-model").resolve();
+        // Falls through to step 4 (resolve_model_cfg) which splits at "/" directly.
+        assert_eq!(cfg.provider, "mylocal");
+        assert_eq!(cfg.name, "some-model");
+    }
+
+    /// Step 2: credentials are inherited when the catalog model uses the same provider as config.
+    #[test]
+    fn step2_inherits_credentials_when_same_provider() {
+        let mut config = make_config("openai", "gpt-4o");
+        config.model.api_key = Some("sk-mykey".into());
+        // openai/gpt-4o-mini — same provider, should inherit api_key.
+        let cfg = ModelResolver::new(&config, "openai/gpt-4o-mini").resolve();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-mykey"),
+            "api_key must be inherited for same-provider catalog model");
+    }
+
+    // ── Step 3: catalog lookup by bare model name ──────────────────────────────
+
+    /// Step 3: a bare model name (not a provider id) resolves via catalog.
+    #[test]
+    fn step3_bare_model_name_resolves_via_catalog() {
+        let config = make_config("anthropic", "claude-opus-4-5");
+        // "gpt-4o" is a bare model name that exists in the catalog.
+        let cfg = ModelResolver::new(&config, "gpt-4o").resolve();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-4o");
+    }
+
+    /// Step 3 skip: a bare known provider id (e.g. "groq") skips step 3 and falls to step 4.
+    #[test]
+    fn step3_bare_provider_id_skips_catalog_model_lookup() {
+        let config = make_config("openai", "gpt-4o");
+        // "groq" is a provider id, not a model name → step 3 is skipped.
+        let cfg = ModelResolver::new(&config, "groq").resolve();
+        // Fallback (step 4): provider becomes groq, model name unchanged.
+        assert_eq!(cfg.provider, "groq");
+    }
+
+    // ── Step 4: fallback ───────────────────────────────────────────────────────
+
+    /// Step 4: a bare provider id with no catalog entry changes the provider.
+    #[test]
+    fn step4_fallback_bare_provider_changes_provider() {
+        let config = make_config("openai", "gpt-4o");
+        let cfg = ModelResolver::new(&config, "groq").resolve();
+        assert_eq!(cfg.provider, "groq");
+    }
+
+    /// Step 4: `provider/model` for an unknown provider sets both fields directly.
+    #[test]
+    fn step4_fallback_unknown_provider_slash_name_sets_both() {
+        let config = make_config("openai", "gpt-4o");
+        let cfg = ModelResolver::new(&config, "myprovider/mycustom-model").resolve();
+        assert_eq!(cfg.provider, "myprovider");
+        assert_eq!(cfg.name, "mycustom-model");
     }
 }

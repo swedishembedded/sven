@@ -110,11 +110,14 @@ pub trait SlashCommand: Send + Sync {
 
 // ── Dispatch helper ───────────────────────────────────────────────────────────
 
-/// Try to dispatch `input` as a slash command against `registry`.
+/// Dispatch `input` as a slash command against `registry`.
 ///
-/// This is a pure function that mirrors the exact argument-building logic used
-/// by `Action::Submit` in `App::dispatch`.  Extracting it here makes the
-/// dispatch logic independently testable without a full TUI app instance.
+/// This is the primary test surface for slash-command dispatch.  All command
+/// integration tests should call this function rather than driving the full TUI.
+///
+/// `ctx` provides session context (current model/mode) that commands may use
+/// for completion and contextual defaults.  Pass a default-constructed
+/// `CommandContext` in tests where session state does not matter.
 ///
 /// Returns `Some((command_name, result))` when a known command was matched and
 /// executed; `None` when the input is not a slash command or the command name
@@ -124,6 +127,17 @@ pub trait SlashCommand: Send + Sync {
 /// - `"/model gpt-4o"` (no trailing space) → `CompletingArgs { partial: "gpt-4o" }` → executes with `["gpt-4o"]`
 /// - `"/model gpt-4o "` (trailing space)   → `Complete { args: ["gpt-4o"] }` → same result
 /// - `"/quit"`                              → `PartialCommand` → executes with `[]`
+pub fn dispatch_command(
+    input: &str,
+    registry: &CommandRegistry,
+    _ctx: &CommandContext,
+) -> Option<(String, CommandResult)> {
+    try_dispatch(input, registry)
+}
+
+/// Legacy alias for [`dispatch_command`] without a context argument.
+///
+/// Prefer `dispatch_command` for new call sites.
 pub fn try_dispatch(input: &str, registry: &CommandRegistry) -> Option<(String, CommandResult)> {
     let parsed = parse(input);
     if matches!(parsed, ParsedCommand::NotCommand) {

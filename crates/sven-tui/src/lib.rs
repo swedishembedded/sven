@@ -13,6 +13,8 @@ mod markdown;
 mod nvim;
 mod overlay;
 mod pager;
+mod state;
+mod submit;
 mod widgets;
 
 pub use app::{App, AppOptions};
