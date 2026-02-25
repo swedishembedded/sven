@@ -393,7 +393,8 @@ mod tests {
         handler.handle_hl_attr_define(&[params]).await;
         let attrs = hl_attrs.lock().await;
         let attr  = attrs.get(&42).expect("attr 42 must be stored");
-        assert_eq!(attr.foreground, Some(Color::Rgb(255, 0, 0)));
+        // Pure red (0xFF0000) converts to Color::Red (luminance ~76)
+        assert_eq!(attr.foreground, Some(Color::Red));
         assert!(attr.bold);
     }
 }

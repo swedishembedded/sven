@@ -1986,7 +1986,7 @@ impl App {
                 let prefix = if self.chat_segments.is_empty() { "💭 **Thinking…**\n" } else { "\n💭 **Thinking…**\n" };
                 (
                     format!("{}{}", prefix, self.streaming_assistant_buffer),
-                    Some(Style::default().fg(Color::Rgb(160, 100, 200))),
+                    Some(Style::default().fg(Color::Magenta)),
                 )
             } else {
                 let prefix = if self.chat_segments.is_empty() { "**Agent:** " } else { "\n**Agent:** " };

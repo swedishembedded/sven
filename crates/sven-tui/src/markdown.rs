@@ -1,33 +1,14 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
-use std::sync::OnceLock;
-
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
 
 use crate::widgets::{md_blockquote, md_bullet, md_rule_char};
 
 /// A styled line ready for Ratatui rendering.
 pub type StyledLines = Vec<Line<'static>>;
-
-// ── Syntect singletons ────────────────────────────────────────────────────────
-
-static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
-
-fn syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
-fn theme_set() -> &'static ThemeSet {
-    THEME_SET.get_or_init(ThemeSet::load_defaults)
-}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -216,7 +197,7 @@ impl MarkdownRenderer {
                     self.style_stack.push(base.fg(Color::Green));
                     self.current_spans.push(Span::styled(
                         md_blockquote(self.ascii).to_string(),
-                        Style::default().fg(Color::Green).add_modifier(Modifier::DIM),
+                        Style::default().fg(Color::Green),
                     ));
                 }
                 Event::End(TagEnd::BlockQuote(_)) => {
@@ -256,7 +237,7 @@ impl MarkdownRenderer {
 
                 // ── Inline code ───────────────────────────────────────────────
                 Event::Code(t) => {
-                    let style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+                    let style = Style::default().fg(Color::Yellow).bg(Color::Black);
                     self.current_spans.push(Span::styled(format!("`{t}`"), style));
                 }
 
@@ -322,64 +303,12 @@ fn current_col(spans: &[Span<'_>]) -> usize {
 
 // ── Syntect code highlighting ─────────────────────────────────────────────────
 
-/// Highlight a fenced code block with syntect, falling back to plain cyan text
-/// when the language is not recognised or syntect fails.
-fn highlight_code_block(code: &str, lang: &str) -> Vec<Line<'static>> {
-    let ss = syntax_set();
-    let ts = theme_set();
-
-    let syntax = if lang.is_empty() {
-        ss.find_syntax_plain_text()
-    } else {
-        ss.find_syntax_by_token(lang)
-            .or_else(|| ss.find_syntax_by_extension(lang))
-            .unwrap_or_else(|| ss.find_syntax_plain_text())
-    };
-
-    let theme = match ts.themes.get("base16-ocean.dark")
-        .or_else(|| ts.themes.values().next())
-    {
-        Some(t) => t,
-        None => return plain_code_lines(code),
-    };
-
-    let mut h = HighlightLines::new(syntax, theme);
-    let mut result: Vec<Line<'static>> = Vec::new();
-
-    for line_str in LinesWithEndings::from(code) {
-        let ranges = match h.highlight_line(line_str, ss) {
-            Ok(r) => r,
-            Err(_) => {
-                result.push(Line::from(
-                    line_str.trim_end().to_string(),
-                ));
-                continue;
-            }
-        };
-
-        let spans: Vec<Span<'static>> = ranges
-            .iter()
-            .filter_map(|(style, text)| {
-                let t = text.trim_end_matches(['\n', '\r']);
-                if t.is_empty() {
-                    return None;
-                }
-                let fg = style.foreground;
-                Some(Span::styled(
-                    t.to_string(),
-                    Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)),
-                ))
-            })
-            .collect();
-
-        if spans.is_empty() {
-            result.push(Line::default());
-        } else {
-            result.push(Line::from(spans));
-        }
-    }
-
-    result
+/// Highlight a fenced code block with plain cyan text for maximum terminal
+/// compatibility. Syntect RGB highlighting is disabled to avoid issues with
+/// non-standard terminal colors.
+fn highlight_code_block(code: &str, _lang: &str) -> Vec<Line<'static>> {
+    // Use plain cyan for all code blocks to ensure compatibility with all terminals
+    plain_code_lines(code)
 }
 
 /// Plain (no highlighting) code fallback — cyan text.

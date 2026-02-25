@@ -11,6 +11,77 @@ use std::collections::HashMap;
 use ratatui::style::{Color, Modifier, Style};
 use rmpv::Value;
 
+/// Convert an RGB color to the nearest standard terminal color for compatibility.
+fn rgb_to_standard_color(r: u8, g: u8, b: u8) -> Color {
+    // Calculate luminance
+    let luminance = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) as u8;
+    
+    // Determine dominant color channel
+    let max_channel = r.max(g).max(b);
+    let min_channel = r.min(g).min(b);
+    let saturation = if max_channel == 0 {
+        0
+    } else {
+        ((max_channel - min_channel) as f32 / max_channel as f32 * 100.0) as u8
+    };
+    
+    // Low saturation = grayscale
+    if saturation < 30 {
+        return match luminance {
+            0..=32 => Color::Black,
+            33..=96 => Color::DarkGray,
+            97..=160 => Color::Gray,
+            _ => Color::White,
+        };
+    }
+    
+    // High saturation = color
+    // Determine which color channel is dominant
+    if r > g && r > b {
+        // Red dominant
+        if luminance > 128 {
+            Color::LightRed
+        } else {
+            Color::Red
+        }
+    } else if g > r && g > b {
+        // Green dominant
+        if luminance > 128 {
+            Color::LightGreen
+        } else {
+            Color::Green
+        }
+    } else if b > r && b > g {
+        // Blue dominant
+        if luminance > 128 {
+            Color::LightBlue
+        } else {
+            Color::Blue
+        }
+    } else if r > b && g > b {
+        // Yellow-ish (red + green)
+        if luminance > 128 {
+            Color::LightYellow
+        } else {
+            Color::Yellow
+        }
+    } else if r > g && b > g {
+        // Magenta-ish (red + blue)
+        if luminance > 128 {
+            Color::LightMagenta
+        } else {
+            Color::Magenta
+        }
+    } else {
+        // Cyan-ish (green + blue)
+        if luminance > 128 {
+            Color::LightCyan
+        } else {
+            Color::Cyan
+        }
+    }
+}
+
 // ── Cell ─────────────────────────────────────────────────────────────────────
 
 /// A single cell in the Neovim grid.
@@ -145,20 +216,20 @@ impl HlAttr {
 
         if let Some(Value::Integer(fg)) = map.get("foreground") {
             if let Ok(v) = u32::try_from(fg.as_u64().unwrap_or(0)) {
-                attr.foreground = Some(Color::Rgb(
-                    ((v >> 16) & 0xFF) as u8,
-                    ((v >>  8) & 0xFF) as u8,
-                    ( v        & 0xFF) as u8,
-                ));
+                let r = ((v >> 16) & 0xFF) as u8;
+                let g = ((v >>  8) & 0xFF) as u8;
+                let b = ( v        & 0xFF) as u8;
+                // Convert RGB to standard terminal color for compatibility
+                attr.foreground = Some(rgb_to_standard_color(r, g, b));
             }
         }
         if let Some(Value::Integer(bg)) = map.get("background") {
             if let Ok(v) = u32::try_from(bg.as_u64().unwrap_or(0)) {
-                attr.background = Some(Color::Rgb(
-                    ((v >> 16) & 0xFF) as u8,
-                    ((v >>  8) & 0xFF) as u8,
-                    ( v        & 0xFF) as u8,
-                ));
+                let r = ((v >> 16) & 0xFF) as u8;
+                let g = ((v >>  8) & 0xFF) as u8;
+                let b = ( v        & 0xFF) as u8;
+                // Convert RGB to standard terminal color for compatibility
+                attr.background = Some(rgb_to_standard_color(r, g, b));
             }
         }
         if let Some(Value::Boolean(true)) = map.get("bold")      { attr.bold      = true; }
@@ -242,20 +313,22 @@ mod tests {
     }
 
     #[test]
-    fn hlattr_foreground_integer_decoded_as_rgb() {
+    fn hlattr_foreground_integer_decoded_as_standard_color() {
         let mut map = std::collections::HashMap::new();
         map.insert("foreground".into(), Value::Integer(0xFF0000u32.into()));
         let attr = HlAttr::from_map(&map);
-        assert_eq!(attr.foreground, Some(Color::Rgb(255, 0, 0)));
-        assert_eq!(attr.to_style().fg, Some(Color::Rgb(255, 0, 0)));
+        // Pure red (0xFF0000) converts to Color::Red (luminance ~76)
+        assert_eq!(attr.foreground, Some(Color::Red));
+        assert_eq!(attr.to_style().fg, Some(Color::Red));
     }
 
     #[test]
-    fn hlattr_background_integer_decoded_as_rgb() {
+    fn hlattr_background_integer_decoded_as_standard_color() {
         let mut map = std::collections::HashMap::new();
         map.insert("background".into(), Value::Integer(0x0000FFu32.into()));
         let attr = HlAttr::from_map(&map);
-        assert_eq!(attr.background, Some(Color::Rgb(0, 0, 255)));
+        // Pure blue (0x0000FF) converts to Color::Blue
+        assert_eq!(attr.background, Some(Color::Blue));
     }
 
     #[test]
@@ -263,7 +336,8 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert("foreground".into(), Value::Integer(0x00FF00u32.into()));
         let attr = HlAttr::from_map(&map);
-        assert_eq!(attr.foreground, Some(Color::Rgb(0, 255, 0)));
+        // Pure green (0x00FF00) converts to Color::LightGreen due to high luminance
+        assert_eq!(attr.foreground, Some(Color::LightGreen));
     }
 
     #[test]
@@ -301,7 +375,8 @@ mod tests {
         map.insert("foreground".into(), Value::Integer(0xFF0000u32.into()));
         map.insert("bold".into(),       Value::Boolean(true));
         let style = HlAttr::from_map(&map).to_style();
-        assert_eq!(style.fg, Some(Color::Rgb(255, 0, 0)));
+        // Pure red (0xFF0000) converts to Color::Red (luminance ~76)
+        assert_eq!(style.fg, Some(Color::Red));
         assert!(style.add_modifier.contains(Modifier::BOLD));
     }
 

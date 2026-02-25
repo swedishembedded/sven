@@ -132,17 +132,17 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
             (Role::User, MessageContent::Text(_)) =>
-                (Some(Style::default().fg(Color::Green)), true),
+                (Some(Style::default().fg(Color::Green)), false),
             (Role::Assistant, MessageContent::Text(_)) =>
                 (Some(Style::default().fg(Color::Blue)), false),
             (Role::Assistant, MessageContent::ToolCall { .. }) =>
-                (Some(Style::default().fg(Color::Rgb(255, 165, 0))), false),
+                (Some(Style::default().fg(Color::Yellow)), false),
             (Role::Tool, MessageContent::ToolResult { .. }) =>
-                (Some(Style::default().fg(Color::Rgb(255, 165, 0))), false),
+                (Some(Style::default().fg(Color::Yellow)), false),
             _ => (None, false),
         },
         ChatSegment::Thinking { .. } =>
-            (Some(Style::default().fg(Color::Rgb(160, 100, 200))), false),
+            (Some(Style::default().fg(Color::Magenta)), false),
         _ => (None, false),
     }
 }

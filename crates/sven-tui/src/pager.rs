@@ -210,8 +210,7 @@ impl PagerOverlay {
                 None => Line::from(Span::styled(
                     "~",
                     Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
+                        .fg(Color::DarkGray),
                 )),
             })
             .collect();
@@ -315,7 +314,7 @@ pub(crate) fn highlight_match_in_line(
 /// Apply a subtle background tint to a line that contains a *non-current*
 /// search match.
 pub(crate) fn tint_match_line(line: Line<'static>) -> Line<'static> {
-    let tint = Style::default().bg(Color::Rgb(50, 40, 10));
+    let tint = Style::default().bg(Color::DarkGray);
     Line::from(
         line.spans
             .into_iter()

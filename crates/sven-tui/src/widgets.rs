@@ -101,23 +101,23 @@ pub fn draw_status(
     let line = Line::from(vec![
         Span::styled(
             format!(" {busy_indicator}"),
-            Style::default().fg(if agent_busy { Color::Yellow } else { Color::DarkGray }),
+            Style::default().fg(if agent_busy { Color::Yellow } else { Color::Gray }),
         ),
         Span::styled(format!(" {model_name} "), Style::default().fg(Color::LightCyan)),
-        Span::styled(separator, Style::default().fg(Color::DarkGray)),
+        Span::styled(separator, Style::default().fg(Color::Gray)),
         Span::styled(format!(" {mode_str} "), mode_style(mode)),
-        Span::styled(separator, Style::default().fg(Color::DarkGray)),
+        Span::styled(separator, Style::default().fg(Color::Gray)),
         Span::styled(format!(" {ctx_str} "), ctx_style(context_pct)),
         cache_span,
         tool_span,
         pending_span,
         Span::styled(
             "  F1:help  ^w k:↑chat  ^w j:↓input  click/e:edit  ^Enter:submit  /:search  ^T:pager  F4:mode  ^c:quit",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::White),
         ),
     ]);
 
-    let para = Paragraph::new(line).style(Style::default().bg(Color::DarkGray));
+    let para = Paragraph::new(line).style(Style::default().bg(Color::Black));
     frame.render_widget(para, area);
 }
 
