@@ -168,6 +168,11 @@ vim.cmd('setlocal linebreak')
 vim.bo[buf].expandtab = true
 vim.bo[buf].tabstop = 2
 vim.bo[buf].shiftwidth = 2
+
+-- Override fold highlight: the default (--clean) Folded group uses a bright
+-- cyan foreground that looks jarring when rendered into the sven TUI.  Use a
+-- plain dark-gray-on-default colour so closed fold lines are unobtrusive.
+vim.api.nvim_set_hl(0, 'Folded', { fg = '#606060', bg = 'NONE', italic = false })
 "#;
         if let Err(e) = self.neovim.exec_lua(basic_settings, vec![]).await {
             debug!("Could not set basic settings: {:?}", e);

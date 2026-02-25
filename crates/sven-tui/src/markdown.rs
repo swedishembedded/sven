@@ -80,7 +80,7 @@ impl MarkdownRenderer {
                     Event::Text(t) => self.code_buf.push_str(&t),
                     Event::End(TagEnd::CodeBlock) => {
                         let highlighted =
-                            highlight_code_block(&self.code_buf, &self.code_lang);
+                            highlight_code_block(&self.code_buf, &self.code_lang, self.width);
                         self.lines.extend(highlighted);
                         self.lines.push(Line::default());
                         self.in_code_block = false;
@@ -306,17 +306,42 @@ fn current_col(spans: &[Span<'_>]) -> usize {
 /// Highlight a fenced code block with plain cyan text for maximum terminal
 /// compatibility. Syntect RGB highlighting is disabled to avoid issues with
 /// non-standard terminal colors.
-fn highlight_code_block(code: &str, _lang: &str) -> Vec<Line<'static>> {
+fn highlight_code_block(code: &str, _lang: &str, max_width: usize) -> Vec<Line<'static>> {
     // Use plain cyan for all code blocks to ensure compatibility with all terminals
-    plain_code_lines(code)
+    plain_code_lines(code, max_width)
 }
 
 /// Plain (no highlighting) code fallback — cyan text.
-fn plain_code_lines(code: &str) -> Vec<Line<'static>> {
+///
+/// Lines wider than `max_width` are hard-wrapped so that `chat_lines` never
+/// contains spans that exceed the visible chat pane width.  Without this,
+/// long lines produce styled cells in Ratatui's buffer that persist as visual
+/// ghost artefacts when the viewport is scrolled.
+fn plain_code_lines(code: &str, max_width: usize) -> Vec<Line<'static>> {
     let style = Style::default().fg(Color::Cyan);
-    code.lines()
-        .map(|l| Line::from(Span::styled(l.to_string(), style)))
-        .collect()
+    let mut out = Vec::new();
+    for raw in code.lines() {
+        let mut remaining = raw;
+        loop {
+            let mut col = 0usize;
+            let mut byte_end = remaining.len();
+            for (i, ch) in remaining.char_indices() {
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if col + cw > max_width {
+                    byte_end = i;
+                    break;
+                }
+                col += cw;
+            }
+            if byte_end == remaining.len() {
+                out.push(Line::from(Span::styled(remaining.to_string(), style)));
+                break;
+            }
+            out.push(Line::from(Span::styled(remaining[..byte_end].to_string(), style)));
+            remaining = &remaining[byte_end..];
+        }
+    }
+    out
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

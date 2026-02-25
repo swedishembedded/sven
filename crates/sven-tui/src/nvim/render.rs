@@ -139,12 +139,12 @@ mod tests {
         }
         let mut attrs = HashMap::new();
         attrs.insert(5u64, HlAttr {
-            foreground: Some(Color::LightRed),
+            foreground: Some(Color::Rgb(0xFF, 0x00, 0x00)),
             ..HlAttr::default()
         });
         let lines = render_grid_to_lines(&g, &attrs, 0, 1);
         let span_style = lines[0].spans[0].style;
-        assert_eq!(span_style.fg, Some(Color::LightRed), "foreground colour applied");
+        assert_eq!(span_style.fg, Some(Color::Rgb(0xFF, 0x00, 0x00)), "foreground colour applied");
     }
 
     #[test]

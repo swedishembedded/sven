@@ -171,7 +171,12 @@ pub fn draw_chat(
     // wraps to `effective_width` (chat inner width minus the 2-column bar), so
     // a second Ratatui-level wrap would push bar characters onto the next visual
     // row and corrupt `segment_line_ranges`, causing wrong click targets.
-    let para = Paragraph::new(visible);
+    //
+    // The explicit background style ensures Ratatui fills every cell in `inner`
+    // on each frame, so styled cells from previous scroll positions (e.g. the
+    // right-hand tail of a long code-block line) are always overwritten and
+    // never leave ghost artefacts on screen.
+    let para = Paragraph::new(visible).style(Style::default().bg(Color::Black));
     frame.render_widget(para, inner);
 
     // Draw Neovim cursor if provided and focused
