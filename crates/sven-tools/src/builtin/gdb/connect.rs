@@ -4,6 +4,8 @@
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(unix)]
+use libc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -182,6 +184,10 @@ impl Tool for GdbConnectTool {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        // Detach from the controlling terminal so gdb cannot open /dev/tty
+        // and corrupt TUI state.
+        #[cfg(unix)]
+        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
 
         let child = match cmd.spawn() {
             Ok(c) => c,

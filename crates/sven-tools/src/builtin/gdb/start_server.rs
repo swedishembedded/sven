@@ -194,16 +194,24 @@ impl Tool for GdbStartServerTool {
         // Spawn the server in its own process group so that kill(-pgid, SIGKILL)
         // later takes out the whole tree (including JLinkGUIServerExe children).
         // kill_on_drop(true) also ensures cleanup if sven exits without gdb_stop.
-        let child = match tokio::process::Command::new("sh")
+        let mut server_cmd = tokio::process::Command::new("sh");
+        server_cmd
             .arg("-c")
             .arg(&command)
             .process_group(0)
             .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
+            .stderr(std::process::Stdio::piped());
+        // Detach the GDB server from the controlling terminal.  Applications
+        // like JLinkGDBServer open /dev/tty directly (bypassing our
+        // stdin/stdout/stderr redirects) and send escape sequences that disable
+        // mouse capture or corrupt the TUI.  setsid() makes the child the
+        // leader of a new session with no controlling terminal, so any
+        // open("/dev/tty") call in it (or its children) fails with ENXIO.
+        #[cfg(unix)]
+        unsafe { server_cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        let child = match server_cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::err(&call.id, format!("Failed to spawn server: {e}")),
         };

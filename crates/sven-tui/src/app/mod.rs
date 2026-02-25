@@ -519,18 +519,49 @@ impl App {
             }
 
             // After a tool call, a subprocess may have left the terminal in a
-            // degraded state (raw mode disabled, cursor visible, etc.).  Check
-            // once per frame and re-enable raw mode + hide cursor if needed.
-            // This is cheap (one syscall) so we always do it when the flag is
-            // set rather than trying to detect corruption another way.
+            // degraded state.  Re-arm the full set of TUI escape sequences:
+            //   • raw mode         — some programs call tcsetattr and restore
+            //                        cooked mode when they exit
+            //   • mouse capture    — programs like JLinkGDBServer open /dev/tty
+            //                        directly and send DisableMouseCapture even
+            //                        when their stdio is redirected; setsid()
+            //                        in the spawn prevents this for most cases
+            //                        but we re-arm here as a belt-and-suspenders
+            //                        guarantee
+            //   • keyboard flags   — same rationale as mouse capture
+            // All escape sequences go to stderr which still points to the real
+            // terminal at this point in the TUI run-loop (stderr is dup2'd to
+            // /dev/null only after startup; the socket is the write end of the
+            // original tty fd and remains valid throughout the session).
+            // Actually: stderr was redirected to /dev/null. Use stdout instead.
             if self.needs_terminal_recover {
                 self.needs_terminal_recover = false;
-                if !crossterm::terminal::is_raw_mode_enabled().unwrap_or(true) {
+                use crossterm::{
+                    execute,
+                    event::{
+                        EnableMouseCapture,
+                        KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+                    },
+                };
+                let raw_was_disabled = !crossterm::terminal::is_raw_mode_enabled().unwrap_or(true);
+                if raw_was_disabled {
                     let _ = crossterm::terminal::enable_raw_mode();
-                    // Force a complete redraw so any garbage written to the
-                    // display buffer by the subprocess is overwritten cleanly.
+                    // Force a complete redraw so any garbage written by the
+                    // subprocess is overwritten cleanly.
                     let _ = terminal.clear();
                 }
+                // Always re-arm mouse capture and keyboard enhancement — these
+                // are cheap writes and protect against any escape-sequence
+                // injection that survived the setsid() defence.
+                let _ = execute!(std::io::stdout(), EnableMouseCapture);
+                let _ = execute!(
+                    std::io::stdout(),
+                    PushKeyboardEnhancementFlags(
+                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                            | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    )
+                );
             }
 
             let ascii = self.ascii();

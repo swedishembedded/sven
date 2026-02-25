@@ -596,12 +596,13 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     }
 
     let terminal = ratatui::init();
-    // Send all terminal control sequences on stdout — the same fd that ratatui
-    // uses for the alternate screen.  We will redirect stderr to /dev/null
-    // shortly, so using stderr for control sequences would break cleanup.
-    let _ = execute!(std::io::stdout(), EnableMouseCapture);
+    // Setup escape sequences go to stderr.  ratatui owns stdout (via its
+    // CrosstermBackend) and may buffer/reorder writes; using the independent
+    // stderr fd avoids that.  Stderr still points to the real terminal here
+    // because the dup2 redirect below has not happened yet.
+    let _ = execute!(std::io::stderr(), EnableMouseCapture);
     let _ = execute!(
-        std::io::stdout(),
+        std::io::stderr(),
         PushKeyboardEnhancementFlags(
             KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                 | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
@@ -609,10 +610,11 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         )
     );
 
-    // Redirect stderr to /dev/null (or SVEN_LOG_FILE) now that all setup is
-    // done.  This is the belt-and-suspenders defence against subprocess output
-    // corrupting the TUI: even if a subprocess inherits our stderr fd its
-    // output goes to /dev/null instead of the raw terminal.
+    // Redirect stderr to /dev/null (or SVEN_LOG_FILE) AFTER setup is done.
+    // From this point on stderr is a sink; all cleanup escape sequences use
+    // stdout instead (see below).  This is the defence against subprocess
+    // output corrupting the TUI: any process that inherits our stderr fd
+    // writes to /dev/null instead of the raw terminal.
     // Tracing is already suppressed via LevelFilter::OFF above; this catches
     // anything else (dynamic libraries, C extensions, etc.).
     #[cfg(unix)]

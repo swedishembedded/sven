@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 use async_trait::async_trait;
+#[cfg(unix)]
+use libc;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use tokio::process::Command;
@@ -96,6 +98,10 @@ impl Tool for RunTerminalCommandTool {
         // the detailed rationale.
         cmd.stdin(Stdio::null());
         cmd.kill_on_drop(true);
+        // Detach from the controlling terminal so the subprocess cannot open
+        // /dev/tty and send escape sequences that corrupt the TUI.
+        #[cfg(unix)]
+        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }

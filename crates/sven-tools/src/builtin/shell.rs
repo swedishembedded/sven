@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 use async_trait::async_trait;
+#[cfg(unix)]
+use libc;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use tokio::process::Command;
@@ -112,6 +114,14 @@ impl Tool for ShellTool {
         // continuing to run and potentially interacting with the terminal.
         cmd.stdin(Stdio::null());
         cmd.kill_on_drop(true);
+        // setsid() in pre_exec creates a new session for the child, detaching
+        // it from the controlling terminal.  Without this, a subprocess can
+        // open /dev/tty directly (bypassing our stdin/stdout/stderr redirects)
+        // and send escape sequences (e.g. DisableMouseCapture) that corrupt the
+        // TUI state.  With setsid() the child has no controlling terminal, so
+        // open("/dev/tty") fails with ENXIO.
+        #[cfg(unix)]
+        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }
