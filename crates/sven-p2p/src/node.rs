@@ -11,10 +11,11 @@ use std::{
 use futures::{future, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade, ConnectedPoint},
+    dcutr,
     identify,
     multiaddr::Protocol,
     noise, relay, request_response,
-    swarm::{dial_opts::DialOpts, DialError, Swarm, SwarmEvent},
+    swarm::{dial_opts::DialOpts, ConnectionId, DialError, Swarm, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
 use tokio::{
@@ -34,6 +35,10 @@ use crate::{
 
 /// Convenience alias used throughout this module.
 type NodeSwarm = Swarm<P2pBehaviour>;
+
+/// How often to re-fetch relay addresses from the discovery backend and
+/// reconnect to any relay that dropped or newly appeared.
+const RELAY_POLL_SECS: u64 = 30;
 
 // ── Public event / command types ──────────────────────────────────────────────
 
@@ -171,7 +176,7 @@ impl P2pNode {
             .map_err(|e| P2pError::Transport(e.to_string()))?;
 
 
-        let relay_peers =
+        let (relay_peers, relay_dial_addrs) =
             fetch_and_dial_relays(&self.config.discovery, &mut swarm).await?;
 
         let state = NodeState {
@@ -185,9 +190,11 @@ impl P2pNode {
             relay_peers,
             connected_relay_addrs: HashMap::new(),
             published_relays: HashSet::new(),
+            relay_dial_addrs,
             dialed: HashSet::new(),
-            failed: HashSet::new(),
+            rejected: HashSet::new(),
             announced_to: HashSet::new(),
+            relay_connection_ids: HashMap::new(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -219,11 +226,18 @@ struct NodeState {
     published_relays: HashSet<PeerId>,
     /// Peers we have already dialled (prevents redundant dials).
     dialed: HashSet<PeerId>,
-    /// Peers whose dial has permanently failed.
-    failed: HashSet<PeerId>,
+    /// Transport dial addresses (no /p2p suffix) per relay peer ID.
+    /// Used to reconnect relays that drop and to detect newly published relays.
+    relay_dial_addrs: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Peers rejected due to a cryptographic peer-ID mismatch (WrongPeerId).
+    /// They have a stale git ref; we skip them until the ref is updated.
+    rejected: HashSet<PeerId>,
     /// Peers we have already sent our `AgentCard` to (prevents duplicate announces
     /// when DCUtR upgrades a relayed connection to a direct one).
     announced_to: HashSet<PeerId>,
+    /// Active relayed `ConnectionId` per application peer.  When DCUtR establishes
+    /// a direct connection we close the relay leg and remove the entry.
+    relay_connection_ids: HashMap<PeerId, ConnectionId>,
 }
 
 impl NodeState {
@@ -237,6 +251,10 @@ impl NodeState {
         let mut poll = interval_at(Instant::now() + self.poll_interval, self.poll_interval);
         poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
+        let relay_interval = Duration::from_secs(RELAY_POLL_SECS);
+        let mut relay_poll = interval_at(Instant::now() + relay_interval, relay_interval);
+        relay_poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 event = swarm.select_next_some() => {
@@ -244,6 +262,9 @@ impl NodeState {
                 }
                 _ = poll.tick() => {
                     self.on_poll_tick(&mut swarm).await;
+                }
+                _ = relay_poll.tick() => {
+                    self.on_relay_poll_tick(&mut swarm).await;
                 }
                 Some(cmd) = cmd_rx.recv() => {
                     if self.on_command(&mut swarm, cmd) { break; }
@@ -264,12 +285,12 @@ impl NodeState {
                 tracing::info!("Listening on {address}");
             }
 
-            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-                self.on_connection_established(swarm, peer_id, &endpoint);
+            SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                self.on_connection_established(swarm, peer_id, connection_id, &endpoint);
             }
 
-            SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
-                self.on_connection_closed(peer_id, num_established);
+            SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
+                self.on_connection_closed(swarm, peer_id, connection_id, num_established);
             }
 
             SwarmEvent::ExternalAddrConfirmed { address } => {
@@ -294,6 +315,10 @@ impl NodeState {
                 on_identify_received(swarm, peer_id, info.listen_addrs);
             }
 
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Dcutr(event)) => {
+                on_dcutr_event(event);
+            }
+
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 self.on_outgoing_error(peer_id, error);
             }
@@ -308,9 +333,11 @@ impl NodeState {
         &mut self,
         swarm: &mut NodeSwarm,
         peer_id: PeerId,
+        connection_id: ConnectionId,
         endpoint: &ConnectedPoint,
     ) {
-        self.emit(P2pEvent::Connected { peer_id, via_relay: endpoint.is_relayed() });
+        let via_relay = endpoint.is_relayed();
+        self.emit(P2pEvent::Connected { peer_id, via_relay });
 
         if self.relay_peers.contains(&peer_id) {
             // Register a circuit-relay listen address for every relay we connect
@@ -324,16 +351,71 @@ impl NodeState {
                     tracing::warn!("relay listen_on failed: {e}");
                 }
             }
-        } else if self.announced_to.insert(peer_id) {
-            swarm.behaviour_mut().task.send_request(
-                &peer_id,
-                P2pRequest::Announce(self.agent_card.clone()),
-            );
+        } else if via_relay {
+            // Application peer reachable only via relay — record the connection
+            // so we can close it once DCUtR successfully upgrades to direct.
+            self.relay_connection_ids.insert(peer_id, connection_id);
+            if self.announced_to.insert(peer_id) {
+                swarm.behaviour_mut().task.send_request(
+                    &peer_id,
+                    P2pRequest::Announce(self.agent_card.clone()),
+                );
+            }
+        } else {
+            // Direct (non-relayed) connection — if DCUtR just upgraded a relay
+            // connection, close the relay leg now that we have a better path.
+            if let Some(relay_conn) = self.relay_connection_ids.remove(&peer_id) {
+                tracing::info!(
+                    "Direct connection to {peer_id} established;                      closing relayed fallback connection"
+                );
+                swarm.close_connection(relay_conn);
+            }
+            if self.announced_to.insert(peer_id) {
+                swarm.behaviour_mut().task.send_request(
+                    &peer_id,
+                    P2pRequest::Announce(self.agent_card.clone()),
+                );
+            }
         }
     }
 
-    fn on_connection_closed(&mut self, peer_id: PeerId, num_established: u32) {
-        if num_established == 0 {
+    fn on_connection_closed(
+        &mut self,
+        swarm: &mut NodeSwarm,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+        num_established: u32,
+    ) {
+        // Keep relay_connection_ids consistent when a relayed connection
+        // closes externally (circuit expired, relay restarted, etc.).
+        if let Some(stored) = self.relay_connection_ids.get(&peer_id) {
+            if *stored == connection_id {
+                self.relay_connection_ids.remove(&peer_id);
+            }
+        }
+
+        if num_established > 0 {
+            return;
+        }
+
+        if self.relay_peers.contains(&peer_id) {
+            // A relay server lost all connections — clean up dependent state and
+            // immediately attempt a reconnect.  The relay_poll will keep retrying
+            // at RELAY_POLL_SECS cadence if the first attempt fails.
+            tracing::info!("Relay {peer_id} disconnected; attempting reconnect");
+            self.connected_relay_addrs.remove(&peer_id);
+            self.published_relays.remove(&peer_id);
+            if let Some(addrs) = self.relay_dial_addrs.get(&peer_id).cloned() {
+                if let Err(e) = swarm
+                    .dial(DialOpts::peer_id(peer_id).addresses(addrs).build())
+                {
+                    tracing::debug!("Immediate relay redial {peer_id}: {e}");
+                }
+            }
+        } else {
+            // Application peer fully disconnected — allow the peer poll to
+            // rediscover and re-dial them if they reappear in the registry.
+            self.dialed.remove(&peer_id);
             self.announced_to.remove(&peer_id);
             self.emit(P2pEvent::Disconnected { peer_id });
         }
@@ -454,38 +536,86 @@ impl NodeState {
     fn on_outgoing_error(&mut self, peer_id: Option<PeerId>, error: DialError) {
         if let DialError::WrongPeerId { obtained, .. } = &error {
             if peer_id.as_ref().map_or(false, |p| self.relay_peers.contains(p)) {
-                // Stale git ref: the relay likely restarted with a different keypair.
-                // The current relay ref will have the correct peer ID; this is leftover.
-                // libp2p correctly rejected the connection; skipping this ref.
+                // Relay restarted with a different keypair — stale git ref.
+                // The relay poll will redial using freshly-fetched addresses.
                 tracing::warn!(
-                    "Stale relay ref: git entry {:?} does not match relay \
-                     identity {obtained} (relay may have restarted). \
-                     Skipping stale ref.",
+                    "Stale relay ref: expected {:?} but relay presented {obtained};                      waiting for updated git ref.",
                     peer_id
                 );
             } else {
-                tracing::warn!("WrongPeerId from {peer_id:?}: {error}");
-                self.mark_failed(peer_id);
+                // Cryptographic mismatch for an app peer — the git ref points to
+                // a peer that has rotated its key.  Skip until the ref is updated.
+                tracing::warn!("WrongPeerId from app peer {peer_id:?}: {error}");
+                if let Some(pid) = peer_id {
+                    self.rejected.insert(pid);
+                    self.dialed.remove(&pid);
+                }
             }
+        } else if peer_id.as_ref().map_or(false, |p| self.relay_peers.contains(p)) {
+            // Relay dial failure (relay may be temporarily down).
+            // The relay_poll background timer will retry automatically.
+            tracing::debug!("Relay {peer_id:?} unreachable: {error}");
         } else {
-            tracing::warn!("Connection error to {peer_id:?}: {error}");
-            self.mark_failed(peer_id);
-        }
-    }
-
-    fn mark_failed(&mut self, peer_id: Option<PeerId>) {
-        if let Some(pid) = peer_id {
-            if self.failed.insert(pid) {
+            // Transient error to an app peer — remove from dialed so the next
+            // peer poll can attempt a fresh dial if the peer is still in git.
+            tracing::debug!("Connection error to {peer_id:?}: {error}");
+            if let Some(pid) = peer_id {
                 self.dialed.remove(&pid);
             }
         }
     }
-
-    // ── Periodic discovery poll ──────────────────────────────────────────────
+    // ── Periodic discovery polls ─────────────────────────────────────────────
 
     async fn on_poll_tick(&mut self, swarm: &mut NodeSwarm) {
         if !self.published_relays.is_empty() {
             self.fetch_and_dial_peers(swarm).await;
+        }
+    }
+
+    /// Runs every `RELAY_POLL_SECS` seconds.
+    ///
+    /// 1. Re-fetches relay addresses from the discovery backend so that newly
+    ///    published relays are picked up automatically.
+    /// 2. Re-dials every known relay that is not currently connected so that
+    ///    transient relay outages are recovered from without user intervention.
+    async fn on_relay_poll_tick(&mut self, swarm: &mut NodeSwarm) {
+        let disc = Arc::clone(&self.discovery);
+        let relay_addrs = match tokio::task::spawn_blocking(move || disc.fetch_relay_addrs())
+            .await
+        {
+            Ok(Ok(addrs)) => addrs,
+            Ok(Err(e)) => { tracing::debug!("relay poll fetch error: {e}"); return; }
+            Err(e) => { tracing::debug!("relay poll spawn error: {e}"); return; }
+        };
+
+        // Build per-relay transport addresses (strip /p2p suffix).
+        let mut fresh: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
+        for addr in &relay_addrs {
+            if let Some(pid) = peer_id_from_addr(addr) {
+                let mut t = addr.clone();
+                if matches!(t.iter().last(), Some(Protocol::P2p(_))) { t.pop(); }
+                fresh.entry(pid).or_default().push(t);
+            }
+        }
+
+        // Incorporate newly discovered relays.
+        for (pid, addrs) in &fresh {
+            if self.relay_peers.insert(*pid) {
+                tracing::info!("Discovered new relay {pid}");
+            }
+            self.relay_dial_addrs.insert(*pid, addrs.clone());
+        }
+
+        // Re-dial every relay we know about but are not currently connected to.
+        for (pid, addrs) in &self.relay_dial_addrs.clone() {
+            if !self.connected_relay_addrs.contains_key(pid) {
+                tracing::info!("Re-dialing relay {pid}");
+                if let Err(e) = swarm
+                    .dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build())
+                {
+                    tracing::debug!("Relay redial {pid}: {e}");
+                }
+            }
         }
     }
 
@@ -536,7 +666,7 @@ impl NodeState {
 
     fn try_dial_peer(&mut self, swarm: &mut NodeSwarm, info: PeerInfo) {
         if info.peer_id == self.local_peer_id { return; }
-        if self.failed.contains(&info.peer_id) { return; }
+        if self.rejected.contains(&info.peer_id) { return; }
         // Only dial peers whose published relay is one we are connected to.
         if peer_id_from_addr(&info.relay_addr)
             .map_or(true, |r| !self.relay_peers.contains(&r))
@@ -645,7 +775,7 @@ fn build_node_swarm(
 async fn fetch_and_dial_relays(
     discovery: &Arc<dyn DiscoveryProvider>,
     swarm: &mut NodeSwarm,
-) -> Result<HashSet<PeerId>, P2pError> {
+) -> Result<(HashSet<PeerId>, HashMap<PeerId, Vec<Multiaddr>>), P2pError> {
     let disc = Arc::clone(discovery);
     let relay_addrs = tokio::task::spawn_blocking(move || disc.fetch_relay_addrs())
         .await
@@ -658,26 +788,27 @@ async fn fetch_and_dial_relays(
     }
 
     // Group transport addresses (strip /p2p suffix) by relay peer ID so we can
-    // pass all addresses for a given relay to a single DialOpts call.
-    let mut relay_addresses: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
+    // pass all addresses for a given relay to a single DialOpts call and so that
+    // NodeState can use them for reconnection later.
+    let mut relay_dial_addrs: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
     for addr in &relay_addrs {
         if let Some(pid) = peer_id_from_addr(addr) {
             let mut t = addr.clone();
             if matches!(t.iter().last(), Some(Protocol::P2p(_))) {
                 t.pop();
             }
-            relay_addresses.entry(pid).or_default().push(t);
+            relay_dial_addrs.entry(pid).or_default().push(t);
         }
     }
 
-    for (pid, addrs) in &relay_addresses {
+    for (pid, addrs) in &relay_dial_addrs {
         tracing::info!("Dialing relay {pid} with {} address(es)", addrs.len());
         swarm
             .dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build())
             .map_err(|e| P2pError::Dial(format!("dial relay {pid}: {e}")))?;
     }
 
-    Ok(relay_peers)
+    Ok((relay_peers, relay_dial_addrs))
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -719,5 +850,25 @@ fn mk_circuit_addr(relay_addr: &Multiaddr, target: PeerId) -> Multiaddr {
 fn on_identify_received(swarm: &mut NodeSwarm, peer_id: PeerId, addrs: Vec<Multiaddr>) {
     for addr in addrs {
         swarm.add_peer_address(peer_id, addr);
+    }
+}
+
+/// Log DCUtR hole-punching outcome.
+///
+/// DCUtR fires one event per upgrade attempt: `result` is `Ok(ConnectionId)`
+/// on success (the new direct connection) or `Err` if all attempts failed.
+/// The relay connection is closed separately in `on_connection_established`
+/// once the direct `ConnectionEstablished` event fires.
+fn on_dcutr_event(event: dcutr::Event) {
+    let dcutr::Event { remote_peer_id, result } = event;
+    match result {
+        Ok(_conn) => {
+            tracing::info!("DCUtR: direct connection to {remote_peer_id} established");
+        }
+        Err(e) => {
+            tracing::debug!(
+                "DCUtR: hole-punch to {remote_peer_id} failed ({e});                  relay connection remains"
+            );
+        }
     }
 }
