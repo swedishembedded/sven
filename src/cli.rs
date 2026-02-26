@@ -51,12 +51,6 @@ pub struct Cli {
     #[arg(long, short = 'f')]
     pub file: Option<PathBuf>,
 
-    /// Conversation file mode: load history from file, execute the trailing
-    /// ## User section, and append results back to the same file.
-    /// Requires --file.
-    #[arg(long)]
-    pub conversation: bool,
-
     /// Resume a saved conversation.
     /// Supply an ID (or unique prefix / file path) to resume directly.
     /// Omit the ID to pick interactively with fzf.
@@ -116,13 +110,30 @@ pub struct Cli {
     #[arg(long, short = 'o', value_name = "PATH")]
     pub output_last_message: Option<PathBuf>,
 
-    /// JSONL conversation file: load existing conversation from file on startup,
-    /// and update the file after every turn or message edit.
+    /// Load conversation history from a JSONL file before running.
+    /// The file is parsed as a full-fidelity JSONL conversation; the history
+    /// seeds the agent and any workflow steps run on top of it.
+    /// Cannot be combined with --jsonl.
+    #[arg(long, value_name = "PATH", conflicts_with = "jsonl")]
+    pub load_jsonl: Option<PathBuf>,
+
+    /// Write the output JSONL to this path after the run.
+    /// If omitted, output goes to the auto-log path (.sven/logs/<timestamp>.jsonl).
+    /// Cannot be combined with --jsonl.
+    #[arg(long, value_name = "PATH", conflicts_with = "jsonl")]
+    pub output_jsonl: Option<PathBuf>,
+
+    /// Combined load + output JSONL: equivalent to --load-jsonl PATH --output-jsonl PATH.
+    /// Loads an existing conversation from PATH, runs, and writes back to the same file.
+    /// In TUI mode the file is kept in sync after every turn.
     /// If the file does not exist it is created automatically.
-    /// In headless mode a pending user message must already be in the file, or
-    /// supply one as a positional argument.
     #[arg(long, value_name = "PATH")]
     pub jsonl: Option<PathBuf>,
+
+    /// Replay all tool calls in the loaded JSONL conversation with fresh results
+    /// before submitting to the model.  Requires --load-jsonl or --jsonl.
+    #[arg(long)]
+    pub rerun_toolcalls: bool,
 
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
@@ -185,10 +196,21 @@ pub enum Commands {
 
 impl Cli {
     /// Returns true if the run should be headless (CI mode).
+    /// Headless is triggered by --headless or when stdin is not a terminal.
+    /// Note: --file no longer forces headless; in TUI mode --file loads the
+    /// workflow into the message queue so the user can review steps before sending.
     pub fn is_headless(&self) -> bool {
-        self.headless
-            || self.file.is_some()
-            || !std::io::stdin().is_terminal()
+        self.headless || !std::io::stdin().is_terminal()
+    }
+
+    /// Resolve the effective JSONL input path: --load-jsonl takes priority, then --jsonl.
+    pub fn effective_load_jsonl(&self) -> Option<&PathBuf> {
+        self.load_jsonl.as_ref().or(self.jsonl.as_ref())
+    }
+
+    /// Resolve the effective JSONL output path: --output-jsonl takes priority, then --jsonl.
+    pub fn effective_output_jsonl(&self) -> Option<&PathBuf> {
+        self.output_jsonl.as_ref().or(self.jsonl.as_ref())
     }
 }
 

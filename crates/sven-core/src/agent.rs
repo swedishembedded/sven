@@ -73,6 +73,13 @@ impl Agent {
 
     /// Replace the model provider for subsequent completions.
     ///
+    /// Returns a shared reference to the tool registry.
+    /// Used by the CI runner to execute tool calls outside the normal agent loop
+    /// (e.g. `--rerun-toolcalls`).
+    pub fn tools(&self) -> &Arc<ToolRegistry> {
+        &self.tools
+    }
+
     /// Used by the CI runner to switch models mid-workflow (per-step model
     /// overrides).  The session history is preserved.
     pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {

@@ -14,13 +14,13 @@ use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 use cli::{Cli, Commands, OutputFormatArg};
 use clap::Parser;
 use sven_ci::{
-    CiOptions, CiRunner, ConversationOptions, ConversationRunner,
+    CiOptions, CiRunner,
     OutputFormat, find_project_root,
 };
+use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
-use sven_model::Message as SvenMessage;
-use sven_tui::{App, AppOptions};
+use sven_tui::{App, AppOptions, ModelDirective, QueuedMessage};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -89,21 +89,19 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
 
     if let Some(fm) = &frontmatter {
         println!("Frontmatter: OK");
-        if let Some(m) = &fm.mode {
-            println!("  mode: {m}");
-        }
-        if let Some(m) = &fm.model {
-            println!("  model: {m}");
-        }
-        if let Some(t) = fm.step_timeout_secs {
-            println!("  step_timeout_secs: {t}");
-        }
-        if let Some(t) = fm.run_timeout_secs {
-            println!("  run_timeout_secs: {t}");
+        if let Some(models) = &fm.models {
+            println!("  models ({}):", models.len());
+            let mut pairs: Vec<_> = models.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            for (mode, model) in pairs {
+                println!("    {mode}: {model}");
+            }
         }
         if let Some(vars) = &fm.vars {
             println!("  vars ({}):", vars.len());
-            for (k, v) in vars {
+            let mut pairs: Vec<_> = vars.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            for (k, v) in pairs {
                 println!("    {k} = {v}");
             }
         }
@@ -390,48 +388,8 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
 }
 
 async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
-    // ── Detect project root (used in all CI modes) ───────────────────────────
+    // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
-
-    // ── --jsonl conversation file ─────────────────────────────────────────────
-    if let Some(jsonl_path) = &cli.jsonl {
-        let file_path = jsonl_path.clone();
-
-        // Create parent directories and the file if it does not exist yet.
-        if !file_path.exists() {
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating parent dirs for {}", file_path.display()))?;
-            }
-            std::fs::write(&file_path, "")
-                .with_context(|| format!("creating {}", file_path.display()))?;
-        }
-
-        // If a positional prompt was given, append it as a JSONL user message.
-        if let Some(prompt) = &cli.prompt {
-            let user_msg = SvenMessage::user(prompt.trim());
-            let line = serde_json::to_string(&user_msg).context("serializing user message")?;
-            let mut content = std::fs::read_to_string(&file_path)
-                .with_context(|| format!("reading {}", file_path.display()))?;
-            if !content.is_empty() && !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(&line);
-            content.push('\n');
-            std::fs::write(&file_path, &content)
-                .with_context(|| format!("appending user message to {}", file_path.display()))?;
-        }
-
-        let content = std::fs::read_to_string(&file_path)
-            .with_context(|| format!("reading {}", file_path.display()))?;
-        let opts = ConversationOptions {
-            mode: cli.mode,
-            model_override: cli.model,
-            file_path,
-            content,
-        };
-        return ConversationRunner::new(config).run(opts).await;
-    }
 
     // ── --resume in headless mode ────────────────────────────────────────────
     if let Some(id) = &cli.resume {
@@ -454,6 +412,8 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
                 .with_context(|| format!("appending user message to {}", file_path.display()))?;
         }
 
+        // Legacy: resume via ConversationRunner for markdown conversation files.
+        use sven_ci::{ConversationOptions, ConversationRunner};
         let content = std::fs::read_to_string(&file_path)
             .with_context(|| format!("reading {}", file_path.display()))?;
         let opts = ConversationOptions {
@@ -465,32 +425,33 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         return ConversationRunner::new(config).run(opts).await;
     }
 
-    // ── Conversation file mode ───────────────────────────────────────────────
-    // Trigger when --conversation is set, OR when --file points to a .jsonl file
-    // (JSONL files are conversation files, not workflow files).
+    // ── Resolve effective JSONL I/O paths ────────────────────────────────────
+    // --file pointing to a .jsonl is treated as --load-jsonl automatically.
     let file_is_jsonl = cli.file.as_ref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("jsonl"))
         .unwrap_or(false);
 
-    if cli.conversation || file_is_jsonl {
-        let file_path = cli.file.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("--conversation requires --file <path>"))?
-            .clone();
-        let content = std::fs::read_to_string(&file_path)
-            .with_context(|| format!("reading conversation file {}", file_path.display()))?;
-        let opts = ConversationOptions {
-            mode: cli.mode,
-            model_override: cli.model,
-            file_path,
-            content,
-        };
-        return ConversationRunner::new(config).run(opts).await;
-    }
+    let load_jsonl = cli.effective_load_jsonl().cloned()
+        .or_else(|| if file_is_jsonl { cli.file.clone() } else { None });
 
-    // ── Standard CI mode ─────────────────────────────────────────────────────
-    let input = if let Some(path) = &cli.file {
+    let output_jsonl = cli.effective_output_jsonl().cloned();
+
+    // ── Read workflow input ──────────────────────────────────────────────────
+    // When --file points to a .jsonl, there is no separate workflow file;
+    // we read from stdin (or use an empty input) for the new prompt.
+    let input = if file_is_jsonl {
+        // The file is a JSONL conversation, not a workflow.  New workflow
+        // input (if any) comes from stdin.
+        if !is_stdin_tty() {
+            let mut buf = String::new();
+            io::stdin().read_to_string(&mut buf).context("reading stdin")?;
+            buf
+        } else {
+            String::new()
+        }
+    } else if let Some(path) = &cli.file {
         std::fs::read_to_string(path)
             .with_context(|| format!("reading input file {}", path.display()))?
     } else if !is_stdin_tty() {
@@ -501,7 +462,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         String::new()
     };
 
-    // ── Parse template variables from --var flags ────────────────────────────
+    // ── Parse template variables ──────────────────────────────────────────────
     let mut vars: HashMap<String, String> = HashMap::new();
     for spec in &cli.vars {
         if let Some((k, v)) = sven_ci::template::parse_var(spec) {
@@ -511,7 +472,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         }
     }
 
-    // ── Map CLI output format to OutputFormat ────────────────────────────────
+    // ── Map CLI output format ─────────────────────────────────────────────────
     let output_format = match cli.output_format {
         OutputFormatArg::Conversation => OutputFormat::Conversation,
         OutputFormatArg::Json => OutputFormat::Json,
@@ -534,6 +495,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         system_prompt_file: cli.system_prompt_file,
         append_system_prompt: cli.append_system_prompt,
         trace_level: cli.verbose,
+        load_jsonl,
+        output_jsonl,
+        rerun_toolcalls: cli.rerun_toolcalls,
     };
 
     CiRunner::new(config).run(opts).await
@@ -676,13 +640,70 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         std::process::exit(1);
     });
 
+    // ── Load workflow into initial TUI queue ─────────────────────────────────
+    // If --file points to a markdown workflow, parse the steps and push them
+    // into the TUI queue so the user can review them before they are sent.
+    // The file must NOT be a JSONL file; JSONL is handled via --load-jsonl.
+    let file_is_jsonl = cli.file.as_ref()
+        .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("jsonl"))
+        .unwrap_or(false);
+
+    let initial_queue: Vec<QueuedMessage> = if let Some(path) = &cli.file {
+        if !file_is_jsonl {
+            match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        let (fm, body) = parse_frontmatter(&content);
+                        let _ = fm; // Frontmatter used by runner, not TUI queue loader
+                        let config_ref = config.clone();
+                        let mut wf = parse_workflow(body);
+                        let mut q = Vec::new();
+                        while let Some(step) = wf.steps.pop() {
+                            // Resolve per-step model string into a ModelDirective
+                            let model_transition = step.options.model.as_deref().map(|name| {
+                                let cfg = sven_model::resolve_model_from_config(&config_ref, name);
+                                ModelDirective::SwitchTo(cfg)
+                            });
+                            // Resolve per-step mode string into an AgentMode
+                            let mode_transition = step.options.mode.as_deref().and_then(|m| {
+                                match m {
+                                    "research" => Some(AgentMode::Research),
+                                    "plan"     => Some(AgentMode::Plan),
+                                    "agent"    => Some(AgentMode::Agent),
+                                    _          => None,
+                                }
+                            });
+                            q.push(QueuedMessage { content: step.content, model_transition, mode_transition });
+                        }
+                        q
+                    }
+                Err(e) => {
+                    eprintln!("[sven:warn] Could not read workflow file {}: {e}", path.display());
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Resolve JSONL paths for TUI: --load-jsonl feeds initial history; output
+    // goes to --output-jsonl (or --jsonl which combines both).
+    let jsonl_load_path = cli.effective_load_jsonl().cloned();
+    let jsonl_save_path = cli.effective_output_jsonl().cloned();
+
     let opts = AppOptions {
         mode: cli.mode,
         initial_prompt: cli.prompt,
         initial_history,
         no_nvim: !cli.nvim,
         model_override: cli.model,
-        jsonl_path: cli.jsonl,
+        jsonl_path: jsonl_save_path,
+        jsonl_load_path,
+        initial_queue,
     };
 
     let app = App::new(config, opts);

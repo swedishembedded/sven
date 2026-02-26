@@ -11,10 +11,9 @@ use std::collections::HashMap;
 /// ```markdown
 /// ---
 /// title: My Workflow
-/// mode: agent
-/// model: anthropic/claude-opus-4-5
-/// step_timeout_secs: 300
-/// run_timeout_secs: 600
+/// models:
+///   agent: claude-haiku-4-5
+///   research: claude-opus-4-5
 /// vars:
 ///   branch: main
 ///   pr_number: "42"
@@ -23,19 +22,30 @@ use std::collections::HashMap;
 /// ## Step one
 /// ...
 /// ```
+///
+/// The default agent mode is `agent` and the default model is `claude-haiku-4-5`.
+/// Per-mode model overrides (from the `models:` map) take effect when a step
+/// uses `<!-- sven: mode=research -->` or similar inline directives.
+/// CLI `--model` always takes the highest priority.
+///
+/// Fields removed compared to the original schema (use CLI flags or config instead):
+/// - `mode` (was: override default agent mode)
+/// - `model` (was: bare model override — use `models:` map now)
+/// - `step_timeout_secs` (was: per-step timeout)
+/// - `run_timeout_secs` (was: total run timeout)
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowMetadata {
     /// Human-readable title (also used as conversation title in output)
     pub title: Option<String>,
-    /// Override default agent mode ("research" | "plan" | "agent")
-    pub mode: Option<String>,
-    /// Override model ("gpt-4o", "anthropic/claude-opus-4-5", etc.)
-    pub model: Option<String>,
-    /// Per-step timeout in seconds (0 = no limit)
-    pub step_timeout_secs: Option<u64>,
-    /// Total run timeout in seconds (0 = no limit)
-    pub run_timeout_secs: Option<u64>,
-    /// Template variables, substituted as `{{key}}` in step content
+    /// Per-mode model map: `mode_name -> model_id`.
+    /// For example `{"agent": "claude-haiku-4-5", "research": "claude-opus-4-5"}`.
+    /// When a step switches to a mode that has an entry here, that model is
+    /// used unless an explicit `--model` CLI flag or inline `model=` step tag
+    /// overrides it.
+    pub models: Option<HashMap<String, String>>,
+    /// Template variables, substituted as `{{key}}` in step content.
+    /// Override with CLI `--var KEY=VALUE`; environment variables provide a
+    /// final fallback (see `apply_template`).
     pub vars: Option<HashMap<String, String>>,
 }
 
@@ -73,48 +83,54 @@ pub fn parse_frontmatter(content: &str) -> (Option<WorkflowMetadata>, &str) {
     }
 }
 
-/// Minimal YAML-subset parser that handles the specific fields used in
-/// workflow frontmatter.  Supports:
+/// Minimal YAML-subset parser supporting:
 /// - Top-level string fields: `key: value` (with optional quotes)
-/// - Top-level integer fields: `key: 123`
 /// - A `vars:` section with indented `  key: value` entries
+/// - A `models:` section with indented `  mode: model_id` entries
 fn parse_simple_yaml(src: &str) -> Option<WorkflowMetadata> {
     let mut meta = WorkflowMetadata::default();
-    let mut in_vars = false;
+    // Which top-level section we are currently inside ("vars" | "models" | "")
+    let mut current_section = "";
     let mut vars: HashMap<String, String> = HashMap::new();
+    let mut models: HashMap<String, String> = HashMap::new();
 
     for line in src.lines() {
-        // Skip comment lines and blank lines
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
             continue;
         }
 
-        // Indented line inside vars: section
-        if in_vars {
-            if line.starts_with(' ') || line.starts_with('\t') {
-                if let Some((k, v)) = split_kv(line.trim()) {
-                    vars.insert(k, v);
+        // Indented line: belongs to the current section
+        if !current_section.is_empty() && (line.starts_with(' ') || line.starts_with('\t')) {
+            if let Some((k, v)) = split_kv(line.trim()) {
+                match current_section {
+                    "vars"   => { vars.insert(k, v); }
+                    "models" => { models.insert(k, v); }
+                    _        => {}
                 }
-                continue;
-            } else {
-                // No longer indented — leave vars section
-                in_vars = false;
             }
+            continue;
+        } else if line.starts_with(' ') || line.starts_with('\t') {
+            // Indented but no active section — ignore
+            continue;
+        } else {
+            // Non-indented line: close any open section
+            current_section = "";
         }
 
         if let Some((key, val)) = split_kv(line) {
             match key.as_str() {
                 "title" => meta.title = Some(val),
-                "mode" => meta.mode = Some(val),
-                "model" => meta.model = Some(val),
-                "step_timeout_secs" => meta.step_timeout_secs = val.parse().ok(),
-                "run_timeout_secs" => meta.run_timeout_secs = val.parse().ok(),
                 "vars" => {
-                    // `vars:` line with no value — sub-section follows
                     if val.is_empty() {
-                        in_vars = true;
+                        current_section = "vars";
                     }
                 }
+                "models" => {
+                    if val.is_empty() {
+                        current_section = "models";
+                    }
+                }
+                // Silently ignore unknown / removed keys for forward compat
                 _ => {}
             }
         }
@@ -123,13 +139,16 @@ fn parse_simple_yaml(src: &str) -> Option<WorkflowMetadata> {
     if !vars.is_empty() {
         meta.vars = Some(vars);
     }
+    if !models.is_empty() {
+        meta.models = Some(models);
+    }
 
     Some(meta)
 }
 
 /// Split `key: value` into `(key, value)`.  Handles quoted values and
 /// strips surrounding whitespace / quotes.  Returns `None` if there is no
-/// `: ` separator.
+/// `:` separator or if the key is empty.
 fn split_kv(s: &str) -> Option<(String, String)> {
     let colon = s.find(':')?;
     let key = s[..colon].trim().to_string();
@@ -168,21 +187,19 @@ mod tests {
 
     #[test]
     fn well_formed_frontmatter_is_parsed() {
-        let md = "---\ntitle: My Workflow\nmode: agent\n---\n\n## Step\nDo it.";
+        let md = "---\ntitle: My Workflow\n---\n\n## Step\nDo it.";
         let (meta, rest) = parse_frontmatter(md);
         let meta = meta.expect("frontmatter should be parsed");
         assert_eq!(meta.title.as_deref(), Some("My Workflow"));
-        assert_eq!(meta.mode.as_deref(), Some("agent"));
         assert!(rest.contains("## Step"));
     }
 
     #[test]
     fn frontmatter_with_quoted_values() {
-        let md = "---\ntitle: \"Quoted Title\"\nmodel: 'anthropic/claude-3'\n---\n## s\ngo.";
+        let md = "---\ntitle: \"Quoted Title\"\n---\n## s\ngo.";
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
         assert_eq!(m.title.as_deref(), Some("Quoted Title"));
-        assert_eq!(m.model.as_deref(), Some("anthropic/claude-3"));
     }
 
     #[test]
@@ -195,12 +212,22 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_timeouts_are_parsed() {
-        let md = "---\nstep_timeout_secs: 120\nrun_timeout_secs: 600\n---\n## s\ngo.";
+    fn frontmatter_with_models_map() {
+        let md = "---\nmodels:\n  agent: claude-haiku-4-5\n  research: claude-opus-4-5\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let models = meta.unwrap().models.unwrap();
+        assert_eq!(models.get("agent").map(String::as_str), Some("claude-haiku-4-5"));
+        assert_eq!(models.get("research").map(String::as_str), Some("claude-opus-4-5"));
+    }
+
+    #[test]
+    fn frontmatter_vars_and_models_together() {
+        let md = "---\ntitle: Both\nmodels:\n  agent: haiku\nvars:\n  key: value\n---\n## s\ngo.";
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
-        assert_eq!(m.step_timeout_secs, Some(120));
-        assert_eq!(m.run_timeout_secs, Some(600));
+        assert_eq!(m.title.as_deref(), Some("Both"));
+        assert_eq!(m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str), Some("haiku"));
+        assert_eq!(m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str), Some("value"));
     }
 
     #[test]
@@ -209,6 +236,78 @@ mod tests {
         let (meta, rest) = parse_frontmatter(md);
         assert!(meta.is_none());
         assert_eq!(rest, md);
+    }
+
+    #[test]
+    fn models_then_vars_both_parsed() {
+        // Section boundary: models: followed by vars:
+        let md = "---\nmodels:\n  agent: haiku\nvars:\n  key: val\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let m = meta.unwrap();
+        assert_eq!(
+            m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str),
+            Some("haiku")
+        );
+        assert_eq!(
+            m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str),
+            Some("val")
+        );
+    }
+
+    #[test]
+    fn vars_then_models_both_parsed() {
+        // Reversed order to verify section-close-on-non-indent works
+        let md = "---\nvars:\n  key: val\nmodels:\n  agent: haiku\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let m = meta.unwrap();
+        assert_eq!(
+            m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str),
+            Some("val")
+        );
+        assert_eq!(
+            m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str),
+            Some("haiku")
+        );
+    }
+
+    #[test]
+    fn models_with_inline_value_is_ignored() {
+        // `models: something` on a single line (not a sub-section) should be ignored
+        let md = "---\nmodels: invalid-inline-value\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let m = meta.unwrap();
+        assert!(m.models.is_none(), "inline models: value should be ignored");
+    }
+
+    #[test]
+    fn multiple_modes_in_models_map() {
+        let md = "---\nmodels:\n  agent: claude-haiku-4-5\n  research: claude-opus-4-5\n  plan: claude-sonnet-4-5\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let models = meta.unwrap().models.unwrap();
+        assert_eq!(models.get("agent").map(String::as_str), Some("claude-haiku-4-5"));
+        assert_eq!(models.get("research").map(String::as_str), Some("claude-opus-4-5"));
+        assert_eq!(models.get("plan").map(String::as_str), Some("claude-sonnet-4-5"));
+    }
+
+    #[test]
+    fn remaining_markdown_is_correct() {
+        // Verify the body split is exact — no bytes dropped or duplicated
+        let md = "---\ntitle: T\n---\n# Heading\nContent here.";
+        let (meta, rest) = parse_frontmatter(md);
+        assert!(meta.is_some());
+        assert_eq!(rest, "# Heading\nContent here.");
+    }
+
+    #[test]
+    fn removed_fields_are_ignored_gracefully() {
+        // Old workflows may still have mode/model/timeout fields; they should
+        // be parsed without error and silently dropped.
+        let md = "---\ntitle: Legacy\nmode: agent\nmodel: claude-opus-4-5\nstep_timeout_secs: 120\nrun_timeout_secs: 600\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let m = meta.unwrap();
+        assert_eq!(m.title.as_deref(), Some("Legacy"));
+        // Old fields are gone — not accessible
+        assert!(m.models.is_none());
     }
 
     #[test]

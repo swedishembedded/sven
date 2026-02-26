@@ -10,6 +10,7 @@ sven-input     = { path = "../sven-input" }
 sven-tools     = { path = "../sven-tools" }
 sven-core      = { path = "../sven-core" }
 sven-bootstrap = { path = "../sven-bootstrap" }
+sven-runtime   = { path = "../sven-runtime" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }

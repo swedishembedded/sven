@@ -18,4 +18,6 @@ futures        = { workspace = true }
 tracing        = { workspace = true }
 
 [dev-dependencies]
-sven-input  = { path = "../sven-input" }
+sven-input   = { path = "../sven-input" }
+sven-tools   = { path = "../sven-tools" }
+async-trait  = { workspace = true }

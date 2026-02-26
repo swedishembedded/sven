@@ -13,31 +13,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Walk up from the current directory looking for a `.sven` subdirectory.
-/// Returns `{sven_dir}/logs/<YYYY-MM-DD_HH-MM-SS>.jsonl` when found.
-/// Creates the `logs/` subdirectory if it does not yet exist.
-fn resolve_auto_log_path() -> Option<PathBuf> {
-    let start = std::env::current_dir().ok()?;
-    let mut current: &std::path::Path = &start;
-    loop {
-        let candidate = current.join(".sven");
-        if candidate.is_dir() {
-            let logs_dir = candidate.join("logs");
-            if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-                tracing::warn!("could not create .sven/logs: {e}");
-                return None;
-            }
-            let now = chrono::Local::now();
-            let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".jsonl";
-            return Some(logs_dir.join(filename));
-        }
-        match current.parent() {
-            Some(p) => current = p,
-            None => break,
-        }
-    }
-    None
-}
+// resolve_auto_log_path is provided by sven-runtime and re-exported below.
+use sven_runtime::resolve_auto_log_path;
 
 use crossterm::event::EventStream;
 use futures::StreamExt;
@@ -131,10 +108,18 @@ pub struct AppOptions {
     /// Supports the same syntax as the CI runner: `"provider/name"`,
     /// bare provider id, bare model name, or a key defined in `config.providers`.
     pub model_override: Option<String>,
-    /// JSONL conversation file: if set, the existing conversation is loaded from
-    /// this file on startup, and the file is overwritten after every turn or
-    /// message edit to keep it in sync with the in-memory conversation.
+    /// JSONL output path: if set, the conversation is written to this file
+    /// after every turn.  When `jsonl_load_path` is also set, history is first
+    /// loaded from `jsonl_load_path` and then new turns are appended here.
     pub jsonl_path: Option<PathBuf>,
+    /// JSONL input path: if set, the existing conversation is loaded from this
+    /// file on startup and seeds the agent history.  May differ from `jsonl_path`
+    /// when `--load-jsonl` and `--output-jsonl` point to different files.
+    pub jsonl_load_path: Option<PathBuf>,
+    /// Initial message queue populated from a `-f workflow.md` file in TUI mode.
+    /// Messages are pushed into the queue in order so the user can review and
+    /// edit them before they are sent.
+    pub initial_queue: Vec<QueuedMessage>,
 }
 
 /// Which pane currently holds keyboard focus.
@@ -386,12 +371,18 @@ impl App {
             nvim_submit_notify: None,
             nvim_quit_notify: None,
             history_path,
-            jsonl_path: opts.jsonl_path.or_else(resolve_auto_log_path),
+            jsonl_path: opts.jsonl_path
+                .or_else(|| opts.jsonl_load_path.clone())
+                .or_else(resolve_auto_log_path),
             no_nvim: opts.no_nvim,
             auto_scroll: true,
             last_input_pane: Rect::default(),
             needs_terminal_recover: false,
         };
+        // Seed the message queue with initial workflow steps (from --file in TUI mode).
+        for qm in opts.initial_queue {
+            app.queued.push_back(qm);
+        }
         if let Some(prompt) = opts.initial_prompt {
             app.queued.push_back(QueuedMessage::plain(prompt));
         }
@@ -748,6 +739,8 @@ impl App {
             no_nvim: true,
             model_override: None,
             jsonl_path: None,
+            jsonl_load_path: None,
+            initial_queue: Vec::new(),
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);
