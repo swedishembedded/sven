@@ -75,7 +75,17 @@ impl Tool for FsTool {
                 }
             }
             "write" => {
-                let content = call.args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let content = match call.args.get("content").and_then(|v| v.as_str()) {
+                    Some(c) => c,
+                    None => return ToolOutput::err(
+                        &call.id,
+                        "write requires a 'content' field but it is missing. \
+                         This usually means the JSON was truncated because the content was too \
+                         large to fit in a single generation. Use the shell tool with a heredoc \
+                         to write large files: shell({command: \"cat > path/to/file << 'EOF'\\n...\\nEOF\"}).",
+                    ),
+                };
+                let truncated = call.args.get("__truncated").and_then(|v| v.as_bool()).unwrap_or(false);
                 // Create parent directories if needed
                 if let Some(parent) = std::path::Path::new(&path).parent() {
                     if !parent.as_os_str().is_empty() {
@@ -83,15 +93,43 @@ impl Tool for FsTool {
                     }
                 }
                 match tokio::fs::write(&path, content).await {
+                    Ok(_) if truncated => ToolOutput::ok(
+                        &call.id,
+                        format!(
+                            "Partial write: wrote {} bytes to {path}. \
+                             The output was cut off by the token limit — this is not the complete \
+                             content. Use the `append` operation to add the remaining content.",
+                            content.len()
+                        ),
+                    ),
                     Ok(_) => ToolOutput::ok(&call.id, format!("wrote {} bytes to {path}", content.len())),
                     Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
                 }
             }
             "append" => {
                 use tokio::io::AsyncWriteExt;
-                let content = call.args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let content = match call.args.get("content").and_then(|v| v.as_str()) {
+                    Some(c) => c,
+                    None => return ToolOutput::err(
+                        &call.id,
+                        "append requires a 'content' field but it is missing. \
+                         This usually means the JSON was truncated because the content was too \
+                         large to fit in a single generation. Use the shell tool with a heredoc \
+                         to write large files: shell({command: \"cat >> path/to/file << 'EOF'\\n...\\nEOF\"}).",
+                    ),
+                };
+                let truncated = call.args.get("__truncated").and_then(|v| v.as_bool()).unwrap_or(false);
                 match tokio::fs::OpenOptions::new().append(true).create(true).open(&path).await {
                     Ok(mut f) => match f.write_all(content.as_bytes()).await {
+                        Ok(_) if truncated => ToolOutput::ok(
+                            &call.id,
+                            format!(
+                                "Partial append: wrote {} bytes to {path}. \
+                                 The output was cut off by the token limit. \
+                                 Use another `append` call to add the remaining content.",
+                                content.len()
+                            ),
+                        ),
                         Ok(_) => ToolOutput::ok(&call.id, format!("appended {} bytes to {path}", content.len())),
                         Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
                     },
@@ -244,6 +282,34 @@ mod tests {
         assert!(r.content.contains("file.txt"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── missing content for write/append is an error ─────────────────────────
+
+    #[tokio::test]
+    async fn write_without_content_is_error() {
+        let path = tmp_path();
+        let t = FsTool;
+        let r = t.execute(&call("w", json!({
+            "operation": "write",
+            "path": path
+        }))).await;
+        assert!(r.is_error, "expected error when content is missing");
+        assert!(r.content.contains("content"), "error should mention the missing field");
+        // File must not have been created
+        assert!(!std::path::Path::new(&path).exists(), "no file should be created");
+    }
+
+    #[tokio::test]
+    async fn append_without_content_is_error() {
+        let path = tmp_path();
+        let t = FsTool;
+        let r = t.execute(&call("a", json!({
+            "operation": "append",
+            "path": path
+        }))).await;
+        assert!(r.is_error, "expected error when content is missing");
+        assert!(r.content.contains("content"), "error should mention the missing field");
     }
 
     // ── Error cases ───────────────────────────────────────────────────────────

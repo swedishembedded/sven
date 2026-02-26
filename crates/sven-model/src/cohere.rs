@@ -220,6 +220,10 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
             Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args })
         }
         "message-end" => {
+            // Cohere v2 finish_reason: "MAX_TOKENS" means the output was cut off.
+            if v["delta"]["finish_reason"].as_str() == Some("MAX_TOKENS") {
+                return Ok(ResponseEvent::MaxTokens);
+            }
             if let Some(usage) = v.get("delta").and_then(|d| d.get("usage")) {
                 let input_tokens = usage["billed_units"]["input_tokens"]
                     .as_u64()

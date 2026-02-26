@@ -600,9 +600,15 @@ impl Agent {
         // Accumulate thinking deltas so we can emit a single ThinkingComplete
         // event to consumers (CI runner, TUI) once the thinking block ends.
         let mut thinking_buf = String::new();
+        // Set to true when the provider signals that the output was cut off by
+        // the max-tokens limit.  Used to recover partial tool-call arguments.
+        let mut output_was_truncated = false;
 
         while let Some(event) = stream.next().await {
             match event? {
+                ResponseEvent::MaxTokens => {
+                    output_was_truncated = true;
+                }
                 ResponseEvent::ThinkingDelta(delta) => {
                     thinking_buf.push_str(&delta);
                     let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
@@ -677,7 +683,7 @@ impl Agent {
                 );
                 continue;
             }
-            let mut tc = ptc.finish();
+            let mut tc = ptc.finish(output_was_truncated);
             if tc.id.is_empty() {
                 tc.id = format!("tc_synthetic_{i}");
                 warn!(
@@ -925,7 +931,15 @@ struct PendingToolCall {
 }
 
 impl PendingToolCall {
-    fn finish(self) -> ToolCall {
+    /// Finalise the accumulated arguments buffer into a [`ToolCall`].
+    ///
+    /// `output_was_truncated` is `true` when the provider signalled that the
+    /// model hit its output-token limit during this turn.  For `fs` write/append
+    /// calls this enables partial-content recovery: whatever the model managed
+    /// to generate before the cut-off is extracted and marked with
+    /// `__truncated: true` so the tool can write the partial content and guide
+    /// the model to continue with an `append` call.
+    fn finish(self, output_was_truncated: bool) -> ToolCall {
         // Always resolve to a JSON object.  Model providers (notably Anthropic)
         // require tool_use input to be an object; sending `null` causes a 400
         // on the *next* completion request and surfaces as "model completion failed".
@@ -939,8 +953,22 @@ impl PendingToolCall {
         } else {
             match serde_json::from_str(&self.args_buf) {
                 Ok(v) => v,
-                Err(e) => {
-                    // Attempt to repair common JSON errors before giving up
+                Err(parse_err) => {
+                    // When the output was truncated and this is an fs write/append
+                    // call, try to salvage the partial content that was generated
+                    // before the cut-off so the tool can do a partial write and
+                    // guide the model to continue with append.
+                    if output_was_truncated && (self.name == "fs") {
+                        if let Some(v) = extract_partial_fs_args(&self.args_buf) {
+                            warn!(
+                                tool_name = %self.name,
+                                tool_call_id = %self.id,
+                                "recovered partial fs arguments from truncated output"
+                            );
+                            return ToolCall { id: self.id, name: self.name, args: v };
+                        }
+                    }
+                    // Attempt generic JSON repairs before giving up.
                     match attempt_json_repair(&self.args_buf) {
                         Ok(v) => {
                             warn!(
@@ -955,7 +983,7 @@ impl PendingToolCall {
                                 tool_name = %self.name,
                                 tool_call_id = %self.id,
                                 args_buf = %self.args_buf,
-                                error = %e,
+                                error = %parse_err,
                                 "model sent tool call with invalid JSON arguments; substituting {{}}"
                             );
                             serde_json::Value::Object(Default::default())
@@ -1005,4 +1033,194 @@ fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
     
     // All repair attempts failed
     anyhow::bail!("JSON repair failed: all repair strategies exhausted")
+}
+
+/// For a truncated `fs` write/append call, extract the operation, path, and
+/// whatever partial `content` the model generated before the output was cut
+/// off.  Returns a JSON object with `__truncated: true` so the tool can write
+/// the partial content and instruct the model to continue with `append`.
+///
+/// The function handles all JSON string escape sequences so that content
+/// containing `\n`, `\"`, unicode escapes, etc. is decoded correctly.
+fn extract_partial_fs_args(json_str: &str) -> Option<serde_json::Value> {
+    // Locate the "content" key's value opening quote.
+    // Accept both `"content":"` and `"content": "` (with optional whitespace).
+    let content_key_pos = json_str.find("\"content\"")?;
+    let after_key = json_str[content_key_pos + "\"content\"".len()..].trim_start();
+    let after_colon = after_key.strip_prefix(':')?.trim_start();
+    // Must start the value with a quote.
+    let raw_value = after_colon.strip_prefix('"')?;
+
+    // Extract operation and path from the portion before the content key,
+    // which is always complete since it comes first in the JSON.
+    let before_content = json_str[..content_key_pos].trim_end_matches(',').trim();
+    let prefix_obj: serde_json::Value =
+        serde_json::from_str(&format!("{}}}", before_content)).ok()?;
+    let operation = prefix_obj.get("operation").and_then(|v| v.as_str())?.to_string();
+    let path      = prefix_obj.get("path").and_then(|v| v.as_str())?.to_string();
+
+    // Decode the JSON string content that was generated before truncation.
+    let partial_content = extract_partial_json_string(raw_value);
+
+    Some(serde_json::json!({
+        "operation":   operation,
+        "path":        path,
+        "content":     partial_content,
+        "__truncated": true,
+    }))
+}
+
+/// Decode a JSON string value that may be cut off anywhere — including in the
+/// middle of an escape sequence.  The input is everything *after* the opening
+/// `"` of the JSON string, running to the end of the available data.
+///
+/// Returns the decoded string content up to (and not including) the closing
+/// `"` if present, or up to the point of truncation.
+fn extract_partial_json_string(raw: &str) -> String {
+    let mut result = String::new();
+    let mut chars  = raw.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            // Clean end of the JSON string.
+            '"' => break,
+            // Escape sequence.
+            '\\' => match chars.next() {
+                Some('"')  => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some('/')  => result.push('/'),
+                Some('n')  => result.push('\n'),
+                Some('r')  => result.push('\r'),
+                Some('t')  => result.push('\t'),
+                Some('b')  => result.push('\x08'),
+                Some('f')  => result.push('\x0C'),
+                Some('u')  => {
+                    // Collect up to 4 hex digits; stop at truncation.
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if hex.len() == 4 {
+                        if let Ok(code) = u16::from_str_radix(&hex, 16) {
+                            if let Some(ch) = char::from_u32(code as u32) {
+                                result.push(ch);
+                            }
+                        }
+                    }
+                    // Truncated mid-escape: discard the incomplete sequence.
+                }
+                // Unknown escape or truncation: stop gracefully.
+                Some(c) => result.push(c),
+                None    => {}
+            },
+            c => result.push(c),
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod partial_write_tests {
+    use super::*;
+
+    // ── extract_partial_json_string ───────────────────────────────────────────
+
+    #[test]
+    fn full_string_with_closing_quote() {
+        assert_eq!(extract_partial_json_string(r#"hello world""#), "hello world");
+    }
+
+    #[test]
+    fn truncated_plain_string() {
+        assert_eq!(extract_partial_json_string("no closing quote"), "no closing quote");
+    }
+
+    #[test]
+    fn newline_and_tab_escapes() {
+        // JSON: "line1\nline2\ttabbed"
+        assert_eq!(extract_partial_json_string("line1\\nline2\\ttabbed\""), "line1\nline2\ttabbed");
+    }
+
+    #[test]
+    fn escaped_double_quotes_inside_value() {
+        // JSON: "say \"hi\""
+        assert_eq!(extract_partial_json_string("say \\\"hi\\\"\""), "say \"hi\"");
+    }
+
+    #[test]
+    fn truncated_mid_escape_sequence() {
+        // Truncated right after the backslash — the incomplete escape is dropped.
+        let result = extract_partial_json_string("partial\\");
+        assert_eq!(result, "partial");
+    }
+
+    #[test]
+    fn unicode_escape() {
+        // JSON: "\u0041"
+        assert_eq!(extract_partial_json_string("\\u0041\""), "A");
+    }
+
+    // ── extract_partial_fs_args ───────────────────────────────────────────────
+
+    #[test]
+    fn recovers_write_with_complete_content() {
+        let json = r#"{"operation":"write","path":"/tmp/foo.md","content":"hello world"}"#;
+        // Full parse should succeed normally; this tests the fallback path isn't needed.
+        let result = extract_partial_fs_args(json);
+        // Should still work via this function.
+        let v = result.unwrap();
+        assert_eq!(v["operation"], "write");
+        assert_eq!(v["path"], "/tmp/foo.md");
+        assert_eq!(v["content"], "hello world");
+        assert_eq!(v["__truncated"], true);
+    }
+
+    #[test]
+    fn recovers_write_truncated_right_at_opening_quote() {
+        // Truncated right after the opening `"` of the content value — empty partial.
+        let json = r#"{"operation":"write","path":"/tmp/foo.md","content":""#;
+        let v = extract_partial_fs_args(json).unwrap();
+        assert_eq!(v["operation"], "write");
+        assert_eq!(v["path"], "/tmp/foo.md");
+        assert_eq!(v["content"], "");
+        assert_eq!(v["__truncated"], true);
+    }
+
+    #[test]
+    fn recovers_write_with_partial_content() {
+        // JSON args truncated mid-content: {"operation":"write","path":"...","content":"# Title\n\nSome partial
+        let json = "{\"operation\":\"write\",\"path\":\"/tmp/foo.md\",\"content\":\"# Title\\n\\nSome partial";
+        let v = extract_partial_fs_args(json).unwrap();
+        assert_eq!(v["operation"], "write");
+        assert_eq!(v["content"], "# Title\n\nSome partial");
+        assert_eq!(v["__truncated"], true);
+    }
+
+    #[test]
+    fn recovers_write_with_escaped_quotes_in_content() {
+        // JSON args: {"operation":"write","path":"...","content":"She said \"hello  (truncated)
+        let json = "{\"operation\":\"write\",\"path\":\"/tmp/foo.md\",\"content\":\"She said \\\"hello";
+        let v = extract_partial_fs_args(json).unwrap();
+        assert_eq!(v["content"], "She said \"hello");
+        assert_eq!(v["__truncated"], true);
+    }
+
+    #[test]
+    fn recovers_append_operation() {
+        let json = r#"{"operation":"append","path":"/tmp/foo.md","content":"more text"#;
+        let v = extract_partial_fs_args(json).unwrap();
+        assert_eq!(v["operation"], "append");
+        assert_eq!(v["content"], "more text");
+    }
+
+    #[test]
+    fn returns_none_when_no_content_key() {
+        let json = r#"{"operation":"write","path":"/tmp/foo.md"}"#;
+        // No content key at all — nothing to recover.
+        assert!(extract_partial_fs_args(json).is_none());
+    }
+
+    #[test]
+    fn returns_none_when_no_path() {
+        let json = r#"{"operation":"write","content":"data"#;
+        assert!(extract_partial_fs_args(json).is_none());
+    }
 }

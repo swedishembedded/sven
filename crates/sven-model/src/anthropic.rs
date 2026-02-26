@@ -375,6 +375,15 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
             }
         }
         "message_delta" => {
+            // Anthropic reports the final stop_reason in delta.stop_reason.
+            // When the model hit the output-token limit, emit MaxTokens so
+            // the agent knows any in-flight tool-call arguments were truncated.
+            // We prioritise this over the accompanying usage data; the output
+            // token count for a truncated turn is necessarily max_output_tokens
+            // so the slight under-count in token tracking is acceptable.
+            if v["delta"]["stop_reason"].as_str() == Some("max_tokens") {
+                return Ok(ResponseEvent::MaxTokens);
+            }
             if let Some(usage) = v.get("usage") {
                 return Ok(ResponseEvent::Usage {
                     input_tokens: 0,

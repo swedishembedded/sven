@@ -476,6 +476,14 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     }
 
     let choice = &v["choices"][0];
+
+    // finish_reason=length means the model hit its output-token limit.
+    // Emit MaxTokens so the agent knows any pending tool-call arguments
+    // are truncated.  The [DONE] sentinel that follows will emit Done.
+    if choice["finish_reason"].as_str() == Some("length") {
+        return Ok(ResponseEvent::MaxTokens);
+    }
+
     let delta = &choice["delta"];
 
     // Tool call delta — OpenAI may send multiple parallel tool calls in one

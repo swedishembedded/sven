@@ -388,6 +388,12 @@ pub enum ResponseEvent {
     },
     /// The stream finished normally
     Done,
+    /// The model stopped because it hit the output-token limit (`max_tokens`).
+    ///
+    /// This arrives *before* [`Done`] in the same stream.  The agent uses it
+    /// to detect that any pending tool-call arguments were truncated, so that
+    /// partial content can be recovered rather than silently discarded.
+    MaxTokens,
     /// A recoverable error (non-fatal warning)
     Error(String),
 }

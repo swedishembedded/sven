@@ -300,9 +300,11 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     let parts = match content["parts"].as_array() {
         Some(p) => p,
         None => {
-            // End of stream signal
-            if candidate["finishReason"].as_str().is_some() {
-                return Ok(ResponseEvent::Done);
+            // End of stream signal — check whether the model ran out of tokens.
+            match candidate["finishReason"].as_str() {
+                Some("MAX_TOKENS") => return Ok(ResponseEvent::MaxTokens),
+                Some(_) => return Ok(ResponseEvent::Done),
+                None => {}
             }
             return Ok(ResponseEvent::TextDelta(String::new()));
         }
@@ -333,8 +335,10 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     }
 
     // finishReason present without parts → stream finished
-    if candidate["finishReason"].as_str().is_some() {
-        return Ok(ResponseEvent::Done);
+    match candidate["finishReason"].as_str() {
+        Some("MAX_TOKENS") => return Ok(ResponseEvent::MaxTokens),
+        Some(_) => return Ok(ResponseEvent::Done),
+        None => {}
     }
 
     Ok(ResponseEvent::TextDelta(String::new()))

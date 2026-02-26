@@ -332,6 +332,12 @@ impl crate::ModelProvider for BedrockProvider {
             }));
         }
 
+        // AWS Bedrock Converse API reports stopReason="max_tokens" when the
+        // output was cut off by the token limit.
+        if response_body["stopReason"].as_str() == Some("max_tokens") {
+            events.push(Ok(ResponseEvent::MaxTokens));
+        }
+
         events.push(Ok(ResponseEvent::Done));
 
         Ok(Box::pin(stream::iter(events)))
