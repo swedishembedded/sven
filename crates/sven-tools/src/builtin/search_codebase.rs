@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// Thin wrapper over `grep` / ripgrep with sensible codebase defaults:
 /// always excludes .git/, target/, node_modules/, dist/, __pycache__/.
@@ -56,6 +56,7 @@ impl Tool for SearchCodebaseTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn output_category(&self) -> OutputCategory { OutputCategory::MatchList }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let query = match call.args.get("query").and_then(|v| v.as_str()) {

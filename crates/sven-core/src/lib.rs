@@ -11,8 +11,8 @@ mod runtime_context;
 mod tests;
 
 pub use session::{Session, TurnRecord};
-pub use events::AgentEvent;
+pub use events::{AgentEvent, CompactionStrategyUsed};
 pub use agent::Agent;
-pub use compact::compact_session;
+pub use compact::{compact_session, compact_session_with_strategy, smart_truncate, emergency_compact};
 pub use prompts::system_prompt;
 pub use runtime_context::AgentRuntimeContext;

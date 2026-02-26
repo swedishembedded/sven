@@ -9,15 +9,15 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
-use sven_config::{AgentConfig, AgentMode};
+use sven_config::{AgentConfig, AgentMode, CompactionStrategy};
 use sven_model::{
     CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role,
 };
 use sven_tools::{events::ToolEvent, ToolCall, ToolOutput, ToolRegistry};
 
 use crate::{
-    compact::compact_session,
-    events::AgentEvent,
+    compact::{compact_session_with_strategy, emergency_compact, smart_truncate},
+    events::{AgentEvent, CompactionStrategyUsed},
     prompts::system_prompt,
     runtime_context::AgentRuntimeContext,
     session::Session,
@@ -57,8 +57,11 @@ impl Agent {
         tool_event_rx: mpsc::Receiver<ToolEvent>,
         max_context_tokens: usize,
     ) -> Self {
+        let max_output_tokens = model.catalog_max_output_tokens().unwrap_or(0) as usize;
+        let mut session = Session::new(max_context_tokens);
+        session.max_output_tokens = max_output_tokens;
         Self {
-            session: Session::new(max_context_tokens),
+            session,
             tools,
             model,
             config,
@@ -73,9 +76,12 @@ impl Agent {
     /// Used by the CI runner to switch models mid-workflow (per-step model
     /// overrides).  The session history is preserved.
     pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {
-        // Update context window from the new model's catalog entry.
+        // Update context window and output token limit from the new model's catalog.
         if let Some(cw) = model.catalog_context_window() {
             self.session.max_tokens = cw as usize;
+        }
+        if let Some(mot) = model.catalog_max_output_tokens() {
+            self.session.max_output_tokens = mot as usize;
         }
         self.model = model;
     }
@@ -107,36 +113,7 @@ impl Agent {
         // injection, and user message push — only the final loop call differs.
         let mode = *self.current_mode.lock().await;
 
-        if self.session.is_near_limit(self.config.compaction_threshold) {
-            let sys = self.system_message(mode);
-            let tokens_before = self.session.token_count;
-            let keep_n = self.config.compaction_keep_recent;
-
-            let non_system: Vec<Message> = self.session.messages.iter()
-                .filter(|m| m.role != Role::System)
-                .cloned()
-                .collect();
-
-            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
-            let summarize_count = non_system.len().saturating_sub(preserve_count);
-            let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
-            let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
-            compact_session(&mut to_compact, Some(sys.clone()));
-            self.session.messages = to_compact;
-            self.session.recalculate_tokens();
-
-            let summary = self.run_single_turn(tx.clone(), mode).await?;
-            self.session.messages.clear();
-            self.session.messages.push(sys);
-            self.session.messages.push(Message::assistant(summary));
-            self.session.messages.extend(recent_messages);
-            self.session.recalculate_tokens();
-
-            let _ = tx.send(AgentEvent::ContextCompacted {
-                tokens_before,
-                tokens_after: self.session.token_count,
-            }).await;
-        }
+        self.ensure_fits_budget(&tx, mode, 0).await?;
 
         if self.session.messages.is_empty() {
             self.session.push(self.system_message(mode));
@@ -181,57 +158,9 @@ impl Agent {
         let mode = *self.current_mode.lock().await;
 
         // Proactive compaction before adding the new user message.
-        //
-        // Rolling strategy: preserve the `compaction_keep_recent` most recent
-        // non-system messages verbatim so the model always has immediate
-        // context, while older messages are condensed into a summary.
-        if self.session.is_near_limit(self.config.compaction_threshold) {
-            let sys = self.system_message(mode);
-            let tokens_before = self.session.token_count;
-            let keep_n = self.config.compaction_keep_recent;
+        self.ensure_fits_budget(&tx, mode, 0).await?;
 
-            // Collect non-system messages and split into "to summarise" vs "to preserve".
-            let non_system: Vec<Message> = self.session.messages.iter()
-                .filter(|m| m.role != Role::System)
-                .cloned()
-                .collect();
-
-            // Preserve the recent tail only when there are at least 2× keep_n
-            // messages, so we always have a meaningful chunk to summarise.
-            // When the history is shorter than that threshold we summarise
-            // everything — the same behaviour as the original code — to avoid
-            // producing a summary of just 1–2 messages that barely reduces
-            // context usage and risks repeated compaction on every turn.
-            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
-            let summarize_count = non_system.len().saturating_sub(preserve_count);
-
-            // Messages to keep verbatim after compaction (the recent tail).
-            let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
-
-            // Build a temporary message list containing only the messages that
-            // need to be summarised, then hand it to compact_session.
-            let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
-            compact_session(&mut to_compact, Some(sys.clone()));
-            self.session.messages = to_compact;
-            self.session.recalculate_tokens();
-
-            // Ask the model to produce the summary.
-            let summary = self.run_single_turn(tx.clone(), mode).await?;
-
-            // Rebuild session: system → summary → preserved recent messages.
-            self.session.messages.clear();
-            self.session.messages.push(sys);
-            self.session.messages.push(Message::assistant(summary));
-            self.session.messages.extend(recent_messages);
-            self.session.recalculate_tokens();
-
-            let _ = tx.send(AgentEvent::ContextCompacted {
-                tokens_before,
-                tokens_after: self.session.token_count,
-            }).await;
-        }
-
-        // Inject system message if this is the first turn
+        // Inject system message if this is the first turn.
         if self.session.messages.is_empty() {
             self.session.push(self.system_message(mode));
         }
@@ -251,6 +180,10 @@ impl Agent {
         tx: mpsc::Sender<AgentEvent>,
     ) -> anyhow::Result<()> {
         let mode = *self.current_mode.lock().await;
+
+        // Proactive compaction before adding the new user message.
+        self.ensure_fits_budget(&tx, mode, 0).await?;
+
         if self.session.messages.is_empty() {
             self.session.push(self.system_message(mode));
         }
@@ -295,6 +228,10 @@ impl Agent {
             msgs.insert(0, sys);
         }
         self.session.replace_messages(msgs);
+
+        // Proactive compaction after loading the (potentially large) history.
+        self.ensure_fits_budget(&tx, mode, 0).await?;
+
         self.session.push(Message::user(new_user_content));
         self.run_agentic_loop(tx).await
     }
@@ -314,21 +251,25 @@ impl Agent {
 
         loop {
             // Check cancel before each round.
-            if cancel.try_recv().is_ok() {
-                if !partial_text.is_empty() {
-                    self.session.push(Message::assistant(&partial_text));
+            // We treat both an explicit send(()) AND a dropped sender as a
+            // cancellation signal.  `send_abort_signal` drops the sender half
+            // without sending, so `try_recv()` returns `Err(Closed)` in that
+            // case — which would be missed by a plain `.is_ok()` check.
+            match cancel.try_recv() {
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                _ => {
+                    if !partial_text.is_empty() {
+                        self.session.push(Message::assistant(&partial_text));
+                    }
+                    let _ = tx.send(AgentEvent::Aborted { partial_text }).await;
+                    return Ok(());
                 }
-                let _ = tx.send(AgentEvent::Aborted { partial_text }).await;
-                return Ok(());
             }
 
             rounds += 1;
             if rounds > self.config.max_tool_rounds {
                 // Instead of hard-stopping with an error, give the model one
                 // final tool-free turn so it can summarise what it completed.
-                // This avoids leaving the task in a half-finished state and
-                // keeps the turn ending as `TurnComplete` (not `Error`), so
-                // the TUI does not show a red error and the user can continue.
                 let wrap_msg = format!(
                     "You have reached the maximum tool-call budget ({} rounds). \
                      Do not call any more tools. \
@@ -339,6 +280,7 @@ impl Agent {
                 self.session.push(Message::user(&wrap_msg));
 
                 let mode = *self.current_mode.lock().await;
+                self.session.schema_overhead = self.estimate_schema_overhead(mode);
                 let wrap_turn = tokio::select! {
                     biased;
                     _ = &mut *cancel => None,
@@ -354,8 +296,9 @@ impl Agent {
             }
 
             let mode = *self.current_mode.lock().await;
+            // Update schema overhead for accurate budget calculations.
+            self.session.schema_overhead = self.estimate_schema_overhead(mode);
 
-            // stream_one_turn_cancellable returns None when the cancel channel fires.
             let turn = tokio::select! {
                 biased;
                 _ = &mut *cancel => None,
@@ -364,7 +307,7 @@ impl Agent {
 
             let (text, tool_calls, had_tool_calls) = match turn {
                 None => {
-                    // Aborted mid-stream.  The streaming buffer has the partial text.
+                    // Aborted mid-stream.
                     if !partial_text.is_empty() {
                         self.session.push(Message::assistant(&partial_text));
                     }
@@ -424,22 +367,31 @@ impl Agent {
                 outputs.push(output);
             }
 
-            // Phase 3: push tool-result messages.
+            // Phase 3: push tool-result messages with smart truncation.
+            let cap = self.config.tool_result_token_cap;
             for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
+                let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
                     let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
-                        sven_tools::ToolOutputPart::Text(t) =>
-                            ToolContentPart::Text { text: t.clone() },
-                        sven_tools::ToolOutputPart::Image(url) =>
-                            ToolContentPart::Image { image_url: url.clone() },
+                        sven_tools::ToolOutputPart::Text(t) => {
+                            let truncated = smart_truncate(t, category, cap);
+                            ToolContentPart::Text { text: truncated }
+                        }
+                        sven_tools::ToolOutputPart::Image(url) => {
+                            ToolContentPart::Image { image_url: url.clone() }
+                        }
                     }).collect();
                     Message::tool_result_with_parts(&tc.id, parts)
                 } else {
-                    Message::tool_result(&tc.id, &output.content)
+                    let content = smart_truncate(&output.content, category, cap);
+                    Message::tool_result(&tc.id, &content)
                 };
                 self.session.push(tool_msg);
             }
+
+            // Mid-loop budget gate.
+            self.ensure_fits_budget(&tx, mode, rounds).await?;
         }
 
         Ok(())
@@ -464,6 +416,7 @@ impl Agent {
                 self.session.push(Message::user(&wrap_msg));
 
                 let mode = *self.current_mode.lock().await;
+                self.session.schema_overhead = self.estimate_schema_overhead(mode);
                 let (text, _, _) = self.stream_one_turn(tx.clone(), mode, false).await?;
                 if !text.is_empty() {
                     self.session.push(Message::assistant(&text));
@@ -473,6 +426,9 @@ impl Agent {
             }
 
             let mode = *self.current_mode.lock().await;
+            // Update schema overhead so the budget gate and calibration are
+            // accurate for this turn's actual request size.
+            self.session.schema_overhead = self.estimate_schema_overhead(mode);
             let (text, tool_calls, had_tool_calls) =
                 self.stream_one_turn(tx.clone(), mode, true).await?;
 
@@ -542,20 +498,35 @@ impl Agent {
                 outputs.push(output);
             }
 
-            // Phase 3: push all tool-result messages.
+            // Phase 3: push all tool-result messages, applying smart truncation
+            // when a result exceeds the configured token cap.
+            let cap = self.config.tool_result_token_cap;
             for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
+                let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
                     let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
-                        sven_tools::ToolOutputPart::Text(t) => ToolContentPart::Text { text: t.clone() },
-                        sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image { image_url: url.clone() },
+                        sven_tools::ToolOutputPart::Text(t) => {
+                            let truncated = smart_truncate(t, category, cap);
+                            ToolContentPart::Text { text: truncated }
+                        }
+                        sven_tools::ToolOutputPart::Image(url) => {
+                            ToolContentPart::Image { image_url: url.clone() }
+                        }
                     }).collect();
                     Message::tool_result_with_parts(&tc.id, parts)
                 } else {
-                    Message::tool_result(&tc.id, &output.content)
+                    let content = smart_truncate(&output.content, category, cap);
+                    Message::tool_result(&tc.id, &content)
                 };
                 self.session.push(tool_msg);
             }
+
+            // Mid-loop budget gate: after tool results are pushed, check
+            // whether the session now exceeds the compaction threshold.
+            // This prevents a single large tool output from causing a hard
+            // failure on the next model call.
+            self.ensure_fits_budget(&tx, mode, rounds).await?;
         }
 
         Ok(())
@@ -657,6 +628,14 @@ impl Agent {
                 }
                 ResponseEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
                     self.session.add_cache_usage(cache_read_tokens, cache_write_tokens);
+                    // Update the running calibration factor using the provider's
+                    // actual input token count.  This corrects the chars/4
+                    // approximation for the current workload and model.
+                    let actual_input = input_tokens + cache_read_tokens;
+                    if actual_input > 0 {
+                        let estimated = self.session.token_count + self.session.schema_overhead;
+                        self.session.update_calibration(actual_input, estimated);
+                    }
                     let _ = tx.send(AgentEvent::TokenUsage {
                         input: input_tokens,
                         output: output_tokens,
@@ -718,14 +697,168 @@ impl Agent {
         Ok((full_text, tool_calls, had_tool_calls))
     }
 
-    /// Run a single turn (no tool loop) and return the full text response.
+    /// Run a single tool-free turn and return the full text response.
+    /// Used for compaction summary generation; no tools are passed so the
+    /// model focuses on producing a summary rather than calling tools.
     async fn run_single_turn(
         &mut self,
         tx: mpsc::Sender<AgentEvent>,
         mode: AgentMode,
     ) -> anyhow::Result<String> {
-        let (text, _, _) = self.stream_one_turn(tx, mode, true).await?;
+        let (text, _, _) = self.stream_one_turn(tx, mode, false).await?;
         Ok(text)
+    }
+
+    /// Estimate the token overhead for items sent with every request but NOT
+    /// stored in `session.messages`: tool schemas and the dynamic context block.
+    fn estimate_schema_overhead(&self, mode: AgentMode) -> usize {
+        let schema_tokens: usize = self.tools.schemas_for_mode(mode)
+            .iter()
+            .map(|s| (s.name.len() + s.description.len() + s.parameters.to_string().len()) / 4)
+            .sum();
+        let dynamic_tokens = self.dynamic_context()
+            .map(|s| s.len() / 4)
+            .unwrap_or(0);
+        schema_tokens + dynamic_tokens
+    }
+
+    /// Single compaction entry point.  Checks the effective token budget and
+    /// compacts the session if needed.  Called before every model submission
+    /// (pre-submit at `turn=0`) and after every batch of tool results during
+    /// the agentic loop (at the current `turn` number).
+    ///
+    /// Three compaction paths:
+    /// - **Normal**: rolling LLM-based compaction (structured or narrative).
+    /// - **Emergency**: session too large for a compaction prompt; drops old
+    ///   messages without a model call to guarantee recovery.
+    /// - **No-op**: effective token count is below the trigger threshold.
+    async fn ensure_fits_budget(
+        &mut self,
+        tx: &mpsc::Sender<AgentEvent>,
+        mode: AgentMode,
+        turn: u32,
+    ) -> anyhow::Result<()> {
+        let input_budget = self.session.input_budget();
+        if input_budget == 0 {
+            return Ok(());
+        }
+
+        // Effective threshold accounts for the overhead reserve so compaction
+        // fires before the hard ceiling is reached.
+        let threshold = self.config.compaction_threshold - self.config.compaction_overhead_reserve;
+        let threshold = threshold.max(0.1); // never below 10%
+
+        if !self.session.is_near_limit(threshold) {
+            return Ok(());
+        }
+
+        let tokens_before = self.session.token_count;
+        let sys = self.system_message(mode);
+        let keep_n = self.config.compaction_keep_recent;
+
+        // Emergency path: session so large that even the compaction prompt
+        // would overflow the context window.  Drop old messages without a
+        // model call — always succeeds regardless of session size.
+        let emergency_fraction = 0.95_f32;
+        let strategy_used = if self.session.context_fraction() >= emergency_fraction {
+            emergency_compact(&mut self.session.messages, Some(sys), keep_n);
+            self.session.recalculate_tokens();
+            CompactionStrategyUsed::Emergency
+        } else {
+            // Normal rolling compaction: preserve the recent tail verbatim,
+            // summarise everything older.
+            let non_system: Vec<Message> = self.session.messages.iter()
+                .filter(|m| m.role != Role::System)
+                .cloned()
+                .collect();
+
+            // Snapshot the original messages so we can restore them if the
+            // compaction model call fails (network error, rate limit, etc.).
+            // Without this, a failed run_single_turn would leave the session
+            // in a partially-compacted state with the original history gone.
+            let original_messages = self.session.messages.clone();
+            let original_token_count = self.session.token_count;
+
+            // Only use rolling strategy when there are enough messages to make
+            // it worthwhile; otherwise summarise the full history.
+            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
+            let mut summarize_count = non_system.len().saturating_sub(preserve_count);
+
+            // Safety: adjust the split point backward until `recent_messages`
+            // begins at a conversation-turn boundary.  If the split falls
+            // inside a tool-use/tool-result group (i.e. `recent_messages[0]`
+            // would be a ToolResult or ToolCall), the compacted session would
+            // contain orphaned ToolResult blocks — references to ToolCall IDs
+            // that were summarised away — causing providers like Anthropic to
+            // reject the next request with a 400 error.
+            //
+            // Moving backward past both ToolResult and ToolCall variants
+            // ensures that the entire tool-interaction group (all ToolCall
+            // messages AND all their corresponding ToolResult messages) is
+            // kept intact in `recent_messages`.
+            while summarize_count > 0 && summarize_count < non_system.len() {
+                match &non_system[summarize_count].content {
+                    MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
+                        summarize_count -= 1;
+                    }
+                    _ => break,
+                }
+            }
+
+            let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
+            let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
+
+            compact_session_with_strategy(
+                &mut to_compact,
+                Some(sys.clone()),
+                &self.config.compaction_strategy,
+            );
+            self.session.messages = to_compact;
+            self.session.recalculate_tokens();
+
+            match self.run_single_turn(tx.clone(), mode).await {
+                Ok(summary) if !summary.is_empty() => {
+                    // Rebuild: system → summary → preserved recent messages.
+                    self.session.messages.clear();
+                    self.session.messages.push(sys);
+                    self.session.messages.push(Message::assistant(summary));
+                    self.session.messages.extend(recent_messages);
+                    self.session.recalculate_tokens();
+
+                    match self.config.compaction_strategy {
+                        CompactionStrategy::Structured => CompactionStrategyUsed::Structured,
+                        CompactionStrategy::Narrative => CompactionStrategyUsed::Narrative,
+                    }
+                }
+                outcome => {
+                    // The compaction model call failed or returned an empty
+                    // summary.  Restore the original messages so the session
+                    // is not left in a corrupt partial-compaction state, then
+                    // fall back to the deterministic emergency path which never
+                    // makes a model call and always succeeds.
+                    if let Err(ref e) = outcome {
+                        warn!("compaction model call failed, falling back to emergency compact: {e}");
+                    } else {
+                        warn!("compaction returned empty summary, falling back to emergency compact");
+                    }
+                    self.session.messages = original_messages;
+                    self.session.token_count = original_token_count;
+
+                    emergency_compact(&mut self.session.messages, Some(sys), keep_n);
+                    self.session.recalculate_tokens();
+                    CompactionStrategyUsed::Emergency
+                }
+            }
+        };
+
+        let _ = tx.send(AgentEvent::ContextCompacted {
+            tokens_before,
+            tokens_after: self.session.token_count,
+            strategy: strategy_used,
+            turn,
+        }).await;
+
+        Ok(())
     }
 
     fn system_message(&self, mode: AgentMode) -> Message {

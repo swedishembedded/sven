@@ -4,6 +4,7 @@
 //! Core chat data: the `ChatSegment` enum and helpers that operate on segment
 //! slices without needing access to the full `App` state.
 
+use sven_core::CompactionStrategyUsed;
 use sven_model::{Message, MessageContent, Role};
 
 /// One entry in the chat display (a concrete message or a display-only note).
@@ -13,6 +14,8 @@ pub enum ChatSegment {
     ContextCompacted {
         tokens_before: usize,
         tokens_after: usize,
+        strategy: CompactionStrategyUsed,
+        turn: u32,
     },
     Error(String),
     Thinking { content: String },

@@ -11,7 +11,7 @@ mod agent_tests {
 
     use sven_config::{AgentConfig, AgentMode};
     use sven_model::{MessageContent, ResponseEvent, ScriptedMockProvider};
-    use sven_tools::{FsTool, ReadImageTool, ShellTool, ToolRegistry, events::ToolEvent};
+    use sven_tools::{FsTool, ShellTool, ToolRegistry, events::ToolEvent};
     use tokio::sync::{mpsc, Mutex};
 
     use crate::{Agent, AgentEvent, AgentRuntimeContext};
@@ -757,7 +757,7 @@ mod agent_tests {
         }
 
         let compaction_ev = events.iter().find_map(|e| {
-            if let AgentEvent::ContextCompacted { tokens_before, tokens_after } = e {
+            if let AgentEvent::ContextCompacted { tokens_before, tokens_after, .. } = e {
                 Some((*tokens_before, *tokens_after))
             } else {
                 None
@@ -779,5 +779,553 @@ mod agent_tests {
         );
         // The event fields must at least be non-zero.
         assert!(after > 0, "tokens_after must be positive (was {after})");
+    }
+
+    // ── New forefront compaction tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compaction_event_carries_strategy_and_turn() {
+        // Verify that ContextCompacted events carry strategy and turn fields.
+        use sven_model::Message;
+        let config = AgentConfig {
+            compaction_keep_recent: 0,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("summary".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("reply".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+        seed_session(&mut agent, vec![
+            Message::system("system"),
+            Message::user("aaaa aaaa aaaa"),
+            Message::assistant("bbbb bbbb bbbb"),
+        ]);
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("q", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        let compacted = events.iter().find_map(|e| {
+            if let AgentEvent::ContextCompacted { strategy, turn, .. } = e {
+                Some((strategy.clone(), *turn))
+            } else {
+                None
+            }
+        });
+        let (strategy, turn) = compacted.expect("ContextCompacted must be emitted");
+        // Pre-submit compaction fires at turn=0
+        assert_eq!(turn, 0, "pre-submit compaction must have turn=0");
+        // Default strategy is Structured
+        assert_eq!(strategy, crate::events::CompactionStrategyUsed::Structured);
+    }
+
+    #[tokio::test]
+    async fn narrative_strategy_produces_narrative_compaction_event() {
+        use sven_config::CompactionStrategy;
+        use sven_model::Message;
+        let config = AgentConfig {
+            compaction_keep_recent: 0,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            compaction_strategy: CompactionStrategy::Narrative,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("summary".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("reply".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+        seed_session(&mut agent, vec![
+            Message::system("system"),
+            Message::user("aaaa aaaa aaaa"),
+            Message::assistant("bbbb bbbb bbbb"),
+        ]);
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("q", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        let strategy = events.iter().find_map(|e| {
+            if let AgentEvent::ContextCompacted { strategy, .. } = e {
+                Some(strategy.clone())
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            strategy,
+            Some(crate::events::CompactionStrategyUsed::Narrative),
+            "Narrative strategy must produce Narrative compaction event"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_result_truncated_when_exceeds_cap() {
+        // When tool_result_token_cap is small, large tool outputs must be
+        // truncated before entering the session.
+        use async_trait::async_trait;
+        use sven_config::AgentMode;
+        use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput, ToolRegistry};
+        use tokio::sync::Mutex;
+        use sven_tools::events::ToolEvent;
+
+        // Inline mock tool that returns 10 000 chars (≈ 2 500 tokens).
+        struct BigOutputTool;
+        #[async_trait]
+        impl Tool for BigOutputTool {
+            fn name(&self) -> &str { "shell" }
+            fn description(&self) -> &str { "mock that returns lots of text" }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({"type": "object", "properties": {}})
+            }
+            fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+            async fn execute(&self, call: &ToolCall) -> ToolOutput {
+                ToolOutput::ok(call.id.clone(), "output line\n".repeat(1000))
+            }
+        }
+
+        let model = ScriptedMockProvider::new(vec![
+            // Turn 1: model calls shell
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc1".into(),
+                    name: "shell".into(),
+                    arguments: r#"{}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            // Turn 2: model produces final answer after seeing truncated result
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ]);
+
+        let mut registry = ToolRegistry::default();
+        registry.register(BigOutputTool);
+
+        let config = AgentConfig {
+            tool_result_token_cap: 100, // cap at 400 chars
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+
+        let mode_lock = Arc::new(Mutex::new(AgentMode::Agent));
+        let (_, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+        let mut agent = Agent::new(
+            Arc::new(model),
+            Arc::new(registry),
+            Arc::new(config),
+            AgentRuntimeContext::default(),
+            mode_lock,
+            tool_event_rx,
+            128_000,
+        );
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("run shell", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        // The tool result stored in the session must be shorter than the original
+        // (10 000 chars raw; cap is 100 tokens = 400 chars).
+        let tool_result_len: usize = agent.session().messages.iter()
+            .filter_map(|m| {
+                if let sven_model::MessageContent::ToolResult { content, .. } = &m.content {
+                    match content {
+                        sven_model::ToolResultContent::Text(t) => Some(t.len()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .sum();
+
+        assert!(
+            tool_result_len < 2000, // significantly less than 10 000 original chars
+            "tool result in session should be truncated (got {tool_result_len} chars)"
+        );
+    }
+
+    #[tokio::test]
+    async fn calibration_factor_updated_from_usage_event() {
+        // After a turn that reports Usage, the session calibration_factor should
+        // have moved away from its initial value of 1.0.
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                // Report 200 input tokens consumed; estimated will be much less
+                ResponseEvent::Usage {
+                    input_tokens: 200,
+                    output_tokens: 10,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                },
+                ResponseEvent::TextDelta("hi".into()),
+                ResponseEvent::Done,
+            ],
+        ]);
+
+        let mut agent = agent_with(
+            model, ToolRegistry::default(), AgentConfig::default(), AgentMode::Agent,
+        );
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("test", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        // calibration_factor should have been updated (moved away from 1.0)
+        let factor = agent.session().calibration_factor;
+        assert!(
+            (factor - 1.0).abs() > 0.001,
+            "calibration_factor should have been updated from 1.0, got {factor}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_input_budget_uses_max_output_tokens() {
+        // Verify that input_budget() = max_tokens - max_output_tokens
+        let model = ScriptedMockProvider::always_text("ok");
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), AgentConfig::default(), AgentMode::Agent, 200_000,
+        );
+        // Manually set max_output_tokens to simulate a real model
+        agent.session_mut().max_output_tokens = 64_000;
+
+        assert_eq!(
+            agent.session().input_budget(),
+            136_000,
+            "input_budget must be context_window - max_output_tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_compaction_produces_summary_in_session() {
+        // Verify that when compaction fires with the Structured strategy,
+        // the summary text from the model is stored in the session.
+        use sven_model::Message;
+        let config = AgentConfig {
+            compaction_keep_recent: 0,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            compaction_strategy: sven_config::CompactionStrategy::Structured,
+            ..AgentConfig::default()
+        };
+
+        let model = ScriptedMockProvider::new(vec![
+            // First call: compaction summary turn
+            vec![ResponseEvent::TextDelta("structured summary text".into()), ResponseEvent::Done],
+            // Second call: actual user question reply
+            vec![ResponseEvent::TextDelta("reply".into()), ResponseEvent::Done],
+        ]);
+
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+        seed_session(&mut agent, vec![
+            Message::system("system"),
+            Message::user("aaaa aaaa aaaa"),
+            Message::assistant("bbbb bbbb bbbb"),
+        ]);
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("q", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        // After compaction the summary text should be present in the session.
+        let has_summary = agent.session().messages.iter().any(|m| {
+            m.as_text().map(|t| t.contains("structured summary text")).unwrap_or(false)
+        });
+        assert!(has_summary, "compacted session must contain the structured summary text");
+    }
+
+    // ── Compaction resilience ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compaction_model_failure_falls_back_to_emergency_and_continues() {
+        // When the compaction model call fails (simulated by returning an
+        // error response), ensure_fits_budget must:
+        //   1. Not corrupt the session (restore original messages).
+        //   2. Fall back to emergency compaction (deterministic, no model call).
+        //   3. Allow the subsequent real model turn to succeed.
+        //
+        // Script: turn-1 emits an error event (triggers the fallback), turn-2
+        // is the actual user reply that must succeed.
+        use sven_model::{Message, ResponseEvent};
+        let config = AgentConfig {
+            compaction_keep_recent: 2,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            // Compaction turn: provider returns an error, simulating a
+            // network failure or rate-limit during the summary generation.
+            vec![ResponseEvent::Error("simulated model error".into()), ResponseEvent::Done],
+            // Real user turn that must succeed after the fallback.
+            vec![ResponseEvent::TextDelta("reply after fallback".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+        // Seed history that is above the compaction threshold.
+        seed_session(&mut agent, vec![
+            Message::system("sys"),
+            Message::user("old msg 1"),
+            Message::assistant("old msg 2"),
+            Message::user("old msg 3"),
+            Message::assistant("old msg 4"),
+        ]);
+        assert!(agent.session().is_near_limit(0.3), "must be over threshold before submit");
+
+        let (tx, rx) = mpsc::channel(64);
+        // Must not return an error even though the compaction model call fails.
+        agent.submit("continue", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        // A ContextCompacted event must still be emitted (emergency strategy).
+        let compacted = events.iter().find_map(|e| {
+            if let AgentEvent::ContextCompacted { strategy, .. } = e {
+                Some(strategy.clone())
+            } else {
+                None
+            }
+        });
+        assert!(compacted.is_some(), "ContextCompacted must be emitted even on fallback");
+        let strategy = compacted.unwrap();
+        assert!(
+            matches!(strategy, crate::events::CompactionStrategyUsed::Emergency),
+            "fallback must use Emergency strategy, got {strategy:?}"
+        );
+
+        // The agent must have replied successfully after the fallback.
+        let has_reply = events.iter().any(|e| matches!(e, AgentEvent::TextDelta(t) if t.contains("reply after fallback")));
+        assert!(has_reply, "agent must produce a reply after compaction fallback");
+    }
+
+    #[tokio::test]
+    async fn compaction_empty_summary_falls_back_to_emergency() {
+        // When the compaction model call returns an empty string (e.g., the
+        // model chose not to respond), ensure_fits_budget must also fall back
+        // to emergency compaction rather than storing an empty assistant message.
+        use sven_model::{Message, ResponseEvent};
+        let config = AgentConfig {
+            compaction_keep_recent: 2,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            // Compaction turn: model returns Done with no text (empty summary).
+            vec![ResponseEvent::Done],
+            // Real turn after fallback.
+            vec![ResponseEvent::TextDelta("ok".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 20,
+        );
+        seed_session(&mut agent, vec![
+            Message::system("sys"),
+            Message::user("old msg 1"),
+            Message::assistant("old msg 2"),
+            Message::user("old msg 3"),
+            Message::assistant("old msg 4"),
+        ]);
+        assert!(agent.session().is_near_limit(0.3));
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("go", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        let strategy = events.iter().find_map(|e| {
+            if let AgentEvent::ContextCompacted { strategy, .. } = e {
+                Some(strategy.clone())
+            } else {
+                None
+            }
+        }).expect("ContextCompacted must be emitted");
+        assert!(
+            matches!(strategy, crate::events::CompactionStrategyUsed::Emergency),
+            "empty summary must also fall back to Emergency, got {strategy:?}"
+        );
+
+        // No empty assistant message should be in the session.
+        let empty_assistant = agent.session().messages.iter().any(|m| {
+            m.role == sven_model::Role::Assistant
+                && m.as_text().map(|t| t.is_empty()).unwrap_or(false)
+        });
+        assert!(!empty_assistant, "session must not contain empty assistant messages after fallback");
+    }
+
+    // ── Split-boundary safety (tool_use / tool_result pair integrity) ─────────
+
+    #[tokio::test]
+    async fn compaction_never_splits_tool_call_result_pair() {
+        // Regression test for: compaction fires mid-loop and the rolling
+        // keep_n boundary falls between ToolCall and ToolResult messages.
+        // The resulting session must not contain any ToolResult whose
+        // corresponding ToolCall was summarised away (which would cause
+        // Anthropic to return a 400 "unexpected tool_use_id" error).
+        //
+        // Setup: seed a session that contains a complete tool-call/result pair
+        // at the very boundary of the keep_n window.  With keep_n=2 the naive
+        // split would land exactly between a ToolCall and its ToolResult.
+        use sven_model::{Message, MessageContent, FunctionCall, Role};
+        use serde_json::json;
+
+        let config = AgentConfig {
+            compaction_keep_recent: 2,
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            // Compaction turn (summary generation).
+            vec![ResponseEvent::TextDelta("summary".into()), ResponseEvent::Done],
+            // Real reply turn.
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 30,
+        );
+
+        // Build a session where the last 2 non-system messages are a ToolCall
+        // followed by a ToolResult — exactly what keep_n=2 would preserve when
+        // the naive split puts the boundary between them.
+        // By inserting extra older messages, we push total tokens above threshold.
+        let tool_call_id = "tc_boundary_test";
+        seed_session(&mut agent, vec![
+            Message::system("sys"),
+            Message::user("task"),
+            Message::assistant("thinking"),
+            // ToolCall + ToolResult pair at positions that straddle the keep_n boundary.
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: tool_call_id.into(),
+                    function: FunctionCall { name: "shell".into(), arguments: json!({"command":"ls"}).to_string() },
+                },
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::ToolResult {
+                    tool_call_id: tool_call_id.into(),
+                    content: sven_model::ToolResultContent::Text("file.txt".into()),
+                },
+            },
+        ]);
+        assert!(agent.session().is_near_limit(0.3), "must be over threshold");
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("continue", tx).await.unwrap();
+        let _events = collect_events(rx).await;
+
+        // Verify the session is internally consistent: every ToolResult in the
+        // session must be preceded (somewhere before it) by a ToolCall with
+        // the same tool_call_id.  An orphaned ToolResult would be the bug.
+        let msgs = &agent.session().messages;
+        let mut seen_tool_call_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for msg in msgs {
+            match &msg.content {
+                MessageContent::ToolCall { tool_call_id, .. } => {
+                    seen_tool_call_ids.insert(tool_call_id.clone());
+                }
+                MessageContent::ToolResult { tool_call_id, .. } => {
+                    assert!(
+                        seen_tool_call_ids.contains(tool_call_id.as_str()),
+                        "orphaned ToolResult: tool_call_id '{tool_call_id}' has no preceding ToolCall in the session"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_adjusts_split_past_multiple_tool_calls_in_same_batch() {
+        // When multiple parallel ToolCall messages (same batch) sit at the
+        // boundary, the split must move backward past ALL of them so that none
+        // of their ToolResult messages is left orphaned in recent_messages.
+        use sven_model::{Message, MessageContent, FunctionCall, Role};
+        use serde_json::json;
+
+        let config = AgentConfig {
+            compaction_keep_recent: 3, // boundary lands mid-batch
+            compaction_threshold: 0.3,
+            compaction_overhead_reserve: 0.0,
+            ..AgentConfig::default()
+        };
+        let model = ScriptedMockProvider::new(vec![
+            vec![ResponseEvent::TextDelta("summary".into()), ResponseEvent::Done],
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ]);
+        let mut agent = agent_with_ctx(
+            model, ToolRegistry::default(), config, AgentMode::Agent, 40,
+        );
+
+        // Non-system messages: [user, assistant-text, tc1, tc2, tr1, tr2]
+        // keep_n=3 → naive split at index 3 (tc2), which is mid-batch.
+        let tc1 = "tc_batch_1";
+        let tc2 = "tc_batch_2";
+        seed_session(&mut agent, vec![
+            Message::system("sys"),
+            Message::user("do task"),
+            Message::assistant("thinking about it"),
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: tc1.into(),
+                    function: FunctionCall { name: "shell".into(), arguments: json!({"command":"ls"}).to_string() },
+                },
+            },
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: tc2.into(),
+                    function: FunctionCall { name: "shell".into(), arguments: json!({"command":"pwd"}).to_string() },
+                },
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::ToolResult {
+                    tool_call_id: tc1.into(),
+                    content: sven_model::ToolResultContent::Text("file.txt".into()),
+                },
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::ToolResult {
+                    tool_call_id: tc2.into(),
+                    content: sven_model::ToolResultContent::Text("/workspace".into()),
+                },
+            },
+        ]);
+        assert!(agent.session().is_near_limit(0.3));
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("next step", tx).await.unwrap();
+        let _events = collect_events(rx).await;
+
+        // All ToolResult messages in the session must have a preceding ToolCall.
+        let msgs = &agent.session().messages;
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for msg in msgs {
+            match &msg.content {
+                MessageContent::ToolCall { tool_call_id, .. } => {
+                    seen_ids.insert(tool_call_id.clone());
+                }
+                MessageContent::ToolResult { tool_call_id, .. } => {
+                    assert!(
+                        seen_ids.contains(tool_call_id.as_str()),
+                        "orphaned ToolResult for '{tool_call_id}' — split must have moved past the full batch"
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 }

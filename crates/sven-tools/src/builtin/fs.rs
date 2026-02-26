@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 const READ_LIMIT: usize = 200_000;
 
@@ -45,6 +45,7 @@ impl Tool for FsTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn output_category(&self) -> OutputCategory { OutputCategory::FileContent }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let op = match call.args.get("operation").and_then(|v| v.as_str()) {

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput, ToolOutputPart};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 
 /// Default number of lines returned when the caller does not specify a limit.
 /// Kept small to avoid flooding the model context on the first read; the agent
@@ -59,6 +59,7 @@ impl Tool for ReadFileTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn output_category(&self) -> OutputCategory { OutputCategory::FileContent }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {

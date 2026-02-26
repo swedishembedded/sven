@@ -106,6 +106,32 @@ impl ToolOutput {
     }
 }
 
+/// Describes the shape of a tool's text output for context-aware truncation.
+///
+/// When a tool result exceeds the configured token cap, `sven-core` uses
+/// this category to pick the right extraction strategy.  Each tool declares
+/// its own category; `sven-core` never hard-codes tool names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputCategory {
+    /// Terminal / process output: keep the first 60 + last 40 lines so both
+    /// the command preamble and the final result are visible.
+    /// Suitable for: shell, run_terminal_command, gdb commands.
+    HeadTail,
+    /// Ordered match list: keep the leading matches so the model sees the
+    /// highest-relevance results first.
+    /// Suitable for: grep, search_codebase, read_lints.
+    MatchList,
+    /// File content: keep a head and tail window with a separator so the
+    /// model sees both the top of the file (imports, declarations) and the
+    /// end (recent changes).
+    /// Suitable for: read_file, fs read operations.
+    FileContent,
+    /// Generic text: hard-truncate at the character boundary.
+    /// Used for all tools that do not fit the categories above.
+    #[default]
+    Generic,
+}
+
 /// Trait that every built-in and user-defined tool must implement.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -120,6 +146,93 @@ pub trait Tool: Send + Sync {
     fn modes(&self) -> &[AgentMode] {
         &[AgentMode::Research, AgentMode::Plan, AgentMode::Agent]
     }
+    /// Describes the shape of this tool's output for context-aware truncation.
+    ///
+    /// Override this when your tool produces output whose leading or trailing
+    /// portion is more useful than a hard cut.  The default is
+    /// [`OutputCategory::Generic`] (hard truncation).
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::Generic
+    }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
+}
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::policy::ApprovalPolicy;
+
+    // -- OutputCategory --
+
+    #[test]
+    fn output_category_default_is_generic() {
+        assert_eq!(OutputCategory::default(), OutputCategory::Generic);
+    }
+
+    #[test]
+    fn output_category_variants_are_distinct() {
+        assert_ne!(OutputCategory::HeadTail, OutputCategory::MatchList);
+        assert_ne!(OutputCategory::HeadTail, OutputCategory::FileContent);
+        assert_ne!(OutputCategory::HeadTail, OutputCategory::Generic);
+        assert_ne!(OutputCategory::MatchList, OutputCategory::FileContent);
+        assert_ne!(OutputCategory::MatchList, OutputCategory::Generic);
+        assert_ne!(OutputCategory::FileContent, OutputCategory::Generic);
+    }
+
+    #[test]
+    fn output_category_copy_semantics() {
+        let a = OutputCategory::HeadTail;
+        let b = a; // Copy — no move
+        assert_eq!(a, b);
+    }
+
+    // -- Tool trait default output_category --
+
+    struct MinimalTool;
+
+    #[async_trait]
+    impl Tool for MinimalTool {
+        fn name(&self) -> &str { "minimal" }
+        fn description(&self) -> &str { "a minimal tool" }
+        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ok")
+        }
+    }
+
+    #[test]
+    fn tool_default_output_category_is_generic() {
+        assert_eq!(MinimalTool.output_category(), OutputCategory::Generic);
+    }
+
+    struct HeadTailTool;
+
+    #[async_trait]
+    impl Tool for HeadTailTool {
+        fn name(&self) -> &str { "ht" }
+        fn description(&self) -> &str { "produces terminal output" }
+        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ok")
+        }
+    }
+
+    #[test]
+    fn tool_can_override_output_category() {
+        assert_eq!(HeadTailTool.output_category(), OutputCategory::HeadTail);
+    }
+
+    #[test]
+    fn overridden_category_differs_from_default() {
+        assert_ne!(HeadTailTool.output_category(), MinimalTool.output_category());
+    }
 }

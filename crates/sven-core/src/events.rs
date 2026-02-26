@@ -4,6 +4,28 @@
 use sven_config::AgentMode;
 use sven_tools::{events::TodoItem, ToolCall};
 
+/// Which compaction strategy was executed when `ContextCompacted` fired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionStrategyUsed {
+    /// Structured Markdown checkpoint with typed sections.
+    Structured,
+    /// Legacy free-form narrative summary.
+    Narrative,
+    /// Emergency fallback: history was dropped without a model summary call
+    /// because the session was too large to fit even a compaction prompt.
+    Emergency,
+}
+
+impl std::fmt::Display for CompactionStrategyUsed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionStrategyUsed::Structured => write!(f, "structured"),
+            CompactionStrategyUsed::Narrative => write!(f, "narrative"),
+            CompactionStrategyUsed::Emergency => write!(f, "emergency"),
+        }
+    }
+}
+
 /// Events emitted by the agent during a single turn.
 /// Consumers (CI runner, TUI) subscribe to these to drive their output.
 #[derive(Debug, Clone)]
@@ -27,10 +49,14 @@ pub enum AgentEvent {
         output: String,
         is_error: bool,
     },
-    /// Context was compacted; statistics for the UI
+    /// Context was compacted; statistics for the UI.
     ContextCompacted {
         tokens_before: usize,
         tokens_after: usize,
+        /// Which compaction strategy was used.
+        strategy: CompactionStrategyUsed,
+        /// Agentic loop round in which compaction fired (0 = pre-submit).
+        turn: u32,
     },
     /// Current token usage update.
     ///

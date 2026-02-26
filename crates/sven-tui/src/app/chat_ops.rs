@@ -164,10 +164,12 @@ impl App {
                 ChatSegment::Thinking { content } => {
                     Some(sven_input::ConversationRecord::Thinking { content: content.clone() })
                 }
-                ChatSegment::ContextCompacted { tokens_before, tokens_after } => {
+                ChatSegment::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
                     Some(sven_input::ConversationRecord::ContextCompacted {
                         tokens_before: *tokens_before,
                         tokens_after: *tokens_after,
+                        strategy: Some(strategy.to_string()),
+                        turn: Some(*turn),
                     })
                 }
                 ChatSegment::Error(_) => None,

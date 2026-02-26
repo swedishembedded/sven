@@ -445,7 +445,7 @@ pub fn parse_jsonl_conversation(content: &str) -> Result<ParsedConversation, Par
 /// Wire format (adjacently tagged, one record per line):
 /// - Message:          `{"type":"message","data":{<Message fields>}}`
 /// - Thinking:         `{"type":"thinking","data":{"content":"..."}}`
-/// - ContextCompacted: `{"type":"context_compacted","data":{"tokens_before":N,"tokens_after":M}}`
+/// - ContextCompacted: `{"type":"context_compacted","data":{"tokens_before":N,"tokens_after":M,...}}`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ConversationRecord {
@@ -458,7 +458,17 @@ pub enum ConversationRecord {
     /// A reasoning / thinking block produced by the model during a turn.
     Thinking { content: String },
     /// A marker left when the session history was compacted to save context.
-    ContextCompacted { tokens_before: usize, tokens_after: usize },
+    ContextCompacted {
+        tokens_before: usize,
+        tokens_after: usize,
+        /// Which compaction strategy was used (structured/narrative/emergency).
+        /// Optional for backward compatibility with older JSONL files.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strategy: Option<String>,
+        /// Agentic loop round in which compaction fired (0 = pre-submit).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<u32>,
+    },
 }
 
 /// Result of parsing a full-fidelity JSONL conversation file.

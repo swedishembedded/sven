@@ -141,18 +141,31 @@ writes. This restricts the agent to read-only tools by design.
 
 ### sven seems to "forget" earlier parts of the conversation
 
-When the context window fills up, sven compacts older messages into a summary.
-The raw text is no longer visible to the model, but the summary captures the
-key points. This is expected behaviour.
+When the context window fills up, sven compacts older messages into a structured
+checkpoint summary. The raw text is no longer directly visible to the model, but
+the checkpoint captures the key decisions, files, constraints, and narrative.
+This is expected behaviour.
 
-To preserve more history before compaction triggers, increase the threshold:
+To preserve more recent messages before compaction triggers, adjust the settings:
 
 ```yaml
 agent:
-  compaction_threshold: 0.95    # compact only when 95% full
+  compaction_threshold: 0.90    # compact only when 90% of the input budget is used
+  compaction_keep_recent: 10    # keep 10 recent messages verbatim (default: 6)
+```
+
+If compaction triggers very frequently due to large tool outputs, reduce the
+tool result cap so individual outputs don't fill the context:
+
+```yaml
+agent:
+  tool_result_token_cap: 2000   # trim tool outputs to ~2000 tokens each
 ```
 
 To see how full the context is at any time, check the status bar: `ctx:X%`.
+When emergency compaction fires (session was too large to compact normally),
+the TUI shows `⚠ Context emergency-compacted` and the CI log shows
+`[sven:context:compacted:emergency]`.
 
 ### "max tool rounds reached"
 

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 pub struct GrepTool;
 
@@ -64,6 +64,7 @@ impl Tool for GrepTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn output_category(&self) -> OutputCategory { OutputCategory::MatchList }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {

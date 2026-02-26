@@ -527,7 +527,7 @@ pub fn draw_queue_panel(
         return;
     }
     let count = items.len();
-    let title = format!("Queue  [{count}]  [↑↓:select  e:edit  d:delete  s:submit  f:force-submit  Esc:close]");
+    let title = format!("Queue  [{count}]  [↑↓:select  e:edit  d:del  Enter/f:force-submit  s:submit-idle  Esc:close]");
     let block = pane_block(&title, focused, ascii);
     let inner = block.inner(area);
     frame.render_widget(block, area);

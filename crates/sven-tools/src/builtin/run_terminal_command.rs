@@ -12,7 +12,7 @@ use tracing::debug;
 use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 use crate::builtin::shell::head_tail_truncate;
 
 pub struct RunTerminalCommandTool {
@@ -76,6 +76,7 @@ impl Tool for RunTerminalCommandTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
 
     fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
 

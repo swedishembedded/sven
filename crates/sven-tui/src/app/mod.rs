@@ -291,10 +291,22 @@ impl App {
                                 sven_input::ConversationRecord::ContextCompacted {
                                     tokens_before,
                                     tokens_after,
-                                } => Some(ChatSegment::ContextCompacted {
-                                    tokens_before,
-                                    tokens_after,
-                                }),
+                                    strategy,
+                                    turn,
+                                } => {
+                                    use sven_core::CompactionStrategyUsed;
+                                    let strategy = match strategy.as_deref() {
+                                        Some("emergency") => CompactionStrategyUsed::Emergency,
+                                        Some("narrative") => CompactionStrategyUsed::Narrative,
+                                        _ => CompactionStrategyUsed::Structured,
+                                    };
+                                    Some(ChatSegment::ContextCompacted {
+                                        tokens_before,
+                                        tokens_after,
+                                        strategy,
+                                        turn: turn.unwrap_or(0),
+                                    })
+                                }
                             })
                             .collect(),
                         Err(e) => {

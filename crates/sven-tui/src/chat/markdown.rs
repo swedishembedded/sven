@@ -36,8 +36,21 @@ pub fn format_todos_markdown(todos: &[TodoItem]) -> String {
 pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
     match seg {
         ChatSegment::Message(m) => message_to_markdown(m, tool_args_cache),
-        ChatSegment::ContextCompacted { tokens_before, tokens_after } => {
-            format!("\n---\n*Context compacted: {} → {} tokens*\n\n", tokens_before, tokens_after)
+        ChatSegment::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
+            use sven_core::CompactionStrategyUsed;
+            let label = match strategy {
+                CompactionStrategyUsed::Structured => "Context compacted (structured)",
+                CompactionStrategyUsed::Narrative => "Context compacted (narrative)",
+                CompactionStrategyUsed::Emergency => "⚠ Context emergency-compacted",
+            };
+            let turn_note = if *turn > 0 {
+                format!(" · tool round {turn}")
+            } else {
+                String::new()
+            };
+            format!(
+                "\n---\n*{label}: {tokens_before} → {tokens_after} tokens{turn_note}*\n\n"
+            )
         }
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {

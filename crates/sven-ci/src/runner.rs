@@ -817,9 +817,10 @@ fn handle_event(
             }
             collected.push(Message::tool_result(&call_id, &output));
         }
-        AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
+        AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
+            let turn_note = if turn > 0 { format!(" (tool round {turn})") } else { String::new() };
             write_stderr(&format!(
-                "[sven:context:compacted] {tokens_before} → {tokens_after} tokens"
+                "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
         }
         AgentEvent::Error(msg) => {

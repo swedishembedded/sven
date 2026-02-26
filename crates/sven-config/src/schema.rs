@@ -207,6 +207,32 @@ fn default_agent_mode() -> AgentMode { AgentMode::Agent }
 fn default_max_tool_rounds() -> u32 { 200 }
 fn default_compaction_threshold() -> f32 { 0.85 }
 
+/// Strategy used when compacting the session context.
+///
+/// `Structured` (default) instructs the model to produce a typed Markdown
+/// checkpoint with fixed sections (Active Task, Key Decisions, Files &
+/// Artifacts, Constraints, Pending Items, Session Narrative).  This produces
+/// checkpoints that are easier for the model to navigate on future turns.
+///
+/// `Narrative` uses the original free-form summarisation prompt and is
+/// available for backward-compatibility or when a simpler output is preferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompactionStrategy {
+    #[default]
+    Structured,
+    Narrative,
+}
+
+impl std::fmt::Display for CompactionStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionStrategy::Structured => write!(f, "structured"),
+            CompactionStrategy::Narrative => write!(f, "narrative"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Default mode when none is specified on the CLI
@@ -215,7 +241,10 @@ pub struct AgentConfig {
     /// Maximum number of autonomous tool-call rounds before stopping
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
-    /// Token fraction at which proactive compaction triggers (0.0–1.0)
+    /// Token fraction at which proactive compaction triggers (0.0–1.0).
+    /// The budget gate compares effective tokens (calibrated estimate + schema
+    /// overhead) against the model's usable input budget, which is
+    /// context_window minus max_output_tokens.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during
@@ -228,6 +257,29 @@ pub struct AgentConfig {
     /// Set to 0 to summarise the full history (original behaviour).
     #[serde(default = "default_compaction_keep_recent")]
     pub compaction_keep_recent: usize,
+    /// Compaction checkpoint format.
+    ///
+    /// `structured` (default): produces a typed Markdown checkpoint with
+    /// fixed sections preserving tasks, decisions, files, and constraints.
+    /// `narrative`: uses the original free-form summarisation prompt.
+    #[serde(default)]
+    pub compaction_strategy: CompactionStrategy,
+    /// Maximum tokens allowed for a single tool result before it is
+    /// deterministically truncated before entering the session.
+    ///
+    /// Truncation is content-aware: shell output keeps head+tail lines, grep
+    /// keeps leading matches, read_file keeps head+tail lines.  A value of
+    /// 0 disables per-result truncation entirely.
+    #[serde(default = "default_tool_result_token_cap")]
+    pub tool_result_token_cap: usize,
+    /// Fraction of the context window reserved for tool schemas, the dynamic
+    /// context block (git/CI info), and measurement error in the token
+    /// approximation.  Reduces the effective compaction trigger threshold.
+    ///
+    /// Example: threshold=0.85, reserve=0.10 → compaction fires when
+    /// calibrated session tokens reach 75% of the input budget.
+    #[serde(default = "default_compaction_overhead_reserve")]
+    pub compaction_overhead_reserve: f32,
     /// System prompt override; leave None to use the built-in prompt
     #[serde(default)]
     pub system_prompt: Option<String>,
@@ -243,6 +295,8 @@ pub struct AgentConfig {
 }
 
 fn default_compaction_keep_recent() -> usize { 6 }
+fn default_tool_result_token_cap() -> usize { 4000 }
+fn default_compaction_overhead_reserve() -> f32 { 0.10 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -251,6 +305,9 @@ impl Default for AgentConfig {
             max_tool_rounds: 200,
             compaction_threshold: 0.85,
             compaction_keep_recent: default_compaction_keep_recent(),
+            compaction_strategy: CompactionStrategy::Structured,
+            tool_result_token_cap: default_tool_result_token_cap(),
+            compaction_overhead_reserve: default_compaction_overhead_reserve(),
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: 0,

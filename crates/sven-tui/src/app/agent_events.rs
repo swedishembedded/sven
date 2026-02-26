@@ -95,10 +95,12 @@ impl App {
                     pager.set_lines(self.chat_lines.clone());
                 }
             }
-            AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
+            AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
                 self.chat_segments.push(ChatSegment::ContextCompacted {
                     tokens_before,
                     tokens_after,
+                    strategy,
+                    turn,
                 });
                 self.save_history_async();
                 self.rerender_chat().await;

@@ -10,7 +10,7 @@ use tokio::process::Command;
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// Hard byte ceiling for combined stdout + stderr returned to the model.
 /// 20 KB ≈ 5,000 tokens — keeps output well within a 40 K-token context window.
@@ -76,6 +76,7 @@ impl Tool for ShellTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("command").and_then(|v| v.as_str()) {

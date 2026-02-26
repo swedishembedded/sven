@@ -9,7 +9,7 @@ pub mod events;
 
 pub use policy::{ApprovalPolicy, ToolPolicy};
 pub use registry::{ToolRegistry, ToolSchema};
-pub use tool::{ToolCall, ToolOutput, ToolOutputPart, Tool};
+pub use tool::{OutputCategory, ToolCall, ToolOutput, ToolOutputPart, Tool};
 pub use events::{TodoItem, ToolEvent};
 
 // New tool exports

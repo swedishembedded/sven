@@ -295,6 +295,8 @@ impl App {
             self.send_abort_signal().await;
         } else {
             // Agent idle: send immediately as a resubmit with full history.
+            // Clear abort_pending so subsequent turns auto-dequeue normally.
+            self.abort_pending = false;
             let history = messages_for_resubmit(&self.chat_segments);
             self.chat_segments.push(ChatSegment::Message(Message::user(&qm.content)));
             self.save_history_async();

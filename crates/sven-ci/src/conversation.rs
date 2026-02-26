@@ -295,11 +295,17 @@ fn collect_event_full(
             )));
         }
 
-        AgentEvent::ContextCompacted { tokens_before, tokens_after } => {
+        AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
+            let turn_note = if turn > 0 { format!(" (tool round {turn})") } else { String::new() };
             write_stderr(&format!(
-                "[sven:context:compacted] {tokens_before} → {tokens_after} tokens"
+                "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
-            records.push(ConversationRecord::ContextCompacted { tokens_before, tokens_after });
+            records.push(ConversationRecord::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy: Some(strategy.to_string()),
+                turn: Some(turn),
+            });
         }
 
         AgentEvent::Error(msg) => {

@@ -162,14 +162,44 @@ agent:
   # summarise progress before the turn ends.  Increase for very long tasks.
   max_tool_rounds: 200
 
-  # Fraction of the context window at which proactive compaction triggers.
-  # 0.85 means sven starts compacting when 85% of the context is used.
+  # Fraction of the input budget at which proactive compaction triggers.
+  # The input budget is context_window − max_output_tokens (not the raw
+  # context window), so this threshold is applied against the actual usable
+  # space rather than the total model window.
+  # 0.85 means compaction fires when 85% of the input budget is consumed.
   compaction_threshold: 0.85
 
   # Number of recent non-system messages to keep verbatim after compaction.
   # The oldest messages beyond this tail are summarised. Default: 6.
   # Set to 0 to summarise the full history (original behaviour).
   compaction_keep_recent: 6
+
+  # Compaction checkpoint format.
+  # "structured" (default): produces a typed Markdown checkpoint with fixed
+  #   sections (Active Task, Key Decisions, Files & Artifacts, Constraints,
+  #   Pending Items, Session Narrative). Easier for the model to navigate.
+  # "narrative": uses the original free-form summarisation prompt.
+  compaction_strategy: structured
+
+  # Maximum tokens allowed for a single tool result before it is
+  # deterministically truncated before entering the session.
+  # Truncation is content-aware:
+  #   shell / run_terminal_command : keeps first 60 + last 40 lines
+  #   grep / search_codebase        : keeps leading matches
+  #   read_file                      : keeps head + tail lines
+  #   everything else                : hard-truncates at the character limit
+  # A truncation notice is always appended so the model knows more exists.
+  # Set to 0 to disable per-result truncation entirely.
+  tool_result_token_cap: 4000
+
+  # Fraction of the context window reserved for tool schemas, the dynamic
+  # context block (git / CI info), and measurement error in the token
+  # approximation. Reduces the effective compaction trigger threshold.
+  #
+  # Example: compaction_threshold=0.85, compaction_overhead_reserve=0.10
+  # → compaction fires when calibrated session tokens reach 75% of the
+  # input budget (effectively threshold − reserve = 0.75).
+  compaction_overhead_reserve: 0.10
 
   # Override the system prompt sent to the model.
   # Leave unset to use the built-in prompt.
@@ -318,27 +348,84 @@ Controls the agent's autonomy and defaults.
 |-----|---------|-------------|
 | `default_mode` | `"agent"` | Mode used when `--mode` is not passed |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
-| `compaction_threshold` | `0.85` | Context fraction that triggers history compaction |
-| `compaction_keep_recent` | `6` | Number of recent non-system messages preserved verbatim during compaction; older messages are summarised |
+| `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
+| `compaction_keep_recent` | `6` | Recent non-system messages preserved verbatim during compaction |
+| `compaction_strategy` | `"structured"` | Checkpoint format: `"structured"` or `"narrative"` |
+| `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
+| `compaction_overhead_reserve` | `0.10` | Fraction of context reserved for schemas and dynamic context |
 | `system_prompt` | — | System prompt override (leave unset to use built-in) |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.
 
-#### Compaction and caching interplay
+#### Context budget and compaction
 
-When the conversation history approaches `compaction_threshold` of the model's
-context window, sven runs a *rolling compaction*:
+sven uses a multi-layer system to keep sessions within the model's context
+window at all times:
 
+**Budget gate** — Before every model submission and after every batch of tool
+results, sven checks an effective token count that accounts for:
+- Calibrated message tokens (corrected from API-reported counts over time)
+- Tool schema overhead (schemas sent with every request but not stored in history)
+- Dynamic context (git branch, CI info) injected per-request
+- A configurable overhead reserve (`compaction_overhead_reserve`)
+
+The effective threshold is `compaction_threshold − compaction_overhead_reserve`.
+For example, with defaults (0.85 − 0.10 = 0.75), compaction fires when
+calibrated session tokens reach 75% of the input budget
+(`context_window − max_output_tokens`).
+
+**Rolling compaction** — When the budget gate fires:
 1. The oldest `(total – compaction_keep_recent)` non-system messages are
-   serialised and summarised by the model.
-2. The system prompt is re-issued (keeping its prompt-cache breakpoint intact).
-3. The `compaction_keep_recent` most recent messages are restored verbatim after
-   the summary so the model retains immediate context.
+   serialised and compacted by the model.
+2. The system prompt is re-issued so the model has full instructions.
+3. The `compaction_keep_recent` most recent messages are restored verbatim.
+
+With `compaction_strategy: structured` (default), the model produces a typed
+Markdown checkpoint with dedicated sections for Active Task, Key Decisions,
+Files & Artifacts, Constraints, Pending Items, and a Session Narrative.
+Set `compaction_strategy: narrative` to use the original free-form summary.
+
+**Smart tool-result truncation** — Before any tool result enters the session,
+`tool_result_token_cap` is applied. Truncation is content-aware:
+shell output keeps the head and tail; grep output keeps leading matches;
+file content keeps head and tail. A notice is always appended so the model
+can retrieve more with a targeted follow-up call.
+
+**Emergency fallback** — If the session is already too large to fit even the
+compaction prompt, the oldest messages are dropped deterministically (no model
+call needed). The model is notified via a canned notice and the session
+continues without crashing.
+
+**Calibration** — After every model turn, sven updates a running calibration
+factor from the API-reported input token count. This exponential moving
+average corrects the chars/4 approximation over time, so token estimates
+improve automatically within a session.
 
 Setting `compaction_keep_recent: 0` disables the rolling strategy and
-summarises the full history, which produces smaller sessions at the cost of
-losing recent context.
+summarises the full history, which produces the smallest sessions at the cost
+of losing immediate context.
+
+##### CI / long-running workflow tuning
+
+For CI pipelines with many tool calls and large file outputs:
+
+```yaml
+agent:
+  compaction_threshold: 0.80
+  compaction_overhead_reserve: 0.12
+  tool_result_token_cap: 2000   # tighter cap for CI workloads
+  compaction_strategy: structured
+```
+
+For interactive sessions where you want to preserve more recent context:
+
+```yaml
+agent:
+  compaction_threshold: 0.85
+  compaction_keep_recent: 10
+  tool_result_token_cap: 6000
+```
 
 ---
 

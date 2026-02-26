@@ -165,12 +165,17 @@ pub fn map_key(
         return match event.code {
             KeyCode::Up   | KeyCode::Char('k') => Some(Action::QueueNavUp),
             KeyCode::Down | KeyCode::Char('j') => Some(Action::QueueNavDown),
-            KeyCode::Char('e') | KeyCode::Enter => Some(Action::QueueEditSelected),
-            KeyCode::Char('d') | KeyCode::Delete => Some(Action::DeleteQueuedMessage),
-            // 'f' — force-submit: abort current run and send the selected message.
-            KeyCode::Char('f') => Some(Action::ForceSubmitQueuedMessage),
-            // 's' — submit selected message (manual dequeue after an abort).
-            KeyCode::Char('s') => Some(Action::QueueSubmitSelected),
+        KeyCode::Char('e') => Some(Action::QueueEditSelected),
+        // Enter — force-submit: abort current run (if any) and send the selected
+        // message immediately.  When the agent is idle this is equivalent to a
+        // normal submit; when busy it aborts the current turn first.
+        KeyCode::Enter => Some(Action::ForceSubmitQueuedMessage),
+        KeyCode::Char('d') | KeyCode::Delete => Some(Action::DeleteQueuedMessage),
+        // 'f' — force-submit (same as Enter, kept for muscle memory).
+        KeyCode::Char('f') => Some(Action::ForceSubmitQueuedMessage),
+        // 's' — submit selected message only when the agent is idle (manual
+        // dequeue without aborting the running turn).
+        KeyCode::Char('s') => Some(Action::QueueSubmitSelected),
             KeyCode::Esc | KeyCode::Char('q') => Some(Action::FocusInput),
             KeyCode::Char('w') if event.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::NavPrefix),
             _ => None,

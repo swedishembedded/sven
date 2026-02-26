@@ -13,7 +13,7 @@ use tracing::debug;
 use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 use super::state::GdbSessionState;
 
@@ -64,6 +64,7 @@ impl Tool for GdbWaitStoppedTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
 
     fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
 

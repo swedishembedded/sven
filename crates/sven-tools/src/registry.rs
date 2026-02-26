@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use sven_config::AgentMode;
 
-use crate::{Tool, ToolCall, ToolOutput};
+use crate::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// A tool schema – mirrors sven_model::ToolSchema but keeps tools crate
 /// independent from the model crate.
@@ -81,6 +81,15 @@ impl ToolRegistry {
         self.tools.keys().cloned().collect()
     }
 
+    /// Returns the [`OutputCategory`] for the named tool, or
+    /// [`OutputCategory::Generic`] if the tool is not registered.
+    pub fn output_category(&self, tool_name: &str) -> OutputCategory {
+        self.tools
+            .get(tool_name)
+            .map(|t| t.output_category())
+            .unwrap_or_default()
+    }
+
     pub fn names_for_mode(&self, mode: AgentMode) -> Vec<String> {
         let mut names: Vec<String> = self.tools.values()
             .filter(|t| t.modes().contains(&mode))
@@ -117,6 +126,49 @@ mod tests {
         fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
             ToolOutput::ok(&call.id, format!("echo:{}", call.args))
+        }
+    }
+
+    /// Tool that explicitly declares a non-default output category.
+    struct TerminalTool;
+
+    #[async_trait]
+    impl Tool for TerminalTool {
+        fn name(&self) -> &str { "terminal" }
+        fn description(&self) -> &str { "runs shell commands" }
+        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ok")
+        }
+    }
+
+    struct SearchTool;
+
+    #[async_trait]
+    impl Tool for SearchTool {
+        fn name(&self) -> &str { "search" }
+        fn description(&self) -> &str { "searches text" }
+        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn output_category(&self) -> OutputCategory { OutputCategory::MatchList }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ok")
+        }
+    }
+
+    struct FileTool;
+
+    #[async_trait]
+    impl Tool for FileTool {
+        fn name(&self) -> &str { "file" }
+        fn description(&self) -> &str { "reads files" }
+        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn output_category(&self) -> OutputCategory { OutputCategory::FileContent }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ok")
         }
     }
 
@@ -184,5 +236,81 @@ mod tests {
         reg.register(EchoTool { name: "t" });
         reg.register(EchoTool { name: "t" });
         assert_eq!(reg.names().len(), 1);
+    }
+
+    // ── output_category ───────────────────────────────────────────────────────
+
+    #[test]
+    fn output_category_unknown_tool_returns_generic() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.output_category("no_such_tool"), OutputCategory::Generic);
+    }
+
+    #[test]
+    fn output_category_tool_without_override_returns_generic() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "echo" });
+        assert_eq!(reg.output_category("echo"), OutputCategory::Generic);
+    }
+
+    #[test]
+    fn output_category_headtail_tool_returns_headtail() {
+        let mut reg = ToolRegistry::new();
+        reg.register(TerminalTool);
+        assert_eq!(reg.output_category("terminal"), OutputCategory::HeadTail);
+    }
+
+    #[test]
+    fn output_category_matchlist_tool_returns_matchlist() {
+        let mut reg = ToolRegistry::new();
+        reg.register(SearchTool);
+        assert_eq!(reg.output_category("search"), OutputCategory::MatchList);
+    }
+
+    #[test]
+    fn output_category_filecontent_tool_returns_filecontent() {
+        let mut reg = ToolRegistry::new();
+        reg.register(FileTool);
+        assert_eq!(reg.output_category("file"), OutputCategory::FileContent);
+    }
+
+    #[test]
+    fn output_category_after_overwrite_reflects_new_tool() {
+        // Register a HeadTail tool, then overwrite the same name with a Generic tool.
+        let mut reg = ToolRegistry::new();
+        reg.register(TerminalTool); // "terminal" → HeadTail
+        // Overwrite with a minimal (Generic) tool under the same name.
+        struct GenericTool;
+        #[async_trait::async_trait]
+        impl Tool for GenericTool {
+            fn name(&self) -> &str { "terminal" }
+            fn description(&self) -> &str { "generic" }
+            fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
+            fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+            async fn execute(&self, call: &ToolCall) -> ToolOutput {
+                ToolOutput::ok(&call.id, "ok")
+            }
+        }
+        reg.register(GenericTool);
+        assert_eq!(
+            reg.output_category("terminal"),
+            OutputCategory::Generic,
+            "output_category must reflect the most recently registered tool"
+        );
+    }
+
+    #[test]
+    fn output_category_multiple_tools_independent() {
+        let mut reg = ToolRegistry::new();
+        reg.register(TerminalTool);
+        reg.register(SearchTool);
+        reg.register(FileTool);
+        reg.register(EchoTool { name: "echo" });
+
+        assert_eq!(reg.output_category("terminal"), OutputCategory::HeadTail);
+        assert_eq!(reg.output_category("search"),   OutputCategory::MatchList);
+        assert_eq!(reg.output_category("file"),     OutputCategory::FileContent);
+        assert_eq!(reg.output_category("echo"),     OutputCategory::Generic);
+        assert_eq!(reg.output_category("missing"),  OutputCategory::Generic);
     }
 }
