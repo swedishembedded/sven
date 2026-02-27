@@ -155,27 +155,58 @@ impl CiRunner {
         vars.extend(frontmatter.vars.unwrap_or_default());
         vars.extend(opts.vars.clone());
 
-        // ── Detect piped conversation format ─────────────────────────────────
-        // When a prior sven run is piped in (stdout is conversation markdown),
-        // we must NOT treat it as a workflow (that would send ## Sven / ## Tool
-        // sections as user steps).  Instead, parse as conversation history and
-        // build a fresh single-step queue from extra_prompt.
-        let is_conversation_input = !opts.input.trim().is_empty()
+        // ── Detect piped input format ─────────────────────────────────────────
+        // Priority: JSONL > conversation markdown > workflow / plain-text.
+        //
+        // JSONL: produced by `--output-jsonl -` or `--output-format jsonl`.
+        //   Every non-empty line is a JSON object.  Carries full-fidelity
+        //   history including thinking blocks and tool calls.
+        //
+        // Conversation markdown: default output of `--output-format conversation`.
+        //   Contains `## User` / `## Sven` / `## Tool` / `## Tool Result`
+        //   headings.  Must NOT be treated as a workflow (those headings would
+        //   be misread as step labels).
+        //
+        // Both formats may end with a trailing user turn that has not yet
+        // received a response.  When present, that pending turn is used as the
+        // step content when no CLI positional prompt was supplied, so that:
+        //
+        //   sven 'do A, output only the next task' | sven
+        //
+        // works without repeating the task on the command line.
+        let is_jsonl_input = !opts.input.trim().is_empty()
+            && is_jsonl_format(markdown_body);
+
+        let is_conversation_input = !is_jsonl_input
+            && !opts.input.trim().is_empty()
             && is_conversation_format(markdown_body);
 
-        let conversation_history = if is_conversation_input {
+        // Parse the piped input: extract history to seed the agent and any
+        // trailing pending user turn that was not yet answered.
+        let (conversation_history, piped_pending) = if is_jsonl_input {
+            match parse_jsonl_full(markdown_body) {
+                Ok(parsed) => (parsed.history, parsed.pending_user_input),
+                Err(e) => {
+                    write_stderr(&format!(
+                        "[sven:warn] Failed to parse piped input as JSONL ({e}), \
+                         treating as workflow"
+                    ));
+                    (Vec::new(), None)
+                }
+            }
+        } else if is_conversation_input {
             match parse_conversation(markdown_body) {
-                Ok(conv) => conv.history,
+                Ok(conv) => (conv.history, conv.pending_user_input),
                 Err(e) => {
                     write_stderr(&format!(
                         "[sven:warn] Failed to parse piped input as conversation ({e}), \
                          treating as workflow"
                     ));
-                    Vec::new()
+                    (Vec::new(), None)
                 }
             }
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
 
         // ── Parse workflow (title, preamble, steps) ──────────────────────────
@@ -193,15 +224,36 @@ impl CiRunner {
                 content,
                 options: Default::default(),
             }])
-        } else if is_conversation_input {
-            // Piped conversation: ignore the workflow steps parsed from the
-            // markdown (they'd be wrong); use only the positional prompt.
-            let content = opts.extra_prompt.clone().unwrap_or_default();
-            StepQueue::from(vec![Step {
-                label: None,
-                content,
-                options: Default::default(),
-            }])
+        } else if is_conversation_input || is_jsonl_input {
+            // Piped conversation/JSONL: the workflow parser would misread the
+            // section headings as step labels, so we bypass it entirely.
+            //
+            // Step content priority:
+            //   1. CLI positional prompt   (explicit task for the new turn)
+            //   2. Trailing pending user   (last ## User section without a response)
+            //   3. Error — nothing to do
+            let content = opts.extra_prompt.clone().or(piped_pending.clone());
+            match content {
+                Some(c) => StepQueue::from(vec![Step {
+                    label: None,
+                    content: c,
+                    options: Default::default(),
+                }]),
+                None => {
+                    let format_name = if is_jsonl_input { "JSONL" } else { "conversation" };
+                    write_stderr(&format!(
+                        "[sven:error] Piped {format_name} has no pending task.\n\
+                         \n\
+                         To continue a piped conversation provide a prompt:\n\
+                         \n\
+                         \tsven 'task1' | sven 'task2'\n\
+                         \n\
+                         Or end the piped output with an unanswered ## User section\n\
+                         so the next sven instance picks it up automatically."
+                    ));
+                    std::process::exit(EXIT_VALIDATION_ERROR);
+                }
+            }
         } else {
             let mut q = workflow.steps;
             if let Some(prompt) = &opts.extra_prompt {
@@ -225,7 +277,7 @@ impl CiRunner {
         // always present at the top of the appended block.
         // Skip preamble when input is empty or conversation format (no useful
         // preamble exists in those cases).
-        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input {
+        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input || is_jsonl_input {
             None
         } else {
             workflow.system_prompt_append
@@ -1052,6 +1104,30 @@ pub(crate) fn is_conversation_format(s: &str) -> bool {
         let t = line.trim_end();
         matches!(t, "## User" | "## Sven" | "## Tool" | "## Tool Result")
     })
+}
+
+/// Return true if the input looks like a JSONL conversation stream: every
+/// non-empty line must start with `{`.
+///
+/// Used to detect when `--output-jsonl -` output from a prior sven run is
+/// piped into the next instance.  We inspect at most the first 10 non-empty
+/// lines to keep detection fast on large streams.
+pub(crate) fn is_jsonl_format(s: &str) -> bool {
+    let mut checked = 0usize;
+    for line in s.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if !t.starts_with('{') {
+            return false;
+        }
+        checked += 1;
+        if checked >= 10 {
+            break;
+        }
+    }
+    checked > 0
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────────
