@@ -2,6 +2,16 @@ CARGO   ?= cargo
 # Use the user-writable registry when the system CARGO_HOME is read-only.
 # Override with: make CARGO_HOME=/path/to/cargo
 export CARGO_HOME = $(HOME)/.cargo
+
+# Wrap rustc with sccache when available for shared compilation caching across builds.
+# Install with: cargo install sccache
+# Override with: make RUSTC_WRAPPER=""  to disable.
+ifneq ($(shell command -v sccache 2>/dev/null),)
+export RUSTC_WRAPPER = sccache
+endif
+
+NPROC := $(shell nproc)
+CARGO_FLAGS ?= --jobs $(NPROC)
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 DEB_OUT := target/debian
 
@@ -12,15 +22,15 @@ all: build
 
 ## build     – debug build
 build:
-	$(CARGO) build
+	$(CARGO) build $(CARGO_FLAGS)
 
 ## release   – optimised release build
 release:
-	$(CARGO) build --release
+	$(CARGO) build --release $(CARGO_FLAGS)
 
 ## test      – run all unit + integration tests
 test:
-	$(CARGO) test
+	$(CARGO) test $(CARGO_FLAGS)
 
 ## bats      – run end-to-end bats tests (requires bats-core)
 bats: build
@@ -44,7 +54,7 @@ deb: release
 		target/release/sven completions bash > target/completions/sven.bash; \
 		target/release/sven completions zsh  > target/completions/_sven; \
 		target/release/sven completions fish > target/completions/sven.fish; \
-		$(CARGO) deb --output $(DEB_OUT); \
+		$(CARGO) deb --output $(DEB_OUT) $(CARGO_FLAGS); \
 	else \
 		echo "cargo-deb not found, using scripts/build-deb.sh..."; \
 		bash scripts/build-deb.sh --out-dir $(DEB_OUT); \
@@ -92,29 +102,29 @@ fmt:
 
 ## check     – lint without building
 check:
-	$(CARGO) clippy --all-targets -- -D warnings
+	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
 
 ## relay     – build the sven-relay server (requires git-discovery feature)
 relay:
-	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery
+	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery $(CARGO_FLAGS)
 	@echo "Binary: target/debug/sven-relay"
 	@echo "Usage:  sven-relay --listen /ip4/0.0.0.0/tcp/4001 --repo /path/to/git/repo"
 
 ## relay-release – release-optimised relay binary
 relay-release:
-	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery --release
+	$(CARGO) build -p sven-p2p --bin sven-relay --features git-discovery --release $(CARGO_FLAGS)
 	@echo "Binary: target/release/sven-relay"
 
 ## p2p-client – build the sven-p2p-client TUI/chat client
 p2p-client:
-	$(CARGO) build -p sven-p2p --bin sven-p2p-client
+	$(CARGO) build -p sven-p2p --bin sven-p2p-client $(CARGO_FLAGS)
 	@echo "Binary: target/debug/sven-p2p-client"
 	@echo "Usage:  sven-p2p-client --repo . --room <room> --name <name>"
 	@echo "        sven-p2p-client --repo . --room <room> --name <name> -m '@peer hello'"
 
 ## p2p-client-release – release-optimised client binary
 p2p-client-release:
-	$(CARGO) build -p sven-p2p --bin sven-p2p-client --release
+	$(CARGO) build -p sven-p2p --bin sven-p2p-client --release $(CARGO_FLAGS)
 	@echo "Binary: target/release/sven-p2p-client"
 
 ## p2p      – build both relay and client debug binaries
@@ -125,7 +135,7 @@ p2p-release: relay-release p2p-client-release
 
 ## p2p-test – run sven-p2p unit and integration tests
 p2p-test:
-	$(CARGO) test -p sven-p2p
+	$(CARGO) test -p sven-p2p $(CARGO_FLAGS)
 
 ## clean     – remove build artefacts
 clean:

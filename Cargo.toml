@@ -118,9 +118,16 @@ assets = [
 ]
 
 [profile.release]
-opt-level = 3
-lto       = true
-strip     = true
+opt-level      = 3
+lto            = "thin"   # thin LTO: cross-crate inlining without serializing all codegen to 1 unit
+codegen-units  = 8        # match physical core count; fat LTO forces this to 1, killing parallelism
+strip          = true
 
 [profile.dev]
-opt-level = 0
+opt-level     = 0
+codegen-units = 256       # max parallelism for debug builds (cargo default, made explicit)
+
+# Fast CI/check profile: same as dev but skip debug info for faster linking
+[profile.ci]
+inherits      = "dev"
+debug         = 0
