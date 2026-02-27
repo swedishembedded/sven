@@ -4,10 +4,13 @@
 //! Runtime environment detection utilities.
 //!
 //! This crate provides project-root discovery, git context collection,
-//! CI environment detection, and project context file loading.
+//! CI environment detection, project context file loading, and skill discovery.
 //!
 //! These are general-purpose utilities usable by any frontend (CI runner,
 //! TUI, daemon, etc.) without depending on any specific runner crate.
+
+pub mod skills;
+pub use skills::{discover_skills, parse_skill_file, ParsedSkill, SkillInfo, SvenSkillMeta};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

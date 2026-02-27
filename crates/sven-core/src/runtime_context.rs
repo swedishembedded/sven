@@ -5,9 +5,13 @@
 //!
 //! This is separate from [`sven_config::AgentConfig`], which holds only
 //! config-file fields.  [`AgentRuntimeContext`] carries values detected or
-//! specified at runtime (project root, git/CI context, prompt overrides).
+//! specified at runtime (project root, git/CI context, prompt overrides,
+//! discovered skills).
 
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use sven_runtime::SkillInfo;
 
 /// Environment-detected context injected into an agent at construction time.
 #[derive(Debug, Default, Clone)]
@@ -25,4 +29,7 @@ pub struct AgentRuntimeContext {
     /// Full system prompt override (from `--system-prompt-file`).
     /// When set, replaces `AgentConfig::system_prompt` entirely.
     pub system_prompt_override: Option<String>,
+    /// Skills discovered from the standard search hierarchy.
+    /// Shared with `LoadSkillTool` via `Arc` to avoid cloning skill content.
+    pub skills: Arc<[SkillInfo]>,
 }

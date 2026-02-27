@@ -8,8 +8,9 @@
 //! currently return immediately (stubs to be filled in later).
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
+
+use sven_runtime::SkillInfo;
 
 use super::SlashCommand;
 
@@ -55,7 +56,8 @@ impl CommandRegistry {
         self.commands.values().cloned()
     }
 
-    /// Return sorted list of command names (used by help and future shell completion).
+    /// Return sorted list of command names (used by help and tab completion).
+    // Not yet wired to a help/completion consumer; suppress until that is done.
     #[allow(dead_code)]
     pub fn names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = self.commands.keys().map(|s| s.as_str()).collect();
@@ -65,15 +67,14 @@ impl CommandRegistry {
 
     // ── Extension points ──────────────────────────────────────────────────────
 
-    /// Scan `skills_dir` for `<skill-name>/SKILL.md` files and register each
-    /// as a slash command.
+    /// Register slash commands for all discovered skills.
     ///
-    /// **Currently a stub** — returns without registering anything.
-    /// Will be implemented when Skills support is added.
-    #[allow(dead_code)]
-    pub async fn discover_skills(&mut self, skills_dir: &Path) {
-        let commands = super::skill::discover_skills(skills_dir).await;
-        for cmd in commands {
+    /// Each skill in `skills` becomes a `/skill-name` command.  Skills with
+    /// `user_invocable_only: true` are included (slash commands are explicitly
+    /// user-invoked).  Duplicate sanitized names are disambiguated with `_2`,
+    /// `_3`, etc.
+    pub fn register_skills(&mut self, skills: &[SkillInfo]) {
+        for cmd in super::skill::make_skill_commands(skills) {
             self.register(Arc::new(cmd));
         }
     }

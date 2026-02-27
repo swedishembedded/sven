@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow  = { workspace = true }
-tracing = { workspace = true }
-chrono  = { workspace = true }
+anyhow     = { workspace = true }
+tracing    = { workspace = true }
+chrono     = { workspace = true }
+serde      = { workspace = true }
+serde_yaml = { workspace = true }
+dirs       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

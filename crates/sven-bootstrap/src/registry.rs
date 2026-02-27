@@ -15,7 +15,7 @@ use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
     AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
-    FsTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool,
+    FsTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool, LoadSkillTool,
     ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
     ShellTool, SwitchModeTool, TodoWriteTool, UpdateMemoryTool,
     WebFetchTool, WebSearchTool, WriteTool,
@@ -94,8 +94,9 @@ pub fn build_tool_registry(
                 model,
                 Arc::new(cfg.clone()),
                 task_depth,
-                sub_agent_runtime,
+                sub_agent_runtime.clone(),
             ));
+            reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
@@ -140,6 +141,7 @@ pub fn build_tool_registry(
             });
             reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
             // TaskTool intentionally omitted to limit sub-agent nesting
+            reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));

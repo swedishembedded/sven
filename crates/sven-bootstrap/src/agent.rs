@@ -80,6 +80,7 @@ impl AgentBuilder {
             project_context_file: self.runtime_ctx.project_context_file,
             append_system_prompt: self.runtime_ctx.append_system_prompt,
             system_prompt_override: self.runtime_ctx.system_prompt_override,
+            skills: self.runtime_ctx.skills,
         };
 
         // Pass runtime.clone() as sub_agent_runtime so TaskTool sub-agents

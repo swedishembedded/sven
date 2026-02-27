@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sven-config = { path = "../sven-config" }
-sven-image  = { path = "../sven-image" }
+sven-config  = { path = "../sven-config" }
+sven-image   = { path = "../sven-image" }
+sven-runtime = { path = "../sven-runtime" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }

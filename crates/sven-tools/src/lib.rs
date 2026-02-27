@@ -39,6 +39,9 @@ pub use builtin::gdb::{
 };
 pub use builtin::gdb::state::GdbSessionState;
 
+// Skill loading tool
+pub use builtin::load_skill::LoadSkillTool;
+
 // Legacy exports preserved for backwards compatibility
 pub use builtin::shell::ShellTool;
 pub use builtin::fs::FsTool;

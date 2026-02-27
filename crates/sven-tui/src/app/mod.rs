@@ -318,7 +318,14 @@ impl App {
             config.model.clone()
         };
 
-        let registry = Arc::new(CommandRegistry::with_builtins());
+        let mut registry = CommandRegistry::with_builtins();
+        {
+            // Discover skills and register them as slash commands.
+            let project_root = sven_runtime::find_project_root().ok();
+            let skills = sven_runtime::discover_skills(project_root.as_deref());
+            registry.register_skills(&skills);
+        }
+        let registry = Arc::new(registry);
         let completion_manager = CompletionManager::new(registry.clone());
 
         let mut app = Self {

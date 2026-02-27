@@ -341,3 +341,214 @@ returns to idle, ready for your next message.
 
 To exit sven from the input box, type `/quit` and press `Enter`. In the Neovim
 buffer, use `:q` or `:qa`.
+
+---
+
+## Skills
+
+Skills are instruction packages that teach sven how to handle a specific type
+of task.  Each skill lives in its own directory alongside any helper scripts or
+reference files it needs.  When you invoke a skill, sven loads its instructions
+and follows them for your task.
+
+Skills are discovered automatically from your project and home directory on
+startup.  You do not need to configure anything; drop a skill directory in the
+right place and it appears immediately.
+
+---
+
+### Invoking a skill with a slash command
+
+Every discovered skill is registered as a slash command named after its
+directory path.  Type `/` followed by the skill name in the input box:
+
+```
+/sven
+/sven/plan
+/git-workflow
+/docker/compose
+```
+
+You can optionally follow the command with a task description on the same line:
+
+```
+/sven implement the rate-limiting feature described in the issue
+/sven/plan analyse the authentication module
+/git-workflow rebase my branch onto main
+```
+
+When you submit, sven receives the skill's full instruction set as your message,
+with your task appended at the end.  The skill guides the agent's behaviour for
+the rest of that turn.
+
+---
+
+### Hierarchical skills
+
+Skills can be nested.  A top-level skill like `sven` describes a high-level
+workflow and lists the sub-skills that handle each phase.  Each sub-skill is
+also a fully independent slash command:
+
+```
+/sven               run the full three-phase workflow
+/sven/plan          run only the planning phase
+/sven/implement     run only the implementation phase
+/sven/review        run only the review checklist
+```
+
+When the model loads a parent skill, it receives a compact list of the
+available sub-skills.  It then calls `load_skill("sven/plan")` etc. exactly
+when it enters each phase — not before.  This means sub-skill instructions are
+loaded only when actually needed, keeping each turn's token usage minimal.
+
+---
+
+### Where to put skills
+
+Sven looks for skills in the following locations, with later sources taking
+precedence when the same command exists in multiple places:
+
+| Location | When to use |
+|----------|-------------|
+| `~/.sven/skills/` | Your personal skills, available in every project |
+| `~/.agents/skills/` | Cross-agent skills shared with other agents |
+| `<project>/.sven/skills/` | Skills specific to this project |
+| `<project>/.agents/skills/` | Project skills shared with other agents |
+
+Project-level skills always win over global ones.
+
+---
+
+### Creating a skill
+
+A skill is a directory containing a `SKILL.md` file:
+
+```
+.sven/skills/
+└── deploy/
+    ├── SKILL.md
+    └── scripts/
+        └── pre-flight.sh
+```
+
+`SKILL.md` starts with a YAML frontmatter block followed by the instruction
+body:
+
+```markdown
+---
+description: |
+  Use this skill when the user asks to deploy, release, or ship the application.
+  Trigger phrases: "deploy", "release", "ship to production".
+name: Deploy             # optional — defaults to directory name
+version: 1.0.0           # optional
+---
+
+# Deploy
+
+Before deploying, run the pre-flight checklist in scripts/pre-flight.sh.
+
+1. Confirm the target environment with the user.
+2. Run `scripts/pre-flight.sh` and fix any failures.
+3. Build the release artefact.
+4. Push and tag.
+```
+
+The `description` field is the only required frontmatter key.  The model reads
+it to decide whether to use the skill, so write it as a list of trigger phrases
+and use-cases rather than a technical summary.
+
+---
+
+### Creating a hierarchical skill
+
+Nest sub-skill directories inside the parent:
+
+```
+.sven/skills/
+└── deploy/
+    ├── SKILL.md              /deploy
+    ├── pre-flight/
+    │   └── SKILL.md          /deploy/pre-flight
+    └── rollback/
+        └── SKILL.md          /deploy/rollback
+```
+
+In the parent `SKILL.md`, tell the model to load sub-skills at the right time:
+
+```markdown
+---
+description: |
+  Full deployment workflow. Use when deploying to any environment.
+---
+
+# Deploy Workflow
+
+Follow these phases in order:
+
+1. Pre-flight checks — call `load_skill("deploy/pre-flight")` before touching
+   any infrastructure.
+2. Deploy the artefact.
+3. If anything fails — call `load_skill("deploy/rollback")` immediately.
+```
+
+Sub-skills are automatically listed to the model when the parent is loaded, so
+you do not need to declare them in the frontmatter.  Just create the directory.
+
+---
+
+### Frontmatter reference
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `description` | string | **yes** | Trigger phrases and use-cases. The model matches this against the user's request. |
+| `name` | string | no | Human-readable label shown in the UI. Defaults to the directory name. |
+| `version` | string | no | Semver version string for your own tracking. |
+| `sven.always` | bool | no | Always include this skill's metadata in the system prompt, regardless of the token budget. Useful for a project-wide coding-style skill. Default: `false`. |
+| `sven.requires_bins` | list | no | Skip this skill if any of the listed binaries are absent from `PATH` (e.g. `[docker, kubectl]`). |
+| `sven.requires_env` | list | no | Skip this skill if any of the listed environment variables are unset (e.g. `[AWS_PROFILE]`). |
+| `sven.user_invocable_only` | bool | no | Hide the skill from the model's automatic matching. It still appears as a `/command`. Use for skills you always want to invoke deliberately. Default: `false`. |
+
+---
+
+### Bundled files
+
+Any file in a skill directory that is not a `SKILL.md` is a **bundled file** —
+a script, reference document, template, or data file the skill's instructions
+may use.  Subdirectories without their own `SKILL.md` are support directories,
+not sub-skills.
+
+When a skill is loaded via `load_skill`, the agent receives a listing of up to
+20 bundled file paths relative to the skill directory.  The skill body can
+reference them:
+
+```markdown
+Run the helper at `scripts/validate.py` before proceeding.
+```
+
+The agent resolves that path against the base directory shown in the tool
+response and reads the file with `read_file`.
+
+---
+
+### Tips
+
+**Write descriptions as trigger phrases.**  The model matches the description
+against what the user asked.  `"Use when deploying to production"` is more
+useful than `"Deployment skill"`.
+
+**Keep parent bodies short.**  The parent skill should describe the workflow
+and tell the model *when* to call each sub-skill.  Put the detailed instructions
+in the sub-skills.
+
+**Use `always: true` sparingly.**  Skills marked `always` are included in every
+system prompt.  Reserve this for genuinely project-wide rules (e.g. a coding
+style guide) rather than task-specific workflows.
+
+**Use `user_invocable_only: true` for personal workflows.**  If a skill
+contains steps you always want to review before running (e.g. a production
+deployment), mark it `user_invocable_only` so the model never triggers it
+automatically.
+
+**Override globals with project skills.**  A project-level skill at
+`.sven/skills/deploy/` silently replaces any global skill with the same command.
+This lets you tailor shared skills for a specific repository.

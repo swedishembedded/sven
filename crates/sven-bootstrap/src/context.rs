@@ -19,7 +19,7 @@ use sven_tools::{
     events::TodoItem,
     QuestionRequest,
 };
-use sven_runtime::{CiContext, GitContext};
+use sven_runtime::{CiContext, GitContext, SkillInfo};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -42,10 +42,12 @@ pub struct RuntimeContext {
     pub append_system_prompt: Option<String>,
     /// Full system prompt override (from `--system-prompt-file`).
     pub system_prompt_override: Option<String>,
+    /// Skills discovered from the standard search hierarchy.
+    pub skills: Arc<[SkillInfo]>,
 }
 
 impl RuntimeContext {
-    /// Create with auto-detected project, git, and CI context.
+    /// Create with auto-detected project, git, CI context, and skills.
     pub fn auto_detect() -> Self {
         let project_root = sven_runtime::find_project_root().ok();
         let git_context = project_root.as_ref()
@@ -53,6 +55,10 @@ impl RuntimeContext {
         let ci_context = Some(sven_runtime::detect_ci_context());
         let project_context_file = project_root.as_ref()
             .and_then(|r| sven_runtime::load_project_context_file(r));
+        let skills: Arc<[SkillInfo]> = {
+            let discovered = sven_runtime::discover_skills(project_root.as_deref());
+            Arc::from(discovered.into_boxed_slice())
+        };
 
         Self {
             project_root,
@@ -61,6 +67,7 @@ impl RuntimeContext {
             project_context_file,
             append_system_prompt: None,
             system_prompt_override: None,
+            skills,
         }
     }
 

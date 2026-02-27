@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use sven_config::AgentMode;
+use sven_runtime::SkillInfo;
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug, Default)]
@@ -25,12 +26,18 @@ pub struct PromptContext<'a> {
     pub ci_context: Option<&'a str>,
     /// Text appended verbatim after the default Guidelines section.
     pub append: Option<&'a str>,
+    /// Discovered skills.  Metadata (name + description) is injected into the
+    /// stable system prompt so the model always knows what skills are available.
+    /// This slice is stable within a session and does not break prompt caching.
+    pub skills: &'a [SkillInfo],
 }
 
 impl<'a> PromptContext<'a> {
     /// Return a version of this context with the volatile fields cleared.
     ///
     /// Used to build the *stable* (cacheable) portion of the system prompt.
+    /// Skills are stable within a session (discovered once at startup) so they
+    /// are included in the stable slice.
     pub fn stable_only(&self) -> Self {
         Self {
             project_root: self.project_root,
@@ -38,6 +45,7 @@ impl<'a> PromptContext<'a> {
             project_context_file: self.project_context_file,
             ci_context: None,
             append: self.append,
+            skills: self.skills,
         }
     }
 
@@ -117,6 +125,116 @@ mod guidelines {
          - If `gdb_start_server` reports a server is already running, call `gdb_connect` directly.\n\
          - Use `gdb_wait_stopped` after `continue` or `step` commands before issuing the next command."
     }
+}
+
+// ─── Skills section ───────────────────────────────────────────────────────────
+
+/// Maximum total characters for the `<available_skills>` block in the system
+/// prompt.  Binary search is used to fit within this budget when there are many
+/// skills.
+pub const MAX_SKILLS_PROMPT_CHARS: usize = 30_000;
+
+/// Format the available-skills block for injection into the system prompt.
+///
+/// Skills with `user_invocable_only: true` are omitted (they are still
+/// registered as TUI slash commands but not shown to the model).
+/// Skills with `always: true` bypass the char-budget check and are always
+/// included.
+///
+/// Returns an empty string when `skills` is empty.
+pub fn build_skills_section(skills: &[SkillInfo]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let always_skills: Vec<&SkillInfo> = skills
+        .iter()
+        .filter(|s| s.sven_meta.as_ref().is_some_and(|m| m.always))
+        .collect();
+
+    let candidate_skills: Vec<&SkillInfo> = skills
+        .iter()
+        .filter(|s| {
+            let is_always = s.sven_meta.as_ref().is_some_and(|m| m.always);
+            let user_only = s.sven_meta.as_ref().is_some_and(|m| m.user_invocable_only);
+            !user_only && !is_always
+        })
+        .collect();
+
+    // Build XML entries for always-included skills.
+    let always_entries: Vec<String> = always_skills
+        .iter()
+        .map(|s| format!(
+            "  <skill>\n    <command>{}</command>\n    <name>{}</name>\n    <description>{}</description>\n  </skill>",
+            s.command,
+            s.name,
+            s.description.trim()
+        ))
+        .collect();
+
+    let remaining_budget = MAX_SKILLS_PROMPT_CHARS
+        .saturating_sub(always_entries.iter().map(|e| e.len()).sum::<usize>());
+
+    let candidate_entries: Vec<String> = candidate_skills
+        .iter()
+        .map(|s| format!(
+            "  <skill>\n    <command>{}</command>\n    <name>{}</name>\n    <description>{}</description>\n  </skill>",
+            s.command,
+            s.name,
+            s.description.trim()
+        ))
+        .collect();
+
+    // Walk forward through candidate entries, accumulating size, and stop once the
+    // budget would be exceeded.  Skills are bounded in practice (< a few hundred),
+    // so a linear scan is both correct and efficient.
+    let mut used = 0usize;
+    let fitted_count = candidate_entries
+        .iter()
+        .take_while(|e| {
+            let next = used + e.len();
+            if next <= remaining_budget {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count();
+    let fitted_entries = &candidate_entries[..fitted_count];
+
+    let all_entries: Vec<&str> = always_entries
+        .iter()
+        .chain(fitted_entries.iter())
+        .map(String::as_str)
+        .collect();
+
+    if all_entries.is_empty() {
+        return String::new();
+    }
+
+    let truncated = fitted_count < candidate_entries.len();
+    let truncation_note = if truncated {
+        format!(
+            "\n⚠ Skills truncated: showing {} of {}.",
+            fitted_count + always_entries.len(),
+            skills.len()
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        "## Skills\n\n\
+         When you recognize that the current task matches one of the available skills listed \
+         below, call the `load_skill` tool to load the full skill instructions before \
+         proceeding.  Match the skill `<description>` trigger phrases against the user's \
+         request.  Load at most one skill per task; do not load a skill unless it clearly \
+         applies.\
+         {truncation_note}\n\n\
+         <available_skills>\n{}\n</available_skills>",
+        all_entries.join("\n")
+    )
 }
 
 fn build_guidelines_section() -> String {
@@ -279,6 +397,12 @@ pub fn system_prompt(
         String::new()
     };
 
+    // Skills — stable, injected after project instructions and before CI/git.
+    let skills_section = {
+        let s = build_skills_section(ctx.skills);
+        if s.is_empty() { String::new() } else { format!("\n\n{s}") }
+    };
+
     let guidelines_section = build_guidelines_section();
 
     let append_section = if let Some(extra) = ctx.append {
@@ -290,7 +414,7 @@ pub fn system_prompt(
     format!(
         "{agent_identity}\n\n\
          {mode_instructions}{tools_section}{tool_examples_section}{project_section}{git_section}\
-         {context_file_section}{ci_section}\n\n\
+         {context_file_section}{skills_section}{ci_section}\n\n\
          {guidelines_section}\
          {append_section}",
     )
@@ -530,5 +654,105 @@ mod tests {
             assert!(pr.contains("specialized AI coding agent"), "all modes should use enhanced identity");
             assert!(pr.contains("Core Capabilities"), "all modes should list capabilities");
         }
+    }
+
+    // ── Skills section tests ──────────────────────────────────────────────────
+
+    fn make_test_skill(command: &str, description: &str) -> sven_runtime::SkillInfo {
+        use std::path::PathBuf;
+        let name = command.rsplit('/').next().unwrap_or(command).to_string();
+        sven_runtime::SkillInfo {
+            command: command.to_string(),
+            name,
+            description: description.to_string(),
+            version: None,
+            skill_md_path: PathBuf::from(format!("/tmp/{command}/SKILL.md")),
+            skill_dir: PathBuf::from(format!("/tmp/{command}")),
+            content: format!("## {command} content"),
+            sven_meta: None,
+        }
+    }
+
+    #[test]
+    fn system_prompt_includes_skills_section_when_skills_provided() {
+        let skills = vec![
+            make_test_skill("git-workflow", "Use when the user asks about git."),
+        ];
+        let ctx = PromptContext { skills: &skills, ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(pr.contains("## Skills"), "prompt should include Skills section");
+        assert!(pr.contains("git-workflow"), "prompt should list skill command");
+        assert!(pr.contains("<command>"), "prompt should include command element");
+        assert!(pr.contains("available_skills"), "prompt should include available_skills block");
+        assert!(pr.contains("load_skill"), "prompt should mention load_skill tool");
+    }
+
+    #[test]
+    fn system_prompt_no_skills_no_section() {
+        let ctx = PromptContext { skills: &[], ..Default::default() };
+        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        assert!(!pr.contains("## Skills"), "prompt should not include Skills section when empty");
+        assert!(!pr.contains("<available_skills>"), "prompt should not include available_skills block");
+    }
+
+    #[test]
+    fn skills_section_omits_user_invocable_only() {
+        use sven_runtime::SvenSkillMeta;
+        let mut private = make_test_skill("private-skill", "Private tool.");
+        private.sven_meta = Some(SvenSkillMeta {
+            user_invocable_only: true,
+            ..Default::default()
+        });
+        let public = make_test_skill("public-skill", "Public tool.");
+        let skills = vec![private, public];
+        let section = build_skills_section(&skills);
+        assert!(section.contains("public-skill"), "public skill should be listed");
+        assert!(!section.contains("private-skill"), "user_invocable_only skill should be omitted");
+    }
+
+    #[test]
+    fn skills_section_always_skill_bypasses_budget() {
+        use sven_runtime::SvenSkillMeta;
+        // Construct an "always" skill and verify it appears even when budget is tight.
+        let mut always = make_test_skill("critical", "Always included.");
+        always.sven_meta = Some(SvenSkillMeta {
+            always: true,
+            ..Default::default()
+        });
+        let skills = vec![always];
+        let section = build_skills_section(&skills);
+        assert!(section.contains("critical"), "always-skill must appear in section");
+    }
+
+    #[test]
+    fn skills_section_char_budget_truncates_large_sets() {
+        // Create more skills than the budget can hold.
+        let skills: Vec<_> = (0..200)
+            .map(|i| make_test_skill(
+                &format!("skill-{i:03}"),
+                &"This skill does task number. ".repeat(20),
+            ))
+            .collect();
+        let section = build_skills_section(&skills);
+        assert!(section.len() <= crate::prompts::MAX_SKILLS_PROMPT_CHARS + 500,
+            "skills section should be bounded by the char budget (with tolerance for wrapper text)");
+        assert!(section.contains("⚠ Skills truncated"), "truncation notice should appear");
+    }
+
+    #[test]
+    fn build_skills_section_empty_returns_empty_string() {
+        let section = build_skills_section(&[]);
+        assert!(section.is_empty());
+    }
+
+    #[test]
+    fn build_skills_section_single_skill_includes_xml_tags() {
+        let skills = vec![make_test_skill("my-skill", "Does something.")];
+        let section = build_skills_section(&skills);
+        assert!(section.contains("<available_skills>"));
+        assert!(section.contains("</available_skills>"));
+        assert!(section.contains("<command>my-skill</command>"));
+        assert!(section.contains("<name>my-skill</name>"));
+        assert!(section.contains("<description>Does something.</description>"));
     }
 }

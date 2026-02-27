@@ -19,6 +19,7 @@ pub mod web_search;
 pub mod update_memory;
 pub mod ask_question;
 pub mod switch_mode;
+pub mod load_skill;
 
 pub mod gdb;
 
