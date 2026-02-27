@@ -34,6 +34,25 @@ impl App {
                     return self.handle_pager_key(k).await;
                 }
 
+                // ── Delete confirmation intercept ────────────────────────────
+                // When a segment is awaiting delete confirmation any key other
+                // than 'y' cancels the request.  'y' executes the removal.
+                if let Some(seg_idx) = self.pending_delete_confirm {
+                    use crossterm::event::KeyCode;
+                    self.pending_delete_confirm = None;
+                    if k.code == KeyCode::Char('y') || k.code == KeyCode::Char('Y') {
+                        let saved = self.focused_chat_segment;
+                        self.focused_chat_segment = Some(seg_idx);
+                        self.dispatch(Action::RemoveChatSegment).await;
+                        if self.focused_chat_segment.is_some() {
+                            self.focused_chat_segment = saved;
+                        }
+                    } else {
+                        self.rerender_chat().await;
+                    }
+                    return false;
+                }
+
                 let in_search = self.search.active;
                 let in_input  = self.focus == FocusPane::Input;
                 let in_queue  = self.focus == FocusPane::Queue;
@@ -198,22 +217,54 @@ impl App {
                                 if let Some(seg_idx) =
                                     segment_at_line(&self.segment_line_ranges, click_line)
                                 {
-                                    let is_editable =
+                                    let _is_editable =
                                         segment_editable_text(&self.chat_segments, seg_idx)
                                             .is_some();
 
-                                    // Detect a click on the [Edit] label: rightmost 6 cols
-                                    // of the header line for any editable segment.
+                                    // Detect clicks on the right-aligned action icons.
+                                    // Layout (6 cols from inner right edge, 1-col margin at w-1):
+                                    //   ↻ rerun  — col w-6  (zone [w-6, w-5])
+                                    //   ✎ edit   — col w-4  (zone [w-5, w-4])
+                                    //   ✕ delete — col w-2  (zone [w-3, w-2])
                                     let is_header_line =
-                                        self.edit_label_line_indices.contains(&click_line);
-                                    let label_len = 6u16; // "[Edit]"
-                                    let label_start_col =
-                                        chat_inner_x + chat_inner_w.saturating_sub(label_len);
-                                    let clicked_edit_label = is_editable
-                                        && is_header_line
-                                        && mouse.column >= label_start_col;
+                                        self.remove_label_line_indices.contains(&click_line);
 
-                                    if clicked_edit_label {
+                                    // Zone boundaries (cols, right-edge relative, non-overlapping)
+                                    let label_area_start  = chat_inner_x + chat_inner_w.saturating_sub(6);
+                                    let edit_zone_start   = chat_inner_x + chat_inner_w.saturating_sub(5);
+                                    let delete_zone_start = chat_inner_x + chat_inner_w.saturating_sub(3);
+
+                                    let clicked_delete = is_header_line
+                                        && mouse.column >= delete_zone_start
+                                        && mouse.column < chat_inner_x + chat_inner_w.saturating_sub(1);
+                                    let clicked_edit = is_header_line
+                                        && self.edit_label_line_indices.contains(&click_line)
+                                        && mouse.column >= edit_zone_start
+                                        && mouse.column < delete_zone_start;
+                                    let clicked_rerun = is_header_line
+                                        && self.rerun_label_line_indices.contains(&click_line)
+                                        && mouse.column >= label_area_start
+                                        && mouse.column < edit_zone_start;
+                                    // Any click outside the label area cancels a pending delete.
+                                    let outside_labels = mouse.column < label_area_start;
+
+                                    if clicked_delete {
+                                        if self.pending_delete_confirm == Some(seg_idx) {
+                                            // Second click: confirmed — execute removal.
+                                            self.pending_delete_confirm = None;
+                                            let saved = self.focused_chat_segment;
+                                            self.focused_chat_segment = Some(seg_idx);
+                                            self.dispatch(Action::RemoveChatSegment).await;
+                                            if self.focused_chat_segment.is_some() {
+                                                self.focused_chat_segment = saved;
+                                            }
+                                        } else {
+                                            // First click: request confirmation (label turns bright).
+                                            self.pending_delete_confirm = Some(seg_idx);
+                                            self.rerender_chat().await;
+                                        }
+                                    } else if clicked_edit {
+                                        self.pending_delete_confirm = None;
                                         // Load segment into the edit buffer.
                                         if let Some(text) = segment_editable_text(
                                             &self.chat_segments,
@@ -227,7 +278,18 @@ impl App {
                                             self.update_editing_segment_live();
                                             self.rerender_chat().await;
                                         }
+                                    } else if clicked_rerun {
+                                        self.pending_delete_confirm = None;
+                                        let saved = self.focused_chat_segment;
+                                        self.focused_chat_segment = Some(seg_idx);
+                                        self.dispatch(Action::RerunFromSegment).await;
+                                        if self.focused_chat_segment.is_some() {
+                                            self.focused_chat_segment = saved;
+                                        }
                                     } else {
+                                        if outside_labels {
+                                            self.pending_delete_confirm = None;
+                                        }
                                         // All other clicks on any segment: toggle collapse.
                                         let is_collapsible = match self.chat_segments.get(seg_idx) {
                                             Some(ChatSegment::Message(m)) => matches!(
@@ -293,59 +355,68 @@ impl App {
     // ── Question modal key handling ───────────────────────────────────────────
 
     pub(crate) fn handle_modal_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
-        use crossterm::event::{KeyCode, KeyModifiers};
+        use crossterm::event::KeyCode;
 
         let modal = match &mut self.question_modal {
             Some(m) => m,
             None => return false,
         };
 
-        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
-
         match k.code {
             // ── Cancel ────────────────────────────────────────────────────────
+            // Esc outside text mode: cancel the whole modal.
             KeyCode::Esc if !modal.other_selected => {
                 let modal = self.question_modal.take().unwrap();
                 modal.cancel();
             }
-            // Esc while in Other text input: exit text mode but keep Other selected.
+            // Esc inside Other text mode: cancel the edit and restore the
+            // snapshot (text typed before this edit session is kept).
             KeyCode::Esc if modal.other_selected => {
-                modal.deactivate_other();
+                modal.cancel_other_edit();
             }
 
-            // ── Submit / advance ──────────────────────────────────────────────
-            // Enter when Other text field is NOT active: submit current answer.
+            // ── Submit / advance / activate text mode ─────────────────────────
+            // Enter outside text mode:
+            //   • Other row focused, no text yet   → enter text-edit mode
+            //   • Other row focused, has text       → submit
+            //   • Regular row, nothing selected yet → auto-select it, then submit
+            //   • Regular row, something selected   → submit as-is
             KeyCode::Enter if !modal.other_selected => {
-                let done = modal.submit();
-                if done {
-                    let modal = self.question_modal.take().unwrap();
-                    modal.finish();
+                let n_opts = modal.questions
+                    .get(modal.current_q)
+                    .map(|q| q.options.len())
+                    .unwrap_or(0);
+                if modal.focused_option == n_opts && !modal.other_has_text() {
+                    // Other row focused but empty: enter text-edit mode.
+                    modal.activate_other();
+                } else {
+                    // For regular options: if nothing is selected yet, select the
+                    // focused option so Enter without a prior Space still works.
+                    if modal.focused_option < n_opts && modal.selected_options.is_empty() {
+                        modal.toggle_option(modal.focused_option);
+                    }
+                    let done = modal.submit();
+                    if done {
+                        let modal = self.question_modal.take().unwrap();
+                        modal.finish();
+                    }
                 }
             }
-            // Enter when Other text field IS active: submit if non-empty, else just confirm text.
+            // Enter inside text mode: accept the typed text and exit text mode.
+            // The user then presses Enter again to submit the whole answer.
             KeyCode::Enter if modal.other_selected => {
-                let done = modal.submit();
-                if done {
-                    let modal = self.question_modal.take().unwrap();
-                    modal.finish();
-                }
-            }
-
-            // ── Go back to previous question ──────────────────────────────────
-            // Shift+Tab or Backspace at the very start of text input (when Other active and empty)
-            KeyCode::BackTab => {
-                modal.go_back();
-            }
-            KeyCode::Backspace
-                if modal.other_selected && modal.other_input.is_empty() =>
-            {
-                // Backspace with nothing to delete: exit Other mode.
                 modal.deactivate_other();
             }
 
-            // ── Arrow key navigation (option rows) ────────────────────────────
+            // ── Arrow-key navigation ─────────────────────────────────────────
+            // Up: move focus to the previous row; at the first row go back to
+            // the previous question (replaces Shift+Tab).
             KeyCode::Up if !modal.other_selected => {
-                modal.focus_prev();
+                if modal.focused_option == 0 {
+                    modal.go_back();
+                } else {
+                    modal.focus_prev();
+                }
             }
             KeyCode::Down if !modal.other_selected => {
                 modal.focus_next();
@@ -355,15 +426,10 @@ impl App {
             KeyCode::Char(' ') if !modal.other_selected => {
                 modal.select_focused();
             }
-            // Space in Other text mode: insert a space character.
+            // Space inside text mode: insert a literal space.
             KeyCode::Char(' ') if modal.other_selected => {
                 modal.other_input.insert(modal.other_cursor, ' ');
                 modal.other_cursor += 1;
-            }
-
-            // ── Quick-select shortcut: 'O' toggles Other ─────────────────────
-            KeyCode::Char('o') | KeyCode::Char('O') if !modal.other_selected => {
-                modal.toggle_other();
             }
 
             // ── Number shortcut: 1-9 toggles the corresponding option ─────────
@@ -373,7 +439,7 @@ impl App {
                     if modal.current_q < modal.questions.len() {
                         let q = &modal.questions[modal.current_q];
                         if option_idx == q.options.len() {
-                            modal.toggle_other();
+                            modal.activate_other();
                         } else if option_idx < q.options.len() {
                             modal.toggle_option(option_idx);
                         }
@@ -382,7 +448,8 @@ impl App {
             }
 
             // ── Text input for the "Other" free-text field ────────────────────
-            KeyCode::Char(c) if modal.other_selected && !shift => {
+            // All printable characters (including Shift+letter = uppercase).
+            KeyCode::Char(c) if modal.other_selected => {
                 modal.other_input.insert(modal.other_cursor, c);
                 modal.other_cursor += c.len_utf8();
             }
@@ -402,9 +469,6 @@ impl App {
                 if modal.other_cursor > 0 {
                     modal.other_cursor =
                         prev_char_boundary(&modal.other_input, modal.other_cursor);
-                } else {
-                    // At the start of the text field: exit Other mode.
-                    modal.deactivate_other();
                 }
             }
             KeyCode::Right if modal.other_selected => {

@@ -14,7 +14,10 @@ use crate::{
             apply_bar_and_dim, collapsed_preview, format_conversation,
             parse_markdown_to_messages, segment_bar_style, segment_to_markdown,
         },
-        segment::{segment_editable_text, segment_at_line, ChatSegment},
+        segment::{
+            segment_at_line, segment_editable_text, segment_is_removable,
+            segment_is_rerunnable, ChatSegment,
+        },
     },
     markdown::render_markdown,
 };
@@ -25,15 +28,25 @@ impl App {
     /// Rebuild `chat_lines` and `segment_line_ranges` from `chat_segments` plus
     /// the streaming buffer.
     pub(crate) fn build_display_from_segments(&mut self) {
-        let mut all_lines = Vec::new();
-        let mut ranges    = Vec::new();
-        let mut label_lines: std::collections::HashSet<usize> = Default::default();
+        let mut all_lines    = Vec::new();
+        let mut ranges       = Vec::new();
+        let mut edit_labels:   std::collections::HashSet<usize> = Default::default();
+        let mut remove_labels: std::collections::HashSet<usize> = Default::default();
+        let mut rerun_labels:  std::collections::HashSet<usize> = Default::default();
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let bar_char = if ascii { "| " } else { "▌ " };
 
         let bar_cols: u16 = 2;
-        let effective_width = self.last_chat_inner_width.saturating_sub(bar_cols).max(20);
+        // In no-nvim mode the rightmost 6 cols of the inner area are reserved
+        // for action labels (↻ ✎ ✕ + 1-col right margin).  Reducing
+        // effective_width here keeps those columns blank so the label overlay
+        // never covers content.
+        let label_reserve: u16 = if self.no_nvim { 6 } else { 0 };
+        let effective_width = self
+            .last_chat_inner_width
+            .saturating_sub(bar_cols + label_reserve)
+            .max(20);
         let render_width = if self.config.tui.wrap_width == 0 {
             effective_width
         } else {
@@ -52,10 +65,18 @@ impl App {
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
             let n = styled.len();
 
-            // In no-nvim mode, mark the first line of each editable segment so
-            // draw_chat can overlay an [Edit] label there.
-            if self.no_nvim && segment_editable_text(&self.chat_segments, i).is_some() {
-                label_lines.insert(line_start);
+            // In no-nvim mode mark the first line of each segment with the
+            // labels that apply to it, so draw_chat can overlay them.
+            if self.no_nvim {
+                if segment_editable_text(&self.chat_segments, i).is_some() {
+                    edit_labels.insert(line_start);
+                }
+                if segment_is_removable(seg) {
+                    remove_labels.insert(line_start);
+                }
+                if segment_is_rerunnable(seg) {
+                    rerun_labels.insert(line_start);
+                }
             }
 
             all_lines.extend(styled);
@@ -82,7 +103,9 @@ impl App {
         }
         self.chat_lines = all_lines;
         self.segment_line_ranges = ranges;
-        self.edit_label_line_indices = label_lines;
+        self.edit_label_line_indices   = edit_labels;
+        self.remove_label_line_indices = remove_labels;
+        self.rerun_label_line_indices  = rerun_labels;
         self.recompute_focused_segment();
     }
 

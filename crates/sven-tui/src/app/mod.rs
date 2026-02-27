@@ -211,11 +211,18 @@ pub struct App {
     /// Rebuilt by `build_display_from_segments`; used by the click handler and
     /// `draw_chat` to render the right-aligned label.
     pub(crate) edit_label_line_indices: std::collections::HashSet<usize>,
+    /// Absolute `chat_lines` indices that carry a `[x]` (remove) label overlay.
+    pub(crate) remove_label_line_indices: std::collections::HashSet<usize>,
+    /// Absolute `chat_lines` indices that carry a `[r]` (rerun) label overlay.
+    pub(crate) rerun_label_line_indices: std::collections::HashSet<usize>,
     /// The segment index closest to the vertical centre of the chat viewport.
     /// Only set for editable (user/assistant text) segments.  `None` when the
     /// centre falls outside any editable segment.  Updated every time the
     /// scroll offset or the display is rebuilt.
     pub(crate) focused_chat_segment: Option<usize>,
+    /// Segment awaiting delete confirmation.  Set by first click on `[✕]`;
+    /// cleared on second click (confirms) or any other interaction (cancels).
+    pub(crate) pending_delete_confirm: Option<usize>,
     /// Last known rect of the chat pane border (populated each frame).
     pub(crate) last_chat_pane: Rect,
     /// When set, we are in inline edit mode (editing a chat segment).
@@ -385,7 +392,10 @@ impl App {
             tool_args_cache: HashMap::new(),
             collapsed_segments: std::collections::HashSet::new(),
             edit_label_line_indices: std::collections::HashSet::new(),
+            remove_label_line_indices: std::collections::HashSet::new(),
+            rerun_label_line_indices: std::collections::HashSet::new(),
             focused_chat_segment: None,
+            pending_delete_confirm: None,
             last_chat_pane: Rect::default(),
             editing_message_index: None,
             editing_queue_index: None,
@@ -659,7 +669,13 @@ impl App {
                     self.search.regex.as_ref(), nvim_cursor,
                     editing_range,
                     focused_range,
-                    &self.edit_label_line_indices,
+                    &crate::widgets::ChatLabels {
+                        edit_label_lines:   self.edit_label_line_indices.clone(),
+                        remove_label_lines: self.remove_label_line_indices.clone(),
+                        rerun_label_lines:  self.rerun_label_line_indices.clone(),
+                        pending_delete_line: self.pending_delete_confirm
+                            .and_then(|idx| self.segment_line_ranges.get(idx).map(|&(s, _)| s)),
+                    },
                 );
                 let edit_mode = if self.editing_queue_index.is_some() {
                     InputEditMode::Queue
@@ -669,12 +685,17 @@ impl App {
                     InputEditMode::Normal
                 };
                 let in_edit = edit_mode != InputEditMode::Normal;
+                // When the question modal is visible it owns the terminal
+                // cursor.  Pass `focused = false` to suppress the input-box
+                // cursor so only one cursor is shown at a time.
+                let input_cursor_active = (self.focus == FocusPane::Input || in_edit)
+                    && self.question_modal.is_none();
                 draw_input(
                     frame, layout.input_pane,
                     if in_edit { &self.edit_buffer } else { &self.input_buffer },
                     if in_edit { self.edit_cursor } else { self.input_cursor },
                     if in_edit { self.edit_scroll_offset } else { self.input_scroll_offset },
-                    self.focus == FocusPane::Input || in_edit,
+                    input_cursor_active,
                     ascii, edit_mode,
                 );
                 if !self.queued.is_empty() {

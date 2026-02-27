@@ -46,6 +46,41 @@ pub fn segment_editable_text(segments: &[ChatSegment], i: usize) -> Option<Strin
     }
 }
 
+/// Returns `true` when the segment can be spliced out of the conversation
+/// (user text, assistant text/tool-call, tool result, thinking block).
+/// `ContextCompacted` and `Error` entries are not user-removable.
+pub fn segment_is_removable(seg: &ChatSegment) -> bool {
+    match seg {
+        ChatSegment::Message(_) | ChatSegment::Thinking { .. } => true,
+        ChatSegment::ContextCompacted { .. } | ChatSegment::Error(_) => false,
+    }
+}
+
+/// Returns `true` when the segment supports the "rerun from here" action
+/// (assistant text, assistant tool calls, or tool results).
+pub fn segment_is_rerunnable(seg: &ChatSegment) -> bool {
+    match seg {
+        ChatSegment::Message(m) => matches!(
+            (&m.role, &m.content),
+            (sven_model::Role::Assistant, _)
+                | (sven_model::Role::Tool, MessageContent::ToolResult { .. })
+        ),
+        _ => false,
+    }
+}
+
+/// If this segment is an assistant `ToolCall`, return its `tool_call_id`.
+pub fn segment_tool_call_id(seg: &ChatSegment) -> Option<&str> {
+    match seg {
+        ChatSegment::Message(m) => match &m.content {
+            MessageContent::ToolCall { tool_call_id, .. } => Some(tool_call_id.as_str()),
+            MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Collect the `Message` objects from a segment slice, skipping non-message
 /// entries (ContextCompacted, Error, Thinking).  Used when building the
 /// payload for a Resubmit request.

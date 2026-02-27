@@ -9,7 +9,10 @@ use crate::{
     app::{App, FocusPane, QueuedMessage},
     chat::{
         markdown::parse_markdown_to_messages,
-        segment::{messages_for_resubmit, segment_editable_text, ChatSegment},
+        segment::{
+            messages_for_resubmit, segment_editable_text, segment_tool_call_id,
+            ChatSegment,
+        },
     },
     commands::{
         completion::CompletionItem,
@@ -153,6 +156,133 @@ impl App {
                     self.focused_chat_segment = None;
                     self.rerender_chat().await;
                     self.save_history_async();
+                }
+            }
+
+            Action::RemoveChatSegment => {
+                // Remove the focused segment from the conversation.  If it is
+                // one half of a ToolCall/ToolResult pair the other half is also
+                // removed to keep the history consistent for the LLM API.
+                if let Some(seg_idx) = self.focused_chat_segment {
+                    // Collect indices to remove (sorted descending so removals
+                    // don't shift earlier indices).
+                    let paired_id: Option<String> = self
+                        .chat_segments
+                        .get(seg_idx)
+                        .and_then(segment_tool_call_id)
+                        .map(String::from);
+
+                    let mut to_remove: Vec<usize> = vec![seg_idx];
+                    if let Some(ref call_id) = paired_id {
+                        // Find the matching counterpart (ToolCall↔ToolResult).
+                        for (i, seg) in self.chat_segments.iter().enumerate() {
+                            if i != seg_idx {
+                                if segment_tool_call_id(seg) == Some(call_id.as_str()) {
+                                    to_remove.push(i);
+                                }
+                            }
+                        }
+                    }
+                    to_remove.sort_unstable_by(|a, b| b.cmp(a)); // descending
+
+                    // Cancel in-progress edit if it targets a removed segment.
+                    if self.editing_message_index
+                        .map(|i| to_remove.contains(&i))
+                        .unwrap_or(false)
+                    {
+                        self.editing_message_index = None;
+                        self.edit_buffer.clear();
+                        self.edit_cursor = 0;
+                        self.edit_scroll_offset = 0;
+                        self.edit_original_text = None;
+                    }
+
+                    for idx in &to_remove {
+                        if *idx < self.chat_segments.len() {
+                            self.chat_segments.remove(*idx);
+                        }
+                    }
+
+                    // Shift collapsed-segment indices to account for removal.
+                    let min_removed = *to_remove.last().unwrap_or(&seg_idx);
+                    let removed_count = to_remove.len();
+                    self.collapsed_segments = self
+                        .collapsed_segments
+                        .iter()
+                        .filter_map(|&i| {
+                            if to_remove.contains(&i) {
+                                None
+                            } else if i > min_removed {
+                                Some(i - removed_count)
+                            } else {
+                                Some(i)
+                            }
+                        })
+                        .collect();
+
+                    self.focused_chat_segment = None;
+                    self.rerender_chat().await;
+                    self.save_history_async();
+                }
+            }
+
+            Action::RerunFromSegment => {
+                // Truncate to just before the last user-text message that
+                // precedes the focused segment, then re-submit to the agent.
+                // This mirrors the `enqueue_or_send_text` flow exactly.
+                if let Some(seg_idx) = self.focused_chat_segment {
+                    // Find the last user text message strictly before seg_idx.
+                    let last_user = (0..seg_idx).rev().find_map(|i| {
+                        match self.chat_segments.get(i) {
+                            Some(ChatSegment::Message(m)) => {
+                                if matches!((&m.role, &m.content),
+                                    (sven_model::Role::User, sven_model::MessageContent::Text(_)))
+                                {
+                                    match &m.content {
+                                        sven_model::MessageContent::Text(t) => {
+                                            Some((i, t.clone()))
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        }
+                    });
+
+                    if let Some((user_idx, user_text)) = last_user {
+                        // Cancel any in-progress edit.
+                        self.editing_message_index = None;
+                        self.edit_buffer.clear();
+                        self.edit_cursor = 0;
+                        self.edit_scroll_offset = 0;
+                        self.edit_original_text = None;
+
+                        // Truncate to just before the user message so that
+                        // messages_for_resubmit returns history without it.
+                        self.chat_segments.truncate(user_idx);
+                        self.collapsed_segments.retain(|&i| i < user_idx);
+
+                        let messages = messages_for_resubmit(&self.chat_segments);
+
+                        // Re-add the user message (agent will add it again via
+                        // Resubmit, mirroring the enqueue_or_send_text pattern).
+                        self.chat_segments.push(ChatSegment::Message(
+                            sven_model::Message::user(&user_text),
+                        ));
+                        self.focused_chat_segment = None;
+                        let qm = QueuedMessage {
+                            content: user_text,
+                            model_transition: None,
+                            mode_transition: None,
+                        };
+                        self.rerender_chat().await;
+                        self.auto_scroll = true;
+                        self.scroll_to_bottom();
+                        self.send_resubmit_to_agent(messages, qm).await;
+                    }
                 }
             }
 

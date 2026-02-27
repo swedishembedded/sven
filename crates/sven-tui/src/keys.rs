@@ -63,6 +63,10 @@ pub enum Action {
     DeleteQueuedMessage,
     /// Truncate chat history from the focused segment onward (chat pane, `d`).
     DeleteChatSegment,
+    /// Remove only the focused segment (and its paired ToolCall/Result if applicable).
+    RemoveChatSegment,
+    /// Truncate to just before the focused segment and re-submit to the agent.
+    RerunFromSegment,
     /// Focus the queue panel (shown above the input when there are queued messages).
     FocusQueue,
     /// Navigate the queue panel selection up.
@@ -255,6 +259,10 @@ pub fn map_key(
         // 'd' / F8 truncate history from the focused segment onward.
         KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteChatSegment),
         KeyCode::F(8)      if !in_input          => Some(Action::DeleteChatSegment),
+        // 'x' removes only the focused segment (ToolCall/Result pair too).
+        KeyCode::Char('x') if !in_input && plain => Some(Action::RemoveChatSegment),
+        // 'r' reruns from the focused segment (truncate + resubmit to agent).
+        KeyCode::Char('r') if !in_input && plain => Some(Action::RerunFromSegment),
         // Focus queue panel when in chat pane
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 

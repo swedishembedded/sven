@@ -34,6 +34,9 @@ pub struct QuestionModal {
     /// Index of the keyboard-focused row in the current question.
     /// Rows: 0..options.len() are regular options; options.len() is "Other".
     pub focused_option: usize,
+    /// Snapshot of `other_input` taken when text-edit mode is entered.
+    /// Restored by Esc so the user can cancel an edit without losing previous text.
+    pub other_input_snapshot: String,
     /// Per-question snapshots so the user can navigate back.
     snapshots: Vec<AnswerState>,
     answer_tx: oneshot::Sender<String>,
@@ -50,6 +53,7 @@ impl QuestionModal {
             other_input: String::new(),
             other_cursor: 0,
             focused_option: 0,
+            other_input_snapshot: String::new(),
             snapshots: Vec::new(),
             answer_tx,
         }
@@ -120,27 +124,36 @@ impl QuestionModal {
         self.other_selected = false;
     }
 
-    /// Activate the "Other" text field (moves focus to the Other row).
+    /// Activate the "Other" text field (enters text-edit mode).
+    /// Saves the current `other_input` as a snapshot so Esc can restore it.
     pub fn activate_other(&mut self) {
         let n_opts = self.questions.get(self.current_q).map(|q| q.options.len()).unwrap_or(0);
         self.focused_option = n_opts;
         self.other_selected = true;
         self.selected_options.clear();
+        // Snapshot so Esc can restore without losing any previously accepted text.
+        self.other_input_snapshot = self.other_input.clone();
     }
 
-    /// Toggle the "Other" option (keyboard shortcut 'O').
-    pub fn toggle_other(&mut self) {
-        if self.other_selected {
-            self.other_selected = false;
-        } else {
-            self.activate_other();
-        }
-    }
-
-    /// Deactivate the "Other" text field but keep the content.
-    /// Returns focus to the "Other" row so the user can still see it.
+    /// Accept the typed text and exit text-edit mode.
+    /// Focus stays on the "Other" row.
     pub fn deactivate_other(&mut self) {
         self.other_selected = false;
+        // Accepted — cursor moves to end so the next edit starts there.
+        self.other_cursor = self.other_input.len();
+    }
+
+    /// Cancel the current text edit: restore the snapshot and exit text-edit mode.
+    pub fn cancel_other_edit(&mut self) {
+        self.other_input  = self.other_input_snapshot.clone();
+        self.other_cursor = self.other_input.len();
+        self.other_selected = false;
+    }
+
+    /// Returns `true` when the "Other" row has accepted (non-empty) text that
+    /// was not yet submitted.
+    pub fn other_has_text(&self) -> bool {
+        !self.other_input.trim().is_empty()
     }
 
     /// Save the current question's state and advance to the next one.
@@ -152,10 +165,13 @@ impl QuestionModal {
         }
 
         // Build the answer string.
+        // Check other_input first: deactivate_other() clears other_selected while
+        // keeping the text, so we must not rely on other_selected here.
         let q = &self.questions[self.current_q];
-        let answer = if self.other_selected {
-            let txt = self.other_input.trim();
-            if txt.is_empty() { "Other".to_string() } else { format!("Other: {txt}") }
+        let answer = if !self.other_input.trim().is_empty() {
+            format!("Other: {}", self.other_input.trim())
+        } else if self.other_selected {
+            "Other".to_string()
         } else if self.selected_options.is_empty() {
             "(no selection)".to_string()
         } else {
@@ -181,6 +197,7 @@ impl QuestionModal {
         self.other_selected = false;
         self.other_input.clear();
         self.other_cursor = 0;
+        self.other_input_snapshot.clear();
         self.focused_option = 0;
 
         self.current_q >= self.questions.len()
