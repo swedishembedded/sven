@@ -9,9 +9,8 @@
 //! discovered skills).
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use sven_runtime::SkillInfo;
+use sven_runtime::SharedSkills;
 
 /// Environment-detected context injected into an agent at construction time.
 #[derive(Debug, Default, Clone)]
@@ -30,6 +29,9 @@ pub struct AgentRuntimeContext {
     /// When set, replaces `AgentConfig::system_prompt` entirely.
     pub system_prompt_override: Option<String>,
     /// Skills discovered from the standard search hierarchy.
-    /// Shared with `LoadSkillTool` via `Arc` to avoid cloning skill content.
-    pub skills: Arc<[SkillInfo]>,
+    ///
+    /// Held as [`SharedSkills`] so the TUI can trigger a live refresh (via
+    /// `/refresh`) and the next agent turn automatically picks up new skills
+    /// when rebuilding the system prompt.
+    pub skills: SharedSkills,
 }

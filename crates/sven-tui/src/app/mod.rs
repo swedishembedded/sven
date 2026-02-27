@@ -242,6 +242,12 @@ pub struct App {
     /// the next draw.  Subprocesses that are not fully isolated may alter
     /// terminal settings; this flag triggers a lightweight recovery pass.
     pub(crate) needs_terminal_recover: bool,
+    /// Live-refreshable skill collection.  Shared with the agent task so that
+    /// calling `/refresh` updates both the TUI slash commands and the agent's
+    /// system-prompt `<available_skills>` block on the next turn.
+    pub(crate) shared_skills: sven_runtime::SharedSkills,
+    /// Project root detected at startup, used to re-discover skills on refresh.
+    pub(crate) project_root: Option<PathBuf>,
 }
 
 impl App {
@@ -318,13 +324,14 @@ impl App {
             config.model.clone()
         };
 
+        // Discover skills once at startup and build the shared live reference.
+        let project_root = sven_runtime::find_project_root().ok();
+        let shared_skills = sven_runtime::SharedSkills::new(
+            sven_runtime::discover_skills(project_root.as_deref())
+        );
+
         let mut registry = CommandRegistry::with_builtins();
-        {
-            // Discover skills and register them as slash commands.
-            let project_root = sven_runtime::find_project_root().ok();
-            let skills = sven_runtime::discover_skills(project_root.as_deref());
-            registry.register_skills(&skills);
-        }
+        registry.register_skills(&shared_skills.get());
         let registry = Arc::new(registry);
         let completion_manager = CompletionManager::new(registry.clone());
 
@@ -385,6 +392,8 @@ impl App {
             auto_scroll: true,
             last_input_pane: Rect::default(),
             needs_terminal_recover: false,
+            shared_skills,
+            project_root,
         };
         // Seed the message queue with initial workflow steps (from --file in TUI mode).
         for qm in opts.initial_queue {
@@ -427,6 +436,7 @@ impl App {
         let mode               = self.session.mode;
         let startup_model_cfg  = self.session.model_cfg.clone();
         let cancel_handle_task = self.cancel_handle.clone();
+        let shared_skills_task = self.shared_skills.clone();
         tokio::spawn(async move {
             agent_task(
                 cfg,
@@ -436,6 +446,7 @@ impl App {
                 event_tx,
                 question_tx,
                 cancel_handle_task,
+                shared_skills_task,
             )
             .await;
         });

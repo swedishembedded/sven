@@ -71,6 +71,8 @@ pub enum ImmediateAction {
     /// Abort the current model run and set abort_pending so queued messages
     /// do not auto-advance.
     Abort,
+    /// Re-scan all skill directories and rebuild the slash command registry.
+    RefreshSkills,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

@@ -898,7 +898,7 @@ impl Agent {
             project_context_file: self.runtime.project_context_file.as_deref(),
             ci_context: self.runtime.ci_context_note.as_deref(),
             append: self.runtime.append_system_prompt.as_deref(),
-            skills: &self.runtime.skills,
+            skills: self.runtime.skills.get(),
         }
     }
 

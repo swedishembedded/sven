@@ -38,6 +38,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::provider::ProviderCommand));
         reg.register(Arc::new(builtin::mode::ModeCommand));
         reg.register(Arc::new(builtin::quit::QuitCommand));
+        reg.register(Arc::new(builtin::refresh::RefreshCommand));
         reg
     }
 

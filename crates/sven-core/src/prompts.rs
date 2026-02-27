@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 use std::path::Path;
+use std::sync::Arc;
 
 use sven_config::AgentMode;
 use sven_runtime::SkillInfo;
 
 /// All optional contextual blocks that can be injected into the system prompt.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PromptContext<'a> {
     /// Absolute path to the project root (from `.git` detection).
     pub project_root: Option<&'a Path>,
@@ -28,8 +29,22 @@ pub struct PromptContext<'a> {
     pub append: Option<&'a str>,
     /// Discovered skills.  Metadata (name + description) is injected into the
     /// stable system prompt so the model always knows what skills are available.
-    /// This slice is stable within a session and does not break prompt caching.
-    pub skills: &'a [SkillInfo],
+    /// Held as an `Arc` so a fresh snapshot can be taken from [`SharedSkills`]
+    /// on each turn without cloning the skill data.
+    pub skills: Arc<[SkillInfo]>,
+}
+
+impl<'a> Default for PromptContext<'a> {
+    fn default() -> Self {
+        Self {
+            project_root: None,
+            git_context: None,
+            project_context_file: None,
+            ci_context: None,
+            append: None,
+            skills: Arc::from(Vec::<SkillInfo>::new()),
+        }
+    }
 }
 
 impl<'a> PromptContext<'a> {
@@ -45,7 +60,7 @@ impl<'a> PromptContext<'a> {
             project_context_file: self.project_context_file,
             ci_context: None,
             append: self.append,
-            skills: self.skills,
+            skills: self.skills.clone(),
         }
     }
 
@@ -399,7 +414,7 @@ pub fn system_prompt(
 
     // Skills — stable, injected after project instructions and before CI/git.
     let skills_section = {
-        let s = build_skills_section(ctx.skills);
+        let s = build_skills_section(&ctx.skills);
         if s.is_empty() { String::new() } else { format!("\n\n{s}") }
     };
 
@@ -678,7 +693,7 @@ mod tests {
         let skills = vec![
             make_test_skill("git-workflow", "Use when the user asks about git."),
         ];
-        let ctx = PromptContext { skills: &skills, ..Default::default() };
+        let ctx = PromptContext { skills: Arc::from(skills.into_boxed_slice()), ..Default::default() };
         let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
         assert!(pr.contains("## Skills"), "prompt should include Skills section");
         assert!(pr.contains("git-workflow"), "prompt should list skill command");
@@ -689,7 +704,7 @@ mod tests {
 
     #[test]
     fn system_prompt_no_skills_no_section() {
-        let ctx = PromptContext { skills: &[], ..Default::default() };
+        let ctx = PromptContext { skills: Arc::from(Vec::<SkillInfo>::new()), ..Default::default() };
         let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
         assert!(!pr.contains("## Skills"), "prompt should not include Skills section when empty");
         assert!(!pr.contains("<available_skills>"), "prompt should not include available_skills block");

@@ -36,9 +36,14 @@
 //! 1. `~/.sven/skills/`               — user-global sven skills
 //! 2. `~/.agents/skills/`             — user-global cross-agent skills
 //! 3. `~/.claude/skills/`             — user-global Claude Code compat
-//! 4. `<project>/.agents/skills/`     — project-level cross-agent skills
-//! 5. `<project>/.claude/skills/`     — project-level Claude Code compat
-//! 6. `<project>/.sven/skills/`       — project-level sven skills (highest)
+//! 4. `~/.cursor/skills/`             — user-global Cursor IDE skills
+//! 5. `<project>/.agents/skills/`     — project-level cross-agent skills
+//! 6. `<project>/.claude/skills/`     — project-level Claude Code compat
+//! 7. `<project>/.cursor/skills/`     — project-level Cursor IDE skills
+//! 8. `<project>/.sven/skills/`       — project-level sven skills (highest)
+//!
+//! The `SKILL.md` filename is matched case-insensitively, so `skill.md`,
+//! `Skill.md`, and `SKILL.md` are all accepted.
 //!
 //! ## SKILL.md format
 //!
@@ -60,6 +65,7 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -114,6 +120,51 @@ pub struct SkillInfo {
     pub content: String,
     /// Optional sven-specific metadata.
     pub sven_meta: Option<SvenSkillMeta>,
+}
+
+/// A shared, live-refreshable collection of discovered skills.
+///
+/// Both the TUI command registry and the running agent hold a clone of the same
+/// `SharedSkills` instance.  Calling [`SharedSkills::refresh`] atomically
+/// replaces the inner skill slice, so the next agent turn and the next TUI
+/// command lookup both see the updated skills without restarting.
+#[derive(Clone, Debug)]
+pub struct SharedSkills(Arc<RwLock<Arc<[SkillInfo]>>>);
+
+impl SharedSkills {
+    /// Create from a pre-discovered skill list.
+    pub fn new(skills: Vec<SkillInfo>) -> Self {
+        Self(Arc::new(RwLock::new(skills.into_boxed_slice().into())))
+    }
+
+    /// Create an empty instance (no skills discovered yet).
+    pub fn empty() -> Self {
+        Self::new(vec![])
+    }
+
+    /// Get a snapshot of the current skill list.
+    ///
+    /// The returned `Arc` is cheap to clone and remains valid until the next
+    /// call to [`refresh`](Self::refresh).
+    #[must_use]
+    pub fn get(&self) -> Arc<[SkillInfo]> {
+        self.0.read().expect("SharedSkills lock poisoned").clone()
+    }
+
+    /// Re-run skill discovery and atomically replace the skill list.
+    ///
+    /// Callers (e.g. the `/refresh` slash command) should also rebuild any
+    /// derived state such as TUI slash commands after calling this.
+    pub fn refresh(&self, project_root: Option<&Path>) {
+        let new_skills: Arc<[SkillInfo]> = discover_skills(project_root)
+            .into_boxed_slice()
+            .into();
+        *self.0.write().expect("SharedSkills lock poisoned") = new_skills;
+    }
+}
+
+impl Default for SharedSkills {
+    fn default() -> Self { Self::empty() }
 }
 
 // ── Internal frontmatter schema ───────────────────────────────────────────────
@@ -288,6 +339,31 @@ fn try_load_skill(skill_dir: &Path, skill_md: &Path, command: &str, source: &str
 /// considered a skill.  Subdirectories without `SKILL.md` are still traversed
 /// so that nested sub-skills can be discovered; they are simply not registered
 /// as skills themselves.
+/// Find the `SKILL.md` file inside `dir`, accepting any capitalisation.
+///
+/// Checks for the canonical `SKILL.md` first (fast path), then falls back to a
+/// case-insensitive scan of the directory entries so that `skill.md`, `Skill.md`,
+/// etc. are also accepted.
+fn find_skill_md(dir: &Path) -> Option<PathBuf> {
+    let canonical = dir.join("SKILL.md");
+    if canonical.is_file() {
+        return Some(canonical);
+    }
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
+        let p = e.path();
+        if p.is_file()
+            && p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_lowercase() == "skill.md")
+                .unwrap_or(false)
+        {
+            Some(p)
+        } else {
+            None
+        }
+    })
+}
+
 fn scan_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
 
@@ -297,8 +373,7 @@ fn scan_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo
             continue;
         }
 
-        let skill_md = child.join("SKILL.md");
-        if skill_md.is_file() {
+        if let Some(skill_md) = find_skill_md(&child) {
             let command = command_from_path(root, &child);
             if let Some(skill) = try_load_skill(&child, &skill_md, &command, source) {
                 out.push(skill);
@@ -351,13 +426,19 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
     if let Some(ref h) = home {
         load(h.join(".claude").join("skills"), "global-claude");
     }
+    // 4. ~/.cursor/skills/
+    if let Some(ref h) = home {
+        load(h.join(".cursor").join("skills"), "global-cursor");
+    }
 
     if let Some(root) = project_root {
-        // 4. <project>/.agents/skills/
+        // 5. <project>/.agents/skills/
         load(root.join(".agents").join("skills"), "project-agents");
-        // 5. <project>/.claude/skills/
+        // 6. <project>/.claude/skills/
         load(root.join(".claude").join("skills"), "project-claude");
-        // 6. <project>/.sven/skills/ — highest precedence
+        // 7. <project>/.cursor/skills/
+        load(root.join(".cursor").join("skills"), "project-cursor");
+        // 8. <project>/.sven/skills/ — highest precedence
         load(root.join(".sven").join("skills"), "project-sven");
     }
 

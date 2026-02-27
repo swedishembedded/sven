@@ -19,7 +19,7 @@ use sven_tools::{
     events::TodoItem,
     QuestionRequest,
 };
-use sven_runtime::{CiContext, GitContext, SkillInfo};
+use sven_runtime::{CiContext, GitContext, SharedSkills};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -43,7 +43,10 @@ pub struct RuntimeContext {
     /// Full system prompt override (from `--system-prompt-file`).
     pub system_prompt_override: Option<String>,
     /// Skills discovered from the standard search hierarchy.
-    pub skills: Arc<[SkillInfo]>,
+    ///
+    /// Using [`SharedSkills`] allows the TUI to share the same instance and
+    /// trigger a live refresh (via `/refresh`) without restarting the agent.
+    pub skills: SharedSkills,
 }
 
 impl RuntimeContext {
@@ -55,10 +58,7 @@ impl RuntimeContext {
         let ci_context = Some(sven_runtime::detect_ci_context());
         let project_context_file = project_root.as_ref()
             .and_then(|r| sven_runtime::load_project_context_file(r));
-        let skills: Arc<[SkillInfo]> = {
-            let discovered = sven_runtime::discover_skills(project_root.as_deref());
-            Arc::from(discovered.into_boxed_slice())
-        };
+        let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
 
         Self {
             project_root,

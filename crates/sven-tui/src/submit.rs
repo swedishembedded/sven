@@ -56,11 +56,13 @@
 
 use sven_model::Message;
 
+use std::sync::Arc;
+
 use crate::{
     agent::AgentRequest,
     app::{App, FocusPane, ModelDirective, QueuedMessage},
     chat::segment::{messages_for_resubmit, ChatSegment},
-    commands::{dispatch_command, CommandContext, ImmediateAction},
+    commands::{CommandRegistry, CompletionManager, dispatch_command, CommandContext, ImmediateAction},
 };
 
 impl App {
@@ -106,6 +108,11 @@ impl App {
                     if matches!(result.immediate_action, Some(ImmediateAction::Abort)) {
                         self.abort_pending = true;
                         self.send_abort_signal().await;
+                        return false;
+                    }
+
+                    if matches!(result.immediate_action, Some(ImmediateAction::RefreshSkills)) {
+                        self.refresh_skill_commands();
                         return false;
                     }
 
@@ -181,6 +188,10 @@ impl App {
             if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
                 return true;
             }
+            if matches!(result.immediate_action, Some(ImmediateAction::RefreshSkills)) {
+                self.refresh_skill_commands();
+                return false;
+            }
             if let Some(model_str) = result.model_override {
                 let resolved =
                     sven_model::resolve_model_from_config(&self.config, &model_str);
@@ -193,6 +204,22 @@ impl App {
             // the buffer already represents the full conversation state.
         }
         false
+    }
+
+    /// Re-scan all skill directories, update [`SharedSkills`], rebuild the
+    /// slash command registry and the completion manager.
+    ///
+    /// Called when `ImmediateAction::RefreshSkills` is produced by `/refresh`.
+    /// Because [`SharedSkills`] is shared with the agent task, the next agent
+    /// turn automatically picks up new skills when building the system prompt.
+    pub(crate) fn refresh_skill_commands(&mut self) {
+        self.shared_skills.refresh(self.project_root.as_deref());
+        let current_skills = self.shared_skills.get();
+        let mut registry = CommandRegistry::with_builtins();
+        registry.register_skills(&current_skills);
+        let registry = Arc::new(registry);
+        self.completion_manager = CompletionManager::new(registry.clone());
+        self.command_registry = registry;
     }
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {

@@ -333,9 +333,9 @@ impl CiRunner {
         // no post-step metadata serialization needed)
 
         // ── Build runtime context ─────────────────────────────────────────────
-        let skills: std::sync::Arc<[sven_runtime::SkillInfo]> = sven_runtime::discover_skills(
-            opts.project_root.as_deref()
-        ).into_boxed_slice().into();
+        let skills = sven_runtime::SharedSkills::new(
+            sven_runtime::discover_skills(opts.project_root.as_deref())
+        );
 
         let mut runtime_ctx = RuntimeContext {
             project_root: opts.project_root.clone(),

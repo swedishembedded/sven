@@ -17,13 +17,11 @@
 //!   Child bodies are never loaded eagerly — the model calls `load_skill`
 //!   again for each child when needed.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use sven_runtime::SkillInfo;
+use sven_runtime::{SharedSkills, SkillInfo};
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -107,18 +105,26 @@ fn build_sub_skills_hint(parent: &SkillInfo, all: &[SkillInfo]) -> String {
 
 /// Tool that loads a named skill's full content on demand.
 ///
-/// Construct with [`LoadSkillTool::new`] to pre-compute the description string.
+/// Construct with [`LoadSkillTool::new`] from a [`SharedSkills`] so that a
+/// live `/refresh` updates the skill list used by [`execute`](Self::execute)
+/// without restarting the agent.
+///
+/// The tool `description()` is pre-computed at construction time and lists the
+/// skills known at that point.  The description is a secondary hint; the
+/// authoritative list that the model sees is the system prompt's
+/// `<available_skills>` block, which is rebuilt fresh on every turn.
 pub struct LoadSkillTool {
-    /// Shared skill list (discovered once at startup).
-    skills: Arc<[SkillInfo]>,
-    /// Pre-computed description (includes available-skills XML).
+    /// Live-refreshable skill collection shared with the TUI.
+    skills: SharedSkills,
+    /// Pre-computed description string (may be slightly stale after a refresh;
+    /// the system prompt's `<available_skills>` block is always current).
     description: String,
 }
 
 impl LoadSkillTool {
-    /// Create a new `LoadSkillTool` from a shared skill slice.
-    pub fn new(skills: Arc<[SkillInfo]>) -> Self {
-        let description = build_description(&skills);
+    /// Create a new `LoadSkillTool` from a [`SharedSkills`] instance.
+    pub fn new(skills: SharedSkills) -> Self {
+        let description = build_description(&skills.get());
         Self { skills, description }
     }
 }
@@ -153,11 +159,14 @@ impl Tool for LoadSkillTool {
 
         debug!(skill = %command, "load_skill tool");
 
-        let skill = match self.skills.iter().find(|s| s.command == command) {
+        // Take a fresh snapshot so a /refresh is immediately visible to
+        // subsequent tool calls within the same agent session.
+        let current_skills = self.skills.get();
+
+        let skill = match current_skills.iter().find(|s| s.command == command) {
             Some(s) => s,
             None => {
-                let available = self
-                    .skills
+                let available = current_skills
                     .iter()
                     .map(|s| s.command.as_str())
                     .collect::<Vec<_>>()
@@ -202,7 +211,7 @@ impl Tool for LoadSkillTool {
         // Add a compact navigation hint listing direct sub-skills.  The model
         // uses this to know which child skills exist and when to call
         // load_skill() for them — without loading their bodies now.
-        let sub_skills_hint = build_sub_skills_hint(skill, &self.skills);
+        let sub_skills_hint = build_sub_skills_hint(skill, &current_skills);
 
         ToolOutput::ok(
             &call.id,
@@ -260,7 +269,7 @@ mod tests {
     use super::*;
     use crate::tool::ToolCall;
     use serde_json::json;
-    use sven_runtime::{SkillInfo, SvenSkillMeta};
+    use sven_runtime::{SharedSkills, SkillInfo, SvenSkillMeta};
     use std::path::PathBuf;
 
     fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {
@@ -280,7 +289,7 @@ mod tests {
     }
 
     fn make_tool(skills: Vec<SkillInfo>) -> LoadSkillTool {
-        LoadSkillTool::new(Arc::from(skills.into_boxed_slice()))
+        LoadSkillTool::new(SharedSkills::new(skills))
     }
 
     fn call(command: &str) -> ToolCall {
