@@ -215,27 +215,58 @@ pub struct ParsedSkill {
 #[must_use]
 pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
     let rest = raw.trim_start_matches('\n');
-    if !rest.starts_with("---") {
+
+    // ── Frontmatter path ─────────────────────────────────────────────────────
+    if rest.starts_with("---") {
+        let after_open = &rest[3..];
+        let close = after_open.find("\n---")?;
+        let yaml_block = &after_open[..close];
+        // Body starts after "\n---" (4 bytes). Strip one leading newline if present.
+        let body = after_open[close + 4..].trim_start_matches('\n').to_string();
+
+        let fm: RawFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
+
+        if fm.description.trim().is_empty() {
+            return None;
+        }
+
+        return Some(ParsedSkill {
+            name: fm.name.filter(|n| !n.trim().is_empty()),
+            description: fm.description,
+            version: fm.version,
+            sven_meta: fm.sven,
+            body,
+        });
+    }
+
+    // ── Frontmatter-free path ─────────────────────────────────────────────────
+    // A SKILL.md with no `---` fence is accepted as a plain-markdown skill.
+    // The description is synthesised from the first non-empty, non-heading line
+    // (or from the text of the first `# Heading` if no plain line comes first).
+    // The entire file becomes the body.
+    if rest.trim().is_empty() {
         return None;
     }
-    let after_open = &rest[3..];
-    let close = after_open.find("\n---")?;
-    let yaml_block = &after_open[..close];
-    // Body starts after "\n---" (4 bytes). Strip one leading newline if present.
-    let body = after_open[close + 4..].trim_start_matches('\n').to_string();
 
-    let fm: RawFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
-
-    if fm.description.trim().is_empty() {
-        return None;
-    }
+    let description = rest
+        .lines()
+        .find_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            // Strip a leading `#` heading marker so "# Sven" → "Sven".
+            let text = line.trim_start_matches('#').trim();
+            if text.is_empty() { None } else { Some(text.to_string()) }
+        })
+        .unwrap_or_else(|| "Skill".to_string());
 
     Some(ParsedSkill {
-        name: fm.name.filter(|n| !n.trim().is_empty()),
-        description: fm.description,
-        version: fm.version,
-        sven_meta: fm.sven,
-        body,
+        name: None,
+        description,
+        version: None,
+        sven_meta: None,
+        body: rest.to_string(),
     })
 }
 
@@ -562,9 +593,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_skill_file_no_frontmatter_returns_none() {
+    fn parse_skill_file_no_frontmatter_uses_first_line_as_description() {
         let raw = "# Just a heading\n\nNo frontmatter here.";
-        assert!(parse_skill_file(raw).is_none());
+        let parsed = parse_skill_file(raw).expect("plain-markdown skill should parse");
+        // Heading marker stripped, first non-empty line becomes description.
+        assert_eq!(parsed.description, "Just a heading");
+        assert!(parsed.body.contains("Just a heading"));
+    }
+
+    #[test]
+    fn parse_skill_file_no_frontmatter_plain_line_description() {
+        let raw = "You are an embedded engineer.";
+        let parsed = parse_skill_file(raw).expect("plain body should parse");
+        assert_eq!(parsed.description, "You are an embedded engineer.");
+    }
+
+    #[test]
+    fn parse_skill_file_no_frontmatter_empty_returns_none() {
+        assert!(parse_skill_file("").is_none());
+        assert!(parse_skill_file("   \n  \n").is_none());
     }
 
     #[test]
