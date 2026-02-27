@@ -33,14 +33,23 @@
 //!
 //! ## Discovery order (later sources take precedence on command collision)
 //!
-//! 1. `~/.sven/skills/`               — user-global sven skills
-//! 2. `~/.agents/skills/`             — user-global cross-agent skills
-//! 3. `~/.claude/skills/`             — user-global Claude Code compat
-//! 4. `~/.cursor/skills/`             — user-global Cursor IDE skills
-//! 5. `<project>/.agents/skills/`     — project-level cross-agent skills
-//! 6. `<project>/.claude/skills/`     — project-level Claude Code compat
-//! 7. `<project>/.cursor/skills/`     — project-level Cursor IDE skills
-//! 8. `<project>/.sven/skills/`       — project-level sven skills (highest)
+//! 1. `~/.sven/skills/`                    — user-global sven skills
+//! 2. `~/.agents/skills/`                  — user-global cross-agent skills
+//! 3. `~/.claude/skills/`                  — user-global Claude Code compat
+//! 4. `~/.cursor/skills/`                  — user-global Cursor IDE skills
+//! 5. `<ancestor>/.cursor/skills/` (×N)    — each `.cursor/skills/` directory
+//!                                           found by walking **up** from the
+//!                                           git project root toward `~`.
+//!                                           Farthest ancestor loads first so
+//!                                           the closest one wins on collision.
+//!                                           This lets workspace-root skills
+//!                                           (e.g. `/workspace/.cursor/skills/`)
+//!                                           be found even when the git root is
+//!                                           a sub-directory of the workspace.
+//! 6. `<project>/.agents/skills/`          — project-level cross-agent skills
+//! 7. `<project>/.claude/skills/`          — project-level Claude Code compat
+//! 8. `<project>/.cursor/skills/`          — project-level Cursor IDE skills
+//! 9. `<project>/.sven/skills/`            — project-level sven skills (highest)
 //!
 //! The `SKILL.md` filename is matched case-insensitively, so `skill.md`,
 //! `Skill.md`, and `SKILL.md` are all accepted.
@@ -431,14 +440,37 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
         load(h.join(".cursor").join("skills"), "global-cursor");
     }
 
+    // 5. Ancestor .cursor/skills/ directories between home and project root.
+    //
+    // Cursor IDE treats the workspace folder (which may be a parent of the git
+    // root) as the place for project-level IDE settings. Walking up from the
+    // git root toward home and scanning .cursor/skills/ at each intermediate
+    // level ensures that workspace skills placed in e.g. /workspace/.cursor/skills/
+    // are found even when the git root is /workspace/repo/.  Ancestors are
+    // loaded farthest-first so the closest ancestor wins on command collisions.
+    if let (Some(root), Some(ref h)) = (project_root, &home) {
+        let mut ancestors: Vec<PathBuf> = Vec::new();
+        let mut dir = root.parent();
+        while let Some(d) = dir {
+            if d == h.as_path() {
+                break; // home is already handled by global-cursor above
+            }
+            ancestors.push(d.to_path_buf());
+            dir = d.parent();
+        }
+        for ancestor in ancestors.into_iter().rev() {
+            load(ancestor.join(".cursor").join("skills"), "ancestor-cursor");
+        }
+    }
+
     if let Some(root) = project_root {
-        // 5. <project>/.agents/skills/
+        // 6. <project>/.agents/skills/
         load(root.join(".agents").join("skills"), "project-agents");
-        // 6. <project>/.claude/skills/
+        // 7. <project>/.claude/skills/
         load(root.join(".claude").join("skills"), "project-claude");
-        // 7. <project>/.cursor/skills/
+        // 8. <project>/.cursor/skills/
         load(root.join(".cursor").join("skills"), "project-cursor");
-        // 8. <project>/.sven/skills/ — highest precedence
+        // 9. <project>/.sven/skills/ — highest precedence
         load(root.join(".sven").join("skills"), "project-sven");
     }
 
