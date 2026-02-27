@@ -33,23 +33,25 @@
 //!
 //! ## Discovery order (later sources take precedence on command collision)
 //!
-//! 1. `~/.sven/skills/`                    — user-global sven skills
-//! 2. `~/.agents/skills/`                  — user-global cross-agent skills
-//! 3. `~/.claude/skills/`                  — user-global Claude Code compat
-//! 4. `~/.cursor/skills/`                  — user-global Cursor IDE skills
-//! 5. `<ancestor>/.cursor/skills/` (×N)    — each `.cursor/skills/` directory
-//!                                           found by walking **up** from the
-//!                                           git project root toward `~`.
-//!                                           Farthest ancestor loads first so
-//!                                           the closest one wins on collision.
-//!                                           This lets workspace-root skills
-//!                                           (e.g. `/workspace/.cursor/skills/`)
-//!                                           be found even when the git root is
-//!                                           a sub-directory of the workspace.
-//! 6. `<project>/.agents/skills/`          — project-level cross-agent skills
-//! 7. `<project>/.claude/skills/`          — project-level Claude Code compat
-//! 8. `<project>/.cursor/skills/`          — project-level Cursor IDE skills
-//! 9. `<project>/.sven/skills/`            — project-level sven skills (highest)
+//! Discovery uses a **unified ancestor walk**: two chains are collected —
+//! one from the project root (or CWD) up to `/`, one from `~` up to `/` —
+//! deduplicated and sorted by depth (shallowest = lowest precedence).  At
+//! every directory in the merged chain, four config dirs are checked in order:
+//!
+//! ```text
+//! <dir>/.agents/skills/   (lowest within a level)
+//! <dir>/.claude/skills/
+//! <dir>/.cursor/skills/
+//! <dir>/.sven/skills/     (highest within a level)
+//! ```
+//!
+//! Because the chain runs from `/` down to the project root, entries closer to
+//! the project root always override farther ancestors.  In practice:
+//!
+//! - `~/.cursor/skills/`      — found because home is one of the walk roots
+//! - `/workspace/.cursor/skills/` — found when the git root is a subdirectory
+//!   of the workspace, even though the workspace has no `.git`
+//! - `<project>/.sven/skills/` — highest precedence of all
 //!
 //! The `SKILL.md` filename is matched case-insensitively, so `skill.md`,
 //! `Skill.md`, and `SKILL.md` are all accepted.
@@ -405,12 +407,41 @@ fn scan_skills_dir(dir: &Path, source: &str) -> Vec<SkillInfo> {
 
 // ── Public discovery API ──────────────────────────────────────────────────────
 
+/// Walk up the filesystem from `start` to `/`, collecting every directory.
+///
+/// Returns the directories in **root-first** order so callers can load them
+/// lowest-precedence first.
+fn ancestor_chain(start: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut cur = start.to_path_buf();
+    loop {
+        dirs.push(cur.clone());
+        match cur.parent() {
+            Some(p) if p != cur => cur = p.to_path_buf(),
+            _ => break,
+        }
+    }
+    dirs.reverse(); // root first, start last
+    dirs
+}
+
 /// Discover all skills from the standard search hierarchy.
 ///
-/// Sources are loaded in increasing precedence order so that project-level
-/// skills override global ones when commands collide.
+/// The search is a **unified ancestor walk**: every directory in the path from
+/// `/` down to the project root (and from `/` down to `~`) is checked for
+/// `.agents/skills/`, `.claude/skills/`, `.cursor/skills/`, and `.sven/skills/`
+/// (in that order within each directory, so `.sven/` beats `.cursor/` at the
+/// same level).  Because directories are loaded farthest-first, entries closer
+/// to the project root override entries from parent directories.
 ///
-/// See the module documentation for the full list of search directories.
+/// This means:
+/// - `/home/user/.cursor/skills/` is found because home is one of the walk roots.
+/// - `/data/.cursor/skills/` is found when the project root is a subdirectory
+///   of `/data/` (e.g. `/data/repo/`), even though `/data/` has no `.git`.
+/// - Skills at the project root itself always have the highest precedence.
+///
+/// When `project_root` is `None`, the current working directory is used as the
+/// walk base so workspace-level skills are still found.
 #[must_use]
 pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
     let home = dirs::home_dir();
@@ -423,55 +454,41 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
         }
     };
 
-    // 1. ~/.sven/skills/
-    if let Some(ref h) = home {
-        load(h.join(".sven").join("skills"), "global-sven");
-    }
-    // 2. ~/.agents/skills/
-    if let Some(ref h) = home {
-        load(h.join(".agents").join("skills"), "global-agents");
-    }
-    // 3. ~/.claude/skills/
-    if let Some(ref h) = home {
-        load(h.join(".claude").join("skills"), "global-claude");
-    }
-    // 4. ~/.cursor/skills/
-    if let Some(ref h) = home {
-        load(h.join(".cursor").join("skills"), "global-cursor");
-    }
+    // Collect unique directories from the project-root chain and the home
+    // chain, then sort by depth so shallower (farther) directories load first.
+    let base = project_root
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"));
 
-    // 5. Ancestor .cursor/skills/ directories between home and project root.
-    //
-    // Cursor IDE treats the workspace folder (which may be a parent of the git
-    // root) as the place for project-level IDE settings. Walking up from the
-    // git root toward home and scanning .cursor/skills/ at each intermediate
-    // level ensures that workspace skills placed in e.g. /workspace/.cursor/skills/
-    // are found even when the git root is /workspace/repo/.  Ancestors are
-    // loaded farthest-first so the closest ancestor wins on command collisions.
-    if let (Some(root), Some(ref h)) = (project_root, &home) {
-        let mut ancestors: Vec<PathBuf> = Vec::new();
-        let mut dir = root.parent();
-        while let Some(d) = dir {
-            if d == h.as_path() {
-                break; // home is already handled by global-cursor above
-            }
-            ancestors.push(d.to_path_buf());
-            dir = d.parent();
-        }
-        for ancestor in ancestors.into_iter().rev() {
-            load(ancestor.join(".cursor").join("skills"), "ancestor-cursor");
+    let mut all_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for dir in ancestor_chain(&base) {
+        all_dirs.insert(dir);
+    }
+    if let Some(ref h) = home {
+        for dir in ancestor_chain(h) {
+            all_dirs.insert(dir);
         }
     }
 
-    if let Some(root) = project_root {
-        // 6. <project>/.agents/skills/
-        load(root.join(".agents").join("skills"), "project-agents");
-        // 7. <project>/.claude/skills/
-        load(root.join(".claude").join("skills"), "project-claude");
-        // 8. <project>/.cursor/skills/
-        load(root.join(".cursor").join("skills"), "project-cursor");
-        // 9. <project>/.sven/skills/ — highest precedence
-        load(root.join(".sven").join("skills"), "project-sven");
+    // Sort: fewer path components = shallower = loaded first = lower precedence.
+    // Break ties alphabetically for determinism.
+    let mut sorted: Vec<PathBuf> = all_dirs.into_iter().collect();
+    sorted.sort_by(|a, b| {
+        let da = a.components().count();
+        let db = b.components().count();
+        da.cmp(&db).then_with(|| a.cmp(b))
+    });
+
+    // At each directory, load all four config dir types.  The within-level
+    // order (.agents < .claude < .cursor < .sven) means .sven/ wins on
+    // collision at the same directory depth.
+    for dir in &sorted {
+        let label = dir.to_string_lossy();
+        load(dir.join(".agents").join("skills"), &format!("{label}/.agents"));
+        load(dir.join(".claude").join("skills"), &format!("{label}/.claude"));
+        load(dir.join(".cursor").join("skills"), &format!("{label}/.cursor"));
+        load(dir.join(".sven").join("skills"),   &format!("{label}/.sven"));
     }
 
     let mut result: Vec<SkillInfo> = map.into_values().collect();
