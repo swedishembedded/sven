@@ -46,10 +46,19 @@ pub enum OutputFormat {
     #[default]
     Conversation,
     /// Structured JSON: one JSON object per run with step metadata.
+    /// Not designed for piping between sven instances; use `Jsonl` for that.
     Json,
     /// Compact plain text: only the final agent response for each step,
     /// without section headings.  Matches the legacy pre-1.0 behaviour.
     Compact,
+    /// Full-fidelity JSONL: one JSON record per line, streamed to stdout in
+    /// real-time as the agent produces output.  Designed for piping:
+    ///
+    ///   sven 'task 1' --output-format jsonl | sven 'task 2'
+    ///
+    /// The receiving sven instance detects the JSONL format automatically via
+    /// `is_jsonl_format()` and loads it as prior conversation history.
+    Jsonl,
 }
 
 // ── JSON output types ─────────────────────────────────────────────────────────
@@ -156,9 +165,9 @@ impl CiRunner {
         vars.extend(opts.vars.clone());
 
         // ── Detect piped input format ─────────────────────────────────────────
-        // Priority: JSONL > conversation markdown > workflow / plain-text.
+        // Priority: JSONL > conversation markdown > JSON summary > workflow / plain-text.
         //
-        // JSONL: produced by `--output-jsonl -` or `--output-format jsonl`.
+        // JSONL: produced by `--output-format jsonl`.
         //   Every non-empty line is a JSON object.  Carries full-fidelity
         //   history including thinking blocks and tool calls.
         //
@@ -167,19 +176,25 @@ impl CiRunner {
         //   headings.  Must NOT be treated as a workflow (those headings would
         //   be misread as step labels).
         //
-        // Both formats may end with a trailing user turn that has not yet
-        // received a response.  When present, that pending turn is used as the
-        // step content when no CLI positional prompt was supplied, so that:
+        // JSON summary: produced by `--output-format json`.
+        //   A single JSON object `{"title":..., "steps":[...]}` where each step
+        //   has `user_input` and `agent_response`.  Reconstructed into a simple
+        //   user/assistant message history for the receiving instance.
         //
-        //   sven 'do A, output only the next task' | sven
-        //
-        // works without repeating the task on the command line.
+        // Both JSONL and conversation formats may end with a trailing user turn
+        // that has not yet received a response.  When present, that pending turn
+        // is used as the step content when no CLI positional prompt was supplied.
         let is_jsonl_input = !opts.input.trim().is_empty()
             && is_jsonl_format(markdown_body);
 
         let is_conversation_input = !is_jsonl_input
             && !opts.input.trim().is_empty()
             && is_conversation_format(markdown_body);
+
+        let is_json_summary_input = !is_jsonl_input
+            && !is_conversation_input
+            && !opts.input.trim().is_empty()
+            && is_json_summary_format(markdown_body);
 
         // Parse the piped input: extract history to seed the agent and any
         // trailing pending user turn that was not yet answered.
@@ -205,6 +220,17 @@ impl CiRunner {
                     (Vec::new(), None)
                 }
             }
+        } else if is_json_summary_input {
+            match parse_json_summary(markdown_body) {
+                Ok(history) => (history, None),
+                Err(e) => {
+                    write_stderr(&format!(
+                        "[sven:warn] Failed to parse piped input as JSON summary ({e}), \
+                         treating as workflow"
+                    ));
+                    (Vec::new(), None)
+                }
+            }
         } else {
             (Vec::new(), None)
         };
@@ -224,13 +250,15 @@ impl CiRunner {
                 content,
                 options: Default::default(),
             }])
-        } else if is_conversation_input || is_jsonl_input {
-            // Piped conversation/JSONL: the workflow parser would misread the
-            // section headings as step labels, so we bypass it entirely.
+        } else if is_conversation_input || is_jsonl_input || is_json_summary_input {
+            // Piped conversation/JSONL/JSON-summary: the workflow parser would
+            // misread the section headings (or JSON braces) as step labels, so
+            // we bypass it entirely.
             //
             // Step content priority:
             //   1. CLI positional prompt   (explicit task for the new turn)
-            //   2. Trailing pending user   (last ## User section without a response)
+            //   2. Trailing pending user   (last ## User section without a response,
+            //                              only available for conversation/JSONL input)
             //   3. Error — nothing to do
             let content = opts.extra_prompt.clone().or(piped_pending.clone());
             match content {
@@ -240,7 +268,9 @@ impl CiRunner {
                     options: Default::default(),
                 }]),
                 None => {
-                    let format_name = if is_jsonl_input { "JSONL" } else { "conversation" };
+                    let format_name = if is_jsonl_input { "JSONL" }
+                        else if is_json_summary_input { "JSON summary" }
+                        else { "conversation" };
                     write_stderr(&format!(
                         "[sven:error] Piped {format_name} has no pending task.\n\
                          \n\
@@ -277,7 +307,7 @@ impl CiRunner {
         // always present at the top of the appended block.
         // Skip preamble when input is empty or conversation format (no useful
         // preamble exists in those cases).
-        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input || is_jsonl_input {
+        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input || is_jsonl_input || is_json_summary_input {
             None
         } else {
             workflow.system_prompt_append
@@ -615,7 +645,11 @@ impl CiRunner {
             // Record the user turn before submitting
             let user_msg = Message::user(&step_content);
             collected.push(user_msg.clone());
-            run_jsonl_records.push(ConversationRecord::Message(user_msg));
+            emit_record(
+                &mut run_jsonl_records,
+                ConversationRecord::Message(user_msg),
+                opts.output_format,
+            );
 
             // In streaming conversation format emit step label and ## User section now
             if opts.output_format == OutputFormat::Conversation {
@@ -796,6 +830,10 @@ impl CiRunner {
                     // Streaming output: already emitted in handle_event / step start above.
                     // Nothing more to write here for Conversation format.
                 }
+                OutputFormat::Jsonl => {
+                    // Streaming output: each record was already emitted to stdout
+                    // by emit_record() as it was produced.  Nothing more to write.
+                }
                 OutputFormat::Compact => {
                     if !response_text.ends_with('\n') {
                         write_stdout(&format!("{response_text}\n"));
@@ -905,6 +943,23 @@ impl CiRunner {
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
+/// Push a `ConversationRecord` and, when `output_format` is `Jsonl`, also
+/// stream the serialized line to stdout immediately.  This is the single place
+/// that ensures JSONL output is consistent across all code paths.
+fn emit_record(
+    records: &mut Vec<ConversationRecord>,
+    record: ConversationRecord,
+    output_format: OutputFormat,
+) {
+    if output_format == OutputFormat::Jsonl {
+        match serde_json::to_string(&record) {
+            Ok(line) => write_stdout(&format!("{line}\n")),
+            Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize JSONL record: {e}")),
+        }
+    }
+    records.push(record);
+}
+
 /// Per-step mutable state threaded through the event handler.
 struct StepState<'a> {
     response_text: &'a mut String,
@@ -945,7 +1000,11 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         AgentEvent::TextComplete(text) => {
             if !text.is_empty() {
                 collected.push(Message::assistant(&text));
-                jsonl_records.push(ConversationRecord::Message(Message::assistant(&text)));
+                emit_record(
+                    jsonl_records,
+                    ConversationRecord::Message(Message::assistant(&text)),
+                    output_format,
+                );
                 // Ensure trailing newline after streamed text in conversation format
                 if output_format == OutputFormat::Conversation && *sven_header_emitted {
                     if !text.ends_with('\n') {
@@ -991,7 +1050,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
             }
             collected.push(msg.clone());
-            jsonl_records.push(ConversationRecord::Message(msg));
+            emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
         }
         AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
             if is_error {
@@ -1028,19 +1087,23 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             }
             let msg = Message::tool_result(&call_id, &output);
             collected.push(msg.clone());
-            jsonl_records.push(ConversationRecord::Message(msg));
+            emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
         }
         AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
             let turn_note = if turn > 0 { format!(" (tool round {turn})") } else { String::new() };
             write_stderr(&format!(
                 "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
-            jsonl_records.push(ConversationRecord::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy: Some(strategy.to_string()),
-                turn: Some(turn),
-            });
+            emit_record(
+                jsonl_records,
+                ConversationRecord::ContextCompacted {
+                    tokens_before,
+                    tokens_after,
+                    strategy: Some(strategy.to_string()),
+                    turn: Some(turn),
+                },
+                output_format,
+            );
         }
         AgentEvent::Error(msg) => {
             write_stderr(&format!("[sven:agent:error] {msg}"));
@@ -1079,7 +1142,11 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         AgentEvent::ThinkingDelta(_) => {}
         AgentEvent::ThinkingComplete(content) => {
             write_stderr(&format!("[sven:thinking] {content}"));
-            jsonl_records.push(ConversationRecord::Thinking { content });
+            emit_record(
+                jsonl_records,
+                ConversationRecord::Thinking { content },
+                output_format,
+            );
         }
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
         AgentEvent::Aborted { partial_text } => {
@@ -1087,7 +1154,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
                 let msg = Message::assistant(&partial_text);
                 collected.push(msg.clone());
-                jsonl_records.push(ConversationRecord::Message(msg));
+                emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
             } else {
                 write_stderr("[sven:agent:aborted]");
             }
@@ -1114,7 +1181,7 @@ pub(crate) fn is_conversation_format(s: &str) -> bool {
 /// Return true if the input looks like a JSONL conversation stream: every
 /// non-empty line must start with `{`.
 ///
-/// Used to detect when `--output-jsonl -` output from a prior sven run is
+/// Used to detect when `--output-format jsonl` output from a prior sven run is
 /// piped into the next instance.  We inspect at most the first 10 non-empty
 /// lines to keep detection fast on large streams.
 pub(crate) fn is_jsonl_format(s: &str) -> bool {
@@ -1133,6 +1200,54 @@ pub(crate) fn is_jsonl_format(s: &str) -> bool {
         }
     }
     checked > 0
+}
+
+/// Return true if the input looks like the JSON summary produced by
+/// `--output-format json`: a single JSON object containing a `"steps"` array.
+///
+/// Used to detect when the output of a prior `sven --output-format json` run
+/// is piped into the next instance so we can reconstruct conversation history
+/// from the step data instead of treating the JSON as a workflow.
+pub(crate) fn is_json_summary_format(s: &str) -> bool {
+    let trimmed = s.trim();
+    if !trimmed.starts_with('{') {
+        return false;
+    }
+    // Quick structural check before deserializing the full object.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        v.get("steps").and_then(|s| s.as_array()).is_some()
+    } else {
+        false
+    }
+}
+
+/// Reconstruct a flat user/assistant `Message` history from the JSON summary
+/// format produced by `--output-format json`.
+///
+/// Each step contributes a `user` message (`user_input`) followed by an
+/// `assistant` message (`agent_response`).  Steps that have an empty
+/// `agent_response` (e.g. failed steps) contribute only the user message.
+pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
+    let v: serde_json::Value = serde_json::from_str(s.trim())?;
+    let steps = v
+        .get("steps")
+        .and_then(|s| s.as_array())
+        .ok_or_else(|| anyhow::anyhow!("JSON summary missing 'steps' array"))?;
+
+    let mut history = Vec::new();
+    for step in steps {
+        if let Some(user_input) = step.get("user_input").and_then(|u| u.as_str()) {
+            if !user_input.is_empty() {
+                history.push(Message::user(user_input));
+            }
+        }
+        if let Some(agent_response) = step.get("agent_response").and_then(|a| a.as_str()) {
+            if !agent_response.is_empty() {
+                history.push(Message::assistant(agent_response));
+            }
+        }
+    }
+    Ok(history)
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────────

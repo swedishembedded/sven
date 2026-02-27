@@ -81,6 +81,30 @@ pub fn segment_tool_call_id(seg: &ChatSegment) -> Option<&str> {
     }
 }
 
+/// Return a short single-line preview of a segment for use in dialog messages.
+pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
+    const MAX: usize = 60;
+    let raw = match seg {
+        None => return "(unknown)".into(),
+        Some(ChatSegment::Message(m)) => match &m.content {
+            MessageContent::Text(t) => t.trim().to_string(),
+            MessageContent::ToolCall { function, .. } => format!("tool call: {}", function.name),
+            MessageContent::ToolResult { content, .. } => content.to_string(),
+            MessageContent::ContentParts(_) => "(multipart message)".into(),
+        },
+        Some(ChatSegment::Thinking { content }) => content.trim().to_string(),
+        Some(ChatSegment::ContextCompacted { .. }) => return "(context compaction)".into(),
+        Some(ChatSegment::Error(e)) => e.trim().to_string(),
+    };
+    // Collapse to first line and truncate.
+    let first_line = raw.lines().next().unwrap_or("").trim();
+    if first_line.chars().count() > MAX {
+        format!("\"{}…\"", first_line.chars().take(MAX).collect::<String>())
+    } else {
+        format!("\"{first_line}\"")
+    }
+}
+
 /// Collect the `Message` objects from a segment slice, skipping non-message
 /// entries (ContextCompacted, Error, Thinking).  Used when building the
 /// payload for a Resubmit request.

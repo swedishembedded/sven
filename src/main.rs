@@ -579,6 +579,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         OutputFormatArg::Conversation => OutputFormat::Conversation,
         OutputFormatArg::Json => OutputFormat::Json,
         OutputFormatArg::Compact => OutputFormat::Compact,
+        OutputFormatArg::Jsonl => OutputFormat::Jsonl,
     };
 
     let opts = CiOptions {

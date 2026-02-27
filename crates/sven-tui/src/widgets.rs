@@ -491,6 +491,126 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
 }
 
 /// Draw the ask-question modal.
+/// Draw the generic confirmation / info modal.
+///
+/// The modal is centred on screen.  It shows a title, a message body, and one
+/// or two buttons.  The focused button is highlighted in cyan; the other is dimmed.
+///
+/// Key bindings are handled externally by `App::handle_confirm_modal_key`.
+///
+/// Returns the absolute screen coordinates of the two button zones so the
+/// caller can use them for mouse-click detection:
+/// `(confirm_rect, cancel_rect)` — both are `None` for info-only dialogs.
+pub fn draw_confirm_modal(
+    frame: &mut Frame,
+    title: &str,
+    message: &str,
+    confirm_label: &str,
+    cancel_label: &str,
+    focused_button: usize,
+    has_action: bool,
+    ascii: bool,
+) -> (Option<Rect>, Option<Rect>) {
+    let area = frame.area();
+    let bt = border_type(ascii);
+
+    // Size the modal to the message content (min 40, max 60).
+    let modal_w = (message.len() as u16 + 4).clamp(40, 60).min(area.width.saturating_sub(4));
+    // 1 blank + message lines + 1 blank + buttons + 1 blank
+    let message_lines = message.lines().count() as u16;
+    let modal_h = (1 + message_lines + 1 + 1 + 1 + 2)  // border top/bottom adds 2
+        .max(7)
+        .min(area.height.saturating_sub(2));
+    let x = area.width.saturating_sub(modal_w) / 2;
+    let y = area.height.saturating_sub(modal_h) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    frame.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(bt)
+        .border_style(Style::default().fg(Color::Red))
+        .style(Style::default().bg(Color::Black));
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    // ── Message ───────────────────────────────────────────────────────────────
+    let mut lines: Vec<Line> = vec![Line::from("")]; // top padding
+    for msg_line in message.lines() {
+        lines.push(Line::from(Span::styled(
+            msg_line.to_owned(),
+            Style::default().fg(Color::White),
+        )));
+    }
+    lines.push(Line::from("")); // padding before buttons
+    // Hint
+    let hint = if has_action {
+        "←/→: move  Enter: confirm  Esc: cancel"
+    } else {
+        "Enter / Esc: close"
+    };
+    lines.push(Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    // ── Buttons ───────────────────────────────────────────────────────────────
+    // Rendered on the last inner row, centred.
+    let btn_row_y = inner.y + inner.height.saturating_sub(1);
+
+    if !has_action {
+        // Info-only: single "OK" button centred.
+        let lbl = cancel_label;
+        let bw = lbl.len() as u16 + 2;
+        let bx = inner.x + (inner.width.saturating_sub(bw)) / 2;
+        let btn_area = Rect::new(bx, btn_row_y, bw, 1);
+        let style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("[{lbl}]"),
+                style,
+            ))),
+            btn_area,
+        );
+        return (None, Some(btn_area));
+    }
+
+    // Two buttons side-by-side with a gap between them.
+    let cw = confirm_label.len() as u16 + 2; // include [ ]
+    let xw = cancel_label.len() as u16 + 2;
+    let gap: u16 = 4;
+    let total = cw + gap + xw;
+    let bx = inner.x + inner.width.saturating_sub(total) / 2;
+
+    let confirm_rect = Rect::new(bx, btn_row_y, cw, 1);
+    let cancel_rect  = Rect::new(bx + cw + gap, btn_row_y, xw, 1);
+
+    let focused_style   = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED);
+    let unfocused_style = Style::default().fg(Color::DarkGray);
+
+    let (cs, xs) = if focused_button == 0 {
+        (focused_style, unfocused_style)
+    } else {
+        (unfocused_style, focused_style)
+    };
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!("[{confirm_label}]"), cs))),
+        confirm_rect,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!("[{cancel_label}]"), xs))),
+        cancel_rect,
+    );
+
+    (Some(confirm_rect), Some(cancel_rect))
+}
+
 ///
 /// Draw the ask-question modal with keyboard navigation support.
 ///

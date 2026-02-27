@@ -38,10 +38,14 @@ use crate::{
     layout::AppLayout,
     markdown::StyledLines,
     nvim::NvimBridge,
-    overlay::{completion::CompletionOverlay, question::QuestionModal},
+    overlay::{
+        completion::CompletionOverlay,
+        confirm::ConfirmModal,
+        question::QuestionModal,
+    },
     pager::PagerOverlay,
     state::SessionState,
-    widgets::{draw_chat, draw_completion_overlay, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
+    widgets::{draw_chat, draw_completion_overlay, draw_confirm_modal, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -220,9 +224,8 @@ pub struct App {
     /// centre falls outside any editable segment.  Updated every time the
     /// scroll offset or the display is rebuilt.
     pub(crate) focused_chat_segment: Option<usize>,
-    /// Segment awaiting delete confirmation.  Set by first click on `[✕]`;
-    /// cleared on second click (confirms) or any other interaction (cancels).
-    pub(crate) pending_delete_confirm: Option<usize>,
+    /// Active confirmation / info modal (replaces the old pending_delete_confirm flag).
+    pub(crate) confirm_modal: Option<ConfirmModal>,
     /// Last known rect of the chat pane border (populated each frame).
     pub(crate) last_chat_pane: Rect,
     /// When set, we are in inline edit mode (editing a chat segment).
@@ -395,7 +398,7 @@ impl App {
             remove_label_line_indices: std::collections::HashSet::new(),
             rerun_label_line_indices: std::collections::HashSet::new(),
             focused_chat_segment: None,
-            pending_delete_confirm: None,
+            confirm_modal: None,
             last_chat_pane: Rect::default(),
             editing_message_index: None,
             editing_queue_index: None,
@@ -670,11 +673,10 @@ impl App {
                     editing_range,
                     focused_range,
                     &crate::widgets::ChatLabels {
-                        edit_label_lines:   self.edit_label_line_indices.clone(),
-                        remove_label_lines: self.remove_label_line_indices.clone(),
-                        rerun_label_lines:  self.rerun_label_line_indices.clone(),
-                        pending_delete_line: self.pending_delete_confirm
-                            .and_then(|idx| self.segment_line_ranges.get(idx).map(|&(s, _)| s)),
+                        edit_label_lines:    self.edit_label_line_indices.clone(),
+                        remove_label_lines:  self.remove_label_line_indices.clone(),
+                        rerun_label_lines:   self.rerun_label_line_indices.clone(),
+                        pending_delete_line: None, // confirmations now use the modal
                     },
                 );
                 let edit_mode = if self.editing_queue_index.is_some() {
@@ -685,11 +687,11 @@ impl App {
                     InputEditMode::Normal
                 };
                 let in_edit = edit_mode != InputEditMode::Normal;
-                // When the question modal is visible it owns the terminal
-                // cursor.  Pass `focused = false` to suppress the input-box
-                // cursor so only one cursor is shown at a time.
+                // When the question modal or confirm modal is visible it owns
+                // the terminal cursor.  Suppress the input-box cursor.
                 let input_cursor_active = (self.focus == FocusPane::Input || in_edit)
-                    && self.question_modal.is_none();
+                    && self.question_modal.is_none()
+                    && self.confirm_modal.is_none();
                 draw_input(
                     frame, layout.input_pane,
                     if in_edit { &self.edit_buffer } else { &self.input_buffer },
@@ -742,6 +744,18 @@ impl App {
                         &modal.other_input,
                         modal.other_cursor,
                         modal.focused_option,
+                        ascii,
+                    );
+                }
+                if let Some(modal) = &self.confirm_modal {
+                    draw_confirm_modal(
+                        frame,
+                        &modal.title,
+                        &modal.message,
+                        &modal.confirm_label,
+                        &modal.cancel_label,
+                        modal.focused_button,
+                        modal.has_action(),
                         ascii,
                     );
                 }

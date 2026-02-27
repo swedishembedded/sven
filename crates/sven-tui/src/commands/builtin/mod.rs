@@ -4,6 +4,7 @@
 //! Built-in slash commands shipped with sven.
 
 pub mod abort;
+pub mod clear;
 pub mod mode;
 pub mod model;
 pub mod provider;

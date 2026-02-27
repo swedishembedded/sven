@@ -73,6 +73,8 @@ pub enum ImmediateAction {
     Abort,
     /// Re-scan all skill directories and rebuild the slash command registry.
     RefreshSkills,
+    /// Erase all chat segments and reset the conversation view.
+    ClearChat,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -337,6 +339,29 @@ mod dispatch_tests {
     fn quit_with_trailing_space_triggers_quit() {
         let (_, result) = try_dispatch("/quit ", &registry()).unwrap();
         assert!(matches!(result.immediate_action, Some(ImmediateAction::Quit)));
+    }
+
+    // ── /clear ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn clear_no_trailing_space_triggers_clear() {
+        let (name, result) = try_dispatch("/clear", &registry()).unwrap();
+        assert_eq!(name, "clear");
+        assert!(matches!(result.immediate_action, Some(ImmediateAction::ClearChat)));
+    }
+
+    #[test]
+    fn clear_with_trailing_space_triggers_clear() {
+        let (_, result) = try_dispatch("/clear ", &registry()).unwrap();
+        assert!(matches!(result.immediate_action, Some(ImmediateAction::ClearChat)));
+    }
+
+    #[test]
+    fn clear_does_not_set_model_mode_or_message() {
+        let (_, result) = try_dispatch("/clear", &registry()).unwrap();
+        assert!(result.model_override.is_none());
+        assert!(result.mode_override.is_none());
+        assert!(result.message_to_send.is_none());
     }
 
     // ── Non-commands ──────────────────────────────────────────────────────────

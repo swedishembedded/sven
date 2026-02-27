@@ -197,6 +197,11 @@ impl App {
                         return false;
                     }
 
+                    if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
+                        self.clear_chat();
+                        return false;
+                    }
+
                     if let Some(model_str) = result.model_override {
                         let resolved =
                             sven_model::resolve_model_from_config(&self.config, &model_str);
@@ -273,6 +278,10 @@ impl App {
                 self.refresh_skill_commands();
                 return false;
             }
+            if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
+                self.clear_chat();
+                return false;
+            }
             if let Some(model_str) = result.model_override {
                 let resolved =
                     sven_model::resolve_model_from_config(&self.config, &model_str);
@@ -285,6 +294,24 @@ impl App {
             // the buffer already represents the full conversation state.
         }
         false
+    }
+
+    /// Clear all chat segments and reset the conversation view.
+    ///
+    /// Called when `ImmediateAction::ClearChat` is produced by `/clear`.
+    /// Model, mode, and all other settings are preserved.
+    pub(crate) fn clear_chat(&mut self) {
+        self.chat_segments.clear();
+        self.chat_lines.clear();
+        self.segment_line_ranges.clear();
+        self.collapsed_segments.clear();
+        self.edit_label_line_indices.clear();
+        self.remove_label_line_indices.clear();
+        self.rerun_label_line_indices.clear();
+        self.editing_message_index = None;
+        self.focused_chat_segment = None;
+        self.confirm_modal = None;
+        self.scroll_offset = 0;
     }
 
     /// Re-scan all skill directories, update [`SharedSkills`], rebuild the

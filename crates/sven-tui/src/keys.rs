@@ -373,9 +373,13 @@ mod tests {
     }
 
     #[test]
-    fn plain_char_not_in_input_does_not_type() {
+    fn plain_char_x_outside_input_removes_segment() {
+        // 'x' is bound to RemoveChatSegment when not in the input box.
         let ev = plain_key('x');
-        assert_eq!(map_key(ev, false, false, false, false, false), None);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::RemoveChatSegment),
+        );
     }
 
     // ── Ctrl+k in input deletes to end ────────────────────────────────────────

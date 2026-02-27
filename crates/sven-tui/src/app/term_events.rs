@@ -9,7 +9,7 @@ use sven_model::{MessageContent, Role};
 
 use crate::{
     app::{App, FocusPane},
-    chat::segment::{segment_at_line, segment_editable_text, ChatSegment},
+    chat::segment::{segment_at_line, segment_editable_text, segment_short_preview, ChatSegment},
     input::{is_reserved_key, to_nvim_notation},
     keys::{map_key, Action},
     layout::AppLayout,
@@ -30,27 +30,11 @@ impl App {
                 if self.question_modal.is_some() {
                     return self.handle_modal_key(k);
                 }
+                if self.confirm_modal.is_some() {
+                    return self.handle_confirm_modal_key(k).await;
+                }
                 if self.pager.is_some() {
                     return self.handle_pager_key(k).await;
-                }
-
-                // ── Delete confirmation intercept ────────────────────────────
-                // When a segment is awaiting delete confirmation any key other
-                // than 'y' cancels the request.  'y' executes the removal.
-                if let Some(seg_idx) = self.pending_delete_confirm {
-                    use crossterm::event::KeyCode;
-                    self.pending_delete_confirm = None;
-                    if k.code == KeyCode::Char('y') || k.code == KeyCode::Char('Y') {
-                        let saved = self.focused_chat_segment;
-                        self.focused_chat_segment = Some(seg_idx);
-                        self.dispatch(Action::RemoveChatSegment).await;
-                        if self.focused_chat_segment.is_some() {
-                            self.focused_chat_segment = saved;
-                        }
-                    } else {
-                        self.rerender_chat().await;
-                    }
-                    return false;
                 }
 
                 let in_search = self.search.active;
@@ -249,22 +233,17 @@ impl App {
                                     let outside_labels = mouse.column < label_area_start;
 
                                     if clicked_delete {
-                                        if self.pending_delete_confirm == Some(seg_idx) {
-                                            // Second click: confirmed — execute removal.
-                                            self.pending_delete_confirm = None;
-                                            let saved = self.focused_chat_segment;
-                                            self.focused_chat_segment = Some(seg_idx);
-                                            self.dispatch(Action::RemoveChatSegment).await;
-                                            if self.focused_chat_segment.is_some() {
-                                                self.focused_chat_segment = saved;
-                                            }
-                                        } else {
-                                            // First click: request confirmation (label turns bright).
-                                            self.pending_delete_confirm = Some(seg_idx);
-                                            self.rerender_chat().await;
-                                        }
+                                        // Open the confirmation modal.
+                                        use crate::overlay::confirm::{ConfirmModal, ConfirmedAction};
+                                        let preview = segment_short_preview(
+                                            self.chat_segments.get(seg_idx),
+                                        );
+                                        self.confirm_modal = Some(ConfirmModal::new(
+                                            "Delete message",
+                                            &format!("Remove this message from the conversation?\n{preview}"),
+                                            ConfirmedAction::RemoveSegment(seg_idx),
+                                        ));
                                     } else if clicked_edit {
-                                        self.pending_delete_confirm = None;
                                         // Load segment into the edit buffer.
                                         if let Some(text) = segment_editable_text(
                                             &self.chat_segments,
@@ -279,7 +258,7 @@ impl App {
                                             self.rerender_chat().await;
                                         }
                                     } else if clicked_rerun {
-                                        self.pending_delete_confirm = None;
+                                        self.confirm_modal = None;
                                         let saved = self.focused_chat_segment;
                                         self.focused_chat_segment = Some(seg_idx);
                                         self.dispatch(Action::RerunFromSegment).await;
@@ -288,7 +267,7 @@ impl App {
                                         }
                                     } else {
                                         if outside_labels {
-                                            self.pending_delete_confirm = None;
+                                            self.confirm_modal = None;
                                         }
                                         // All other clicks on any segment: toggle collapse.
                                         let is_collapsible = match self.chat_segments.get(seg_idx) {
@@ -486,6 +465,55 @@ impl App {
             }
             KeyCode::End if modal.other_selected => {
                 modal.other_cursor = modal.other_input.len();
+            }
+            _ => {}
+        }
+        false
+    }
+
+    // ── Confirm-modal key handling ────────────────────────────────────────────
+
+    /// Handle keyboard events when the confirmation modal is open.
+    ///
+    /// - `←` / `→` / `Tab`: toggle focus between Confirm and Cancel buttons
+    /// - `Enter`: activate the focused button (confirm or cancel)
+    /// - `Esc`: cancel (same as activating Cancel)
+    pub(crate) async fn handle_confirm_modal_key(
+        &mut self,
+        k: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        use crate::overlay::confirm::ConfirmedAction;
+
+        match k.code {
+            KeyCode::Esc => {
+                self.confirm_modal = None;
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                if let Some(modal) = &mut self.confirm_modal {
+                    modal.focus_next();
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if let Some(modal) = self.confirm_modal.take() {
+                    // Focused on Cancel or info-only dialog → just dismiss.
+                    if modal.focused_button != 0 || !modal.has_action() {
+                        return false;
+                    }
+                    // Focused on Confirm → execute the stored action.
+                    if let Some(action) = modal.action {
+                        match action {
+                            ConfirmedAction::RemoveSegment(seg_idx) => {
+                                let saved = self.focused_chat_segment;
+                                self.focused_chat_segment = Some(seg_idx);
+                                self.dispatch(Action::RemoveChatSegment).await;
+                                if self.focused_chat_segment.is_some() {
+                                    self.focused_chat_segment = saved;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }

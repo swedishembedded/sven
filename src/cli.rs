@@ -73,10 +73,16 @@ pub enum OutputFormatArg {
     #[default]
     Conversation,
     /// Structured JSON: title + array of steps with metadata.
+    /// Not designed for piping between sven instances; use --output-format jsonl for that.
     Json,
     /// Compact plain text: only the final agent response for each step.
     /// Matches the legacy pre-enhancement behaviour.
     Compact,
+    /// Full-fidelity JSONL: one JSON record per line (messages, thinking, tool calls).
+    /// Designed for piping between sven instances:
+    ///   sven 'task 1' --output-format jsonl | sven 'task 2'
+    /// The receiving sven instance automatically detects and loads the history.
+    Jsonl,
 }
 
 #[derive(Parser, Debug)]
@@ -264,11 +270,19 @@ pub enum Commands {
 
 impl Cli {
     /// Returns true if the run should be headless (CI mode).
-    /// Headless is triggered by --headless or when stdin is not a terminal.
-    /// Note: --file no longer forces headless; in TUI mode --file loads the
-    /// workflow into the message queue so the user can review steps before sending.
+    ///
+    /// Headless is triggered by any of:
+    /// - `--headless` flag
+    /// - stdin is not a terminal (piped input, e.g. `echo "task" | sven`)
+    /// - stdout is not a terminal (piped output, e.g. `sven 'hi' | sven 'follow up'`)
+    ///
+    /// Checking stdout matters for the pipe case: the left side of a pipe has
+    /// a TTY stdin but a piped stdout.  Without this check it would try to start
+    /// the full TUI and write escape codes into the pipe, causing it to hang.
     pub fn is_headless(&self) -> bool {
-        self.headless || !std::io::stdin().is_terminal()
+        self.headless
+            || !std::io::stdin().is_terminal()
+            || !std::io::stdout().is_terminal()
     }
 
     /// Resolve the effective JSONL input path: --load-jsonl takes priority, then --jsonl.
@@ -287,14 +301,31 @@ pub fn print_completions(shell: Shell) {
     generate(shell, &mut cmd, "sven", &mut std::io::stdout());
 }
 
-// We need this trait for stdin TTY detection
+// TTY detection for stdin and stdout.
 trait IsTerminal {
     fn is_terminal(&self) -> bool;
 }
 
 impl IsTerminal for std::io::Stdin {
     fn is_terminal(&self) -> bool {
-        use std::os::unix::io::AsRawFd;
-        unsafe { libc::isatty(self.as_raw_fd()) != 0 }
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::isatty(self.as_raw_fd()) != 0 }
+        }
+        #[cfg(not(unix))]
+        { false }
+    }
+}
+
+impl IsTerminal for std::io::Stdout {
+    fn is_terminal(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::isatty(self.as_raw_fd()) != 0 }
+        }
+        #[cfg(not(unix))]
+        { false }
     }
 }
