@@ -122,6 +122,13 @@ pub fn draw_status(
 }
 
 /// Draw the chat / markdown scroll pane with optional search highlighting.
+///
+/// `editing_line_range` — `(start, end)` in absolute `chat_lines` space for
+///   the segment currently being edited.  Those rows receive a cyan bar tint.
+/// `focused_line_range` — same for the keyboard-focused segment (centre of
+///   screen).  Those rows receive a subtle dark-blue background.
+/// `edit_label_lines` — absolute line indices that should show a right-aligned
+///   `[Edit]` label overlay (first line of each editable, non-nvim segment).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_chat(
     frame: &mut Frame,
@@ -135,12 +142,14 @@ pub fn draw_chat(
     search_current: usize,
     search_regex: Option<&regex::Regex>,
     nvim_cursor: Option<(u16, u16)>,
+    editing_line_range: Option<(usize, usize)>,
+    focused_line_range: Option<(usize, usize)>,
+    edit_label_lines: &std::collections::HashSet<usize>,
 ) {
     let block = pane_block("Chat", focused, ascii);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Build a set for O(1) per-line match lookup instead of scanning the Vec.
     let match_set: std::collections::HashSet<usize> =
         search_matches.iter().copied().collect();
     let current_match_line = search_matches.get(search_current).copied();
@@ -156,12 +165,30 @@ pub fn draw_chat(
             let is_other = !search_query.is_empty()
                 && !is_current
                 && match_set.contains(&i);
-            if is_current {
+
+            // Segment highlight: editing > focused > search
+            let is_editing = editing_line_range
+                .map(|(s, e)| i >= s && i < e)
+                .unwrap_or(false);
+            let is_focused_seg = !is_editing
+                && focused_line_range
+                    .map(|(s, e)| i >= s && i < e)
+                    .unwrap_or(false);
+
+            let base = if is_current {
                 highlight_match_in_line(line.clone(), search_query, search_regex)
             } else if is_other {
                 tint_match_line(line.clone())
             } else {
                 line.clone()
+            };
+
+            if is_editing {
+                tint_segment_line(base, Color::Rgb(0, 40, 60))
+            } else if is_focused_seg {
+                tint_segment_line(base, Color::Rgb(25, 25, 45))
+            } else {
+                base
             }
         })
         .collect();
@@ -179,6 +206,32 @@ pub fn draw_chat(
     let para = Paragraph::new(visible).style(Style::default().bg(Color::Black));
     frame.render_widget(para, inner);
 
+    // ── [Edit] label overlay ──────────────────────────────────────────────────
+    // Rendered directly into the ratatui buffer so that line content and
+    // wrapping are unaffected.  The label sits at the far-right of the inner
+    // area on the header line of each editable segment.
+    if !edit_label_lines.is_empty() && inner.width > 8 {
+        let label = "[Edit]";
+        let label_len = label.len() as u16;
+        let label_x = inner.x + inner.width.saturating_sub(label_len);
+        let label_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM);
+
+        let buf = frame.buffer_mut();
+        for &abs_line in edit_label_lines {
+            if abs_line < scroll_offset as usize {
+                continue;
+            }
+            let vis_row = abs_line - scroll_offset as usize;
+            if vis_row >= inner.height as usize {
+                break;
+            }
+            let y = inner.y + vis_row as u16;
+            buf.set_string(label_x, y, label, label_style);
+        }
+    }
+
     // Draw Neovim cursor if provided and focused
     if focused {
         if let Some((cursor_row, cursor_col)) = nvim_cursor {
@@ -194,6 +247,20 @@ pub fn draw_chat(
             }
         }
     }
+}
+
+/// Apply a uniform background colour to every span in a line without
+/// touching foreground colours or other modifiers.
+fn tint_segment_line(line: Line<'static>, bg: Color) -> Line<'static> {
+    let spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .map(|s| {
+            let style = s.style.bg(bg);
+            Span::styled(s.content, style)
+        })
+        .collect();
+    Line::from(spans)
 }
 
 /// Draw the input box at the bottom.
@@ -342,14 +409,14 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
         Line::from(" j/k/J/K  Scroll chat down/up"),
         Line::from(" ^u/^d    Half-page up/down"),
         Line::from(" g / G    Jump to top/bottom"),
-        Line::from(" e        Edit message at top of chat view"),
-        Line::from(" d        Delete queued message at top of chat view"),
-        Line::from(" click    Click any message to edit it (ratatui mode)"),
+        Line::from(" e / F2   Edit focused message (centre of chat view)"),
+        Line::from(" d / F8   Delete from focused message onward"),
+        Line::from(" [Edit]   Click [Edit] label to load message into input"),
         Line::from("           Live preview as you type; Enter submits"),
         Line::from("           Submitting discards later conversation"),
         Line::from("           Esc to cancel and restore original"),
-        Line::from(" click    Toggle tool call / thought collapse"),
-        Line::from("           (click again to expand)"),
+        Line::from(" click    Click any message to collapse / expand"),
+        Line::from("           (user, agent, tool calls, thinking blocks)"),
         Line::from(" Up/Down  Move cursor up/down a line in input box"),
         Line::from(" PgUp/Dn  Scroll input box by a page"),
         Line::from(" scroll   Mouse wheel over input scrolls input box"),
@@ -385,8 +452,12 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
 
 /// Draw the ask-question modal.
 ///
-/// Shows all questions at once, with the current one highlighted.
-/// The answer input field is shown at the bottom.
+/// Draw the ask-question modal with keyboard navigation support.
+///
+/// * Arrow keys (Up/Down) move `focused_option`.
+/// * Space or Enter select/toggle the focused row.
+/// * When `other_selected` is true the "Other" row shows a text cursor.
+/// * `Shift+Tab` navigates back to the previous question.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_question_modal(
     frame: &mut Frame,
@@ -396,6 +467,7 @@ pub fn draw_question_modal(
     other_selected: bool,
     other_input: &str,
     other_cursor: usize,
+    focused_option: usize,
     ascii: bool,
 ) {
     let area = frame.area();
@@ -404,23 +476,21 @@ pub fn draw_question_modal(
     // Modal width: up to 80 columns, leaving 4 cols margin each side.
     let modal_w = (area.width.saturating_sub(8)).clamp(20, 80);
 
-    // Calculate rows needed: question prompt + options + "Other" line + hint
     let current_question = questions.get(current_q);
+    // rows: 1 prompt + 1 blank + options + 1 Other + 1 blank + 2 hints
     let content_rows = if let Some(q) = current_question {
-        // 1 for prompt + options count + 1 for "Other" + 1 blank + 1 hint
-        1 + q.options.len() as u16 + 3
+        1 + 1 + q.options.len() as u16 + 1 + 1 + 2
     } else {
-        5
+        8
     };
-
     let modal_h = (content_rows + 2).min(area.height.saturating_sub(2)).max(10);
     let x = area.width.saturating_sub(modal_w) / 2;
     let y = area.height.saturating_sub(modal_h) / 2;
     let modal_area = Rect::new(x, y, modal_w, modal_h);
 
-    // Clear background
     frame.render_widget(Clear, modal_area);
 
+    let has_prev = current_q > 0;
     let block = Block::default()
         .title(Span::styled(
             " Questions from agent ",
@@ -437,73 +507,103 @@ pub fn draw_question_modal(
     if let Some(q) = current_question {
         let mut lines: Vec<Line> = Vec::new();
 
-        // Question prompt
+        // Header: question number and prompt
         lines.push(Line::from(Span::styled(
             format!("Q{}/{}: {}", current_q + 1, questions.len(), q.prompt),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from("")); // blank
 
-        // Options with checkbox/radio indicators
         let checkbox = if q.allow_multiple { "☐" } else { "○" };
-        let checked = if q.allow_multiple { "☑" } else { "●" };
-        
+        let checked  = if q.allow_multiple { "☑" } else { "●" };
+
+        // Regular option rows
         for (i, opt) in q.options.iter().enumerate() {
             let is_selected = selected_options.contains(&i);
-            let indicator = if is_selected { checked } else { checkbox };
-            let style = if is_selected {
+            let is_focused  = focused_option == i && !other_selected;
+            let indicator   = if is_selected { checked } else { checkbox };
+
+            let focus_prefix = if is_focused { "▶ " } else { "  " };
+            let text_style = if is_selected {
                 Style::default().fg(Color::Green)
+            } else if is_focused {
+                Style::default().fg(Color::Cyan)
             } else {
                 Style::default().fg(Color::White)
             };
             lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(format!("{} ", indicator), style),
-                Span::styled(format!("{}. {}", i + 1, opt), style),
+                Span::styled(focus_prefix, Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{} ", indicator), text_style),
+                Span::styled(format!("{}. {}", i + 1, opt), text_style),
             ]));
         }
 
-        // "Other" option
+        // "Other" row — when active it shows the text input inline
+        let other_focused   = focused_option == q.options.len() && !other_selected;
         let other_indicator = if other_selected { checked } else { checkbox };
-        let other_style = if other_selected {
+        let other_prefix    = if other_focused { "▶ " } else { "  " };
+        let other_label_style = if other_selected {
             Style::default().fg(Color::Green)
+        } else if other_focused {
+            Style::default().fg(Color::Cyan)
         } else {
             Style::default().fg(Color::White)
         };
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(format!("{} ", other_indicator), other_style),
-            Span::styled(format!("{}. Other: ", q.options.len() + 1), other_style),
-            Span::styled(other_input, Style::default().fg(Color::Cyan)),
-        ]));
+        if other_selected {
+            // Active text-input row: show blinking cursor prompt
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(format!("{} ", other_indicator), other_label_style),
+                Span::styled(
+                    format!("{}. Other: ", q.options.len() + 1),
+                    other_label_style,
+                ),
+                Span::styled(other_input, Style::default().fg(Color::White)),
+                Span::styled("│", Style::default().fg(Color::Cyan)), // visual caret hint
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(other_prefix, Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{} ", other_indicator), other_label_style),
+                Span::styled(
+                    format!("{}. Other (custom answer)", q.options.len() + 1),
+                    other_label_style,
+                ),
+            ]));
+        }
 
         lines.push(Line::from("")); // blank
 
-        // Hint
-        let hint = if q.allow_multiple {
-            "1-9: toggle   O: Other   Enter: submit   Esc: cancel"
+        // Hint line 1: navigation keys
+        let nav_hint = if other_selected {
+            "Type your answer  Esc: exit text mode  Enter: submit"
+        } else if q.allow_multiple {
+            "↑/↓: move  Space: toggle  O: Other  Enter: submit"
         } else {
-            "1-9: select   O: Other   Enter: submit   Esc: cancel"
+            "↑/↓: move  Space: select  O: Other  Enter: submit"
         };
-        lines.push(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )));
+        lines.push(Line::from(Span::styled(nav_hint, Style::default().fg(Color::DarkGray))));
 
-        frame.render_widget(
-            Paragraph::new(lines),
-            inner,
-        );
+        // Hint line 2: back / cancel
+        let back_hint = if has_prev {
+            "Shift+Tab: go back   Esc: cancel"
+        } else {
+            "Esc: cancel"
+        };
+        lines.push(Line::from(Span::styled(back_hint, Style::default().fg(Color::DarkGray))));
 
-        // Cursor for "Other" input when selected
-        if other_selected && !other_input.is_empty() {
-            // Position cursor after "Other: " text
-            let other_line_y = inner.y + 2 + q.options.len() as u16 + 1;
-            let other_prefix_len = format!("  {} {}. Other: ", checkbox, q.options.len() + 1).len();
-            let cursor_x = inner.x + other_prefix_len as u16 + other_cursor as u16;
-            if cursor_x < inner.x + inner.width {
-                frame.set_cursor_position((cursor_x, other_line_y));
-            }
+        frame.render_widget(Paragraph::new(lines), inner);
+
+        // Terminal cursor for the "Other" text field (shown even when empty)
+        if other_selected {
+            // row index: 0 prompt, 1 blank, then option rows (0..len), then Other row
+            let other_row_y = inner.y + 2 + q.options.len() as u16;
+            // prefix = "  ● N. Other: " where N = options.len()+1
+            let prefix_len =
+                format!("  {} {}. Other: ", other_indicator, q.options.len() + 1).len();
+            let cursor_x = (inner.x + prefix_len as u16 + other_cursor as u16)
+                .min(inner.x + inner.width.saturating_sub(1));
+            frame.set_cursor_position((cursor_x, other_row_y));
         }
     }
 }

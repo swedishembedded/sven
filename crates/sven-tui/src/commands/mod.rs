@@ -151,14 +151,13 @@ pub fn try_dispatch(input: &str, registry: &CommandRegistry) -> Option<(String, 
     let (cmd_name, cmd_args): (String, Vec<String>) = match &parsed {
         ParsedCommand::Complete { command, args } => (command.clone(), args.clone()),
         ParsedCommand::PartialCommand { partial } => (partial.clone(), vec![]),
-        // Enter finalises the partial as the last argument.
-        // Built-in commands have exactly one arg at index 0, so this always
-        // produces the correct `[partial]` list for them.
-        ParsedCommand::CompletingArgs { command, arg_index, partial } => {
-            let mut args: Vec<String> = (0..*arg_index).map(|_| String::new()).collect();
-            if !partial.is_empty() {
-                args.push(partial.clone());
-            }
+        // Re-derive all args from the raw input so that the full text after
+        // the command name is passed, not just the last space-separated word.
+        // This matters for commands like skills where the entire remainder is
+        // the task (e.g. `/sven make a plan for X` → task = "make a plan for X").
+        ParsedCommand::CompletingArgs { command, .. } => {
+            let all_tokens = parser::tokenise(&input[1..]);
+            let args = all_tokens.into_iter().skip(1).collect();
             (command.clone(), args)
         }
         ParsedCommand::NotCommand => return None,

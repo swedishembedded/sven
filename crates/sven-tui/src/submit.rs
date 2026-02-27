@@ -65,6 +65,78 @@ use crate::{
     commands::{CommandRegistry, CompletionManager, dispatch_command, CommandContext, ImmediateAction},
 };
 
+// ── Inline slash-command expansion ───────────────────────────────────────────
+
+/// Scan `text` for embedded `/command [args]` patterns and expand them.
+///
+/// Rules:
+/// - A slash command is `/word` where `word` matches a registered command.
+/// - The argument is everything from after the command name to the end of the
+///   **current line** (newline acts as the arg terminator).
+/// - Text before the `/command` on the same line is preserved and separated
+///   from the expanded command body with a newline.
+/// - Returns `None` when no inline commands are found (caller uses `text` as-is).
+pub(crate) fn expand_inline_commands(
+    text: &str,
+    registry: &CommandRegistry,
+    ctx: &CommandContext,
+) -> Option<String> {
+    // The standard slash-command path (text starts with '/') is handled
+    // separately in submit_user_input.
+    if text.starts_with('/') {
+        return None;
+    }
+
+    let mut result_parts: Vec<String> = Vec::new();
+    let mut any_expanded = false;
+
+    for line in text.split('\n') {
+        if let Some((pre_len, expanded)) = try_expand_inline_in_line(line, registry, ctx) {
+            let before = line[..pre_len].trim_end();
+            if !before.is_empty() {
+                result_parts.push(before.to_string());
+            }
+            result_parts.push(expanded);
+            any_expanded = true;
+        } else {
+            result_parts.push(line.to_string());
+        }
+    }
+
+    if any_expanded { Some(result_parts.join("\n")) } else { None }
+}
+
+/// Scan a single line for a `/command [args]` pattern.
+///
+/// Returns `(position_of_slash, expanded_text)` on the first match, or `None`.
+fn try_expand_inline_in_line(
+    line: &str,
+    registry: &CommandRegistry,
+    ctx: &CommandContext,
+) -> Option<(usize, String)> {
+    let bytes = line.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'/' {
+            continue;
+        }
+        // Skip URL-like slashes (preceded by ':').
+        if i > 0 && bytes[i - 1] == b':' {
+            continue;
+        }
+        // Must be followed by an alphanumeric character (start of a command name).
+        if !bytes.get(i + 1).map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) {
+            continue;
+        }
+        let cmd_text = &line[i..];
+        if let Some((_name, result)) = dispatch_command(cmd_text, registry, ctx) {
+            if let Some(msg) = result.message_to_send {
+                return Some((i, msg));
+            }
+        }
+    }
+    None
+}
+
 impl App {
     // ── Submit path ───────────────────────────────────────────────────────────
 
@@ -93,6 +165,15 @@ impl App {
     /// 4. `agent_task` receives `AgentRequest::Resubmit`.
     /// 5. `agent.set_model()` / `agent.set_mode()` / `agent.replace_history_and_submit()`.
     pub(crate) async fn submit_user_input(&mut self, text: &str) -> bool {
+        // Expand any inline `/command` patterns embedded in multi-line text.
+        if let Some(expanded) = expand_inline_commands(text, &self.command_registry, &CommandContext {
+            config: self.config.clone(),
+            current_model_provider: self.session.model_cfg.provider.clone(),
+            current_model_name: self.session.model_cfg.name.clone(),
+        }) {
+            return self.enqueue_or_send_text(&expanded).await;
+        }
+
         if text.starts_with('/') {
             let ctx = CommandContext {
                 config: self.config.clone(),

@@ -63,6 +63,21 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
 pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
+            // User / assistant text: first line, up to 80 chars
+            (Role::User, MessageContent::Text(t)) => {
+                let first = t.lines().next().unwrap_or("").trim();
+                let preview: String = first.chars().take(80).collect();
+                let has_more = first.chars().count() > 80 || t.contains('\n');
+                let ellipsis = if has_more { "…" } else { "" };
+                format!("\n**User:** `{preview}{ellipsis}` ▶ click to expand\n")
+            }
+            (Role::Assistant, MessageContent::Text(t)) => {
+                let first = t.lines().next().unwrap_or("").trim();
+                let preview: String = first.chars().take(80).collect();
+                let has_more = first.chars().count() > 80 || t.contains('\n');
+                let ellipsis = if has_more { "…" } else { "" };
+                format!("\n**Agent:** `{preview}{ellipsis}` ▶ click to expand\n")
+            }
             (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
                 let args_preview = serde_json::from_str::<serde_json::Value>(&function.arguments)
                     .map(|v| {

@@ -14,7 +14,7 @@ use crate::{
             apply_bar_and_dim, collapsed_preview, format_conversation,
             parse_markdown_to_messages, segment_bar_style, segment_to_markdown,
         },
-        segment::ChatSegment,
+        segment::{segment_editable_text, segment_at_line, ChatSegment},
     },
     markdown::render_markdown,
 };
@@ -27,6 +27,7 @@ impl App {
     pub(crate) fn build_display_from_segments(&mut self) {
         let mut all_lines = Vec::new();
         let mut ranges    = Vec::new();
+        let mut label_lines: std::collections::HashSet<usize> = Default::default();
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let bar_char = if ascii { "| " } else { "▌ " };
@@ -40,7 +41,8 @@ impl App {
         };
 
         for (i, seg) in self.chat_segments.iter().enumerate() {
-            let s = if self.no_nvim && self.collapsed_segments.contains(&i) {
+            let collapsed = self.no_nvim && self.collapsed_segments.contains(&i);
+            let s = if collapsed {
                 collapsed_preview(seg, &self.tool_args_cache)
             } else {
                 segment_to_markdown(seg, &self.tool_args_cache)
@@ -49,6 +51,13 @@ impl App {
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
             let n = styled.len();
+
+            // In no-nvim mode, mark the first line of each editable segment so
+            // draw_chat can overlay an [Edit] label there.
+            if self.no_nvim && segment_editable_text(&self.chat_segments, i).is_some() {
+                label_lines.insert(line_start);
+            }
+
             all_lines.extend(styled);
             ranges.push((line_start, line_start + n));
             line_start += n;
@@ -73,6 +82,17 @@ impl App {
         }
         self.chat_lines = all_lines;
         self.segment_line_ranges = ranges;
+        self.edit_label_line_indices = label_lines;
+        self.recompute_focused_segment();
+    }
+
+    /// Recompute the keyboard-focused segment based on the current scroll
+    /// offset and chat height.  The focused segment is the editable segment
+    /// whose line range contains the vertical centre of the chat viewport.
+    pub(crate) fn recompute_focused_segment(&mut self) {
+        let center = self.scroll_offset as usize + self.chat_height as usize / 2;
+        self.focused_chat_segment = segment_at_line(&self.segment_line_ranges, center)
+            .filter(|&idx| segment_editable_text(&self.chat_segments, idx).is_some());
     }
 
     /// Re-render the chat pane: update the Neovim buffer (if active) and
@@ -113,6 +133,7 @@ impl App {
     pub(crate) fn scroll_up(&mut self, n: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
         self.auto_scroll = false;
+        self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_down(&mut self, n: u16) {
@@ -121,6 +142,7 @@ impl App {
         if self.scroll_offset >= max {
             self.auto_scroll = true;
         }
+        self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_to_bottom(&mut self) {
@@ -128,6 +150,7 @@ impl App {
             self.scroll_offset =
                 (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
         }
+        self.recompute_focused_segment();
     }
 
     /// Adjust `input_scroll_offset` so the cursor row is within the visible

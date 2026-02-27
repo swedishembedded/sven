@@ -65,8 +65,13 @@ impl App {
                 {
                     use crossterm::event::KeyCode;
                     let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+                    let ctrl  = k.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+                    let alt   = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                     let overlay_action = match k.code {
-                        KeyCode::Enter => Some(Action::CompletionSelect),
+                        // Plain Enter accepts the highlighted completion.
+                        // Shift/Ctrl/Alt+Enter inserts a newline instead of accepting — let
+                        // the action fall through to the regular key handler below.
+                        KeyCode::Enter if !shift && !ctrl && !alt => Some(Action::CompletionSelect),
                         KeyCode::Esc   => Some(Action::CompletionCancel),
                         KeyCode::Down  => Some(Action::CompletionNext),
                         KeyCode::Up    => Some(Action::CompletionPrev),
@@ -182,52 +187,73 @@ impl App {
                             }
 
                             // ── Click on chat pane ───────────────────────────────
-                            let content_start_row: u16 = 2;
+                            // The chat pane inner area starts at row 1 (border)
+                            // and column last_chat_pane.x + 1 (border).
+                            let chat_inner_x = self.last_chat_pane.x + 1;
+                            let chat_inner_w = self.last_chat_pane.width.saturating_sub(2);
+                            let content_start_row = self.last_chat_pane.y + 1;
                             if mouse.row >= content_start_row && !over_queue && !over_input {
                                 let click_line = (mouse.row - content_start_row) as usize
                                     + self.scroll_offset as usize;
                                 if let Some(seg_idx) =
                                     segment_at_line(&self.segment_line_ranges, click_line)
                                 {
-                                    if let Some(seg) = self.chat_segments.get(seg_idx) {
-                                        let is_editable =
-                                            segment_editable_text(&self.chat_segments, seg_idx)
-                                                .is_some();
-                                        if is_editable {
-                                            if let Some(text) = segment_editable_text(
-                                                &self.chat_segments,
-                                                seg_idx,
-                                            ) {
-                                                self.editing_message_index = Some(seg_idx);
-                                                self.edit_cursor = text.len();
-                                                self.edit_original_text = Some(text.clone());
-                                                self.edit_buffer = text;
-                                                self.focus = FocusPane::Input;
-                                                self.update_editing_segment_live();
-                                                self.rerender_chat().await;
+                                    let is_editable =
+                                        segment_editable_text(&self.chat_segments, seg_idx)
+                                            .is_some();
+
+                                    // Detect a click on the [Edit] label: rightmost 6 cols
+                                    // of the header line for any editable segment.
+                                    let is_header_line =
+                                        self.edit_label_line_indices.contains(&click_line);
+                                    let label_len = 6u16; // "[Edit]"
+                                    let label_start_col =
+                                        chat_inner_x + chat_inner_w.saturating_sub(label_len);
+                                    let clicked_edit_label = is_editable
+                                        && is_header_line
+                                        && mouse.column >= label_start_col;
+
+                                    if clicked_edit_label {
+                                        // Load segment into the edit buffer.
+                                        if let Some(text) = segment_editable_text(
+                                            &self.chat_segments,
+                                            seg_idx,
+                                        ) {
+                                            self.editing_message_index = Some(seg_idx);
+                                            self.edit_cursor = text.len();
+                                            self.edit_original_text = Some(text.clone());
+                                            self.edit_buffer = text;
+                                            self.focus = FocusPane::Input;
+                                            self.update_editing_segment_live();
+                                            self.rerender_chat().await;
+                                        }
+                                    } else {
+                                        // All other clicks on any segment: toggle collapse.
+                                        let is_collapsible = match self.chat_segments.get(seg_idx) {
+                                            Some(ChatSegment::Message(m)) => matches!(
+                                                (&m.role, &m.content),
+                                                (Role::User, MessageContent::Text(_))
+                                                    | (Role::Assistant, MessageContent::Text(_))
+                                                    | (
+                                                        Role::Assistant,
+                                                        MessageContent::ToolCall { .. },
+                                                    )
+                                                    | (
+                                                        Role::Tool,
+                                                        MessageContent::ToolResult { .. },
+                                                    )
+                                            ),
+                                            Some(ChatSegment::Thinking { .. }) => true,
+                                            _ => false,
+                                        };
+                                        if is_collapsible {
+                                            if self.collapsed_segments.contains(&seg_idx) {
+                                                self.collapsed_segments.remove(&seg_idx);
+                                            } else {
+                                                self.collapsed_segments.insert(seg_idx);
                                             }
-                                        } else {
-                                            let is_collapsible = match seg {
-                                                ChatSegment::Message(m) => matches!(
-                                                    (&m.role, &m.content),
-                                                    (Role::Assistant, MessageContent::ToolCall { .. })
-                                                        | (
-                                                            Role::Tool,
-                                                            MessageContent::ToolResult { .. },
-                                                        )
-                                                ),
-                                                ChatSegment::Thinking { .. } => true,
-                                                _ => false,
-                                            };
-                                            if is_collapsible {
-                                                if self.collapsed_segments.contains(&seg_idx) {
-                                                    self.collapsed_segments.remove(&seg_idx);
-                                                } else {
-                                                    self.collapsed_segments.insert(seg_idx);
-                                                }
-                                                self.build_display_from_segments();
-                                                self.search.update_matches(&self.chat_lines);
-                                            }
+                                            self.build_display_from_segments();
+                                            self.search.update_matches(&self.chat_lines);
                                         }
                                     }
                                 }
@@ -267,42 +293,96 @@ impl App {
     // ── Question modal key handling ───────────────────────────────────────────
 
     pub(crate) fn handle_modal_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
-        use crossterm::event::KeyCode;
+        use crossterm::event::{KeyCode, KeyModifiers};
 
         let modal = match &mut self.question_modal {
             Some(m) => m,
             None => return false,
         };
 
+        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
+
         match k.code {
-            KeyCode::Esc => {
+            // ── Cancel ────────────────────────────────────────────────────────
+            KeyCode::Esc if !modal.other_selected => {
                 let modal = self.question_modal.take().unwrap();
                 modal.cancel();
             }
-            KeyCode::Enter => {
+            // Esc while in Other text input: exit text mode but keep Other selected.
+            KeyCode::Esc if modal.other_selected => {
+                modal.deactivate_other();
+            }
+
+            // ── Submit / advance ──────────────────────────────────────────────
+            // Enter when Other text field is NOT active: submit current answer.
+            KeyCode::Enter if !modal.other_selected => {
                 let done = modal.submit();
                 if done {
                     let modal = self.question_modal.take().unwrap();
                     modal.finish();
                 }
             }
-            KeyCode::Char('o') | KeyCode::Char('O') => {
+            // Enter when Other text field IS active: submit if non-empty, else just confirm text.
+            KeyCode::Enter if modal.other_selected => {
+                let done = modal.submit();
+                if done {
+                    let modal = self.question_modal.take().unwrap();
+                    modal.finish();
+                }
+            }
+
+            // ── Go back to previous question ──────────────────────────────────
+            // Shift+Tab or Backspace at the very start of text input (when Other active and empty)
+            KeyCode::BackTab => {
+                modal.go_back();
+            }
+            KeyCode::Backspace
+                if modal.other_selected && modal.other_input.is_empty() =>
+            {
+                // Backspace with nothing to delete: exit Other mode.
+                modal.deactivate_other();
+            }
+
+            // ── Arrow key navigation (option rows) ────────────────────────────
+            KeyCode::Up if !modal.other_selected => {
+                modal.focus_prev();
+            }
+            KeyCode::Down if !modal.other_selected => {
+                modal.focus_next();
+            }
+
+            // ── Space: select/toggle focused row ──────────────────────────────
+            KeyCode::Char(' ') if !modal.other_selected => {
+                modal.select_focused();
+            }
+            // Space in Other text mode: insert a space character.
+            KeyCode::Char(' ') if modal.other_selected => {
+                modal.other_input.insert(modal.other_cursor, ' ');
+                modal.other_cursor += 1;
+            }
+
+            // ── Quick-select shortcut: 'O' toggles Other ─────────────────────
+            KeyCode::Char('o') | KeyCode::Char('O') if !modal.other_selected => {
                 modal.toggle_other();
             }
-            KeyCode::Char(c @ '1'..='9') => {
-                // Option number (1-indexed from display, 0-indexed internally)
+
+            // ── Number shortcut: 1-9 toggles the corresponding option ─────────
+            KeyCode::Char(c @ '1'..='9') if !modal.other_selected => {
                 if let Some(idx) = c.to_digit(10) {
                     let option_idx = idx as usize - 1;
                     if modal.current_q < modal.questions.len() {
                         let q = &modal.questions[modal.current_q];
-                        if option_idx < q.options.len() {
+                        if option_idx == q.options.len() {
+                            modal.toggle_other();
+                        } else if option_idx < q.options.len() {
                             modal.toggle_option(option_idx);
                         }
                     }
                 }
             }
-            // Text input for "Other" field when Other is selected
-            KeyCode::Char(c) if modal.other_selected => {
+
+            // ── Text input for the "Other" free-text field ────────────────────
+            KeyCode::Char(c) if modal.other_selected && !shift => {
                 modal.other_input.insert(modal.other_cursor, c);
                 modal.other_cursor += c.len_utf8();
             }
@@ -313,9 +393,19 @@ impl App {
                     modal.other_cursor = prev;
                 }
             }
+            KeyCode::Delete if modal.other_selected => {
+                if modal.other_cursor < modal.other_input.len() {
+                    modal.other_input.remove(modal.other_cursor);
+                }
+            }
             KeyCode::Left if modal.other_selected => {
-                modal.other_cursor =
-                    prev_char_boundary(&modal.other_input, modal.other_cursor);
+                if modal.other_cursor > 0 {
+                    modal.other_cursor =
+                        prev_char_boundary(&modal.other_input, modal.other_cursor);
+                } else {
+                    // At the start of the text field: exit Other mode.
+                    modal.deactivate_other();
+                }
             }
             KeyCode::Right if modal.other_selected => {
                 if modal.other_cursor < modal.other_input.len() {

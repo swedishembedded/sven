@@ -207,6 +207,17 @@ pub struct App {
     pub(crate) tool_args_cache: HashMap<String, String>,
     /// Segment indices that are collapsed (ratatui-only mode).
     pub(crate) collapsed_segments: std::collections::HashSet<usize>,
+    /// Absolute `chat_lines` indices that carry an `[Edit]` label overlay.
+    /// Rebuilt by `build_display_from_segments`; used by the click handler and
+    /// `draw_chat` to render the right-aligned label.
+    pub(crate) edit_label_line_indices: std::collections::HashSet<usize>,
+    /// The segment index closest to the vertical centre of the chat viewport.
+    /// Only set for editable (user/assistant text) segments.  `None` when the
+    /// centre falls outside any editable segment.  Updated every time the
+    /// scroll offset or the display is rebuilt.
+    pub(crate) focused_chat_segment: Option<usize>,
+    /// Last known rect of the chat pane border (populated each frame).
+    pub(crate) last_chat_pane: Rect,
     /// When set, we are in inline edit mode (editing a chat segment).
     pub(crate) editing_message_index: Option<usize>,
     /// When set, the queue item at this index is being edited in the input box.
@@ -373,6 +384,9 @@ impl App {
             question_modal: None,
             tool_args_cache: HashMap::new(),
             collapsed_segments: std::collections::HashSet::new(),
+            edit_label_line_indices: std::collections::HashSet::new(),
+            focused_chat_segment: None,
+            last_chat_pane: Rect::default(),
             editing_message_index: None,
             editing_queue_index: None,
             queue_selected: None,
@@ -520,6 +534,7 @@ impl App {
                     self.queued.len(),
                 );
                 self.chat_height = layout.chat_inner_height().max(1);
+                self.last_chat_pane = layout.chat_pane;
                 // Track chat pane inner width for pre-wrap in the markdown renderer.
                 self.last_chat_inner_width =
                     layout.chat_pane.width.saturating_sub(2).max(20);
@@ -630,11 +645,21 @@ impl App {
                 );
 
                 let lines_to_draw = if !nvim_lines.is_empty() { &nvim_lines } else { &self.chat_lines };
+                // Compute editing / focused line ranges for the chat highlight overlay.
+                let editing_range = self.editing_message_index
+                    .and_then(|idx| self.segment_line_ranges.get(idx))
+                    .copied();
+                let focused_range = self.focused_chat_segment
+                    .and_then(|idx| self.segment_line_ranges.get(idx))
+                    .copied();
                 draw_chat(
                     frame, layout.chat_pane, lines_to_draw, nvim_draw_scroll,
                     self.focus == FocusPane::Chat, ascii,
                     &self.search.query, &self.search.matches, self.search.current,
                     self.search.regex.as_ref(), nvim_cursor,
+                    editing_range,
+                    focused_range,
+                    &self.edit_label_line_indices,
                 );
                 let edit_mode = if self.editing_queue_index.is_some() {
                     InputEditMode::Queue
@@ -695,6 +720,7 @@ impl App {
                         modal.other_selected,
                         &modal.other_input,
                         modal.other_cursor,
+                        modal.focused_option,
                         ascii,
                     );
                 }

@@ -90,7 +90,10 @@ impl<'a> PromptContext<'a> {
 mod guidelines {
     pub fn general() -> &'static str {
         "- Be concise and precise. Use tools instead of guessing — always verify tool outputs.\n\
-         - If a task is ambiguous, ask for clarification before acting.\n\
+         - When a task is ambiguous or you need information to proceed, use the `ask_question` \
+           tool to collect structured answers from the user rather than making assumptions or \
+           writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
+           prefer it over free-form text questions whenever the user is interactive.\n\
          - Check `update_memory` (list) at session start for stored project context."
     }
 

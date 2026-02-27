@@ -16,6 +16,8 @@ pub fn is_reserved_key(event: &KeyEvent) -> bool {
         | (KeyModifiers::CONTROL, KeyCode::Enter)  // Submit buffer to agent
         | (KeyModifiers::NONE, KeyCode::F(1))  // Help
         | (KeyModifiers::NONE, KeyCode::F(4))  // Mode cycle
+        | (KeyModifiers::NONE, KeyCode::F(2))  // Edit focused segment (nvim chat)
+        | (KeyModifiers::NONE, KeyCode::F(8))  // Delete/truncate from focused segment (nvim chat)
         | (KeyModifiers::NONE, KeyCode::Char('/'))  // Search (when not in nvim)
     )
 }

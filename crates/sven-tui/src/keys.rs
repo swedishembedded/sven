@@ -61,6 +61,8 @@ pub enum Action {
     EditMessageCancel,
     /// Delete the currently selected queued message.
     DeleteQueuedMessage,
+    /// Truncate chat history from the focused segment onward (chat pane, `d`).
+    DeleteChatSegment,
     /// Focus the queue panel (shown above the input when there are queued messages).
     FocusQueue,
     /// Navigate the queue panel selection up.
@@ -136,7 +138,7 @@ pub fn map_key(
     // ── Edit message mode: confirm, cancel, or route to input ─────────────────
     if in_edit_mode {
         return match event.code {
-            KeyCode::Enter if shift => Some(Action::InputNewline),
+            KeyCode::Enter if shift || ctrl || alt => Some(Action::InputNewline),
             KeyCode::Enter => Some(Action::EditMessageConfirm),
             KeyCode::Char(' ') if shift => Some(Action::InputNewline), // Shift+Enter decoded as space
             KeyCode::Char('j' | 'm') if ctrl => Some(Action::InputNewline),
@@ -207,8 +209,10 @@ pub fn map_key(
         // The App decides at dispatch time whether the overlay is active.
         KeyCode::Tab if in_input && !shift => Some(Action::CompletionNext),
         KeyCode::BackTab if in_input => Some(Action::CompletionPrev),
-        KeyCode::Enter    if in_input && !shift => Some(Action::Submit),
+        KeyCode::Enter    if in_input && !shift && !ctrl && !alt => Some(Action::Submit),
         KeyCode::Enter    if in_input &&  shift => Some(Action::InputNewline),
+        KeyCode::Enter    if in_input &&  ctrl  => Some(Action::InputNewline),
+        KeyCode::Enter    if in_input &&  alt   => Some(Action::InputNewline),
         // Some terminals send Shift+Enter as KeyCode::Char(' ') with Shift; treat as newline
         KeyCode::Char(' ') if in_input &&  shift => Some(Action::InputNewline),
         // Ctrl+J / Ctrl+M insert newline (fallback when terminal doesn't report Shift+Enter)
@@ -243,9 +247,14 @@ pub fn map_key(
         KeyCode::Char('n') if !in_input && plain => Some(Action::SearchNextMatch),
         KeyCode::Char('N') if !in_input          => Some(Action::SearchPrevMatch),
 
-        // Edit / delete message at cursor (chat pane)
+        // Edit / delete focused segment (chat pane).
+        // 'e' / 'd' work in no-nvim mode; F2 / F8 work in both modes
+        // (F2 and F8 are intercepted as reserved keys before nvim receives them).
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
-        KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteQueuedMessage),
+        KeyCode::F(2)      if !in_input          => Some(Action::EditMessageAtCursor),
+        // 'd' / F8 truncate history from the focused segment onward.
+        KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteChatSegment),
+        KeyCode::F(8)      if !in_input          => Some(Action::DeleteChatSegment),
         // Focus queue panel when in chat pane
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 

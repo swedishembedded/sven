@@ -75,11 +75,12 @@ pub fn build_tool_registry(
             reg.register(UpdateMemoryTool {
                 memory_file: cfg.tools.memory.memory_file.clone(),
             });
-            let ask_tool = match question_tx {
-                Some(tx) => AskQuestionTool::new_tui(tx),
-                None => AskQuestionTool::new(),
-            };
-            reg.register(ask_tool);
+            // Only register ask_question when a TUI channel is available.
+            // In headless/CI/sub-agent mode there is no UI to display the modal,
+            // so we omit the tool entirely — the model won't attempt to call it.
+            if let Some(tx) = question_tx {
+                reg.register(AskQuestionTool::new_tui(tx));
+            }
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
             reg.register(SwitchModeTool::new(mode_lock, tool_event_tx));
             reg.register(WriteTool);

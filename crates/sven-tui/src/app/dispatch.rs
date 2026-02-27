@@ -9,7 +9,7 @@ use crate::{
     app::{App, FocusPane, QueuedMessage},
     chat::{
         markdown::parse_markdown_to_messages,
-        segment::{messages_for_resubmit, segment_at_line, segment_editable_text, ChatSegment},
+        segment::{messages_for_resubmit, segment_editable_text, ChatSegment},
     },
     commands::{
         completion::CompletionItem,
@@ -121,15 +121,38 @@ impl App {
             }
 
             Action::EditMessageAtCursor => {
-                let line = self.scroll_offset as usize;
-                if let Some(seg_idx) = segment_at_line(&self.segment_line_ranges, line) {
+                // Use the keyboard-focused segment (centre of viewport).
+                if let Some(seg_idx) = self.focused_chat_segment {
                     if let Some(text) = segment_editable_text(&self.chat_segments, seg_idx) {
                         self.editing_message_index = Some(seg_idx);
                         self.edit_cursor = text.len();
                         self.edit_original_text = Some(text.clone());
                         self.edit_buffer = text;
                         self.focus = FocusPane::Input;
+                        self.update_editing_segment_live();
+                        self.rerender_chat().await;
                     }
+                }
+            }
+
+            Action::DeleteChatSegment => {
+                // Truncate chat history from the focused segment onward.
+                // Only operates on editable (user / assistant text) segments so
+                // that the user cannot accidentally wipe non-text entries.
+                if let Some(seg_idx) = self.focused_chat_segment {
+                    // Cancel any ongoing edit that would be invalidated.
+                    if self.editing_message_index.map(|i| i >= seg_idx).unwrap_or(false) {
+                        self.editing_message_index = None;
+                        self.edit_buffer.clear();
+                        self.edit_cursor = 0;
+                        self.edit_scroll_offset = 0;
+                        self.edit_original_text = None;
+                    }
+                    self.chat_segments.truncate(seg_idx);
+                    self.collapsed_segments.retain(|&i| i < seg_idx);
+                    self.focused_chat_segment = None;
+                    self.rerender_chat().await;
+                    self.save_history_async();
                 }
             }
 
@@ -460,8 +483,8 @@ impl App {
             Action::InputChar(c) => {
                 self.input_buffer.insert(self.input_cursor, c);
                 self.input_cursor += c.len_utf8();
-                // Auto-trigger / update completion overlay when typing a slash command.
-                if self.input_buffer.starts_with('/') {
+                // Auto-trigger / update completion overlay when on a slash-command line.
+                if self.should_show_completion() {
                     self.update_completion_overlay();
                 } else {
                     self.completion_overlay = None;
@@ -470,6 +493,8 @@ impl App {
             Action::InputNewline => {
                 self.input_buffer.insert(self.input_cursor, '\n');
                 self.input_cursor += 1;
+                // Dismiss the completion overlay when starting a new line.
+                self.completion_overlay = None;
             }
             Action::InputBackspace => {
                 if self.input_cursor > 0 {
@@ -477,7 +502,7 @@ impl App {
                     self.input_buffer.remove(prev);
                     self.input_cursor = prev;
                 }
-                if self.input_buffer.starts_with('/') {
+                if self.should_show_completion() {
                     self.update_completion_overlay();
                 } else {
                     self.completion_overlay = None;
@@ -584,7 +609,7 @@ impl App {
             Action::CompletionNext => {
                 if let Some(overlay) = &mut self.completion_overlay {
                     overlay.select_next();
-                } else if self.input_buffer.starts_with('/') {
+                } else if self.should_show_completion() {
                     self.update_completion_overlay();
                 }
             }
@@ -674,10 +699,40 @@ impl App {
 
     // ── Slash command completion ──────────────────────────────────────────────
 
+    /// Return `(command_line_start_byte, command_line_as_owned_string)` for the
+    /// line containing the cursor.  The "command line" is the text from the last
+    /// `\n` before the cursor position to the cursor.
+    ///
+    /// Returns owned data so callers can freely mutate `self` afterwards.
+    fn command_line_at_cursor(&self) -> (usize, String) {
+        let before_cursor = &self.input_buffer[..self.input_cursor];
+        let start = before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        (start, self.input_buffer[start..self.input_cursor].to_string())
+    }
+
+    /// Return true when the input should trigger the completion overlay.
+    ///
+    /// True when either the whole buffer starts with `/` (single-line mode) or
+    /// when the current line at the cursor starts with `/` (multi-line mode).
+    fn should_show_completion(&self) -> bool {
+        let (_, line) = self.command_line_at_cursor();
+        line.starts_with('/') || self.input_buffer.starts_with('/')
+    }
+
     /// Regenerate completions from the current `input_buffer` and update (or
     /// dismiss) the `completion_overlay`.
+    ///
+    /// In multi-line mode the completion is driven by the line containing the
+    /// cursor so that `/command` patterns typed in the middle of a message still
+    /// get completions.
     pub(crate) fn update_completion_overlay(&mut self) {
-        let parsed = parse(&self.input_buffer);
+        let (_, cmd_line) = self.command_line_at_cursor();
+        let parse_source = if cmd_line.starts_with('/') {
+            cmd_line
+        } else {
+            self.input_buffer.clone()
+        };
+        let parsed = parse(&parse_source);
         let ctx = CommandContext {
             config: self.config.clone(),
             current_model_provider: self.session.model_cfg.provider.clone(),
@@ -690,7 +745,6 @@ impl App {
             let prev_selected =
                 self.completion_overlay.as_ref().map(|o| o.selected).unwrap_or(0);
             let mut overlay = CompletionOverlay::new(items);
-            // Keep the previously-selected index in bounds.
             overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
             overlay.adjust_scroll_pub();
             self.completion_overlay = Some(overlay);
@@ -699,36 +753,43 @@ impl App {
 
     /// Apply the selected completion item to `input_buffer`.
     ///
-    /// Replaces either the command name or the current argument with the
-    /// selected value, then positions the cursor appropriately.
+    /// In single-line mode (buffer starts with `/`), the entire buffer is
+    /// replaced.  In multi-line mode, only the command-line portion of the
+    /// current line is updated.
     pub(crate) fn apply_completion(&mut self, item: &CompletionItem) {
-        let parsed = parse(&self.input_buffer);
-        match parsed {
+        let (cmd_start, cmd_line) = self.command_line_at_cursor();
+        let is_multiline_cmd = cmd_line.starts_with('/') && cmd_start > 0;
+        let parse_source = if is_multiline_cmd { cmd_line } else { self.input_buffer.clone() };
+
+        let parsed = parse(&parse_source);
+        let new_cmd = match parsed {
             ParsedCommand::PartialCommand { .. } => {
-                // Replace everything after the leading '/' with the command name.
-                self.input_buffer = format!("/{} ", item.value.trim_start_matches('/'));
-                self.input_cursor = self.input_buffer.len();
+                format!("/{} ", item.value.trim_start_matches('/'))
             }
             ParsedCommand::CompletingArgs { command, arg_index, partial: _ } => {
-                // Build new buffer: "/command arg0 … argN-1 <selected>"
-                // We only have arg_index here but we know partial is the last
-                // word.  Reconstruct by keeping everything up to the partial.
                 let prefix = if arg_index == 0 {
                     format!("/{} ", command)
                 } else {
-                    // Keep existing args up to arg_index — simple: re-split
-                    // We strip the partial from the buffer end and replace.
-                    let body = self.input_buffer.trim_end();
-                    // Find last space to strip partial
+                    let body = parse_source.trim_end();
                     let base = body.rfind(' ').map(|i| &body[..=i]).unwrap_or(body);
                     base.to_string()
                 };
-                self.input_buffer = format!("{}{} ", prefix, item.value);
-                self.input_cursor = self.input_buffer.len();
+                format!("{}{} ", prefix, item.value)
             }
-            _ => {}
+            _ => return,
+        };
+
+        if is_multiline_cmd {
+            // Replace only the command portion of the current line.
+            // Capture remaining text after the cursor before mutation.
+            let after_cursor = self.input_buffer[self.input_cursor..].to_string();
+            let before_cmd = self.input_buffer[..cmd_start].to_string();
+            self.input_buffer = format!("{}{}{}", before_cmd, new_cmd, after_cursor);
+            self.input_cursor = cmd_start + new_cmd.len();
+        } else {
+            self.input_buffer = new_cmd;
+            self.input_cursor = self.input_buffer.len();
         }
-        // Update completions for the new buffer state.
         self.update_completion_overlay();
     }
 

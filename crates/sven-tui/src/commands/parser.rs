@@ -115,7 +115,7 @@ pub fn parse(input: &str) -> ParsedCommand {
 /// strings, collapses multiple spaces.
 ///
 /// Returns owned tokens; quoted strings have their quotes stripped.
-fn tokenise(s: &str) -> Vec<String> {
+pub(super) fn tokenise(s: &str) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
