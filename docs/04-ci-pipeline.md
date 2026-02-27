@@ -521,20 +521,58 @@ echo "$OUTPUT"
 
 ---
 
-## Chaining Workflows
+## Pipe Composition
 
-Because headless output is valid conversation markdown, you can chain
-multiple workflows:
+Sven's headless output is designed to pipe cleanly into other tools or into
+another sven instance.  Diagnostics go to stderr so stdout stays uncontaminated.
 
-```bash
-# Research → Plan → Implement pipeline
-sven --file research.md \
-  | sven --file plan.md --output-format compact \
-  | sven --file implement.md
+### Input format detection
+
+When stdin is not a terminal, sven auto-detects the format:
+
+| stdin content | Detected as | Effect |
+|---------------|-------------|--------|
+| Plain text / no `##` headings | Workflow / plain text | Entire input becomes a single step |
+| Contains `## User`, `## Sven`, `## Tool`, or `## Tool Result` | Conversation markdown | History seeded; step = CLI prompt or pending user turn |
+| Every non-empty line starts with `{` | JSONL conversation | History seeded from full-fidelity JSONL |
+
+### Step content when a conversation is piped
+
+When conversation markdown or JSONL is piped in, the step content for the
+new turn resolves in this order:
+
+```
+CLI positional prompt  →  piped pending user turn  →  error (exit 2)
 ```
 
-Each stage receives the full conversation from the previous stage on stdin
-(or via a file), giving it complete context.
+This means `sven 'task1' | sven` exits with a clear error message, while
+`sven 'task1' | sven 'task2'` works as expected.
+
+### Common pipe patterns
+
+```bash
+# Data transform: stdin is data, CLI arg is the operation (most idiomatic)
+git diff HEAD~1 | sven 'write a commit message for these changes'
+cat report.md   | sven 'summarise the key findings'
+
+# Context seed: first conversation becomes history for the second agent
+sven 'list all public APIs' | sven 'write tests for each API listed above'
+
+# Compact relay: response text becomes next user message
+sven 'find null-pointer bugs' --output-format compact \
+  | sven 'fix each of the following bugs'
+
+# Multi-stage pipeline with full-fidelity JSONL handoff
+sven 'stage 1' --output-jsonl /tmp/run.jsonl
+sven 'stage 2' --load-jsonl  /tmp/run.jsonl
+
+# Pending-user relay: last ## User in output drives the next agent
+sven --file plan-and-relay.md | sven
+```
+
+See **[docs/technical/pipe-composition.md](technical/pipe-composition.md)** for
+the full reference including all patterns, error cases, and implementation
+details.
 
 ---
 
