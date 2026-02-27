@@ -6,6 +6,65 @@ use clap_complete::{generate, Shell};
 use std::path::PathBuf;
 use sven_config::AgentMode;
 
+// ── Gateway subcommand ────────────────────────────────────────────────────────
+
+/// `sven gateway` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum GatewayCommands {
+    /// Start the remote-control gateway (HTTP + P2P).
+    ///
+    /// Exposes the agent over HTTPS/WebSocket and libp2p so it can be
+    /// controlled from a mobile app, Slack, or any other operator client.
+    ///
+    /// TLS is enabled by default. A bearer token is generated on first run
+    /// and printed once. Mobile clients pair via `sven gateway pair`.
+    Start {
+        /// Path to the gateway config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Authorize a device to control this agent via P2P.
+    ///
+    /// The device displays a `sven-pair://` URI (or QR code). Paste it here.
+    /// The peer's PeerId and short fingerprint are shown for visual confirmation.
+    Pair {
+        /// The `sven-pair://` URI displayed by the device.
+        uri: String,
+        /// Human-readable label for this device (e.g. "my-phone").
+        #[arg(long, short = 'l')]
+        label: Option<String>,
+        /// Path to the gateway config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Revoke a previously authorized peer.
+    Revoke {
+        /// PeerId (base58) to revoke.
+        peer_id: String,
+        /// Path to the gateway config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Regenerate the HTTP bearer token.
+    ///
+    /// The new token is printed once. The old token is immediately invalidated.
+    RegenerateToken {
+        /// Path to the gateway config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Print the current gateway configuration and exit.
+    ShowConfig {
+        /// Path to the gateway config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+}
+
 /// Output format for headless / CI runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum OutputFormatArg {
@@ -143,6 +202,15 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Remote-control gateway: start, pair devices, manage tokens.
+    ///
+    /// Run `sven gateway start` to expose this agent to mobile apps, Slack,
+    /// and other clients. Run `sven gateway pair <uri>` to authorize a device.
+    Gateway {
+        #[command(subcommand)]
+        command: GatewayCommands,
+    },
+
     /// Generate shell completion script
     Completions {
         #[arg(value_enum)]

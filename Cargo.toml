@@ -13,6 +13,7 @@ members = [
     "crates/sven-ci",
     "crates/sven-tui",
     "crates/sven-p2p",
+    "crates/sven-gateway",
 ]
 
 [workspace.dependencies]
@@ -42,6 +43,7 @@ humantime    = "2"
 regex        = "1"
 sha2         = "0.10"
 hex          = "0.4"
+subtle       = "2.6"
 lru          = "0.12"
 pulldown-cmark = "0.12"
 ratatui      = "0.29"
@@ -66,13 +68,14 @@ name = "sven"
 path = "src/main.rs"
 
 [dependencies]
-sven-config = { path = "crates/sven-config" }
-sven-model  = { path = "crates/sven-model" }
-sven-input  = { path = "crates/sven-input" }
-sven-tools  = { path = "crates/sven-tools" }
-sven-core   = { path = "crates/sven-core" }
-sven-ci     = { path = "crates/sven-ci" }
-sven-tui    = { path = "crates/sven-tui" }
+sven-config  = { path = "crates/sven-config" }
+sven-model   = { path = "crates/sven-model" }
+sven-input   = { path = "crates/sven-input" }
+sven-tools   = { path = "crates/sven-tools" }
+sven-core    = { path = "crates/sven-core" }
+sven-ci      = { path = "crates/sven-ci" }
+sven-tui     = { path = "crates/sven-tui" }
+sven-gateway = { path = "crates/sven-gateway" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }

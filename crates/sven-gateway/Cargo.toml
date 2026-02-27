@@ -1,0 +1,71 @@
+[package]
+name    = "sven-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Secure remote-control gateway for sven agents"
+
+[dependencies]
+# ── HTTP server ───────────────────────────────────────────────────────────────
+# axum 0.7 + axum-server 0.7 is the stable, tested pairing for TLS.
+axum          = { version = "0.7", features = ["ws", "macros"] }
+axum-server   = { version = "0.7", features = ["tls-rustls"] }
+tower         = { version = "0.4" }
+tower-http    = { version = "0.5", features = ["set-header", "limit", "cors", "request-id"] }
+
+# ── TLS — pure Rust, no OpenSSL ───────────────────────────────────────────────
+rustls-pemfile = "2"
+# rcgen 0.13 generates ECDSA P-256 certs (default key type).
+rcgen         = { version = "0.13", features = ["pem"] }
+time          = { version = "0.3", features = ["serde"] }
+
+# ── Rate limiting — GCRA algorithm, production-grade ─────────────────────────
+governor      = "0.6"
+
+# ── Crypto — all from RustCrypto, audited ────────────────────────────────────
+rand          = "0.8"
+sha2          = { workspace = true }
+hmac          = "0.12"
+# subtle provides constant-time comparison primitives.
+subtle        = "2.6"
+
+# ── libp2p for P2P operator connections ──────────────────────────────────────
+libp2p        = { version = "0.56", features = [
+    "tokio", "tcp", "noise", "yamux", "identify", "ping",
+    "relay", "dcutr", "autonat", "request-response", "macros",
+    "mdns",
+] }
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+ciborium      = "0.2"
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+serde_yaml    = { workspace = true }
+base64        = { workspace = true }
+hex           = { workspace = true }
+
+# ── Async ─────────────────────────────────────────────────────────────────────
+tokio              = { workspace = true }
+tokio-stream       = { workspace = true }
+futures            = { workspace = true }
+tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
+reqwest            = { workspace = true }
+async-trait        = { workspace = true }
+
+# ── Sven internal crates ──────────────────────────────────────────────────────
+sven-core     = { path = "../sven-core" }
+sven-config   = { path = "../sven-config" }
+sven-tools    = { path = "../sven-tools" }
+sven-p2p      = { path = "../sven-p2p" }
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+anyhow        = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+uuid          = { workspace = true, features = ["serde"] }
+chrono        = { workspace = true }
+dirs          = { workspace = true }
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = { workspace = true }
+sven-model = { path = "../sven-model" }

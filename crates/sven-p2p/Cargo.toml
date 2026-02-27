@@ -30,6 +30,7 @@ libp2p = { version = "0.56", features = [
     "autonat",
     "request-response",
     "macros",
+    "mdns",
 ] }
 
 ciborium    = "0.2"

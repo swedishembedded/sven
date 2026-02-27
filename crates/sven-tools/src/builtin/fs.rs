@@ -34,12 +34,12 @@ impl Tool for FsTool {
                     "type": "string",
                     "description": "File or directory path"
                 },
-                "content": {
+                "text": {
                     "type": "string",
-                    "description": "Content to write (required for write/append)"
+                    "description": "Text content to write (required for write/append - set as empty for others)"
                 }
             },
-            "required": ["operation", "path"],
+            "required": ["operation", "path", "text"],
             "additionalProperties": false
         })
     }
@@ -81,8 +81,7 @@ impl Tool for FsTool {
                         &call.id,
                         "write requires a 'content' field but it is missing. \
                          This usually means the JSON was truncated because the content was too \
-                         large to fit in a single generation. Use the shell tool with a heredoc \
-                         to write large files: shell({command: \"cat > path/to/file << 'EOF'\\n...\\nEOF\"}).",
+                         large to fit in a single generation.",
                     ),
                 };
                 let truncated = call.args.get("__truncated").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -114,8 +113,7 @@ impl Tool for FsTool {
                         &call.id,
                         "append requires a 'content' field but it is missing. \
                          This usually means the JSON was truncated because the content was too \
-                         large to fit in a single generation. Use the shell tool with a heredoc \
-                         to write large files: shell({command: \"cat >> path/to/file << 'EOF'\\n...\\nEOF\"}).",
+                         large to fit in a single generation.",
                     ),
                 };
                 let truncated = call.args.get("__truncated").and_then(|v| v.as_bool()).unwrap_or(false);

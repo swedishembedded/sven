@@ -41,6 +41,7 @@ impl Tool for ShellTool {
 
     fn description(&self) -> &str {
         "Execute a shell command and return stdout + stderr.\n\
+         'command' parameter is required and can be any shell command\n\
          Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
          preserved with an omission marker in the middle — errors at the end are never lost.\n\
          Prefer non-interactive commands. Avoid commands that require a TTY.\n\
@@ -57,9 +58,9 @@ impl Tool for ShellTool {
         json!({
             "type": "object",
             "properties": {
-                "command": {
+                "shell_command": {
                     "type": "string",
-                    "description": "The shell command to execute"
+                    "description": "The complete bash one liner shell command to execute."
                 },
                 "workdir": {
                     "type": "string",
@@ -70,7 +71,7 @@ impl Tool for ShellTool {
                     "description": "Execution timeout in seconds (optional)"
                 }
             },
-            "required": ["command"],
+            "required": ["shell_command"],
             "additionalProperties": false
         })
     }
@@ -79,14 +80,13 @@ impl Tool for ShellTool {
     fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let command = match call.args.get("command").and_then(|v| v.as_str()) {
+        let command = match call.args.get("shell_command").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'command'. Received: {}", args_preview)
+                    "Please provide a shell command to execute as 'shell_command' parameter to this tool call. \
+                    The shell command can be any bash one liner",
                 );
             }
         };
@@ -98,7 +98,7 @@ impl Tool for ShellTool {
 
         debug!(cmd = %command, "executing shell tool");
 
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new("bash");
         cmd.arg("-c").arg(&command);
         // Isolate the subprocess from the TUI's terminal.
         //

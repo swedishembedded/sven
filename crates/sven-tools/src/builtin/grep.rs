@@ -153,7 +153,7 @@ async fn run_rg(
             .await?
     } else {
         // Fallback to grep
-        let mut args = vec!["-rn".to_string()];
+        let mut args = vec!["-ran".to_string()];
         match output_mode {
             "files_with_matches" => { args.push("-l".to_string()); }
             "count" => { args.push("-c".to_string()); }

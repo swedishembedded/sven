@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
-use cli::{Cli, Commands, OutputFormatArg};
+use cli::{Cli, Commands, GatewayCommands, OutputFormatArg};
 use clap::Parser;
 use sven_ci::{
     CiOptions, CiRunner,
@@ -36,6 +36,9 @@ async fn main() -> anyhow::Result<()> {
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
         match cmd {
+            Commands::Gateway { command } => {
+                return run_gateway_command(command).await;
+            }
             Commands::Completions { shell } => {
                 cli::print_completions(*shell);
                 return Ok(());
@@ -69,6 +72,105 @@ async fn main() -> anyhow::Result<()> {
     } else {
         run_tui(cli, config).await
     }
+}
+
+// ── Gateway command handler ───────────────────────────────────────────────────
+
+async fn run_gateway_command(cmd: &GatewayCommands) -> anyhow::Result<()> {
+    match cmd {
+        GatewayCommands::Start { config: config_path } => {
+            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            let sven_config = Arc::new(sven_config::load(None)?);
+
+            // Build the agent the same way the TUI/CI does.
+            let agent = build_agent_for_gateway(&sven_config).await?;
+
+            sven_gateway::gateway::run(gw_config, agent).await
+        }
+
+        GatewayCommands::Pair { uri, label, config: config_path } => {
+            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            sven_gateway::gateway::pair_peer(&gw_config, uri, label.clone()).await
+        }
+
+        GatewayCommands::Revoke { peer_id, config: config_path } => {
+            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            sven_gateway::gateway::revoke_peer(&gw_config, peer_id).await
+        }
+
+        GatewayCommands::RegenerateToken { config: config_path } => {
+            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            sven_gateway::gateway::regenerate_token(&gw_config)
+        }
+
+        GatewayCommands::ShowConfig { config: config_path } => {
+            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            println!("{}", serde_yaml::to_string(&gw_config).unwrap_or_default());
+            Ok(())
+        }
+    }
+}
+
+/// Build a bare `sven_core::Agent` suitable for gateway use.
+///
+/// Uses the same model/tools configuration as the TUI/CI runner but without
+/// starting a TUI or CI session. The gateway's `ControlService` owns the agent.
+async fn build_agent_for_gateway(
+    config: &Arc<sven_config::Config>,
+) -> anyhow::Result<sven_core::Agent> {
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Mutex};
+    use sven_tools::{
+        ToolRegistry,
+        RunTerminalCommandTool, ReadFileTool, WriteTool, EditFileTool,
+        GlobFileSearchTool, GrepTool, ListDirTool, DeleteFileTool,
+        WebFetchTool, WebSearchTool, ApplyPatchTool, ReadLintsTool,
+        UpdateMemoryTool, TodoWriteTool, SwitchModeTool,
+        TodoItem, ToolEvent,
+    };
+
+    let model: Arc<dyn sven_model::ModelProvider> = Arc::from(
+        sven_model::from_config(&config.model)?
+    );
+    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+
+    let mode = Arc::new(Mutex::new(config.agent.default_mode));
+    let (tool_tx, tool_rx) = mpsc::channel::<ToolEvent>(64);
+
+    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let mut registry = ToolRegistry::new();
+    registry.register(RunTerminalCommandTool::default());
+    registry.register(ReadFileTool);
+    registry.register(WriteTool);
+    registry.register(EditFileTool);
+    registry.register(GlobFileSearchTool);
+    registry.register(GrepTool);
+    registry.register(ListDirTool);
+    registry.register(DeleteFileTool);
+    registry.register(WebFetchTool);
+    registry.register(WebSearchTool {
+        api_key: config.tools.web.search.api_key.clone(),
+    });
+    registry.register(ApplyPatchTool);
+    registry.register(ReadLintsTool);
+    registry.register(UpdateMemoryTool {
+        memory_file: config.tools.memory.memory_file.clone(),
+    });
+    registry.register(TodoWriteTool::new(todos, tool_tx.clone()));
+    registry.register(SwitchModeTool::new(mode.clone(), tool_tx));
+
+    let runtime = sven_core::AgentRuntimeContext::default();
+
+    Ok(sven_core::Agent::new(
+        model,
+        Arc::new(registry),
+        Arc::new(config.agent.clone()),
+        runtime,
+        mode,
+        tool_rx,
+        max_ctx,
+    ))
 }
 
 /// Validate a workflow file: parse frontmatter, count steps, report to stdout.
