@@ -124,8 +124,9 @@ impl ConversationRunner {
             task_depth,
         };
 
-        let mut agent =
-            AgentBuilder::new(self.config.clone()).build(opts.mode, model.clone(), profile);
+        let mut agent = AgentBuilder::new(self.config.clone())
+            .build(opts.mode, model.clone(), profile)
+            .await;
 
         // Load conversation history into the agent session.
         // replace_history_and_submit prepends the system message and then adds

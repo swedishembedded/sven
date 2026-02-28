@@ -462,7 +462,8 @@ impl CiRunner {
 
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_runtime_context(runtime_ctx)
-            .build(initial_mode, model, profile);
+            .build(initial_mode, model, profile)
+            .await;
 
         // ── Load JSONL history ───────────────────────────────────────────────
         // If --load-jsonl was set, parse and seed the agent with that history.

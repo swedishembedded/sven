@@ -70,6 +70,12 @@ pub struct OpenAICompatProvider {
     ///   • `reasoning_format: "deepseek"` — enable thinking extraction on
     ///     llama.cpp for reasoning-capable models (QwQ, DeepSeek-R1, Qwen3)
     extra_body: serde_json::Value,
+    /// Server root URL for live property probing (e.g. `http://localhost:8080`).
+    ///
+    /// Derived from `base_url` in `new()` by stripping the `/v1` suffix.
+    /// `None` when constructed via `with_full_chat_url` (no derivable root).
+    /// Used by `probe_context_window()` to query `GET {server_root}/props`.
+    server_root: Option<String>,
 }
 
 impl OpenAICompatProvider {
@@ -111,6 +117,7 @@ impl OpenAICompatProvider {
             extra_headers,
             auth_style,
             extra_body,
+            server_root: Some(derive_server_root(base)),
         }
     }
 
@@ -147,8 +154,30 @@ impl OpenAICompatProvider {
             extra_headers,
             auth_style,
             extra_body,
+            server_root: None,
         }
     }
+}
+
+/// Derive the server root from a `/v1`-prefixed API base URL.
+///
+/// Strips common API path suffixes so that `probe_context_window()` can reach
+/// the server's properties endpoint (e.g. llama.cpp's `GET /props`).
+///
+/// Examples:
+/// - `http://localhost:8080/v1`   → `http://localhost:8080`
+/// - `https://api.openai.com/v1` → `https://api.openai.com`
+/// - `http://host:8080/api/v1`   → `http://host:8080`
+/// - `http://host:8080`          → `http://host:8080` (unchanged)
+fn derive_server_root(base_url: &str) -> String {
+    let b = base_url.trim_end_matches('/');
+    if let Some(root) = b.strip_suffix("/api/v1") {
+        return root.to_string();
+    }
+    if let Some(root) = b.strip_suffix("/v1") {
+        return root.to_string();
+    }
+    b.to_string()
 }
 
 #[async_trait]
@@ -159,6 +188,40 @@ impl crate::ModelProvider for OpenAICompatProvider {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+
+    /// Query the server's `/props` endpoint for the actual loaded context window.
+    ///
+    /// llama.cpp and compatible servers expose `GET /props` which includes
+    /// `n_ctx` — the actual KV-cache size the model was loaded with.  This
+    /// value may be smaller than the catalog entry (e.g. the server was
+    /// started with `--ctx-size 54272`).
+    ///
+    /// Returns `Some(n_ctx)` on success, `None` when the endpoint is absent
+    /// (hosted providers like OpenAI, Anthropic) or unreachable.
+    async fn probe_context_window(&self) -> Option<u32> {
+        let root = self.server_root.as_deref()?;
+        let props_url = format!("{root}/props");
+        let mut req = self
+            .client
+            .get(&props_url)
+            // Short timeout: the probe is a startup hint, not a critical path.
+            // A slow or unreachable server must not block agent startup.
+            .timeout(std::time::Duration::from_secs(5));
+        if let Some(key) = &self.api_key {
+            req = match self.auth_style {
+                AuthStyle::Bearer => req.bearer_auth(key),
+                AuthStyle::ApiKeyHeader => req.header("api-key", key),
+                AuthStyle::None => req,
+            };
+        }
+        let resp = req.send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body: serde_json::Value = resp.json().await.ok()?;
+        // llama.cpp /props returns {"n_ctx": <u32>, ...}
+        body["n_ctx"].as_u64().map(|v| v as u32)
     }
 
     /// List models via `GET /models`, enriched with static catalog metadata.

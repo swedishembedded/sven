@@ -51,6 +51,19 @@ pub trait ModelProvider: Send + Sync {
         crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.context_window)
     }
 
+    /// Query the live API for the actual context window in use.
+    ///
+    /// Default implementation returns `None` (no live probe available).
+    /// Override in providers that expose a properties or info endpoint —
+    /// e.g. llama.cpp-compatible servers expose `GET /props` which includes
+    /// the loaded `n_ctx` value.
+    ///
+    /// Returns `Some(n_ctx)` when the probe succeeds, `None` otherwise.
+    /// A `Some(0)` result is treated as "unknown" by callers.
+    async fn probe_context_window(&self) -> Option<u32> {
+        None
+    }
+
     /// Input modalities supported by this provider/model combination.
     ///
     /// Reads from the static catalog.  Returns `[Text]` when the model is not

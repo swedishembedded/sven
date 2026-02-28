@@ -699,11 +699,61 @@ impl Agent {
             cache_key: Some(self.session.id.clone()),
         };
 
-        let mut stream = self
-            .model
-            .complete(req)
-            .await
-            .context("model completion failed")?;
+        let mut stream = match self.model.complete(req).await {
+            Ok(s) => s,
+            Err(e) => {
+                // When the provider reports a hard context-size overflow
+                // (e.g. llama.cpp `exceed_context_size_error` with `n_ctx`),
+                // update the session budget to the actual value, compact, and
+                // retry once.  This handles the case where the catalog or config
+                // context window is larger than what the server was loaded with.
+                if let Some(n_ctx) = extract_n_ctx_from_error(&e) {
+                    warn!(
+                        n_ctx,
+                        old_max_tokens = self.session.max_tokens,
+                        "context overflow: catalog/config budget was wrong; \
+                         updating to actual n_ctx and compacting before retry"
+                    );
+                    // Update the session budget to the real server value so all
+                    // subsequent ensure_fits_budget calls use the correct ceiling
+                    // and will prefer LLM summarization going forward.
+                    self.session.max_tokens = n_ctx;
+                    // Use a direct emergency compact here rather than calling
+                    // ensure_fits_budget: ensure_fits_budget drives a LLM
+                    // summarization turn through run_single_turn → stream_one_turn,
+                    // which would create an unresolvable async recursion cycle.
+                    // Emergency compact is the safe recovery primitive; LLM-based
+                    // summarization will apply correctly on the next proactive
+                    // compaction check now that max_tokens reflects the real limit.
+                    let sys = self.system_message(mode);
+                    emergency_compact(
+                        &mut self.session.messages,
+                        Some(sys),
+                        self.config.compaction_keep_recent,
+                    );
+                    self.session.recalculate_tokens();
+                    // Rebuild request with the compacted message set.
+                    let modalities2 = self.model.input_modalities();
+                    let messages2 = sven_model::sanitize::strip_images_if_unsupported(
+                        self.session.messages.clone(),
+                        &modalities2,
+                    );
+                    let req2 = CompletionRequest {
+                        messages: messages2,
+                        tools: tools.clone(),
+                        stream: true,
+                        system_dynamic_suffix: self.dynamic_context(),
+                        cache_key: Some(self.session.id.clone()),
+                    };
+                    self.model
+                        .complete(req2)
+                        .await
+                        .context("model completion failed (after context recovery)")?
+                } else {
+                    return Err(e).context("model completion failed");
+                }
+            }
+        };
 
         let mut full_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -911,61 +961,87 @@ impl Agent {
         let sys = self.system_message(mode);
         let keep_n = self.config.compaction_keep_recent;
 
-        // Emergency path: session so large that even the compaction prompt
-        // would overflow the context window.  Drop old messages without a
-        // model call — always succeeds regardless of session size.
+        // Pre-compute the message split so the emergency decision can be based
+        // on whether the compaction prompt (old messages only) fits within the
+        // budget — not whether the full session fits.  The compaction call only
+        // sends `to_compact` to the model, so checking the full session is
+        // unnecessarily pessimistic: it would force information-destroying
+        // emergency drops even when the old messages alone are well within the
+        // window.
+        let non_system: Vec<Message> = self
+            .session
+            .messages
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .cloned()
+            .collect();
+
+        let preserve_count = if non_system.len() > keep_n * 2 {
+            keep_n
+        } else {
+            0
+        };
+        let mut summarize_count = non_system.len().saturating_sub(preserve_count);
+
+        // Safety: adjust the split point backward until `recent_messages`
+        // begins at a conversation-turn boundary.  If the split falls
+        // inside a tool-use/tool-result group (i.e. `recent_messages[0]`
+        // would be a ToolResult or ToolCall), the compacted session would
+        // contain orphaned ToolResult blocks — references to ToolCall IDs
+        // that were summarised away — causing providers like Anthropic to
+        // reject the next request with a 400 error.
+        //
+        // Moving backward past both ToolResult and ToolCall variants
+        // ensures that the entire tool-interaction group (all ToolCall
+        // messages AND all their corresponding ToolResult messages) is
+        // kept intact in `recent_messages`.
+        while summarize_count > 0 && summarize_count < non_system.len() {
+            match &non_system[summarize_count].content {
+                MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
+                    summarize_count -= 1;
+                }
+                _ => break,
+            }
+        }
+
+        // Emergency check: would the compaction prompt itself exceed the budget?
+        //
+        // The compaction call sends only the OLD messages (to_compact), not the
+        // recent tail.  Estimate the compaction prompt size by subtracting the
+        // recent-tail token count from the total tracked session token count.
+        // Using the session's own token accounting (rather than recomputing with
+        // the freshly generated system prompt) keeps this consistent with the
+        // calibration factor and with how test sessions are seeded.
+        //
+        // If even the old-messages portion of the session fills 95 % of the
+        // budget, there is not enough space left for the model to emit a summary.
+        let recent_raw_tokens: usize = non_system[summarize_count..]
+            .iter()
+            .map(|m| m.approx_tokens())
+            .sum();
+        let compaction_input_raw = self.session.token_count.saturating_sub(recent_raw_tokens);
+        let calibrated_compaction_input =
+            (compaction_input_raw as f32 * self.session.calibration_factor) as usize;
         let emergency_fraction = 0.95_f32;
-        let strategy_used = if self.session.context_fraction() >= emergency_fraction {
+        let compaction_would_overflow = summarize_count == 0
+            || (calibrated_compaction_input as f32 / input_budget as f32) >= emergency_fraction;
+
+        let strategy_used = if compaction_would_overflow {
+            // Emergency path: even the compaction call would overflow, or there
+            // is nothing to summarize.  Drop old messages without a model call —
+            // always succeeds regardless of session size.
             emergency_compact(&mut self.session.messages, Some(sys), keep_n);
             self.session.recalculate_tokens();
             CompactionStrategyUsed::Emergency
         } else {
             // Normal rolling compaction: preserve the recent tail verbatim,
             // summarise everything older.
-            let non_system: Vec<Message> = self
-                .session
-                .messages
-                .iter()
-                .filter(|m| m.role != Role::System)
-                .cloned()
-                .collect();
-
             // Snapshot the original messages so we can restore them if the
             // compaction model call fails (network error, rate limit, etc.).
             // Without this, a failed run_single_turn would leave the session
             // in a partially-compacted state with the original history gone.
             let original_messages = self.session.messages.clone();
             let original_token_count = self.session.token_count;
-
-            // Only use rolling strategy when there are enough messages to make
-            // it worthwhile; otherwise summarise the full history.
-            let preserve_count = if non_system.len() > keep_n * 2 {
-                keep_n
-            } else {
-                0
-            };
-            let mut summarize_count = non_system.len().saturating_sub(preserve_count);
-
-            // Safety: adjust the split point backward until `recent_messages`
-            // begins at a conversation-turn boundary.  If the split falls
-            // inside a tool-use/tool-result group (i.e. `recent_messages[0]`
-            // would be a ToolResult or ToolCall), the compacted session would
-            // contain orphaned ToolResult blocks — references to ToolCall IDs
-            // that were summarised away — causing providers like Anthropic to
-            // reject the next request with a 400 error.
-            //
-            // Moving backward past both ToolResult and ToolCall variants
-            // ensures that the entire tool-interaction group (all ToolCall
-            // messages AND all their corresponding ToolResult messages) is
-            // kept intact in `recent_messages`.
-            while summarize_count > 0 && summarize_count < non_system.len() {
-                match &non_system[summarize_count].content {
-                    MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
-                        summarize_count -= 1;
-                    }
-                    _ => break,
-                }
-            }
 
             let recent_messages: Vec<Message> = non_system[summarize_count..].to_vec();
             let mut to_compact: Vec<Message> = non_system[..summarize_count].to_vec();
@@ -1091,6 +1167,34 @@ impl Agent {
         let mut m = self.current_mode.lock().await;
         *m = mode;
     }
+}
+
+/// Try to extract `n_ctx` from a context-overflow API error.
+///
+/// llama.cpp-compatible backends return a structured error body when the
+/// request exceeds the loaded context window:
+///
+/// ```json
+/// {"error":{"type":"exceed_context_size_error","n_ctx":54272,"n_prompt_tokens":54298,...}}
+/// ```
+///
+/// Returns `Some(n_ctx)` when the error message contains that pattern,
+/// `None` for any other error.
+fn extract_n_ctx_from_error(err: &anyhow::Error) -> Option<usize> {
+    let msg = err.to_string();
+    if !msg.contains("exceed_context_size_error") {
+        return None;
+    }
+    // The error string is "<driver> error <status>: <json-body>".
+    // Find the first '{' and try to parse the JSON fragment from there.
+    let json_start = msg.find('{')?;
+    let body: serde_json::Value = serde_json::from_str(&msg[json_start..]).ok()?;
+    // {"error": {"n_ctx": …}}
+    if let Some(n) = body["error"]["n_ctx"].as_u64() {
+        return Some(n as usize);
+    }
+    // Flat format: {"n_ctx": …}
+    body["n_ctx"].as_u64().map(|n| n as usize)
 }
 
 /// Strip `<think>` / `</think>` wrapper tags from accumulated thinking content.

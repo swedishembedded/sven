@@ -95,7 +95,8 @@ pub async fn agent_task(
 
     let mut agent = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
-        .build(mode, model.clone(), profile);
+        .build(mode, model.clone(), profile)
+        .await;
 
     // Model/mode overrides are applied permanently: no revert after the turn.
     let _ = model;

@@ -58,8 +58,9 @@ impl AgentBuilder {
     /// 2. Creates `(tool_event_tx, tool_event_rx)` (tx → tools, rx → Agent).
     /// 3. Converts [`RuntimeContext`] → [`AgentRuntimeContext`].
     /// 4. Builds a [`ToolRegistry`] via `build_tool_registry`.
-    /// 5. Constructs `Agent::new(...)`.
-    pub fn build(
+    /// 5. Probes the provider for the actual context window (`GET /props`).
+    /// 6. Constructs `Agent::new(...)`.
+    pub async fn build(
         self,
         mode: AgentMode,
         model: Arc<dyn ModelProvider>,
@@ -99,8 +100,14 @@ impl AgentBuilder {
             runtime.clone(),
         );
 
-        // Resolve context window from the static catalog; fall back to 128 000.
-        let context_window = model.catalog_context_window().unwrap_or(128_000) as usize;
+        // Resolve context window: prefer live probe (actual n_ctx loaded by the
+        // server), fall back to the static catalog, then default to 128 000.
+        // The probe is a cheap GET /props request; it silently returns None for
+        // hosted providers that don't expose such an endpoint.
+        let context_window = match model.probe_context_window().await {
+            Some(n) if n > 0 => n as usize,
+            _ => model.catalog_context_window().unwrap_or(128_000) as usize,
+        };
 
         Agent::new(
             model,
