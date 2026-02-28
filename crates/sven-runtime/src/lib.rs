@@ -10,7 +10,7 @@
 //! TUI, daemon, etc.) without depending on any specific runner crate.
 
 pub mod skills;
-pub use skills::{discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta};
+pub use skills::{discover_commands, discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
