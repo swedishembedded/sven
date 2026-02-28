@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use sven_runtime::SharedSkills;
+use sven_runtime::{SharedAgents, SharedSkills};
 
 /// Environment-detected context injected into an agent at construction time.
 #[derive(Debug, Default, Clone)]
@@ -34,4 +34,9 @@ pub struct AgentRuntimeContext {
     /// `/refresh`) and the next agent turn automatically picks up new skills
     /// when rebuilding the system prompt.
     pub skills: SharedSkills,
+    /// Subagents discovered from the standard search hierarchy.
+    ///
+    /// Held as [`SharedAgents`] so the TUI can trigger a live refresh and the
+    /// next agent turn picks up new subagents when rebuilding the system prompt.
+    pub agents: SharedAgents,
 }

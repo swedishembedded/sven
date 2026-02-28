@@ -22,90 +22,13 @@
 
 use std::path::PathBuf;
 
-use sven_runtime::SkillInfo;
+use sven_runtime::{AgentInfo, SkillInfo};
 
 use crate::commands::{
     CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
 };
 
-// ── Name sanitization ──────────────────────────────────────────────────────────
-
-const MAX_COMMAND_NAME_LEN: usize = 64; // longer limit to accommodate path segments
 const MAX_DESCRIPTION_LEN: usize = 100;
-
-/// Sanitize a single path segment into a valid slash command keyword component.
-///
-/// - Converts to lowercase
-/// - Replaces any sequence of non-alphanumeric characters with `_`
-/// - Strips leading and trailing `_`
-/// - Truncates to `max_len` characters
-///
-/// Returns `"skill"` if the result would otherwise be empty.
-fn sanitize_segment(raw: &str, max_len: usize) -> String {
-    let lower = raw.to_lowercase();
-    let mut result = String::with_capacity(lower.len());
-    let mut in_sep = false;
-
-    for ch in lower.chars() {
-        if ch.is_alphanumeric() {
-            result.push(ch);
-            in_sep = false;
-        } else if !in_sep && !result.is_empty() {
-            result.push('_');
-            in_sep = true;
-        }
-    }
-
-    let trimmed = result.trim_end_matches('_');
-    let truncated: String = trimmed.chars().take(max_len).collect();
-
-    if truncated.is_empty() {
-        "skill".to_string()
-    } else {
-        truncated
-    }
-}
-
-/// Sanitize a skill command path into a valid slash command keyword.
-///
-/// The `/` path separator is preserved; each segment is individually
-/// sanitized via [`sanitize_segment`].
-///
-/// ```text
-/// "sven"          → "sven"
-/// "sven/plan"     → "sven/plan"
-/// "My Skill"      → "my_skill"
-/// "git-workflow"  → "git_workflow"
-/// ```
-#[must_use]
-pub fn sanitize_command_name(raw: &str) -> String {
-    // Per-segment max is generous; the overall limit exists to bound total length.
-    let per_segment_max = MAX_COMMAND_NAME_LEN;
-    let sanitized = raw
-        .split('/')
-        .map(|seg| sanitize_segment(seg, per_segment_max))
-        .collect::<Vec<_>>()
-        .join("/");
-
-    // Overall length guard: truncate at a segment boundary.
-    if sanitized.len() <= MAX_COMMAND_NAME_LEN {
-        return sanitized;
-    }
-    let mut len = 0usize;
-    sanitized
-        .split('/')
-        .take_while(|seg| {
-            let next = len + seg.len() + if len == 0 { 0 } else { 1 };
-            if next <= MAX_COMMAND_NAME_LEN {
-                len = next;
-                true
-            } else {
-                false
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
 
 fn truncate_description(s: &str, max: usize) -> String {
     let trimmed = s.trim();
@@ -159,47 +82,29 @@ impl SlashCommand for SkillCommand {
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {
-        let task = args.join(" ");
-        let task = task.trim();
-        let message = if task.is_empty() {
-            self.content.trim_end().to_string()
-        } else {
-            format!("{}\n\nTask: {task}", self.content.trim_end())
-        };
-        CommandResult { message_to_send: Some(message), ..Default::default() }
+        CommandResult {
+            message_to_send: Some(build_content_message(&self.content, &args)),
+            ..Default::default()
+        }
+    }
+}
+
+/// Build the message to send when a content-based slash command is executed.
+///
+/// When `args` is empty the content is sent as-is.  When a task is provided
+/// it is appended with a `\n\nTask:` separator so the model can distinguish
+/// the injected instructions from the user's intent.
+fn build_content_message(content: &str, args: &[String]) -> String {
+    let task = args.join(" ");
+    let task = task.trim();
+    if task.is_empty() {
+        content.trim_end().to_string()
+    } else {
+        format!("{}\n\nTask: {task}", content.trim_end())
     }
 }
 
 // ── Discovery ─────────────────────────────────────────────────────────────────
-
-/// Build [`SkillCommand`] instances from a slice of discovered skills.
-///
-/// Each skill becomes a slash command keyed by its sanitized command path.
-/// Skills with `user_invocable_only: true` are included (slash commands are
-/// explicitly user-invoked).  Duplicate sanitized names are resolved by
-/// appending `_2`, `_3`, etc. to the last segment only.
-///
-/// Only the skill's own SKILL.md body is stored — sub-skill bodies are never
-/// pre-loaded.
-#[must_use]
-pub fn make_skill_commands(skills: &[SkillInfo]) -> Vec<SkillCommand> {
-    let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut commands = Vec::with_capacity(skills.len());
-
-    for skill in skills {
-        let base = sanitize_command_name(&skill.command);
-        let unique_name = resolve_unique_name(base, &mut used_names);
-
-        commands.push(SkillCommand {
-            name: unique_name,
-            description: truncate_description(&skill.description, MAX_DESCRIPTION_LEN),
-            content: skill.content.clone(),
-            skill_dir: skill.skill_dir.clone(),
-        });
-    }
-
-    commands
-}
 
 /// Build [`SkillCommand`] instances from a slice of user-authored commands.
 ///
@@ -237,38 +142,103 @@ pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> 
     result
 }
 
-fn resolve_unique_command_name(
+/// Append a numeric suffix separated by `sep` until the name is unique.
+///
+/// Used by both skill commands (`sep = '_'`) and user commands / agents
+/// (`sep = '-'`) so that the disambiguation suffix matches the filename
+/// convention of each kind.
+fn resolve_unique_name_sep(
     base: String,
+    sep: char,
     used: &mut std::collections::HashSet<String>,
 ) -> String {
     if used.insert(base.clone()) {
         return base;
     }
     for i in 2..1000usize {
-        let candidate = format!("{base}-{i}");
+        let candidate = format!("{base}{sep}{i}");
         if used.insert(candidate.clone()) {
             return candidate;
         }
     }
-    let fallback = format!("{base}-x");
+    let fallback = format!("{base}{sep}x");
     used.insert(fallback.clone());
     fallback
 }
 
-fn resolve_unique_name(base: String, used: &mut std::collections::HashSet<String>) -> String {
-    if used.insert(base.clone()) {
-        return base;
+fn resolve_unique_command_name(base: String, used: &mut std::collections::HashSet<String>) -> String {
+    resolve_unique_name_sep(base, '-', used)
+}
+
+// ── AgentCommand ──────────────────────────────────────────────────────────────
+
+/// A slash command backed by a subagent markdown file.
+///
+/// When invoked, injects the subagent's system prompt (body) as a message
+/// prefix, optionally followed by the user-provided task.  The `model_override`
+/// field carries the `model:` frontmatter value so the app can switch models
+/// for the turn.
+pub struct AgentCommand {
+    /// Slash command name derived from the agent's `name` field (lowercase).
+    pub name: String,
+    /// One-line description from frontmatter.
+    pub description: String,
+    /// Agent system prompt body, injected into the message.
+    pub content: String,
+    /// Optional model override from frontmatter (`None` → use session model).
+    pub model_override: Option<String>,
+}
+
+impl SlashCommand for AgentCommand {
+    fn name(&self) -> &str { &self.name }
+
+    fn description(&self) -> &str { &self.description }
+
+    fn arguments(&self) -> Vec<CommandArgument> {
+        vec![CommandArgument::optional("task", "Optional task for this subagent")]
     }
-    for i in 2..1000usize {
-        let candidate = format!("{base}_{i}");
-        if used.insert(candidate.clone()) {
-            return candidate;
+
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
+        vec![]
+    }
+
+    fn execute(&self, args: Vec<String>) -> CommandResult {
+        CommandResult {
+            message_to_send: Some(build_content_message(&self.content, &args)),
+            model_override: self.model_override.clone(),
+            ..Default::default()
         }
     }
-    // Fallback: should never be reached in practice
-    let fallback = format!("{base}_x");
-    used.insert(fallback.clone());
-    fallback
+}
+
+/// Build [`AgentCommand`] instances from a slice of discovered subagents.
+///
+/// Each agent becomes a slash command keyed by the lowercased agent name with
+/// hyphens preserved (e.g. `security-auditor` → `/security-auditor`).
+/// Duplicate names are disambiguated by appending `-2`, `-3`, etc.
+#[must_use]
+pub fn make_agent_slash_commands(agents: &[AgentInfo]) -> Vec<AgentCommand> {
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::with_capacity(agents.len());
+
+    for agent in agents {
+        let base = agent.name.to_lowercase();
+        let unique_name = resolve_unique_command_name(base, &mut used);
+
+        result.push(AgentCommand {
+            name: unique_name,
+            description: truncate_description(&agent.description, MAX_DESCRIPTION_LEN),
+            content: agent.content.clone(),
+            model_override: agent.model.clone(),
+        });
+    }
+
+    result
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -278,27 +248,13 @@ mod tests {
     use super::*;
     use crate::commands::CommandContext;
     use sven_config::Config;
-    use sven_runtime::{SkillInfo, SvenSkillMeta};
+    use sven_runtime::AgentInfo;
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {
-        let name = command.rsplit('/').next().unwrap_or(command).to_string();
-        SkillInfo {
-            command: command.to_string(),
-            name,
-            description: description.to_string(),
-            version: None,
-            skill_md_path: PathBuf::from(format!("/tmp/skills/{command}/SKILL.md")),
-            skill_dir: PathBuf::from(format!("/tmp/skills/{command}")),
-            content: content.to_string(),
-            sven_meta: None,
-        }
-    }
-
-    fn make_cmd(command: &str, description: &str, content: &str) -> SkillCommand {
+    fn make_cmd(name: &str, description: &str, content: &str) -> SkillCommand {
         SkillCommand {
-            name: sanitize_command_name(command),
+            name: name.to_string(),
             description: truncate_description(description, MAX_DESCRIPTION_LEN),
             content: content.to_string(),
             skill_dir: PathBuf::from("/tmp"),
@@ -313,52 +269,16 @@ mod tests {
         }
     }
 
-    // ── sanitize_command_name ─────────────────────────────────────────────────
-
-    #[test]
-    fn sanitize_kebab_becomes_underscore() {
-        assert_eq!(sanitize_command_name("git-workflow"), "git_workflow");
-    }
-
-    #[test]
-    fn sanitize_slash_preserved() {
-        assert_eq!(sanitize_command_name("sven/plan"), "sven/plan");
-    }
-
-    #[test]
-    fn sanitize_nested_path_segments_cleaned() {
-        assert_eq!(sanitize_command_name("my-skill/sub-step"), "my_skill/sub_step");
-    }
-
-    #[test]
-    fn sanitize_already_clean() {
-        assert_eq!(sanitize_command_name("deploy"), "deploy");
-    }
-
-    #[test]
-    fn sanitize_spaces_become_underscore() {
-        assert_eq!(sanitize_command_name("my skill"), "my_skill");
-    }
-
-    #[test]
-    fn sanitize_multiple_separators_collapse() {
-        assert_eq!(sanitize_command_name("my--skill"), "my_skill");
-    }
-
-    #[test]
-    fn sanitize_empty_falls_back_to_skill() {
-        assert_eq!(sanitize_command_name(""), "skill");
-        assert_eq!(sanitize_command_name("---"), "skill");
-    }
-
-    #[test]
-    fn sanitize_uppercase_lowercased() {
-        assert_eq!(sanitize_command_name("GitWorkflow"), "gitworkflow");
-    }
-
-    #[test]
-    fn sanitize_deep_path_preserved() {
-        assert_eq!(sanitize_command_name("sven/implement/research"), "sven/implement/research");
+    fn make_agent(name: &str, description: &str, content: &str, model: Option<&str>) -> AgentInfo {
+        AgentInfo {
+            name: name.to_string(),
+            description: description.to_string(),
+            model: model.map(|s| s.to_string()),
+            readonly: false,
+            is_background: false,
+            content: content.to_string(),
+            agent_md_path: PathBuf::from(format!("/tmp/agents/{name}.md")),
+        }
     }
 
     // ── SkillCommand::execute ─────────────────────────────────────────────────
@@ -386,8 +306,7 @@ mod tests {
     fn execute_multi_word_task_joined() {
         let cmd = make_cmd("deploy", "Deploy.", "Deploy content.");
         let result = cmd.execute(vec!["push".to_string(), "to".to_string(), "prod".to_string()]);
-        let msg = result.message_to_send.unwrap();
-        assert!(msg.contains("Task: push to prod"));
+        assert!(result.message_to_send.unwrap().contains("Task: push to prod"));
     }
 
     #[test]
@@ -397,130 +316,110 @@ mod tests {
         assert_eq!(result.message_to_send.as_deref(), Some("Deploy content."));
     }
 
-    // ── make_skill_commands ───────────────────────────────────────────────────
-
     #[test]
-    fn make_skill_commands_uses_command_path() {
-        let skills = vec![make_skill("sven/plan", "Plan.", "body")];
-        let cmds = make_skill_commands(&skills);
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0].name, "sven/plan");
-    }
-
-    #[test]
-    fn make_skill_commands_top_level_skill() {
-        let skills = vec![make_skill("git-workflow", "Git helper.", "body")];
-        let cmds = make_skill_commands(&skills);
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0].name, "git_workflow");
-    }
-
-    #[test]
-    fn make_skill_commands_duplicate_names_deduplicated() {
-        let skills = vec![
-            make_skill("my-skill", "First.", "body1"),
-            make_skill("my_skill", "Second.", "body2"),
-        ];
-        let cmds = make_skill_commands(&skills);
-        assert_eq!(cmds.len(), 2);
-        assert_ne!(cmds[0].name, cmds[1].name);
-        let names: std::collections::HashSet<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains("my_skill"));
-        assert!(names.contains("my_skill_2"));
-    }
-
-    #[test]
-    fn make_skill_commands_includes_user_invocable_only_skills() {
-        let mut skill = make_skill("private-skill", "User-only.", "Private body.");
-        skill.sven_meta = Some(SvenSkillMeta { user_invocable_only: true, ..Default::default() });
-        let cmds = make_skill_commands(&[skill]);
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0].name, "private_skill");
+    fn complete_returns_empty() {
+        let cmd = make_cmd("test", "Test.", "body");
+        assert!(cmd.complete(0, "partial", &ctx()).is_empty());
     }
 
     #[test]
     fn description_truncated_to_100_chars() {
         let long_desc = "x".repeat(120);
-        let skill = make_skill("long-desc", &long_desc, "body");
-        let cmds = make_skill_commands(&[skill]);
-        assert!(cmds[0].description.chars().count() <= MAX_DESCRIPTION_LEN);
+        let cmd = make_cmd("cmd", &long_desc, "body");
+        assert!(cmd.description.chars().count() <= MAX_DESCRIPTION_LEN);
+    }
+
+    // ── make_command_slash_commands ───────────────────────────────────────────
+
+    #[test]
+    fn command_hyphens_preserved() {
+        use sven_runtime::SkillInfo;
+        let info = SkillInfo {
+            command: "review-code".to_string(),
+            name: "review-code".to_string(),
+            description: "Review code.".to_string(),
+            version: None,
+            skill_md_path: PathBuf::from("/tmp/review-code.md"),
+            skill_dir: PathBuf::from("/tmp"),
+            content: "body".to_string(),
+            sven_meta: None,
+        };
+        let cmds = make_command_slash_commands(&[info]);
+        assert_eq!(cmds[0].name, "review-code");
     }
 
     #[test]
-    fn complete_returns_empty() {
-        let cmd = make_cmd("test", "Test.", "body");
-        let completions = cmd.complete(0, "partial", &ctx());
-        assert!(completions.is_empty());
+    fn command_duplicates_get_hyphen_suffix() {
+        use sven_runtime::SkillInfo;
+        let make = |cmd: &str| SkillInfo {
+            command: cmd.to_string(), name: cmd.to_string(),
+            description: "D.".to_string(), version: None,
+            skill_md_path: PathBuf::from("/tmp/a.md"),
+            skill_dir: PathBuf::from("/tmp"),
+            content: "b".to_string(), sven_meta: None,
+        };
+        let cmds = make_command_slash_commands(&[make("deploy"), make("deploy")]);
+        assert_eq!(cmds.len(), 2);
+        let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"deploy"));
+        assert!(names.contains(&"deploy-2"));
     }
 
-    // ── Hierarchical skill tests ──────────────────────────────────────────────
+    // ── AgentCommand ─────────────────────────────────────────────────────────
 
     #[test]
-    fn parent_and_subskill_registered_as_independent_commands() {
-        let parent = make_skill("sven", "Top-level.", "## Sven\n\nCall load_skill('sven/plan').");
-        let child  = make_skill("sven/plan", "Planning.", "## Planning detail.");
-        let cmds = make_skill_commands(&[parent, child]);
-        assert!(cmds.iter().any(|c| c.name == "sven"), "parent registered");
-        assert!(cmds.iter().any(|c| c.name == "sven/plan"), "child registered independently");
-    }
-
-    #[test]
-    fn slash_command_sends_only_own_body() {
-        let parent = make_skill(
-            "sven",
-            "Top-level sven workflow.",
-            "## Sven Workflow\n\nFor planning: call load_skill('sven/plan').",
-        );
-        let child = make_skill(
-            "sven/plan",
-            "Planning sub-skill.",
-            "## Planning\n\nThis should NOT appear in the parent slash command output.",
-        );
-        let cmds = make_skill_commands(&[parent, child]);
-        let sven_cmd = cmds.iter().find(|c| c.name == "sven").unwrap();
-
-        let result = sven_cmd.execute(vec![]);
+    fn agent_command_injects_prompt() {
+        let agent = make_agent("verifier", "Validates work.", "You verify.", None);
+        let cmds = make_agent_slash_commands(&[agent]);
+        let result = cmds[0].execute(vec!["check auth".to_string()]);
         let msg = result.message_to_send.unwrap();
-        assert!(msg.contains("Sven Workflow"), "parent content present");
-        assert!(!msg.contains("This should NOT appear"), "child body must not be injected");
+        assert!(msg.contains("You verify."));
+        assert!(msg.contains("Task: check auth"));
     }
 
     #[test]
-    fn child_slash_command_sends_only_child_body() {
-        let parent = make_skill("sven", "Top-level.", "Parent body.");
-        let child  = make_skill("sven/plan", "Plan.", "Child body.");
-        let cmds = make_skill_commands(&[parent, child]);
-        let plan_cmd = cmds.iter().find(|c| c.name == "sven/plan").unwrap();
-
-        let result = plan_cmd.execute(vec![]);
-        let msg = result.message_to_send.unwrap();
-        assert_eq!(msg, "Child body.");
+    fn agent_command_carries_model_override() {
+        let agent = make_agent("fast-agent", "Fast.", "body", Some("fast"));
+        let cmds = make_agent_slash_commands(&[agent]);
+        assert_eq!(cmds[0].model_override.as_deref(), Some("fast"));
     }
 
     #[test]
-    fn slash_command_with_task_appends_only_own_body_plus_task() {
-        let parent = make_skill(
-            "sven",
-            "Sven workflow.",
-            "## Workflow\n\nCall load_skill('sven/plan') to plan.",
-        );
-        let child = make_skill("sven/plan", "Plan.", "Sub-skill body — must not appear.");
-        let cmds = make_skill_commands(&[parent, child]);
-        let sven_cmd = cmds.iter().find(|c| c.name == "sven").unwrap();
-
-        let result = sven_cmd.execute(vec!["implement feature X".to_string()]);
-        let msg = result.message_to_send.unwrap();
-        assert!(msg.contains("## Workflow"), "parent content present");
-        assert!(msg.contains("Task: implement feature X"), "task appended");
-        assert!(!msg.contains("Sub-skill body"), "child body must not be injected");
+    fn agent_command_no_model_when_inherit() {
+        let agent = AgentInfo {
+            name: "agent".to_string(),
+            description: "D.".to_string(),
+            model: None, // already normalised by parse_agent_file
+            readonly: false,
+            is_background: false,
+            content: "body".to_string(),
+            agent_md_path: PathBuf::from("/tmp/agent.md"),
+        };
+        let cmds = make_agent_slash_commands(&[agent]);
+        assert!(cmds[0].model_override.is_none());
     }
 
     #[test]
-    fn standalone_skill_body_sent_without_extra_blocks() {
-        let skill = make_skill("standalone", "Standalone skill.", "Just a body.");
-        let cmds = make_skill_commands(&[skill]);
-        let result = cmds[0].execute(vec![]);
-        let msg = result.message_to_send.unwrap();
-        assert_eq!(msg, "Just a body.");
+    fn agent_name_lowercased() {
+        let agent = make_agent("Security-Auditor", "Security.", "body", None);
+        let cmds = make_agent_slash_commands(&[agent]);
+        assert_eq!(cmds[0].name, "security-auditor");
+    }
+
+    // ── resolve_unique_name_sep ───────────────────────────────────────────────
+
+    #[test]
+    fn resolve_unique_underscore_sep() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo");
+        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo_2");
+        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo_3");
+    }
+
+    #[test]
+    fn resolve_unique_hyphen_sep() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(resolve_unique_name_sep("bar".to_string(), '-', &mut used), "bar");
+        assert_eq!(resolve_unique_name_sep("bar".to_string(), '-', &mut used), "bar-2");
     }
 }

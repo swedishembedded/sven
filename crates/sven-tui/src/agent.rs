@@ -10,7 +10,7 @@ use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_model::Message;
-use sven_runtime::SharedSkills;
+use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::{QuestionRequest, TodoItem};
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
@@ -64,6 +64,7 @@ pub async fn agent_task(
     question_tx: mpsc::Sender<QuestionRequest>,
     cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     shared_skills: SharedSkills,
+    shared_agents: SharedAgents,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> = match sven_model::from_config(&startup_model_cfg) {
         Ok(m) => Arc::from(m),
@@ -81,11 +82,12 @@ pub async fn agent_task(
         task_depth,
     };
 
-    // Build a RuntimeContext that uses the caller-provided SharedSkills so
-    // that a TUI `/refresh` updates the agent's skill list on the next turn.
+    // Build a RuntimeContext that uses the caller-provided SharedSkills and
+    // SharedAgents so that a TUI `/refresh` updates both on the next turn.
     let runtime_ctx = {
         let mut ctx = RuntimeContext::auto_detect();
         ctx.skills = shared_skills;
+        ctx.agents = shared_agents;
         ctx
     };
 

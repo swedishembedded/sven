@@ -267,6 +267,9 @@ pub struct App {
     /// calling `/refresh` updates both the TUI slash commands and the agent's
     /// system-prompt `<available_skills>` block on the next turn.
     pub(crate) shared_skills: sven_runtime::SharedSkills,
+    /// Live-refreshable subagent collection.  Shared with the agent task so
+    /// that `/refresh` also picks up new agent markdown files.
+    pub(crate) shared_agents: sven_runtime::SharedAgents,
     /// Project root detected at startup, used to re-discover skills on refresh.
     pub(crate) project_root: Option<PathBuf>,
 }
@@ -351,12 +354,19 @@ impl App {
             sven_runtime::discover_skills(project_root.as_deref())
         );
 
+        // Discover subagents once at startup.
+        let shared_agents = sven_runtime::SharedAgents::new(
+            sven_runtime::discover_agents(project_root.as_deref())
+        );
+
         // Discover user-invocable commands from .cursor/commands/ etc. and
         // register them as slash commands.  Skills are intentionally excluded
         // from the slash command list — they are auto-loaded by the agent.
+        // Subagents are registered as slash commands for explicit invocation.
         let mut registry = CommandRegistry::with_builtins();
         let startup_commands = sven_runtime::discover_commands(project_root.as_deref());
         registry.register_commands(&startup_commands);
+        registry.register_agents(&shared_agents.get());
         let registry = Arc::new(registry);
         let completion_manager = CompletionManager::new(registry.clone());
 
@@ -424,6 +434,7 @@ impl App {
             last_input_pane: Rect::default(),
             needs_terminal_recover: false,
             shared_skills,
+            shared_agents,
             project_root,
         };
         // Seed the message queue with initial workflow steps (from --file in TUI mode).
@@ -468,6 +479,7 @@ impl App {
         let startup_model_cfg  = self.session.model_cfg.clone();
         let cancel_handle_task = self.cancel_handle.clone();
         let shared_skills_task = self.shared_skills.clone();
+        let shared_agents_task = self.shared_agents.clone();
         tokio::spawn(async move {
             agent_task(
                 cfg,
@@ -478,6 +490,7 @@ impl App {
                 question_tx,
                 cancel_handle_task,
                 shared_skills_task,
+                shared_agents_task,
             )
             .await;
         });

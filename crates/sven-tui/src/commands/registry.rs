@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use sven_runtime::SkillInfo;
+use sven_runtime::{AgentInfo, SkillInfo};
 
 use super::SlashCommand;
 
@@ -79,6 +79,19 @@ impl CommandRegistry {
     /// `/review-code`) to match the Cursor commands convention.
     pub fn register_commands(&mut self, commands: &[SkillInfo]) {
         for cmd in super::skill::make_command_slash_commands(commands) {
+            self.register(Arc::new(cmd));
+        }
+    }
+
+    /// Register slash commands for all discovered subagents.
+    ///
+    /// Each subagent markdown file found in `agents/` directories becomes one
+    /// slash command.  The name is the lowercased agent `name` field (or file
+    /// stem), with hyphens preserved (e.g. `security-auditor` →
+    /// `/security-auditor`).  Model overrides from frontmatter are forwarded to
+    /// the app via [`CommandResult::model_override`].
+    pub fn register_agents(&mut self, agents: &[AgentInfo]) {
+        for cmd in super::skill::make_agent_slash_commands(agents) {
             self.register(Arc::new(cmd));
         }
     }

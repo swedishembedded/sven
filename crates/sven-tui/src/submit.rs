@@ -323,9 +323,11 @@ impl App {
     /// slash completions immediately.
     pub(crate) fn refresh_skill_commands(&mut self) {
         self.shared_skills.refresh(self.project_root.as_deref());
+        self.shared_agents.refresh(self.project_root.as_deref());
         let commands = sven_runtime::discover_commands(self.project_root.as_deref());
         let mut registry = CommandRegistry::with_builtins();
         registry.register_commands(&commands);
+        registry.register_agents(&self.shared_agents.get());
         let registry = Arc::new(registry);
         self.completion_manager = CompletionManager::new(registry.clone());
         self.command_registry = registry;

@@ -19,7 +19,7 @@ use sven_tools::{
     events::TodoItem,
     QuestionRequest,
 };
-use sven_runtime::{CiContext, GitContext, SharedSkills};
+use sven_runtime::{CiContext, GitContext, SharedAgents, SharedSkills};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -47,6 +47,8 @@ pub struct RuntimeContext {
     /// Using [`SharedSkills`] allows the TUI to share the same instance and
     /// trigger a live refresh (via `/refresh`) without restarting the agent.
     pub skills: SharedSkills,
+    /// Subagents discovered from the standard search hierarchy.
+    pub agents: SharedAgents,
 }
 
 impl RuntimeContext {
@@ -59,6 +61,7 @@ impl RuntimeContext {
         let project_context_file = project_root.as_ref()
             .and_then(|r| sven_runtime::load_project_context_file(r));
         let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
+        let agents = SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
 
         Self {
             project_root,
@@ -68,6 +71,7 @@ impl RuntimeContext {
             append_system_prompt: None,
             system_prompt_override: None,
             skills,
+            agents,
         }
     }
 

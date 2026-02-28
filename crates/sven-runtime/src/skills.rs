@@ -77,10 +77,11 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
+
+use crate::shared::Shared;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -138,45 +139,18 @@ pub struct SkillInfo {
 ///
 /// Both the TUI command registry and the running agent hold a clone of the same
 /// `SharedSkills` instance.  Calling [`SharedSkills::refresh`] atomically
-/// replaces the inner skill slice, so the next agent turn and the next TUI
+/// replaces the inner skill slice so the next agent turn and the next TUI
 /// command lookup both see the updated skills without restarting.
-#[derive(Clone, Debug)]
-pub struct SharedSkills(Arc<RwLock<Arc<[SkillInfo]>>>);
+pub type SharedSkills = Shared<SkillInfo>;
 
-impl SharedSkills {
-    /// Create from a pre-discovered skill list.
-    pub fn new(skills: Vec<SkillInfo>) -> Self {
-        Self(Arc::new(RwLock::new(skills.into_boxed_slice().into())))
-    }
-
-    /// Create an empty instance (no skills discovered yet).
-    pub fn empty() -> Self {
-        Self::new(vec![])
-    }
-
-    /// Get a snapshot of the current skill list.
-    ///
-    /// The returned `Arc` is cheap to clone and remains valid until the next
-    /// call to [`refresh`](Self::refresh).
-    #[must_use]
-    pub fn get(&self) -> Arc<[SkillInfo]> {
-        self.0.read().expect("SharedSkills lock poisoned").clone()
-    }
-
+impl Shared<SkillInfo> {
     /// Re-run skill discovery and atomically replace the skill list.
     ///
     /// Callers (e.g. the `/refresh` slash command) should also rebuild any
     /// derived state such as TUI slash commands after calling this.
     pub fn refresh(&self, project_root: Option<&Path>) {
-        let new_skills: Arc<[SkillInfo]> = discover_skills(project_root)
-            .into_boxed_slice()
-            .into();
-        *self.0.write().expect("SharedSkills lock poisoned") = new_skills;
+        self.set(discover_skills(project_root));
     }
-}
-
-impl Default for SharedSkills {
-    fn default() -> Self { Self::empty() }
 }
 
 // ── Internal frontmatter schema ───────────────────────────────────────────────
@@ -296,7 +270,7 @@ fn env_vars_set(vars: &[String]) -> bool {
 
 // ── Directory scanning ────────────────────────────────────────────────────────
 
-const MAX_SKILL_FILE_BYTES: u64 = 256 * 1024; // 256 KB
+pub(crate) const MAX_SKILL_FILE_BYTES: u64 = 256 * 1024; // 256 KB
 
 /// Compute the slash-command key for `skill_dir` relative to the skills `root`.
 ///
@@ -457,6 +431,92 @@ pub(crate) fn ancestor_chain(start: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// Build the merged, depth-sorted list of directories to scan for config files.
+///
+/// Combines the ancestor chains of `project_root` (or CWD) and `~`, deduplicates,
+/// and returns them shallowest-first so that deeper directories (closer to the
+/// project root) always win on command name collisions.
+pub(crate) fn build_sorted_search_dirs(project_root: Option<&Path>) -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    let base = project_root
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"));
+
+    let mut all_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for dir in ancestor_chain(&base) {
+        all_dirs.insert(dir);
+    }
+    if let Some(ref h) = home {
+        for dir in ancestor_chain(h) {
+            all_dirs.insert(dir);
+        }
+    }
+
+    let mut sorted: Vec<PathBuf> = all_dirs.into_iter().collect();
+    sorted.sort_by(|a, b| {
+        let da = a.components().count();
+        let db = b.components().count();
+        da.cmp(&db).then_with(|| a.cmp(b))
+    });
+    sorted
+}
+
+/// Derive the slash-command key for a `*.md` `path` relative to `root`.
+///
+/// The extension (`.md` / `.MD`) is stripped; path components are joined with
+/// `/`.  Used by both command and agent discovery.
+pub(crate) fn md_key_from_path(root: &Path, path: &Path) -> String {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let raw: String = rel
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    raw.strip_suffix(".md")
+        .or_else(|| raw.strip_suffix(".MD"))
+        .map(|s| s.to_string())
+        .unwrap_or(raw)
+}
+
+/// Recursively enumerate all `*.md` files under `dir`, returning
+/// `(key, path)` pairs where `key` is the path relative to `root` with the
+/// `.md` extension stripped.
+///
+/// Files are yielded in deterministic (sorted) order.  Both command discovery
+/// and agent discovery use this helper so the scanning logic is implemented
+/// exactly once.
+pub(crate) fn enumerate_md_files_recursive(root: &Path, dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    enumerate_md_inner(root, dir, &mut out);
+    out
+}
+
+fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_file() {
+            let is_md = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("md"))
+                .unwrap_or(false);
+            if is_md {
+                out.push((md_key_from_path(root, &path), path));
+            }
+        } else if path.is_dir() {
+            enumerate_md_inner(root, &path, out);
+        }
+    }
+}
+
 /// Discover all skills from the standard search hierarchy.
 ///
 /// The search is a **unified ancestor walk**: every directory in the path from
@@ -476,7 +536,6 @@ pub(crate) fn ancestor_chain(start: &Path) -> Vec<PathBuf> {
 /// walk base so workspace-level skills are still found.
 #[must_use]
 pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
-    let home = dirs::home_dir();
     // Keyed by command; later insertions (higher-precedence sources) win.
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
 
@@ -486,37 +545,11 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
         }
     };
 
-    // Collect unique directories from the project-root chain and the home
-    // chain, then sort by depth so shallower (farther) directories load first.
-    let base = project_root
-        .map(|p| p.to_path_buf())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"));
-
-    let mut all_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for dir in ancestor_chain(&base) {
-        all_dirs.insert(dir);
-    }
-    if let Some(ref h) = home {
-        for dir in ancestor_chain(h) {
-            all_dirs.insert(dir);
-        }
-    }
-
-    // Sort: fewer path components = shallower = loaded first = lower precedence.
-    // Break ties alphabetically for determinism.
-    let mut sorted: Vec<PathBuf> = all_dirs.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        let da = a.components().count();
-        let db = b.components().count();
-        da.cmp(&db).then_with(|| a.cmp(b))
-    });
-
     // At each directory, load all five config dir types.  The within-level
     // order (.agents < .claude < .codex < .cursor < .sven) means .sven/ wins
     // on collision at the same directory depth.  .codex/ is included for
     // compatibility with Codex-based tooling (mirrors Cursor's compat list).
-    for dir in &sorted {
+    for dir in &build_sorted_search_dirs(project_root) {
         let label = dir.to_string_lossy();
         load(dir.join(".agents").join("skills"), &format!("{label}/.agents"));
         load(dir.join(".claude").join("skills"), &format!("{label}/.claude"));
@@ -581,58 +614,13 @@ fn try_load_command(md_path: &Path, command: &str, source: &str) -> Option<Skill
     })
 }
 
-/// Recursively scan `dir` for `*.md` command files.
-///
-/// Each `.md` file (at any depth) becomes one command.  The command name is
-/// the file path relative to `root` with the `.md` extension stripped.
-fn scan_commands_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|e| e.path());
-
-    for entry in entries {
-        let path = entry.path();
-        if path.is_file() {
-            let is_md = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("md"))
-                .unwrap_or(false);
-            if !is_md {
-                continue;
-            }
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let raw_command: String = rel
-                .components()
-                .filter_map(|c| match c {
-                    Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("/");
-            // Strip .md / .MD extension
-            let command = raw_command
-                .strip_suffix(".md")
-                .or_else(|| raw_command.strip_suffix(".MD"))
-                .map(|s| s.to_string())
-                .unwrap_or(raw_command);
-
-            if let Some(cmd) = try_load_command(&path, &command, source) {
-                out.push(cmd);
-            }
-        } else if path.is_dir() {
-            scan_commands_recursive(root, &path, source, out);
-        }
-    }
-}
-
 /// Scan one commands root directory and return all valid commands found within
 /// it (including those nested at any depth).
 fn scan_commands_dir(dir: &Path, source: &str) -> Vec<SkillInfo> {
-    let mut commands = Vec::new();
-    scan_commands_recursive(dir, dir, source, &mut commands);
-    commands
+    enumerate_md_files_recursive(dir, dir)
+        .into_iter()
+        .filter_map(|(key, path)| try_load_command(&path, &key, source))
+        .collect()
 }
 
 /// Discover user-invocable commands from the standard `commands/` directories.
@@ -668,7 +656,6 @@ fn scan_commands_dir(dir: &Path, source: &str) -> Vec<SkillInfo> {
 /// root override those from parent directories.
 #[must_use]
 pub fn discover_commands(project_root: Option<&Path>) -> Vec<SkillInfo> {
-    let home = dirs::home_dir();
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
 
     let mut load = |dir: PathBuf, source: &str| {
@@ -677,29 +664,7 @@ pub fn discover_commands(project_root: Option<&Path>) -> Vec<SkillInfo> {
         }
     };
 
-    let base = project_root
-        .map(|p| p.to_path_buf())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"));
-
-    let mut all_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for dir in ancestor_chain(&base) {
-        all_dirs.insert(dir);
-    }
-    if let Some(ref h) = home {
-        for dir in ancestor_chain(h) {
-            all_dirs.insert(dir);
-        }
-    }
-
-    let mut sorted: Vec<PathBuf> = all_dirs.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        let da = a.components().count();
-        let db = b.components().count();
-        da.cmp(&db).then_with(|| a.cmp(b))
-    });
-
-    for dir in &sorted {
+    for dir in &build_sorted_search_dirs(project_root) {
         let label = dir.to_string_lossy();
         load(dir.join(".agents").join("commands"), &format!("{label}/.agents"));
         load(dir.join(".claude").join("commands"), &format!("{label}/.claude"));

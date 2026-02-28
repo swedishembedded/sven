@@ -366,6 +366,9 @@ impl CiRunner {
         let skills = sven_runtime::SharedSkills::new(
             sven_runtime::discover_skills(opts.project_root.as_deref())
         );
+        let agents = sven_runtime::SharedAgents::new(
+            sven_runtime::discover_agents(opts.project_root.as_deref())
+        );
 
         let mut runtime_ctx = RuntimeContext {
             project_root: opts.project_root.clone(),
@@ -377,6 +380,7 @@ impl CiRunner {
             append_system_prompt: combined_append,
             system_prompt_override: None,
             skills,
+            agents,
         };
 
         if runtime_ctx.project_context_file.is_some() {

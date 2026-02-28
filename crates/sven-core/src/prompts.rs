@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sven_config::AgentMode;
-use sven_runtime::SkillInfo;
+use sven_runtime::{AgentInfo, SkillInfo};
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -32,6 +32,10 @@ pub struct PromptContext<'a> {
     /// Held as an `Arc` so a fresh snapshot can be taken from [`SharedSkills`]
     /// on each turn without cloning the skill data.
     pub skills: Arc<[SkillInfo]>,
+    /// Discovered subagents.  Names and descriptions are injected into the
+    /// stable system prompt so the model can suggest delegation and the user
+    /// can invoke them via slash commands.
+    pub agents: Arc<[AgentInfo]>,
 }
 
 impl<'a> Default for PromptContext<'a> {
@@ -43,6 +47,7 @@ impl<'a> Default for PromptContext<'a> {
             ci_context: None,
             append: None,
             skills: Arc::from(Vec::<SkillInfo>::new()),
+            agents: Arc::from(Vec::<AgentInfo>::new()),
         }
     }
 }
@@ -51,8 +56,8 @@ impl<'a> PromptContext<'a> {
     /// Return a version of this context with the volatile fields cleared.
     ///
     /// Used to build the *stable* (cacheable) portion of the system prompt.
-    /// Skills are stable within a session (discovered once at startup) so they
-    /// are included in the stable slice.
+    /// Skills and agents are stable within a session (discovered once at
+    /// startup) so they are included in the stable slice.
     pub fn stable_only(&self) -> Self {
         Self {
             project_root: self.project_root,
@@ -61,6 +66,7 @@ impl<'a> PromptContext<'a> {
             ci_context: None,
             append: self.append,
             skills: self.skills.clone(),
+            agents: self.agents.clone(),
         }
     }
 
@@ -255,6 +261,81 @@ pub fn build_skills_section(skills: &[SkillInfo]) -> String {
     )
 }
 
+// ─── Agents section ───────────────────────────────────────────────────────────
+
+/// Maximum total characters for the `<available_agents>` block.
+pub const MAX_AGENTS_PROMPT_CHARS: usize = 10_000;
+
+/// Format the available-agents block for injection into the system prompt.
+///
+/// Returns an empty string when `agents` is empty.
+pub fn build_agents_section(agents: &[AgentInfo]) -> String {
+    if agents.is_empty() {
+        return String::new();
+    }
+
+    let entries: Vec<String> = agents
+        .iter()
+        .map(|a| {
+            let model_hint = match a.model.as_deref() {
+                Some(m) => format!("\n    <model>{m}</model>"),
+                None => String::new(),
+            };
+            let bg_hint = if a.is_background { "\n    <background>true</background>" } else { "" };
+            let ro_hint = if a.readonly { "\n    <readonly>true</readonly>" } else { "" };
+            format!(
+                "  <agent>\n    <name>{}</name>\n    <description>{}</description>{}{}{}\n  </agent>",
+                a.name,
+                a.description.trim(),
+                model_hint,
+                bg_hint,
+                ro_hint,
+            )
+        })
+        .collect();
+
+    // Fit entries within budget.
+    let mut used = 0usize;
+    let fitted_count = entries
+        .iter()
+        .take_while(|e| {
+            let next = used + e.len();
+            if next <= MAX_AGENTS_PROMPT_CHARS {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count();
+
+    if fitted_count == 0 {
+        return String::new();
+    }
+
+    let fitted = &entries[..fitted_count];
+    let truncation_note = if fitted_count < entries.len() {
+        format!(
+            "\n⚠ Agents truncated: showing {} of {}.",
+            fitted_count,
+            agents.len()
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        "## Subagents\n\n\
+         The following subagents are available for delegation.  When the user's task \
+         clearly matches a subagent's description, suggest invoking it explicitly with \
+         a slash command (e.g. `/verifier confirm the auth flow`).  Users can also \
+         invoke subagents directly by typing `/<name> <task>` in the input box.\
+         {truncation_note}\n\n\
+         <available_agents>\n{}\n</available_agents>",
+        fitted.join("\n")
+    )
+}
+
 fn build_guidelines_section() -> String {
     format!(
         "## Guidelines\n\n\
@@ -421,6 +502,12 @@ pub fn system_prompt(
         if s.is_empty() { String::new() } else { format!("\n\n{s}") }
     };
 
+    // Agents — stable, injected after skills.
+    let agents_section = {
+        let s = build_agents_section(&ctx.agents);
+        if s.is_empty() { String::new() } else { format!("\n\n{s}") }
+    };
+
     let guidelines_section = build_guidelines_section();
 
     let append_section = if let Some(extra) = ctx.append {
@@ -432,7 +519,7 @@ pub fn system_prompt(
     format!(
         "{agent_identity}\n\n\
          {mode_instructions}{tools_section}{tool_examples_section}{project_section}{git_section}\
-         {context_file_section}{skills_section}{ci_section}\n\n\
+         {context_file_section}{skills_section}{agents_section}{ci_section}\n\n\
          {guidelines_section}\
          {append_section}",
     )

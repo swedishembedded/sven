@@ -9,6 +9,12 @@
 //! These are general-purpose utilities usable by any frontend (CI runner,
 //! TUI, daemon, etc.) without depending on any specific runner crate.
 
+pub mod shared;
+pub use shared::Shared;
+
+pub mod agents;
+pub use agents::{AgentInfo, SharedAgents, discover_agents};
+
 pub mod skills;
 pub use skills::{discover_commands, discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta};
 
