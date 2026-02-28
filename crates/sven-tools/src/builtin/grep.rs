@@ -15,9 +15,12 @@ impl Tool for GrepTool {
     fn name(&self) -> &str { "grep" }
 
     fn description(&self) -> &str {
-        "Pattern search built on ripgrep. Prefer over search_codebase when you know the exact symbol or string.\n\
-         pattern: full regex (escape literal braces: \\{\\}). include: glob filter (*.rs, **/*.{ts,tsx}).\n\
-         case_sensitive: true by default. limit: 100 by default.\n\
+        "Pattern search built on ripgrep. Prefer over search_codebase when you know the exact symbol or string. \
+         Provide path to narrow down the search.\n\
+         pattern: full grep style regex (escape literal braces: \\{\\}). \n\
+         include: glob filter (*.rs, **/*.{ts,tsx}).\n\
+         case_sensitive: enabled by default. \n\
+         limit: 100 by default.\n\
          output_mode: content (default, shows file:line:col:text) | files_with_matches | count\n\
          context_lines: lines of context before+after each match (default 0).\n\
          Use files_with_matches for discovery, then read_file for details.\n\

@@ -150,10 +150,22 @@ impl Tool for ShellTool {
                     content = format!("[exit {}]", output.status.code().unwrap_or(-1));
                 }
 
-                if output.status.success() {
+                let code = output.status.code().unwrap_or(-1);
+                if code == 0 {
                     ToolOutput::ok(&call.id, content)
+                } else if code == 1 {
+                    // Exit code 1 is the Unix convention for "no matches" (grep/rg),
+                    // "condition false" (test/[), and similar non-fatal empty results.
+                    // Flagging it as is_error inflates the consecutive-error counter and
+                    // confuses the model into believing the command itself failed.
+                    // Include the code in the output for transparency.
+                    let out = if content.is_empty() {
+                        "[exit 1]".to_string()
+                    } else {
+                        format!("[exit 1]\n{content}")
+                    };
+                    ToolOutput::ok(&call.id, out)
                 } else {
-                    let code = output.status.code().unwrap_or(-1);
                     ToolOutput::err(
                         &call.id,
                         format!("[exit {code}]\n{content}"),
@@ -260,11 +272,20 @@ mod tests {
     // ── Failure cases ─────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn non_zero_exit_code_is_error() {
+    async fn exit_1_is_not_error_but_includes_code() {
+        // Exit code 1 is "no matches" for grep/rg and "false" for test — not a hard error.
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({"command": "exit 1"}))).await;
-        assert!(out.is_error, "non-zero exit should set is_error");
+        let out = t.execute(&call("1", json!({"shell_command": "exit 1"}))).await;
+        assert!(!out.is_error, "exit 1 should not set is_error");
         assert!(out.content.contains("[exit 1]"));
+    }
+
+    #[tokio::test]
+    async fn exit_2_is_error() {
+        let t = ShellTool::default();
+        let out = t.execute(&call("1", json!({"shell_command": "exit 2"}))).await;
+        assert!(out.is_error, "exit code >= 2 should set is_error");
+        assert!(out.content.contains("[exit 2]"));
     }
 
     #[tokio::test]
@@ -327,6 +348,6 @@ mod tests {
         let t = ShellTool::default();
         let schema = t.parameters_schema();
         let required = schema["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v.as_str() == Some("command")));
+        assert!(required.iter().any(|v| v.as_str() == Some("shell_command")));
     }
 }

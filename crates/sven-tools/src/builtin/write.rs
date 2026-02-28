@@ -32,16 +32,16 @@ impl Tool for WriteTool {
                     "type": "string",
                     "description": "Absolute or relative path to the file"
                 },
-                "content": {
+                "text": {
                     "type": "string",
-                    "description": "Content to write to the file"
+                    "description": "Text content to write to the file"
                 },
                 "append": {
                     "type": "boolean",
                     "description": "If true, append to existing content instead of overwriting (default false)"
                 }
             },
-            "required": ["path", "content"],
+            "required": ["path", "text"],
             "additionalProperties": false
         })
     }
@@ -62,14 +62,14 @@ impl Tool for WriteTool {
                 );
             }
         };
-        let content = match call.args.get("content").and_then(|v| v.as_str()) {
+        let content = match call.args.get("text").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
                 let args_preview = serde_json::to_string(&call.args)
                     .unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'content'. Received: {}", args_preview)
+                    format!("missing required parameter 'text'. Received: {}", args_preview)
                 );
             }
         };
@@ -132,7 +132,7 @@ mod tests {
         let t = WriteTool;
         let out = t.execute(&call(json!({
             "path": path,
-            "content": "hello write"
+            "text": "hello write"
         }))).await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "hello write");
@@ -143,9 +143,9 @@ mod tests {
     async fn append_adds_to_file() {
         let path = tmp_path();
         let t = WriteTool;
-        let w1 = t.execute(&call(json!({"path": path, "content": "first\n"}))).await;
+        let w1 = t.execute(&call(json!({"path": path, "text": "first\n"}))).await;
         assert!(!w1.is_error, "write failed: {}", w1.content);
-        let w2 = t.execute(&call(json!({"path": path, "content": "second\n", "append": true}))).await;
+        let w2 = t.execute(&call(json!({"path": path, "text": "second\n", "append": true}))).await;
         assert!(!w2.is_error, "append failed: {}", w2.content);
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("first"), "missing 'first' in: {contents:?}");
@@ -161,7 +161,7 @@ mod tests {
         let dir = format!("/tmp/sven_write_nested_{}_{n}", std::process::id());
         let path = format!("{dir}/sub/file.txt");
         let t = WriteTool;
-        let out = t.execute(&call(json!({"path": path, "content": "nested"}))).await;
+        let out = t.execute(&call(json!({"path": path, "text": "nested"}))).await;
         assert!(!out.is_error, "{}", out.content);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -169,7 +169,7 @@ mod tests {
     #[tokio::test]
     async fn missing_file_path_is_error() {
         let t = WriteTool;
-        let out = t.execute(&call(json!({"content": "x"}))).await;
+        let out = t.execute(&call(json!({"text": "x"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'path'"));
     }
@@ -179,7 +179,7 @@ mod tests {
         let t = WriteTool;
         let out = t.execute(&call(json!({"path": "/tmp/x.txt"}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'content'"));
+        assert!(out.content.contains("missing required parameter 'text'"));
     }
 
     #[test]
