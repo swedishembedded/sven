@@ -378,7 +378,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
             } else {
                 0
             };
-            let cache_pct = if total_ctx > 0 {
+            let ctx_cache = if total_ctx > 0 {
                 cache_read * 100 / total_ctx
             } else {
                 0
@@ -390,10 +390,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
                 ));
             }
             if max_tokens > 0 {
-                line.push_str(&format!(" ctx_pct={ctx_pct}"));
-            }
-            if cache_pct > 0 {
-                line.push_str(&format!(" cache_pct={cache_pct}"));
+                line.push_str(&format!(" ctx_pct={ctx_pct} ctx_cache={ctx_cache}"));
             }
             if cache_read_total > 0 || cache_write_total > 0 {
                 line.push_str(&format!(

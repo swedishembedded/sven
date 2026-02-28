@@ -1316,7 +1316,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             } else {
                 0
             };
-            let cache_pct = if total_ctx > 0 {
+            let ctx_cache = if total_ctx > 0 {
                 cache_read * 100 / total_ctx
             } else {
                 0
@@ -1328,10 +1328,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 ));
             }
             if max_tokens > 0 {
-                line.push_str(&format!(" ctx_pct={ctx_pct}"));
-            }
-            if cache_pct > 0 {
-                line.push_str(&format!(" cache_pct={cache_pct}"));
+                line.push_str(&format!(" ctx_pct={ctx_pct} ctx_cache={ctx_cache}"));
             }
             line.push_str(&format!(
                 " input_total={} output_total={}",
