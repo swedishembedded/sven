@@ -30,6 +30,8 @@ fn config_search_paths() -> Vec<PathBuf> {
     // 3. Workspace-local
     paths.push(PathBuf::from(".sven/config.yaml"));
     paths.push(PathBuf::from(".sven/config.yml"));
+    paths.push(PathBuf::from(".sven.yaml"));
+    paths.push(PathBuf::from(".sven.yml"));
     paths.push(PathBuf::from("sven.yaml"));
     paths.push(PathBuf::from("sven.yml"));
 
