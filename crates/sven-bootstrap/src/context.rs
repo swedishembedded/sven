@@ -10,16 +10,13 @@
 //! shared state needed by stateful tools (todos, mode lock, GDB state).
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_tools::{
-    events::TodoItem,
-    QuestionRequest,
-};
 use sven_runtime::{CiContext, GitContext, SharedAgents, SharedSkills};
+use sven_tools::{events::TodoItem, QuestionRequest};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -55,10 +52,12 @@ impl RuntimeContext {
     /// Create with auto-detected project, git, CI context, and skills.
     pub fn auto_detect() -> Self {
         let project_root = sven_runtime::find_project_root().ok();
-        let git_context = project_root.as_ref()
+        let git_context = project_root
+            .as_ref()
             .map(|r| sven_runtime::collect_git_context(r));
         let ci_context = Some(sven_runtime::detect_ci_context());
-        let project_context_file = project_root.as_ref()
+        let project_context_file = project_root
+            .as_ref()
             .and_then(|r| sven_runtime::load_project_context_file(r));
         let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
         let agents = SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
@@ -107,7 +106,5 @@ pub enum ToolSetProfile {
     },
 
     /// Sub-agent tool set (Full minus TaskTool to prevent unbounded nesting).
-    SubAgent {
-        todos: Arc<Mutex<Vec<TodoItem>>>,
-    },
+    SubAgent { todos: Arc<Mutex<Vec<TodoItem>>> },
 }

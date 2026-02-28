@@ -44,8 +44,8 @@
 use std::path::Path;
 
 use anyhow::Context;
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -90,9 +90,7 @@ impl std::fmt::Display for RawToken {
 ///
 /// Deserialised from/serialised to YAML. Never contains the raw token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredToken(
-    #[serde(with = "hex_bytes")] [u8; 32],
-);
+pub struct StoredToken(#[serde(with = "hex_bytes")] [u8; 32]);
 
 impl StoredToken {
     /// Verify a provided token string in constant time.
@@ -107,7 +105,9 @@ impl StoredToken {
     #[cfg(test)]
     pub fn from_hex(hex_str: &str) -> anyhow::Result<Self> {
         let bytes = hex::decode(hex_str)?;
-        let arr: [u8; 32] = bytes.try_into().map_err(|_| anyhow::anyhow!("wrong length"))?;
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("wrong length"))?;
         Ok(StoredToken(arr))
     }
 }
@@ -170,7 +170,9 @@ fn write_secret_file(path: &Path, data: &[u8]) -> anyhow::Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new()
-            .write(true).create(true).truncate(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .mode(0o600)
             .open(path)
             .with_context(|| format!("writing secret file {}", path.display()))?;
@@ -191,7 +193,7 @@ fn base64url_encode(bytes: &[u8]) -> String {
 
 /// Serde helper: serialize/deserialize a `[u8; 32]` as a lowercase hex string.
 mod hex_bytes {
-    use serde::{Deserializer, Serializer, de::Error};
+    use serde::{de::Error, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&hex::encode(v))
@@ -200,7 +202,9 @@ mod hex_bytes {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
         let s = String::deserialize(d)?;
         let bytes = hex::decode(&s).map_err(D::Error::custom)?;
-        bytes.try_into().map_err(|_| D::Error::custom("expected 32-byte hex"))
+        bytes
+            .try_into()
+            .map_err(|_| D::Error::custom("expected 32-byte hex"))
     }
 
     use serde::Deserialize;
@@ -224,7 +228,10 @@ mod tests {
         let raw = RawToken::generate();
         let raw_str = raw.as_str().to_string();
         let stored = raw.into_stored();
-        assert!(stored.verify(&raw_str), "stored token must verify the original raw token");
+        assert!(
+            stored.verify(&raw_str),
+            "stored token must verify the original raw token"
+        );
     }
 
     #[test]
@@ -257,7 +264,10 @@ mod tests {
         let file = StoredTokenFile { token_hash: stored };
         let yaml = serde_yaml::to_string(&file).unwrap();
         let back: StoredTokenFile = serde_yaml::from_str(&yaml).unwrap();
-        assert!(back.token_hash.verify(&raw_str), "round-tripped token must verify");
+        assert!(
+            back.token_hash.verify(&raw_str),
+            "round-tripped token must verify"
+        );
     }
 
     #[test]

@@ -14,7 +14,9 @@ pub struct ApplyPatchTool;
 
 #[async_trait]
 impl Tool for ApplyPatchTool {
-    fn name(&self) -> &str { "apply_patch" }
+    fn name(&self) -> &str {
+        "apply_patch"
+    }
 
     fn description(&self) -> &str {
         "Apply a patch to add, update, or delete multiple files atomically.\n\
@@ -47,9 +49,13 @@ impl Tool for ApplyPatchTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let input = match call.args.get("input").and_then(|v| v.as_str()) {
@@ -70,9 +76,11 @@ async fn apply_patch(input: &str) -> anyhow::Result<String> {
     let begin = "*** Begin Patch";
     let end = "*** End Patch";
 
-    let start = input.find(begin)
+    let start = input
+        .find(begin)
         .ok_or_else(|| anyhow::anyhow!("'*** Begin Patch' not found"))?;
-    let finish = input.find(end)
+    let finish = input
+        .find(end)
         .ok_or_else(|| anyhow::anyhow!("'*** End Patch' not found"))?;
 
     if finish <= start {
@@ -110,7 +118,8 @@ async fn apply_patch(input: &str) -> anyhow::Result<String> {
         } else if remaining.starts_with("*** Update File: ") {
             let (path, rest) = parse_file_header(remaining, "*** Update File: ")?;
             let (hunks, rest2) = collect_hunks(rest);
-            let file_content = tokio::fs::read_to_string(&path).await
+            let file_content = tokio::fs::read_to_string(&path)
+                .await
                 .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))?;
             let new_content = apply_hunks(&file_content, &hunks)
                 .map_err(|e| anyhow::anyhow!("hunk failed for {path}: {e}"))?;
@@ -132,7 +141,8 @@ async fn apply_patch(input: &str) -> anyhow::Result<String> {
 }
 
 fn parse_file_header<'a>(s: &'a str, prefix: &str) -> anyhow::Result<(String, &'a str)> {
-    let after_prefix = s.strip_prefix(prefix)
+    let after_prefix = s
+        .strip_prefix(prefix)
         .ok_or_else(|| anyhow::anyhow!("expected '{prefix}'"))?;
     let newline = after_prefix.find('\n').unwrap_or(after_prefix.len());
     let path = after_prefix[..newline].trim().to_string();
@@ -160,7 +170,11 @@ fn collect_add_content(s: &str) -> (String, &str) {
     }
 
     let content = lines.join("\n");
-    let content = if content.ends_with('\n') { content } else { format!("{content}\n") };
+    let content = if content.ends_with('\n') {
+        content
+    } else {
+        format!("{content}\n")
+    };
     (content, remaining)
 }
 
@@ -197,7 +211,10 @@ fn collect_hunks(s: &str) -> (Vec<Hunk>, &str) {
             // Collect hunk lines
             loop {
                 remaining = remaining.strip_prefix('\n').unwrap_or(remaining);
-                if remaining.starts_with("@@ ") || remaining.starts_with("*** ") || remaining.is_empty() {
+                if remaining.starts_with("@@ ")
+                    || remaining.starts_with("*** ")
+                    || remaining.is_empty()
+                {
                     break;
                 }
                 let newline = remaining.find('\n').unwrap_or(remaining.len());
@@ -212,7 +229,10 @@ fn collect_hunks(s: &str) -> (Vec<Hunk>, &str) {
                 remaining = &remaining[newline..];
             }
 
-            hunks.push(Hunk { context_before, changes });
+            hunks.push(Hunk {
+                context_before,
+                changes,
+            });
         } else {
             let newline = remaining.find('\n').unwrap_or(remaining.len());
             remaining = &remaining[newline..];
@@ -229,7 +249,9 @@ fn apply_hunks(content: &str, hunks: &[Hunk]) -> anyhow::Result<String> {
     for hunk in hunks {
         // Find the hunk position using context
         let search_ctx: Vec<&str> = hunk.context_before.iter().map(String::as_str).collect();
-        let expected_removes: Vec<&str> = hunk.changes.iter()
+        let expected_removes: Vec<&str> = hunk
+            .changes
+            .iter()
             .filter(|(c, _)| *c == '-' || *c == ' ')
             .map(|(_, l)| l.as_str())
             .collect();
@@ -288,12 +310,13 @@ fn find_hunk_position(lines: &[String], context: &[&str], expected: &[&str]) -> 
     };
 
     // Fallback: find expected lines without context
-    (0..=lines.len().saturating_sub(search.len()))
-        .find(|&i| lines_match_at(lines, i, search))
+    (0..=lines.len().saturating_sub(search.len())).find(|&i| lines_match_at(lines, i, search))
 }
 
 fn lines_match_at(lines: &[String], start: usize, expected: &[&str]) -> bool {
-    if start + expected.len() > lines.len() { return false; }
+    if start + expected.len() > lines.len() {
+        return false;
+    }
     for (i, exp) in expected.iter().enumerate() {
         if lines[start + i].trim() != exp.trim() {
             return false;
@@ -310,7 +333,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "ap1".into(), name: "apply_patch".into(), args }
+        ToolCall {
+            id: "ap1".into(),
+            name: "apply_patch".into(),
+            args,
+        }
     }
 
     fn tmp_path(suffix: &str) -> String {
@@ -323,9 +350,8 @@ mod tests {
     #[tokio::test]
     async fn add_new_file() {
         let path = tmp_path(".txt");
-        let patch = format!(
-            "*** Begin Patch\n*** Add File: {path}\n+hello\n+world\n*** End Patch\n"
-        );
+        let patch =
+            format!("*** Begin Patch\n*** Add File: {path}\n+hello\n+world\n*** End Patch\n");
         let t = ApplyPatchTool;
         let out = t.execute(&call(json!({"input": patch}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -339,9 +365,7 @@ mod tests {
     async fn delete_file() {
         let path = tmp_path("_del.txt");
         std::fs::write(&path, "bye").unwrap();
-        let patch = format!(
-            "*** Begin Patch\n*** Delete File: {path}\n*** End Patch\n"
-        );
+        let patch = format!("*** Begin Patch\n*** Delete File: {path}\n*** End Patch\n");
         let t = ApplyPatchTool;
         let out = t.execute(&call(json!({"input": patch}))).await;
         assert!(!out.is_error, "{}", out.content);

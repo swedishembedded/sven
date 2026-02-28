@@ -32,7 +32,8 @@ impl App {
                 }
             }
             AgentEvent::TextComplete(full_text) => {
-                self.chat_segments.push(ChatSegment::Message(Message::assistant(&full_text)));
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::assistant(&full_text)));
                 self.streaming_assistant_buffer.clear();
                 self.streaming_is_thinking = false;
                 self.save_history_async();
@@ -74,12 +75,15 @@ impl App {
                     pager.set_lines(self.chat_lines.clone());
                 }
             }
-            AgentEvent::ToolCallFinished { call_id, output, .. } => {
+            AgentEvent::ToolCallFinished {
+                call_id, output, ..
+            } => {
                 self.current_tool = None;
                 let seg_idx = self.chat_segments.len();
-                self.chat_segments.push(ChatSegment::Message(
-                    Message::tool_result(&call_id, &output),
-                ));
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::tool_result(
+                        &call_id, &output,
+                    )));
                 if self.no_nvim {
                     self.collapsed_segments.insert(seg_idx);
                 }
@@ -95,7 +99,12 @@ impl App {
                     pager.set_lines(self.chat_lines.clone());
                 }
             }
-            AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
+            AgentEvent::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy,
+                turn,
+            } => {
                 self.chat_segments.push(ChatSegment::ContextCompacted {
                     tokens_before,
                     tokens_after,
@@ -105,7 +114,13 @@ impl App {
                 self.save_history_async();
                 self.rerender_chat().await;
             }
-            AgentEvent::TokenUsage { input, cache_read, cache_write, max_tokens, .. } => {
+            AgentEvent::TokenUsage {
+                input,
+                cache_read,
+                cache_write,
+                max_tokens,
+                ..
+            } => {
                 // Providers like Anthropic send two Usage events per turn:
                 //   1. message_start  – input + cache stats, output = 0
                 //   2. message_delta  – output count only, input = cache = 0
@@ -115,7 +130,11 @@ impl App {
                 if input > 0 || cache_read > 0 || cache_write > 0 {
                     // Total tokens in the context = processed + from cache + written to cache.
                     let total_ctx = input + cache_read + cache_write;
-                    let max = if max_tokens > 0 { max_tokens as u32 } else { 200_000 };
+                    let max = if max_tokens > 0 {
+                        max_tokens as u32
+                    } else {
+                        200_000
+                    };
                     self.context_pct = (total_ctx * 100 / max).min(100) as u8;
                     // Cache hit rate = tokens served from cache / total context tokens.
                     self.cache_hit_pct = if total_ctx > 0 && cache_read > 0 {
@@ -142,14 +161,16 @@ impl App {
                 if self.editing_queue_index.is_none() && !self.abort_pending {
                     if let Some(next) = self.queued.pop_front() {
                         // Shift the selection down by one since the front was removed.
-                        self.queue_selected = self.queue_selected
+                        self.queue_selected = self
+                            .queue_selected
                             .map(|s| s.saturating_sub(1))
                             .filter(|_| !self.queued.is_empty());
                         // If queue is now empty and we were focused on it, return to Input.
                         if self.queued.is_empty() && self.focus == FocusPane::Queue {
                             self.focus = FocusPane::Input;
                         }
-                        self.chat_segments.push(ChatSegment::Message(Message::user(&next.content)));
+                        self.chat_segments
+                            .push(ChatSegment::Message(Message::user(&next.content)));
                         self.save_history_async();
                         self.rerender_chat().await;
                         self.auto_scroll = true;
@@ -188,7 +209,8 @@ impl App {
                 // the complete history including any committed partial text.
                 if !self.abort_pending && self.editing_queue_index.is_none() {
                     if let Some(next) = self.queued.pop_front() {
-                        self.queue_selected = self.queue_selected
+                        self.queue_selected = self
+                            .queue_selected
                             .map(|s| s.saturating_sub(1))
                             .filter(|_| !self.queued.is_empty());
                         if self.queued.is_empty() && self.focus == FocusPane::Queue {
@@ -215,7 +237,8 @@ impl App {
             }
             AgentEvent::TodoUpdate(todos) => {
                 let todo_md = format_todos_markdown(&todos);
-                self.chat_segments.push(ChatSegment::Message(Message::assistant(&todo_md)));
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::assistant(&todo_md)));
                 self.save_history_async();
                 self.rerender_chat().await;
                 if let Some(nvim_bridge) = &self.nvim_bridge {

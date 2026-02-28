@@ -47,7 +47,7 @@ use crate::{
     config::{GatewayConfig, SlackMode},
     control::service::ControlService,
     crypto::token::StoredTokenFile,
-    http::slack::{SlackWebhookState, run_socket_mode},
+    http::slack::{run_socket_mode, SlackWebhookState},
     p2p::{auth::PeerAllowlist, handler::P2pControlNode},
 };
 
@@ -66,7 +66,11 @@ pub async fn run(config: GatewayConfig, agent: Agent) -> anyhow::Result<()> {
     tokio::spawn(service.run());
 
     // ── Token ─────────────────────────────────────────────────────────────────
-    let token_path = config.http.token_file.clone().unwrap_or_else(default_token_path);
+    let token_path = config
+        .http
+        .token_file
+        .clone()
+        .unwrap_or_else(default_token_path);
     let token_hash = if token_path.exists() {
         StoredTokenFile::load(&token_path)?.token_hash
     } else {
@@ -80,10 +84,12 @@ pub async fn run(config: GatewayConfig, agent: Agent) -> anyhow::Result<()> {
     };
 
     // ── P2P allowlist ─────────────────────────────────────────────────────────
-    let peers_path = config.p2p.authorized_peers_file.clone()
+    let peers_path = config
+        .p2p
+        .authorized_peers_file
+        .clone()
         .unwrap_or_else(default_peers_path);
-    let allowlist = PeerAllowlist::load(&peers_path)
-        .unwrap_or_default();
+    let allowlist = PeerAllowlist::load(&peers_path).unwrap_or_default();
     let allowlist = Arc::new(Mutex::new(allowlist));
 
     if allowlist.lock().await.operator_count() == 0 {
@@ -93,7 +99,10 @@ pub async fn run(config: GatewayConfig, agent: Agent) -> anyhow::Result<()> {
     }
 
     // ── P2P control node ──────────────────────────────────────────────────────
-    let listen_addr: libp2p::Multiaddr = config.p2p.listen.parse()
+    let listen_addr: libp2p::Multiaddr = config
+        .p2p
+        .listen
+        .parse()
         .map_err(|e| anyhow::anyhow!("invalid P2P listen address: {e}"))?;
 
     let p2p_node = P2pControlNode::new(
@@ -102,7 +111,8 @@ pub async fn run(config: GatewayConfig, agent: Agent) -> anyhow::Result<()> {
         allowlist,
         agent_handle.clone(),
         config.p2p.mdns,
-    ).await?;
+    )
+    .await?;
 
     tokio::spawn(p2p_node.run());
 
@@ -147,7 +157,11 @@ pub async fn run(config: GatewayConfig, agent: Agent) -> anyhow::Result<()> {
 /// Add a peer to the operator allowlist via a `sven-pair://` URI.
 ///
 /// Called by `sven gateway pair <uri>`.
-pub async fn pair_peer(config: &GatewayConfig, uri: &str, label: Option<String>) -> anyhow::Result<()> {
+pub async fn pair_peer(
+    config: &GatewayConfig,
+    uri: &str,
+    label: Option<String>,
+) -> anyhow::Result<()> {
     use crate::p2p::pairing::PairingUri;
 
     let pairing = PairingUri::parse(uri)?;
@@ -155,7 +169,14 @@ pub async fn pair_peer(config: &GatewayConfig, uri: &str, label: Option<String>)
 
     println!("Peer ID:       {}", pairing.peer_id.to_base58());
     println!("Fingerprint:   {fp}");
-    println!("Address:       {}", pairing.addr.as_ref().map(|a| a.to_string()).unwrap_or("-".into()));
+    println!(
+        "Address:       {}",
+        pairing
+            .addr
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or("-".into())
+    );
     println!();
 
     let label = label.unwrap_or_else(|| format!("device-{}", &pairing.peer_id.to_base58()[..8]));
@@ -166,7 +187,10 @@ pub async fn pair_peer(config: &GatewayConfig, uri: &str, label: Option<String>)
     let line = stdin.lock().lines().next().unwrap_or(Ok(String::new()))?;
 
     if line.trim().eq_ignore_ascii_case("y") {
-        let peers_path = config.p2p.authorized_peers_file.clone()
+        let peers_path = config
+            .p2p
+            .authorized_peers_file
+            .clone()
             .unwrap_or_else(default_peers_path);
         let mut allowlist = PeerAllowlist::load(&peers_path).unwrap_or_default();
         allowlist.add_operator(pairing.peer_id, label.clone())?;
@@ -180,10 +204,14 @@ pub async fn pair_peer(config: &GatewayConfig, uri: &str, label: Option<String>)
 
 /// Revoke an authorized peer by PeerId string.
 pub async fn revoke_peer(config: &GatewayConfig, peer_id_str: &str) -> anyhow::Result<()> {
-    let peer_id: libp2p::PeerId = peer_id_str.parse()
+    let peer_id: libp2p::PeerId = peer_id_str
+        .parse()
         .map_err(|e| anyhow::anyhow!("invalid PeerId: {e}"))?;
 
-    let peers_path = config.p2p.authorized_peers_file.clone()
+    let peers_path = config
+        .p2p
+        .authorized_peers_file
+        .clone()
         .unwrap_or_else(default_peers_path);
     let mut allowlist = PeerAllowlist::load(&peers_path).unwrap_or_default();
 
@@ -198,7 +226,11 @@ pub async fn revoke_peer(config: &GatewayConfig, peer_id_str: &str) -> anyhow::R
 
 /// Regenerate the HTTP bearer token, printing the new raw token once.
 pub fn regenerate_token(config: &GatewayConfig) -> anyhow::Result<()> {
-    let token_path = config.http.token_file.clone().unwrap_or_else(default_token_path);
+    let token_path = config
+        .http
+        .token_file
+        .clone()
+        .unwrap_or_else(default_token_path);
     let raw = StoredTokenFile::generate_and_save(&token_path)?;
     println!("New bearer token (save it now — it won't be shown again):");
     println!("  {}", raw.as_str());

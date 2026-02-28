@@ -39,7 +39,8 @@ impl PairingUri {
     /// - `sven-pair://<peer_id>`
     /// - `sven-pair://<peer_id>/<multiaddr>`
     pub fn parse(uri: &str) -> anyhow::Result<Self> {
-        let rest = uri.strip_prefix("sven-pair://")
+        let rest = uri
+            .strip_prefix("sven-pair://")
             .ok_or_else(|| anyhow::anyhow!("URI must start with sven-pair://"))?;
 
         let (peer_str, addr_str) = match rest.find('/') {
@@ -47,7 +48,8 @@ impl PairingUri {
             None => (rest, None),
         };
 
-        let peer_id = peer_str.parse::<PeerId>()
+        let peer_id = peer_str
+            .parse::<PeerId>()
             .map_err(|e| anyhow::anyhow!("invalid PeerId in pairing URI: {e}"))?;
 
         let addr = addr_str
@@ -113,7 +115,10 @@ mod tests {
     #[test]
     fn round_trip_without_addr() {
         let peer = sample_peer();
-        let original = PairingUri { peer_id: peer, addr: None };
+        let original = PairingUri {
+            peer_id: peer,
+            addr: None,
+        };
         let uri = original.to_uri();
         let parsed = PairingUri::parse(&uri).unwrap();
         assert_eq!(parsed.peer_id, peer);
@@ -123,7 +128,10 @@ mod tests {
     fn round_trip_with_addr() {
         let peer = sample_peer();
         let addr: Multiaddr = "/ip4/1.2.3.4/tcp/4001".parse().unwrap();
-        let original = PairingUri { peer_id: peer, addr: Some(addr.clone()) };
+        let original = PairingUri {
+            peer_id: peer,
+            addr: Some(addr.clone()),
+        };
         let uri = original.to_uri();
         let parsed = PairingUri::parse(&uri).unwrap();
         assert_eq!(parsed.peer_id, peer);
@@ -139,7 +147,10 @@ mod tests {
     #[test]
     fn short_fingerprint_is_colon_separated_hex() {
         let peer = sample_peer();
-        let uri = PairingUri { peer_id: peer, addr: None };
+        let uri = PairingUri {
+            peer_id: peer,
+            addr: None,
+        };
         let fp = uri.short_fingerprint();
         // Should look like "AB:CD:EF:12" — colons between hex pairs
         assert!(fp.contains(':'), "fingerprint must contain colons: {fp}");

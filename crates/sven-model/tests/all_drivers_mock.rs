@@ -86,7 +86,9 @@ fn all_registered_drivers_instantiate_without_unknown_error() {
 #[test]
 fn unknown_provider_returns_descriptive_error() {
     let cfg = minimal_cfg("definitely-not-a-real-provider-xyz");
-    let err = from_config(&cfg).err().expect("should fail for unknown provider");
+    let err = from_config(&cfg)
+        .err()
+        .expect("should fail for unknown provider");
     let msg = err.to_string();
     assert!(
         msg.contains("unknown model provider"),
@@ -101,10 +103,19 @@ fn unknown_provider_returns_descriptive_error() {
 
 #[test]
 fn driver_metadata_is_complete() {
-    for DriverMeta { id, name, description, .. } in list_drivers() {
+    for DriverMeta {
+        id,
+        name,
+        description,
+        ..
+    } in list_drivers()
+    {
         assert!(!id.is_empty(), "driver id must not be empty");
         assert!(!name.is_empty(), "driver '{id}' name must not be empty");
-        assert!(!description.is_empty(), "driver '{id}' description must not be empty");
+        assert!(
+            !description.is_empty(),
+            "driver '{id}' description must not be empty"
+        );
     }
 }
 
@@ -115,7 +126,8 @@ fn driver_ids_are_lowercase_and_alphanumeric() {
             assert!(
                 ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_',
                 "driver id '{}' contains invalid char '{}'",
-                d.id, ch
+                d.id,
+                ch
             );
         }
     }
@@ -138,12 +150,36 @@ fn drivers_with_no_key_requirement_have_no_default_env() {
 #[test]
 fn all_major_providers_registered() {
     let must_exist = [
-        "openai", "anthropic", "google", "azure", "aws", "cohere",
-        "openrouter", "litellm", "groq", "together", "fireworks",
-        "cerebras", "deepinfra", "nebius", "sambanova", "huggingface", "nvidia",
-        "perplexity", "mistral", "xai",
-        "deepseek", "moonshot", "dashscope", "glm", "minimax", "qianfan",
-        "ollama", "vllm", "lmstudio", "mock",
+        "openai",
+        "anthropic",
+        "google",
+        "azure",
+        "aws",
+        "cohere",
+        "openrouter",
+        "litellm",
+        "groq",
+        "together",
+        "fireworks",
+        "cerebras",
+        "deepinfra",
+        "nebius",
+        "sambanova",
+        "huggingface",
+        "nvidia",
+        "perplexity",
+        "mistral",
+        "xai",
+        "deepseek",
+        "moonshot",
+        "dashscope",
+        "glm",
+        "minimax",
+        "qianfan",
+        "ollama",
+        "vllm",
+        "lmstudio",
+        "mock",
     ];
     for id in &must_exist {
         assert!(

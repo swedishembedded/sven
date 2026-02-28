@@ -57,18 +57,23 @@ async fn spawn_relay(
     let kp = keypair_path.clone();
     let jh = tokio::spawn(async move {
         let _dir = dir; // keep tempdir alive for the process lifetime
-        // A tiny custom relay that reports its addr back.
+                        // A tiny custom relay that reports its addr back.
         use futures::StreamExt;
-        use libp2p::{multiaddr::Protocol, swarm::{Swarm, SwarmEvent}};
-        use sven_p2p::transport::{build_transport, default_swarm_config};
+        use libp2p::{
+            multiaddr::Protocol,
+            swarm::{Swarm, SwarmEvent},
+        };
         use sven_p2p::behaviour::RelayBehaviour;
+        use sven_p2p::transport::{build_transport, default_swarm_config};
 
         let key = sven_p2p::transport::load_or_create_keypair(&kp).unwrap();
         let local_pid = PeerId::from(key.public());
         let transport = build_transport(&key).unwrap();
         let behaviour = RelayBehaviour::new(&key);
         let mut swarm = Swarm::new(transport, behaviour, local_pid, default_swarm_config());
-        swarm.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+        swarm
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
 
         let mut sent_addr = false;
         let mut addr_tx = Some(addr_tx);
@@ -131,8 +136,9 @@ async fn ctrl_c_cleanup_removes_peer_registration() {
     // Publish a fake relay addr so P2pNode can boot.
     let relay_key = identity::Keypair::generate_ed25519();
     let relay_pid = PeerId::from(relay_key.public());
-    let relay_addr: Multiaddr =
-        format!("/ip4/127.0.0.1/tcp/9999/p2p/{relay_pid}").parse().unwrap();
+    let relay_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/9999/p2p/{relay_pid}")
+        .parse()
+        .unwrap();
     disc.publish_relay_addrs(&[relay_addr]).unwrap();
 
     // Manually publish a peer entry; then call delete_peer to verify cleanup.
@@ -147,8 +153,10 @@ async fn ctrl_c_cleanup_removes_peer_registration() {
 
     disc.delete_peer("test-room", &peer).unwrap();
 
-    assert!(disc.fetch_peers("test-room").unwrap().is_empty(),
-        "delete_peer must remove the entry — this simulates what P2pNode does on shutdown");
+    assert!(
+        disc.fetch_peers("test-room").unwrap().is_empty(),
+        "delete_peer must remove the entry — this simulates what P2pNode does on shutdown"
+    );
 }
 
 // ── Test: InMemoryDiscovery relay-assisted discovery (lightweight) ─────────────
@@ -164,8 +172,9 @@ fn discovery_lifecycle() {
     let relay_pid = PeerId::from(relay_key.public());
 
     // Publish relay.
-    let relay_addr: Multiaddr =
-        format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}").parse().unwrap();
+    let relay_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}")
+        .parse()
+        .unwrap();
     disc.publish_relay_addrs(&[relay_addr.clone()]).unwrap();
     assert_eq!(disc.fetch_relay_addrs().unwrap(), vec![relay_addr]);
 
@@ -226,15 +235,17 @@ async fn agent_card_announcement_direct_connection() {
     // Simulate what P2pNode does: publish alice into the room.
     let relay_key = identity::Keypair::generate_ed25519();
     let relay_pid = PeerId::from(relay_key.public());
-    let relay_addr: Multiaddr =
-        format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}").parse().unwrap();
+    let relay_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}")
+        .parse()
+        .unwrap();
     disc.publish_relay_addrs(&[relay_addr.clone()]).unwrap();
 
     let alice_circuit: Multiaddr =
         format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}/p2p-circuit/p2p/{alice_pid}")
             .parse()
             .unwrap();
-    disc.publish_peer("room1", &alice_pid, &alice_circuit).unwrap();
+    disc.publish_peer("room1", &alice_pid, &alice_circuit)
+        .unwrap();
 
     // Verify bob can find alice.
     let peers = disc.fetch_peers("room1").unwrap();
@@ -263,7 +274,9 @@ async fn agent_card_announcement_direct_connection() {
 fn task_request_response_codec_roundtrip() {
     use sven_p2p::protocol::{
         codec::{cbor_decode, cbor_encode},
-        types::{AgentCard, P2pRequest, P2pResponse, TaskRequest, TaskResponse, TaskStatus, ContentBlock},
+        types::{
+            AgentCard, ContentBlock, P2pRequest, P2pResponse, TaskRequest, TaskResponse, TaskStatus,
+        },
     };
     use uuid::Uuid;
 
@@ -326,5 +339,8 @@ fn keypair_persistence() {
     let pid1 = PeerId::from(key1.public());
     let pid2 = PeerId::from(key2.public());
 
-    assert_eq!(pid1, pid2, "loaded keypair must produce the same PeerId as the generated one");
+    assert_eq!(
+        pid1, pid2,
+        "loaded keypair must produce the same PeerId as the generated one"
+    );
 }

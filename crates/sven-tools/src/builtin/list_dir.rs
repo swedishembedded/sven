@@ -12,7 +12,9 @@ pub struct ListDirTool;
 
 #[async_trait]
 impl Tool for ListDirTool {
-    fn name(&self) -> &str { "list_dir" }
+    fn name(&self) -> &str {
+        "list_dir"
+    }
 
     fn description(&self) -> &str {
         "List directory contents. depth: default 2, max 5. limit: 100 entries by default.\n\
@@ -42,22 +44,36 @@ impl Tool for ListDirTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'path'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
-        let depth = call.args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2).min(5) as usize;
-        let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let depth = call
+            .args
+            .get("depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2)
+            .min(5) as usize;
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100) as usize;
 
         debug!(path = %path, depth, limit, "list_dir tool");
 
@@ -86,7 +102,14 @@ impl Tool for ListDirTool {
     }
 }
 
-static EXCLUDED_DIRS: &[&str] = &[".git", "target", "node_modules", ".svn", "__pycache__", ".mypy_cache"];
+static EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".svn",
+    "__pycache__",
+    ".mypy_cache",
+];
 
 fn is_excluded(name: &str) -> bool {
     EXCLUDED_DIRS.contains(&name)
@@ -141,7 +164,16 @@ async fn collect_entries(
         if is_dir {
             entries.push(format!("{}/", rel));
             if current_depth < max_depth && !is_excluded(&name) {
-                collect_entries(base, &full_path, current_depth + 1, max_depth, limit, entries, truncated).await;
+                collect_entries(
+                    base,
+                    &full_path,
+                    current_depth + 1,
+                    max_depth,
+                    limit,
+                    entries,
+                    truncated,
+                )
+                .await;
             }
         } else {
             entries.push(rel);
@@ -157,7 +189,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "l1".into(), name: "list_dir".into(), args }
+        ToolCall {
+            id: "l1".into(),
+            name: "list_dir".into(),
+            args,
+        }
     }
 
     #[tokio::test]
@@ -178,7 +214,10 @@ mod tests {
 
         let t = ListDirTool;
         let out = t.execute(&call(json!({"path": dir}))).await;
-        assert!(out.content.contains("subdir/"), "dirs should have trailing slash");
+        assert!(
+            out.content.contains("subdir/"),
+            "dirs should have trailing slash"
+        );
         assert!(out.content.contains("file.txt"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -206,14 +245,19 @@ mod tests {
         let out = t.execute(&call(json!({"path": dir, "depth": 0}))).await;
         assert!(out.content.contains("top.txt"));
         assert!(out.content.contains("subdir/"));
-        assert!(!out.content.contains("inner.txt"), "inner.txt should not appear at depth=0");
+        assert!(
+            !out.content.contains("inner.txt"),
+            "inner.txt should not appear at depth=0"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn nonexistent_dir_is_error() {
         let t = ListDirTool;
-        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_dir_xyzzy_99999"}))).await;
+        let out = t
+            .execute(&call(json!({"path": "/tmp/sven_no_such_dir_xyzzy_99999"})))
+            .await;
         assert!(out.is_error);
     }
 }

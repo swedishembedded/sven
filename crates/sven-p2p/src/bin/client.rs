@@ -132,7 +132,10 @@ enum ChatLine {
 
 impl ChatLine {
     fn msg(from: impl Into<String>, body: impl Into<String>) -> Self {
-        ChatLine::Message { from: from.into(), body: body.into() }
+        ChatLine::Message {
+            from: from.into(),
+            body: body.into(),
+        }
     }
     fn sys(text: impl Into<String>) -> Self {
         ChatLine::System(text.into())
@@ -240,8 +243,7 @@ fn open_discovery(repo: &Option<PathBuf>) -> anyhow::Result<Arc<dyn DiscoveryPro
     match repo {
         #[cfg(feature = "git-discovery")]
         Some(path) => Ok(Arc::new(
-            GitDiscoveryProvider::open(path)
-                .map_err(|e| anyhow::anyhow!("git repo error: {e}"))?,
+            GitDiscoveryProvider::open(path).map_err(|e| anyhow::anyhow!("git repo error: {e}"))?,
         )),
         _ => {
             if repo.is_some() {
@@ -355,13 +357,15 @@ async fn run_oneshot(
         }
     }
 
-
     // Send.
     let peers = handle.room_peers(room);
     let sent = send_message(&handle, own_name, &peers, target_name.as_deref(), &body).await;
     if sent == 0 {
         if target_name.is_some() {
-            anyhow::bail!("peer '@{}' not found in room '{room}'", target_name.unwrap());
+            anyhow::bail!(
+                "peer '@{}' not found in room '{room}'",
+                target_name.unwrap()
+            );
         } else {
             println!("(no peers in room '{room}' to broadcast to)");
         }
@@ -411,10 +415,19 @@ async fn run_tui(handle: P2pHandle, own_name: &str, rooms: &[String]) -> anyhow:
                 g.quit,
             )
         };
-        if state_snap.4 { break Ok(()); }
+        if state_snap.4 {
+            break Ok(());
+        }
 
         terminal.draw(|f| {
-            draw_ui(f, &state_snap.0, &state_snap.1, &state_snap.2, &own_name, &primary_room);
+            draw_ui(
+                f,
+                &state_snap.0,
+                &state_snap.1,
+                &state_snap.2,
+                &own_name,
+                &primary_room,
+            );
         })?;
 
         // Input events (with timeout so we keep redrawing).
@@ -437,18 +450,13 @@ async fn run_tui(handle: P2pHandle, own_name: &str, rooms: &[String]) -> anyhow:
                         if !input.is_empty() {
                             let (target, body) = parse_message(&input);
                             let peers = handle.room_peers(&primary_room);
-                            let sent = send_message(
-                                &handle,
-                                &own_name,
-                                &peers,
-                                target.as_deref(),
-                                &body,
-                            )
-                            .await;
+                            let sent =
+                                send_message(&handle, &own_name, &peers, target.as_deref(), &body)
+                                    .await;
                             if sent > 0 {
                                 let display = match &target {
                                     Some(t) => format!("[@{t}] {body}"),
-                                    None    => format!("[broadcast] {body}"),
+                                    None => format!("[broadcast] {body}"),
                                 };
                                 state.push(ChatLine::msg(format!("{own_name} (you)"), display));
                             } else if let Some(t) = &target {
@@ -503,7 +511,12 @@ async fn listen_events(handle: P2pHandle, state: AppState, room: String) {
     loop {
         match events.recv().await {
             Ok(ev) => match ev {
-                P2pEvent::PeerDiscovered { peer_id, card, room: r, .. } if r == room => {
+                P2pEvent::PeerDiscovered {
+                    peer_id,
+                    card,
+                    room: r,
+                    ..
+                } if r == room => {
                     let already_known = {
                         let g = state.inner.lock().unwrap();
                         g.peers.contains_key(&card.name)
@@ -548,7 +561,11 @@ async fn listen_events(handle: P2pHandle, state: AppState, room: String) {
                     let body = if request.payload.is_empty() {
                         request.description.clone()
                     } else {
-                        format!("{} [+{} block(s)]", request.description, request.payload.len())
+                        format!(
+                            "{} [+{} block(s)]",
+                            request.description,
+                            request.payload.len()
+                        )
                     };
                     state.push(ChatLine::msg(name, body));
                 }
@@ -576,9 +593,9 @@ fn draw_ui(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title bar
-            Constraint::Min(3),     // message + peers
-            Constraint::Length(3),  // input box
+            Constraint::Length(1), // title bar
+            Constraint::Min(3),    // message + peers
+            Constraint::Length(3), // input box
         ])
         .split(size);
 
@@ -592,7 +609,9 @@ fn draw_ui(
     let title = Line::from(vec![
         Span::styled(
             format!(" sven-p2p-client · room: {room} · you: {own_name} "),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("── peers: {peer_list} "),
@@ -605,7 +624,10 @@ fn draw_ui(
     let msg_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(" messages ", Style::default().fg(Color::DarkGray)));
+        .title(Span::styled(
+            " messages ",
+            Style::default().fg(Color::DarkGray),
+        ));
 
     let inner_height = chunks[1].height.saturating_sub(2) as usize;
     let items: Vec<ListItem> = messages
@@ -614,14 +636,18 @@ fn draw_ui(
             ChatLine::Message { from, body } => ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{from}"),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" ▶ "),
                 Span::raw(body.clone()),
             ])),
             ChatLine::System(text) => ListItem::new(Span::styled(
                 format!("  {text}"),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
             )),
         })
         .collect();

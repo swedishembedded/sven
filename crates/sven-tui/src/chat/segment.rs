@@ -18,15 +18,14 @@ pub enum ChatSegment {
         turn: u32,
     },
     Error(String),
-    Thinking { content: String },
+    Thinking {
+        content: String,
+    },
 }
 
 /// Return the segment index whose line range contains `line`, or `None` when
 /// the line is inside the streaming-buffer area (no corresponding segment).
-pub fn segment_at_line(
-    segment_line_ranges: &[(usize, usize)],
-    line: usize,
-) -> Option<usize> {
+pub fn segment_at_line(segment_line_ranges: &[(usize, usize)], line: usize) -> Option<usize> {
     segment_line_ranges
         .iter()
         .position(|&(start, end)| line >= start && line < end)
@@ -38,7 +37,7 @@ pub fn segment_editable_text(segments: &[ChatSegment], i: usize) -> Option<Strin
     let seg = segments.get(i)?;
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
-            (Role::User, MessageContent::Text(t))      => Some(t.clone()),
+            (Role::User, MessageContent::Text(t)) => Some(t.clone()),
             (Role::Assistant, MessageContent::Text(t)) => Some(t.clone()),
             _ => None,
         },

@@ -192,8 +192,7 @@ pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
     let rest = raw.trim_start_matches('\n');
 
     // ── Frontmatter path ─────────────────────────────────────────────────────
-    if rest.starts_with("---") {
-        let after_open = &rest[3..];
+    if let Some(after_open) = rest.strip_prefix("---") {
         let close = after_open.find("\n---")?;
         let yaml_block = &after_open[..close];
         // Body starts after "\n---" (4 bytes). Strip one leading newline if present.
@@ -232,7 +231,11 @@ pub fn parse_skill_file(raw: &str) -> Option<ParsedSkill> {
             }
             // Strip a leading `#` heading marker so "# Sven" → "Sven".
             let text = line.trim_start_matches('#').trim();
-            if text.is_empty() { None } else { Some(text.to_string()) }
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
         })
         .unwrap_or_else(|| "Skill".to_string());
 
@@ -265,7 +268,8 @@ fn which_available(name: &str) -> bool {
 
 /// Return `true` when all `requires_env` entries are set (non-empty).
 fn env_vars_set(vars: &[String]) -> bool {
-    vars.iter().all(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false))
+    vars.iter()
+        .all(|v| std::env::var(v).map(|s| !s.is_empty()).unwrap_or(false))
 }
 
 // ── Directory scanning ────────────────────────────────────────────────────────
@@ -293,7 +297,12 @@ fn command_from_path(root: &Path, skill_dir: &Path) -> String {
 ///
 /// Returns `None` and emits a warning when the file is oversized, unreadable,
 /// or has invalid frontmatter.
-fn try_load_skill(skill_dir: &Path, skill_md: &Path, command: &str, source: &str) -> Option<SkillInfo> {
+fn try_load_skill(
+    skill_dir: &Path,
+    skill_md: &Path,
+    command: &str,
+    source: &str,
+) -> Option<SkillInfo> {
     let size = skill_md.metadata().map(|m| m.len()).unwrap_or(0);
     if size > MAX_SKILL_FILE_BYTES {
         warn!(
@@ -334,9 +343,9 @@ fn try_load_skill(skill_dir: &Path, skill_md: &Path, command: &str, source: &str
 
     // Display name: frontmatter `name:` if provided, otherwise the last
     // path segment (directory name) of `command`.
-    let name = parsed.name.unwrap_or_else(|| {
-        command.rsplit('/').next().unwrap_or(command).to_string()
-    });
+    let name = parsed
+        .name
+        .unwrap_or_else(|| command.rsplit('/').next().unwrap_or(command).to_string());
 
     Some(SkillInfo {
         command: command.to_string(),
@@ -382,7 +391,9 @@ fn find_skill_md(dir: &Path) -> Option<PathBuf> {
 }
 
 fn scan_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
 
     for entry in entries.flatten() {
         let child = entry.path();
@@ -496,7 +507,9 @@ pub(crate) fn enumerate_md_files_recursive(root: &Path, dir: &Path) -> Vec<(Stri
 }
 
 fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = entries.flatten().collect();
     entries.sort_by_key(|e| e.path());
 
@@ -551,11 +564,23 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
     // compatibility with Codex-based tooling (mirrors Cursor's compat list).
     for dir in &build_sorted_search_dirs(project_root) {
         let label = dir.to_string_lossy();
-        load(dir.join(".agents").join("skills"), &format!("{label}/.agents"));
-        load(dir.join(".claude").join("skills"), &format!("{label}/.claude"));
-        load(dir.join(".codex").join("skills"),  &format!("{label}/.codex"));
-        load(dir.join(".cursor").join("skills"), &format!("{label}/.cursor"));
-        load(dir.join(".sven").join("skills"),   &format!("{label}/.sven"));
+        load(
+            dir.join(".agents").join("skills"),
+            &format!("{label}/.agents"),
+        );
+        load(
+            dir.join(".claude").join("skills"),
+            &format!("{label}/.claude"),
+        );
+        load(
+            dir.join(".codex").join("skills"),
+            &format!("{label}/.codex"),
+        );
+        load(
+            dir.join(".cursor").join("skills"),
+            &format!("{label}/.cursor"),
+        );
+        load(dir.join(".sven").join("skills"), &format!("{label}/.sven"));
     }
 
     let mut result: Vec<SkillInfo> = map.into_values().collect();
@@ -598,9 +623,9 @@ fn try_load_command(md_path: &Path, command: &str, source: &str) -> Option<Skill
         }
     };
 
-    let name = parsed.name.unwrap_or_else(|| {
-        command.rsplit('/').next().unwrap_or(command).to_string()
-    });
+    let name = parsed
+        .name
+        .unwrap_or_else(|| command.rsplit('/').next().unwrap_or(command).to_string());
 
     Some(SkillInfo {
         command: command.to_string(),
@@ -666,11 +691,26 @@ pub fn discover_commands(project_root: Option<&Path>) -> Vec<SkillInfo> {
 
     for dir in &build_sorted_search_dirs(project_root) {
         let label = dir.to_string_lossy();
-        load(dir.join(".agents").join("commands"), &format!("{label}/.agents"));
-        load(dir.join(".claude").join("commands"), &format!("{label}/.claude"));
-        load(dir.join(".codex").join("commands"),  &format!("{label}/.codex"));
-        load(dir.join(".cursor").join("commands"), &format!("{label}/.cursor"));
-        load(dir.join(".sven").join("commands"),   &format!("{label}/.sven"));
+        load(
+            dir.join(".agents").join("commands"),
+            &format!("{label}/.agents"),
+        );
+        load(
+            dir.join(".claude").join("commands"),
+            &format!("{label}/.claude"),
+        );
+        load(
+            dir.join(".codex").join("commands"),
+            &format!("{label}/.codex"),
+        );
+        load(
+            dir.join(".cursor").join("commands"),
+            &format!("{label}/.cursor"),
+        );
+        load(
+            dir.join(".sven").join("commands"),
+            &format!("{label}/.sven"),
+        );
     }
 
     let mut result: Vec<SkillInfo> = map.into_values().collect();
@@ -688,12 +728,19 @@ mod tests {
 
     /// Write a SKILL.md into `dir/<command>/SKILL.md`, creating all parent
     /// directories.  `command` may be slash-separated (e.g. `"sven/plan"`).
-    fn write_skill(dir: &Path, command: &str, description: &str, extra_frontmatter: &str, body: &str) {
-        let skill_dir = command.split('/').fold(dir.to_path_buf(), |acc, seg| acc.join(seg));
+    fn write_skill(
+        dir: &Path,
+        command: &str,
+        description: &str,
+        extra_frontmatter: &str,
+        body: &str,
+    ) {
+        let skill_dir = command
+            .split('/')
+            .fold(dir.to_path_buf(), |acc, seg| acc.join(seg));
         fs::create_dir_all(&skill_dir).unwrap();
-        let frontmatter = format!(
-            "---\ndescription: |\n  {description}\n{extra_frontmatter}---\n\n{body}"
-        );
+        let frontmatter =
+            format!("---\ndescription: |\n  {description}\n{extra_frontmatter}---\n\n{body}");
         fs::write(skill_dir.join("SKILL.md"), frontmatter).unwrap();
     }
 
@@ -722,8 +769,16 @@ mod tests {
         // A body that itself contains a horizontal-rule `---` must not be truncated.
         let raw = "---\ndescription: Desc.\n---\n\nParagraph one.\n\n---\n\nParagraph two.";
         let parsed = parse_skill_file(raw).expect("should parse");
-        assert!(parsed.body.contains("Paragraph one."), "body: {:?}", parsed.body);
-        assert!(parsed.body.contains("Paragraph two."), "body: {:?}", parsed.body);
+        assert!(
+            parsed.body.contains("Paragraph one."),
+            "body: {:?}",
+            parsed.body
+        );
+        assert!(
+            parsed.body.contains("Paragraph two."),
+            "body: {:?}",
+            parsed.body
+        );
     }
 
     #[test]
@@ -813,7 +868,7 @@ mod tests {
         let skills = discover_skills(Some(tmp.path()));
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].command, "git-workflow");
-        assert_eq!(skills[0].name, "git-workflow");   // falls back to dir name
+        assert_eq!(skills[0].name, "git-workflow"); // falls back to dir name
         assert!(skills[0].description.contains("Git helper."));
         assert!(skills[0].content.contains("## Section"));
         assert!(skills[0].skill_dir.ends_with("git-workflow"));
@@ -826,12 +881,15 @@ mod tests {
         fs::create_dir_all(&skills_dir).unwrap();
         let skill_dir = skills_dir.join("git-workflow");
         fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"),
-            "---\nname: Git Workflow\ndescription: Git helper.\n---\n\nbody").unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: Git Workflow\ndescription: Git helper.\n---\n\nbody",
+        )
+        .unwrap();
 
         let skills = discover_skills(Some(tmp.path()));
         assert_eq!(skills[0].command, "git-workflow");
-        assert_eq!(skills[0].name, "Git Workflow");   // from frontmatter
+        assert_eq!(skills[0].name, "Git Workflow"); // from frontmatter
     }
 
     #[test]
@@ -855,9 +913,27 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let skills_dir = tmp.path().join(".sven").join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
-        write_skill(&skills_dir, "sven", "Top-level sven.", "", "Orchestrator body.");
-        write_skill(&skills_dir, "sven/plan", "Planning phase.", "", "Plan body.");
-        write_skill(&skills_dir, "sven/implement", "Implementation phase.", "", "Impl body.");
+        write_skill(
+            &skills_dir,
+            "sven",
+            "Top-level sven.",
+            "",
+            "Orchestrator body.",
+        );
+        write_skill(
+            &skills_dir,
+            "sven/plan",
+            "Planning phase.",
+            "",
+            "Plan body.",
+        );
+        write_skill(
+            &skills_dir,
+            "sven/implement",
+            "Implementation phase.",
+            "",
+            "Impl body.",
+        );
 
         let skills = discover_skills(Some(tmp.path()));
         assert_eq!(skills.len(), 3);
@@ -873,7 +949,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let skills_dir = tmp.path().join(".sven").join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
-        write_skill(&skills_dir, "sven/implement/research", "Research sub-skill.", "", "Research body.");
+        write_skill(
+            &skills_dir,
+            "sven/implement/research",
+            "Research sub-skill.",
+            "",
+            "Research body.",
+        );
 
         let skills = discover_skills(Some(tmp.path()));
         assert_eq!(skills.len(), 1);
@@ -888,7 +970,11 @@ mod tests {
         let skills_dir = tmp.path().join(".sven").join("skills");
         let sven_dir = skills_dir.join("sven");
         fs::create_dir_all(&sven_dir).unwrap();
-        fs::write(sven_dir.join("SKILL.md"), "---\ndescription: Sven.\n---\n\nbody").unwrap();
+        fs::write(
+            sven_dir.join("SKILL.md"),
+            "---\ndescription: Sven.\n---\n\nbody",
+        )
+        .unwrap();
 
         // scripts/ has no SKILL.md → not a sub-skill
         let scripts_dir = sven_dir.join("scripts");
@@ -948,7 +1034,10 @@ mod tests {
         );
 
         let skills = discover_skills(Some(tmp.path()));
-        assert!(skills.is_empty(), "skill with missing binary should be skipped");
+        assert!(
+            skills.is_empty(),
+            "skill with missing binary should be skipped"
+        );
     }
 
     #[test]
@@ -985,11 +1074,20 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let skills_dir = tmp.path().join(".sven").join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
-        write_skill(&skills_dir, "example", "Example skill.", "", "## Usage\n\nDo things.");
+        write_skill(
+            &skills_dir,
+            "example",
+            "Example skill.",
+            "",
+            "## Usage\n\nDo things.",
+        );
 
         let skills = discover_skills(Some(tmp.path()));
         let content = &skills[0].content;
-        assert!(!content.contains("description:"), "content should not include frontmatter");
+        assert!(
+            !content.contains("description:"),
+            "content should not include frontmatter"
+        );
         assert!(content.contains("## Usage"));
     }
 }

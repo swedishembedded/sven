@@ -30,7 +30,9 @@ impl GdbCommandTool {
 
 #[async_trait]
 impl Tool for GdbCommandTool {
-    fn name(&self) -> &str { "gdb_command" }
+    fn name(&self) -> &str {
+        "gdb_command"
+    }
 
     fn description(&self) -> &str {
         "Run a GDB command in the active debugging session and return its output. \
@@ -63,10 +65,16 @@ impl Tool for GdbCommandTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::HeadTail
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("command").and_then(|v| v.as_str()) {
@@ -74,7 +82,8 @@ impl Tool for GdbCommandTool {
             None => return ToolOutput::err(&call.id, "missing 'command' argument"),
         };
 
-        let timeout_secs = call.args
+        let timeout_secs = call
+            .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.cfg.command_timeout_secs);
@@ -84,10 +93,7 @@ impl Tool for GdbCommandTool {
         let mut state = self.state.lock().await;
 
         if !state.has_client() {
-            return ToolOutput::err(
-                &call.id,
-                "No active GDB session. Call gdb_connect first.",
-            );
+            return ToolOutput::err(&call.id, "No active GDB session. Call gdb_connect first.");
         }
 
         // Temporarily set the timeout for this command, then restore.
@@ -113,7 +119,8 @@ impl Tool for GdbCommandTool {
                 let gdb = state.client.as_ref().unwrap();
                 match gdb.pop_general().await {
                     Ok(msgs) => {
-                        let lines: Vec<String> = msgs.iter()
+                        let lines: Vec<String> = msgs
+                            .iter()
                             .filter_map(|m| match m {
                                 GeneralMessage::Console(s) => {
                                     // Strip the trailing \n escape that GDB embeds in MI output
@@ -124,7 +131,10 @@ impl Tool for GdbCommandTool {
                             .collect();
                         let output = lines.join("\n");
                         if output.is_empty() {
-                            ToolOutput::ok(&call.id, format!("[command '{command}' produced no output]"))
+                            ToolOutput::ok(
+                                &call.id,
+                                format!("[command '{command}' produced no output]"),
+                            )
                         } else {
                             ToolOutput::ok(&call.id, output)
                         }
@@ -141,12 +151,16 @@ impl Tool for GdbCommandTool {
 
 #[cfg(test)]
 mod tests {
-    use sven_config::GdbConfig;
     use super::*;
     use crate::tool::ToolCall;
+    use sven_config::GdbConfig;
 
     fn call(args: Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_command".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_command".into(),
+            args,
+        }
     }
 
     fn make_tool() -> GdbCommandTool {

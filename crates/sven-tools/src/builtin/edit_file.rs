@@ -59,7 +59,13 @@ fn strip_common_indent(s: &str) -> String {
 
     let lines: Vec<&str> = s
         .lines()
-        .map(|l| if l.len() >= min_indent { &l[min_indent..] } else { l.trim_start() })
+        .map(|l| {
+            if l.len() >= min_indent {
+                &l[min_indent..]
+            } else {
+                l.trim_start()
+            }
+        })
         .collect();
 
     let mut out = lines.join("\n");
@@ -90,7 +96,11 @@ fn try_indent_normalized(content: &str, needle: &str) -> Option<String> {
         let window = file_lines[i..i + n].join("\n");
         let norm_window = strip_common_indent(&window);
         if norm_window.trim_end_matches('\n') == norm_cmp {
-            return Some(if needle.ends_with('\n') { window + "\n" } else { window });
+            return Some(if needle.ends_with('\n') {
+                window + "\n"
+            } else {
+                window
+            });
         }
     }
     None
@@ -135,12 +145,20 @@ fn try_fuzzy(content: &str, old_str: &str) -> Option<String> {
     for i in 0..=(file_lines.len() - n) {
         let window = file_lines[i..i + n].join("\n");
         if similarity_ratio(old_cmp, &window) >= FUZZY_THRESHOLD {
-            hits.push(if old_str.ends_with('\n') { window + "\n" } else { window });
+            hits.push(if old_str.ends_with('\n') {
+                window + "\n"
+            } else {
+                window
+            });
         }
     }
 
     // Only accept an unambiguous single match.
-    if hits.len() == 1 { hits.pop() } else { None }
+    if hits.len() == 1 {
+        hits.pop()
+    } else {
+        None
+    }
 }
 
 /// Find the `limit` windows in `content` most similar to `old_str`, for use
@@ -175,7 +193,9 @@ pub struct EditFileTool;
 
 #[async_trait]
 impl Tool for EditFileTool {
-    fn name(&self) -> &str { "edit_file" }
+    fn name(&self) -> &str {
+        "edit_file"
+    }
 
     fn description(&self) -> &str {
         "Replace text in a file. Tries strategies in order until one succeeds:\n\
@@ -219,9 +239,13 @@ impl Tool for EditFileTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {
@@ -268,8 +292,11 @@ impl Tool for EditFileTool {
             );
         }
 
-        let replace_all =
-            call.args.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let replace_all = call
+            .args
+            .get("replace_all")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         debug!(path = %path, replace_all = %replace_all, "edit_file tool");
 
@@ -279,9 +306,17 @@ impl Tool for EditFileTool {
         };
 
         // ── Strategy 1: exact match ──────────────────────────────────────────
-        if let Some(out) =
-            self.try_apply(&call.id, &path, &content, &old_str, &new_str, replace_all, "exact")
-                .await
+        if let Some(out) = self
+            .try_apply(
+                &call.id,
+                &path,
+                &content,
+                &old_str,
+                &new_str,
+                replace_all,
+                "exact",
+            )
+            .await
         {
             return out;
         }
@@ -374,9 +409,7 @@ impl Tool for EditFileTool {
                     text
                 ));
             }
-            msg.push_str(
-                "\nTip: re-read the file and use the exact text shown above as old_str.",
-            );
+            msg.push_str("\nTip: re-read the file and use the exact text shown above as old_str.");
         }
 
         ToolOutput::err(&call.id, msg)
@@ -387,6 +420,7 @@ impl EditFileTool {
     /// Apply replacement of `actual_old` with `new_str` in `content` and write
     /// the file.  Returns `None` if `actual_old` is absent (fall-through to the
     /// next strategy); returns `Some(err)` on ambiguity or write failure.
+    #[allow(clippy::too_many_arguments)]
     async fn try_apply(
         &self,
         id: &str,
@@ -449,7 +483,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "e1".into(), name: "edit_file".into(), args }
+        ToolCall {
+            id: "e1".into(),
+            name: "edit_file".into(),
+            args,
+        }
     }
 
     fn tmp_file(content: &str) -> String {
@@ -467,12 +505,13 @@ mod tests {
     async fn replaces_unique_string() {
         let path = tmp_file("hello world\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "world",
-            "new_str": "rust"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "world",
+                "new_str": "rust"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello rust\n");
         let _ = std::fs::remove_file(&path);
@@ -482,12 +521,13 @@ mod tests {
     async fn fails_if_not_found() {
         let path = tmp_file("hello world\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "xyz",
-            "new_str": "abc"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "xyz",
+                "new_str": "abc"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("not found"), "{}", out.content);
         let _ = std::fs::remove_file(&path);
@@ -497,12 +537,13 @@ mod tests {
     async fn fails_if_ambiguous() {
         let path = tmp_file("foo foo foo\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "foo",
-            "new_str": "bar"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "foo",
+                "new_str": "bar"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("3 times"), "{}", out.content);
         let _ = std::fs::remove_file(&path);
@@ -511,7 +552,9 @@ mod tests {
     #[tokio::test]
     async fn missing_file_path_is_error() {
         let t = EditFileTool;
-        let out = t.execute(&call(json!({"old_str": "a", "new_str": "b"}))).await;
+        let out = t
+            .execute(&call(json!({"old_str": "a", "new_str": "b"})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'path'"));
     }
@@ -528,7 +571,9 @@ mod tests {
     async fn missing_new_str_is_error() {
         let path = tmp_file("hello\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({"path": path, "old_str": "hello"}))).await;
+        let out = t
+            .execute(&call(json!({"path": path, "old_str": "hello"})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter 'new_str'"));
         let _ = std::fs::remove_file(&path);
@@ -538,12 +583,13 @@ mod tests {
     async fn empty_old_str_is_error() {
         let path = tmp_file("hello\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "",
-            "new_str": "world"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "",
+                "new_str": "world"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("must not be empty"), "{}", out.content);
         let _ = std::fs::remove_file(&path);
@@ -552,12 +598,13 @@ mod tests {
     #[tokio::test]
     async fn nonexistent_file_is_read_error() {
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": "/tmp/sven_definitely_no_such_file_xyz123.txt",
-            "old_str": "hello",
-            "new_str": "world"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": "/tmp/sven_definitely_no_such_file_xyz123.txt",
+                "old_str": "hello",
+                "new_str": "world"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("read error"), "{}", out.content);
     }
@@ -568,23 +615,32 @@ mod tests {
     async fn strips_read_file_prefixes() {
         let path = tmp_file("fn hello() {\n    println!(\"hi\");\n}\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "L1:fn hello() {\nL2:    println!(\"hi\");\nL3:}\n",
-            "new_str": "fn greet() {\n    println!(\"hello\");\n}\n"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "L1:fn hello() {\nL2:    println!(\"hi\");\nL3:}\n",
+                "new_str": "fn greet() {\n    println!(\"hello\");\n}\n"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("strip-prefixes"), "{}", out.content);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("fn greet()"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("fn greet()"));
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn strip_prefixes_helper_basic() {
-        assert_eq!(strip_read_file_prefixes("L1:hello\nL2:world\n"), "hello\nworld\n");
+        assert_eq!(
+            strip_read_file_prefixes("L1:hello\nL2:world\n"),
+            "hello\nworld\n"
+        );
         // Lines without prefix are left alone
-        assert_eq!(strip_read_file_prefixes("hello\nL2:world\n"), "hello\nworld\n");
+        assert_eq!(
+            strip_read_file_prefixes("hello\nL2:world\n"),
+            "hello\nworld\n"
+        );
         // No trailing newline preserved correctly
         assert_eq!(strip_read_file_prefixes("L10:foo"), "foo");
         // Multi-digit line numbers
@@ -594,7 +650,10 @@ mod tests {
     #[test]
     fn strip_prefixes_does_not_strip_zero_digit_l_colon() {
         // "L:" is a valid C/Go label — must NOT be stripped (bug fix: colon > 0)
-        assert_eq!(strip_read_file_prefixes("L:label_target\n"), "L:label_target\n");
+        assert_eq!(
+            strip_read_file_prefixes("L:label_target\n"),
+            "L:label_target\n"
+        );
     }
 
     // ── Strategy 3: strip-prefixes + indent-normalize (combined) ─────────
@@ -602,15 +661,15 @@ mod tests {
     #[tokio::test]
     async fn strips_prefixes_then_indent_normalizes() {
         // File: 4-space indented block. old_str: L<n>: prefixes + 0-indent.
-        let path =
-            tmp_file("    fn foo() {\n        bar();\n    }\n");
+        let path = tmp_file("    fn foo() {\n        bar();\n    }\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "L1:fn foo() {\nL2:    bar();\nL3:}\n",
-            "new_str": "    fn foo() {\n        baz();\n    }\n"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "L1:fn foo() {\nL2:    bar();\nL3:}\n",
+                "new_str": "    fn foo() {\n        baz();\n    }\n"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(
             out.content.contains("strip-prefixes+indent"),
@@ -627,12 +686,13 @@ mod tests {
     async fn indent_normalized_match() {
         let path = tmp_file("    fn foo() {\n        bar();\n    }\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "fn foo() {\n    bar();\n}\n",
-            "new_str": "    fn foo() {\n        baz();\n    }\n"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "fn foo() {\n    bar();\n}\n",
+                "new_str": "    fn foo() {\n        baz();\n    }\n"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("indent-normalized"), "{}", out.content);
         assert!(std::fs::read_to_string(&path).unwrap().contains("baz()"));
@@ -651,8 +711,7 @@ mod tests {
 
     #[tokio::test]
     async fn fuzzy_match_corrects_minor_typo() {
-        let path =
-            tmp_file("fn process_user(id: u32) {\n    validate(id);\n    update(id);\n}\n");
+        let path = tmp_file("fn process_user(id: u32) {\n    validate(id);\n    update(id);\n}\n");
         let t = EditFileTool;
         let out = t.execute(&call(json!({
             "path": path,
@@ -670,12 +729,13 @@ mod tests {
     async fn fuzzy_does_not_match_below_threshold() {
         let path = tmp_file("fn foo() { bar(); }\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "struct Widget { name: String, value: i32, active: bool }\n",
-            "new_str": "struct Widget { name: String }\n"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "struct Widget { name: String, value: i32, active: bool }\n",
+                "new_str": "struct Widget { name: String }\n"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("not found"), "{}", out.content);
         let _ = std::fs::remove_file(&path);
@@ -696,7 +756,11 @@ mod tests {
             "new_str": "fn process_thing(id: u32) {\n    validate(id);\n    commit(id);\n    log();\n}\n"
         })))
         .await;
-        assert!(out.is_error, "expected error on ambiguous fuzzy match, got: {}", out.content);
+        assert!(
+            out.is_error,
+            "expected error on ambiguous fuzzy match, got: {}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -704,20 +768,26 @@ mod tests {
     async fn fuzzy_skipped_for_replace_all() {
         // Only a fuzzy match exists (slight typo in old_str); replace_all=true must fail,
         // not silently apply the fuzzy match.
-        let path =
-            tmp_file("fn process_user(id: u32) {\n    validate(id);\n    update(id);\n}\n");
+        let path = tmp_file("fn process_user(id: u32) {\n    validate(id);\n    update(id);\n}\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "fn process_user(id: usize) {\n    validate(id);\n    update(id);\n}\n",
-            "new_str": "fn process_user(id: u32) {}\n",
-            "replace_all": true
-        })))
-        .await;
-        assert!(out.is_error, "fuzzy must be skipped for replace_all, got: {}", out.content);
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "fn process_user(id: usize) {\n    validate(id);\n    update(id);\n}\n",
+                "new_str": "fn process_user(id: u32) {}\n",
+                "replace_all": true
+            })))
+            .await;
+        assert!(
+            out.is_error,
+            "fuzzy must be skipped for replace_all, got: {}",
+            out.content
+        );
         // File must be unchanged
         assert!(
-            std::fs::read_to_string(&path).unwrap().contains("validate(id)"),
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("validate(id)"),
             "file was mutated"
         );
         let _ = std::fs::remove_file(&path);
@@ -742,7 +812,11 @@ mod tests {
             "new_str": "fn calculate_total(items: &[Item]) -> f64 { 0.0 }\n"
         })))
         .await;
-        assert!(out.is_error, "expected all strategies to fail, got: {}", out.content);
+        assert!(
+            out.is_error,
+            "expected all strategies to fail, got: {}",
+            out.content
+        );
         assert!(out.content.contains("calculate_total"), "{}", out.content);
         let _ = std::fs::remove_file(&path);
     }
@@ -753,15 +827,19 @@ mod tests {
     async fn surrounding_content_is_preserved() {
         let path = tmp_file("// header\nfn target() { old(); }\n// footer\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "fn target() { old(); }",
-            "new_str": "fn target() { new(); }"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "fn target() { old(); }",
+                "new_str": "fn target() { new(); }"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         let result = std::fs::read_to_string(&path).unwrap();
-        assert!(result.starts_with("// header\n"), "header missing: {result}");
+        assert!(
+            result.starts_with("// header\n"),
+            "header missing: {result}"
+        );
         assert!(result.ends_with("// footer\n"), "footer missing: {result}");
         assert!(result.contains("new()"), "replacement missing: {result}");
         assert!(!result.contains("old()"), "old content remains: {result}");
@@ -776,21 +854,23 @@ mod tests {
         let t = EditFileTool;
 
         // Edit 1: replace alpha's body — succeeds.
-        let out1 = t.execute(&call(json!({
-            "path": path,
-            "old_str": "fn alpha() { one(); }",
-            "new_str": "fn alpha() { updated(); }"
-        })))
-        .await;
+        let out1 = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "fn alpha() { one(); }",
+                "new_str": "fn alpha() { updated(); }"
+            })))
+            .await;
         assert!(!out1.is_error, "{}", out1.content);
 
         // Edit 2: re-send the SAME old_str (now stale — file changed).
-        let out2 = t.execute(&call(json!({
-            "path": path,
-            "old_str": "fn alpha() { one(); }",
-            "new_str": "fn alpha() { updated(); }"
-        })))
-        .await;
+        let out2 = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "fn alpha() { one(); }",
+                "new_str": "fn alpha() { updated(); }"
+            })))
+            .await;
         assert!(out2.is_error, "stale edit must fail");
         // Error must show the new content as a suggestion so the agent can recover.
         assert!(
@@ -807,16 +887,20 @@ mod tests {
     async fn replace_all_replaces_every_occurrence() {
         let path = tmp_file("foo bar foo baz foo\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "foo",
-            "new_str": "qux",
-            "replace_all": true
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "foo",
+                "new_str": "qux",
+                "replace_all": true
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("3 occurrences"), "{}", out.content);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "qux bar qux baz qux\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "qux bar qux baz qux\n"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -825,16 +909,20 @@ mod tests {
         // replace_all=true flowing through strategy 2 (strip-prefixes).
         let path = tmp_file("fn foo() {}\nfn foo() {}\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "L1:fn foo() {}",
-            "new_str": "fn bar() {}",
-            "replace_all": true
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "L1:fn foo() {}",
+                "new_str": "fn bar() {}",
+                "replace_all": true
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         let result = std::fs::read_to_string(&path).unwrap();
-        assert!(!result.contains("fn foo()"), "both occurrences should be replaced: {result}");
+        assert!(
+            !result.contains("fn foo()"),
+            "both occurrences should be replaced: {result}"
+        );
         assert_eq!(result.matches("fn bar()").count(), 2);
         let _ = std::fs::remove_file(&path);
     }
@@ -846,12 +934,13 @@ mod tests {
         // old_str ends with \n; the matched text in the file does too.
         let path = tmp_file("line one\nline two\nline three\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "line two\n",
-            "new_str": "line 2\n"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "line two\n",
+                "new_str": "line 2\n"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -865,14 +954,18 @@ mod tests {
         // old_str has no trailing \n.
         let path = tmp_file("alpha\nbeta\ngamma\n");
         let t = EditFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "old_str": "beta",
-            "new_str": "BETA"
-        })))
-        .await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "old_str": "beta",
+                "new_str": "BETA"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "alpha\nBETA\ngamma\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

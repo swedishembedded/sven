@@ -29,11 +29,11 @@ const APP_PROTO: &str = "/sven-p2p/1.0.0";
 #[behaviour(out_event = "P2pBehaviourEvent")]
 pub struct P2pBehaviour {
     pub relay_client: relay::client::Behaviour,
-    pub dcutr:        dcutr::Behaviour,
-    pub identify:     identify::Behaviour,
-    pub autonat:      autonat::v2::client::Behaviour<OsRng>,
-    pub ping:         ping::Behaviour,
-    pub task:         request_response::Behaviour<P2pCodec>,
+    pub dcutr: dcutr::Behaviour,
+    pub identify: identify::Behaviour,
+    pub autonat: autonat::v2::client::Behaviour<OsRng>,
+    pub ping: ping::Behaviour,
+    pub task: request_response::Behaviour<P2pCodec>,
 }
 
 /// Unified event type produced by `P2pBehaviour`.
@@ -45,33 +45,47 @@ pub enum P2pBehaviourEvent {
     Identify(identify::Event),
     Autonat(autonat::v2::client::Event),
     Ping(ping::Event),
-    Task(request_response::Event<
-        crate::protocol::types::P2pRequest,
-        crate::protocol::types::P2pResponse,
-    >),
+    Task(
+        request_response::Event<
+            crate::protocol::types::P2pRequest,
+            crate::protocol::types::P2pResponse,
+        >,
+    ),
 }
 
 impl From<relay::client::Event> for P2pBehaviourEvent {
-    fn from(e: relay::client::Event) -> Self { P2pBehaviourEvent::Relay(e) }
+    fn from(e: relay::client::Event) -> Self {
+        P2pBehaviourEvent::Relay(e)
+    }
 }
 impl From<dcutr::Event> for P2pBehaviourEvent {
-    fn from(e: dcutr::Event) -> Self { P2pBehaviourEvent::Dcutr(e) }
+    fn from(e: dcutr::Event) -> Self {
+        P2pBehaviourEvent::Dcutr(e)
+    }
 }
 impl From<identify::Event> for P2pBehaviourEvent {
-    fn from(e: identify::Event) -> Self { P2pBehaviourEvent::Identify(e) }
+    fn from(e: identify::Event) -> Self {
+        P2pBehaviourEvent::Identify(e)
+    }
 }
 impl From<autonat::v2::client::Event> for P2pBehaviourEvent {
-    fn from(e: autonat::v2::client::Event) -> Self { P2pBehaviourEvent::Autonat(e) }
+    fn from(e: autonat::v2::client::Event) -> Self {
+        P2pBehaviourEvent::Autonat(e)
+    }
 }
 impl From<ping::Event> for P2pBehaviourEvent {
-    fn from(e: ping::Event) -> Self { P2pBehaviourEvent::Ping(e) }
+    fn from(e: ping::Event) -> Self {
+        P2pBehaviourEvent::Ping(e)
+    }
 }
-impl From<
-    request_response::Event<
-        crate::protocol::types::P2pRequest,
-        crate::protocol::types::P2pResponse,
-    >,
-> for P2pBehaviourEvent {
+impl
+    From<
+        request_response::Event<
+            crate::protocol::types::P2pRequest,
+            crate::protocol::types::P2pResponse,
+        >,
+    > for P2pBehaviourEvent
+{
     fn from(
         e: request_response::Event<
             crate::protocol::types::P2pRequest,
@@ -88,15 +102,14 @@ impl P2pBehaviour {
         Self {
             relay_client,
             dcutr: dcutr::Behaviour::new(local_peer_id),
-            identify: identify::Behaviour::new(
-                identify::Config::new(APP_PROTO.into(), key.public()),
-            ),
+            identify: identify::Behaviour::new(identify::Config::new(
+                APP_PROTO.into(),
+                key.public(),
+            )),
             autonat: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
-            ping: ping::Behaviour::new(
-                ping::Config::new().with_interval(Duration::from_secs(15)),
-            ),
+            ping: ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(15))),
             task: request_response::Behaviour::with_codec(
-                P2pCodec::default(),
+                P2pCodec,
                 [(TASK_PROTO, request_response::ProtocolSupport::Full)],
                 request_response::Config::default(),
             ),
@@ -110,26 +123,32 @@ impl P2pBehaviour {
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "RelayBehaviourEvent")]
 pub struct RelayBehaviour {
-    pub relay:    relay::Behaviour,
+    pub relay: relay::Behaviour,
     pub identify: identify::Behaviour,
-    pub ping:     ping::Behaviour,
+    pub ping: ping::Behaviour,
 }
 
 #[derive(Debug)]
 pub enum RelayBehaviourEvent {
     Relay(relay::Event),
-    Identify(identify::Event),
+    Identify(Box<identify::Event>),
     Ping(ping::Event),
 }
 
 impl From<relay::Event> for RelayBehaviourEvent {
-    fn from(e: relay::Event) -> Self { RelayBehaviourEvent::Relay(e) }
+    fn from(e: relay::Event) -> Self {
+        RelayBehaviourEvent::Relay(e)
+    }
 }
 impl From<identify::Event> for RelayBehaviourEvent {
-    fn from(e: identify::Event) -> Self { RelayBehaviourEvent::Identify(e) }
+    fn from(e: identify::Event) -> Self {
+        RelayBehaviourEvent::Identify(Box::new(e))
+    }
 }
 impl From<ping::Event> for RelayBehaviourEvent {
-    fn from(e: ping::Event) -> Self { RelayBehaviourEvent::Ping(e) }
+    fn from(e: ping::Event) -> Self {
+        RelayBehaviourEvent::Ping(e)
+    }
 }
 
 impl RelayBehaviour {
@@ -137,12 +156,11 @@ impl RelayBehaviour {
         let local_peer_id = PeerId::from(key.public());
         Self {
             relay: relay::Behaviour::new(local_peer_id, relay::Config::default()),
-            identify: identify::Behaviour::new(
-                identify::Config::new(APP_PROTO.into(), key.public()),
-            ),
-            ping: ping::Behaviour::new(
-                ping::Config::new().with_interval(Duration::from_secs(15)),
-            ),
+            identify: identify::Behaviour::new(identify::Config::new(
+                APP_PROTO.into(),
+                key.public(),
+            )),
+            ping: ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(15))),
         }
     }
 }

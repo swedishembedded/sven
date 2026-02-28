@@ -64,21 +64,13 @@ pub enum ControlCommand {
     },
 
     /// Submit a text message to an active session.
-    SendInput {
-        session_id: Uuid,
-        text: String,
-    },
+    SendInput { session_id: Uuid, text: String },
 
     /// Cancel a running session gracefully.
-    CancelSession {
-        session_id: Uuid,
-    },
+    CancelSession { session_id: Uuid },
 
     /// Approve a tool call that is waiting for operator confirmation.
-    ApproveTool {
-        session_id: Uuid,
-        call_id: String,
-    },
+    ApproveTool { session_id: Uuid, call_id: String },
 
     /// Deny a tool call that is waiting for operator confirmation.
     DenyTool {
@@ -91,14 +83,10 @@ pub enum ControlCommand {
     ///
     /// The gateway will push `ControlEvent`s on the established stream until
     /// the operator unsubscribes or the connection closes.
-    Subscribe {
-        session_id: Uuid,
-    },
+    Subscribe { session_id: Uuid },
 
     /// Stop receiving events for a session.
-    Unsubscribe {
-        session_id: Uuid,
-    },
+    Unsubscribe { session_id: Uuid },
 
     /// Request the current list of sessions.
     ListSessions,
@@ -158,9 +146,7 @@ pub enum ControlEvent {
     },
 
     /// Response to a `ListSessions` command.
-    SessionList {
-        sessions: Vec<SessionInfo>,
-    },
+    SessionList { sessions: Vec<SessionInfo> },
 
     /// A recoverable error occurred (agent continues).
     AgentError {
@@ -169,10 +155,7 @@ pub enum ControlEvent {
     },
 
     /// Gateway-level error (not session-specific).
-    GatewayError {
-        code: u32,
-        message: String,
-    },
+    GatewayError { code: u32, message: String },
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -209,29 +192,25 @@ pub struct SessionInfo {
 /// Encode a `ControlCommand` to CBOR bytes.
 pub fn encode_command(cmd: &ControlCommand) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    ciborium::into_writer(cmd, &mut buf)
-        .map_err(|e| anyhow::anyhow!("CBOR encode: {e}"))?;
+    ciborium::into_writer(cmd, &mut buf).map_err(|e| anyhow::anyhow!("CBOR encode: {e}"))?;
     Ok(buf)
 }
 
 /// Decode a `ControlCommand` from CBOR bytes.
 pub fn decode_command(bytes: &[u8]) -> anyhow::Result<ControlCommand> {
-    ciborium::from_reader(bytes)
-        .map_err(|e| anyhow::anyhow!("CBOR decode: {e}"))
+    ciborium::from_reader(bytes).map_err(|e| anyhow::anyhow!("CBOR decode: {e}"))
 }
 
 /// Encode a `ControlEvent` to CBOR bytes.
 pub fn encode_event(ev: &ControlEvent) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    ciborium::into_writer(ev, &mut buf)
-        .map_err(|e| anyhow::anyhow!("CBOR encode: {e}"))?;
+    ciborium::into_writer(ev, &mut buf).map_err(|e| anyhow::anyhow!("CBOR encode: {e}"))?;
     Ok(buf)
 }
 
 /// Decode a `ControlEvent` from CBOR bytes.
 pub fn decode_event(bytes: &[u8]) -> anyhow::Result<ControlEvent> {
-    ciborium::from_reader(bytes)
-        .map_err(|e| anyhow::anyhow!("CBOR decode: {e}"))
+    ciborium::from_reader(bytes).map_err(|e| anyhow::anyhow!("CBOR decode: {e}"))
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

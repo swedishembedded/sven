@@ -127,7 +127,11 @@ impl QuestionModal {
     /// Activate the "Other" text field (enters text-edit mode).
     /// Saves the current `other_input` as a snapshot so Esc can restore it.
     pub fn activate_other(&mut self) {
-        let n_opts = self.questions.get(self.current_q).map(|q| q.options.len()).unwrap_or(0);
+        let n_opts = self
+            .questions
+            .get(self.current_q)
+            .map(|q| q.options.len())
+            .unwrap_or(0);
         self.focused_option = n_opts;
         self.other_selected = true;
         self.selected_options.clear();
@@ -145,7 +149,7 @@ impl QuestionModal {
 
     /// Cancel the current text edit: restore the snapshot and exit text-edit mode.
     pub fn cancel_other_edit(&mut self) {
-        self.other_input  = self.other_input_snapshot.clone();
+        self.other_input = self.other_input_snapshot.clone();
         self.other_cursor = self.other_input.len();
         self.other_selected = false;
     }
@@ -214,10 +218,10 @@ impl QuestionModal {
         self.answers.pop();
         let snap = self.snapshots.pop().unwrap();
         self.selected_options = snap.selected_options;
-        self.other_selected   = snap.other_selected;
-        self.other_input      = snap.other_input;
-        self.other_cursor     = snap.other_cursor;
-        self.focused_option   = snap.focused_option;
+        self.other_selected = snap.other_selected;
+        self.other_input = snap.other_input;
+        self.other_cursor = snap.other_cursor;
+        self.focused_option = snap.focused_option;
         true
     }
 
@@ -229,8 +233,8 @@ impl QuestionModal {
 
     /// Cancel and send a fallback message back to the agent.
     pub fn cancel(self) {
-        let _ = self.answer_tx.send(
-            "The user cancelled the question. Proceed with your best judgement.".into(),
-        );
+        let _ = self
+            .answer_tx
+            .send("The user cancelled the question. Proceed with your best judgement.".into());
     }
 }

@@ -1,11 +1,11 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
+#[cfg(unix)]
+use libc;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(unix)]
-use libc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -32,7 +32,9 @@ impl GdbConnectTool {
 
 #[async_trait]
 impl Tool for GdbConnectTool {
-    fn name(&self) -> &str { "gdb_connect" }
+    fn name(&self) -> &str {
+        "gdb_connect"
+    }
 
     fn description(&self) -> &str {
         "Spawn gdb-multiarch and connect it to a running GDB server. \
@@ -71,9 +73,13 @@ impl Tool for GdbConnectTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let mut state = self.state.lock().await;
@@ -86,7 +92,8 @@ impl Tool for GdbConnectTool {
         }
 
         // Resolve target address
-        let host = call.args
+        let host = call
+            .args
             .get("host")
             .and_then(|v| v.as_str())
             .unwrap_or("localhost")
@@ -96,7 +103,8 @@ impl Tool for GdbConnectTool {
             p as u16
         } else if let Some(addr) = &state.server_addr {
             // Parse port from "host:port"
-            addr.split(':').next_back()
+            addr.split(':')
+                .next_back()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(2331)
         } else {
@@ -104,12 +112,14 @@ impl Tool for GdbConnectTool {
         };
 
         let target_addr = format!("{host}:{port}");
-        let gdb_path = call.args
+        let gdb_path = call
+            .args
             .get("gdb_path")
             .and_then(|v| v.as_str())
             .unwrap_or(&self.cfg.gdb_path)
             .to_string();
-        let executable = call.args
+        let executable = call
+            .args
             .get("executable")
             .and_then(|v| v.as_str())
             .map(str::to_string);
@@ -138,8 +148,12 @@ impl Tool for GdbConnectTool {
         // We use `std::process::Command` (not tokio) so we can take ownership of
         // stdout and read it with a blocking-thread timeout — no async executor
         // involvement, no gdbmi internals to fight.
-        let probe_output = probe_server_connection(&gdb_path, &target_addr, &executable,
-            Duration::from_secs(self.cfg.command_timeout_secs));
+        let probe_output = probe_server_connection(
+            &gdb_path,
+            &target_addr,
+            &executable,
+            Duration::from_secs(self.cfg.command_timeout_secs),
+        );
 
         match probe_output {
             ProbeResult::Failed(output) => {
@@ -171,9 +185,7 @@ impl Tool for GdbConnectTool {
         // connection as -ex makes GDB emit *stopped before the first (gdb)
         // prompt, which gdbmi::await_ready() detects correctly.
         let mut cmd = tokio::process::Command::new(&gdb_path);
-        cmd.arg("--interpreter=mi3")
-            .arg("--quiet")
-            .arg("-nx");
+        cmd.arg("--interpreter=mi3").arg("--quiet").arg("-nx");
 
         if let Some(exe) = &executable {
             cmd.arg(exe);
@@ -187,17 +199,24 @@ impl Tool for GdbConnectTool {
         // Detach from the controlling terminal so gdb cannot open /dev/tty
         // and corrupt TUI state.
         #[cfg(unix)]
-        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
 
         let child = match cmd.spawn() {
             Ok(c) => c,
-            Err(e) => return ToolOutput::err(
-                &call.id,
-                format!(
-                    "Failed to spawn {gdb_path} (async client): {e}\n\
+            Err(e) => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Failed to spawn {gdb_path} (async client): {e}\n\
                      Is gdb-multiarch installed? Try: apt-get install gdb-multiarch"
-                ),
-            ),
+                    ),
+                )
+            }
         };
 
         // Capture PID before handing the child to gdbmi, since gdbmi does not
@@ -274,9 +293,7 @@ fn probe_server_connection(
     use std::thread;
 
     let mut cmd = Command::new(gdb_path);
-    cmd.arg("--interpreter=mi3")
-        .arg("--quiet")
-        .arg("-nx");
+    cmd.arg("--interpreter=mi3").arg("--quiet").arg("-nx");
 
     if let Some(exe) = executable {
         cmd.arg(exe);
@@ -358,7 +375,10 @@ fn probe_server_connection(
     if success {
         ProbeResult::Connected(output)
     } else if lines.is_empty() {
-        ProbeResult::Failed(format!("No output from GDB within {:.0}s", timeout.as_secs_f32()))
+        ProbeResult::Failed(format!(
+            "No output from GDB within {:.0}s",
+            timeout.as_secs_f32()
+        ))
     } else {
         ProbeResult::Failed(output)
     }
@@ -397,7 +417,8 @@ fn connection_error_hint(output: &str, target_addr: &str) -> String {
              → Call gdb_start_server first, or check that the GDB server is running.\n\
              → Verify with: ss -tln | grep {port}"
         )
-    } else if lower.contains("timed out") || lower.contains("timeout") || output.contains("within") {
+    } else if lower.contains("timed out") || lower.contains("timeout") || output.contains("within")
+    {
         format!(
             "Hint: Connection to {target_addr} timed out.\n\
              → The GDB server may still be initialising — retry gdb_connect in a moment.\n\
@@ -424,7 +445,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_connect".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_connect".into(),
+            args,
+        }
     }
 
     #[test]
@@ -437,10 +462,13 @@ mod tests {
     #[tokio::test]
     async fn fails_when_gdb_binary_not_found() {
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
-        let t = GdbConnectTool::new(state, GdbConfig {
-            gdb_path: "/nonexistent/gdb-multiarch".into(),
-            ..GdbConfig::default()
-        });
+        let t = GdbConnectTool::new(
+            state,
+            GdbConfig {
+                gdb_path: "/nonexistent/gdb-multiarch".into(),
+                ..GdbConfig::default()
+            },
+        );
         let out = t.execute(&call(json!({"port": 9999}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("Failed to spawn"));
@@ -450,10 +478,12 @@ mod tests {
     async fn fails_when_elf_not_found() {
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbConnectTool::new(state, GdbConfig::default());
-        let out = t.execute(&call(json!({
-            "port": 2331,
-            "executable": "/nonexistent/firmware.elf"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "port": 2331,
+                "executable": "/nonexistent/firmware.elf"
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("ELF file not found"));
     }
@@ -482,10 +512,13 @@ mod tests {
     async fn fails_gracefully_when_nothing_listening() {
         // Nothing listening on port 19998 — probe returns quickly with connection refused.
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
-        let t = GdbConnectTool::new(state, GdbConfig {
-            command_timeout_secs: 5,
-            ..GdbConfig::default()
-        });
+        let t = GdbConnectTool::new(
+            state,
+            GdbConfig {
+                command_timeout_secs: 5,
+                ..GdbConfig::default()
+            },
+        );
         let out = t.execute(&call(json!({"port": 19998}))).await;
         assert!(out.is_error, "expected failure when nothing is listening");
         let c = out.content.to_lowercase();
@@ -508,9 +541,7 @@ mod tests {
 
     #[test]
     fn decode_mi_output_strips_ampersand_prefix() {
-        let lines = vec![
-            r#"&"Connection refused.\n""#.to_string(),
-        ];
+        let lines = vec![r#"&"Connection refused.\n""#.to_string()];
         let out = decode_mi_output(&lines);
         assert!(out.contains("Connection refused"), "got: {out}");
     }
@@ -535,6 +566,9 @@ mod tests {
             Duration::from_secs(5),
         );
         // Should fail because nothing is listening
-        assert!(matches!(result, ProbeResult::Failed(_) | ProbeResult::SpawnError(_)));
+        assert!(matches!(
+            result,
+            ProbeResult::Failed(_) | ProbeResult::SpawnError(_)
+        ));
     }
 }

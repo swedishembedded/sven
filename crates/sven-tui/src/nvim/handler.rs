@@ -10,7 +10,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use nvim_rs::{compat::tokio::Compat, Handler, Neovim};
 use rmpv::Value;
-use tokio::{process::ChildStdin, sync::{Mutex, Notify}};
+use tokio::{
+    process::ChildStdin,
+    sync::{Mutex, Notify},
+};
 use tracing::debug;
 
 use super::grid::{Cell, Grid, HlAttr};
@@ -39,17 +42,24 @@ impl NvimHandler {
         submit_notify: Arc<Notify>,
         quit_notify: Arc<Notify>,
     ) -> Self {
-        Self { grid, hl_attrs, cursor_pos, flush_notify, submit_notify, quit_notify }
+        Self {
+            grid,
+            hl_attrs,
+            cursor_pos,
+            flush_notify,
+            submit_notify,
+            quit_notify,
+        }
     }
 
     async fn handle_redraw_event(&self, event_name: &str, args: &[Value]) {
         match event_name {
-            "grid_resize"      => self.handle_grid_resize(args).await,
-            "grid_clear"       => self.handle_grid_clear(args).await,
-            "grid_line"        => self.handle_grid_line(args).await,
-            "grid_scroll"      => self.handle_grid_scroll(args).await,
+            "grid_resize" => self.handle_grid_resize(args).await,
+            "grid_clear" => self.handle_grid_clear(args).await,
+            "grid_line" => self.handle_grid_line(args).await,
+            "grid_scroll" => self.handle_grid_scroll(args).await,
             "grid_cursor_goto" => self.handle_grid_cursor_goto(args).await,
-            "hl_attr_define"   => self.handle_hl_attr_define(args).await,
+            "hl_attr_define" => self.handle_hl_attr_define(args).await,
             "flush" => {
                 debug!("Redraw flush — notifying TUI");
                 self.flush_notify.notify_one();
@@ -68,7 +78,7 @@ impl NvimHandler {
                         Some(Value::Integer(height)),
                     ) = (params.first(), params.get(1), params.get(2))
                     {
-                        let width  = width.as_u64().unwrap_or(80)  as usize;
+                        let width = width.as_u64().unwrap_or(80) as usize;
                         let height = height.as_u64().unwrap_or(24) as usize;
                         debug!("Grid resize: {}x{}", width, height);
                         let mut grid = self.grid.lock().await;
@@ -90,11 +100,11 @@ impl NvimHandler {
         for params in args {
             if let Value::Array(p) = params {
                 if p.len() >= 6 {
-                    let top   = p.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let bot   = p.get(2).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let left  = p.get(3).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let top = p.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let bot = p.get(2).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let left = p.get(3).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     let right = p.get(4).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let rows  = p.get(5).and_then(|v| v.as_i64()).unwrap_or(0);
+                    let rows = p.get(5).and_then(|v| v.as_i64()).unwrap_or(0);
                     debug!("grid_scroll top={top} bot={bot} rows={rows}");
                     let mut grid = self.grid.lock().await;
                     grid.scroll(top, bot, left, right, rows);
@@ -107,7 +117,7 @@ impl NvimHandler {
         for params_val in args {
             if let Value::Array(params) = params_val {
                 if params.len() >= 4 {
-                    let row       = params.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let row = params.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     let col_start = params.get(2).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     if let Some(Value::Array(cells)) = params.get(3) {
                         let mut grid = self.grid.lock().await;
@@ -120,15 +130,22 @@ impl NvimHandler {
                                     if let Some(Value::Integer(hl_id)) = cell_parts.get(1) {
                                         current_attr = hl_id.as_u64().unwrap_or(0);
                                     }
-                                    let repeat = if let Some(Value::Integer(r)) = cell_parts.get(2) {
+                                    let repeat = if let Some(Value::Integer(r)) = cell_parts.get(2)
+                                    {
                                         r.as_u64().unwrap_or(1) as usize
-                                    } else { 1 };
+                                    } else {
+                                        1
+                                    };
                                     for _ in 0..repeat {
                                         if col < grid.width {
-                                            grid.set_cell(row, col, Cell {
-                                                text: text_str.to_string(),
-                                                attr_id: current_attr,
-                                            });
+                                            grid.set_cell(
+                                                row,
+                                                col,
+                                                Cell {
+                                                    text: text_str.to_string(),
+                                                    attr_id: current_attr,
+                                                },
+                                            );
                                             col += 1;
                                         }
                                     }
@@ -165,12 +182,8 @@ impl NvimHandler {
         for params_val in args {
             if let Value::Array(params) = params_val {
                 if params.len() >= 4 {
-                    if let (
-                        Some(Value::Integer(id)),
-                        Some(Value::Map(rgb_attrs)),
-                        _,
-                        _,
-                    ) = (params.first(), params.get(1), params.get(2), params.get(3))
+                    if let (Some(Value::Integer(id)), Some(Value::Map(rgb_attrs)), _, _) =
+                        (params.first(), params.get(1), params.get(2), params.get(3))
                     {
                         let attr_id = id.as_u64().unwrap_or(0);
                         let mut attr_map = HashMap::new();
@@ -204,12 +217,7 @@ impl Handler for NvimHandler {
         Ok(Value::from("ok"))
     }
 
-    async fn handle_notify(
-        &self,
-        name: String,
-        args: Vec<Value>,
-        _neovim: Neovim<Self::Writer>,
-    ) {
+    async fn handle_notify(&self, name: String, args: Vec<Value>, _neovim: Neovim<Self::Writer>) {
         if name == "redraw" {
             for event_batch in args {
                 if let Value::Array(events) = event_batch {
@@ -249,27 +257,34 @@ mod tests {
         Arc<Mutex<HashMap<u64, HlAttr>>>,
         Arc<Mutex<(u16, u16)>>,
     ) {
-        let grid          = Arc::new(Mutex::new(Grid::new(80, 24)));
-        let hl_attrs      = Arc::new(Mutex::new(HashMap::new()));
-        let cursor        = Arc::new(Mutex::new((0u16, 0u16)));
-        let flush_notify  = Arc::new(Notify::new());
+        let grid = Arc::new(Mutex::new(Grid::new(80, 24)));
+        let hl_attrs = Arc::new(Mutex::new(HashMap::new()));
+        let cursor = Arc::new(Mutex::new((0u16, 0u16)));
+        let flush_notify = Arc::new(Notify::new());
         let submit_notify = Arc::new(Notify::new());
-        let quit_notify   = Arc::new(Notify::new());
+        let quit_notify = Arc::new(Notify::new());
         let handler = NvimHandler::new(
-            grid.clone(), hl_attrs.clone(), cursor.clone(),
-            flush_notify, submit_notify, quit_notify,
+            grid.clone(),
+            hl_attrs.clone(),
+            cursor.clone(),
+            flush_notify,
+            submit_notify,
+            quit_notify,
         );
         (handler, grid, hl_attrs, cursor)
     }
 
     fn grid_line_event(row: u64, col: u64, cells: &[(&str, u64, u64)]) -> Value {
-        let cell_values: Vec<Value> = cells.iter().map(|(text, hl, repeat)| {
-            Value::Array(vec![
-                Value::String((*text).into()),
-                Value::Integer((*hl).into()),
-                Value::Integer((*repeat).into()),
-            ])
-        }).collect();
+        let cell_values: Vec<Value> = cells
+            .iter()
+            .map(|(text, hl, repeat)| {
+                Value::Array(vec![
+                    Value::String((*text).into()),
+                    Value::Integer((*hl).into()),
+                    Value::Integer((*repeat).into()),
+                ])
+            })
+            .collect();
         Value::Array(vec![
             Value::Integer(1.into()),
             Value::Integer(row.into()),
@@ -296,7 +311,9 @@ mod tests {
         let event = grid_line_event(0, 0, &[("X", 0, 4)]);
         handler.handle_grid_line(&[event]).await;
         let g = grid.lock().await;
-        for i in 0..4 { assert_eq!(g.cells[0][i].text, "X", "col {i}"); }
+        for i in 0..4 {
+            assert_eq!(g.cells[0][i].text, "X", "col {i}");
+        }
         assert_eq!(g.cells[0][4].text, " ", "col 4 must be untouched");
     }
 
@@ -332,7 +349,7 @@ mod tests {
         ]);
         handler.handle_grid_cursor_goto(&[params]).await;
         let pos = cursor.lock().await;
-        assert_eq!(pos.0, 7,  "row stored");
+        assert_eq!(pos.0, 7, "row stored");
         assert_eq!(pos.1, 12, "col stored");
     }
 
@@ -346,17 +363,27 @@ mod tests {
         ]);
         handler.handle_grid_resize(&[params]).await;
         let g = grid.lock().await;
-        assert_eq!(g.width,  120);
+        assert_eq!(g.width, 120);
         assert_eq!(g.height, 40);
     }
 
     #[tokio::test]
     async fn handler_grid_clear_resets_previously_written_cells() {
         let (handler, grid, _, _) = make_handler();
-        { let mut g = grid.lock().await; g.set_cell(0, 0, Cell { text: "Q".into(), attr_id: 3 }); }
+        {
+            let mut g = grid.lock().await;
+            g.set_cell(
+                0,
+                0,
+                Cell {
+                    text: "Q".into(),
+                    attr_id: 3,
+                },
+            );
+        }
         handler.handle_grid_clear(&[]).await;
         let g = grid.lock().await;
-        assert_eq!(g.cells[0][0].text,    " ");
+        assert_eq!(g.cells[0][0].text, " ");
         assert_eq!(g.cells[0][0].attr_id, 0);
     }
 
@@ -365,12 +392,30 @@ mod tests {
         let (handler, grid, _, _) = make_handler();
         {
             let mut g = grid.lock().await;
-            g.set_cell(0, 0, Cell { text: "A".into(), attr_id: 0 });
-            g.set_cell(2, 0, Cell { text: "B".into(), attr_id: 0 });
+            g.set_cell(
+                0,
+                0,
+                Cell {
+                    text: "A".into(),
+                    attr_id: 0,
+                },
+            );
+            g.set_cell(
+                2,
+                0,
+                Cell {
+                    text: "B".into(),
+                    attr_id: 0,
+                },
+            );
         }
         let params = Value::Array(vec![
-            Value::Integer(1.into()), Value::Integer(0.into()), Value::Integer(3.into()),
-            Value::Integer(0.into()), Value::Integer(80.into()), Value::Integer(2.into()),
+            Value::Integer(1.into()),
+            Value::Integer(0.into()),
+            Value::Integer(3.into()),
+            Value::Integer(0.into()),
+            Value::Integer(80.into()),
+            Value::Integer(2.into()),
             Value::Integer(0.into()),
         ]);
         handler.handle_grid_scroll(&[params]).await;
@@ -384,15 +429,21 @@ mod tests {
     async fn handler_hl_attr_define_stores_colour_and_modifiers() {
         let (handler, _, hl_attrs, _) = make_handler();
         let rgb_map = Value::Map(vec![
-            (Value::String("foreground".into()), Value::Integer(0xFF0000u32.into())),
-            (Value::String("bold".into()),       Value::Boolean(true)),
+            (
+                Value::String("foreground".into()),
+                Value::Integer(0xFF0000u32.into()),
+            ),
+            (Value::String("bold".into()), Value::Boolean(true)),
         ]);
         let params = Value::Array(vec![
-            Value::Integer(42.into()), rgb_map, Value::Map(vec![]), Value::Array(vec![]),
+            Value::Integer(42.into()),
+            rgb_map,
+            Value::Map(vec![]),
+            Value::Array(vec![]),
         ]);
         handler.handle_hl_attr_define(&[params]).await;
         let attrs = hl_attrs.lock().await;
-        let attr  = attrs.get(&42).expect("attr 42 must be stored");
+        let attr = attrs.get(&42).expect("attr 42 must be stored");
         assert_eq!(attr.foreground, Some(Color::Rgb(0xFF, 0x00, 0x00)));
         assert!(attr.bold);
     }

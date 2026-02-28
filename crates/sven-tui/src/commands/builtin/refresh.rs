@@ -10,13 +10,17 @@ use crate::commands::{
 pub struct RefreshCommand;
 
 impl SlashCommand for RefreshCommand {
-    fn name(&self) -> &str { "refresh" }
+    fn name(&self) -> &str {
+        "refresh"
+    }
 
     fn description(&self) -> &str {
         "Re-scan skill directories and update slash commands"
     }
 
-    fn arguments(&self) -> Vec<CommandArgument> { vec![] }
+    fn arguments(&self) -> Vec<CommandArgument> {
+        vec![]
+    }
 
     fn complete(
         &self,
@@ -43,7 +47,10 @@ mod tests {
     fn execute_returns_refresh_skills_action() {
         let result = RefreshCommand.execute(vec![]);
         assert!(
-            matches!(result.immediate_action, Some(ImmediateAction::RefreshSkills)),
+            matches!(
+                result.immediate_action,
+                Some(ImmediateAction::RefreshSkills)
+            ),
             "refresh must return ImmediateAction::RefreshSkills"
         );
     }

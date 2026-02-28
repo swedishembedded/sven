@@ -67,10 +67,7 @@ fn build_description(skills: &[SkillInfo]) -> String {
 fn direct_children<'a>(parent: &SkillInfo, all: &'a [SkillInfo]) -> Vec<&'a SkillInfo> {
     let prefix = format!("{}/", parent.command);
     all.iter()
-        .filter(|s| {
-            s.command.starts_with(&prefix)
-                && !s.command[prefix.len()..].contains('/')
-        })
+        .filter(|s| s.command.starts_with(&prefix) && !s.command[prefix.len()..].contains('/'))
         .collect()
 }
 
@@ -89,8 +86,10 @@ fn build_sub_skills_hint(parent: &SkillInfo, all: &[SkillInfo]) -> String {
         .iter()
         .map(|child| {
             let one_liner = child.description.lines().next().unwrap_or("").trim();
-            format!("  <sub_skill command=\"{}\" name=\"{}\">{}</sub_skill>",
-                child.command, child.name, one_liner)
+            format!(
+                "  <sub_skill command=\"{}\" name=\"{}\">{}</sub_skill>",
+                child.command, child.name, one_liner
+            )
         })
         .collect();
 
@@ -125,15 +124,22 @@ impl LoadSkillTool {
     /// Create a new `LoadSkillTool` from a [`SharedSkills`] instance.
     pub fn new(skills: SharedSkills) -> Self {
         let description = build_description(&skills.get());
-        Self { skills, description }
+        Self {
+            skills,
+            description,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for LoadSkillTool {
-    fn name(&self) -> &str { "load_skill" }
+    fn name(&self) -> &str {
+        "load_skill"
+    }
 
-    fn description(&self) -> &str { &self.description }
+    fn description(&self) -> &str {
+        &self.description
+    }
 
     fn parameters_schema(&self) -> Value {
         json!({
@@ -149,7 +155,9 @@ impl Tool for LoadSkillTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("name").and_then(|v| v.as_str()) {
@@ -175,7 +183,11 @@ impl Tool for LoadSkillTool {
                     &call.id,
                     format!(
                         "skill \"{command}\" not found. Available skills: {}",
-                        if available.is_empty() { "(none)" } else { &available }
+                        if available.is_empty() {
+                            "(none)"
+                        } else {
+                            &available
+                        }
                     ),
                 );
             }
@@ -244,7 +256,9 @@ fn collect_files_recursive(
     exclude_file: &std::path::Path,
     skip_skill_subdirs: bool,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path == exclude_file {
@@ -269,8 +283,8 @@ mod tests {
     use super::*;
     use crate::tool::ToolCall;
     use serde_json::json;
-    use sven_runtime::{SharedSkills, SkillInfo, SvenSkillMeta};
     use std::path::PathBuf;
+    use sven_runtime::{SharedSkills, SkillInfo, SvenSkillMeta};
 
     fn make_skill(command: &str, description: &str, content: &str) -> SkillInfo {
         // Name falls back to the last segment of the command.
@@ -316,11 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_nested_skill_by_command_path() {
-        let tool = make_tool(vec![make_skill(
-            "sven/plan",
-            "Planning phase.",
-            "## Plan",
-        )]);
+        let tool = make_tool(vec![make_skill("sven/plan", "Planning phase.", "## Plan")]);
         let out = tool.execute(&call("sven/plan")).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("command=\"sven/plan\""));
@@ -352,7 +362,10 @@ mod tests {
     #[test]
     fn description_lists_non_user_invocable_skills() {
         let mut skill = make_skill("helper", "Help skill.", "body");
-        skill.sven_meta = Some(SvenSkillMeta { user_invocable_only: false, ..Default::default() });
+        skill.sven_meta = Some(SvenSkillMeta {
+            user_invocable_only: false,
+            ..Default::default()
+        });
         let tool = make_tool(vec![skill]);
         assert!(tool.description().contains("helper"));
     }
@@ -360,7 +373,10 @@ mod tests {
     #[test]
     fn description_omits_user_invocable_only_skills() {
         let mut skill = make_skill("private", "Private skill.", "body");
-        skill.sven_meta = Some(SvenSkillMeta { user_invocable_only: true, ..Default::default() });
+        skill.sven_meta = Some(SvenSkillMeta {
+            user_invocable_only: true,
+            ..Default::default()
+        });
         let tool = make_tool(vec![skill]);
         assert!(!tool.description().contains("private"));
     }
@@ -406,10 +422,14 @@ mod tests {
         // Child command referenced in the hint block
         assert!(out.content.contains("sven/plan"), "child command in hint");
         // The navigation hint mentions calling load_skill
-        assert!(out.content.contains("load_skill"), "hint mentions load_skill");
+        assert!(
+            out.content.contains("load_skill"),
+            "hint mentions load_skill"
+        );
         // Child full body must NOT appear
         assert!(
-            !out.content.contains("Planning detail — this body must NOT appear"),
+            !out.content
+                .contains("Planning detail — this body must NOT appear"),
             "child body must not be embedded"
         );
     }
@@ -417,32 +437,51 @@ mod tests {
     #[tokio::test]
     async fn load_parent_hint_uses_one_line_description() {
         let parent = make_skill("sven", "Orchestrator.", "Parent body.");
-        let child = make_skill("sven/plan", "Planning step — call this when planning.", "Full plan body.");
+        let child = make_skill(
+            "sven/plan",
+            "Planning step — call this when planning.",
+            "Full plan body.",
+        );
         let tool = make_tool(vec![parent, child]);
 
         let out = tool.execute(&call("sven")).await;
         assert!(!out.is_error);
         // The one-liner description should appear in the hint
-        assert!(out.content.contains("Planning step"), "description one-liner in hint");
+        assert!(
+            out.content.contains("Planning step"),
+            "description one-liner in hint"
+        );
         // Full body must not appear
-        assert!(!out.content.contains("Full plan body."), "full body must not be embedded");
+        assert!(
+            !out.content.contains("Full plan body."),
+            "full body must not be embedded"
+        );
     }
 
     #[tokio::test]
     async fn load_parent_hint_excludes_grandchildren() {
         // Grandchildren are not direct children — they should NOT appear in the
         // parent's hint.  They appear in the child's hint instead.
-        let parent   = make_skill("sven", "Orchestrator.", "Parent body.");
-        let child    = make_skill("sven/implement", "Impl phase.", "Impl body.");
+        let parent = make_skill("sven", "Orchestrator.", "Parent body.");
+        let child = make_skill("sven/implement", "Impl phase.", "Impl body.");
         let grandchild = make_skill("sven/implement/research", "Research.", "Research body.");
         let tool = make_tool(vec![parent, child, grandchild]);
 
         let parent_out = tool.execute(&call("sven")).await;
-        assert!(!parent_out.content.contains("research"), "grandchild should not appear in parent hint");
-        assert!(parent_out.content.contains("sven/implement"), "direct child in parent hint");
+        assert!(
+            !parent_out.content.contains("research"),
+            "grandchild should not appear in parent hint"
+        );
+        assert!(
+            parent_out.content.contains("sven/implement"),
+            "direct child in parent hint"
+        );
 
         let child_out = tool.execute(&call("sven/implement")).await;
-        assert!(child_out.content.contains("research"), "grandchild in child hint");
+        assert!(
+            child_out.content.contains("research"),
+            "grandchild in child hint"
+        );
     }
 
     #[tokio::test]
@@ -450,7 +489,10 @@ mod tests {
         let tool = make_tool(vec![make_skill("simple", "Simple.", "Just content.")]);
         let out = tool.execute(&call("simple")).await;
         assert!(!out.is_error);
-        assert!(!out.content.contains("<sub_skills>"), "no sub_skills block without children");
+        assert!(
+            !out.content.contains("<sub_skills>"),
+            "no sub_skills block without children"
+        );
     }
 
     #[tokio::test]
@@ -461,9 +503,21 @@ mod tests {
             "Full workflow.",
             "## Workflow\n\nPlan: load_skill('sven/plan'). Impl: load_skill('sven/implement').",
         );
-        let plan = make_skill("sven/plan", "Planning phase.", "## Plan body — must not appear");
-        let imp  = make_skill("sven/implement", "Implementation phase.", "## Impl body — must not appear");
-        let rev  = make_skill("sven/review", "Review phase.", "## Review body — must not appear");
+        let plan = make_skill(
+            "sven/plan",
+            "Planning phase.",
+            "## Plan body — must not appear",
+        );
+        let imp = make_skill(
+            "sven/implement",
+            "Implementation phase.",
+            "## Impl body — must not appear",
+        );
+        let rev = make_skill(
+            "sven/review",
+            "Review phase.",
+            "## Review body — must not appear",
+        );
         let tool = make_tool(vec![parent, plan, imp, rev]);
 
         let out = tool.execute(&call("sven")).await;
@@ -477,13 +531,19 @@ mod tests {
         assert!(out.content.contains("Implementation phase."));
         assert!(out.content.contains("Review phase."));
         // Full bodies must NOT appear
-        assert!(!out.content.contains("must not appear"), "no full child bodies embedded");
+        assert!(
+            !out.content.contains("must not appear"),
+            "no full child bodies embedded"
+        );
     }
 
     #[tokio::test]
     async fn description_includes_command_field() {
         let tool = make_tool(vec![make_skill("sven/plan", "Plan phase.", "body")]);
         let desc = tool.description();
-        assert!(desc.contains("<command>sven/plan</command>"), "description lists command path");
+        assert!(
+            desc.contains("<command>sven/plan</command>"),
+            "description lists command path"
+        );
     }
 }

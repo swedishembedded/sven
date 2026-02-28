@@ -11,12 +11,12 @@ use crate::{
     app::App,
     chat::{
         markdown::{
-            apply_bar_and_dim, collapsed_preview, format_conversation,
-            parse_markdown_to_messages, segment_bar_style, segment_to_markdown,
+            apply_bar_and_dim, collapsed_preview, format_conversation, parse_markdown_to_messages,
+            segment_bar_style, segment_to_markdown,
         },
         segment::{
-            segment_at_line, segment_editable_text, segment_is_removable,
-            segment_is_rerunnable, ChatSegment,
+            segment_at_line, segment_editable_text, segment_is_removable, segment_is_rerunnable,
+            ChatSegment,
         },
     },
     markdown::render_markdown,
@@ -28,11 +28,11 @@ impl App {
     /// Rebuild `chat_lines` and `segment_line_ranges` from `chat_segments` plus
     /// the streaming buffer.
     pub(crate) fn build_display_from_segments(&mut self) {
-        let mut all_lines    = Vec::new();
-        let mut ranges       = Vec::new();
-        let mut edit_labels:   std::collections::HashSet<usize> = Default::default();
+        let mut all_lines = Vec::new();
+        let mut ranges = Vec::new();
+        let mut edit_labels: std::collections::HashSet<usize> = Default::default();
         let mut remove_labels: std::collections::HashSet<usize> = Default::default();
-        let mut rerun_labels:  std::collections::HashSet<usize> = Default::default();
+        let mut rerun_labels: std::collections::HashSet<usize> = Default::default();
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let bar_char = if ascii { "| " } else { "▌ " };
@@ -85,13 +85,21 @@ impl App {
         }
         if !self.streaming_assistant_buffer.is_empty() {
             let (s, bar_color) = if self.streaming_is_thinking {
-                let prefix = if self.chat_segments.is_empty() { "💭 **Thinking…**\n" } else { "\n💭 **Thinking…**\n" };
+                let prefix = if self.chat_segments.is_empty() {
+                    "💭 **Thinking…**\n"
+                } else {
+                    "\n💭 **Thinking…**\n"
+                };
                 (
                     format!("{}{}", prefix, self.streaming_assistant_buffer),
                     Some(Style::default().fg(Color::Magenta)),
                 )
             } else {
-                let prefix = if self.chat_segments.is_empty() { "**Agent:** " } else { "\n**Agent:** " };
+                let prefix = if self.chat_segments.is_empty() {
+                    "**Agent:** "
+                } else {
+                    "\n**Agent:** "
+                };
                 (
                     format!("{}{}", prefix, self.streaming_assistant_buffer),
                     Some(Style::default().fg(Color::Blue)),
@@ -103,9 +111,9 @@ impl App {
         }
         self.chat_lines = all_lines;
         self.segment_line_ranges = ranges;
-        self.edit_label_line_indices   = edit_labels;
+        self.edit_label_line_indices = edit_labels;
         self.remove_label_line_indices = remove_labels;
-        self.rerun_label_line_indices  = rerun_labels;
+        self.rerun_label_line_indices = rerun_labels;
         self.recompute_focused_segment();
     }
 
@@ -170,8 +178,7 @@ impl App {
 
     pub(crate) fn scroll_to_bottom(&mut self) {
         if self.nvim_bridge.is_none() && self.auto_scroll {
-            self.scroll_offset =
-                (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
+            self.scroll_offset = (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
         }
         self.recompute_focused_segment();
     }
@@ -181,7 +188,9 @@ impl App {
     pub(crate) fn adjust_input_scroll(&mut self) {
         let w = self.last_input_inner_width as usize;
         let h = self.last_input_inner_height as usize;
-        if w == 0 || h == 0 { return; }
+        if w == 0 || h == 0 {
+            return;
+        }
         let wrap = crate::input_wrap::wrap_content(&self.input_buffer, w, self.input_cursor);
         crate::input_wrap::adjust_scroll(wrap.cursor_row, h, &mut self.input_scroll_offset);
     }
@@ -191,7 +200,9 @@ impl App {
     pub(crate) fn adjust_edit_scroll(&mut self) {
         let w = self.last_input_inner_width as usize;
         let h = self.last_input_inner_height as usize;
-        if w == 0 || h == 0 { return; }
+        if w == 0 || h == 0 {
+            return;
+        }
         let wrap = crate::input_wrap::wrap_content(&self.edit_buffer, w, self.edit_cursor);
         crate::input_wrap::adjust_scroll(wrap.cursor_row, h, &mut self.edit_scroll_offset);
     }
@@ -204,20 +215,23 @@ impl App {
             .chat_segments
             .iter()
             .filter_map(|seg| match seg {
-                ChatSegment::Message(m) => {
-                    Some(sven_input::ConversationRecord::Message(m.clone()))
-                }
+                ChatSegment::Message(m) => Some(sven_input::ConversationRecord::Message(m.clone())),
                 ChatSegment::Thinking { content } => {
-                    Some(sven_input::ConversationRecord::Thinking { content: content.clone() })
-                }
-                ChatSegment::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
-                    Some(sven_input::ConversationRecord::ContextCompacted {
-                        tokens_before: *tokens_before,
-                        tokens_after: *tokens_after,
-                        strategy: Some(strategy.to_string()),
-                        turn: Some(*turn),
+                    Some(sven_input::ConversationRecord::Thinking {
+                        content: content.clone(),
                     })
                 }
+                ChatSegment::ContextCompacted {
+                    tokens_before,
+                    tokens_after,
+                    strategy,
+                    turn,
+                } => Some(sven_input::ConversationRecord::ContextCompacted {
+                    tokens_before: *tokens_before,
+                    tokens_after: *tokens_after,
+                    strategy: Some(strategy.to_string()),
+                    turn: Some(*turn),
+                }),
                 ChatSegment::Error(_) => None,
             })
             .collect();
@@ -252,15 +266,13 @@ impl App {
 
         let path_opt = self.history_path.clone();
         match path_opt {
-            None => {
-                match sven_input::history::save(&messages) {
-                    Ok(path) => {
-                        debug!(path = %path.display(), "conversation saved to history");
-                        self.history_path = Some(path);
-                    }
-                    Err(e) => debug!("failed to save conversation to history: {e}"),
+            None => match sven_input::history::save(&messages) {
+                Ok(path) => {
+                    debug!(path = %path.display(), "conversation saved to history");
+                    self.history_path = Some(path);
                 }
-            }
+                Err(e) => debug!("failed to save conversation to history: {e}"),
+            },
             Some(path) => {
                 tokio::spawn(async move {
                     if let Err(e) = sven_input::history::save_to(&path, &messages) {
@@ -291,8 +303,13 @@ impl App {
                         .collect();
                     self.tool_args_cache.clear();
                     for m in &messages {
-                        if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
-                            self.tool_args_cache.insert(tool_call_id.clone(), function.name.clone());
+                        if let MessageContent::ToolCall {
+                            tool_call_id,
+                            function,
+                        } = &m.content
+                        {
+                            self.tool_args_cache
+                                .insert(tool_call_id.clone(), function.name.clone());
                         }
                     }
                 }

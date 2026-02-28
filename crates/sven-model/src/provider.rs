@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
 
-use crate::{catalog::{InputModality, ModelCatalogEntry}, CompletionRequest, ResponseEvent};
+use crate::{
+    catalog::{InputModality, ModelCatalogEntry},
+    CompletionRequest, ResponseEvent,
+};
 
 pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>> + Send>>;
 
@@ -38,16 +41,14 @@ pub trait ModelProvider: Send + Sync {
     ///
     /// Reads from the static catalog; returns `None` if the model is unknown.
     fn catalog_max_output_tokens(&self) -> Option<u32> {
-        crate::catalog::lookup(self.name(), self.model_name())
-            .map(|e| e.max_output_tokens)
+        crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.max_output_tokens)
     }
 
     /// Context window size for this provider/model combination.
     ///
     /// Reads from the static catalog; returns `None` if the model is unknown.
     fn catalog_context_window(&self) -> Option<u32> {
-        crate::catalog::lookup(self.name(), self.model_name())
-            .map(|e| e.context_window)
+        crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.context_window)
     }
 
     /// Input modalities supported by this provider/model combination.

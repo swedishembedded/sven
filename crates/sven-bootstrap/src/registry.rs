@@ -14,15 +14,12 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
-    AskQuestionTool, ApplyPatchTool, DeleteFileTool, EditFileTool,
-    FsTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool, LoadSkillTool,
-    ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
-    ShellTool, SwitchModeTool, TodoWriteTool, UpdateMemoryTool,
+    events::ToolEvent, ApplyPatchTool, AskQuestionTool, DeleteFileTool, EditFileTool, FsTool,
+    GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
+    GdbStatusTool, GdbStopTool, GdbWaitStoppedTool, GlobFileSearchTool, GlobTool, GrepTool,
+    ListDirTool, LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
+    SearchCodebaseTool, ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool,
     WebFetchTool, WebSearchTool, WriteTool,
-    GdbStartServerTool, GdbConnectTool, GdbCommandTool,
-    GdbInterruptTool, GdbWaitStoppedTool, GdbStatusTool, GdbStopTool,
-    GdbSessionState, ToolRegistry,
-    events::ToolEvent,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -56,7 +53,11 @@ pub fn build_tool_registry(
     sub_agent_runtime: AgentRuntimeContext,
 ) -> ToolRegistry {
     match profile {
-        ToolSetProfile::Full { question_tx, todos, task_depth } => {
+        ToolSetProfile::Full {
+            question_tx,
+            todos,
+            task_depth,
+        } => {
             let mut reg = ToolRegistry::new();
 
             reg.register(ReadFileTool);
@@ -90,7 +91,9 @@ pub fn build_tool_registry(
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
-            reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
+            reg.register(ShellTool {
+                timeout_secs: cfg.tools.timeout_secs,
+            });
             reg.register(TaskTool::new(
                 model,
                 Arc::new(cfg.clone()),
@@ -100,9 +103,18 @@ pub fn build_tool_registry(
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbConnectTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbCommandTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
+            reg.register(GdbStartServerTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
+            reg.register(GdbConnectTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
+            reg.register(GdbCommandTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
             reg.register(GdbInterruptTool::new(gdb_state.clone()));
             reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
             reg.register(GdbStatusTool::new(gdb_state.clone()));
@@ -140,14 +152,25 @@ pub fn build_tool_registry(
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
-            reg.register(ShellTool { timeout_secs: cfg.tools.timeout_secs });
+            reg.register(ShellTool {
+                timeout_secs: cfg.tools.timeout_secs,
+            });
             // TaskTool intentionally omitted to limit sub-agent nesting
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbStartServerTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbConnectTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
-            reg.register(GdbCommandTool::new(gdb_state.clone(), cfg.tools.gdb.clone()));
+            reg.register(GdbStartServerTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
+            reg.register(GdbConnectTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
+            reg.register(GdbCommandTool::new(
+                gdb_state.clone(),
+                cfg.tools.gdb.clone(),
+            ));
             reg.register(GdbInterruptTool::new(gdb_state.clone()));
             reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
             reg.register(GdbStatusTool::new(gdb_state.clone()));

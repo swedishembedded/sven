@@ -12,12 +12,12 @@
 //! Frontends (`sven-ci`, `sven-tui`) depend on this crate instead of
 //! inlining their own registry-building loops.
 
+pub mod agent;
 pub mod context;
 pub mod registry;
 pub mod task_tool;
-pub mod agent;
 
+pub use agent::AgentBuilder;
 pub use context::{RuntimeContext, ToolSetProfile};
 pub use registry::build_tool_registry;
 pub use task_tool::TaskTool;
-pub use agent::AgentBuilder;

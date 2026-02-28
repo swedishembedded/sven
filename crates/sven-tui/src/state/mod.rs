@@ -35,7 +35,13 @@ pub struct SessionState {
 impl SessionState {
     pub fn new(model_cfg: ModelConfig, mode: AgentMode) -> Self {
         let model_display = format!("{}/{}", model_cfg.provider, model_cfg.name);
-        Self { model_cfg, model_display, staged_model: None, staged_mode: None, mode }
+        Self {
+            model_cfg,
+            model_display,
+            staged_model: None,
+            staged_mode: None,
+            mode,
+        }
     }
 
     /// Stage a model to take effect with the next sent message.
@@ -94,7 +100,9 @@ impl SessionState {
     /// Label for the "next: …" hint shown in the status bar when a model
     /// override is staged but not yet sent.
     pub fn staged_model_label(&self) -> Option<String> {
-        self.staged_model.as_ref().map(|c| format!("{}/{}", c.provider, c.name))
+        self.staged_model
+            .as_ref()
+            .map(|c| format!("{}/{}", c.provider, c.name))
     }
 }
 
@@ -104,7 +112,11 @@ mod tests {
     use sven_config::ModelConfig;
 
     fn mock_cfg(provider: &str, name: &str) -> ModelConfig {
-        ModelConfig { provider: provider.to_string(), name: name.to_string(), ..ModelConfig::default() }
+        ModelConfig {
+            provider: provider.to_string(),
+            name: name.to_string(),
+            ..ModelConfig::default()
+        }
     }
 
     #[test]
@@ -127,7 +139,10 @@ mod tests {
         // staged_model set
         assert_eq!(s.staged_model.as_ref().unwrap().provider, "anthropic");
         // staged label visible for status bar "next: …" hint
-        assert_eq!(s.staged_model_label().as_deref(), Some("anthropic/claude-opus-4-6"));
+        assert_eq!(
+            s.staged_model_label().as_deref(),
+            Some("anthropic/claude-opus-4-6")
+        );
     }
 
     #[test]

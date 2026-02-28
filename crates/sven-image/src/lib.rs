@@ -22,7 +22,7 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use sha2::Digest as _;
 
 pub use error::ImageError;
@@ -80,8 +80,7 @@ impl EncodedImage {
 ///
 /// PNG images are re-encoded as PNG; everything else is re-encoded as JPEG.
 pub fn load_image(path: &Path) -> Result<EncodedImage, ImageError> {
-    let raw = std::fs::read(path)
-        .map_err(|e| ImageError::Io(path.display().to_string(), e))?;
+    let raw = std::fs::read(path).map_err(|e| ImageError::Io(path.display().to_string(), e))?;
 
     // Content-addressed cache lookup.
     let key: CacheKey = sha2::Sha256::digest(&raw).into();
@@ -108,7 +107,8 @@ fn encode_image_bytes(raw: &[u8], hint_path: &Path) -> Result<EncodedImage, Imag
     // Detect format from bytes first, fall back to extension.
     let fmt = image::guess_format(raw)
         .or_else(|_| {
-            let ext = hint_path.extension()
+            let ext = hint_path
+                .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
@@ -140,11 +140,17 @@ fn encode_image_bytes(raw: &[u8], hint_path: &Path) -> Result<EncodedImage, Imag
     if use_png {
         img.write_to(&mut out, image::ImageFormat::Png)
             .map_err(|e| ImageError::Encode(e.to_string()))?;
-        Ok(EncodedImage { mime_type: "image/png".into(), bytes: out.into_inner() })
+        Ok(EncodedImage {
+            mime_type: "image/png".into(),
+            bytes: out.into_inner(),
+        })
     } else {
         img.write_to(&mut out, image::ImageFormat::Jpeg)
             .map_err(|e| ImageError::Encode(e.to_string()))?;
-        Ok(EncodedImage { mime_type: "image/jpeg".into(), bytes: out.into_inner() })
+        Ok(EncodedImage {
+            mime_type: "image/jpeg".into(),
+            bytes: out.into_inner(),
+        })
     }
 }
 
@@ -158,10 +164,7 @@ pub fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), ImageError> {
     let (meta, b64) = rest
         .split_once(',')
         .ok_or_else(|| ImageError::InvalidDataUrl(data_url.to_string()))?;
-    let mime = meta
-        .strip_suffix(";base64")
-        .unwrap_or(meta)
-        .to_string();
+    let mime = meta.strip_suffix(";base64").unwrap_or(meta).to_string();
     let bytes = B64
         .decode(b64)
         .map_err(|e| ImageError::Base64(e.to_string()))?;
@@ -242,7 +245,7 @@ mod tests {
         0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, // compressed pixel (red)
         0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, // IDAT CRC
         0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND
-        0x44, 0xae, 0x42, 0x60, 0x82,                   // IEND CRC
+        0x44, 0xae, 0x42, 0x60, 0x82, // IEND CRC
     ];
 
     #[test]
@@ -250,7 +253,11 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), MINIMAL_PNG).unwrap();
         let result = load_image(tmp.path());
-        assert!(result.is_ok(), "should load minimal PNG: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "should load minimal PNG: {:?}",
+            result.err()
+        );
         let img = result.unwrap();
         assert_eq!(img.mime_type, "image/png");
         assert!(!img.bytes.is_empty());
@@ -267,8 +274,10 @@ mod tests {
         let second = load_image(tmp.path()).unwrap();
 
         assert_eq!(first.mime_type, second.mime_type);
-        assert_eq!(first.bytes, second.bytes,
-            "second call should return cached bytes identical to first call");
+        assert_eq!(
+            first.bytes, second.bytes,
+            "second call should return cached bytes identical to first call"
+        );
     }
 
     #[test]
@@ -282,7 +291,9 @@ mod tests {
         let a = load_image(tmp1.path()).unwrap();
         let b = load_image(tmp2.path()).unwrap();
 
-        assert_eq!(a.bytes, b.bytes,
-            "identical content from different paths should yield identical encoded output");
+        assert_eq!(
+            a.bytes, b.bytes,
+            "identical content from different paths should yield identical encoded output"
+        );
     }
 }

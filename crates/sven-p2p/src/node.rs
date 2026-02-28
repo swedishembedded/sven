@@ -11,8 +11,7 @@ use std::{
 use futures::{future, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade, ConnectedPoint},
-    dcutr,
-    identify,
+    dcutr, identify,
     multiaddr::Protocol,
     noise, relay, request_response,
     swarm::{dial_opts::DialOpts, ConnectionId, DialError, Swarm, SwarmEvent},
@@ -46,16 +45,38 @@ const RELAY_POLL_SECS: u64 = 30;
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum P2pEvent {
-    PeerDiscovered { room: String, peer_id: PeerId, card: AgentCard },
-    PeerLeft { room: String, peer_id: PeerId },
-    Connected { peer_id: PeerId, via_relay: bool },
-    Disconnected { peer_id: PeerId },
+    PeerDiscovered {
+        room: String,
+        peer_id: PeerId,
+        card: AgentCard,
+    },
+    PeerLeft {
+        room: String,
+        peer_id: PeerId,
+    },
+    Connected {
+        peer_id: PeerId,
+        via_relay: bool,
+    },
+    Disconnected {
+        peer_id: PeerId,
+    },
     /// Fired once per relay when the circuit reservation is confirmed and our
     /// circuit address has been published to discovery.  The node is now
     /// reachable by other peers through this relay.
-    RelayCircuitEstablished { relay_peer_id: Option<PeerId> },
-    TaskRequested { id: Uuid, from: PeerId, request: TaskRequest },
-    TaskResponseReceived { id: Uuid, from: PeerId, response: TaskResponse },
+    RelayCircuitEstablished {
+        relay_peer_id: Option<PeerId>,
+    },
+    TaskRequested {
+        id: Uuid,
+        from: PeerId,
+        request: TaskRequest,
+    },
+    TaskResponseReceived {
+        id: Uuid,
+        from: PeerId,
+        response: TaskResponse,
+    },
     Error(P2pError),
 }
 
@@ -114,7 +135,10 @@ impl P2pHandle {
     }
 
     pub async fn announce(&self) -> Result<(), P2pError> {
-        self.cmd_tx.send(P2pCommand::Announce).await.map_err(|_| P2pError::Shutdown)
+        self.cmd_tx
+            .send(P2pCommand::Announce)
+            .await
+            .map_err(|_| P2pError::Shutdown)
     }
 
     pub async fn shutdown(&self) {
@@ -141,11 +165,24 @@ impl P2pNode {
         let roster: Arc<Mutex<HashMap<String, RoomState>>> = Arc::new(Mutex::new({
             let mut m = HashMap::new();
             for room in &config.rooms {
-                m.insert(room.clone(), RoomState { room: room.clone(), peers: HashMap::new() });
+                m.insert(
+                    room.clone(),
+                    RoomState {
+                        room: room.clone(),
+                        peers: HashMap::new(),
+                    },
+                );
             }
             m
         }));
-        Self { config, event_tx, log_tx, cmd_tx, cmd_rx, roster }
+        Self {
+            config,
+            event_tx,
+            log_tx,
+            cmd_tx,
+            cmd_rx,
+            roster,
+        }
     }
 
     pub fn handle(&self) -> P2pHandle {
@@ -174,7 +211,6 @@ impl P2pNode {
         swarm
             .listen_on(self.config.listen_addr.clone())
             .map_err(|e| P2pError::Transport(e.to_string()))?;
-
 
         let (relay_peers, relay_dial_addrs) =
             fetch_and_dial_relays(&self.config.discovery, &mut swarm).await?;
@@ -279,17 +315,31 @@ impl NodeState {
 
     // ── Swarm event dispatch ─────────────────────────────────────────────────
 
-    async fn on_swarm_event(&mut self, swarm: &mut NodeSwarm, event: SwarmEvent<P2pBehaviourEvent>) {
+    async fn on_swarm_event(
+        &mut self,
+        swarm: &mut NodeSwarm,
+        event: SwarmEvent<P2pBehaviourEvent>,
+    ) {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 tracing::info!("Listening on {address}");
             }
 
-            SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            } => {
                 self.on_connection_established(swarm, peer_id, connection_id, &endpoint);
             }
 
-            SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                connection_id,
+                num_established,
+                ..
+            } => {
                 self.on_connection_closed(swarm, peer_id, connection_id, num_established);
             }
 
@@ -303,15 +353,19 @@ impl NodeState {
                 self.on_relay_reservation_accepted(relay_peer_id);
             }
 
-            SwarmEvent::Behaviour(P2pBehaviourEvent::Task(
-                request_response::Event::Message { peer, message, .. },
-            )) => {
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Task(request_response::Event::Message {
+                peer,
+                message,
+                ..
+            })) => {
                 self.on_task_message(swarm, peer, message);
             }
 
-            SwarmEvent::Behaviour(P2pBehaviourEvent::Identify(
-                identify::Event::Received { peer_id, info, .. },
-            )) => {
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Identify(identify::Event::Received {
+                peer_id,
+                info,
+                ..
+            })) => {
                 on_identify_received(swarm, peer_id, info.listen_addrs);
             }
 
@@ -342,10 +396,12 @@ impl NodeState {
         if self.relay_peers.contains(&peer_id) {
             // Register a circuit-relay listen address for every relay we connect
             // to so peers can reach us through any available relay server.
-            if !self.connected_relay_addrs.contains_key(&peer_id) {
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                self.connected_relay_addrs.entry(peer_id)
+            {
                 let relay_addr = endpoint.get_remote_address().clone();
                 tracing::info!("Relay {peer_id} reachable at {relay_addr}");
-                self.connected_relay_addrs.insert(peer_id, relay_addr.clone());
+                e.insert(relay_addr.clone());
                 let circuit = mk_circuit_addr(&relay_addr, self.local_peer_id);
                 if let Err(e) = swarm.listen_on(circuit) {
                     tracing::warn!("relay listen_on failed: {e}");
@@ -356,10 +412,10 @@ impl NodeState {
             // so we can close it once DCUtR successfully upgrades to direct.
             self.relay_connection_ids.insert(peer_id, connection_id);
             if self.announced_to.insert(peer_id) {
-                swarm.behaviour_mut().task.send_request(
-                    &peer_id,
-                    P2pRequest::Announce(self.agent_card.clone()),
-                );
+                swarm
+                    .behaviour_mut()
+                    .task
+                    .send_request(&peer_id, P2pRequest::Announce(self.agent_card.clone()));
             }
         } else {
             // Direct (non-relayed) connection — if DCUtR just upgraded a relay
@@ -371,10 +427,10 @@ impl NodeState {
                 swarm.close_connection(relay_conn);
             }
             if self.announced_to.insert(peer_id) {
-                swarm.behaviour_mut().task.send_request(
-                    &peer_id,
-                    P2pRequest::Announce(self.agent_card.clone()),
-                );
+                swarm
+                    .behaviour_mut()
+                    .task
+                    .send_request(&peer_id, P2pRequest::Announce(self.agent_card.clone()));
             }
         }
     }
@@ -406,9 +462,7 @@ impl NodeState {
             self.connected_relay_addrs.remove(&peer_id);
             self.published_relays.remove(&peer_id);
             if let Some(addrs) = self.relay_dial_addrs.get(&peer_id).cloned() {
-                if let Err(e) = swarm
-                    .dial(DialOpts::peer_id(peer_id).addresses(addrs).build())
-                {
+                if let Err(e) = swarm.dial(DialOpts::peer_id(peer_id).addresses(addrs).build()) {
                     tracing::debug!("Immediate relay redial {peer_id}: {e}");
                 }
             }
@@ -432,13 +486,15 @@ impl NodeState {
         }
         let relay_pid = relay_peer_from_circuit_addr(&address);
         // Only publish once per relay to avoid redundant git pushes.
-        let is_new = relay_pid.map_or(true, |rp| self.published_relays.insert(rp));
+        let is_new = relay_pid.is_none_or(|rp| self.published_relays.insert(rp));
         if !is_new {
             return;
         }
 
         tracing::info!("Relay circuit confirmed: {address}");
-        self.emit(P2pEvent::RelayCircuitEstablished { relay_peer_id: relay_pid });
+        self.emit(P2pEvent::RelayCircuitEstablished {
+            relay_peer_id: relay_pid,
+        });
         self.publish_peer_via_circuit(address);
         self.fetch_and_dial_peers(swarm).await;
     }
@@ -454,7 +510,9 @@ impl NodeState {
             return;
         };
         self.published_relays.insert(relay_peer_id);
-        self.emit(P2pEvent::RelayCircuitEstablished { relay_peer_id: Some(relay_peer_id) });
+        self.emit(P2pEvent::RelayCircuitEstablished {
+            relay_peer_id: Some(relay_peer_id),
+        });
         let circuit = mk_circuit_addr(&relay_addr, self.local_peer_id);
         let disc = Arc::clone(&self.discovery);
         let rooms = self.rooms.clone();
@@ -477,7 +535,9 @@ impl NodeState {
         message: request_response::Message<P2pRequest, P2pResponse>,
     ) {
         match message {
-            request_response::Message::Request { request, channel, .. } => match request {
+            request_response::Message::Request {
+                request, channel, ..
+            } => match request {
                 P2pRequest::Announce(card) => self.on_announce_request(swarm, peer, card, channel),
                 P2pRequest::Task(req) => self.on_task_request(swarm, peer, req, channel),
             },
@@ -500,7 +560,10 @@ impl NodeState {
             let mut r = self.roster.lock().unwrap();
             for room in &self.rooms {
                 r.entry(room.clone())
-                    .or_insert_with(|| RoomState { room: room.clone(), peers: HashMap::new() })
+                    .or_insert_with(|| RoomState {
+                        room: room.clone(),
+                        peers: HashMap::new(),
+                    })
                     .peers
                     .insert(peer, card.clone());
             }
@@ -512,7 +575,10 @@ impl NodeState {
                 card: card.clone(),
             });
         }
-        let _ = swarm.behaviour_mut().task.send_response(channel, P2pResponse::Ack);
+        let _ = swarm
+            .behaviour_mut()
+            .task
+            .send_response(channel, P2pResponse::Ack);
     }
 
     fn on_task_request(
@@ -523,19 +589,33 @@ impl NodeState {
         channel: request_response::ResponseChannel<P2pResponse>,
     ) {
         let id = req.id;
-        self.emit(P2pEvent::TaskRequested { id, from: peer, request: req });
-        let _ = swarm.behaviour_mut().task.send_response(channel, P2pResponse::Ack);
+        self.emit(P2pEvent::TaskRequested {
+            id,
+            from: peer,
+            request: req,
+        });
+        let _ = swarm
+            .behaviour_mut()
+            .task
+            .send_response(channel, P2pResponse::Ack);
     }
 
     fn on_task_response(&self, peer: PeerId, resp: TaskResponse) {
-        self.emit(P2pEvent::TaskResponseReceived { id: resp.request_id, from: peer, response: resp });
+        self.emit(P2pEvent::TaskResponseReceived {
+            id: resp.request_id,
+            from: peer,
+            response: resp,
+        });
     }
 
     // ── Dial error ────────────────────────────────────────────────────────────────────────────
 
     fn on_outgoing_error(&mut self, peer_id: Option<PeerId>, error: DialError) {
         if let DialError::WrongPeerId { obtained, .. } = &error {
-            if peer_id.as_ref().map_or(false, |p| self.relay_peers.contains(p)) {
+            if peer_id
+                .as_ref()
+                .is_some_and(|p| self.relay_peers.contains(p))
+            {
                 // Relay restarted with a different keypair — stale git ref.
                 // The relay poll will redial using freshly-fetched addresses.
                 tracing::warn!(
@@ -551,7 +631,10 @@ impl NodeState {
                     self.dialed.remove(&pid);
                 }
             }
-        } else if peer_id.as_ref().map_or(false, |p| self.relay_peers.contains(p)) {
+        } else if peer_id
+            .as_ref()
+            .is_some_and(|p| self.relay_peers.contains(p))
+        {
             // Relay dial failure (relay may be temporarily down).
             // The relay_poll background timer will retry automatically.
             tracing::debug!("Relay {peer_id:?} unreachable: {error}");
@@ -580,12 +663,17 @@ impl NodeState {
     ///    transient relay outages are recovered from without user intervention.
     async fn on_relay_poll_tick(&mut self, swarm: &mut NodeSwarm) {
         let disc = Arc::clone(&self.discovery);
-        let relay_addrs = match tokio::task::spawn_blocking(move || disc.fetch_relay_addrs())
-            .await
+        let relay_addrs = match tokio::task::spawn_blocking(move || disc.fetch_relay_addrs()).await
         {
             Ok(Ok(addrs)) => addrs,
-            Ok(Err(e)) => { tracing::debug!("relay poll fetch error: {e}"); return; }
-            Err(e) => { tracing::debug!("relay poll spawn error: {e}"); return; }
+            Ok(Err(e)) => {
+                tracing::debug!("relay poll fetch error: {e}");
+                return;
+            }
+            Err(e) => {
+                tracing::debug!("relay poll spawn error: {e}");
+                return;
+            }
         };
 
         // Build per-relay transport addresses (strip /p2p suffix).
@@ -593,7 +681,9 @@ impl NodeState {
         for addr in &relay_addrs {
             if let Some(pid) = peer_id_from_addr(addr) {
                 let mut t = addr.clone();
-                if matches!(t.iter().last(), Some(Protocol::P2p(_))) { t.pop(); }
+                if matches!(t.iter().last(), Some(Protocol::P2p(_))) {
+                    t.pop();
+                }
                 fresh.entry(pid).or_default().push(t);
             }
         }
@@ -610,8 +700,7 @@ impl NodeState {
         for (pid, addrs) in &self.relay_dial_addrs.clone() {
             if !self.connected_relay_addrs.contains_key(pid) {
                 tracing::info!("Re-dialing relay {pid}");
-                if let Err(e) = swarm
-                    .dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build())
+                if let Err(e) = swarm.dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build())
                 {
                     tracing::debug!("Relay redial {pid}: {e}");
                 }
@@ -625,17 +714,20 @@ impl NodeState {
     fn on_command(&mut self, swarm: &mut NodeSwarm, cmd: P2pCommand) -> bool {
         match cmd {
             P2pCommand::SendTask { peer, request } => {
-                swarm.behaviour_mut().task.send_request(&peer, P2pRequest::Task(request));
+                swarm
+                    .behaviour_mut()
+                    .task
+                    .send_request(&peer, P2pRequest::Task(request));
                 false
             }
             P2pCommand::Announce => {
                 let connected: Vec<PeerId> = swarm.connected_peers().copied().collect();
                 for peer in connected {
                     if !self.relay_peers.contains(&peer) {
-                        swarm.behaviour_mut().task.send_request(
-                            &peer,
-                            P2pRequest::Announce(self.agent_card.clone()),
-                        );
+                        swarm
+                            .behaviour_mut()
+                            .task
+                            .send_request(&peer, P2pRequest::Announce(self.agent_card.clone()));
                     }
                 }
                 false
@@ -651,7 +743,10 @@ impl NodeState {
         let disc = Arc::clone(&self.discovery);
         let rooms = self.rooms.clone();
         let all: Vec<Vec<PeerInfo>> = match tokio::task::spawn_blocking(move || {
-            rooms.iter().map(|r| disc.fetch_peers(r)).collect::<Result<Vec<_>, _>>()
+            rooms
+                .iter()
+                .map(|r| disc.fetch_peers(r))
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
         {
@@ -665,12 +760,14 @@ impl NodeState {
     }
 
     fn try_dial_peer(&mut self, swarm: &mut NodeSwarm, info: PeerInfo) {
-        if info.peer_id == self.local_peer_id { return; }
-        if self.rejected.contains(&info.peer_id) { return; }
+        if info.peer_id == self.local_peer_id {
+            return;
+        }
+        if self.rejected.contains(&info.peer_id) {
+            return;
+        }
         // Only dial peers whose published relay is one we are connected to.
-        if peer_id_from_addr(&info.relay_addr)
-            .map_or(true, |r| !self.relay_peers.contains(&r))
-        {
+        if peer_id_from_addr(&info.relay_addr).is_none_or(|r| !self.relay_peers.contains(&r)) {
             return;
         }
         if self.dialed.insert(info.peer_id) {
@@ -737,17 +834,13 @@ fn build_node_swarm(
 
     let tcp_t = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true))
         .upgrade(upgrade::Version::V1)
-        .authenticate(
-            noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?,
-        )
+        .authenticate(noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?)
         .multiplex(yamux::Config::default())
         .map(|(p, m), _| (p, StreamMuxerBox::new(m)));
 
     let relay_t = relay_transport
         .upgrade(upgrade::Version::V1)
-        .authenticate(
-            noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?,
-        )
+        .authenticate(noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?)
         .multiplex(yamux::Config::default())
         .map(|(p, m), _| (p, StreamMuxerBox::new(m)));
 
@@ -760,7 +853,12 @@ fn build_node_swarm(
         .boxed();
 
     let behaviour = P2pBehaviour::new(key, relay_client);
-    Ok(Swarm::new(transport, behaviour, local_peer_id, default_swarm_config()))
+    Ok(Swarm::new(
+        transport,
+        behaviour,
+        local_peer_id,
+        default_swarm_config(),
+    ))
 }
 
 /// Fetch all relay addresses from discovery, group them by peer ID, and dial
@@ -781,10 +879,11 @@ async fn fetch_and_dial_relays(
         .await
         .map_err(|e| P2pError::Discovery(e.to_string()))??;
 
-    let relay_peers: HashSet<PeerId> =
-        relay_addrs.iter().filter_map(peer_id_from_addr).collect();
+    let relay_peers: HashSet<PeerId> = relay_addrs.iter().filter_map(peer_id_from_addr).collect();
     if relay_peers.is_empty() {
-        return Err(P2pError::Discovery("relay addrs have no /p2p component".into()));
+        return Err(P2pError::Discovery(
+            "relay addrs have no /p2p component".into(),
+        ));
     }
 
     // Group transport addresses (strip /p2p suffix) by relay peer ID so we can
@@ -842,7 +941,7 @@ fn relay_peer_from_circuit_addr(addr: &Multiaddr) -> Option<PeerId> {
 fn mk_circuit_addr(relay_addr: &Multiaddr, target: PeerId) -> Multiaddr {
     let mut a = relay_addr.clone();
     a.push(Protocol::P2pCircuit);
-    a.push(Protocol::P2p(target.into()));
+    a.push(Protocol::P2p(target));
     a
 }
 
@@ -860,7 +959,10 @@ fn on_identify_received(swarm: &mut NodeSwarm, peer_id: PeerId, addrs: Vec<Multi
 /// The relay connection is closed separately in `on_connection_established`
 /// once the direct `ConnectionEstablished` event fires.
 fn on_dcutr_event(event: dcutr::Event) {
-    let dcutr::Event { remote_peer_id, result } = event;
+    let dcutr::Event {
+        remote_peer_id,
+        result,
+    } = event;
     match result {
         Ok(_conn) => {
             tracing::info!("DCUtR: direct connection to {remote_peer_id} established");

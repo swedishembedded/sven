@@ -11,14 +11,13 @@ use std::{path::PathBuf, sync::Arc};
 use clap::Parser;
 use libp2p::Multiaddr;
 
-use sven_p2p::{
-    config::RelayConfig,
-    discovery::git::GitDiscoveryProvider,
-    relay,
-};
+use sven_p2p::{config::RelayConfig, discovery::git::GitDiscoveryProvider, relay};
 
 #[derive(Parser, Debug)]
-#[command(name = "sven-relay", about = "libp2p relay server for sven agent discovery")]
+#[command(
+    name = "sven-relay",
+    about = "libp2p relay server for sven agent discovery"
+)]
 struct Args {
     /// TCP listen address (e.g. `/ip4/0.0.0.0/tcp/4001`).
     #[arg(long, default_value = "/ip4/0.0.0.0/tcp/4001")]

@@ -25,14 +25,18 @@ mod gdb_integration {
     use tokio::sync::Mutex;
 
     use sven_config::GdbConfig;
-    use sven_tools::{
-        GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState,
-        GdbStartServerTool, GdbStatusTool, GdbStopTool, GdbWaitStoppedTool,
-    };
     use sven_tools::tool::{Tool, ToolCall};
+    use sven_tools::{
+        GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
+        GdbStatusTool, GdbStopTool, GdbWaitStoppedTool,
+    };
 
     fn call(name: &str, args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "test".into(), name: name.into(), args }
+        ToolCall {
+            id: "test".into(),
+            name: name.into(),
+            args,
+        }
     }
 
     fn make_state() -> Arc<Mutex<GdbSessionState>> {
@@ -91,9 +95,14 @@ mod gdb_integration {
     async fn start_server_fails_with_nonexistent_binary() {
         let state = make_state();
         let t = GdbStartServerTool::new(state, cfg());
-        let out = t.execute(&call("gdb_start_server", json!({
-            "command": "/nonexistent/JLinkGDBServer -port 2331"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "/nonexistent/JLinkGDBServer -port 2331"
+                }),
+            ))
+            .await;
         assert!(out.is_error, "expected error, got: {}", out.content);
     }
 
@@ -101,9 +110,14 @@ mod gdb_integration {
     async fn start_server_fails_fast_when_command_exits_immediately() {
         let state = make_state();
         let t = GdbStartServerTool::new(state, fast_cfg());
-        let out = t.execute(&call("gdb_start_server", json!({
-            "command": "false"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "false"
+                }),
+            ))
+            .await;
         assert!(out.is_error, "expected error from 'false' command");
         assert!(
             out.content.contains("exited immediately"),
@@ -124,9 +138,14 @@ mod gdb_integration {
             s.set_server(child, "localhost:2331".into(), None);
         }
         let t = GdbStartServerTool::new(state, cfg());
-        let out = t.execute(&call("gdb_start_server", json!({
-            "command": "sleep 60"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "sleep 60"
+                }),
+            ))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("already running"));
     }
@@ -136,9 +155,14 @@ mod gdb_integration {
         let state = make_state();
         let t = GdbStartServerTool::new(state.clone(), fast_cfg());
         // Use 'sleep 5' as a long-lived dummy server
-        let out = t.execute(&call("gdb_start_server", json!({
-            "command": "sleep 5 -port 2331"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "sleep 5 -port 2331"
+                }),
+            ))
+            .await;
         // This might succeed (sleep keeps running) or fail (sleep exits); either way
         // check state is set or cleaned up properly
         let s = state.lock().await;
@@ -186,10 +210,13 @@ mod gdb_integration {
     #[tokio::test]
     async fn connect_fails_when_gdb_binary_not_found() {
         let state = make_state();
-        let t = GdbConnectTool::new(state, GdbConfig {
-            gdb_path: "/nonexistent/gdb-multiarch".into(),
-            ..fast_cfg()
-        });
+        let t = GdbConnectTool::new(
+            state,
+            GdbConfig {
+                gdb_path: "/nonexistent/gdb-multiarch".into(),
+                ..fast_cfg()
+            },
+        );
         let out = t.execute(&call("gdb_connect", json!({"port": 2331}))).await;
         assert!(out.is_error);
         assert!(
@@ -203,10 +230,15 @@ mod gdb_integration {
     async fn connect_fails_when_elf_not_found() {
         let state = make_state();
         let t = GdbConnectTool::new(state, fast_cfg());
-        let out = t.execute(&call("gdb_connect", json!({
-            "port": 2331,
-            "executable": "/nonexistent/path/firmware.elf"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_connect",
+                json!({
+                    "port": 2331,
+                    "executable": "/nonexistent/path/firmware.elf"
+                }),
+            ))
+            .await;
         assert!(out.is_error);
         assert!(
             out.content.contains("ELF file not found"),
@@ -219,7 +251,9 @@ mod gdb_integration {
     async fn connect_fails_gracefully_when_nothing_listening() {
         let state = make_state();
         let t = GdbConnectTool::new(state, fast_cfg());
-        let out = t.execute(&call("gdb_connect", json!({"port": 19997}))).await;
+        let out = t
+            .execute(&call("gdb_connect", json!({"port": 19997})))
+            .await;
         assert!(out.is_error, "expected failure when nothing is listening");
         // Error message should mention connection issue
         let c = out.content.to_lowercase();
@@ -234,7 +268,9 @@ mod gdb_integration {
     async fn connect_provides_hint_when_refused() {
         let state = make_state();
         let t = GdbConnectTool::new(state, fast_cfg());
-        let out = t.execute(&call("gdb_connect", json!({"port": 19996}))).await;
+        let out = t
+            .execute(&call("gdb_connect", json!({"port": 19996})))
+            .await;
         assert!(out.is_error);
         // Hint should guide the user
         // (hint is appended after the raw error)
@@ -247,9 +283,14 @@ mod gdb_integration {
     async fn command_fails_when_not_connected() {
         let state = make_state();
         let t = GdbCommandTool::new(state, GdbConfig::default());
-        let out = t.execute(&call("gdb_command", json!({
-            "command": "info registers"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "gdb_command",
+                json!({
+                    "command": "info registers"
+                }),
+            ))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("No active GDB session"));
     }
@@ -285,12 +326,15 @@ mod gdb_integration {
             "# JLinkGDBServer -device STM32F407VG -if SWD -speed 4000 -port 2331\ntarget remote :2331"
         ).unwrap();
 
-        let result = sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(
-            Some(dir.path())
-        ).await;
+        let result =
+            sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+                .await;
 
         let cmd = result.unwrap().unwrap();
-        assert!(cmd.contains("JLinkGDBServer"), "expected JLink command, got: {cmd}");
+        assert!(
+            cmd.contains("JLinkGDBServer"),
+            "expected JLink command, got: {cmd}"
+        );
         assert!(cmd.contains("STM32F407VG"));
     }
 
@@ -309,13 +353,19 @@ mod gdb_integration {
                     "interface": "SWD"
                 }]
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let cmd = sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(
-            Some(dir.path())
-        ).await.unwrap().unwrap();
+        let cmd =
+            sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+                .await
+                .unwrap()
+                .unwrap();
 
-        assert!(cmd.contains("AT32F435RMT7"), "expected AT32 device, got: {cmd}");
+        assert!(
+            cmd.contains("AT32F435RMT7"),
+            "expected AT32 device, got: {cmd}"
+        );
         assert!(cmd.contains("JLinkGDBServer"));
         assert!(cmd.contains("SWD"));
     }
@@ -326,11 +376,14 @@ mod gdb_integration {
         std::fs::write(
             dir.path().join("Makefile"),
             "flash:\n\tJLinkExe -nogui 1 -if swd -speed 4000 -device AT32F435RMT7\n",
-        ).unwrap();
+        )
+        .unwrap();
 
-        let cmd = sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(
-            Some(dir.path())
-        ).await.unwrap().unwrap();
+        let cmd =
+            sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+                .await
+                .unwrap()
+                .unwrap();
 
         assert!(cmd.contains("AT32F435RMT7"), "got: {cmd}");
     }
@@ -338,9 +391,9 @@ mod gdb_integration {
     #[tokio::test]
     async fn discovery_returns_none_in_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let result = sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(
-            Some(dir.path())
-        ).await;
+        let result =
+            sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+                .await;
         assert!(result.unwrap().is_none());
     }
 
@@ -350,18 +403,25 @@ mod gdb_integration {
         std::fs::write(
             dir.path().join(".gdbinit"),
             "# JLinkGDBServer -device GDBINIT_DEVICE -if SWD -speed 4000 -port 2331\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("Makefile"),
             "flash:\n\tJLinkExe -device MAKEFILE_DEVICE -if SWD -speed 4000\n",
-        ).unwrap();
+        )
+        .unwrap();
 
-        let cmd = sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(
-            Some(dir.path())
-        ).await.unwrap().unwrap();
+        let cmd =
+            sven_tools::builtin::gdb::discovery::discover_gdb_server_command_in(Some(dir.path()))
+                .await
+                .unwrap()
+                .unwrap();
 
         assert!(cmd.contains("GDBINIT_DEVICE"), ".gdbinit should win: {cmd}");
-        assert!(!cmd.contains("MAKEFILE_DEVICE"), "Makefile should lose: {cmd}");
+        assert!(
+            !cmd.contains("MAKEFILE_DEVICE"),
+            "Makefile should lose: {cmd}"
+        );
     }
 
     // ── ELF discovery integration tests ──────────────────────────────────────
@@ -369,7 +429,8 @@ mod gdb_integration {
     #[test]
     fn elf_discovery_finds_sysbuild_elf() {
         let dir = tempfile::tempdir().unwrap();
-        let elf_dir = dir.path()
+        let elf_dir = dir
+            .path()
             .join("build-firmware")
             .join("ng-iot-platform")
             .join("zephyr");
@@ -386,11 +447,19 @@ mod gdb_integration {
     fn elf_discovery_skips_mcuboot_prefers_app() {
         let dir = tempfile::tempdir().unwrap();
 
-        let mcuboot = dir.path().join("build-firmware").join("mcuboot").join("zephyr");
+        let mcuboot = dir
+            .path()
+            .join("build-firmware")
+            .join("mcuboot")
+            .join("zephyr");
         std::fs::create_dir_all(&mcuboot).unwrap();
         std::fs::write(mcuboot.join("zephyr.elf"), b"\x7fELF").unwrap();
 
-        let app = dir.path().join("build-firmware").join("ng-iot-platform").join("zephyr");
+        let app = dir
+            .path()
+            .join("build-firmware")
+            .join("ng-iot-platform")
+            .join("zephyr");
         std::fs::create_dir_all(&app).unwrap();
         let app_elf = app.join("zephyr.elf");
         std::fs::write(&app_elf, b"\x7fELF").unwrap();
@@ -420,26 +489,43 @@ mod gdb_integration {
         let state = make_state();
 
         let start = GdbStartServerTool::new(state.clone(), cfg());
-        let out = start.execute(&call("gdb_start_server", json!({
-            "command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"
-        }))).await;
+        let out = start
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"
+                }),
+            ))
+            .await;
         assert!(!out.is_error, "start failed: {}", out.content);
 
         let connect = GdbConnectTool::new(state.clone(), cfg());
-        let out = connect.execute(&call("gdb_connect", json!({"port": 2331}))).await;
+        let out = connect
+            .execute(&call("gdb_connect", json!({"port": 2331})))
+            .await;
         assert!(!out.is_error, "connect failed: {}", out.content);
         assert!(out.content.contains("Connected"), "got: {}", out.content);
 
         let cmd = GdbCommandTool::new(state.clone(), GdbConfig::default());
 
-        let out = cmd.execute(&call("gdb_command", json!({
-            "command": "monitor reset halt"
-        }))).await;
+        let out = cmd
+            .execute(&call(
+                "gdb_command",
+                json!({
+                    "command": "monitor reset halt"
+                }),
+            ))
+            .await;
         assert!(!out.is_error, "reset halt failed: {}", out.content);
 
-        let out = cmd.execute(&call("gdb_command", json!({
-            "command": "info registers"
-        }))).await;
+        let out = cmd
+            .execute(&call(
+                "gdb_command",
+                json!({
+                    "command": "info registers"
+                }),
+            ))
+            .await;
         assert!(!out.is_error, "info registers failed: {}", out.content);
         // Should contain register names like pc, sp
         assert!(
@@ -465,19 +551,31 @@ mod gdb_integration {
         let state = make_state();
 
         let start = GdbStartServerTool::new(state.clone(), cfg());
-        let out = start.execute(&call("gdb_start_server", json!({
-            "command": "JLinkGDBServer -device STM32H562VI -if SWD -speed 4000 -port 2331"
-        }))).await;
+        let out = start
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "JLinkGDBServer -device STM32H562VI -if SWD -speed 4000 -port 2331"
+                }),
+            ))
+            .await;
         assert!(!out.is_error, "start failed: {}", out.content);
 
         let connect = GdbConnectTool::new(state.clone(), cfg());
-        let out = connect.execute(&call("gdb_connect", json!({"port": 2331}))).await;
+        let out = connect
+            .execute(&call("gdb_connect", json!({"port": 2331})))
+            .await;
         assert!(!out.is_error, "connect failed: {}", out.content);
 
         let cmd = GdbCommandTool::new(state.clone(), GdbConfig::default());
-        let out = cmd.execute(&call("gdb_command", json!({
-            "command": "info registers"
-        }))).await;
+        let out = cmd
+            .execute(&call(
+                "gdb_command",
+                json!({
+                    "command": "info registers"
+                }),
+            ))
+            .await;
         println!("STM32H5 registers:\n{}", out.content);
 
         let stop = GdbStopTool::new(state);
@@ -489,13 +587,21 @@ mod gdb_integration {
     #[ignore = "slow test (waits for timeout); run when validating error handling"]
     async fn graceful_failure_no_server_slow() {
         let state = make_state();
-        let connect = GdbConnectTool::new(state, GdbConfig {
-            command_timeout_secs: 10,
-            ..cfg()
-        });
-        let out = connect.execute(&call("gdb_connect", json!({
-            "port": 19999
-        }))).await;
+        let connect = GdbConnectTool::new(
+            state,
+            GdbConfig {
+                command_timeout_secs: 10,
+                ..cfg()
+            },
+        );
+        let out = connect
+            .execute(&call(
+                "gdb_connect",
+                json!({
+                    "port": 19999
+                }),
+            ))
+            .await;
         assert!(out.is_error, "expected failure when no server is present");
         println!("Expected error: {}", out.content);
         // Hint should mention server
@@ -512,17 +618,29 @@ mod gdb_integration {
     async fn hardware_interrupt_timeout_is_graceful() {
         let state = make_state();
         let start = GdbStartServerTool::new(state.clone(), cfg());
-        start.execute(&call("gdb_start_server", json!({
-            "command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"
-        }))).await;
+        start
+            .execute(&call(
+                "gdb_start_server",
+                json!({
+                    "command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"
+                }),
+            ))
+            .await;
 
         let connect = GdbConnectTool::new(state.clone(), cfg());
-        connect.execute(&call("gdb_connect", json!({"port": 2331}))).await;
+        connect
+            .execute(&call("gdb_connect", json!({"port": 2331})))
+            .await;
 
         let interrupt = GdbInterruptTool::new(state.clone());
-        let out = interrupt.execute(&call("gdb_interrupt", json!({
-            "timeout_secs": 2
-        }))).await;
+        let out = interrupt
+            .execute(&call(
+                "gdb_interrupt",
+                json!({
+                    "timeout_secs": 2
+                }),
+            ))
+            .await;
         println!("interrupt result: {}", out.content);
 
         let stop = GdbStopTool::new(state);
@@ -536,7 +654,10 @@ mod gdb_integration {
         let state = make_state();
         {
             let mut s = state.lock().await;
-            let child = tokio::process::Command::new("sleep").arg("60").spawn().unwrap();
+            let child = tokio::process::Command::new("sleep")
+                .arg("60")
+                .spawn()
+                .unwrap();
             s.set_server(child, "localhost:2331".into(), None);
         }
         assert!(state.lock().await.has_server());

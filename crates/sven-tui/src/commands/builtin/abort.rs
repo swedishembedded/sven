@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: MIT
 //! `/abort` — abort the current model run.
 
-use crate::commands::{CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::commands::{
+    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
+};
 
 /// Abort the current model run.
 ///
@@ -32,7 +34,12 @@ impl SlashCommand for AbortCommand {
         vec![]
     }
 
-    fn complete(&self, _arg_index: usize, _partial: &str, _ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         vec![]
     }
 

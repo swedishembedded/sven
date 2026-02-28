@@ -10,11 +10,20 @@ use crate::commands::{
 pub struct ClearCommand;
 
 impl SlashCommand for ClearCommand {
-    fn name(&self) -> &str { "clear" }
+    fn name(&self) -> &str {
+        "clear"
+    }
 
-    fn description(&self) -> &str { "Clear the chat history" }
+    fn description(&self) -> &str {
+        "Clear the chat history"
+    }
 
-    fn complete(&self, _arg_index: usize, _partial: &str, _ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -42,7 +51,10 @@ mod tests {
     #[test]
     fn execute_ignores_args() {
         let result = ClearCommand.execute(vec!["all".into()]);
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::ClearChat)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::ClearChat)
+        ));
     }
 
     #[test]

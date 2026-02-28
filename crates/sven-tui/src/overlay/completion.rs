@@ -48,9 +48,7 @@ impl CompletionOverlay {
         if self.items.is_empty() {
             return;
         }
-        self.selected = self.selected
-            .checked_sub(1)
-            .unwrap_or(self.items.len() - 1);
+        self.selected = self.selected.checked_sub(1).unwrap_or(self.items.len() - 1);
         self.adjust_scroll();
     }
 

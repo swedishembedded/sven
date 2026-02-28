@@ -11,12 +11,9 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
-use cli::{Cli, Commands, GatewayCommands, OutputFormatArg};
 use clap::Parser;
-use sven_ci::{
-    CiOptions, CiRunner,
-    OutputFormat, find_project_root,
-};
+use cli::{Cli, Commands, GatewayCommands, OutputFormatArg};
+use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
@@ -55,7 +52,11 @@ async fn main() -> anyhow::Result<()> {
             Commands::Validate { file } => {
                 return validate_workflow(file);
             }
-            Commands::ListModels { provider, refresh, json } => {
+            Commands::ListModels {
+                provider,
+                refresh,
+                json,
+            } => {
                 let config = sven_config::load(cli.config.as_deref())?;
                 return list_models_cmd(&config, provider.as_deref(), *refresh, *json).await;
             }
@@ -78,7 +79,9 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_gateway_command(cmd: &GatewayCommands) -> anyhow::Result<()> {
     match cmd {
-        GatewayCommands::Start { config: config_path } => {
+        GatewayCommands::Start {
+            config: config_path,
+        } => {
             let gw_config = sven_gateway::config::load(config_path.as_deref())?;
             let sven_config = Arc::new(sven_config::load(None)?);
 
@@ -88,22 +91,33 @@ async fn run_gateway_command(cmd: &GatewayCommands) -> anyhow::Result<()> {
             sven_gateway::gateway::run(gw_config, agent).await
         }
 
-        GatewayCommands::Pair { uri, label, config: config_path } => {
+        GatewayCommands::Pair {
+            uri,
+            label,
+            config: config_path,
+        } => {
             let gw_config = sven_gateway::config::load(config_path.as_deref())?;
             sven_gateway::gateway::pair_peer(&gw_config, uri, label.clone()).await
         }
 
-        GatewayCommands::Revoke { peer_id, config: config_path } => {
+        GatewayCommands::Revoke {
+            peer_id,
+            config: config_path,
+        } => {
             let gw_config = sven_gateway::config::load(config_path.as_deref())?;
             sven_gateway::gateway::revoke_peer(&gw_config, peer_id).await
         }
 
-        GatewayCommands::RegenerateToken { config: config_path } => {
+        GatewayCommands::RegenerateToken {
+            config: config_path,
+        } => {
             let gw_config = sven_gateway::config::load(config_path.as_deref())?;
             sven_gateway::gateway::regenerate_token(&gw_config)
         }
 
-        GatewayCommands::ShowConfig { config: config_path } => {
+        GatewayCommands::ShowConfig {
+            config: config_path,
+        } => {
             let gw_config = sven_gateway::config::load(config_path.as_deref())?;
             println!("{}", serde_yaml::to_string(&gw_config).unwrap_or_default());
             Ok(())
@@ -119,19 +133,16 @@ async fn build_agent_for_gateway(
     config: &Arc<sven_config::Config>,
 ) -> anyhow::Result<sven_core::Agent> {
     use std::sync::Arc;
-    use tokio::sync::{mpsc, Mutex};
     use sven_tools::{
-        ToolRegistry,
-        RunTerminalCommandTool, ReadFileTool, WriteTool, EditFileTool,
-        GlobFileSearchTool, GrepTool, ListDirTool, DeleteFileTool,
-        WebFetchTool, WebSearchTool, ApplyPatchTool, ReadLintsTool,
-        UpdateMemoryTool, TodoWriteTool, SwitchModeTool,
-        TodoItem, ToolEvent,
+        ApplyPatchTool, DeleteFileTool, EditFileTool, GlobFileSearchTool, GrepTool, ListDirTool,
+        ReadFileTool, ReadLintsTool, RunTerminalCommandTool, SwitchModeTool, TodoItem,
+        TodoWriteTool, ToolEvent, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool,
+        WriteTool,
     };
+    use tokio::sync::{mpsc, Mutex};
 
-    let model: Arc<dyn sven_model::ModelProvider> = Arc::from(
-        sven_model::from_config(&config.model)?
-    );
+    let model: Arc<dyn sven_model::ModelProvider> =
+        Arc::from(sven_model::from_config(&config.model)?);
     let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
 
     let mode = Arc::new(Mutex::new(config.agent.default_mode));
@@ -183,7 +194,9 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
     let workflow = parse_workflow(markdown_body);
 
     // Title: frontmatter overrides H1
-    let title = frontmatter.as_ref().and_then(|fm| fm.title.as_deref())
+    let title = frontmatter
+        .as_ref()
+        .and_then(|fm| fm.title.as_deref())
         .or(workflow.title.as_deref());
     if let Some(t) = title {
         println!("Title: {t}");
@@ -212,7 +225,10 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
     }
 
     if let Some(preamble) = &workflow.system_prompt_append {
-        println!("Preamble: {} chars (appended to system prompt)", preamble.chars().count());
+        println!(
+            "Preamble: {} chars (appended to system prompt)",
+            preamble.chars().count()
+        );
     }
 
     let mut queue = workflow.steps;
@@ -226,13 +242,19 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
         let mode = step.options.mode.as_deref().unwrap_or("(inherit)");
         let provider = step.options.provider.as_deref().unwrap_or("(inherit)");
         let model = step.options.model.as_deref().unwrap_or("(inherit)");
-        let timeout = step.options.timeout_secs
+        let timeout = step
+            .options
+            .timeout_secs
             .map(|t| format!("{t}s"))
             .unwrap_or_else(|| "(inherit)".to_string());
         println!("  Step {i}/{total}: {label:?}  mode={mode}  provider={provider}  model={model}  timeout={timeout}");
         if !step.content.is_empty() {
             let preview = step.content.chars().take(80).collect::<String>();
-            let ellipsis = if step.content.chars().count() > 80 { "…" } else { "" };
+            let ellipsis = if step.content.chars().count() > 80 {
+                "…"
+            } else {
+                ""
+            };
             println!("    {preview}{ellipsis}");
         }
     }
@@ -296,13 +318,27 @@ async fn list_models_cmd(
     }
 
     // Determine column widths.
-    let id_w = entries.iter().map(|e| e.id.len()).max().unwrap_or(10).max(10);
-    let prov_w = entries.iter().map(|e| e.provider.len()).max().unwrap_or(8).max(8);
+    let id_w = entries
+        .iter()
+        .map(|e| e.id.len())
+        .max()
+        .unwrap_or(10)
+        .max(10);
+    let prov_w = entries
+        .iter()
+        .map(|e| e.provider.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
 
     println!(
         "{:<id_w$}  {:<prov_w$}  {:>12}  {:>16}  DESCRIPTION",
-        "ID", "PROVIDER", "CTX WINDOW", "MAX OUT TOKENS",
-        id_w = id_w, prov_w = prov_w,
+        "ID",
+        "PROVIDER",
+        "CTX WINDOW",
+        "MAX OUT TOKENS",
+        id_w = id_w,
+        prov_w = prov_w,
     );
     println!("{}", "-".repeat(id_w + prov_w + 50));
 
@@ -319,8 +355,13 @@ async fn list_models_cmd(
         };
         println!(
             "{:<id_w$}  {:<prov_w$}  {}  {}  {}",
-            e.id, e.provider, ctx, max_out, e.description,
-            id_w = id_w, prov_w = prov_w,
+            e.id,
+            e.provider,
+            ctx,
+            max_out,
+            e.description,
+            id_w = id_w,
+            prov_w = prov_w,
         );
     }
     println!("\nTotal: {} model(s)", entries.len());
@@ -341,14 +382,17 @@ fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
             default_base_url: Option<&'static str>,
             requires_api_key: bool,
         }
-        let rows: Vec<ProviderJson> = drivers.iter().map(|d| ProviderJson {
-            id: d.id,
-            name: d.name,
-            description: d.description,
-            default_api_key_env: d.default_api_key_env,
-            default_base_url: d.default_base_url,
-            requires_api_key: d.requires_api_key,
-        }).collect();
+        let rows: Vec<ProviderJson> = drivers
+            .iter()
+            .map(|d| ProviderJson {
+                id: d.id,
+                name: d.name,
+                description: d.description,
+                default_api_key_env: d.default_api_key_env,
+                default_base_url: d.default_base_url,
+                requires_api_key: d.requires_api_key,
+            })
+            .collect();
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
@@ -371,8 +415,18 @@ fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
             println!();
         }
     } else {
-        let id_w = drivers.iter().map(|d| d.id.len()).max().unwrap_or(10).max(10);
-        let name_w = drivers.iter().map(|d| d.name.len()).max().unwrap_or(8).max(8);
+        let id_w = drivers
+            .iter()
+            .map(|d| d.id.len())
+            .max()
+            .unwrap_or(10)
+            .max(10);
+        let name_w = drivers
+            .iter()
+            .map(|d| d.name.len())
+            .max()
+            .unwrap_or(8)
+            .max(8);
         println!("{:<id_w$}  {:<name_w$}  DESCRIPTION", "ID", "NAME");
         println!("{}", "-".repeat(id_w + name_w + 40));
         for d in drivers {
@@ -389,7 +443,10 @@ fn print_chats(limit: usize) {
     match history::list(Some(limit)) {
         Ok(entries) if entries.is_empty() => {
             println!("No saved conversations found.");
-            println!("Conversations are stored in: {}", history::history_dir().display());
+            println!(
+                "Conversations are stored in: {}",
+                history::history_dir().display()
+            );
         }
         Ok(entries) => {
             println!(
@@ -410,7 +467,10 @@ fn print_chats(limit: usize) {
                 } else {
                     e.title.clone()
                 };
-                println!("{:<45}  {:<16}  {:<5}  {}", display_id, date, e.turns, title);
+                println!(
+                    "{:<45}  {:<16}  {:<5}  {}",
+                    display_id, date, e.turns, title
+                );
             }
             println!("\nTotal: {} conversation(s)", entries.len());
             println!("History dir: {}", history::history_dir().display());
@@ -437,7 +497,11 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
         .map(|e| {
             let date = e.timestamp.replace('T', " ");
             let date = &date[..16.min(date.len())];
-            let turns_label = if e.turns == 1 { "1 turn".to_string() } else { format!("{} turns", e.turns) };
+            let turns_label = if e.turns == 1 {
+                "1 turn".to_string()
+            } else {
+                format!("{} turns", e.turns)
+            };
             format!("{}\t{}\t{}\t{}", e.id, date, e.title, turns_label)
         })
         .collect::<Vec<_>>()
@@ -463,7 +527,7 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
         .spawn()
         .context(
             "failed to launch fzf — make sure fzf is installed\n\
-             (https://github.com/junegunn/fzf or `apt install fzf`)"
+             (https://github.com/junegunn/fzf or `apt install fzf`)",
         )?;
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -501,8 +565,8 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
                  Use 'sven chats' to list available conversations."
             );
         }
-        let file_path = history::resolve(id)
-            .with_context(|| format!("resolving conversation id '{id}'"))?;
+        let file_path =
+            history::resolve(id).with_context(|| format!("resolving conversation id '{id}'"))?;
 
         if let Some(prompt) = &cli.prompt {
             use std::fmt::Write as _;
@@ -529,14 +593,21 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
 
     // ── Resolve effective JSONL I/O paths ────────────────────────────────────
     // --file pointing to a .jsonl is treated as --load-jsonl automatically.
-    let file_is_jsonl = cli.file.as_ref()
+    let file_is_jsonl = cli
+        .file
+        .as_ref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("jsonl"))
         .unwrap_or(false);
 
-    let load_jsonl = cli.effective_load_jsonl().cloned()
-        .or_else(|| if file_is_jsonl { cli.file.clone() } else { None });
+    let load_jsonl = cli.effective_load_jsonl().cloned().or_else(|| {
+        if file_is_jsonl {
+            cli.file.clone()
+        } else {
+            None
+        }
+    });
 
     let output_jsonl = cli.effective_output_jsonl().cloned();
 
@@ -548,7 +619,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         // input (if any) comes from stdin.
         if !is_stdin_tty() {
             let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf).context("reading stdin")?;
+            io::stdin()
+                .read_to_string(&mut buf)
+                .context("reading stdin")?;
             buf
         } else {
             String::new()
@@ -558,7 +631,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             .with_context(|| format!("reading input file {}", path.display()))?
     } else if !is_stdin_tty() {
         let mut buf = String::new();
-        io::stdin().read_to_string(&mut buf).context("reading stdin")?;
+        io::stdin()
+            .read_to_string(&mut buf)
+            .context("reading stdin")?;
         buf
     } else {
         String::new()
@@ -570,7 +645,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         if let Some((k, v)) = sven_ci::template::parse_var(spec) {
             vars.insert(k, v);
         } else {
-            eprintln!("[sven:warn] Ignoring invalid --var argument: {spec:?}  (expected KEY=VALUE)");
+            eprintln!(
+                "[sven:warn] Ignoring invalid --var argument: {spec:?}  (expected KEY=VALUE)"
+            );
         }
     }
 
@@ -608,11 +685,11 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
 
 async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     use ratatui::crossterm::{
-        execute,
         event::{
-            EnableMouseCapture, DisableMouseCapture,
-            KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+            PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
+        execute,
     };
 
     let initial_history = match &cli.resume {
@@ -646,18 +723,14 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // below so escape sequences written there would never reach the terminal.
     {
         use ratatui::crossterm::{
-            execute,
             event::DisableMouseCapture,
+            execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             let _ = disable_raw_mode();
-            let _ = execute!(
-                std::io::stdout(),
-                LeaveAlternateScreen,
-                DisableMouseCapture,
-            );
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture,);
             original_hook(info);
         }));
     }
@@ -687,10 +760,10 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     #[cfg(unix)]
     {
         use std::os::unix::io::IntoRawFd;
-        let sink_path = std::env::var("SVEN_LOG_FILE")
-            .unwrap_or_else(|_| "/dev/null".to_string());
+        let sink_path = std::env::var("SVEN_LOG_FILE").unwrap_or_else(|_| "/dev/null".to_string());
         if let Ok(f) = std::fs::OpenOptions::new()
-            .write(true).create(true).append(true)
+            .create(true)
+            .append(true)
             .open(&sink_path)
         {
             unsafe {
@@ -710,8 +783,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // Uses stdout for all escape sequences (stderr is now /dev/null).
     tokio::spawn(async move {
         use ratatui::crossterm::{
-            execute,
             event::DisableMouseCapture,
+            execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         #[cfg(unix)]
@@ -735,11 +808,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
             let _ = tokio::signal::ctrl_c().await;
         }
         let _ = disable_raw_mode();
-        let _ = execute!(
-            std::io::stdout(),
-            LeaveAlternateScreen,
-            DisableMouseCapture,
-        );
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture,);
         std::process::exit(1);
     });
 
@@ -747,7 +816,9 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // If --file points to a markdown workflow, parse the steps and push them
     // into the TUI queue so the user can review them before they are sent.
     // The file must NOT be a JSONL file; JSONL is handled via --load-jsonl.
-    let file_is_jsonl = cli.file.as_ref()
+    let file_is_jsonl = cli
+        .file
+        .as_ref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("jsonl"))
@@ -756,33 +827,38 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let initial_queue: Vec<QueuedMessage> = if let Some(path) = &cli.file {
         if !file_is_jsonl {
             match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        let (fm, body) = parse_frontmatter(&content);
-                        let _ = fm; // Frontmatter used by runner, not TUI queue loader
-                        let config_ref = config.clone();
-                        let mut wf = parse_workflow(body);
-                        let mut q = Vec::new();
-                        while let Some(step) = wf.steps.pop() {
-                            // Resolve per-step model string into a ModelDirective
-                            let model_transition = step.options.model.as_deref().map(|name| {
-                                let cfg = sven_model::resolve_model_from_config(&config_ref, name);
-                                ModelDirective::SwitchTo(cfg)
-                            });
-                            // Resolve per-step mode string into an AgentMode
-                            let mode_transition = step.options.mode.as_deref().and_then(|m| {
-                                match m {
-                                    "research" => Some(AgentMode::Research),
-                                    "plan"     => Some(AgentMode::Plan),
-                                    "agent"    => Some(AgentMode::Agent),
-                                    _          => None,
-                                }
-                            });
-                            q.push(QueuedMessage { content: step.content, model_transition, mode_transition });
-                        }
-                        q
+                Ok(content) => {
+                    let (fm, body) = parse_frontmatter(&content);
+                    let _ = fm; // Frontmatter used by runner, not TUI queue loader
+                    let config_ref = config.clone();
+                    let mut wf = parse_workflow(body);
+                    let mut q = Vec::new();
+                    while let Some(step) = wf.steps.pop() {
+                        // Resolve per-step model string into a ModelDirective
+                        let model_transition = step.options.model.as_deref().map(|name| {
+                            let cfg = sven_model::resolve_model_from_config(&config_ref, name);
+                            ModelDirective::SwitchTo(Box::new(cfg))
+                        });
+                        // Resolve per-step mode string into an AgentMode
+                        let mode_transition = step.options.mode.as_deref().and_then(|m| match m {
+                            "research" => Some(AgentMode::Research),
+                            "plan" => Some(AgentMode::Plan),
+                            "agent" => Some(AgentMode::Agent),
+                            _ => None,
+                        });
+                        q.push(QueuedMessage {
+                            content: step.content,
+                            model_transition,
+                            mode_transition,
+                        });
                     }
+                    q
+                }
                 Err(e) => {
-                    eprintln!("[sven:warn] Could not read workflow file {}: {e}", path.display());
+                    eprintln!(
+                        "[sven:warn] Could not read workflow file {}: {e}",
+                        path.display()
+                    );
                     Vec::new()
                 }
             }
@@ -830,15 +906,19 @@ fn init_logging(verbosity: u8, is_tui: bool) {
         if let Ok(log_path) = std::env::var("SVEN_LOG_FILE") {
             use std::sync::Mutex;
             if let Ok(file) = std::fs::OpenOptions::new()
-                .create(true).append(true).open(&log_path)
+                .create(true)
+                .append(true)
+                .open(&log_path)
             {
-                let filter = EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("debug"));
+                let filter =
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
                 let _ = tracing_subscriber::registry()
-                    .with(fmt::layer()
-                        .with_target(true)
-                        .with_ansi(false)
-                        .with_writer(Mutex::new(file)))
+                    .with(
+                        fmt::layer()
+                            .with_target(true)
+                            .with_ansi(false)
+                            .with_writer(Mutex::new(file)),
+                    )
                     .with(filter)
                     .try_init();
                 return;
@@ -856,8 +936,7 @@ fn init_logging(verbosity: u8, is_tui: bool) {
         1 => "debug",
         _ => "trace",
     };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_target(false).with_writer(std::io::stderr))

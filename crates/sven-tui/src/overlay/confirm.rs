@@ -87,11 +87,7 @@ impl ConfirmModal {
 
     /// Customise the button labels (builder-style).
     #[allow(dead_code)]
-    pub fn labels(
-        mut self,
-        confirm: impl Into<String>,
-        cancel: impl Into<String>,
-    ) -> Self {
+    pub fn labels(mut self, confirm: impl Into<String>, cancel: impl Into<String>) -> Self {
         self.confirm_label = confirm.into();
         self.cancel_label = cancel.into();
         self

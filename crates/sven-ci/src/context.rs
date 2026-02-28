@@ -8,12 +8,6 @@
 //! continues to compile without modification.
 
 pub use sven_runtime::{
-    find_project_root,
-    find_workspace_root,
-    collect_git_context,
-    detect_ci_context,
-    load_project_context_file,
-    ci_template_vars,
-    GitContext,
-    CiContext,
+    ci_template_vars, collect_git_context, detect_ci_context, find_project_root,
+    find_workspace_root, load_project_context_file, CiContext, GitContext,
 };

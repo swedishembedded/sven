@@ -42,17 +42,23 @@ impl AskQuestionTool {
 
     /// Create a TUI-aware instance that sends questions via `tx`.
     pub fn new_tui(tx: mpsc::Sender<QuestionRequest>) -> Self {
-        Self { question_tx: Some(tx) }
+        Self {
+            question_tx: Some(tx),
+        }
     }
 }
 
 impl Default for AskQuestionTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Tool for AskQuestionTool {
-    fn name(&self) -> &str { "ask_question" }
+    fn name(&self) -> &str {
+        "ask_question"
+    }
 
     fn description(&self) -> &str {
         "Present structured multiple-choice questions to the user and collect responses.\n\
@@ -100,7 +106,9 @@ impl Tool for AskQuestionTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let questions_json = match call.args.get("questions").and_then(|v| v.as_array()) {
@@ -112,26 +120,46 @@ impl Tool for AskQuestionTool {
         for (i, q_val) in questions_json.iter().enumerate() {
             let q_obj = match q_val.as_object() {
                 Some(o) => o,
-                None => return ToolOutput::err(&call.id, format!("question {} is not an object", i + 1)),
+                None => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("question {} is not an object", i + 1),
+                    )
+                }
             };
 
             let prompt = match q_obj.get("prompt").and_then(|v| v.as_str()) {
                 Some(p) => p.to_string(),
-                None => return ToolOutput::err(&call.id, format!("question {} missing 'prompt'", i + 1)),
+                None => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("question {} missing 'prompt'", i + 1),
+                    )
+                }
             };
 
             let options: Vec<String> = match q_obj.get("options").and_then(|v| v.as_array()) {
-                Some(opts) => opts.iter()
+                Some(opts) => opts
+                    .iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
                     .collect(),
-                None => return ToolOutput::err(&call.id, format!("question {} missing 'options'", i + 1)),
+                None => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("question {} missing 'options'", i + 1),
+                    )
+                }
             };
 
             if options.len() < 2 {
-                return ToolOutput::err(&call.id, format!("question {} needs at least 2 options", i + 1));
+                return ToolOutput::err(
+                    &call.id,
+                    format!("question {} needs at least 2 options", i + 1),
+                );
             }
 
-            let allow_multiple = q_obj.get("allow_multiple")
+            let allow_multiple = q_obj
+                .get("allow_multiple")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
@@ -170,15 +198,24 @@ impl Tool for AskQuestionTool {
 
         // ── Plain terminal / headless mode ────────────────────────────────────
         if !stdin_is_tty() {
-            let question_list = questions.iter()
+            let question_list = questions
+                .iter()
                 .enumerate()
                 .map(|(i, q)| {
-                    let opts = q.options.iter()
+                    let opts = q
+                        .options
+                        .iter()
                         .enumerate()
                         .map(|(j, opt)| format!("    {}. {}", j + 1, opt))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    format!("  {}. {}\n{}\n    {}. Other", i + 1, q.prompt, opts, q.options.len() + 1)
+                    format!(
+                        "  {}. {}\n{}\n    {}. Other",
+                        i + 1,
+                        q.prompt,
+                        opts,
+                        q.options.len() + 1
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
@@ -240,7 +277,10 @@ async fn read_stdin_line() -> String {
     let mut reader = tokio::io::BufReader::new(stdin);
     let mut line = String::new();
     match reader.read_line(&mut line).await {
-        Ok(_) => line.trim_end_matches('\n').trim_end_matches('\r').to_string(),
+        Ok(_) => line
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
+            .to_string(),
         Err(_) => String::new(),
     }
 }
@@ -252,7 +292,7 @@ async fn read_stdin_line() -> String {
 /// - "other: custom text" for custom answer
 fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> String {
     let input = input.trim();
-    
+
     // Check for "other:" prefix (case-insensitive)
     if input.to_lowercase().starts_with("other:") || input.to_lowercase().starts_with("other ") {
         let text = input[6..].trim();
@@ -261,14 +301,14 @@ fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> 
         }
         return format!("Other: {}", text);
     }
-    
+
     // Try to parse as comma-separated numbers
     let selections: Vec<usize> = input
         .split(',')
         .filter_map(|s| s.trim().parse::<usize>().ok())
         .filter(|&n| n > 0 && n <= options.len() + 1)
         .collect();
-    
+
     if selections.is_empty() {
         // If parsing failed, treat as "Other" with custom text
         return if input.is_empty() {
@@ -277,23 +317,23 @@ fn parse_stdin_answer(input: &str, options: &[String], allow_multiple: bool) -> 
             format!("Other: {}", input)
         };
     }
-    
+
     // Check if "Other" option (last number) was selected
     let other_idx = options.len() + 1;
     if selections.contains(&other_idx) {
         return "Other".to_string();
     }
-    
+
     // Map selections to option strings
     let selected: Vec<String> = selections
         .iter()
         .filter_map(|&n| options.get(n - 1).cloned())
         .collect();
-    
+
     if selected.is_empty() {
         return "(no valid selection)".to_string();
     }
-    
+
     if !allow_multiple && selected.len() > 1 {
         // If multiple not allowed, take first
         selected[0].clone()
@@ -317,10 +357,14 @@ mod tests {
 
     #[tokio::test]
     async fn missing_questions_is_error() {
-        use serde_json::json;
         use crate::tool::ToolCall;
+        use serde_json::json;
         let t = AskQuestionTool::new();
-        let call = ToolCall { id: "1".into(), name: "ask_question".into(), args: json!({}) };
+        let call = ToolCall {
+            id: "1".into(),
+            name: "ask_question".into(),
+            args: json!({}),
+        };
         let out = t.execute(&call).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing 'questions'"));
@@ -328,13 +372,15 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_questions_is_error() {
-        use serde_json::json;
         use crate::tool::ToolCall;
+        use serde_json::json;
         let t = AskQuestionTool::new();
-        let make_q = |prompt: &str| json!({
-            "prompt": prompt,
-            "options": ["Yes", "No"],
-        });
+        let make_q = |prompt: &str| {
+            json!({
+                "prompt": prompt,
+                "options": ["Yes", "No"],
+            })
+        };
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),
@@ -351,8 +397,8 @@ mod tests {
     /// return a descriptive error rather than blocking forever on empty stdin.
     #[tokio::test]
     async fn headless_mode_returns_error_with_question_list() {
-        use serde_json::json;
         use crate::tool::ToolCall;
+        use serde_json::json;
 
         // Tests always run with stdin as a pipe (not a TTY), so we don't need
         // to mock anything — stdin_is_tty() will return false naturally.

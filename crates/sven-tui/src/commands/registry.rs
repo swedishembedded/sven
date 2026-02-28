@@ -27,7 +27,9 @@ impl CommandRegistry {
     /// Create an empty registry.  Callers should then register built-in
     /// commands via [`register`] and optionally call the discovery methods.
     pub fn empty() -> Self {
-        Self { commands: HashMap::new() }
+        Self {
+            commands: HashMap::new(),
+        }
     }
 
     /// Create a registry pre-populated with all built-in commands.
@@ -117,12 +119,24 @@ mod tests {
     #[test]
     fn with_builtins_registers_core_commands() {
         let reg = CommandRegistry::with_builtins();
-        assert!(reg.get("model").is_some(), "model command must be registered");
-        assert!(reg.get("provider").is_some(), "provider command must be registered");
+        assert!(
+            reg.get("model").is_some(),
+            "model command must be registered"
+        );
+        assert!(
+            reg.get("provider").is_some(),
+            "provider command must be registered"
+        );
         assert!(reg.get("mode").is_some(), "mode command must be registered");
         assert!(reg.get("quit").is_some(), "quit command must be registered");
-        assert!(reg.get("abort").is_some(), "abort command must be registered");
-        assert!(reg.get("clear").is_some(), "clear command must be registered");
+        assert!(
+            reg.get("abort").is_some(),
+            "abort command must be registered"
+        );
+        assert!(
+            reg.get("clear").is_some(),
+            "clear command must be registered"
+        );
     }
 
     #[test]
@@ -131,11 +145,26 @@ mod tests {
 
         struct DummyCmd;
         impl SlashCommand for DummyCmd {
-            fn name(&self) -> &str { "model" }
-            fn description(&self) -> &str { "dummy" }
-            fn arguments(&self) -> Vec<CommandArgument> { vec![] }
-            fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<super::super::CompletionItem> { vec![] }
-            fn execute(&self, _: Vec<String>) -> CommandResult { CommandResult::default() }
+            fn name(&self) -> &str {
+                "model"
+            }
+            fn description(&self) -> &str {
+                "dummy"
+            }
+            fn arguments(&self) -> Vec<CommandArgument> {
+                vec![]
+            }
+            fn complete(
+                &self,
+                _: usize,
+                _: &str,
+                _: &CommandContext,
+            ) -> Vec<super::super::CompletionItem> {
+                vec![]
+            }
+            fn execute(&self, _: Vec<String>) -> CommandResult {
+                CommandResult::default()
+            }
         }
 
         let mut reg = CommandRegistry::with_builtins();

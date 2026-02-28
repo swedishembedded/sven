@@ -34,7 +34,9 @@ fn normalise_glob_for_find(pattern: &str) -> String {
 
 #[async_trait]
 impl Tool for GlobFileSearchTool {
-    fn name(&self) -> &str { "glob_file_search" }
+    fn name(&self) -> &str {
+        "glob_file_search"
+    }
 
     fn description(&self) -> &str {
         "Search for files matching a glob pattern recursively under a root directory. \
@@ -68,15 +70,26 @@ impl Tool for GlobFileSearchTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let raw_pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'pattern'"),
         };
-        let root = call.args.get("root").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-        let max = call.args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+        let root = call
+            .args
+            .get("root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+        let max = call
+            .args
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200) as usize;
 
         // Normalise pattern so `**/*.elf` works with find's -name
         let name_pattern = normalise_glob_for_find(&raw_pattern);
@@ -119,7 +132,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "g1".into(), name: "glob_file_search".into(), args }
+        ToolCall {
+            id: "g1".into(),
+            name: "glob_file_search".into(),
+            args,
+        }
     }
 
     // ── Pattern normalisation ─────────────────────────────────────────────────
@@ -157,10 +174,12 @@ mod tests {
     #[tokio::test]
     async fn finds_toml_files() {
         let t = GlobFileSearchTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.toml",
-            "root": "/data/agents/sven"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.toml",
+                "root": "/data/agents/sven"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("Cargo.toml"));
     }
@@ -172,10 +191,12 @@ mod tests {
         std::fs::write(dir.path().join("firmware.elf"), b"\x7fELF").unwrap();
 
         let t = GlobFileSearchTool;
-        let out = t.execute(&call(json!({
-            "pattern": "**/*.elf",
-            "root": dir.path().to_str().unwrap()
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "**/*.elf",
+                "root": dir.path().to_str().unwrap()
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("firmware.elf"), "got: {}", out.content);
     }
@@ -188,10 +209,12 @@ mod tests {
         std::fs::write(sub.join("zephyr.elf"), b"\x7fELF").unwrap();
 
         let t = GlobFileSearchTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.elf",
-            "root": dir.path().to_str().unwrap()
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.elf",
+                "root": dir.path().to_str().unwrap()
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("zephyr.elf"), "got: {}", out.content);
     }
@@ -199,10 +222,12 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_no_matches_message() {
         let t = GlobFileSearchTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.xyz_nonexistent_ext",
-            "root": "/tmp"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.xyz_nonexistent_ext",
+                "root": "/tmp"
+            })))
+            .await;
         assert!(!out.is_error);
         assert!(out.content.contains("no matches"));
     }
@@ -210,11 +235,13 @@ mod tests {
     #[tokio::test]
     async fn max_results_is_respected() {
         let t = GlobFileSearchTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.rs",
-            "root": "/data/agents/sven",
-            "max_results": 2
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.rs",
+                "root": "/data/agents/sven",
+                "max_results": 2
+            })))
+            .await;
         assert!(!out.is_error);
         let lines: Vec<&str> = out.content.lines().collect();
         assert!(lines.len() <= 2);

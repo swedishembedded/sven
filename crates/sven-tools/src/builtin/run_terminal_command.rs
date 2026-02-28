@@ -11,9 +11,9 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
+use crate::builtin::shell::head_tail_truncate;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
-use crate::builtin::shell::head_tail_truncate;
 
 pub struct RunTerminalCommandTool {
     pub timeout_secs: u64,
@@ -27,7 +27,9 @@ impl Default for RunTerminalCommandTool {
 
 #[async_trait]
 impl Tool for RunTerminalCommandTool {
-    fn name(&self) -> &str { "run_terminal_command" }
+    fn name(&self) -> &str {
+        "run_terminal_command"
+    }
 
     fn description(&self) -> &str {
         "For terminal operations: git, cargo, make, build tools. \
@@ -75,18 +77,29 @@ impl Tool for RunTerminalCommandTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
-    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::HeadTail
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("command").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'command' argument"),
         };
-        let workdir = call.args.get("workdir").and_then(|v| v.as_str()).map(str::to_string);
-        let timeout = call.args
+        let workdir = call
+            .args
+            .get("workdir")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let timeout = call
+            .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.timeout_secs);
@@ -102,15 +115,18 @@ impl Tool for RunTerminalCommandTool {
         // Detach from the controlling terminal so the subprocess cannot open
         // /dev/tty and send escape sequences that corrupt the TUI.
         #[cfg(unix)]
-        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            cmd.output(),
-        ).await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -122,7 +138,9 @@ impl Tool for RunTerminalCommandTool {
                     content.push_str(&head_tail_truncate(&stdout));
                 }
                 if !stderr.is_empty() {
-                    if !content.is_empty() { content.push('\n'); }
+                    if !content.is_empty() {
+                        content.push('\n');
+                    }
                     content.push_str("[stderr]\n");
                     content.push_str(&head_tail_truncate(&stderr));
                 }
@@ -151,7 +169,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "run_terminal_command".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "run_terminal_command".into(),
+            args,
+        }
     }
 
     #[tokio::test]
@@ -188,7 +210,9 @@ mod tests {
     #[tokio::test]
     async fn timeout_returns_error() {
         let t = RunTerminalCommandTool { timeout_secs: 1 };
-        let out = t.execute(&call(json!({"command": "sleep 60", "timeout_secs": 1}))).await;
+        let out = t
+            .execute(&call(json!({"command": "sleep 60", "timeout_secs": 1})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("timeout"));
     }

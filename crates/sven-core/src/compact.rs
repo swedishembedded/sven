@@ -138,37 +138,31 @@ pub fn smart_truncate(content: &str, category: OutputCategory, cap_tokens: usize
     }
     let omitted_bytes = content.len().saturating_sub(cap_chars);
     match category {
-        OutputCategory::HeadTail => {
-            head_tail_lines(
-                content,
-                cap_chars,
-                60,
-                40,
-                &format!("[... {{lines}} lines / {omitted_bytes} bytes omitted ...]"),
-            )
-        }
-        OutputCategory::MatchList => {
-            head_lines(
-                content,
-                cap_chars,
-                &format!(
-                    "[... {{lines}} more matches omitted ({omitted_bytes} bytes); \
+        OutputCategory::HeadTail => head_tail_lines(
+            content,
+            cap_chars,
+            60,
+            40,
+            &format!("[... {{lines}} lines / {omitted_bytes} bytes omitted ...]"),
+        ),
+        OutputCategory::MatchList => head_lines(
+            content,
+            cap_chars,
+            &format!(
+                "[... {{lines}} more matches omitted ({omitted_bytes} bytes); \
                      use a more specific pattern to see them ...]"
-                ),
-            )
-        }
-        OutputCategory::FileContent => {
-            head_tail_lines(
-                content,
-                cap_chars,
-                usize::MAX,
-                usize::MAX,
-                &format!(
-                    "[... {{lines}} lines omitted ({omitted_bytes} bytes); \
+            ),
+        ),
+        OutputCategory::FileContent => head_tail_lines(
+            content,
+            cap_chars,
+            usize::MAX,
+            usize::MAX,
+            &format!(
+                "[... {{lines}} lines omitted ({omitted_bytes} bytes); \
                      use read_file with offset/limit to see more ...]"
-                ),
-            )
-        }
+            ),
+        ),
         OutputCategory::Generic => {
             let cut = content[..cap_chars]
                 .rfind('\n')
@@ -226,7 +220,11 @@ fn head_lines(content: &str, cap_chars: usize, notice_template: &str) -> String 
     let mut kept = String::with_capacity(cap_chars);
     let mut kept_count = 0usize;
     for line in &lines {
-        let needed = if kept.is_empty() { line.len() } else { line.len() + 1 };
+        let needed = if kept.is_empty() {
+            line.len()
+        } else {
+            line.len() + 1
+        };
         if kept.len() + needed > cap_chars {
             break;
         }
@@ -260,7 +258,11 @@ fn head_tail_lines(
     let mut head = String::with_capacity(half_cap);
     let mut head_count = 0usize;
     for line in lines.iter().take(max_head) {
-        let needed = if head.is_empty() { line.len() } else { line.len() + 1 };
+        let needed = if head.is_empty() {
+            line.len()
+        } else {
+            line.len() + 1
+        };
         if head.len() + needed > half_cap {
             break;
         }
@@ -275,7 +277,11 @@ fn head_tail_lines(
     let mut tail_lines: Vec<&str> = Vec::new();
     let mut tail_chars = 0usize;
     for line in lines.iter().rev().take(max_tail) {
-        let needed = if tail_lines.is_empty() { line.len() } else { line.len() + 1 };
+        let needed = if tail_lines.is_empty() {
+            line.len()
+        } else {
+            line.len() + 1
+        };
         if tail_chars + needed > half_cap {
             break;
         }
@@ -298,8 +304,8 @@ fn head_tail_lines(
 
 #[cfg(test)]
 mod tests {
-    use sven_model::{FunctionCall, Message, MessageContent, Role};
     use super::*;
+    use sven_model::{FunctionCall, Message, MessageContent, Role};
 
     fn make_history() -> Vec<Message> {
         vec![
@@ -416,12 +422,30 @@ mod tests {
         let mut msgs = make_history();
         compact_session_with_strategy(&mut msgs, None, &CompactionStrategy::Structured);
         let text = msgs[0].as_text().unwrap();
-        assert!(text.contains("## Active Task"), "missing Active Task section");
-        assert!(text.contains("## Key Decisions"), "missing Key Decisions section");
-        assert!(text.contains("## Files & Artifacts"), "missing Files section");
-        assert!(text.contains("## Constraints"), "missing Constraints section");
-        assert!(text.contains("## Pending Items"), "missing Pending Items section");
-        assert!(text.contains("## Session Narrative"), "missing Narrative section");
+        assert!(
+            text.contains("## Active Task"),
+            "missing Active Task section"
+        );
+        assert!(
+            text.contains("## Key Decisions"),
+            "missing Key Decisions section"
+        );
+        assert!(
+            text.contains("## Files & Artifacts"),
+            "missing Files section"
+        );
+        assert!(
+            text.contains("## Constraints"),
+            "missing Constraints section"
+        );
+        assert!(
+            text.contains("## Pending Items"),
+            "missing Pending Items section"
+        );
+        assert!(
+            text.contains("## Session Narrative"),
+            "missing Narrative section"
+        );
     }
 
     #[test]
@@ -429,7 +453,10 @@ mod tests {
         let mut msgs = make_history();
         compact_session_with_strategy(&mut msgs, None, &CompactionStrategy::Structured);
         let text = msgs[0].as_text().unwrap();
-        assert!(text.contains("What is Rust?"), "history must be embedded in prompt");
+        assert!(
+            text.contains("What is Rust?"),
+            "history must be embedded in prompt"
+        );
     }
 
     // ── emergency_compact ─────────────────────────────────────────────────────
@@ -498,7 +525,10 @@ mod tests {
 
     /// Build a multi-line string of exactly `n` lines, each of the form "line N".
     fn make_lines(n: usize) -> String {
-        (0..n).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n")
+        (0..n)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // -- pass-through (no truncation) --
@@ -512,7 +542,10 @@ mod tests {
     #[test]
     fn smart_truncate_zero_cap_returns_original() {
         let content = "a".repeat(10_000);
-        assert_eq!(smart_truncate(&content, OutputCategory::HeadTail, 0), content);
+        assert_eq!(
+            smart_truncate(&content, OutputCategory::HeadTail, 0),
+            content
+        );
     }
 
     #[test]
@@ -525,7 +558,10 @@ mod tests {
         // cap_chars = 10 * 4 = 40 bytes; content is exactly 40 bytes
         let content = "a".repeat(40);
         let result = smart_truncate(&content, OutputCategory::Generic, 10);
-        assert_eq!(result, content, "content at exact cap boundary must not be truncated");
+        assert_eq!(
+            result, content,
+            "content at exact cap boundary must not be truncated"
+        );
     }
 
     #[test]
@@ -533,7 +569,10 @@ mod tests {
         // cap_chars = 10 * 4 = 40 bytes; content is 41 bytes
         let content = "a".repeat(41);
         let result = smart_truncate(&content, OutputCategory::Generic, 10);
-        assert_ne!(result, content, "content one byte over cap must be truncated");
+        assert_ne!(
+            result, content,
+            "content one byte over cap must be truncated"
+        );
         assert!(result.contains("omitted"));
     }
 
@@ -563,16 +602,28 @@ mod tests {
         // 200 lines; cap 50 tokens (200 chars). HeadTail keeps lines 0-59 + last 40.
         let content = make_lines(200);
         let result = smart_truncate(&content, OutputCategory::HeadTail, 50);
-        assert!(result.contains("line 0"), "HeadTail must preserve the first line");
-        assert!(result.contains("line 1"), "HeadTail must preserve early lines");
+        assert!(
+            result.contains("line 0"),
+            "HeadTail must preserve the first line"
+        );
+        assert!(
+            result.contains("line 1"),
+            "HeadTail must preserve early lines"
+        );
     }
 
     #[test]
     fn headtail_preserves_last_lines() {
         let content = make_lines(200);
         let result = smart_truncate(&content, OutputCategory::HeadTail, 50);
-        assert!(result.contains("line 199"), "HeadTail must preserve the last line");
-        assert!(result.contains("line 198"), "HeadTail must preserve recent lines");
+        assert!(
+            result.contains("line 199"),
+            "HeadTail must preserve the last line"
+        );
+        assert!(
+            result.contains("line 198"),
+            "HeadTail must preserve recent lines"
+        );
     }
 
     #[test]
@@ -596,7 +647,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let result = smart_truncate(&content, OutputCategory::MatchList, 50);
-        assert!(result.contains("match 0:"), "MatchList must keep the first match");
+        assert!(
+            result.contains("match 0:"),
+            "MatchList must keep the first match"
+        );
     }
 
     #[test]
@@ -619,8 +673,14 @@ mod tests {
     fn filecontent_preserves_first_and_last_lines() {
         let content = make_lines(1000);
         let result = smart_truncate(&content, OutputCategory::FileContent, 50);
-        assert!(result.contains("line 0"), "FileContent must preserve the first line");
-        assert!(result.contains("line 999"), "FileContent must preserve the last line");
+        assert!(
+            result.contains("line 0"),
+            "FileContent must preserve the first line"
+        );
+        assert!(
+            result.contains("line 999"),
+            "FileContent must preserve the last line"
+        );
     }
 
     #[test]
@@ -656,7 +716,10 @@ mod tests {
         let result = smart_truncate(&content, OutputCategory::Generic, 10);
         // cap_chars = 40; result must be ≤ 40 chars of 'x' plus the notice
         let x_count = result.chars().take_while(|&c| c == 'x').count();
-        assert_eq!(x_count, 40, "Generic must hard-cut at cap_chars when no newline is found");
+        assert_eq!(
+            x_count, 40,
+            "Generic must hard-cut at cap_chars when no newline is found"
+        );
     }
 
     // -- Omission notice content --
@@ -665,8 +728,14 @@ mod tests {
     fn headtail_omission_notice_mentions_lines_and_bytes() {
         let content = make_lines(200);
         let result = smart_truncate(&content, OutputCategory::HeadTail, 20);
-        assert!(result.contains("omitted"), "HeadTail notice must mention 'omitted'");
-        assert!(result.contains("bytes"), "HeadTail notice must state byte count");
+        assert!(
+            result.contains("omitted"),
+            "HeadTail notice must mention 'omitted'"
+        );
+        assert!(
+            result.contains("bytes"),
+            "HeadTail notice must state byte count"
+        );
     }
 
     #[test]
@@ -698,21 +767,36 @@ mod tests {
     fn smart_truncate_shell_includes_omission_notice() {
         let content = make_lines(200);
         let result = smart_truncate(&content, OutputCategory::HeadTail, 50);
-        assert!(result.contains("omitted"), "truncated HeadTail output must contain omission notice");
+        assert!(
+            result.contains("omitted"),
+            "truncated HeadTail output must contain omission notice"
+        );
     }
 
     #[test]
     fn smart_truncate_grep_includes_omission_notice() {
-        let content = (0..500).map(|i| format!("match {i}: some content here")).collect::<Vec<_>>().join("\n");
+        let content = (0..500)
+            .map(|i| format!("match {i}: some content here"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = smart_truncate(&content, OutputCategory::MatchList, 100);
-        assert!(result.contains("matches omitted") || result.contains("omitted"), "truncated MatchList output must note omission");
+        assert!(
+            result.contains("matches omitted") || result.contains("omitted"),
+            "truncated MatchList output must note omission"
+        );
     }
 
     #[test]
     fn smart_truncate_read_file_includes_omission_notice() {
-        let content = (0..500).map(|i| format!("{i}: some source code line here")).collect::<Vec<_>>().join("\n");
+        let content = (0..500)
+            .map(|i| format!("{i}: some source code line here"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = smart_truncate(&content, OutputCategory::FileContent, 100);
-        assert!(result.contains("omitted"), "truncated FileContent output must contain omission notice");
+        assert!(
+            result.contains("omitted"),
+            "truncated FileContent output must contain omission notice"
+        );
     }
 
     #[test]
@@ -720,6 +804,9 @@ mod tests {
         let content = "x".repeat(80_000); // 20000 tokens
         let result = smart_truncate(&content, OutputCategory::Generic, 100);
         // cap_chars = 400; result should be cap + notice, well under 1000
-        assert!(result.len() < 1000, "truncated output should be close to cap size");
+        assert!(
+            result.len() < 1000,
+            "truncated output should be close to cap size"
+        );
     }
 }

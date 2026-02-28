@@ -1,32 +1,32 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
-pub mod run_terminal_command;
+pub mod apply_patch;
+pub mod ask_question;
+pub mod delete_file;
+pub mod edit_file;
+pub mod glob_file_search;
+pub mod grep;
+pub mod list_dir;
+pub mod load_skill;
 pub mod read_file;
 pub mod read_image;
-pub mod write;
-pub mod list_dir;
-pub mod delete_file;
-pub mod glob_file_search;
-pub mod edit_file;
-pub mod grep;
-pub mod search_codebase;
-pub mod apply_patch;
 pub mod read_lints;
+pub mod run_terminal_command;
+pub mod search_codebase;
+pub mod switch_mode;
 pub mod todo_write;
+pub mod update_memory;
 pub mod web_fetch;
 pub mod web_search;
-pub mod update_memory;
-pub mod ask_question;
-pub mod switch_mode;
-pub mod load_skill;
+pub mod write;
 
 pub mod gdb;
 
 // Legacy modules kept for backwards compatibility
-pub mod shell;
 pub mod fs;
 pub mod glob;
+pub mod shell;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //
@@ -37,12 +37,12 @@ pub mod glob;
 #[cfg(test)]
 mod output_category_tests {
     use std::sync::Arc;
-    use tokio::sync::Mutex;
     use sven_config::GdbConfig;
+    use tokio::sync::Mutex;
 
+    use super::gdb::state::GdbSessionState;
     use crate::tool::OutputCategory;
     use crate::Tool;
-    use super::gdb::state::GdbSessionState;
 
     fn gdb_state() -> Arc<Mutex<GdbSessionState>> {
         Arc::new(Mutex::new(GdbSessionState::default()))

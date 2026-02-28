@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 /// Used for config fields that should be enabled unless the user explicitly
 /// sets them to `false`.  `#[serde(default)]` on a `bool` always falls back
 /// to `bool::default()` (i.e. `false`), so a named function is required.
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -203,9 +205,15 @@ impl Default for ModelConfig {
     }
 }
 
-fn default_agent_mode() -> AgentMode { AgentMode::Agent }
-fn default_max_tool_rounds() -> u32 { 200 }
-fn default_compaction_threshold() -> f32 { 0.85 }
+fn default_agent_mode() -> AgentMode {
+    AgentMode::Agent
+}
+fn default_max_tool_rounds() -> u32 {
+    200
+}
+fn default_compaction_threshold() -> f32 {
+    0.85
+}
 
 /// Strategy used when compacting the session context.
 ///
@@ -294,9 +302,15 @@ pub struct AgentConfig {
     pub max_run_timeout_secs: u64,
 }
 
-fn default_compaction_keep_recent() -> usize { 6 }
-fn default_tool_result_token_cap() -> usize { 4000 }
-fn default_compaction_overhead_reserve() -> f32 { 0.10 }
+fn default_compaction_keep_recent() -> usize {
+    6
+}
+fn default_tool_result_token_cap() -> usize {
+    4000
+}
+fn default_compaction_overhead_reserve() -> f32 {
+    0.10
+}
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -372,10 +386,7 @@ impl Default for ToolsConfig {
                 "rg *".into(),
                 "grep *".into(),
             ],
-            deny_patterns: vec![
-                "rm -rf /*".into(),
-                "dd if=*".into(),
-            ],
+            deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
             timeout_secs: 30,
             use_docker: false,
             docker_image: None,
@@ -436,10 +447,18 @@ pub struct GdbConfig {
 }
 
 impl GdbConfig {
-    fn default_gdb_path() -> String { "gdb-multiarch".into() }
-    fn default_command_timeout_secs() -> u64 { 10 }
-    fn default_connect_timeout_secs() -> u64 { 30 }
-    fn default_server_startup_wait_ms() -> u64 { 500 }
+    fn default_gdb_path() -> String {
+        "gdb-multiarch".into()
+    }
+    fn default_command_timeout_secs() -> u64 {
+        10
+    }
+    fn default_connect_timeout_secs() -> u64 {
+        30
+    }
+    fn default_server_startup_wait_ms() -> u64 {
+        500
+    }
 }
 
 impl Default for GdbConfig {
@@ -564,9 +583,13 @@ mod tests {
     #[test]
     fn config_compaction_keep_recent_defaults_when_absent_from_yaml() {
         // A YAML with an agent section but no compaction_keep_recent uses serde default.
-        let yaml_str = "agent:\n  max_tool_rounds: 30\n  default_mode: agent\n  compaction_threshold: 0.9\n";
+        let yaml_str =
+            "agent:\n  max_tool_rounds: 30\n  default_mode: agent\n  compaction_threshold: 0.9\n";
         let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert_eq!(c.agent.compaction_keep_recent, 6, "serde default must fill in missing field");
+        assert_eq!(
+            c.agent.compaction_keep_recent, 6,
+            "serde default must fill in missing field"
+        );
     }
 
     #[test]
@@ -625,12 +648,24 @@ mod tests {
         // extended_cache_time stays false: the 1-hour TTL has a 2× write cost
         // and is only worthwhile when turns are more than 5 minutes apart.
         let c = Config::default();
-        assert!(c.model.cache_system_prompt, "cache_system_prompt must default to true");
+        assert!(
+            c.model.cache_system_prompt,
+            "cache_system_prompt must default to true"
+        );
         assert!(c.model.cache_tools, "cache_tools must default to true");
-        assert!(c.model.cache_conversation, "cache_conversation must default to true");
+        assert!(
+            c.model.cache_conversation,
+            "cache_conversation must default to true"
+        );
         assert!(c.model.cache_images, "cache_images must default to true");
-        assert!(c.model.cache_tool_results, "cache_tool_results must default to true");
-        assert!(!c.model.extended_cache_time, "extended_cache_time must remain false by default");
+        assert!(
+            c.model.cache_tool_results,
+            "cache_tool_results must default to true"
+        );
+        assert!(
+            !c.model.extended_cache_time,
+            "extended_cache_time must remain false by default"
+        );
     }
 
     #[test]
@@ -662,12 +697,24 @@ mod tests {
         // (true for caching flags, false for extended TTL).
         let yaml_str = "model:\n  provider: anthropic\n  name: claude-sonnet-4-5\n";
         let c: Config = serde_yaml::from_str(yaml_str).unwrap();
-        assert!(c.model.cache_system_prompt, "cache_system_prompt must default to true");
+        assert!(
+            c.model.cache_system_prompt,
+            "cache_system_prompt must default to true"
+        );
         assert!(c.model.cache_tools, "cache_tools must default to true");
-        assert!(c.model.cache_conversation, "cache_conversation must default to true");
-        assert!(!c.model.extended_cache_time, "extended_cache_time must default to false");
+        assert!(
+            c.model.cache_conversation,
+            "cache_conversation must default to true"
+        );
+        assert!(
+            !c.model.extended_cache_time,
+            "extended_cache_time must default to false"
+        );
         assert!(c.model.cache_images, "cache_images must default to true");
-        assert!(c.model.cache_tool_results, "cache_tool_results must default to true");
+        assert!(
+            c.model.cache_tool_results,
+            "cache_tool_results must default to true"
+        );
     }
 
     #[test]
@@ -701,7 +748,8 @@ mod tests {
 
     #[test]
     fn config_deserialises_from_yaml() {
-        let yaml_str = "model:\n  provider: anthropic\n  name: claude-opus-4-5\n  max_tokens: 8192\n";
+        let yaml_str =
+            "model:\n  provider: anthropic\n  name: claude-opus-4-5\n  max_tokens: 8192\n";
         let c: Config = serde_yaml::from_str(yaml_str).unwrap();
         assert_eq!(c.model.provider, "anthropic");
         assert_eq!(c.model.name, "claude-opus-4-5");
@@ -713,14 +761,21 @@ mod tests {
         let yaml_str = "model:\n  name: gpt-4o-mini\n  provider: openai\n";
         let c: Config = serde_yaml::from_str(yaml_str).unwrap();
         assert_eq!(c.model.name, "gpt-4o-mini");
-        assert_eq!(c.agent.max_tool_rounds, AgentConfig::default().max_tool_rounds);
+        assert_eq!(
+            c.agent.max_tool_rounds,
+            AgentConfig::default().max_tool_rounds
+        );
     }
 
     #[test]
     fn agent_mode_yaml_serde_roundtrip() {
         #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
-        struct Wrap { mode: AgentMode }
-        let w = Wrap { mode: AgentMode::Plan };
+        struct Wrap {
+            mode: AgentMode,
+        }
+        let w = Wrap {
+            mode: AgentMode::Plan,
+        };
         let s = serde_yaml::to_string(&w).unwrap();
         let back: Wrap = serde_yaml::from_str(&s).unwrap();
         assert_eq!(back.mode, AgentMode::Plan);

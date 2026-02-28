@@ -35,11 +35,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use governor::{
-    Quota, RateLimiter,
-    clock::DefaultClock,
-    state::keyed::DashMapStateStore,
-};
+use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
 use tracing::warn;
 
 use crate::crypto::token::StoredToken;
@@ -60,10 +56,9 @@ impl AuthState {
     /// `burst`: how many attempts are allowed in a burst before the rate
     /// limit kicks in.
     pub fn new(token_hash: StoredToken, max_per_minute: u32, burst: u32) -> Self {
-        let quota = Quota::per_minute(
-            NonZeroU32::new(max_per_minute).expect("max_per_minute must be > 0"),
-        )
-        .allow_burst(NonZeroU32::new(burst).expect("burst must be > 0"));
+        let quota =
+            Quota::per_minute(NonZeroU32::new(max_per_minute).expect("max_per_minute must be > 0"))
+                .allow_burst(NonZeroU32::new(burst).expect("burst must be > 0"));
 
         Self {
             token_hash: Arc::new(token_hash),
@@ -105,7 +100,9 @@ pub trait AsAuthState {
 }
 
 impl AsAuthState for AuthState {
-    fn auth_state(&self) -> &AuthState { self }
+    fn auth_state(&self) -> &AuthState {
+        self
+    }
 }
 
 /// Standalone bearer verification logic (called by different middleware wrappers).
@@ -113,12 +110,7 @@ impl AsAuthState for AuthState {
 /// Rate limiting is applied **only to failed auth attempts**. Successful
 /// requests never consume rate-limit tokens so legitimate clients are never
 /// throttled by their own traffic.
-pub async fn verify_bearer(
-    auth: &AuthState,
-    ip: IpAddr,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn verify_bearer(auth: &AuthState, ip: IpAddr, req: Request, next: Next) -> Response {
     let provided = extract_bearer(req.headers());
     match provided {
         Some(token) if auth.token_hash.verify(token) => {
@@ -128,16 +120,14 @@ pub async fn verify_bearer(
         _ => {
             // Failed auth: consume a rate-limit token for this IP.
             // Loopback is exempt so local dev tools are never locked out.
-            if !is_loopback(ip) {
-                if auth.limiter.check_key(&ip).is_err() {
-                    warn!(%ip, "rate limit exceeded after repeated auth failures");
-                    return (
-                        StatusCode::TOO_MANY_REQUESTS,
-                        [(axum::http::header::RETRY_AFTER, "60")],
-                        "Too Many Requests",
-                    )
-                        .into_response();
-                }
+            if !is_loopback(ip) && auth.limiter.check_key(&ip).is_err() {
+                warn!(%ip, "rate limit exceeded after repeated auth failures");
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, "60")],
+                    "Too Many Requests",
+                )
+                    .into_response();
             }
             warn!(%ip, "authentication failed");
             (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
@@ -148,7 +138,10 @@ pub async fn verify_bearer(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
     auth.strip_prefix("Bearer ")
 }
 

@@ -40,7 +40,10 @@ mod tests {
         let needs_newline = !("hello".ends_with('\n'));
         let already_newline = "hello\n".ends_with('\n');
         assert!(needs_newline, "text without newline should trigger newline");
-        assert!(already_newline, "text with newline should not trigger extra newline");
+        assert!(
+            already_newline,
+            "text with newline should not trigger extra newline"
+        );
     }
 
     #[test]

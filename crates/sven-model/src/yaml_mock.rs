@@ -113,8 +113,8 @@ impl YamlMockProvider {
 
     /// Load a provider from a YAML string.
     pub fn load(yaml: &str) -> anyhow::Result<Self> {
-        let config: MockConfig = serde_yaml::from_str(yaml)
-            .context("parsing mock responses YAML")?;
+        let config: MockConfig =
+            serde_yaml::from_str(yaml).context("parsing mock responses YAML")?;
         Ok(Self {
             config: Arc::new(config),
             call_count: Arc::new(Mutex::new(0)),
@@ -125,8 +125,12 @@ impl YamlMockProvider {
 
 #[async_trait]
 impl crate::ModelProvider for YamlMockProvider {
-    fn name(&self) -> &str { &self.name }
-    fn model_name(&self) -> &str { "yaml-mock-model" }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn model_name(&self) -> &str {
+        "yaml-mock-model"
+    }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let call_num = {
@@ -136,11 +140,12 @@ impl crate::ModelProvider for YamlMockProvider {
         };
 
         // Determine whether we are responding after tool results were added.
-        let has_tool_results = req.messages.iter()
-            .any(|m| m.role == Role::Tool);
+        let has_tool_results = req.messages.iter().any(|m| m.role == Role::Tool);
 
         // Find the last user message – this is the key we match against.
-        let last_user_text = req.messages.iter()
+        let last_user_text = req
+            .messages
+            .iter()
             .rev()
             .find(|m| m.role == Role::User)
             .and_then(|m| m.as_text())
@@ -237,12 +242,14 @@ fn text_events(text: &str, thinking: Option<&str>) -> Vec<anyhow::Result<Respons
 fn tool_call_events(tool_calls: &[ToolCallDef]) -> Vec<anyhow::Result<ResponseEvent>> {
     let mut events: Vec<anyhow::Result<ResponseEvent>> = tool_calls
         .iter()
-        .map(|tc| Ok(ResponseEvent::ToolCall {
-            index: 0,
-            id: tc.id.clone(),
-            name: tc.tool.clone(),
-            arguments: tc.args.to_string(),
-        }))
+        .map(|tc| {
+            Ok(ResponseEvent::ToolCall {
+                index: 0,
+                id: tc.id.clone(),
+                name: tc.tool.clone(),
+                arguments: tc.args.to_string(),
+            })
+        })
         .collect();
     events.push(Ok(ResponseEvent::Done));
     events
@@ -296,10 +303,7 @@ responses:
 
     fn req_with_tool_result(user: &str) -> CompletionRequest {
         CompletionRequest {
-            messages: vec![
-                Message::user(user),
-                Message::tool_result("tc-1", "ok"),
-            ],
+            messages: vec![Message::user(user), Message::tool_result("tc-1", "ok")],
             stream: true,
             ..Default::default()
         }
@@ -320,28 +324,36 @@ responses:
     async fn equals_match() {
         let p = provider();
         let events = collect(&p, req("ping")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "pong")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "pong")));
     }
 
     #[tokio::test]
     async fn contains_match_case_insensitive() {
         let p = provider();
         let events = collect(&p, req("Please WRITE the file")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::ToolCall { name, .. } if name == "fs")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ToolCall { name, .. } if name == "fs")));
     }
 
     #[tokio::test]
     async fn starts_with_match() {
         let p = provider();
         let events = collect(&p, req("plan the project")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t.contains("plan"))));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t.contains("plan"))));
     }
 
     #[tokio::test]
     async fn default_fallback() {
         let p = provider();
         let events = collect(&p, req("something completely unrelated")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "default reply")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "default reply")));
     }
 
     // ── Tool call sequence ────────────────────────────────────────────────────
@@ -350,9 +362,13 @@ responses:
     async fn round_1_emits_tool_call() {
         let p = provider();
         let events = collect(&p, req("write a file")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::ToolCall { id, .. } if id == "tc-1")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ToolCall { id, .. } if id == "tc-1")));
         // Should not emit text delta in round 1
-        assert!(!events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(_))));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(_))));
     }
 
     #[tokio::test]
@@ -360,7 +376,9 @@ responses:
         let p = provider();
         // Simulate: first call emits tool call, second call (with tool result) emits text
         let events = collect(&p, req_with_tool_result("write a file")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "File written.")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "File written.")));
     }
 
     #[tokio::test]
@@ -368,7 +386,11 @@ responses:
         let p = provider();
         let events = collect(&p, req("write the file")).await;
         let tc_event = events.iter().find_map(|e| {
-            if let ResponseEvent::ToolCall { arguments, .. } = e { Some(arguments.as_str()) } else { None }
+            if let ResponseEvent::ToolCall { arguments, .. } = e {
+                Some(arguments.as_str())
+            } else {
+                None
+            }
         });
         assert!(tc_event.is_some());
         let args_json = tc_event.unwrap();
@@ -384,8 +406,10 @@ responses:
         let p = provider();
         for input in ["ping", "write something", "unknown"] {
             let events = collect(&p, req(input)).await;
-            assert!(matches!(events.last(), Some(ResponseEvent::Done)),
-                "stream for '{input}' should end with Done");
+            assert!(
+                matches!(events.last(), Some(ResponseEvent::Done)),
+                "stream for '{input}' should end with Done"
+            );
         }
     }
 
@@ -423,6 +447,8 @@ responses:
 "#;
         let p = YamlMockProvider::load(yaml).unwrap();
         let events = collect(&p, req("step 3 of the plan")).await;
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "step matched")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "step matched")));
     }
 }

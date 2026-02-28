@@ -29,7 +29,9 @@ impl GdbStatusTool {
 
 #[async_trait]
 impl Tool for GdbStatusTool {
-    fn name(&self) -> &str { "gdb_status" }
+    fn name(&self) -> &str {
+        "gdb_status"
+    }
 
     fn description(&self) -> &str {
         "Return the current state of the GDB debugging session without interrupting the target. \
@@ -48,9 +50,13 @@ impl Tool for GdbStatusTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         debug!("gdb_status");
@@ -82,11 +88,14 @@ impl Tool for GdbStatusTool {
 
         // Drain any pending general messages first so status is fresh
         let pending_msgs = gdb.pop_general().await.unwrap_or_default();
-        let recent_output: Vec<String> = pending_msgs.iter()
+        let recent_output: Vec<String> = pending_msgs
+            .iter()
             .filter_map(|m| match m {
                 GeneralMessage::Console(s) => Some(s.trim_end_matches("\\n").to_string()),
                 GeneralMessage::Log(s) => Some(format!("[log] {}", s.trim_end_matches("\\n"))),
-                GeneralMessage::Target(s) => Some(format!("[target] {}", s.trim_end_matches("\\n"))),
+                GeneralMessage::Target(s) => {
+                    Some(format!("[target] {}", s.trim_end_matches("\\n")))
+                }
                 _ => None,
             })
             .collect();
@@ -95,27 +104,28 @@ impl Tool for GdbStatusTool {
         // This is safe and doesn't register any awaiters that could leave stale entries.
         let target_status = match gdb.status().await {
             Ok(Status::Stopped(stopped)) => {
-                let reason = stopped.reason
+                let reason = stopped
+                    .reason
                     .as_ref()
                     .map(|r| format!("{r:?}"))
                     .unwrap_or_else(|| "unknown".to_string());
                 let location = match (&stopped.function, &stopped.file, stopped.line) {
-                    (Some(func), Some(file), Some(line)) =>
-                        format!("{func} ({file}:{line})"),
-                    (Some(func), _, _) =>
-                        func.clone(),
-                    _ =>
-                        format!("PC=0x{:x}", stopped.address.0),
+                    (Some(func), Some(file), Some(line)) => format!("{func} ({file}:{line})"),
+                    (Some(func), _, _) => func.clone(),
+                    _ => format!("PC=0x{:x}", stopped.address.0),
                 };
-                format!("Target: stopped\nReason: {reason}\nAt: {location}\nPC: 0x{:x}", stopped.address.0)
+                format!(
+                    "Target: stopped\nReason: {reason}\nAt: {location}\nPC: 0x{:x}",
+                    stopped.address.0
+                )
             }
-            Ok(Status::Running) => {
-                "Target: running\n\
+            Ok(Status::Running) => "Target: running\n\
                  → Use gdb_wait_stopped to wait for it to halt, or\n\
-                 → Use gdb_interrupt to forcibly pause it.".to_string()
-            }
+                 → Use gdb_interrupt to forcibly pause it."
+                .to_string(),
             Ok(Status::Unstarted) => {
-                "Target: not started (GDB connected but no target loaded or program not run)".to_string()
+                "Target: not started (GDB connected but no target loaded or program not run)"
+                    .to_string()
             }
             Ok(Status::Exited(reason)) => {
                 format!("Target: exited ({reason:?})")
@@ -142,7 +152,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call() -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_status".into(), args: json!({}) }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_status".into(),
+            args: json!({}),
+        }
     }
 
     #[test]

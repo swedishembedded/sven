@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use sven_config::AgentMode;
 use libc;
+use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -28,7 +28,9 @@ impl GdbStopTool {
 
 #[async_trait]
 impl Tool for GdbStopTool {
-    fn name(&self) -> &str { "gdb_stop" }
+    fn name(&self) -> &str {
+        "gdb_stop"
+    }
 
     fn description(&self) -> &str {
         "Stop the active GDB debugging session: disconnect gdb-multiarch and kill the \
@@ -44,9 +46,13 @@ impl Tool for GdbStopTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         debug!("gdb_stop: tearing down session");
@@ -63,7 +69,9 @@ impl Tool for GdbStopTool {
         // gdbmi worker's process_stderr() (usize underflow on len()-1 of empty buf).
         // SIGTERM lets GDB exit cleanly without us blocking on its response.
         if let Some(pid) = state.gdb_pid {
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
         }
 
         // Brief pause to let GDB drain output before we drop it.
@@ -83,7 +91,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call() -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_stop".into(), args: json!({}) }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_stop".into(),
+            args: json!({}),
+        }
     }
 
     #[test]

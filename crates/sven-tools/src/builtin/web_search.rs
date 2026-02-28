@@ -16,7 +16,9 @@ pub struct WebSearchTool {
 
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &str { "web_search" }
+    fn name(&self) -> &str {
+        "web_search"
+    }
 
     fn description(&self) -> &str {
         "Real-time web search. Requires BRAVE_API_KEY env var. count: 1-10 (default 5).\n\
@@ -45,14 +47,18 @@ impl Tool for WebSearchTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let query = match call.args.get("query").and_then(|v| v.as_str()) {
             Some(q) => q.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'query'"),
         };
-        let count = call.args.get("count")
+        let count = call
+            .args
+            .get("count")
             .and_then(|v| v.as_u64())
             .unwrap_or(5)
             .min(10) as usize;
@@ -60,14 +66,16 @@ impl Tool for WebSearchTool {
         debug!(query = %query, count, "web_search tool");
 
         // Resolve API key
-        let api_key = self.api_key.clone()
+        let api_key = self
+            .api_key
+            .clone()
             .or_else(|| std::env::var("BRAVE_API_KEY").ok());
 
         let Some(api_key) = api_key else {
             return ToolOutput::err(
                 &call.id,
                 "No Brave Search API key configured. Set the BRAVE_API_KEY environment variable \
-                 or configure tools.web.search.api_key in sven.yaml.",
+                 or configure tools.web.search.api_key in sven.toml.",
             );
         };
 
@@ -117,7 +125,10 @@ async fn brave_search(query: &str, count: usize, api_key: &str) -> anyhow::Resul
 
     let mut output = Vec::new();
     for (i, r) in results.iter().enumerate().take(count) {
-        let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("(no title)");
+        let title = r
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no title)");
         let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
         let desc = r.get("description").and_then(|v| v.as_str()).unwrap_or("");
         output.push(format!("{}. **{}**\n   {}\n   {}", i + 1, title, url, desc));
@@ -164,7 +175,11 @@ mod tests {
         std::env::remove_var("BRAVE_API_KEY");
 
         let t = WebSearchTool { api_key: None };
-        let call = ToolCall { id: "1".into(), name: "web_search".into(), args: json!({"query": "test"}) };
+        let call = ToolCall {
+            id: "1".into(),
+            name: "web_search".into(),
+            args: json!({"query": "test"}),
+        };
         let out = t.execute(&call).await;
         assert!(out.is_error);
         assert!(out.content.contains("BRAVE_API_KEY"));

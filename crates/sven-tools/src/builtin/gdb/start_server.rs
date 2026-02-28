@@ -59,7 +59,9 @@ async fn kill_process_on_port(port: u16) {
                     .unwrap_or(rest.len());
                 if let Ok(pid) = rest[..end].parse::<i32>() {
                     debug!(pid, port, "kill_process_on_port: SIGTERM");
-                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
                 }
             }
         }
@@ -85,7 +87,9 @@ async fn kill_process_on_port(port: u16) {
 
 #[async_trait]
 impl Tool for GdbStartServerTool {
-    fn name(&self) -> &str { "gdb_start_server" }
+    fn name(&self) -> &str {
+        "gdb_start_server"
+    }
 
     fn description(&self) -> &str {
         "Start a GDB debug server in the background (e.g., JLinkGDBServer, OpenOCD, pyocd). \
@@ -119,12 +123,20 @@ impl Tool for GdbStartServerTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let force = call.args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+        let force = call
+            .args
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // If we already track a server in our state, handle it.
         {
@@ -149,16 +161,15 @@ impl Tool for GdbStartServerTool {
         } else {
             match discover_gdb_server_command().await {
                 Ok(Some(cmd)) => cmd,
-                Ok(None) => return ToolOutput::err(
-                    &call.id,
-                    "Could not discover a GDB server command from project files. \
+                Ok(None) => {
+                    return ToolOutput::err(
+                        &call.id,
+                        "Could not discover a GDB server command from project files. \
                      Please provide the 'command' argument explicitly, e.g.: \
                      JLinkGDBServer -device <DEVICE> -if SWD -speed 4000 -port 2331",
-                ),
-                Err(e) => return ToolOutput::err(
-                    &call.id,
-                    format!("Discovery error: {e}"),
-                ),
+                    )
+                }
+                Err(e) => return ToolOutput::err(&call.id, format!("Discovery error: {e}")),
             }
         };
 
@@ -185,7 +196,10 @@ impl Tool for GdbStartServerTool {
 
         // When force=true, evict any external process already on the port.
         if force {
-            debug!(port, "gdb_start_server: force=true, killing any existing server on port");
+            debug!(
+                port,
+                "gdb_start_server: force=true, killing any existing server on port"
+            );
             kill_process_on_port(port).await;
         }
 
@@ -210,7 +224,12 @@ impl Tool for GdbStartServerTool {
         // leader of a new session with no controlling terminal, so any
         // open("/dev/tty") call in it (or its children) fails with ENXIO.
         #[cfg(unix)]
-        unsafe { server_cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        unsafe {
+            server_cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         let child = match server_cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::err(&call.id, format!("Failed to spawn server: {e}")),
@@ -294,7 +313,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_start_server".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_start_server".into(),
+            args,
+        }
     }
 
     fn make_tool() -> GdbStartServerTool {
@@ -350,7 +373,9 @@ mod tests {
         let t = GdbStartServerTool::new(state, GdbConfig::default());
         // Using `false` as the command: the existing server will be cleared,
         // then the new server (`false`) will exit immediately.
-        let out = t.execute(&call(json!({"command": "false", "force": true}))).await;
+        let out = t
+            .execute(&call(json!({"command": "false", "force": true})))
+            .await;
         assert!(out.is_error);
         // Should fail because `false` exits immediately, not because of "already running"
         assert!(out.content.contains("exited immediately"));
@@ -372,7 +397,11 @@ mod tests {
 
         // Should succeed (not error) because the port is already occupied.
         assert!(!out.is_error, "expected success, got: {}", out.content);
-        assert!(out.content.contains("already running"), "got: {}", out.content);
+        assert!(
+            out.content.contains("already running"),
+            "got: {}",
+            out.content
+        );
         assert!(out.content.contains("gdb_connect"), "got: {}", out.content);
 
         // server_addr must be stored so gdb_connect can infer the port.
@@ -395,10 +424,16 @@ mod tests {
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbStartServerTool::new(state, GdbConfig::default());
         let cmd = format!("false"); // exits immediately — proves we didn't return early
-        let out = t.execute(&call(json!({"command": cmd, "force": true}))).await;
+        let out = t
+            .execute(&call(json!({"command": cmd, "force": true})))
+            .await;
 
         // force=true should skip the idempotent check, attempt to spawn, and fail.
         assert!(out.is_error);
-        assert!(out.content.contains("exited immediately"), "got: {}", out.content);
+        assert!(
+            out.content.contains("exited immediately"),
+            "got: {}",
+            out.content
+        );
     }
 }

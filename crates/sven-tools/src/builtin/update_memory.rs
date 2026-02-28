@@ -18,7 +18,9 @@ pub struct UpdateMemoryTool {
 
 #[async_trait]
 impl Tool for UpdateMemoryTool {
-    fn name(&self) -> &str { "update_memory" }
+    fn name(&self) -> &str {
+        "update_memory"
+    }
 
     fn description(&self) -> &str {
         "Persist key-value pairs across sessions (~/.config/sven/memory.json).\n\
@@ -50,7 +52,9 @@ impl Tool for UpdateMemoryTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let op = match call.args.get("operation").and_then(|v| v.as_str()) {
@@ -161,12 +165,19 @@ mod tests {
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
         UpdateMemoryTool {
-            memory_file: Some(format!("/tmp/sven_memory_test_{}_{n}.json", std::process::id())),
+            memory_file: Some(format!(
+                "/tmp/sven_memory_test_{}_{n}.json",
+                std::process::id()
+            )),
         }
     }
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "m1".into(), name: "update_memory".into(), args }
+        ToolCall {
+            id: "m1".into(),
+            name: "update_memory".into(),
+            args,
+        }
     }
 
     #[tokio::test]
@@ -174,8 +185,13 @@ mod tests {
         let t = tmp_memory_tool();
         let path = t.memory_file.clone().unwrap();
 
-        t.execute(&call(json!({"operation": "set", "key": "name", "value": "sven"}))).await;
-        let out = t.execute(&call(json!({"operation": "get", "key": "name"}))).await;
+        t.execute(&call(
+            json!({"operation": "set", "key": "name", "value": "sven"}),
+        ))
+        .await;
+        let out = t
+            .execute(&call(json!({"operation": "get", "key": "name"})))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(out.content, "sven");
 
@@ -187,9 +203,13 @@ mod tests {
         let t = tmp_memory_tool();
         let path = t.memory_file.clone().unwrap();
 
-        t.execute(&call(json!({"operation": "set", "key": "x", "value": "1"}))).await;
-        t.execute(&call(json!({"operation": "delete", "key": "x"}))).await;
-        let out = t.execute(&call(json!({"operation": "get", "key": "x"}))).await;
+        t.execute(&call(json!({"operation": "set", "key": "x", "value": "1"})))
+            .await;
+        t.execute(&call(json!({"operation": "delete", "key": "x"})))
+            .await;
+        let out = t
+            .execute(&call(json!({"operation": "get", "key": "x"})))
+            .await;
         assert!(out.is_error);
 
         let _ = std::fs::remove_file(&path);
@@ -200,8 +220,10 @@ mod tests {
         let t = tmp_memory_tool();
         let path = t.memory_file.clone().unwrap();
 
-        t.execute(&call(json!({"operation": "set", "key": "a", "value": "1"}))).await;
-        t.execute(&call(json!({"operation": "set", "key": "b", "value": "2"}))).await;
+        t.execute(&call(json!({"operation": "set", "key": "a", "value": "1"})))
+            .await;
+        t.execute(&call(json!({"operation": "set", "key": "b", "value": "2"})))
+            .await;
         let out = t.execute(&call(json!({"operation": "list"}))).await;
         assert!(out.content.contains("a"));
         assert!(out.content.contains("b"));

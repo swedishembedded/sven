@@ -71,8 +71,15 @@ fn content_block_image_roundtrip() {
     };
     let decoded = roundtrip(&block);
     match &decoded {
-        ContentBlock::Image { data: d, mime_type, detail } => {
-            assert_eq!(d, &data, "binary data must survive CBOR round-trip byte-for-byte");
+        ContentBlock::Image {
+            data: d,
+            mime_type,
+            detail,
+        } => {
+            assert_eq!(
+                d, &data,
+                "binary data must survive CBOR round-trip byte-for-byte"
+            );
             assert_eq!(mime_type, "image/png");
             assert_eq!(detail.as_deref(), Some("high"));
         }
@@ -152,7 +159,10 @@ fn task_request_with_image_payload() {
     let decoded = roundtrip(&req);
     match &decoded.payload[1] {
         ContentBlock::Image { data, .. } => {
-            assert_eq!(data, &image_data, "image bytes must be identical after CBOR round-trip");
+            assert_eq!(
+                data, &image_data,
+                "image bytes must be identical after CBOR round-trip"
+            );
         }
         _ => panic!("expected Image block"),
     }
@@ -172,7 +182,9 @@ fn task_response_completed() {
             capabilities: vec!["pcb".into()],
             version: "0.1.0".into(),
         },
-        result: vec![ContentBlock::text("Here is the BCD counter implementation…")],
+        result: vec![ContentBlock::text(
+            "Here is the BCD counter implementation…",
+        )],
         status: TaskStatus::Completed,
         duration_ms: 4200,
     };
@@ -194,7 +206,9 @@ fn task_response_failed() {
             version: "0.1.0".into(),
         },
         result: vec![],
-        status: TaskStatus::Failed { reason: "context limit exceeded".into() },
+        status: TaskStatus::Failed {
+            reason: "context limit exceeded".into(),
+        },
         duration_ms: 0,
     };
     let decoded = roundtrip(&resp);
@@ -306,5 +320,8 @@ fn same_value_encodes_identically() {
     };
     let a = cbor_encode(&card).unwrap();
     let b = cbor_encode(&card).unwrap();
-    assert_eq!(a, b, "CBOR encoding must be deterministic for the same value");
+    assert_eq!(
+        a, b,
+        "CBOR encoding must be deterministic for the same value"
+    );
 }

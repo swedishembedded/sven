@@ -49,8 +49,12 @@ impl CohereProvider {
 
 #[async_trait]
 impl crate::ModelProvider for CohereProvider {
-    fn name(&self) -> &str { "cohere" }
-    fn model_name(&self) -> &str { &self.model }
+    fn name(&self) -> &str {
+        "cohere"
+    }
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let mut entries: Vec<ModelCatalogEntry> = static_catalog()
@@ -97,13 +101,20 @@ impl crate::ModelProvider for CohereProvider {
                         // Cohere command-r does not support image inputs natively.
                         // Concatenate text parts; images are represented as a note.
                         MessageContent::ContentParts(parts) => {
-                            let text = parts.iter().map(|p| match p {
-                                crate::ContentPart::Text { text } => text.clone(),
-                                crate::ContentPart::Image { .. } => "[image]".to_string(),
-                            }).collect::<Vec<_>>().join("\n");
+                            let text = parts
+                                .iter()
+                                .map(|p| match p {
+                                    crate::ContentPart::Text { text } => text.clone(),
+                                    crate::ContentPart::Image { .. } => "[image]".to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
                             messages.push(json!({ "role": role, "content": text }));
                         }
-                        MessageContent::ToolCall { tool_call_id, function } => {
+                        MessageContent::ToolCall {
+                            tool_call_id,
+                            function,
+                        } => {
                             messages.push(json!({
                                 "role": "assistant",
                                 "tool_calls": [{
@@ -116,15 +127,22 @@ impl crate::ModelProvider for CohereProvider {
                                 }]
                             }));
                         }
-                        MessageContent::ToolResult { tool_call_id, content } => {
+                        MessageContent::ToolResult {
+                            tool_call_id,
+                            content,
+                        } => {
                             let text_content = match content {
                                 crate::ToolResultContent::Text(t) => t.clone(),
-                                crate::ToolResultContent::Parts(parts) => {
-                                    parts.iter().map(|p| match p {
+                                crate::ToolResultContent::Parts(parts) => parts
+                                    .iter()
+                                    .map(|p| match p {
                                         crate::ToolContentPart::Text { text } => text.clone(),
-                                        crate::ToolContentPart::Image { .. } => "[image]".to_string(),
-                                    }).collect::<Vec<_>>().join("\n")
-                                }
+                                        crate::ToolContentPart::Image { .. } => {
+                                            "[image]".to_string()
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
                             };
                             messages.push(json!({
                                 "role": "tool",
@@ -137,14 +155,20 @@ impl crate::ModelProvider for CohereProvider {
             }
         }
 
-        let tools: Vec<Value> = req.tools.iter().map(|t| json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            }
-        })).collect();
+        let tools: Vec<Value> = req
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                })
+            })
+            .collect();
 
         let mut body = json!({
             "model": self.model,
@@ -166,7 +190,8 @@ impl crate::ModelProvider for CohereProvider {
         debug!(model = %self.model, "sending Cohere request");
 
         let url = format!("{}/v2/chat", self.base_url.trim_end_matches('/'));
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .bearer_auth(key)
             .json(&body)
@@ -209,15 +234,26 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
     let event_type = v["type"].as_str().unwrap_or("");
     match event_type {
         "content-delta" => {
-            let text = v["delta"]["message"]["content"]["text"].as_str().unwrap_or("").to_string();
+            let text = v["delta"]["message"]["content"]["text"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             Ok(ResponseEvent::TextDelta(text))
         }
         "tool-call-start" | "tool-call-delta" => {
             let tc = &v["delta"]["message"]["tool_calls"];
             let id = tc["id"].as_str().unwrap_or("").to_string();
             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-            let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
-            Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args })
+            let args = tc["function"]["arguments"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            Ok(ResponseEvent::ToolCall {
+                index: 0,
+                id,
+                name,
+                arguments: args,
+            })
         }
         "message-end" => {
             // Cohere v2 finish_reason: "MAX_TOKENS" means the output was cut off.
@@ -294,7 +330,14 @@ mod tests {
         });
         let ev = parse_cohere_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 20, output_tokens: 10, .. }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 20,
+                    output_tokens: 10,
+                    ..
+                }
+            ),
             "unexpected: {ev:?}"
         );
     }

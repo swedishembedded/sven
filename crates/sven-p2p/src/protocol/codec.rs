@@ -15,8 +15,7 @@ use super::types::{P2pRequest, P2pResponse};
 
 const MAX_MSG_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
 
-pub const TASK_PROTO: StreamProtocol =
-    StreamProtocol::new("/sven-p2p/task/1.0.0");
+pub const TASK_PROTO: StreamProtocol = StreamProtocol::new("/sven-p2p/task/1.0.0");
 
 // ── Low-level CBOR helpers ────────────────────────────────────────────────────
 
@@ -39,7 +38,10 @@ where
 {
     let payload = cbor_encode(value)?;
     if payload.len() > MAX_MSG_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message too large",
+        ));
     }
     let len = payload.len() as u32;
     io.write_all(&len.to_be_bytes()).await?;
@@ -56,7 +58,10 @@ where
     io.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_MSG_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "incoming message too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incoming message too large",
+        ));
     }
     let mut payload = vec![0u8; len];
     io.read_exact(&mut payload).await?;
@@ -73,26 +78,52 @@ pub struct P2pCodec;
 #[async_trait]
 impl request_response::Codec for P2pCodec {
     type Protocol = StreamProtocol;
-    type Request  = P2pRequest;
+    type Request = P2pRequest;
     type Response = P2pResponse;
 
-    async fn read_request<T>(&mut self, _proto: &StreamProtocol, io: &mut T) -> io::Result<P2pRequest>
-    where T: AsyncRead + Unpin + Send {
+    async fn read_request<T>(
+        &mut self,
+        _proto: &StreamProtocol,
+        io: &mut T,
+    ) -> io::Result<P2pRequest>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
         read_framed(io).await
     }
 
-    async fn read_response<T>(&mut self, _proto: &StreamProtocol, io: &mut T) -> io::Result<P2pResponse>
-    where T: AsyncRead + Unpin + Send {
+    async fn read_response<T>(
+        &mut self,
+        _proto: &StreamProtocol,
+        io: &mut T,
+    ) -> io::Result<P2pResponse>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
         read_framed(io).await
     }
 
-    async fn write_request<T>(&mut self, _proto: &StreamProtocol, io: &mut T, req: P2pRequest) -> io::Result<()>
-    where T: AsyncWrite + Unpin + Send {
+    async fn write_request<T>(
+        &mut self,
+        _proto: &StreamProtocol,
+        io: &mut T,
+        req: P2pRequest,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
         write_framed(io, &req).await
     }
 
-    async fn write_response<T>(&mut self, _proto: &StreamProtocol, io: &mut T, resp: P2pResponse) -> io::Result<()>
-    where T: AsyncWrite + Unpin + Send {
+    async fn write_response<T>(
+        &mut self,
+        _proto: &StreamProtocol,
+        io: &mut T,
+        resp: P2pResponse,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
         write_framed(io, &resp).await
     }
 }

@@ -14,7 +14,9 @@ pub struct DeleteFileTool;
 
 #[async_trait]
 impl Tool for DeleteFileTool {
-    fn name(&self) -> &str { "delete_file" }
+    fn name(&self) -> &str {
+        "delete_file"
+    }
 
     fn description(&self) -> &str {
         "Delete a single file. Fails gracefully if not found. NEVER delete without explicit user request.\n\
@@ -35,19 +37,26 @@ impl Tool for DeleteFileTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'path'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
@@ -59,7 +68,9 @@ impl Tool for DeleteFileTool {
             Ok(m) if m.is_dir() => {
                 return ToolOutput::err(
                     &call.id,
-                    format!("{path} is a directory; use run_terminal_command with 'rm -rf' instead"),
+                    format!(
+                        "{path} is a directory; use run_terminal_command with 'rm -rf' instead"
+                    ),
                 );
             }
             Err(e) => return ToolOutput::err(&call.id, format!("stat error: {e}")),
@@ -81,7 +92,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "d1".into(), name: "delete_file".into(), args }
+        ToolCall {
+            id: "d1".into(),
+            name: "delete_file".into(),
+            args,
+        }
     }
 
     #[tokio::test]
@@ -102,7 +117,9 @@ mod tests {
     #[tokio::test]
     async fn missing_file_is_error() {
         let t = DeleteFileTool;
-        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_delete_xyz.txt"}))).await;
+        let out = t
+            .execute(&call(json!({"path": "/tmp/sven_no_such_delete_xyz.txt"})))
+            .await;
         assert!(out.is_error);
     }
 

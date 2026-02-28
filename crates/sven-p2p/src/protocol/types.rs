@@ -108,7 +108,9 @@ pub struct TaskResponse {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TaskStatus {
     Completed,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
     /// Task produced partial results but did not fully complete.
     Partial,
 }

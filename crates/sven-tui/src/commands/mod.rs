@@ -19,8 +19,8 @@ pub use completion::{CompletionItem, CompletionManager};
 pub use parser::{parse, ParsedCommand};
 pub use registry::CommandRegistry;
 
-use sven_config::{AgentMode, Config};
 use std::sync::Arc;
+use sven_config::{AgentMode, Config};
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -106,7 +106,12 @@ pub trait SlashCommand: Send + Sync {
     /// Implementations should return an empty vec when no completions apply.
     ///
     /// The default implementation returns an empty vec (no completions).
-    fn complete(&self, arg_index: usize, partial: &str, ctx: &CommandContext) -> Vec<CompletionItem>;
+    fn complete(
+        &self,
+        arg_index: usize,
+        partial: &str,
+        ctx: &CommandContext,
+    ) -> Vec<CompletionItem>;
 
     /// Execute the command with the given arguments.
     ///
@@ -190,12 +195,20 @@ pub struct CommandArgument {
 impl CommandArgument {
     #[allow(dead_code)]
     pub const fn required(name: &'static str, description: &'static str) -> Self {
-        Self { name, description, required: true }
+        Self {
+            name,
+            description,
+            required: true,
+        }
     }
 
     #[allow(dead_code)]
     pub const fn optional(name: &'static str, description: &'static str) -> Self {
-        Self { name, description, required: false }
+        Self {
+            name,
+            description,
+            required: false,
+        }
     }
 }
 
@@ -234,13 +247,19 @@ mod dispatch_tests {
     #[test]
     fn model_provider_slash_model_no_trailing_space() {
         let (_, result) = try_dispatch("/model anthropic/claude-opus-4-6", &registry()).unwrap();
-        assert_eq!(result.model_override.as_deref(), Some("anthropic/claude-opus-4-6"));
+        assert_eq!(
+            result.model_override.as_deref(),
+            Some("anthropic/claude-opus-4-6")
+        );
     }
 
     #[test]
     fn model_provider_slash_model_with_trailing_space() {
         let (_, result) = try_dispatch("/model anthropic/claude-opus-4-6 ", &registry()).unwrap();
-        assert_eq!(result.model_override.as_deref(), Some("anthropic/claude-opus-4-6"));
+        assert_eq!(
+            result.model_override.as_deref(),
+            Some("anthropic/claude-opus-4-6")
+        );
     }
 
     #[test]
@@ -259,7 +278,10 @@ mod dispatch_tests {
     #[test]
     fn model_bare_command_no_arg_no_override() {
         let (_, result) = try_dispatch("/model ", &registry()).unwrap();
-        assert!(result.model_override.is_none(), "bare /model must not set override");
+        assert!(
+            result.model_override.is_none(),
+            "bare /model must not set override"
+        );
     }
 
     // ── /mode ─────────────────────────────────────────────────────────────────
@@ -331,14 +353,20 @@ mod dispatch_tests {
     fn quit_no_trailing_space_triggers_quit() {
         let (name, result) = try_dispatch("/quit", &registry()).unwrap();
         assert_eq!(name, "quit");
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::Quit)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::Quit)
+        ));
     }
 
     /// "/quit " with trailing space — CompletingArgs path (arg 0, empty partial).
     #[test]
     fn quit_with_trailing_space_triggers_quit() {
         let (_, result) = try_dispatch("/quit ", &registry()).unwrap();
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::Quit)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::Quit)
+        ));
     }
 
     // ── /clear ────────────────────────────────────────────────────────────────
@@ -347,13 +375,19 @@ mod dispatch_tests {
     fn clear_no_trailing_space_triggers_clear() {
         let (name, result) = try_dispatch("/clear", &registry()).unwrap();
         assert_eq!(name, "clear");
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::ClearChat)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::ClearChat)
+        ));
     }
 
     #[test]
     fn clear_with_trailing_space_triggers_clear() {
         let (_, result) = try_dispatch("/clear ", &registry()).unwrap();
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::ClearChat)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::ClearChat)
+        ));
     }
 
     #[test]
@@ -424,13 +458,19 @@ mod dispatch_tests {
     fn abort_no_trailing_space_triggers_abort() {
         let (name, result) = try_dispatch("/abort", &registry()).unwrap();
         assert_eq!(name, "abort");
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::Abort)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::Abort)
+        ));
     }
 
     #[test]
     fn abort_with_trailing_space_triggers_abort() {
         let (_, result) = try_dispatch("/abort ", &registry()).unwrap();
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::Abort)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::Abort)
+        ));
     }
 
     #[test]

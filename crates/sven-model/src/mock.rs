@@ -15,11 +15,18 @@ pub struct MockProvider;
 
 #[async_trait]
 impl crate::ModelProvider for MockProvider {
-    fn name(&self) -> &str { "mock" }
-    fn model_name(&self) -> &str { "mock-model" }
+    fn name(&self) -> &str {
+        "mock"
+    }
+    fn model_name(&self) -> &str {
+        "mock-model"
+    }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        let reply = req.messages.iter().rev()
+        let reply = req
+            .messages
+            .iter()
+            .rev()
             .find(|m| matches!(m.role, crate::Role::User))
             .and_then(|m| m.as_text())
             .unwrap_or("[no input]")
@@ -27,7 +34,12 @@ impl crate::ModelProvider for MockProvider {
 
         let events: Vec<anyhow::Result<ResponseEvent>> = vec![
             Ok(ResponseEvent::TextDelta(format!("MOCK: {reply}"))),
-            Ok(ResponseEvent::Usage { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0 }),
+            Ok(ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 10,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            }),
             Ok(ResponseEvent::Done),
         ];
         Ok(Box::pin(stream::iter(events)))
@@ -75,7 +87,12 @@ impl ScriptedMockProvider {
         let r = reply.into();
         Self::new(vec![vec![
             ResponseEvent::TextDelta(r),
-            ResponseEvent::Usage { input_tokens: 5, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0 },
+            ResponseEvent::Usage {
+                input_tokens: 5,
+                output_tokens: 5,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
             ResponseEvent::Done,
         ]])
     }
@@ -109,8 +126,12 @@ impl ScriptedMockProvider {
 
 #[async_trait]
 impl crate::ModelProvider for ScriptedMockProvider {
-    fn name(&self) -> &str { &self.name }
-    fn model_name(&self) -> &str { "scripted-mock-model" }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn model_name(&self) -> &str {
+        "scripted-mock-model"
+    }
 
     fn input_modalities(&self) -> Vec<InputModality> {
         self.modalities.clone()
@@ -145,7 +166,11 @@ mod tests {
     use crate::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 
     fn empty_req() -> CompletionRequest {
-        CompletionRequest { messages: vec![Message::user("hi")], stream: true, ..Default::default() }
+        CompletionRequest {
+            messages: vec![Message::user("hi")],
+            stream: true,
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
@@ -180,22 +205,29 @@ mod tests {
 
     #[tokio::test]
     async fn scripted_tool_then_text_two_rounds() {
-        let p = ScriptedMockProvider::tool_then_text(
-            "call-1", "shell", r#"{"command":"ls"}"#, "done",
-        );
+        let p =
+            ScriptedMockProvider::tool_then_text("call-1", "shell", r#"{"command":"ls"}"#, "done");
 
         // Round 1
         let req = empty_req();
         let mut events = Vec::new();
         let mut stream = p.complete(req.clone()).await.unwrap();
-        while let Some(ev) = stream.next().await { events.push(ev.unwrap()); }
-        assert!(events.iter().any(|e| matches!(e, ResponseEvent::ToolCall { name, .. } if name == "shell")));
+        while let Some(ev) = stream.next().await {
+            events.push(ev.unwrap());
+        }
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::ToolCall { name, .. } if name == "shell")));
 
         // Round 2
         let mut events2 = Vec::new();
         let mut stream2 = p.complete(req).await.unwrap();
-        while let Some(ev) = stream2.next().await { events2.push(ev.unwrap()); }
-        assert!(events2.iter().any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "done")));
+        while let Some(ev) = stream2.next().await {
+            events2.push(ev.unwrap());
+        }
+        assert!(events2
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "done")));
     }
 
     #[tokio::test]

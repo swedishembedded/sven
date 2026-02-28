@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use super::{CommandContext, ParsedCommand, CommandRegistry};
+use super::{CommandContext, CommandRegistry, ParsedCommand};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -40,7 +40,12 @@ impl CompletionItem {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn simple(value: impl Into<String>) -> Self {
         let v = value.into();
-        Self { display: v.clone(), value: v, description: None, score: 0 }
+        Self {
+            display: v.clone(),
+            value: v,
+            description: None,
+            score: 0,
+        }
     }
 
     /// Create an item with value, display, and a secondary description.
@@ -145,8 +150,7 @@ pub fn filter_and_rank(items: Vec<CompletionItem>, filter: &str) -> Vec<Completi
 
     // Re-filter: only keep actual matches
     scored.retain(|item| {
-        fuzzy_score(filter, &item.value).is_some()
-            || fuzzy_score(filter, &item.display).is_some()
+        fuzzy_score(filter, &item.value).is_some() || fuzzy_score(filter, &item.display).is_some()
     });
 
     scored.sort_by(|a, b| b.score.cmp(&a.score).then(a.value.cmp(&b.value)));
@@ -194,7 +198,11 @@ impl CompletionManager {
                 filter_and_rank(items, partial)
             }
 
-            ParsedCommand::CompletingArgs { command, arg_index, partial } => {
+            ParsedCommand::CompletingArgs {
+                command,
+                arg_index,
+                partial,
+            } => {
                 match self.registry.get(command) {
                     Some(cmd) => {
                         // The command is responsible for filtering and ranking
@@ -251,7 +259,10 @@ mod tests {
         let consec = fuzzy_score("mo", "mode").unwrap();
         let spread = fuzzy_score("me", "model").unwrap();
         // "mo" in "mode" is consecutive from start; "me" spans chars — consec should score higher
-        assert!(consec >= spread, "consecutive match should score at least as high");
+        assert!(
+            consec >= spread,
+            "consecutive match should score at least as high"
+        );
     }
 
     #[test]
@@ -295,8 +306,8 @@ mod tests {
     /// displacing pinned entries (e.g. the current model at index 0).
     #[test]
     fn get_completions_preserves_cmd_complete_ordering() {
-        use std::sync::Arc;
         use crate::commands::{CommandContext, CommandRegistry, ParsedCommand};
+        use std::sync::Arc;
         use sven_config::Config;
 
         let registry = Arc::new(CommandRegistry::with_builtins());
@@ -316,7 +327,8 @@ mod tests {
         let items = manager.get_completions(&parsed, &ctx);
         assert!(!items.is_empty(), "must return completions for /model");
         assert_eq!(
-            items[0].value, "openai/gpt-4o",
+            items[0].value,
+            "openai/gpt-4o",
             "current model must be the first completion item, got: {:?}",
             items.iter().take(3).map(|i| &i.value).collect::<Vec<_>>()
         );

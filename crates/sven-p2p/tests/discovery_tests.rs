@@ -43,7 +43,10 @@ fn relay_addrs_overwrite() {
 fn relay_addrs_not_found_without_publish() {
     let disc = InMemoryDiscovery::new();
     let result = disc.fetch_relay_addrs();
-    assert!(result.is_err(), "should return error when no addrs published");
+    assert!(
+        result.is_err(),
+        "should return error when no addrs published"
+    );
 }
 
 // ── Peer CRUD ─────────────────────────────────────────────────────────────────
@@ -116,8 +119,10 @@ fn multiple_peers_in_same_room() {
     let peer_a = new_peer();
     let peer_b = new_peer();
 
-    disc.publish_peer("room1", &peer_a, &circuit_addr(&relay_pid, &peer_a)).unwrap();
-    disc.publish_peer("room1", &peer_b, &circuit_addr(&relay_pid, &peer_b)).unwrap();
+    disc.publish_peer("room1", &peer_a, &circuit_addr(&relay_pid, &peer_a))
+        .unwrap();
+    disc.publish_peer("room1", &peer_b, &circuit_addr(&relay_pid, &peer_b))
+        .unwrap();
 
     let peers = disc.fetch_peers("room1").unwrap();
     assert_eq!(peers.len(), 2);
@@ -131,7 +136,8 @@ fn rooms_are_isolated() {
     let relay_pid = new_peer();
     let peer_a = new_peer();
 
-    disc.publish_peer("room-a", &peer_a, &circuit_addr(&relay_pid, &peer_a)).unwrap();
+    disc.publish_peer("room-a", &peer_a, &circuit_addr(&relay_pid, &peer_a))
+        .unwrap();
 
     let in_a = disc.fetch_peers("room-a").unwrap();
     let in_b = disc.fetch_peers("room-b").unwrap();
@@ -146,8 +152,10 @@ fn delete_from_one_room_does_not_affect_another() {
     let relay_pid = new_peer();
     let peer_a = new_peer();
 
-    disc.publish_peer("room-a", &peer_a, &circuit_addr(&relay_pid, &peer_a)).unwrap();
-    disc.publish_peer("room-b", &peer_a, &circuit_addr(&relay_pid, &peer_a)).unwrap();
+    disc.publish_peer("room-a", &peer_a, &circuit_addr(&relay_pid, &peer_a))
+        .unwrap();
+    disc.publish_peer("room-b", &peer_a, &circuit_addr(&relay_pid, &peer_a))
+        .unwrap();
 
     disc.delete_peer("room-a", &peer_a).unwrap();
 
@@ -169,6 +177,10 @@ fn shared_discovery_visible_across_clones() {
     disc.publish_peer("shared-room", &peer_a, &a_addr).unwrap();
 
     let peers = disc2.fetch_peers("shared-room").unwrap();
-    assert_eq!(peers.len(), 1, "peer published via disc must be visible via disc2");
+    assert_eq!(
+        peers.len(),
+        1,
+        "peer published via disc must be visible via disc2"
+    );
     assert_eq!(peers[0].peer_id, peer_a);
 }

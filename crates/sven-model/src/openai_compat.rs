@@ -263,14 +263,20 @@ impl crate::ModelProvider for OpenAICompatProvider {
             build_openai_messages(&req.messages)
         };
 
-        let tools: Vec<Value> = req.tools.iter().map(|t| json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            }
-        })).collect();
+        let tools: Vec<Value> = req
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                })
+            })
+            .collect();
 
         // OpenAI's API now uses "max_completion_tokens" for newer models (gpt-5, o1, etc.)
         // Other providers still use "max_tokens"
@@ -279,17 +285,17 @@ impl crate::ModelProvider for OpenAICompatProvider {
         } else {
             "max_tokens"
         };
-        
+
         // GPT-5 models only support temperature=1 (the default)
         // Reasoning models (o1, o3) don't support temperature parameter at all
         let use_temperature = if self.driver_name == "openai" {
-            !(self.model.starts_with("o1-") 
+            !(self.model.starts_with("o1-")
                 || self.model.starts_with("o3-")
                 || self.model.starts_with("gpt-5"))
         } else {
             true
         };
-        
+
         let mut body = json!({
             "model": self.model,
             "messages": messages,
@@ -339,19 +345,23 @@ impl crate::ModelProvider for OpenAICompatProvider {
             message_count = messages.len(),
             "sending completion request"
         );
-        
+
         // Log full request body at trace level for debugging schema issues
         tracing::trace!(request_body = ?body, "full completion request");
 
         let mut http_req = self.client.post(&self.chat_url).json(&body);
         http_req = match self.auth_style {
             AuthStyle::Bearer => {
-                let key = self.api_key.as_deref()
+                let key = self
+                    .api_key
+                    .as_deref()
                     .context("API key not set; provide api_key or api_key_env in config")?;
                 http_req.bearer_auth(key)
             }
             AuthStyle::ApiKeyHeader => {
-                let key = self.api_key.as_deref()
+                let key = self
+                    .api_key
+                    .as_deref()
                     .context("API key not set; provide api_key or api_key_env in config")?;
                 http_req.header("api-key", key)
             }
@@ -361,7 +371,9 @@ impl crate::ModelProvider for OpenAICompatProvider {
             http_req = http_req.header(name.as_str(), val.as_str());
         }
 
-        let resp = http_req.send().await
+        let resp = http_req
+            .send()
+            .await
             .with_context(|| format!("{} request failed", self.driver_name))?;
 
         if !resp.status().is_success() {
@@ -445,7 +457,11 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             .get("prompt_tokens_details")
             .and_then(|d| d.get("cached_tokens"))
             .and_then(|t| t.as_u64())
-            .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(|t| t.as_u64()))
+            .or_else(|| {
+                usage
+                    .get("prompt_cache_hit_tokens")
+                    .and_then(|t| t.as_u64())
+            })
             .unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
@@ -495,8 +511,16 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             let index = tc["index"].as_u64().unwrap_or(0) as u32;
             let id = tc["id"].as_str().unwrap_or("").to_string();
             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-            let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
-            return Ok(ResponseEvent::ToolCall { index, id, name, arguments: args });
+            let args = tc["function"]["arguments"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            return Ok(ResponseEvent::ToolCall {
+                index,
+                id,
+                name,
+                arguments: args,
+            });
         }
     }
 
@@ -505,7 +529,9 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     //   • `reasoning`         — OpenRouter (and some other aggregators)
     // Both carry the same semantics: readable CoT text that arrived before the
     // final answer.  Prefer `reasoning_content`; fall back to `reasoning`.
-    let thinking_text = delta.get("reasoning_content").and_then(|c| c.as_str())
+    let thinking_text = delta
+        .get("reasoning_content")
+        .and_then(|c| c.as_str())
         .or_else(|| delta.get("reasoning").and_then(|c| c.as_str()));
     if let Some(thinking) = thinking_text {
         if !thinking.is_empty() {
@@ -550,13 +576,16 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
         let wire_content: Value = match content {
             ToolResultContent::Text(t) => json!(t),
             ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                let arr: Vec<Value> = parts.iter().map(|p| match p {
-                    ToolContentPart::Text { text } => json!({ "type": "text", "text": text }),
-                    ToolContentPart::Image { image_url } => json!({
-                        "type": "image_url",
-                        "image_url": { "url": image_url },
-                    }),
-                }).collect();
+                let arr: Vec<Value> = parts
+                    .iter()
+                    .map(|p| match p {
+                        ToolContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                        ToolContentPart::Image { image_url } => json!({
+                            "type": "image_url",
+                            "image_url": { "url": image_url },
+                        }),
+                    })
+                    .collect();
                 json!(arr)
             }
             ToolResultContent::Parts(_) => json!(""),
@@ -572,11 +601,19 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
 
         // Merge consecutive ToolCall messages into one assistant message so
         // the wire format satisfies OpenAI's parallel-tool-call contract.
-        if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &m.content
+        {
             let mut calls = vec![tool_call_to_json(tool_call_id, function)];
             i += 1;
             while i < messages.len() {
-                if let MessageContent::ToolCall { tool_call_id, function } = &messages[i].content {
+                if let MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                } = &messages[i].content
+                {
                     calls.push(tool_call_to_json(tool_call_id, function));
                     i += 1;
                 } else {
@@ -593,25 +630,29 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
                 "content": t,
             }),
             MessageContent::ContentParts(parts) if !parts.is_empty() => {
-                let content: Vec<Value> = parts.iter().map(|p| match p {
-                    ContentPart::Text { text } => json!({ "type": "text", "text": text }),
-                    ContentPart::Image { image_url, detail } => {
-                        let mut img_obj = json!({ "url": image_url });
-                        if let Some(d) = detail {
-                            img_obj["detail"] = json!(d);
+                let content: Vec<Value> = parts
+                    .iter()
+                    .map(|p| match p {
+                        ContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                        ContentPart::Image { image_url, detail } => {
+                            let mut img_obj = json!({ "url": image_url });
+                            if let Some(d) = detail {
+                                img_obj["detail"] = json!(d);
+                            }
+                            json!({ "type": "image_url", "image_url": img_obj })
                         }
-                        json!({ "type": "image_url", "image_url": img_obj })
-                    }
-                }).collect();
+                    })
+                    .collect();
                 json!({ "role": role_str(&m.role), "content": content })
             }
             MessageContent::ContentParts(_) => {
                 json!({ "role": role_str(&m.role), "content": "" })
             }
             MessageContent::ToolCall { .. } => unreachable!("handled above"),
-            MessageContent::ToolResult { tool_call_id, content } => {
-                tool_result_to_json(tool_call_id, content)
-            }
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => tool_result_to_json(tool_call_id, content),
         };
         result.push(v);
         i += 1;
@@ -660,9 +701,14 @@ mod tests {
     #[test]
     fn base_url_trailing_slash_stripped() {
         let p = OpenAICompatProvider::new(
-            "x", "m".into(), None,
+            "x",
+            "m".into(),
+            None,
             "http://localhost:1234/v1/",
-            None, None, vec![], AuthStyle::None,
+            None,
+            None,
+            vec![],
+            AuthStyle::None,
             serde_json::Value::Null,
         );
         assert_eq!(p.chat_url, "http://localhost:1234/v1/chat/completions");
@@ -671,8 +717,12 @@ mod tests {
     #[test]
     fn extra_headers_stored() {
         let p = OpenAICompatProvider::new(
-            "openrouter", "m".into(), None,
-            "https://openrouter.ai/api/v1", None, None,
+            "openrouter",
+            "m".into(),
+            None,
+            "https://openrouter.ai/api/v1",
+            None,
+            None,
             vec![("HTTP-Referer".into(), "https://example.com".into())],
             AuthStyle::Bearer,
             serde_json::Value::Null,
@@ -690,9 +740,14 @@ mod tests {
 
         let extra = json!({ "parse_tool_calls": false, "reasoning_format": "deepseek" });
         let p = OpenAICompatProvider::new(
-            "llama", "qwen2.5".into(), None,
-            "http://localhost:8080/v1", None, None,
-            vec![], AuthStyle::None,
+            "llama",
+            "qwen2.5".into(),
+            None,
+            "http://localhost:8080/v1",
+            None,
+            None,
+            vec![],
+            AuthStyle::None,
             extra,
         );
 
@@ -737,8 +792,14 @@ mod tests {
 
         let extra = json!({ "stream": false, "temperature": 0.9 });
         let p = OpenAICompatProvider::new(
-            "test", "m".into(), None,
-            "http://localhost/v1", None, Some(0.2), vec![], AuthStyle::None,
+            "test",
+            "m".into(),
+            None,
+            "http://localhost/v1",
+            None,
+            Some(0.2),
+            vec![],
+            AuthStyle::None,
             extra,
         );
 
@@ -749,8 +810,16 @@ mod tests {
             }
         }
 
-        assert_eq!(body["stream"], json!(false), "extra_body should override stream");
-        assert_eq!(body["temperature"], json!(0.9), "extra_body should override temperature");
+        assert_eq!(
+            body["stream"],
+            json!(false),
+            "extra_body should override stream"
+        );
+        assert_eq!(
+            body["temperature"],
+            json!(0.9),
+            "extra_body should override temperature"
+        );
     }
 
     // ── parse_sse_chunk ───────────────────────────────────────────────────────
@@ -850,7 +919,14 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50, .. }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    ..
+                }
+            ),
             "unexpected event: {ev:?}"
         );
     }
@@ -866,12 +942,15 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage {
-                input_tokens: 200,
-                output_tokens: 40,
-                cache_read_tokens: 150,
-                ..
-            }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 200,
+                    output_tokens: 40,
+                    cache_read_tokens: 150,
+                    ..
+                }
+            ),
             "unexpected event: {ev:?}"
         );
     }
@@ -904,9 +983,9 @@ mod tests {
         // user_with_parts(single text) collapses to MessageContent::Text for
         // cleaner serialization — the wire format should be a plain string.
         use crate::{ContentPart, Message};
-        let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "describe this".into() },
-        ]);
+        let msg = Message::user_with_parts(vec![ContentPart::Text {
+            text: "describe this".into(),
+        }]);
         let json = build_openai_messages(&[msg]);
         assert_eq!(json[0]["content"], "describe this");
     }
@@ -916,7 +995,9 @@ mod tests {
         use crate::{ContentPart, Message};
         let data_url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "what is this?".into() },
+            ContentPart::Text {
+                text: "what is this?".into(),
+            },
             ContentPart::image(data_url),
         ]);
         let json = build_openai_messages(&[msg]);
@@ -930,10 +1011,17 @@ mod tests {
     fn tool_result_parts_with_image_serialized_as_content_array() {
         use crate::{Message, ToolContentPart};
         let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
-        let msg = Message::tool_result_with_parts("tc-99", vec![
-            ToolContentPart::Text { text: "image captured".into() },
-            ToolContentPart::Image { image_url: data_url.into() },
-        ]);
+        let msg = Message::tool_result_with_parts(
+            "tc-99",
+            vec![
+                ToolContentPart::Text {
+                    text: "image captured".into(),
+                },
+                ToolContentPart::Image {
+                    image_url: data_url.into(),
+                },
+            ],
+        );
         let json = build_openai_messages(&[msg]);
         assert_eq!(json[0]["role"], "tool");
         assert_eq!(json[0]["tool_call_id"], "tc-99");
@@ -957,7 +1045,9 @@ mod tests {
         use crate::{ContentPart, Message};
         let url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "what logo is this?".into() },
+            ContentPart::Text {
+                text: "what logo is this?".into(),
+            },
             ContentPart::image_with_detail(url, "low"),
         ]);
         let json = build_openai_messages(&[msg]);
@@ -972,7 +1062,9 @@ mod tests {
         use crate::{ContentPart, Message};
         let url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "describe".into() },
+            ContentPart::Text {
+                text: "describe".into(),
+            },
             ContentPart::image(url),
         ]);
         let json = build_openai_messages(&[msg]);
@@ -1042,7 +1134,9 @@ mod tests {
         assert!(buf.is_empty());
 
         match &events2[0] {
-            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
+            Ok(ResponseEvent::ToolCall {
+                index, id, name, ..
+            }) => {
                 assert_eq!(*index, 0, "index should be 0");
                 assert_eq!(id, "call_1", "id should be preserved");
                 assert_eq!(name, "shell", "name should be preserved");
@@ -1064,14 +1158,22 @@ mod tests {
         assert!(buf.is_empty());
 
         match &events[0] {
-            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
-                assert_eq!(*index, 0); assert_eq!(id, "c0"); assert_eq!(name, "glob");
+            Ok(ResponseEvent::ToolCall {
+                index, id, name, ..
+            }) => {
+                assert_eq!(*index, 0);
+                assert_eq!(id, "c0");
+                assert_eq!(name, "glob");
             }
             other => panic!("unexpected first event: {other:?}"),
         }
         match &events[1] {
-            Ok(ResponseEvent::ToolCall { index, id, name, .. }) => {
-                assert_eq!(*index, 1); assert_eq!(id, "c1"); assert_eq!(name, "grep");
+            Ok(ResponseEvent::ToolCall {
+                index, id, name, ..
+            }) => {
+                assert_eq!(*index, 1);
+                assert_eq!(id, "c1");
+                assert_eq!(name, "grep");
             }
             other => panic!("unexpected second event: {other:?}"),
         }
@@ -1099,9 +1201,14 @@ mod tests {
         assert_eq!(e2.len(), 1);
 
         match &e2[0] {
-            Ok(ResponseEvent::ToolCall { index, arguments, .. }) => {
+            Ok(ResponseEvent::ToolCall {
+                index, arguments, ..
+            }) => {
                 assert_eq!(*index, 0);
-                assert_eq!(arguments, r#"{"pattern":"#, "args should be the complete fragment, not mixed");
+                assert_eq!(
+                    arguments, r#"{"pattern":"#,
+                    "args should be the complete fragment, not mixed"
+                );
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -1134,14 +1241,20 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "call_1".into(),
-                    function: FunctionCall { name: "glob".into(), arguments: r#"{"pattern":"*.c"}"#.into() },
+                    function: FunctionCall {
+                        name: "glob".into(),
+                        arguments: r#"{"pattern":"*.c"}"#.into(),
+                    },
                 },
             },
             Message {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "call_2".into(),
-                    function: FunctionCall { name: "read_file".into(), arguments: r#"{"path":"main.c"}"#.into() },
+                    function: FunctionCall {
+                        name: "read_file".into(),
+                        arguments: r#"{"path":"main.c"}"#.into(),
+                    },
                 },
             },
             Message::tool_result("call_1", "found 3 files"),
@@ -1149,7 +1262,12 @@ mod tests {
         ];
         let json = build_openai_messages(&msgs);
         // Two tool calls → one assistant message + two tool messages = 3 total
-        assert_eq!(json.len(), 3, "expected 3 wire messages, got {}", json.len());
+        assert_eq!(
+            json.len(),
+            3,
+            "expected 3 wire messages, got {}",
+            json.len()
+        );
         assert_eq!(json[0]["role"], "assistant");
         let calls = json[0]["tool_calls"].as_array().unwrap();
         assert_eq!(calls.len(), 2);
@@ -1177,12 +1295,15 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage {
-                input_tokens: 500,
-                output_tokens: 30,
-                cache_read_tokens: 400,
-                ..
-            }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 500,
+                    output_tokens: 30,
+                    cache_read_tokens: 400,
+                    ..
+                }
+            ),
             "unexpected event: {ev:?}"
         );
     }
@@ -1201,10 +1322,13 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage {
-                cache_read_tokens: 250, // OpenAI nested value wins
-                ..
-            }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    cache_read_tokens: 250, // OpenAI nested value wins
+                    ..
+                }
+            ),
             "unexpected event: {ev:?}"
         );
     }
@@ -1219,7 +1343,10 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "call_1".into(),
-                    function: FunctionCall { name: "shell".into(), arguments: r#"{"command":"ls"}"#.into() },
+                    function: FunctionCall {
+                        name: "shell".into(),
+                        arguments: r#"{"command":"ls"}"#.into(),
+                    },
                 },
             },
             Message::tool_result("call_1", "file.txt"),
@@ -1326,7 +1453,8 @@ mod tests {
         assert_eq!(e2.len(), 1);
         assert!(
             matches!(&e2[0], Ok(ResponseEvent::ThinkingDelta(t)) if t == "thinking..."),
-            "unexpected event: {:?}", e2[0]
+            "unexpected event: {:?}",
+            e2[0]
         );
     }
 
@@ -1350,12 +1478,15 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(&ev, ResponseEvent::Usage {
-                input_tokens: 41,      // cache_n + prompt_n
-                output_tokens: 60,     // predicted_n
-                cache_read_tokens: 40, // cache_n
-                ..
-            }),
+            matches!(
+                &ev,
+                ResponseEvent::Usage {
+                    input_tokens: 41,      // cache_n + prompt_n
+                    output_tokens: 60,     // predicted_n
+                    cache_read_tokens: 40, // cache_n
+                    ..
+                }
+            ),
             "expected Usage from llama.cpp timings, got {ev:?}"
         );
     }
@@ -1372,12 +1503,15 @@ mod tests {
         });
         let ev = parse_sse_chunk(&v).unwrap();
         assert!(
-            matches!(&ev, ResponseEvent::Usage {
-                input_tokens: 50,
-                output_tokens: 30,
-                cache_read_tokens: 0,
-                ..
-            }),
+            matches!(
+                &ev,
+                ResponseEvent::Usage {
+                    input_tokens: 50,
+                    output_tokens: 30,
+                    cache_read_tokens: 0,
+                    ..
+                }
+            ),
             "expected Usage with no cache hits, got {ev:?}"
         );
     }

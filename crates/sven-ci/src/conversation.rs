@@ -4,20 +4,19 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use anyhow::Context;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
+use sven_bootstrap::{AgentBuilder, ToolSetProfile};
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
-use sven_bootstrap::{AgentBuilder, ToolSetProfile};
 use sven_input::{
-    parse_conversation, parse_jsonl_full,
-    serialize_conversation_turn_with_metadata, serialize_jsonl_records,
-    ConversationRecord, TurnMetadata,
+    parse_conversation, parse_jsonl_full, serialize_conversation_turn_with_metadata,
+    serialize_jsonl_records, ConversationRecord, TurnMetadata,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::TodoItem;
@@ -51,7 +50,8 @@ impl ConversationRunner {
 
     pub async fn run(&self, opts: ConversationOptions) -> anyhow::Result<()> {
         // Detect file format by extension; default to markdown.
-        let is_jsonl = opts.file_path
+        let is_jsonl = opts
+            .file_path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("jsonl"))
@@ -74,8 +74,8 @@ impl ConversationRunner {
             };
             (parsed.history, pending, Some(parsed.records))
         } else {
-            let parsed = parse_conversation(&opts.content)
-                .context("failed to parse conversation file")?;
+            let parsed =
+                parse_conversation(&opts.content).context("failed to parse conversation file")?;
             let pending = match parsed.pending_user_input {
                 Some(p) => p,
                 None => {
@@ -101,8 +101,8 @@ impl ConversationRunner {
             self.config.model.clone()
         };
 
-        let model = sven_model::from_config(&model_cfg)
-            .context("failed to initialise model provider")?;
+        let model =
+            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
         // Build metadata for turn annotation
@@ -118,10 +118,14 @@ impl ConversationRunner {
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
         let task_depth = Arc::new(AtomicUsize::new(0));
 
-        let profile = ToolSetProfile::Full { question_tx: None, todos, task_depth };
+        let profile = ToolSetProfile::Full {
+            question_tx: None,
+            todos,
+            task_depth,
+        };
 
-        let mut agent = AgentBuilder::new(self.config.clone())
-            .build(opts.mode, model.clone(), profile);
+        let mut agent =
+            AgentBuilder::new(self.config.clone()).build(opts.mode, model.clone(), profile);
 
         // Load conversation history into the agent session.
         // replace_history_and_submit prepends the system message and then adds
@@ -193,16 +197,27 @@ impl ConversationRunner {
             // Skip the first new_record (the user message that was already in the file)
             all_records.extend_from_slice(&new_records[1..]);
             let serialized = serialize_jsonl_records(&all_records);
-            std::fs::write(&opts.file_path, serialized.as_bytes())
-                .with_context(|| format!("writing JSONL conversation file: {}", opts.file_path.display()))?;
-            debug!(records = all_records.len(), "rewrote JSONL conversation file");
+            std::fs::write(&opts.file_path, serialized.as_bytes()).with_context(|| {
+                format!(
+                    "writing JSONL conversation file: {}",
+                    opts.file_path.display()
+                )
+            })?;
+            debug!(
+                records = all_records.len(),
+                "rewrote JSONL conversation file"
+            );
         } else {
             // For markdown: append new messages only (excluding the user, which
             // is already present), using the legacy serializer.
             let new_messages: Vec<Message> = new_records[1..]
                 .iter()
                 .filter_map(|r| {
-                    if let ConversationRecord::Message(m) = r { Some(m.clone()) } else { None }
+                    if let ConversationRecord::Message(m) = r {
+                        Some(m.clone())
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             if !new_messages.is_empty() {
@@ -235,11 +250,7 @@ impl ConversationRunner {
 ///
 /// This replaces the old `collect_event` which only captured `Message`s and
 /// silently discarded thinking traces.
-fn collect_event_full(
-    event: AgentEvent,
-    records: &mut Vec<ConversationRecord>,
-    failed: &mut bool,
-) {
+fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, failed: &mut bool) {
     match event {
         AgentEvent::TextDelta(delta) => {
             write_stdout(&delta);
@@ -277,7 +288,12 @@ fn collect_event_full(
             }));
         }
 
-        AgentEvent::ToolCallFinished { call_id, tool_name, output, is_error } => {
+        AgentEvent::ToolCallFinished {
+            call_id,
+            tool_name,
+            output,
+            is_error,
+        } => {
             if is_error {
                 write_stderr(&format!(
                     "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" \
@@ -295,8 +311,17 @@ fn collect_event_full(
             )));
         }
 
-        AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
-            let turn_note = if turn > 0 { format!(" (tool round {turn})") } else { String::new() };
+        AgentEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
+            let turn_note = if turn > 0 {
+                format!(" (tool round {turn})")
+            } else {
+                String::new()
+            };
             write_stderr(&format!(
                 "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
@@ -337,7 +362,13 @@ fn collect_event_full(
             write_stderr(&format!("[sven:questions] {}", questions.join(" | ")));
         }
 
-        AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
+        AgentEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            ..
+        } => {
             if cache_read > 0 || cache_write > 0 {
                 write_stderr(&format!(
                     "[sven:tokens] input={input} output={output} \
@@ -352,7 +383,9 @@ fn collect_event_full(
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
-                records.push(ConversationRecord::Message(Message::assistant(&partial_text)));
+                records.push(ConversationRecord::Message(Message::assistant(
+                    &partial_text,
+                )));
             } else {
                 write_stderr("[sven:agent:aborted]");
             }

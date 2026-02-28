@@ -12,7 +12,9 @@ pub struct ReadImageTool;
 
 #[async_trait]
 impl Tool for ReadImageTool {
-    fn name(&self) -> &str { "read_image" }
+    fn name(&self) -> &str {
+        "read_image"
+    }
 
     fn description(&self) -> &str {
         "Read an image and return it as a base64 data URL for visual analysis.\n\
@@ -34,17 +36,22 @@ impl Tool for ReadImageTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path_str = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'path'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
@@ -67,10 +74,13 @@ impl Tool for ReadImageTool {
         match sven_image::load_image(path) {
             Ok(img) => {
                 let data_url = img.into_data_url();
-                ToolOutput::with_parts(&call.id, vec![
-                    ToolOutputPart::Text(format!("Image loaded: {path_str}")),
-                    ToolOutputPart::Image(data_url),
-                ])
+                ToolOutput::with_parts(
+                    &call.id,
+                    vec![
+                        ToolOutputPart::Text(format!("Image loaded: {path_str}")),
+                        ToolOutputPart::Image(data_url),
+                    ],
+                )
             }
             Err(e) => ToolOutput::err(&call.id, format!("failed to read image: {e}")),
         }
@@ -87,22 +97,22 @@ mod tests {
     use crate::tool::Tool;
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "ri1".into(), name: "read_image".into(), args }
+        ToolCall {
+            id: "ri1".into(),
+            name: "read_image".into(),
+            args,
+        }
     }
 
     /// Write a minimal 1×1 PNG to a temp file and return the path.
     fn tmp_png() -> String {
         // Minimal valid 1×1 red PNG (CRCs verified by Python zlib)
         let png_bytes: &[u8] = &[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-            0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-            0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
-            0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
-            0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
-            0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
-            0x44, 0xae, 0x42, 0x60, 0x82,
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
+            0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         let path = format!("/tmp/sven_read_image_test_{}.png", std::process::id());
         std::fs::write(&path, png_bytes).unwrap();
@@ -117,10 +127,16 @@ mod tests {
         assert!(!out.is_error, "unexpected error: {}", out.content);
         assert!(out.has_images(), "should have an image part");
         // The image URL in parts should start with data:
-        let img_part = out.parts.iter().find(|p| matches!(p, ToolOutputPart::Image(_)));
+        let img_part = out
+            .parts
+            .iter()
+            .find(|p| matches!(p, ToolOutputPart::Image(_)));
         assert!(img_part.is_some());
         if let Some(ToolOutputPart::Image(url)) = img_part {
-            assert!(url.starts_with("data:image/"), "data url should start with data:image/");
+            assert!(
+                url.starts_with("data:image/"),
+                "data url should start with data:image/"
+            );
         }
         let _ = std::fs::remove_file(&path);
     }
@@ -144,7 +160,9 @@ mod tests {
     #[tokio::test]
     async fn missing_file_returns_error() {
         let t = ReadImageTool;
-        let out = t.execute(&call(json!({"path": "/tmp/no_such_image_xyz.png"}))).await;
+        let out = t
+            .execute(&call(json!({"path": "/tmp/no_such_image_xyz.png"})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("failed to read image"));
     }

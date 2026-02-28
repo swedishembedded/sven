@@ -25,7 +25,9 @@ impl TodoWriteTool {
 
 #[async_trait]
 impl Tool for TodoWriteTool {
-    fn name(&self) -> &str { "todo_write" }
+    fn name(&self) -> &str {
+        "todo_write"
+    }
 
     fn description(&self) -> &str {
         "Structured task list for the session. Update silently — don't announce todo updates.\n\
@@ -71,7 +73,9 @@ impl Tool for TodoWriteTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let todos_value = match call.args.get("todos").and_then(|v| v.as_array()) {
@@ -99,7 +103,11 @@ impl Tool for TodoWriteTool {
                     format!("invalid status '{status}' for todo '{id}'"),
                 );
             }
-            items.push(TodoItem { id, content, status });
+            items.push(TodoItem {
+                id,
+                content,
+                status,
+            });
         }
 
         // Validate at most one in_progress
@@ -111,7 +119,10 @@ impl Tool for TodoWriteTool {
         debug!(count = items.len(), "todo_write tool");
 
         *self.todos.lock().await = items.clone();
-        let _ = self.event_tx.send(ToolEvent::TodoUpdate(items.clone())).await;
+        let _ = self
+            .event_tx
+            .send(ToolEvent::TodoUpdate(items.clone()))
+            .await;
 
         let summary = format_todos(&items);
         ToolOutput::ok(&call.id, summary)
@@ -122,15 +133,18 @@ fn format_todos(items: &[TodoItem]) -> String {
     if items.is_empty() {
         return "Todo list cleared.".to_string();
     }
-    let lines: Vec<String> = items.iter().map(|t| {
-        let icon = match t.status.as_str() {
-            "completed" => "✓",
-            "in_progress" => "→",
-            "cancelled" => "✗",
-            _ => "○",
-        };
-        format!("{icon} [{}] {}", t.id, t.content)
-    }).collect();
+    let lines: Vec<String> = items
+        .iter()
+        .map(|t| {
+            let icon = match t.status.as_str() {
+                "completed" => "✓",
+                "in_progress" => "→",
+                "cancelled" => "✗",
+                _ => "○",
+            };
+            format!("{icon} [{}] {}", t.id, t.content)
+        })
+        .collect();
     format!("Todos updated:\n{}", lines.join("\n"))
 }
 
@@ -141,7 +155,11 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolCall};
 
-    fn make_tool() -> (TodoWriteTool, Arc<Mutex<Vec<TodoItem>>>, mpsc::Receiver<ToolEvent>) {
+    fn make_tool() -> (
+        TodoWriteTool,
+        Arc<Mutex<Vec<TodoItem>>>,
+        mpsc::Receiver<ToolEvent>,
+    ) {
         let todos = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel(16);
         let tool = TodoWriteTool::new(todos.clone(), tx);
@@ -149,18 +167,24 @@ mod tests {
     }
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "todo_write".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "todo_write".into(),
+            args,
+        }
     }
 
     #[tokio::test]
     async fn sets_todos() {
         let (tool, todos, _rx) = make_tool();
-        let out = tool.execute(&call(json!({
-            "todos": [
-                {"id": "1", "content": "do something", "status": "pending"},
-                {"id": "2", "content": "in progress", "status": "in_progress"}
-            ]
-        }))).await;
+        let out = tool
+            .execute(&call(json!({
+                "todos": [
+                    {"id": "1", "content": "do something", "status": "pending"},
+                    {"id": "2", "content": "in progress", "status": "in_progress"}
+                ]
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         let locked = todos.lock().await;
         assert_eq!(locked.len(), 2);
@@ -172,7 +196,8 @@ mod tests {
         let (tool, _todos, mut rx) = make_tool();
         tool.execute(&call(json!({
             "todos": [{"id": "a", "content": "task", "status": "pending"}]
-        }))).await;
+        })))
+        .await;
         let event = rx.try_recv().expect("should have emitted event");
         matches!(event, ToolEvent::TodoUpdate(_));
     }
@@ -180,12 +205,14 @@ mod tests {
     #[tokio::test]
     async fn rejects_multiple_in_progress() {
         let (tool, _todos, _rx) = make_tool();
-        let out = tool.execute(&call(json!({
-            "todos": [
-                {"id": "1", "content": "a", "status": "in_progress"},
-                {"id": "2", "content": "b", "status": "in_progress"}
-            ]
-        }))).await;
+        let out = tool
+            .execute(&call(json!({
+                "todos": [
+                    {"id": "1", "content": "a", "status": "in_progress"},
+                    {"id": "2", "content": "b", "status": "in_progress"}
+                ]
+            })))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("at most one"));
     }

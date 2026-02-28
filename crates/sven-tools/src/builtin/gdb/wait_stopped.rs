@@ -35,7 +35,9 @@ impl GdbWaitStoppedTool {
 
 #[async_trait]
 impl Tool for GdbWaitStoppedTool {
-    fn name(&self) -> &str { "gdb_wait_stopped" }
+    fn name(&self) -> &str {
+        "gdb_wait_stopped"
+    }
 
     fn description(&self) -> &str {
         "Wait for the target to halt and return where it stopped. \
@@ -63,13 +65,20 @@ impl Tool for GdbWaitStoppedTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::HeadTail
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let timeout_secs = call.args
+        let timeout_secs = call
+            .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
@@ -79,10 +88,7 @@ impl Tool for GdbWaitStoppedTool {
         let state = self.state.lock().await;
 
         if !state.has_client() {
-            return ToolOutput::err(
-                &call.id,
-                "No active GDB session. Call gdb_connect first.",
-            );
+            return ToolOutput::err(&call.id, "No active GDB session. Call gdb_connect first.");
         }
 
         let gdb = state.client.as_ref().unwrap();
@@ -95,25 +101,21 @@ impl Tool for GdbWaitStoppedTool {
         loop {
             match gdb.status().await {
                 Ok(Status::Stopped(stopped)) => {
-                    let reason = stopped.reason
+                    let reason = stopped
+                        .reason
                         .as_ref()
                         .map(|r| format!("{r:?}"))
                         .unwrap_or_else(|| "unknown".to_string());
 
                     let location = match (&stopped.function, &stopped.file, stopped.line) {
-                        (Some(func), Some(file), Some(line)) =>
-                            format!("{func} ({file}:{line})"),
-                        (Some(func), _, _) =>
-                            func.clone(),
-                        _ =>
-                            format!("PC=0x{:x}", stopped.address.0),
+                        (Some(func), Some(file), Some(line)) => format!("{func} ({file}:{line})"),
+                        (Some(func), _, _) => func.clone(),
+                        _ => format!("PC=0x{:x}", stopped.address.0),
                     };
 
                     return ToolOutput::ok(
                         &call.id,
-                        format!(
-                            "Target stopped.\nReason: {reason}\nLocation: {location}"
-                        ),
+                        format!("Target stopped.\nReason: {reason}\nLocation: {location}"),
                     );
                 }
                 Ok(Status::Exited(reason)) => {
@@ -153,7 +155,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_wait_stopped".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_wait_stopped".into(),
+            args,
+        }
     }
 
     #[test]

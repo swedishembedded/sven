@@ -64,12 +64,19 @@ pub struct SkillCommand {
 }
 
 impl SlashCommand for SkillCommand {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn description(&self) -> &str { &self.description }
+    fn description(&self) -> &str {
+        &self.description
+    }
 
     fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::optional("task", "Optional task to perform using this skill")]
+        vec![CommandArgument::optional(
+            "task",
+            "Optional task to perform using this skill",
+        )]
     }
 
     fn complete(
@@ -121,7 +128,8 @@ pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> 
 
     for cmd in commands {
         // Normalise: lowercase each path segment, preserve hyphens and slashes.
-        let normalised = cmd.command
+        let normalised = cmd
+            .command
             .split('/')
             .map(|seg| seg.to_lowercase())
             .collect::<Vec<_>>()
@@ -166,7 +174,10 @@ fn resolve_unique_name_sep(
     fallback
 }
 
-fn resolve_unique_command_name(base: String, used: &mut std::collections::HashSet<String>) -> String {
+fn resolve_unique_command_name(
+    base: String,
+    used: &mut std::collections::HashSet<String>,
+) -> String {
     resolve_unique_name_sep(base, '-', used)
 }
 
@@ -190,12 +201,19 @@ pub struct AgentCommand {
 }
 
 impl SlashCommand for AgentCommand {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn description(&self) -> &str { &self.description }
+    fn description(&self) -> &str {
+        &self.description
+    }
 
     fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::optional("task", "Optional task for this subagent")]
+        vec![CommandArgument::optional(
+            "task",
+            "Optional task for this subagent",
+        )]
     }
 
     fn complete(
@@ -247,10 +265,10 @@ pub fn make_agent_slash_commands(agents: &[AgentInfo]) -> Vec<AgentCommand> {
 mod tests {
     use super::*;
     use crate::commands::CommandContext;
-    use sven_config::Config;
-    use sven_runtime::AgentInfo;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use sven_config::Config;
+    use sven_runtime::AgentInfo;
 
     fn make_cmd(name: &str, description: &str, content: &str) -> SkillCommand {
         SkillCommand {
@@ -287,7 +305,10 @@ mod tests {
     fn execute_no_args_returns_content() {
         let cmd = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
         let result = cmd.execute(vec![]);
-        assert_eq!(result.message_to_send.as_deref(), Some("## Instructions\n\nDo things."));
+        assert_eq!(
+            result.message_to_send.as_deref(),
+            Some("## Instructions\n\nDo things.")
+        );
         assert!(result.model_override.is_none());
         assert!(result.mode_override.is_none());
         assert!(result.immediate_action.is_none());
@@ -305,8 +326,15 @@ mod tests {
     #[test]
     fn execute_multi_word_task_joined() {
         let cmd = make_cmd("deploy", "Deploy.", "Deploy content.");
-        let result = cmd.execute(vec!["push".to_string(), "to".to_string(), "prod".to_string()]);
-        assert!(result.message_to_send.unwrap().contains("Task: push to prod"));
+        let result = cmd.execute(vec![
+            "push".to_string(),
+            "to".to_string(),
+            "prod".to_string(),
+        ]);
+        assert!(result
+            .message_to_send
+            .unwrap()
+            .contains("Task: push to prod"));
     }
 
     #[test]
@@ -352,11 +380,14 @@ mod tests {
     fn command_duplicates_get_hyphen_suffix() {
         use sven_runtime::SkillInfo;
         let make = |cmd: &str| SkillInfo {
-            command: cmd.to_string(), name: cmd.to_string(),
-            description: "D.".to_string(), version: None,
+            command: cmd.to_string(),
+            name: cmd.to_string(),
+            description: "D.".to_string(),
+            version: None,
             skill_md_path: PathBuf::from("/tmp/a.md"),
             skill_dir: PathBuf::from("/tmp"),
-            content: "b".to_string(), sven_meta: None,
+            content: "b".to_string(),
+            sven_meta: None,
         };
         let cmds = make_command_slash_commands(&[make("deploy"), make("deploy")]);
         assert_eq!(cmds.len(), 2);
@@ -411,15 +442,30 @@ mod tests {
     #[test]
     fn resolve_unique_underscore_sep() {
         let mut used = std::collections::HashSet::new();
-        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo");
-        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo_2");
-        assert_eq!(resolve_unique_name_sep("foo".to_string(), '_', &mut used), "foo_3");
+        assert_eq!(
+            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
+            "foo"
+        );
+        assert_eq!(
+            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
+            "foo_2"
+        );
+        assert_eq!(
+            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
+            "foo_3"
+        );
     }
 
     #[test]
     fn resolve_unique_hyphen_sep() {
         let mut used = std::collections::HashSet::new();
-        assert_eq!(resolve_unique_name_sep("bar".to_string(), '-', &mut used), "bar");
-        assert_eq!(resolve_unique_name_sep("bar".to_string(), '-', &mut used), "bar-2");
+        assert_eq!(
+            resolve_unique_name_sep("bar".to_string(), '-', &mut used),
+            "bar"
+        );
+        assert_eq!(
+            resolve_unique_name_sep("bar".to_string(), '-', &mut used),
+            "bar-2"
+        );
     }
 }

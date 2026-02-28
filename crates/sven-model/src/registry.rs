@@ -77,7 +77,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.cohere.com"),
         requires_api_key: true,
     },
-
     // ── Gateways ──────────────────────────────────────────────────────────────
     DriverMeta {
         id: "openrouter",
@@ -119,7 +118,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: true,
     },
-
     // ── Fast inference platforms ───────────────────────────────────────────────
     DriverMeta {
         id: "groq",
@@ -137,7 +135,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.cerebras.ai/v1"),
         requires_api_key: true,
     },
-
     // ── Open model platforms ───────────────────────────────────────────────────
     DriverMeta {
         id: "together",
@@ -195,7 +192,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://integrate.api.nvidia.com/v1"),
         requires_api_key: true,
     },
-
     // ── Specialized ───────────────────────────────────────────────────────────
     DriverMeta {
         id: "perplexity",
@@ -221,7 +217,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.x.ai/v1"),
         requires_api_key: true,
     },
-
     // ── Regional providers ────────────────────────────────────────────────────
     DriverMeta {
         id: "deepseek",
@@ -271,7 +266,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://qianfan.baidubce.com/v2"),
         requires_api_key: true,
     },
-
     // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
         id: "ollama",
@@ -297,7 +291,6 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://localhost:1234/v1"),
         requires_api_key: false,
     },
-
     // ── Testing ───────────────────────────────────────────────────────────────
     DriverMeta {
         id: "mock",
@@ -355,8 +348,19 @@ mod tests {
     #[test]
     fn known_driver_ids_covers_major_providers() {
         let ids: Vec<&str> = known_driver_ids().collect();
-        for required in &["openai", "anthropic", "google", "aws", "azure", "groq", "ollama"] {
-            assert!(ids.contains(required), "missing required driver: {required}");
+        for required in &[
+            "openai",
+            "anthropic",
+            "google",
+            "aws",
+            "azure",
+            "groq",
+            "ollama",
+        ] {
+            assert!(
+                ids.contains(required),
+                "missing required driver: {required}"
+            );
         }
     }
 }

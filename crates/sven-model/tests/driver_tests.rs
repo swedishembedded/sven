@@ -32,7 +32,11 @@ impl DriverTestHarness {
         test_model: &'static str,
         api_key_env: &'static str,
     ) -> Self {
-        Self { provider_id, test_model, api_key_env }
+        Self {
+            provider_id,
+            test_model,
+            api_key_env,
+        }
     }
 
     fn make_config(&self) -> ModelConfig {
@@ -64,7 +68,10 @@ impl DriverTestHarness {
         while let Some(ev) = stream.next().await {
             match ev? {
                 ResponseEvent::TextDelta(t) => text.push_str(&t),
-                ResponseEvent::Done => { got_done = true; break; }
+                ResponseEvent::Done => {
+                    got_done = true;
+                    break;
+                }
                 _ => {}
             }
         }
@@ -78,7 +85,10 @@ impl DriverTestHarness {
         let cfg = self.make_config();
         let provider = from_config(&cfg)?;
         let models = provider.list_models().await?;
-        assert!(!models.is_empty(), "list_models should return at least one entry");
+        assert!(
+            !models.is_empty(),
+            "list_models should return at least one entry"
+        );
         Ok(())
     }
 
@@ -157,7 +167,9 @@ impl DriverTestHarness {
 
         while let Some(ev) = stream.next().await {
             match ev? {
-                ResponseEvent::ToolCall { name, arguments, .. } if !name.is_empty() => {
+                ResponseEvent::ToolCall {
+                    name, arguments, ..
+                } if !name.is_empty() => {
                     tool_calls.push((name, arguments));
                 }
                 ResponseEvent::Done => {
@@ -325,11 +337,7 @@ async fn test_fireworks_basic() {
 #[tokio::test]
 #[ignore = "requires NVIDIA_API_KEY and network"]
 async fn test_nvidia_basic() {
-    let h = DriverTestHarness::new(
-        "nvidia",
-        "meta/llama-3.3-70b-instruct",
-        "NVIDIA_API_KEY",
-    );
+    let h = DriverTestHarness::new("nvidia", "meta/llama-3.3-70b-instruct", "NVIDIA_API_KEY");
     h.test_basic_completion().await.unwrap();
 }
 

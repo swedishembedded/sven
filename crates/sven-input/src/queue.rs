@@ -38,17 +38,29 @@ pub struct Step {
 pub struct StepQueue(VecDeque<Step>);
 
 impl StepQueue {
-    pub fn new() -> Self { Self(VecDeque::new()) }
+    pub fn new() -> Self {
+        Self(VecDeque::new())
+    }
 
-    pub fn push(&mut self, step: Step) { self.0.push_back(step); }
+    pub fn push(&mut self, step: Step) {
+        self.0.push_back(step);
+    }
 
-    pub fn pop(&mut self) -> Option<Step> { self.0.pop_front() }
+    pub fn pop(&mut self) -> Option<Step> {
+        self.0.pop_front()
+    }
 
-    pub fn peek(&self) -> Option<&Step> { self.0.front() }
+    pub fn peek(&self) -> Option<&Step> {
+        self.0.front()
+    }
 
-    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 
-    pub fn len(&self) -> usize { self.0.len() }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl From<Vec<Step>> for StepQueue {
@@ -64,11 +76,19 @@ mod tests {
     use super::*;
 
     fn step(content: &str) -> Step {
-        Step { label: None, content: content.into(), options: StepOptions::default() }
+        Step {
+            label: None,
+            content: content.into(),
+            options: StepOptions::default(),
+        }
     }
 
     fn labelled(label: &str, content: &str) -> Step {
-        Step { label: Some(label.into()), content: content.into(), options: StepOptions::default() }
+        Step {
+            label: Some(label.into()),
+            content: content.into(),
+            options: StepOptions::default(),
+        }
     }
 
     #[test]

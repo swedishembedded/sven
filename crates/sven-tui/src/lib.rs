@@ -17,5 +17,5 @@ mod state;
 mod submit;
 mod widgets;
 
-pub use app::{App, AppOptions, QueuedMessage, ModelDirective};
+pub use app::{App, AppOptions, ModelDirective, QueuedMessage};
 pub use chat::segment::ChatSegment;

@@ -205,7 +205,6 @@ pub struct Cli {
     pub verbose: u8,
 }
 
-
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Remote-control gateway: start, pair devices, manage tokens.
@@ -280,9 +279,7 @@ impl Cli {
     /// a TTY stdin but a piped stdout.  Without this check it would try to start
     /// the full TUI and write escape codes into the pipe, causing it to hang.
     pub fn is_headless(&self) -> bool {
-        self.headless
-            || !std::io::stdin().is_terminal()
-            || !std::io::stdout().is_terminal()
+        self.headless || !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal()
     }
 
     /// Resolve the effective JSONL input path: --load-jsonl takes priority, then --jsonl.
@@ -314,7 +311,9 @@ impl IsTerminal for std::io::Stdin {
             unsafe { libc::isatty(self.as_raw_fd()) != 0 }
         }
         #[cfg(not(unix))]
-        { false }
+        {
+            false
+        }
     }
 }
 
@@ -326,6 +325,8 @@ impl IsTerminal for std::io::Stdout {
             unsafe { libc::isatty(self.as_raw_fd()) != 0 }
         }
         #[cfg(not(unix))]
-        { false }
+        {
+            false
+        }
     }
 }

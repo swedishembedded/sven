@@ -44,7 +44,9 @@ impl GdbInterruptTool {
 
 #[async_trait]
 impl Tool for GdbInterruptTool {
-    fn name(&self) -> &str { "gdb_interrupt" }
+    fn name(&self) -> &str {
+        "gdb_interrupt"
+    }
 
     fn description(&self) -> &str {
         "Interrupt the currently running target (equivalent to pressing Ctrl+C in a GDB prompt). \
@@ -66,13 +68,20 @@ impl Tool for GdbInterruptTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::HeadTail
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let timeout_secs = call.args
+        let timeout_secs = call
+            .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(5);
@@ -82,10 +91,7 @@ impl Tool for GdbInterruptTool {
         let state = self.state.lock().await;
 
         if !state.has_client() {
-            return ToolOutput::err(
-                &call.id,
-                "No active GDB session. Call gdb_connect first.",
-            );
+            return ToolOutput::err(&call.id, "No active GDB session. Call gdb_connect first.");
         }
 
         let gdb = state.client.as_ref().unwrap();
@@ -99,12 +105,9 @@ impl Tool for GdbInterruptTool {
         match gdb.status().await {
             Ok(Status::Stopped(stopped)) => {
                 let location = match (&stopped.function, &stopped.file, stopped.line) {
-                    (Some(func), Some(file), Some(line)) =>
-                        format!("{func} ({file}:{line})"),
-                    (Some(func), _, _) =>
-                        func.clone(),
-                    _ =>
-                        format!("PC=0x{:x}", stopped.address.0),
+                    (Some(func), Some(file), Some(line)) => format!("{func} ({file}:{line})"),
+                    (Some(func), _, _) => func.clone(),
+                    _ => format!("PC=0x{:x}", stopped.address.0),
                 };
                 return ToolOutput::ok(
                     &call.id,
@@ -114,7 +117,7 @@ impl Tool for GdbInterruptTool {
             Err(e) => {
                 return ToolOutput::err(&call.id, format!("Status query failed: {e}"));
             }
-            _ => {}  // Running or unstarted — proceed with interrupt
+            _ => {} // Running or unstarted — proceed with interrupt
         }
 
         // Send SIGINT to the GDB process.  This is the reliable way to halt an
@@ -141,12 +144,9 @@ impl Tool for GdbInterruptTool {
             match gdb.status().await {
                 Ok(Status::Stopped(stopped)) => {
                     let location = match (&stopped.function, &stopped.file, stopped.line) {
-                        (Some(func), Some(file), Some(line)) =>
-                            format!("{func} ({file}:{line})"),
-                        (Some(func), _, _) =>
-                            func.clone(),
-                        _ =>
-                            format!("PC=0x{:x}", stopped.address.0),
+                        (Some(func), Some(file), Some(line)) => format!("{func} ({file}:{line})"),
+                        (Some(func), _, _) => func.clone(),
+                        _ => format!("PC=0x{:x}", stopped.address.0),
                     };
                     return ToolOutput::ok(
                         &call.id,
@@ -178,7 +178,11 @@ mod tests {
     use crate::tool::ToolCall;
 
     fn call(args: Value) -> ToolCall {
-        ToolCall { id: "t1".into(), name: "gdb_interrupt".into(), args }
+        ToolCall {
+            id: "t1".into(),
+            name: "gdb_interrupt".into(),
+            args,
+        }
     }
 
     #[test]

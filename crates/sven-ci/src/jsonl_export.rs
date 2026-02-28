@@ -49,20 +49,19 @@ pub fn write_jsonl_trace(
 ) -> anyhow::Result<()> {
     let mut file = std::fs::File::create(path)
         .with_context(|| format!("creating JSONL file {}", path.display()))?;
-    
+
     let converted = match format {
         JsonlFormat::OpenAI => convert_to_openai_format(messages),
         JsonlFormat::Anthropic => convert_to_anthropic_format(messages)?,
         JsonlFormat::Raw => convert_to_raw_format(messages),
     };
-    
+
     for msg_json in converted {
-        let json = serde_json::to_string(&msg_json)
-            .context("serializing message to JSON")?;
+        let json = serde_json::to_string(&msg_json).context("serializing message to JSON")?;
         writeln!(file, "{}", json)
             .with_context(|| format!("writing to JSONL file {}", path.display()))?;
     }
-    
+
     Ok(())
 }
 
@@ -74,82 +73,100 @@ pub fn write_jsonl_trace(
 /// - `tool_calls`: array for assistant tool invocations
 /// - `tool_call_id`: for tool results
 fn convert_to_openai_format(messages: &[Message]) -> Vec<Value> {
-    messages.iter().map(|m| {
-        match &m.content {
-            MessageContent::Text(t) => json!({
-                "role": role_to_str(&m.role),
-                "content": t,
-            }),
-            
-            MessageContent::ContentParts(parts) if !parts.is_empty() => {
-                let content: Vec<Value> = parts.iter().map(|p| match p {
-                    ContentPart::Text { text } => {
-                        json!({ "type": "text", "text": text })
-                    }
-                    ContentPart::Image { image_url, detail } => {
-                        let mut img_obj = json!({ "url": image_url });
-                        if let Some(d) = detail {
-                            img_obj.as_object_mut().unwrap().insert("detail".to_string(), json!(d));
-                        }
-                        json!({ "type": "image_url", "image_url": img_obj })
-                    }
-                }).collect();
-                json!({
+    messages
+        .iter()
+        .map(|m| {
+            match &m.content {
+                MessageContent::Text(t) => json!({
                     "role": role_to_str(&m.role),
-                    "content": content,
-                })
-            }
-            
-            MessageContent::ContentParts(_) => {
-                // Empty parts fallback
-                json!({
-                    "role": role_to_str(&m.role),
-                    "content": "",
-                })
-            }
-            
-            MessageContent::ToolCall { tool_call_id, function } => {
-                json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": tool_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function.name,
-                            "arguments": function.arguments,
-                        }
-                    }]
-                })
-            }
-            
-            MessageContent::ToolResult { tool_call_id, content } => {
-                let wire_content: Value = match content {
-                    ToolResultContent::Text(t) => json!(t),
-                    ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                        let arr: Vec<Value> = parts.iter().map(|p| match p {
-                            ToolContentPart::Text { text } => {
+                    "content": t,
+                }),
+
+                MessageContent::ContentParts(parts) if !parts.is_empty() => {
+                    let content: Vec<Value> = parts
+                        .iter()
+                        .map(|p| match p {
+                            ContentPart::Text { text } => {
                                 json!({ "type": "text", "text": text })
                             }
-                            ToolContentPart::Image { image_url } => {
-                                json!({
-                                    "type": "image_url",
-                                    "image_url": { "url": image_url },
-                                })
+                            ContentPart::Image { image_url, detail } => {
+                                let mut img_obj = json!({ "url": image_url });
+                                if let Some(d) = detail {
+                                    img_obj
+                                        .as_object_mut()
+                                        .unwrap()
+                                        .insert("detail".to_string(), json!(d));
+                                }
+                                json!({ "type": "image_url", "image_url": img_obj })
                             }
-                        }).collect();
-                        json!(arr)
-                    }
-                    ToolResultContent::Parts(_) => json!(""),
-                };
-                json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": wire_content,
-                })
+                        })
+                        .collect();
+                    json!({
+                        "role": role_to_str(&m.role),
+                        "content": content,
+                    })
+                }
+
+                MessageContent::ContentParts(_) => {
+                    // Empty parts fallback
+                    json!({
+                        "role": role_to_str(&m.role),
+                        "content": "",
+                    })
+                }
+
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                } => {
+                    json!({
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": function.name,
+                                "arguments": function.arguments,
+                            }
+                        }]
+                    })
+                }
+
+                MessageContent::ToolResult {
+                    tool_call_id,
+                    content,
+                } => {
+                    let wire_content: Value = match content {
+                        ToolResultContent::Text(t) => json!(t),
+                        ToolResultContent::Parts(parts) if !parts.is_empty() => {
+                            let arr: Vec<Value> = parts
+                                .iter()
+                                .map(|p| match p {
+                                    ToolContentPart::Text { text } => {
+                                        json!({ "type": "text", "text": text })
+                                    }
+                                    ToolContentPart::Image { image_url } => {
+                                        json!({
+                                            "type": "image_url",
+                                            "image_url": { "url": image_url },
+                                        })
+                                    }
+                                })
+                                .collect();
+                            json!(arr)
+                        }
+                        ToolResultContent::Parts(_) => json!(""),
+                    };
+                    json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": wire_content,
+                    })
+                }
             }
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Convert messages to Anthropic fine-tuning format.
@@ -160,7 +177,7 @@ fn convert_to_openai_format(messages: &[Message]) -> Vec<Value> {
 fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
     // Anthropic separates system message from conversation messages
     let mut result = Vec::new();
-    
+
     for msg in messages {
         match &msg.role {
             Role::System => {
@@ -177,15 +194,16 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
             Role::User => {
                 let content = match &msg.content {
                     MessageContent::Text(t) => vec![json!({"type": "text", "text": t})],
-                    MessageContent::ContentParts(parts) => {
-                        parts.iter().map(|p| match p {
+                    MessageContent::ContentParts(parts) => parts
+                        .iter()
+                        .map(|p| match p {
                             ContentPart::Text { text } => json!({"type": "text", "text": text}),
                             ContentPart::Image { image_url, .. } => json!({
                                 "type": "image",
                                 "source": {"type": "base64", "data": image_url}
                             }),
-                        }).collect()
-                    }
+                        })
+                        .collect(),
                     _ => vec![json!({"type": "text", "text": ""})],
                 };
                 result.push(json!({
@@ -201,10 +219,13 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
                             "content": [{"type": "text", "text": t}],
                         }));
                     }
-                    MessageContent::ToolCall { tool_call_id, function } => {
+                    MessageContent::ToolCall {
+                        tool_call_id,
+                        function,
+                    } => {
                         // Parse arguments back to JSON for Anthropic's input field
-                        let input: Value = serde_json::from_str(&function.arguments)
-                            .unwrap_or(json!({}));
+                        let input: Value =
+                            serde_json::from_str(&function.arguments).unwrap_or(json!({}));
                         result.push(json!({
                             "role": "assistant",
                             "content": [{
@@ -224,18 +245,21 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
                 }
             }
             Role::Tool => {
-                if let MessageContent::ToolResult { tool_call_id, content } = &msg.content {
+                if let MessageContent::ToolResult {
+                    tool_call_id,
+                    content,
+                } = &msg.content
+                {
                     let text_content = match content {
                         ToolResultContent::Text(t) => t.clone(),
-                        ToolResultContent::Parts(parts) => {
-                            parts.iter()
-                                .filter_map(|p| match p {
-                                    ToolContentPart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        }
+                        ToolResultContent::Parts(parts) => parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                ToolContentPart::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                     };
                     result.push(json!({
                         "role": "user",
@@ -249,7 +273,7 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
             }
         }
     }
-    
+
     Ok(result)
 }
 
@@ -258,10 +282,13 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
 /// This uses sven's native Message serialization without any transformation.
 /// Useful for debugging or custom processing pipelines.
 fn convert_to_raw_format(messages: &[Message]) -> Vec<Value> {
-    messages.iter().map(|m| {
-        // Use serde to convert to Value
-        serde_json::to_value(m).unwrap_or(json!({"error": "serialization failed"}))
-    }).collect()
+    messages
+        .iter()
+        .map(|m| {
+            // Use serde to convert to Value
+            serde_json::to_value(m).unwrap_or(json!({"error": "serialization failed"}))
+        })
+        .collect()
 }
 
 /// Convert Role enum to string representation.
@@ -288,20 +315,20 @@ mod tests {
             Message::user("Hello"),
             Message::assistant("Hi there!"),
         ];
-        
+
         let result = convert_to_openai_format(&messages);
         assert_eq!(result.len(), 3);
-        
+
         assert_eq!(result[0]["role"], "system");
         assert_eq!(result[0]["content"], "You are a helpful assistant.");
-        
+
         assert_eq!(result[1]["role"], "user");
         assert_eq!(result[1]["content"], "Hello");
-        
+
         assert_eq!(result[2]["role"], "assistant");
         assert_eq!(result[2]["content"], "Hi there!");
     }
-    
+
     #[test]
     fn test_openai_format_tool_call() {
         let tool_call = Message {
@@ -314,32 +341,32 @@ mod tests {
                 },
             },
         };
-        
+
         let result = convert_to_openai_format(&[tool_call]);
         assert_eq!(result.len(), 1);
-        
+
         assert_eq!(result[0]["role"], "assistant");
         assert_eq!(result[0]["content"], Value::Null);
         assert!(result[0]["tool_calls"].is_array());
-        
+
         let calls = result[0]["tool_calls"].as_array().unwrap();
         assert_eq!(calls[0]["id"], "call_123");
         assert_eq!(calls[0]["type"], "function");
         assert_eq!(calls[0]["function"]["name"], "read_file");
     }
-    
+
     #[test]
     fn test_openai_format_tool_result() {
         let tool_result = Message::tool_result("call_123", "file contents here");
-        
+
         let result = convert_to_openai_format(&[tool_result]);
         assert_eq!(result.len(), 1);
-        
+
         assert_eq!(result[0]["role"], "tool");
         assert_eq!(result[0]["tool_call_id"], "call_123");
         assert_eq!(result[0]["content"], "file contents here");
     }
-    
+
     #[test]
     fn test_anthropic_format_basic() {
         let messages = vec![
@@ -347,22 +374,20 @@ mod tests {
             Message::user("User question"),
             Message::assistant("Assistant response"),
         ];
-        
+
         let result = convert_to_anthropic_format(&messages).unwrap();
         assert_eq!(result.len(), 3);
-        
+
         // Anthropic includes system separately
         assert_eq!(result[0]["role"], "system");
         assert_eq!(result[1]["role"], "user");
         assert_eq!(result[2]["role"], "assistant");
     }
-    
+
     #[test]
     fn test_raw_format_preserves_structure() {
-        let messages = vec![
-            Message::user("test"),
-        ];
-        
+        let messages = vec![Message::user("test")];
+
         let result = convert_to_raw_format(&messages);
         assert_eq!(result.len(), 1);
         assert!(result[0].is_object());

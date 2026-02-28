@@ -89,19 +89,25 @@ impl PeerAllowlist {
     /// Load from a YAML file. Missing file → empty allowlist (secure default).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         if !path.exists() {
-            return Ok(Self { path: Some(path.to_path_buf()), ..Default::default() });
+            return Ok(Self {
+                path: Some(path.to_path_buf()),
+                ..Default::default()
+            });
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let file: AuthorizedPeersFile = serde_yaml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let file: AuthorizedPeersFile =
+            serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
 
         let parse_map = |m: HashMap<String, String>| -> anyhow::Result<HashMap<PeerId, String>> {
-            m.into_iter().map(|(id_str, label)| {
-                id_str.parse::<PeerId>()
-                    .map(|id| (id, label))
-                    .map_err(|e| anyhow::anyhow!("invalid PeerId {id_str:?}: {e}"))
-            }).collect()
+            m.into_iter()
+                .map(|(id_str, label)| {
+                    id_str
+                        .parse::<PeerId>()
+                        .map(|id| (id, label))
+                        .map_err(|e| anyhow::anyhow!("invalid PeerId {id_str:?}: {e}"))
+                })
+                .collect()
         };
 
         Ok(Self {
@@ -150,19 +156,29 @@ impl PeerAllowlist {
     }
 
     /// Number of authorized operators.
-    pub fn operator_count(&self) -> usize { self.operators.len() }
+    pub fn operator_count(&self) -> usize {
+        self.operators.len()
+    }
 
     /// Number of authorized observers.
-    pub fn observer_count(&self) -> usize { self.observers.len() }
+    pub fn observer_count(&self) -> usize {
+        self.observers.len()
+    }
 
     fn persist(&self) -> anyhow::Result<()> {
-        let Some(path) = &self.path else { return Ok(()); };
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
 
         let file = AuthorizedPeersFile {
-            operators: self.operators.iter()
+            operators: self
+                .operators
+                .iter()
                 .map(|(id, label)| (id.to_base58(), label.clone()))
                 .collect(),
-            observers: self.observers.iter()
+            observers: self
+                .observers
+                .iter()
                 .map(|(id, label)| (id.to_base58(), label.clone()))
                 .collect(),
         };
@@ -178,7 +194,9 @@ impl PeerAllowlist {
             use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
             let mut f = std::fs::OpenOptions::new()
-                .write(true).create(true).truncate(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
                 .mode(0o600)
                 .open(path)
                 .with_context(|| format!("writing {}", path.display()))?;
@@ -259,7 +277,10 @@ mod tests {
         let key = libp2p::identity::Keypair::generate_ed25519();
         let peer = PeerId::from(key.public());
 
-        let mut list = PeerAllowlist { path: Some(path.clone()), ..Default::default() };
+        let mut list = PeerAllowlist {
+            path: Some(path.clone()),
+            ..Default::default()
+        };
         list.add_operator(peer, "my-phone".to_string()).unwrap();
 
         let loaded = PeerAllowlist::load(&path).unwrap();

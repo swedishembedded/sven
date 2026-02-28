@@ -60,8 +60,7 @@ pub fn wrap_content(content: &str, width: usize, cursor_byte: usize) -> WrapStat
 
         // Soft-wrap: if adding this non-newline char would exceed `width`,
         // flush the current line and start a new one first.
-        let soft_wrap =
-            width > 0 && ch != '\n' && ch_width > 0 && cur_col + ch_width > width;
+        let soft_wrap = width > 0 && ch != '\n' && ch_width > 0 && cur_col + ch_width > width;
         if soft_wrap {
             lines.push(std::mem::take(&mut cur_line));
             cur_col = 0;
@@ -106,7 +105,11 @@ pub fn wrap_content(content: &str, width: usize, cursor_byte: usize) -> WrapStat
         lines.push(String::new());
     }
 
-    WrapState { lines, cursor_row: c_row, cursor_col: c_col }
+    WrapState {
+        lines,
+        cursor_row: c_row,
+        cursor_col: c_col,
+    }
 }
 
 /// Given an already-computed `WrapState`, return the byte offset in `content`
@@ -115,7 +118,12 @@ pub fn wrap_content(content: &str, width: usize, cursor_byte: usize) -> WrapStat
 /// If `target_col` exceeds the length of the target visual line the cursor is
 /// placed at the end of that line (clamped).  This matches the behaviour of
 /// most editors when moving vertically across lines of different lengths.
-pub fn byte_offset_at_row_col(content: &str, width: usize, target_row: usize, target_col: usize) -> usize {
+pub fn byte_offset_at_row_col(
+    content: &str,
+    width: usize,
+    target_row: usize,
+    target_col: usize,
+) -> usize {
     // Re-run the wrap loop, stopping when we enter the target row and have
     // consumed `target_col` display columns (or the line ends).
     let mut lines: Vec<String> = Vec::new();
@@ -309,7 +317,10 @@ mod tests {
     #[test]
     fn three_lines_separated_by_newlines() {
         let s = wrap_content("a\nb\nc", 10, 0);
-        assert_eq!(s.lines, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            s.lines,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
         // cursor at 'b' → byte 2 → row 1, col 0
         let s2 = wrap_content("a\nb\nc", 10, 2);
         assert_eq!(s2.cursor_row, 1);
@@ -325,7 +336,10 @@ mod tests {
         // no soft wrap because it doesn't *exceed* the width limit.
         // "ab\ncdef" (width=3): "cde"=3 fits, then 'f' overflows → ["ab","cde","f"].
         let s = wrap_content("ab\ncdef", 3, 0);
-        assert_eq!(s.lines, vec!["ab".to_string(), "cde".to_string(), "f".to_string()]);
+        assert_eq!(
+            s.lines,
+            vec!["ab".to_string(), "cde".to_string(), "f".to_string()]
+        );
     }
 
     #[test]

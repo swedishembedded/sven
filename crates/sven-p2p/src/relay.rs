@@ -46,7 +46,7 @@ pub async fn run(config: RelayConfig) -> Result<(), P2pError> {
                 match event {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         // Append /p2p/<peer-id> so clients can verify identity.
-                        let full = address.with(Protocol::P2p(local_peer_id.into()));
+                        let full = address.with(Protocol::P2p(local_peer_id));
                         tracing::info!("Relay listening on {full}");
                         // Tell libp2p about our external address so the relay
                         // behaviour includes it in Reservation responses.
@@ -89,7 +89,10 @@ pub async fn run(config: RelayConfig) -> Result<(), P2pError> {
 
     // Cleanup: remove exactly the addresses we published — other relays are
     // unaffected because each address has its own ref keyed by its SHA-256.
-    tracing::info!("Cleaning up {} relay address(es) from discovery…", server_addrs.len());
+    tracing::info!(
+        "Cleaning up {} relay address(es) from discovery…",
+        server_addrs.len()
+    );
     let disc = Arc::clone(&config.discovery);
     tokio::task::spawn_blocking(move || {
         if let Err(e) = disc.delete_relay_addrs(&server_addrs) {

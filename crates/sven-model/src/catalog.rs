@@ -113,7 +113,10 @@ mod tests {
     #[test]
     fn static_catalog_is_non_empty() {
         let models = static_catalog();
-        assert!(!models.is_empty(), "bundled catalog must contain at least one model");
+        assert!(
+            !models.is_empty(),
+            "bundled catalog must contain at least one model"
+        );
     }
 
     #[test]
@@ -132,8 +135,8 @@ mod tests {
 
     #[test]
     fn claude_opus_is_in_catalog() {
-        let entry = lookup("anthropic", "claude-opus-4-6")
-            .expect("claude-opus-4-6 must be in catalog");
+        let entry =
+            lookup("anthropic", "claude-opus-4-6").expect("claude-opus-4-6 must be in catalog");
         assert_eq!(entry.provider, "anthropic");
         assert!(entry.context_window >= 200_000);
     }
@@ -141,7 +144,10 @@ mod tests {
     #[test]
     fn claude_opus_supports_images() {
         let entry = lookup("anthropic", "claude-opus-4-6").unwrap();
-        assert!(entry.supports_images(), "claude-opus-4-6 must support image input");
+        assert!(
+            entry.supports_images(),
+            "claude-opus-4-6 must support image input"
+        );
     }
 
     #[test]
@@ -173,8 +179,16 @@ mod tests {
                 );
                 continue;
             }
-            assert!(entry.context_window > 0, "{} has zero context_window", entry.id);
-            assert!(entry.max_output_tokens > 0, "{} has zero max_output_tokens", entry.id);
+            assert!(
+                entry.context_window > 0,
+                "{} has zero context_window",
+                entry.id
+            );
+            assert!(
+                entry.max_output_tokens > 0,
+                "{} has zero max_output_tokens",
+                entry.id
+            );
         }
     }
 

@@ -46,7 +46,8 @@ impl GoogleProvider {
         Self {
             model,
             api_key,
-            base_url: base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com".into()),
+            base_url: base_url
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into()),
             max_tokens: max_tokens.unwrap_or(8192),
             temperature: temperature.unwrap_or(0.2),
             client: reqwest::Client::new(),
@@ -56,8 +57,12 @@ impl GoogleProvider {
 
 #[async_trait]
 impl crate::ModelProvider for GoogleProvider {
-    fn name(&self) -> &str { "google" }
-    fn model_name(&self) -> &str { &self.model }
+    fn name(&self) -> &str {
+        "google"
+    }
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let mut entries: Vec<ModelCatalogEntry> = static_catalog()
@@ -80,7 +85,11 @@ impl crate::ModelProvider for GoogleProvider {
         let mut tc_name_map: HashMap<String, String> = HashMap::new();
 
         for m in &req.messages {
-            if let MessageContent::ToolCall { tool_call_id, function } = &m.content {
+            if let MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } = &m.content
+            {
                 tc_name_map.insert(tool_call_id.clone(), function.name.clone());
             }
         }
@@ -115,11 +124,17 @@ impl crate::ModelProvider for GoogleProvider {
         let tools_section: Option<Value> = if req.tools.is_empty() {
             None
         } else {
-            let function_declarations: Vec<Value> = req.tools.iter().map(|t| json!({
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            })).collect();
+            let function_declarations: Vec<Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    })
+                })
+                .collect();
             Some(json!([{ "functionDeclarations": function_declarations }]))
         };
 
@@ -146,7 +161,8 @@ impl crate::ModelProvider for GoogleProvider {
 
         debug!(model = %self.model, "sending Google Gemini request");
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .json(&body)
             .send()
@@ -198,24 +214,30 @@ fn message_to_gemini_parts(
             if parts.is_empty() {
                 return vec![json!({ "text": "" })];
             }
-            parts.iter().map(|p| match p {
-                crate::ContentPart::Text { text } => json!({ "text": text }),
-                crate::ContentPart::Image { image_url, .. } => {
-                    if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
-                        json!({
-                            "inline_data": {
-                                "mime_type": mime,
-                                "data": data,
-                            }
-                        })
-                    } else {
-                        // Remote URL
-                        json!({ "file_data": { "file_uri": image_url } })
+            parts
+                .iter()
+                .map(|p| match p {
+                    crate::ContentPart::Text { text } => json!({ "text": text }),
+                    crate::ContentPart::Image { image_url, .. } => {
+                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                            json!({
+                                "inline_data": {
+                                    "mime_type": mime,
+                                    "data": data,
+                                }
+                            })
+                        } else {
+                            // Remote URL
+                            json!({ "file_data": { "file_uri": image_url } })
+                        }
                     }
-                }
-            }).collect()
+                })
+                .collect()
         }
-        MessageContent::ToolCall { tool_call_id: _, function } => {
+        MessageContent::ToolCall {
+            tool_call_id: _,
+            function,
+        } => {
             let input: Value = serde_json::from_str(&function.arguments).unwrap_or(json!({}));
             vec![json!({
                 "functionCall": {
@@ -224,13 +246,16 @@ fn message_to_gemini_parts(
                 }
             })]
         }
-        MessageContent::ToolResult { tool_call_id, content } => {
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
             // Resolve the function name — Gemini matches functionResponse to
             // functionCall by the "name" field, not by an opaque ID.
             let fn_name = tc_name_map
                 .get(tool_call_id)
                 .map(|s| s.as_str())
-                .unwrap_or(tool_call_id);  // fallback to ID if name unknown
+                .unwrap_or(tool_call_id); // fallback to ID if name unknown
 
             match content {
                 crate::ToolResultContent::Text(t) => {
@@ -245,7 +270,8 @@ fn message_to_gemini_parts(
                     // Gemini functionResponse carries text in "output".
                     // Images are emitted as separate inline_data parts alongside
                     // the functionResponse part.
-                    let output_text: String = parts.iter()
+                    let output_text: String = parts
+                        .iter()
                         .filter_map(|p| match p {
                             crate::ToolContentPart::Text { text } => Some(text.as_str()),
                             _ => None,
@@ -267,7 +293,8 @@ fn message_to_gemini_parts(
                     })];
                     for p in parts {
                         if let crate::ToolContentPart::Image { image_url } = p {
-                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
+                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url)
+                            {
                                 result_parts.push(json!({
                                     "inline_data": { "mime_type": mime, "data": data }
                                 }));
@@ -285,8 +312,7 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage metadata
     if let Some(meta) = v.get("usageMetadata") {
         // Google Gemini reports cached tokens in cachedContentTokenCount
-        let cache_read_tokens = meta["cachedContentTokenCount"]
-            .as_u64().unwrap_or(0) as u32;
+        let cache_read_tokens = meta["cachedContentTokenCount"].as_u64().unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: meta["promptTokenCount"].as_u64().unwrap_or(0) as u32,
             output_tokens: meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32,
@@ -365,7 +391,14 @@ mod tests {
             }
         });
         let ev = parse_gemini_chunk(&v).unwrap();
-        assert!(matches!(ev, ResponseEvent::Usage { input_tokens: 100, output_tokens: 50, .. }));
+        assert!(matches!(
+            ev,
+            ResponseEvent::Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -432,15 +465,21 @@ mod tests {
 
         // Build the lookup map as `complete()` does.
         let mut tc_name_map = HashMap::new();
-        if let MessageContent::ToolCall { tool_call_id, function } = &tc_msg.content {
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &tc_msg.content
+        {
             tc_name_map.insert(tool_call_id.clone(), function.name.clone());
         }
 
         let parts = message_to_gemini_parts(&tr_msg, &tc_name_map);
         assert_eq!(parts.len(), 1);
         // The functionResponse must use the function name, not the opaque ID.
-        assert_eq!(parts[0]["functionResponse"]["name"], "read_file",
-            "functionResponse.name must be the function name, not the call ID");
+        assert_eq!(
+            parts[0]["functionResponse"]["name"], "read_file",
+            "functionResponse.name must be the function name, not the call ID"
+        );
     }
 
     #[test]
@@ -454,24 +493,29 @@ mod tests {
     #[test]
     fn tool_result_parts_image_only_uses_placeholder_text() {
         use crate::{Message, ToolContentPart};
-        let msg = Message::tool_result_with_parts("tc-1", vec![
-            ToolContentPart::Image {
+        let msg = Message::tool_result_with_parts(
+            "tc-1",
+            vec![ToolContentPart::Image {
                 image_url: "data:image/png;base64,iVBORw0KGgo=".into(),
-            },
-        ]);
+            }],
+        );
         let parts = message_to_gemini_parts(&msg, &HashMap::new());
         // Should have functionResponse + 1 inline_data part
         assert!(parts.len() >= 1);
         let resp_output = &parts[0]["functionResponse"]["response"]["output"];
-        assert_eq!(resp_output, "[see attached images]",
-            "image-only tool results must use placeholder text in functionResponse");
+        assert_eq!(
+            resp_output, "[see attached images]",
+            "image-only tool results must use placeholder text in functionResponse"
+        );
     }
 
     #[test]
     fn content_parts_image_serialized_as_inline_data() {
         use crate::{ContentPart, Message};
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "look".into() },
+            ContentPart::Text {
+                text: "look".into(),
+            },
             ContentPart::image("data:image/png;base64,abc="),
         ]);
         let parts = message_to_gemini_parts(&msg, &HashMap::new());

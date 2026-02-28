@@ -102,7 +102,9 @@ impl ToolOutput {
 
     /// Return `true` if this output contains at least one image part.
     pub fn has_images(&self) -> bool {
-        self.parts.iter().any(|p| matches!(p, ToolOutputPart::Image(_)))
+        self.parts
+            .iter()
+            .any(|p| matches!(p, ToolOutputPart::Image(_)))
     }
 }
 
@@ -198,10 +200,18 @@ mod tests {
 
     #[async_trait]
     impl Tool for MinimalTool {
-        fn name(&self) -> &str { "minimal" }
-        fn description(&self) -> &str { "a minimal tool" }
-        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
-        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn name(&self) -> &str {
+            "minimal"
+        }
+        fn description(&self) -> &str {
+            "a minimal tool"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
             ToolOutput::ok(&call.id, "ok")
         }
@@ -216,11 +226,21 @@ mod tests {
 
     #[async_trait]
     impl Tool for HeadTailTool {
-        fn name(&self) -> &str { "ht" }
-        fn description(&self) -> &str { "produces terminal output" }
-        fn parameters_schema(&self) -> Value { json!({ "type": "object" }) }
-        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-        fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+        fn name(&self) -> &str {
+            "ht"
+        }
+        fn description(&self) -> &str {
+            "produces terminal output"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        fn output_category(&self) -> OutputCategory {
+            OutputCategory::HeadTail
+        }
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
             ToolOutput::ok(&call.id, "ok")
         }
@@ -233,6 +253,9 @@ mod tests {
 
     #[test]
     fn overridden_category_differs_from_default() {
-        assert_ne!(HeadTailTool.output_category(), MinimalTool.output_category());
+        assert_ne!(
+            HeadTailTool.output_category(),
+            MinimalTool.output_category()
+        );
     }
 }

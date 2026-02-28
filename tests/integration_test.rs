@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use sven_config::{AgentConfig, AgentMode, Config};
 use sven_core::{Agent, AgentRuntimeContext};
-use sven_input::{parse_workflow, parse_conversation, serialize_conversation_turn};
-use sven_model::{MockProvider, Message, Role};
-use sven_tools::{ToolRegistry, events::ToolEvent};
+use sven_input::{parse_conversation, parse_workflow, serialize_conversation_turn};
+use sven_model::{Message, MockProvider, Role};
+use sven_tools::{events::ToolEvent, ToolRegistry};
 use tokio::sync::{mpsc, Mutex};
 
 fn mock_agent(mode: AgentMode) -> Agent {
@@ -17,7 +17,15 @@ fn mock_agent(mode: AgentMode) -> Agent {
     let config = Arc::new(AgentConfig::default());
     let mode_lock = Arc::new(Mutex::new(mode));
     let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
-    Agent::new(model, tools, config, AgentRuntimeContext::default(), mode_lock, tool_event_rx, 128_000)
+    Agent::new(
+        model,
+        tools,
+        config,
+        AgentRuntimeContext::default(),
+        mode_lock,
+        tool_event_rx,
+        128_000,
+    )
 }
 
 #[tokio::test]
@@ -58,7 +66,9 @@ fn workflow_parsing_preamble_goes_to_system_prompt() {
     let md = "Intro text.\n\n## Step A\nDo this.";
     let mut w = parse_workflow(md);
     assert_eq!(w.steps.len(), 1, "preamble must not become a step");
-    assert!(w.system_prompt_append.as_deref()
+    assert!(w
+        .system_prompt_append
+        .as_deref()
         .map(|s| s.contains("Intro"))
         .unwrap_or(false));
     assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Step A"));
@@ -106,8 +116,8 @@ fn tool_policy_deny() {
 
 #[tokio::test]
 async fn shell_tool_executes_echo() {
-    use sven_tools::{ToolCall, ShellTool};
     use sven_tools::Tool;
+    use sven_tools::{ShellTool, ToolCall};
 
     let tool = ShellTool::default();
     let call = ToolCall {
@@ -157,7 +167,10 @@ fn conversation_parse_fixture_file() {
     // Fixture has title + 2 complete turns + 1 pending user section
     assert_eq!(conv.title.as_deref(), Some("Test Conversation"));
     assert_eq!(conv.history.len(), 2, "two complete messages in history");
-    assert!(conv.pending_user_input.is_some(), "trailing ## User is pending");
+    assert!(
+        conv.pending_user_input.is_some(),
+        "trailing ## User is pending"
+    );
     assert_eq!(
         conv.pending_user_input.as_deref().unwrap().trim(),
         "What did you echo?"
@@ -221,20 +234,29 @@ fn conversation_round_trip_with_tool_call() {
     let md = serialize_conversation_turn(&messages);
 
     assert!(md.contains("## Tool\n"), "tool section present");
-    assert!(md.contains("## Tool Result\n"), "tool result section present");
+    assert!(
+        md.contains("## Tool Result\n"),
+        "tool result section present"
+    );
     assert!(md.contains("call_99"), "tool call id present");
 
     let conv = parse_conversation(&md).expect("round-trip parse");
     assert_eq!(conv.history.len(), 4);
     match &conv.history[1].content {
-        MessageContent::ToolCall { tool_call_id, function } => {
+        MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } => {
             assert_eq!(tool_call_id, "call_99");
             assert_eq!(function.name, "read_file");
         }
         _ => panic!("expected ToolCall"),
     }
     match &conv.history[2].content {
-        MessageContent::ToolResult { tool_call_id, content } => {
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
             assert_eq!(tool_call_id, "call_99");
             assert!(content.to_string().contains("file contents"));
         }
@@ -251,7 +273,10 @@ fn conversation_nested_code_block_preserved() {
     let conv = parse_conversation(md).expect("nested code block must not break parsing");
     assert_eq!(conv.history.len(), 2);
     let response = conv.history[1].as_text().unwrap();
-    assert!(response.contains("fn main()"), "code block content preserved");
+    assert!(
+        response.contains("fn main()"),
+        "code block content preserved"
+    );
 }
 
 #[test]
@@ -262,7 +287,10 @@ fn conversation_serialize_skips_system_messages() {
         Message::assistant("Hello"),
     ];
     let md = serialize_conversation_turn(&messages);
-    assert!(!md.contains("## System"), "system messages must not appear in file");
+    assert!(
+        !md.contains("## System"),
+        "system messages must not appear in file"
+    );
     assert!(md.contains("## User"), "user message present");
     assert!(md.contains("## Sven"), "sven message present");
 }

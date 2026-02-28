@@ -16,7 +16,9 @@ use crate::commands::{
 pub struct ProviderCommand;
 
 impl SlashCommand for ProviderCommand {
-    fn name(&self) -> &str { "provider" }
+    fn name(&self) -> &str {
+        "provider"
+    }
 
     fn description(&self) -> &str {
         "Switch provider for the next message (keeps current model name)"
@@ -29,7 +31,12 @@ impl SlashCommand for ProviderCommand {
         )]
     }
 
-    fn complete(&self, arg_index: usize, partial: &str, ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        arg_index: usize,
+        partial: &str,
+        ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         if arg_index != 0 {
             return vec![];
         }
@@ -37,18 +44,23 @@ impl SlashCommand for ProviderCommand {
         let mut items: Vec<CompletionItem> = Vec::new();
 
         // Named custom providers from config.providers first
-        let mut provider_names: Vec<&str> = ctx.config.providers.keys().map(|s| s.as_str()).collect();
+        let mut provider_names: Vec<&str> =
+            ctx.config.providers.keys().map(|s| s.as_str()).collect();
         provider_names.sort_unstable();
         for name in provider_names {
             let cfg = &ctx.config.providers[name];
             let display = format!("{} (custom: {}  {})", name, cfg.provider, cfg.name);
-            items.push(CompletionItem::with_desc(name, display, "custom provider from config"));
+            items.push(CompletionItem::with_desc(
+                name,
+                display,
+                "custom provider from config",
+            ));
         }
 
         // Built-in provider drivers
         for driver in registry::list_drivers() {
             let display = format!("{} — {}", driver.id, driver.name);
-            let desc = format!("{}", driver.description);
+            let desc = driver.description.to_string();
             items.push(CompletionItem::with_desc(driver.id, display, desc));
         }
 

@@ -39,10 +39,7 @@ pub enum ParsedCommand {
     },
 
     /// Input is a fully-specified command ready for execution.
-    Complete {
-        command: String,
-        args: Vec<String>,
-    },
+    Complete { command: String, args: Vec<String> },
 }
 
 /// Parse the input string and return the current command state.
@@ -61,7 +58,9 @@ pub fn parse(input: &str) -> ParsedCommand {
 
     if tokens.is_empty() {
         // Just "/"
-        return ParsedCommand::PartialCommand { partial: String::new() };
+        return ParsedCommand::PartialCommand {
+            partial: String::new(),
+        };
     }
 
     let command_name = &tokens[0];
@@ -71,7 +70,9 @@ pub fn parse(input: &str) -> ParsedCommand {
     let body_ends_with_space = body.ends_with(' ');
 
     if tokens.len() == 1 && !body_ends_with_space {
-        return ParsedCommand::PartialCommand { partial: command_name.clone() };
+        return ParsedCommand::PartialCommand {
+            partial: command_name.clone(),
+        };
     }
 
     // Command name is done.  Now check args.
@@ -109,7 +110,6 @@ pub fn parse(input: &str) -> ParsedCommand {
         partial,
     }
 }
-
 
 /// Tokenise a command body: splits on whitespace, respects double-quoted
 /// strings, collapses multiple spaces.
@@ -165,13 +165,26 @@ mod tests {
 
     #[test]
     fn bare_slash_is_partial_command() {
-        assert_eq!(parse("/"), ParsedCommand::PartialCommand { partial: "".into() });
+        assert_eq!(
+            parse("/"),
+            ParsedCommand::PartialCommand { partial: "".into() }
+        );
     }
 
     #[test]
     fn partial_command_name() {
-        assert_eq!(parse("/mod"), ParsedCommand::PartialCommand { partial: "mod".into() });
-        assert_eq!(parse("/mode"), ParsedCommand::PartialCommand { partial: "mode".into() });
+        assert_eq!(
+            parse("/mod"),
+            ParsedCommand::PartialCommand {
+                partial: "mod".into()
+            }
+        );
+        assert_eq!(
+            parse("/mode"),
+            ParsedCommand::PartialCommand {
+                partial: "mode".into()
+            }
+        );
     }
 
     #[test]
@@ -214,7 +227,9 @@ mod tests {
         // "/quit" with no space: still PartialCommand (user might keep typing)
         assert_eq!(
             parse("/quit"),
-            ParsedCommand::PartialCommand { partial: "quit".into() }
+            ParsedCommand::PartialCommand {
+                partial: "quit".into()
+            }
         );
     }
 
@@ -236,7 +251,11 @@ mod tests {
         // "/model \"my custom provider\""
         let input = "/model \"my provider\"";
         match parse(input) {
-            ParsedCommand::CompletingArgs { command, arg_index, partial } => {
+            ParsedCommand::CompletingArgs {
+                command,
+                arg_index,
+                partial,
+            } => {
                 assert_eq!(command, "model");
                 assert_eq!(arg_index, 0);
                 assert_eq!(partial, "my provider");

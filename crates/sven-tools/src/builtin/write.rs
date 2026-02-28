@@ -14,7 +14,9 @@ pub struct WriteTool;
 
 #[async_trait]
 impl Tool for WriteTool {
-    fn name(&self) -> &str { "write" }
+    fn name(&self) -> &str {
+        "write"
+    }
 
     fn description(&self) -> &str {
         "Write content to a file. Overwrites by default; append=true to extend.\n\
@@ -46,34 +48,48 @@ impl Tool for WriteTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'path'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
         let content = match call.args.get("text").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'text'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'text'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
-        let should_append = call.args.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
+        let should_append = call
+            .args
+            .get("append")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         debug!(path = %path, append = should_append, "write tool");
 
@@ -85,7 +101,12 @@ impl Tool for WriteTool {
 
         if should_append {
             use tokio::io::AsyncWriteExt;
-            match tokio::fs::OpenOptions::new().append(true).create(true).open(&path).await {
+            match tokio::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path)
+                .await
+            {
                 Ok(mut f) => {
                     let result = f.write_all(content.as_bytes()).await;
                     // Explicitly flush + shutdown to ensure all bytes reach the OS before
@@ -93,7 +114,10 @@ impl Tool for WriteTool {
                     let _ = f.flush().await;
                     let _ = f.shutdown().await;
                     match result {
-                        Ok(_) => ToolOutput::ok(&call.id, format!("appended {} bytes to {path}", content.len())),
+                        Ok(_) => ToolOutput::ok(
+                            &call.id,
+                            format!("appended {} bytes to {path}", content.len()),
+                        ),
                         Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
                     }
                 }
@@ -101,7 +125,9 @@ impl Tool for WriteTool {
             }
         } else {
             match tokio::fs::write(&path, &content).await {
-                Ok(_) => ToolOutput::ok(&call.id, format!("wrote {} bytes to {path}", content.len())),
+                Ok(_) => {
+                    ToolOutput::ok(&call.id, format!("wrote {} bytes to {path}", content.len()))
+                }
                 Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
             }
         }
@@ -116,7 +142,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "w1".into(), name: "write".into(), args }
+        ToolCall {
+            id: "w1".into(),
+            name: "write".into(),
+            args,
+        }
     }
 
     fn tmp_path() -> String {
@@ -130,12 +160,17 @@ mod tests {
     async fn write_creates_file() {
         let path = tmp_path();
         let t = WriteTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "text": "hello write"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "text": "hello write"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
-        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "hello write");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().trim(),
+            "hello write"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -143,13 +178,25 @@ mod tests {
     async fn append_adds_to_file() {
         let path = tmp_path();
         let t = WriteTool;
-        let w1 = t.execute(&call(json!({"path": path, "text": "first\n"}))).await;
+        let w1 = t
+            .execute(&call(json!({"path": path, "text": "first\n"})))
+            .await;
         assert!(!w1.is_error, "write failed: {}", w1.content);
-        let w2 = t.execute(&call(json!({"path": path, "text": "second\n", "append": true}))).await;
+        let w2 = t
+            .execute(&call(
+                json!({"path": path, "text": "second\n", "append": true}),
+            ))
+            .await;
         assert!(!w2.is_error, "append failed: {}", w2.content);
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("first"), "missing 'first' in: {contents:?}");
-        assert!(contents.contains("second"), "missing 'second' in: {contents:?}");
+        assert!(
+            contents.contains("first"),
+            "missing 'first' in: {contents:?}"
+        );
+        assert!(
+            contents.contains("second"),
+            "missing 'second' in: {contents:?}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -161,7 +208,9 @@ mod tests {
         let dir = format!("/tmp/sven_write_nested_{}_{n}", std::process::id());
         let path = format!("{dir}/sub/file.txt");
         let t = WriteTool;
-        let out = t.execute(&call(json!({"path": path, "text": "nested"}))).await;
+        let out = t
+            .execute(&call(json!({"path": path, "text": "nested"})))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         let _ = std::fs::remove_dir_all(dir);
     }

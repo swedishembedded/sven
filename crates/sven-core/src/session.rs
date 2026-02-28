@@ -151,8 +151,8 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use sven_model::Message;
     use super::*;
+    use sven_model::Message;
 
     // ── Construction ─────────────────────────────────────────────────────────
 
@@ -348,7 +348,10 @@ mod tests {
         s.token_count = 68_000;
         // context_fraction = 68_000 / 136_000 = 0.5
         let frac = s.context_fraction();
-        assert!((frac - 0.5).abs() < 0.01, "fraction should be ~0.5, got {frac}");
+        assert!(
+            (frac - 0.5).abs() < 0.01,
+            "fraction should be ~0.5, got {frac}"
+        );
     }
 
     // ── Near-limit detection ──────────────────────────────────────────────────

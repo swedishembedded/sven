@@ -103,9 +103,13 @@ fn parse_simple_yaml(src: &str) -> Option<WorkflowMetadata> {
         if !current_section.is_empty() && (line.starts_with(' ') || line.starts_with('\t')) {
             if let Some((k, v)) = split_kv(line.trim()) {
                 match current_section {
-                    "vars"   => { vars.insert(k, v); }
-                    "models" => { models.insert(k, v); }
-                    _        => {}
+                    "vars" => {
+                        vars.insert(k, v);
+                    }
+                    "models" => {
+                        models.insert(k, v);
+                    }
+                    _ => {}
                 }
             }
             continue;
@@ -162,9 +166,7 @@ fn split_kv(s: &str) -> Option<(String, String)> {
 
 /// Strip a single layer of matching `"..."` or `'...'` quotes if present.
 fn unquote(s: &str) -> &str {
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
-    {
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
         &s[1..s.len() - 1]
     } else {
         s
@@ -213,11 +215,18 @@ mod tests {
 
     #[test]
     fn frontmatter_with_models_map() {
-        let md = "---\nmodels:\n  agent: claude-haiku-4-5\n  research: claude-opus-4-5\n---\n## s\ngo.";
+        let md =
+            "---\nmodels:\n  agent: claude-haiku-4-5\n  research: claude-opus-4-5\n---\n## s\ngo.";
         let (meta, _) = parse_frontmatter(md);
         let models = meta.unwrap().models.unwrap();
-        assert_eq!(models.get("agent").map(String::as_str), Some("claude-haiku-4-5"));
-        assert_eq!(models.get("research").map(String::as_str), Some("claude-opus-4-5"));
+        assert_eq!(
+            models.get("agent").map(String::as_str),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(
+            models.get("research").map(String::as_str),
+            Some("claude-opus-4-5")
+        );
     }
 
     #[test]
@@ -226,8 +235,20 @@ mod tests {
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
         assert_eq!(m.title.as_deref(), Some("Both"));
-        assert_eq!(m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str), Some("haiku"));
-        assert_eq!(m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str), Some("value"));
+        assert_eq!(
+            m.models
+                .as_ref()
+                .and_then(|ms| ms.get("agent"))
+                .map(String::as_str),
+            Some("haiku")
+        );
+        assert_eq!(
+            m.vars
+                .as_ref()
+                .and_then(|vs| vs.get("key"))
+                .map(String::as_str),
+            Some("value")
+        );
     }
 
     #[test]
@@ -245,11 +266,17 @@ mod tests {
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
         assert_eq!(
-            m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str),
+            m.models
+                .as_ref()
+                .and_then(|ms| ms.get("agent"))
+                .map(String::as_str),
             Some("haiku")
         );
         assert_eq!(
-            m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str),
+            m.vars
+                .as_ref()
+                .and_then(|vs| vs.get("key"))
+                .map(String::as_str),
             Some("val")
         );
     }
@@ -261,11 +288,17 @@ mod tests {
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
         assert_eq!(
-            m.vars.as_ref().and_then(|vs| vs.get("key")).map(String::as_str),
+            m.vars
+                .as_ref()
+                .and_then(|vs| vs.get("key"))
+                .map(String::as_str),
             Some("val")
         );
         assert_eq!(
-            m.models.as_ref().and_then(|ms| ms.get("agent")).map(String::as_str),
+            m.models
+                .as_ref()
+                .and_then(|ms| ms.get("agent"))
+                .map(String::as_str),
             Some("haiku")
         );
     }
@@ -284,9 +317,18 @@ mod tests {
         let md = "---\nmodels:\n  agent: claude-haiku-4-5\n  research: claude-opus-4-5\n  plan: claude-sonnet-4-5\n---\n## s\ngo.";
         let (meta, _) = parse_frontmatter(md);
         let models = meta.unwrap().models.unwrap();
-        assert_eq!(models.get("agent").map(String::as_str), Some("claude-haiku-4-5"));
-        assert_eq!(models.get("research").map(String::as_str), Some("claude-opus-4-5"));
-        assert_eq!(models.get("plan").map(String::as_str), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            models.get("agent").map(String::as_str),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(
+            models.get("research").map(String::as_str),
+            Some("claude-opus-4-5")
+        );
+        assert_eq!(
+            models.get("plan").map(String::as_str),
+            Some("claude-sonnet-4-5")
+        );
     }
 
     #[test]

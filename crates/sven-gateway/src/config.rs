@@ -56,8 +56,12 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-fn default_http_bind() -> String { "127.0.0.1:18790".to_string() }
-fn default_true() -> bool { true }
+fn default_http_bind() -> String {
+    "127.0.0.1:18790".to_string()
+}
+fn default_true() -> bool {
+    true
+}
 
 /// Top-level gateway configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -97,7 +101,9 @@ pub struct HttpConfig {
     pub max_body_bytes: usize,
 }
 
-fn default_max_body() -> usize { 4 * 1024 * 1024 }
+fn default_max_body() -> usize {
+    4 * 1024 * 1024
+}
 
 impl Default for HttpConfig {
     fn default() -> Self {
@@ -135,7 +141,9 @@ pub struct P2pGatewayConfig {
     pub mdns: bool,
 }
 
-fn default_p2p_listen() -> String { "/ip4/0.0.0.0/tcp/0".to_string() }
+fn default_p2p_listen() -> String {
+    "/ip4/0.0.0.0/tcp/0".to_string()
+}
 
 impl Default for P2pGatewayConfig {
     fn default() -> Self {
@@ -178,8 +186,12 @@ pub struct SlackAccount {
     pub webhook_path: String,
 }
 
-fn default_slack_mode() -> SlackMode { SlackMode::Socket }
-fn default_slack_webhook_path() -> String { "/slack/events".to_string() }
+fn default_slack_mode() -> SlackMode {
+    SlackMode::Socket
+}
+fn default_slack_webhook_path() -> String {
+    "/slack/events".to_string()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -218,19 +230,19 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<GatewayConfig> {
 
     if let Some(p) = extra {
         debug!(path = %p.display(), "loading explicit gateway config");
-        let text = std::fs::read_to_string(p)
-            .with_context(|| format!("reading {}", p.display()))?;
-        let layer: serde_yaml::Value = serde_yaml::from_str(&text)
-            .with_context(|| format!("parsing {}", p.display()))?;
+        let text =
+            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let layer: serde_yaml::Value =
+            serde_yaml::from_str(&text).with_context(|| format!("parsing {}", p.display()))?;
         merge_yaml(&mut merged, layer);
     }
 
-    let config: GatewayConfig =
-        if matches!(&merged, serde_yaml::Value::Mapping(m) if m.is_empty()) {
-            GatewayConfig::default()
-        } else {
-            serde_yaml::from_value(merged).unwrap_or_default()
-        };
+    let config: GatewayConfig = if matches!(&merged, serde_yaml::Value::Mapping(m) if m.is_empty())
+    {
+        GatewayConfig::default()
+    } else {
+        serde_yaml::from_value(merged).unwrap_or_default()
+    };
     Ok(config)
 }
 
@@ -257,7 +269,10 @@ mod tests {
     #[test]
     fn default_http_bind_is_loopback() {
         let c = GatewayConfig::default();
-        assert!(c.http.bind.starts_with("127.0.0.1"), "default must be loopback-only");
+        assert!(
+            c.http.bind.starts_with("127.0.0.1"),
+            "default must be loopback-only"
+        );
     }
 
     #[test]

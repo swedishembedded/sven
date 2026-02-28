@@ -45,10 +45,7 @@ use crate::control::{
 /// HTTP handler for GET /ws.
 ///
 /// Upgrades to WebSocket, then bridges JSON ↔ ControlCommand/ControlEvent.
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(agent): State<AgentHandle>,
-) -> Response {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(agent): State<AgentHandle>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, agent))
 }
 

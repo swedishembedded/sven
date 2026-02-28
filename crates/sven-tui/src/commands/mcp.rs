@@ -24,16 +24,25 @@ pub struct McpPromptCommand {
 }
 
 impl SlashCommand for McpPromptCommand {
-    fn name(&self) -> &str { &self.prompt_name }
+    fn name(&self) -> &str {
+        &self.prompt_name
+    }
 
-    fn description(&self) -> &str { "MCP prompt command" }
+    fn description(&self) -> &str {
+        "MCP prompt command"
+    }
 
     fn arguments(&self) -> Vec<CommandArgument> {
         // Future: derive from MCP prompt argument schema
         vec![]
     }
 
-    fn complete(&self, _arg_index: usize, _partial: &str, _ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         // Future: use MCP argument schema for completions, query resources, etc.
         vec![]
     }

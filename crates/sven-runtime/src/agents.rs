@@ -124,8 +124,7 @@ struct AgentFrontmatter {
 fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<AgentInfo> {
     let rest = raw.trim_start_matches('\n');
 
-    let (fm, content) = if rest.starts_with("---") {
-        let after_open = &rest[3..];
+    let (fm, content) = if let Some(after_open) = rest.strip_prefix("---") {
         let close = after_open.find("\n---")?;
         let yaml_block = &after_open[..close];
         let body = after_open[close + 4..].trim_start_matches('\n').to_string();
@@ -140,17 +139,21 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         (fm, body)
     } else {
         // No frontmatter: entire file is the system prompt body.
-        (AgentFrontmatter {
-            name: None,
-            description: None,
-            model: None,
-            readonly: false,
-            is_background: false,
-        }, rest.to_string())
+        (
+            AgentFrontmatter {
+                name: None,
+                description: None,
+                model: None,
+                readonly: false,
+                is_background: false,
+            },
+            rest.to_string(),
+        )
     };
 
     // Synthesise description from the first non-empty body line when absent.
-    let description = fm.description
+    let description = fm
+        .description
         .filter(|d| !d.trim().is_empty())
         .unwrap_or_else(|| {
             content
@@ -166,12 +169,14 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         return None;
     }
 
-    let name = fm.name
+    let name = fm
+        .name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| stem.to_string());
 
     // Normalise model: treat "inherit" the same as absent.
-    let model = fm.model
+    let model = fm
+        .model
         .filter(|m| !m.trim().is_empty() && m.trim() != "inherit");
 
     Some(AgentInfo {
@@ -253,11 +258,23 @@ pub fn discover_agents(project_root: Option<&Path>) -> Vec<AgentInfo> {
 
     for dir in &build_sorted_search_dirs(project_root) {
         let label = dir.to_string_lossy();
-        load(dir.join(".agents").join("agents"), &format!("{label}/.agents"));
-        load(dir.join(".claude").join("agents"), &format!("{label}/.claude"));
-        load(dir.join(".codex").join("agents"),  &format!("{label}/.codex"));
-        load(dir.join(".cursor").join("agents"), &format!("{label}/.cursor"));
-        load(dir.join(".sven").join("agents"),   &format!("{label}/.sven"));
+        load(
+            dir.join(".agents").join("agents"),
+            &format!("{label}/.agents"),
+        );
+        load(
+            dir.join(".claude").join("agents"),
+            &format!("{label}/.claude"),
+        );
+        load(
+            dir.join(".codex").join("agents"),
+            &format!("{label}/.codex"),
+        );
+        load(
+            dir.join(".cursor").join("agents"),
+            &format!("{label}/.cursor"),
+        );
+        load(dir.join(".sven").join("agents"), &format!("{label}/.sven"));
     }
 
     let mut result: Vec<AgentInfo> = map.into_values().collect();
@@ -273,7 +290,13 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn write_agent(dir: &std::path::Path, name: &str, description: &str, extra_fm: &str, body: &str) {
+    fn write_agent(
+        dir: &std::path::Path,
+        name: &str,
+        description: &str,
+        extra_fm: &str,
+        body: &str,
+    ) {
         fs::create_dir_all(dir).unwrap();
         let content = format!("---\ndescription: {description}\n{extra_fm}---\n\n{body}");
         fs::write(dir.join(format!("{name}.md")), content).unwrap();
@@ -314,7 +337,8 @@ mod tests {
     fn parse_agent_file_no_frontmatter() {
         let raw = "# You are a specialist.\n\nHelp with tasks.";
         let path = std::path::PathBuf::from("/tmp/agent.md");
-        let info = parse_agent_file(raw, "agent", &path).expect("no-frontmatter agent should parse");
+        let info =
+            parse_agent_file(raw, "agent", &path).expect("no-frontmatter agent should parse");
         assert_eq!(info.name, "agent");
         assert!(!info.description.is_empty());
     }
@@ -330,7 +354,13 @@ mod tests {
     fn discover_agents_cursor_location() {
         let tmp = TempDir::new().unwrap();
         let agents_dir = tmp.path().join(".cursor").join("agents");
-        write_agent(&agents_dir, "verifier", "Validates completed work.", "", "You verify things.");
+        write_agent(
+            &agents_dir,
+            "verifier",
+            "Validates completed work.",
+            "",
+            "You verify things.",
+        );
 
         let agents = discover_agents(Some(tmp.path()));
         assert_eq!(agents.len(), 1);
@@ -343,11 +373,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_agent(
             &tmp.path().join(".cursor").join("agents"),
-            "verifier", "Cursor version.", "", "Cursor body.",
+            "verifier",
+            "Cursor version.",
+            "",
+            "Cursor body.",
         );
         write_agent(
             &tmp.path().join(".sven").join("agents"),
-            "verifier", "Sven version.", "", "Sven body.",
+            "verifier",
+            "Sven version.",
+            "",
+            "Sven body.",
         );
 
         let agents = discover_agents(Some(tmp.path()));
@@ -359,8 +395,8 @@ mod tests {
     fn discover_agents_multiple_sorted_by_name() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join(".cursor").join("agents");
-        write_agent(&dir, "zebra",    "Z agent.", "", "");
-        write_agent(&dir, "apple",    "A agent.", "", "");
+        write_agent(&dir, "zebra", "Z agent.", "", "");
+        write_agent(&dir, "apple", "A agent.", "", "");
         write_agent(&dir, "security", "S agent.", "", "");
 
         let agents = discover_agents(Some(tmp.path()));

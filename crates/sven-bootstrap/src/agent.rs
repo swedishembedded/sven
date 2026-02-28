@@ -73,9 +73,13 @@ impl AgentBuilder {
         // Convert RuntimeContext → AgentRuntimeContext (the sven-core type).
         let runtime = AgentRuntimeContext {
             project_root: self.runtime_ctx.project_root,
-            git_context_note: self.runtime_ctx.git_context
+            git_context_note: self
+                .runtime_ctx
+                .git_context
                 .and_then(|g| g.to_prompt_section()),
-            ci_context_note: self.runtime_ctx.ci_context
+            ci_context_note: self
+                .runtime_ctx
+                .ci_context
                 .and_then(|c| c.to_prompt_section()),
             project_context_file: self.runtime_ctx.project_context_file,
             append_system_prompt: self.runtime_ctx.append_system_prompt,

@@ -18,7 +18,7 @@ pub fn is_reserved_key(event: &KeyEvent) -> bool {
         | (KeyModifiers::NONE, KeyCode::F(4))  // Mode cycle
         | (KeyModifiers::NONE, KeyCode::F(2))  // Edit focused segment (nvim chat)
         | (KeyModifiers::NONE, KeyCode::F(8))  // Delete/truncate from focused segment (nvim chat)
-        | (KeyModifiers::NONE, KeyCode::Char('/'))  // Search (when not in nvim)
+        | (KeyModifiers::NONE, KeyCode::Char('/')) // Search (when not in nvim)
     )
 }
 
@@ -47,9 +47,9 @@ pub fn to_nvim_notation(event: &KeyEvent) -> Option<String> {
                 "<CR>".to_string()
             }
         }
-        KeyCode::Esc       => "<Esc>".to_string(),
+        KeyCode::Esc => "<Esc>".to_string(),
         KeyCode::Backspace => "<BS>".to_string(),
-        KeyCode::Delete    => "<Del>".to_string(),
+        KeyCode::Delete => "<Del>".to_string(),
         KeyCode::Tab => {
             if event.modifiers.contains(KeyModifiers::SHIFT) {
                 "<S-Tab>".to_string()
@@ -57,16 +57,16 @@ pub fn to_nvim_notation(event: &KeyEvent) -> Option<String> {
                 "<Tab>".to_string()
             }
         }
-        KeyCode::Up       => "<Up>".to_string(),
-        KeyCode::Down     => "<Down>".to_string(),
-        KeyCode::Left     => "<Left>".to_string(),
-        KeyCode::Right    => "<Right>".to_string(),
-        KeyCode::Home     => "<Home>".to_string(),
-        KeyCode::End      => "<End>".to_string(),
-        KeyCode::PageUp   => "<PageUp>".to_string(),
+        KeyCode::Up => "<Up>".to_string(),
+        KeyCode::Down => "<Down>".to_string(),
+        KeyCode::Left => "<Left>".to_string(),
+        KeyCode::Right => "<Right>".to_string(),
+        KeyCode::Home => "<Home>".to_string(),
+        KeyCode::End => "<End>".to_string(),
+        KeyCode::PageUp => "<PageUp>".to_string(),
         KeyCode::PageDown => "<PageDown>".to_string(),
-        KeyCode::F(n)     => format!("<F{}>", n),
-        _                 => return None,
+        KeyCode::F(n) => format!("<F{}>", n),
+        _ => return None,
     };
 
     Some(key_str)
@@ -81,7 +81,12 @@ mod tests {
     use super::*;
 
     fn press(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
-        KeyEvent { code, modifiers: mods, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+        KeyEvent {
+            code,
+            modifiers: mods,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     // ── is_reserved_key ───────────────────────────────────────────────────────
@@ -89,7 +94,10 @@ mod tests {
     #[test]
     fn pane_switch_prefix_ctrl_w_is_reserved() {
         let event = press(KeyCode::Char('w'), KeyModifiers::CONTROL);
-        assert!(is_reserved_key(&event), "Ctrl+W must be reserved for pane-switch prefix");
+        assert!(
+            is_reserved_key(&event),
+            "Ctrl+W must be reserved for pane-switch prefix"
+        );
     }
 
     #[test]
@@ -113,23 +121,37 @@ mod tests {
     #[test]
     fn mode_cycle_f4_is_reserved() {
         let event = press(KeyCode::F(4), KeyModifiers::NONE);
-        assert!(is_reserved_key(&event), "F4 must be reserved for mode cycle");
+        assert!(
+            is_reserved_key(&event),
+            "F4 must be reserved for mode cycle"
+        );
     }
 
     #[test]
     fn vim_motion_and_editing_keys_are_not_reserved() {
-        let vim_keys = ['h', 'j', 'k', 'l', 'i', 'o', 'v', 'G', 'g', 'z', 'Z', 'c', 'd', 'y', 'p'];
+        let vim_keys = [
+            'h', 'j', 'k', 'l', 'i', 'o', 'v', 'G', 'g', 'z', 'Z', 'c', 'd', 'y', 'p',
+        ];
         for c in vim_keys {
             let event = press(KeyCode::Char(c), KeyModifiers::NONE);
-            assert!(!is_reserved_key(&event), "vim key '{c}' must not be reserved");
+            assert!(
+                !is_reserved_key(&event),
+                "vim key '{c}' must not be reserved"
+            );
         }
     }
 
     #[test]
     fn arrow_and_navigation_keys_are_not_reserved() {
         let nav_keys = [
-            KeyCode::Up, KeyCode::Down, KeyCode::Left, KeyCode::Right,
-            KeyCode::PageUp, KeyCode::PageDown, KeyCode::Home, KeyCode::End,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Home,
+            KeyCode::End,
         ];
         for code in nav_keys {
             let event = press(code, KeyModifiers::NONE);
@@ -140,7 +162,10 @@ mod tests {
     #[test]
     fn escape_is_not_reserved() {
         let event = press(KeyCode::Esc, KeyModifiers::NONE);
-        assert!(!is_reserved_key(&event), "Esc must not be reserved (Neovim handles it)");
+        assert!(
+            !is_reserved_key(&event),
+            "Esc must not be reserved (Neovim handles it)"
+        );
     }
 
     // ── to_nvim_notation ──────────────────────────────────────────────────────
@@ -156,7 +181,12 @@ mod tests {
 
     #[test]
     fn ctrl_char_encoded_as_angle_bracket_c_notation() {
-        let cases = [('u', "<C-u>"), ('d', "<C-d>"), ('r', "<C-r>"), ('o', "<C-o>")];
+        let cases = [
+            ('u', "<C-u>"),
+            ('d', "<C-d>"),
+            ('r', "<C-r>"),
+            ('o', "<C-o>"),
+        ];
         for (c, expected) in cases {
             let result = to_nvim_notation(&press(KeyCode::Char(c), KeyModifiers::CONTROL));
             assert_eq!(result, Some(expected.into()), "Ctrl+{c}");
@@ -166,11 +196,11 @@ mod tests {
     #[test]
     fn special_keys_encoded_with_angle_bracket_names() {
         let cases: &[(KeyCode, &str)] = &[
-            (KeyCode::Esc,       "<Esc>"),
-            (KeyCode::Enter,     "<CR>"),
+            (KeyCode::Esc, "<Esc>"),
+            (KeyCode::Enter, "<CR>"),
             (KeyCode::Backspace, "<BS>"),
-            (KeyCode::Delete,    "<Del>"),
-            (KeyCode::Tab,       "<Tab>"),
+            (KeyCode::Delete, "<Del>"),
+            (KeyCode::Tab, "<Tab>"),
         ];
         for (code, expected) in cases {
             let result = to_nvim_notation(&press(*code, KeyModifiers::NONE));
@@ -181,9 +211,9 @@ mod tests {
     #[test]
     fn directional_keys_encoded_with_direction_names() {
         let cases: &[(KeyCode, &str)] = &[
-            (KeyCode::Up,    "<Up>"),
-            (KeyCode::Down,  "<Down>"),
-            (KeyCode::Left,  "<Left>"),
+            (KeyCode::Up, "<Up>"),
+            (KeyCode::Down, "<Down>"),
+            (KeyCode::Left, "<Left>"),
             (KeyCode::Right, "<Right>"),
         ];
         for (code, expected) in cases {
@@ -195,11 +225,11 @@ mod tests {
     #[test]
     fn page_and_function_keys_encoded_correctly() {
         let cases: &[(KeyCode, &str)] = &[
-            (KeyCode::PageUp,   "<PageUp>"),
+            (KeyCode::PageUp, "<PageUp>"),
             (KeyCode::PageDown, "<PageDown>"),
-            (KeyCode::F(1),     "<F1>"),
-            (KeyCode::F(5),     "<F5>"),
-            (KeyCode::F(12),    "<F12>"),
+            (KeyCode::F(1), "<F1>"),
+            (KeyCode::F(5), "<F5>"),
+            (KeyCode::F(12), "<F12>"),
         ];
         for (code, expected) in cases {
             let result = to_nvim_notation(&press(*code, KeyModifiers::NONE));

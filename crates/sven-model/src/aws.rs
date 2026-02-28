@@ -65,8 +65,12 @@ impl BedrockProvider {
 
 #[async_trait]
 impl crate::ModelProvider for BedrockProvider {
-    fn name(&self) -> &str { "aws" }
-    fn model_name(&self) -> &str { &self.model }
+    fn name(&self) -> &str {
+        "aws"
+    }
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let mut entries: Vec<ModelCatalogEntry> = static_catalog()
@@ -78,10 +82,9 @@ impl crate::ModelProvider for BedrockProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        let access_key = std::env::var("AWS_ACCESS_KEY_ID")
-            .context("AWS_ACCESS_KEY_ID not set")?;
-        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
-            .context("AWS_SECRET_ACCESS_KEY not set")?;
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID not set")?;
+        let secret_key =
+            std::env::var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY not set")?;
         let session_token = std::env::var("AWS_SESSION_TOKEN").ok();
 
         // Separate system messages
@@ -110,8 +113,9 @@ impl crate::ModelProvider for BedrockProvider {
             };
             let content = match &m.content {
                 MessageContent::Text(t) => vec![json!({ "text": t })],
-                MessageContent::ContentParts(parts) => {
-                    parts.iter().map(|p| match p {
+                MessageContent::ContentParts(parts) => parts
+                    .iter()
+                    .map(|p| match p {
                         crate::ContentPart::Text { text } => json!({ "text": text }),
                         crate::ContentPart::Image { image_url, .. } => {
                             if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
@@ -126,11 +130,14 @@ impl crate::ModelProvider for BedrockProvider {
                                 json!({ "text": format!("[image: {}]", image_url) })
                             }
                         }
-                    }).collect()
-                }
-                MessageContent::ToolCall { tool_call_id, function } => {
-                    let input: Value = serde_json::from_str(&function.arguments)
-                        .unwrap_or(json!({}));
+                    })
+                    .collect(),
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                } => {
+                    let input: Value =
+                        serde_json::from_str(&function.arguments).unwrap_or(json!({}));
                     vec![json!({
                         "toolUse": {
                             "toolUseId": tool_call_id,
@@ -139,14 +146,20 @@ impl crate::ModelProvider for BedrockProvider {
                         }
                     })]
                 }
-                MessageContent::ToolResult { tool_call_id, content } => {
+                MessageContent::ToolResult {
+                    tool_call_id,
+                    content,
+                } => {
                     let bedrock_content: Vec<Value> = match content {
                         crate::ToolResultContent::Text(t) => vec![json!({ "text": t })],
-                        crate::ToolResultContent::Parts(parts) => {
-                            parts.iter().map(|p| match p {
+                        crate::ToolResultContent::Parts(parts) => parts
+                            .iter()
+                            .map(|p| match p {
                                 crate::ToolContentPart::Text { text } => json!({ "text": text }),
                                 crate::ToolContentPart::Image { image_url } => {
-                                    if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
+                                    if let Ok((mime, b64)) =
+                                        crate::types::parse_data_url_parts(image_url)
+                                    {
                                         let format = normalize_bedrock_image_format(&mime);
                                         json!({
                                             "image": {
@@ -158,8 +171,8 @@ impl crate::ModelProvider for BedrockProvider {
                                         json!({ "text": format!("[image: {}]", image_url) })
                                     }
                                 }
-                            }).collect()
-                        }
+                            })
+                            .collect(),
                     };
                     vec![json!({
                         "toolResult": {
@@ -176,13 +189,19 @@ impl crate::ModelProvider for BedrockProvider {
         let tool_config = if req.tools.is_empty() {
             None
         } else {
-            let tools: Vec<Value> = req.tools.iter().map(|t| json!({
-                "toolSpec": {
-                    "name": t.name,
-                    "description": t.description,
-                    "inputSchema": { "json": t.parameters },
-                }
-            })).collect();
+            let tools: Vec<Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "toolSpec": {
+                            "name": t.name,
+                            "description": t.description,
+                            "inputSchema": { "json": t.parameters },
+                        }
+                    })
+                })
+                .collect();
             Some(json!({ "tools": tools }))
         };
 
@@ -229,10 +248,12 @@ impl crate::ModelProvider for BedrockProvider {
             h
         };
 
-        let canonical_headers: String = headers_to_sign.iter()
+        let canonical_headers: String = headers_to_sign
+            .iter()
             .map(|(k, v)| format!("{}:{}\n", k.to_lowercase(), v.trim()))
             .collect();
-        let signed_headers: String = headers_to_sign.iter()
+        let signed_headers: String = headers_to_sign
+            .iter()
             .map(|(k, _)| k.to_lowercase())
             .collect::<Vec<_>>()
             .join(";");
@@ -252,9 +273,7 @@ impl crate::ModelProvider for BedrockProvider {
             hex_sha256(canonical_request.as_bytes())
         );
 
-        let signing_key = derive_signing_key(
-            secret_key.as_bytes(), date, &self.region, service,
-        );
+        let signing_key = derive_signing_key(secret_key.as_bytes(), date, &self.region, service);
         let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
 
         let authorization = format!(
@@ -262,7 +281,8 @@ impl crate::ModelProvider for BedrockProvider {
             access_key, credential_scope, signed_headers, signature
         );
 
-        let mut req_builder = self.client
+        let mut req_builder = self
+            .client
             .post(&url)
             .header("content-type", content_type)
             .header("host", &host)
@@ -274,7 +294,9 @@ impl crate::ModelProvider for BedrockProvider {
             req_builder = req_builder.header("x-amz-security-token", tok);
         }
 
-        let resp = req_builder.send().await
+        let resp = req_builder
+            .send()
+            .await
             .context("AWS Bedrock request failed")?;
 
         if !resp.status().is_success() {
@@ -283,7 +305,9 @@ impl crate::ModelProvider for BedrockProvider {
             bail!("AWS Bedrock error {status}: {text}");
         }
 
-        let response_body: Value = resp.json().await
+        let response_body: Value = resp
+            .json()
+            .await
             .context("AWS Bedrock response parse failed")?;
 
         // Convert the synchronous Converse response into a stream of events.
@@ -302,7 +326,12 @@ impl crate::ModelProvider for BedrockProvider {
                             let id = tu["toolUseId"].as_str().unwrap_or("").to_string();
                             let name = tu["name"].as_str().unwrap_or("").to_string();
                             let args = serde_json::to_string(&tu["input"]).unwrap_or_default();
-                            events.push(Ok(ResponseEvent::ToolCall { index: 0, id, name, arguments: args }));
+                            events.push(Ok(ResponseEvent::ToolCall {
+                                index: 0,
+                                id,
+                                name,
+                                arguments: args,
+                            }));
                         }
                         // Claude Extended Thinking via AWS Bedrock Converse API:
                         // thinking content arrives as a `reasoningContent` block
@@ -313,7 +342,9 @@ impl crate::ModelProvider for BedrockProvider {
                             if let Some(rt) = rc.get("reasoningText") {
                                 if let Some(text) = rt["text"].as_str() {
                                     if !text.is_empty() {
-                                        events.push(Ok(ResponseEvent::ThinkingDelta(text.to_string())));
+                                        events.push(Ok(ResponseEvent::ThinkingDelta(
+                                            text.to_string(),
+                                        )));
                                     }
                                 }
                             }
@@ -359,7 +390,11 @@ fn hex_sha256(data: &[u8]) -> String {
 /// HMAC-SHA256 computed without the `hmac` crate using the raw SHA256 primitive.
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     const BLOCK: usize = 64;
-    let norm_key = if key.len() > BLOCK { sha256(key) } else { key.to_vec() };
+    let norm_key = if key.len() > BLOCK {
+        sha256(key)
+    } else {
+        key.to_vec()
+    };
     let mut padded = [0u8; BLOCK];
     padded[..norm_key.len()].copy_from_slice(&norm_key);
     let ipad: Vec<u8> = padded.iter().map(|&b| b ^ 0x36).collect();
@@ -424,7 +459,10 @@ mod tests {
         let data = b"The quick brown fox jumps over the lazy dog";
         let result = hex::encode(hmac_sha256(key, data));
         // Known good value
-        assert_eq!(result, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+        assert_eq!(
+            result,
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
     }
 
     #[test]
@@ -436,7 +474,10 @@ mod tests {
 
     #[test]
     fn urlencoded_safe_chars_unchanged() {
-        assert_eq!(urlencoded("us.anthropic.claude-3-5/v2"), "us.anthropic.claude-3-5/v2");
+        assert_eq!(
+            urlencoded("us.anthropic.claude-3-5/v2"),
+            "us.anthropic.claude-3-5/v2"
+        );
     }
 
     #[test]
@@ -473,7 +514,12 @@ mod tests {
 
     #[test]
     fn provider_defaults() {
-        let p = BedrockProvider::new("amazon.nova-pro-v1:0".into(), Some("eu-west-1".into()), None, None);
+        let p = BedrockProvider::new(
+            "amazon.nova-pro-v1:0".into(),
+            Some("eu-west-1".into()),
+            None,
+            None,
+        );
         assert_eq!(p.name(), "aws");
         assert_eq!(p.region, "eu-west-1");
         assert_eq!(p.max_tokens, 4096);
@@ -498,7 +544,9 @@ mod tests {
                             if let Some(rt) = rc.get("reasoningText") {
                                 if let Some(text) = rt["text"].as_str() {
                                     if !text.is_empty() {
-                                        events.push(Ok(crate::ResponseEvent::ThinkingDelta(text.to_string())));
+                                        events.push(Ok(crate::ResponseEvent::ThinkingDelta(
+                                            text.to_string(),
+                                        )));
                                     }
                                 }
                             }
@@ -533,7 +581,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], crate::ResponseEvent::ThinkingDelta(t) if t == "Let me think step by step."),
-            "expected ThinkingDelta, got {:?}", events[0]
+            "expected ThinkingDelta, got {:?}",
+            events[0]
         );
     }
 
@@ -576,7 +625,10 @@ mod tests {
             }
         });
         let events = parse_bedrock_events(body);
-        assert!(events.is_empty(), "no events expected for empty reasoningContent");
+        assert!(
+            events.is_empty(),
+            "no events expected for empty reasoningContent"
+        );
     }
 
     #[test]

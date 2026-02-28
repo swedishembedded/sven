@@ -35,23 +35,32 @@ fn strip_message(mut m: Message) -> Message {
             let stripped: Vec<ContentPart> = parts
                 .into_iter()
                 .map(|p| match p {
-                    ContentPart::Image { .. } => {
-                        ContentPart::Text { text: IMAGE_OMITTED.to_string() }
-                    }
+                    ContentPart::Image { .. } => ContentPart::Text {
+                        text: IMAGE_OMITTED.to_string(),
+                    },
                     other => other,
                 })
                 .collect();
             // Collapse single text part back to Text for cleaner serialization.
             if stripped.len() == 1 {
                 if let ContentPart::Text { text } = &stripped[0] {
-                    return Message { content: MessageContent::Text(text.clone()), ..m };
+                    return Message {
+                        content: MessageContent::Text(text.clone()),
+                        ..m
+                    };
                 }
             }
             MessageContent::ContentParts(stripped)
         }
-        MessageContent::ToolResult { tool_call_id, content } => {
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
             let content = strip_tool_result_content(content);
-            MessageContent::ToolResult { tool_call_id, content }
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            }
         }
         other => other,
     };
@@ -64,9 +73,9 @@ fn strip_tool_result_content(content: ToolResultContent) -> ToolResultContent {
             let stripped: Vec<ToolContentPart> = parts
                 .into_iter()
                 .map(|p| match p {
-                    ToolContentPart::Image { .. } => {
-                        ToolContentPart::Text { text: IMAGE_OMITTED.to_string() }
-                    }
+                    ToolContentPart::Image { .. } => ToolContentPart::Text {
+                        text: IMAGE_OMITTED.to_string(),
+                    },
                     other => other,
                 })
                 .collect();
@@ -100,7 +109,9 @@ mod tests {
     #[test]
     fn no_op_when_image_supported() {
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "hello".into() },
+            ContentPart::Text {
+                text: "hello".into(),
+            },
             ContentPart::image("data:image/png;base64,ABC"),
         ]);
         let result = strip_images_if_unsupported(vec![msg], &vision_modalities());
@@ -111,7 +122,9 @@ mod tests {
     #[test]
     fn strips_image_parts_from_content_parts() {
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "describe this".into() },
+            ContentPart::Text {
+                text: "describe this".into(),
+            },
             ContentPart::image("data:image/png;base64,ABC"),
         ]);
         let result = strip_images_if_unsupported(vec![msg], &text_only_modalities());
@@ -128,9 +141,7 @@ mod tests {
 
     #[test]
     fn strips_image_from_single_part_collapses_to_text() {
-        let msg = Message::user_with_parts(vec![
-            ContentPart::image("data:image/png;base64,ABC"),
-        ]);
+        let msg = Message::user_with_parts(vec![ContentPart::image("data:image/png;base64,ABC")]);
         let result = strip_images_if_unsupported(vec![msg], &text_only_modalities());
         assert!(matches!(result[0].content, MessageContent::Text(_)));
         assert_eq!(result[0].as_text(), Some(IMAGE_OMITTED));
@@ -139,8 +150,12 @@ mod tests {
     #[test]
     fn strips_image_from_tool_result_parts() {
         let parts = vec![
-            ToolContentPart::Text { text: "result".into() },
-            ToolContentPart::Image { image_url: "data:image/png;base64,XYZ".into() },
+            ToolContentPart::Text {
+                text: "result".into(),
+            },
+            ToolContentPart::Image {
+                image_url: "data:image/png;base64,XYZ".into(),
+            },
         ];
         let msg = Message::tool_result_with_parts("id-1", parts);
         let result = strip_images_if_unsupported(vec![msg], &text_only_modalities());
@@ -149,7 +164,9 @@ mod tests {
                 assert!(content.image_urls().is_empty());
                 match content {
                     ToolResultContent::Parts(p) => {
-                        assert!(matches!(&p[1], ToolContentPart::Text { text } if text == IMAGE_OMITTED));
+                        assert!(
+                            matches!(&p[1], ToolContentPart::Text { text } if text == IMAGE_OMITTED)
+                        );
                     }
                     other => panic!("expected Parts, got {:?}", other),
                 }
@@ -160,7 +177,9 @@ mod tests {
 
     #[test]
     fn strips_single_image_tool_result_collapses_to_text() {
-        let parts = vec![ToolContentPart::Image { image_url: "data:image/png;base64,XYZ".into() }];
+        let parts = vec![ToolContentPart::Image {
+            image_url: "data:image/png;base64,XYZ".into(),
+        }];
         let msg = Message::tool_result_with_parts("id-1", parts);
         let result = strip_images_if_unsupported(vec![msg], &text_only_modalities());
         match &result[0].content {
@@ -173,10 +192,7 @@ mod tests {
 
     #[test]
     fn plain_text_messages_pass_through_unchanged() {
-        let msgs = vec![
-            Message::user("hello"),
-            Message::assistant("world"),
-        ];
+        let msgs = vec![Message::user("hello"), Message::assistant("world")];
         let result = strip_images_if_unsupported(msgs, &text_only_modalities());
         assert_eq!(result[0].as_text(), Some("hello"));
         assert_eq!(result[1].as_text(), Some("world"));

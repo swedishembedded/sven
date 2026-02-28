@@ -20,7 +20,9 @@ use crate::commands::{
 pub struct ModelCommand;
 
 impl SlashCommand for ModelCommand {
-    fn name(&self) -> &str { "model" }
+    fn name(&self) -> &str {
+        "model"
+    }
 
     fn description(&self) -> &str {
         "Switch model permanently (e.g. /model anthropic/claude-opus-4-6)"
@@ -33,7 +35,12 @@ impl SlashCommand for ModelCommand {
         )]
     }
 
-    fn complete(&self, arg_index: usize, partial: &str, ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        arg_index: usize,
+        partial: &str,
+        ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         if arg_index != 0 {
             return vec![];
         }
@@ -49,7 +56,8 @@ impl SlashCommand for ModelCommand {
         let mut candidates: Vec<CompletionItem> = Vec::new();
 
         // 1. Named custom providers from config.providers.
-        let mut provider_names: Vec<&str> = ctx.config.providers.keys().map(|s| s.as_str()).collect();
+        let mut provider_names: Vec<&str> =
+            ctx.config.providers.keys().map(|s| s.as_str()).collect();
         provider_names.sort_unstable();
         for name in provider_names {
             let cfg = &ctx.config.providers[name];
@@ -58,7 +66,11 @@ impl SlashCommand for ModelCommand {
                 continue;
             }
             let display = format!("{} (custom: {}  {})", name, cfg.provider, cfg.name);
-            candidates.push(CompletionItem::with_desc(name, display, "custom provider from config"));
+            candidates.push(CompletionItem::with_desc(
+                name,
+                display,
+                "custom provider from config",
+            ));
         }
 
         // 2. All models from static catalog in provider/id form.
@@ -75,7 +87,10 @@ impl SlashCommand for ModelCommand {
             } else {
                 format!("{} — {}", value, entry.description)
             };
-            let desc = format!("ctx:{} max_out:{}", entry.context_window, entry.max_output_tokens);
+            let desc = format!(
+                "ctx:{} max_out:{}",
+                entry.context_window, entry.max_output_tokens
+            );
             candidates.push(CompletionItem::with_desc(value, display, desc));
         }
 
@@ -121,7 +136,10 @@ mod tests {
     #[test]
     fn execute_provider_slash_model_sets_override() {
         let result = ModelCommand.execute(vec!["anthropic/claude-opus-4-6".into()]);
-        assert_eq!(result.model_override.as_deref(), Some("anthropic/claude-opus-4-6"));
+        assert_eq!(
+            result.model_override.as_deref(),
+            Some("anthropic/claude-opus-4-6")
+        );
     }
 
     #[test]
@@ -146,7 +164,10 @@ mod tests {
     fn execute_empty_string_arg_returns_no_override() {
         // Happens when user presses Enter after "/model " with nothing typed.
         let result = ModelCommand.execute(vec!["".into()]);
-        assert!(result.model_override.is_none(), "empty string must not set override");
+        assert!(
+            result.model_override.is_none(),
+            "empty string must not set override"
+        );
     }
 
     #[test]

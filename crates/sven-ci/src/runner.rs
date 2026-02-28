@@ -3,28 +3,26 @@
 // SPDX-License-Identifier: MIT
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
+use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
-use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_input::{
     history, parse_conversation, parse_frontmatter, parse_jsonl_full, parse_workflow,
-    serialize_conversation_turn,
-    serialize_jsonl_records, ConversationRecord,
-    Step, StepQueue,
+    serialize_conversation_turn, serialize_jsonl_records, ConversationRecord, Step, StepQueue,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
 use sven_tools::events::TodoItem;
 
-use crate::output::{write_stderr, write_stdout, write_progress};
+use crate::output::{write_progress, write_stderr, write_stdout};
 use crate::template::apply_template;
 
 // ── Exit codes ────────────────────────────────────────────────────────────────
@@ -184,8 +182,7 @@ impl CiRunner {
         // Both JSONL and conversation formats may end with a trailing user turn
         // that has not yet received a response.  When present, that pending turn
         // is used as the step content when no CLI positional prompt was supplied.
-        let is_jsonl_input = !opts.input.trim().is_empty()
-            && is_jsonl_format(markdown_body);
+        let is_jsonl_input = !opts.input.trim().is_empty() && is_jsonl_format(markdown_body);
 
         let is_conversation_input = !is_jsonl_input
             && !opts.input.trim().is_empty()
@@ -268,9 +265,13 @@ impl CiRunner {
                     options: Default::default(),
                 }]),
                 None => {
-                    let format_name = if is_jsonl_input { "JSONL" }
-                        else if is_json_summary_input { "JSON summary" }
-                        else { "conversation" };
+                    let format_name = if is_jsonl_input {
+                        "JSONL"
+                    } else if is_json_summary_input {
+                        "JSON summary"
+                    } else {
+                        "conversation"
+                    };
                     write_stderr(&format!(
                         "[sven:error] Piped {format_name} has no pending task.\n\
                          \n\
@@ -307,12 +308,19 @@ impl CiRunner {
         // always present at the top of the appended block.
         // Skip preamble when input is empty or conversation format (no useful
         // preamble exists in those cases).
-        let workflow_system_prompt_append = if opts.input.trim().is_empty() || is_conversation_input || is_jsonl_input || is_json_summary_input {
+        let workflow_system_prompt_append = if opts.input.trim().is_empty()
+            || is_conversation_input
+            || is_jsonl_input
+            || is_json_summary_input
+        {
             None
         } else {
             workflow.system_prompt_append
         };
-        let combined_append = match (workflow_system_prompt_append, opts.append_system_prompt.clone()) {
+        let combined_append = match (
+            workflow_system_prompt_append,
+            opts.append_system_prompt.clone(),
+        ) {
             (Some(p), Some(a)) => Some(format!("{p}\n\n{a}")),
             (p, a) => p.or(a),
         };
@@ -321,7 +329,10 @@ impl CiRunner {
 
         // ── Dry-run mode ─────────────────────────────────────────────────────
         if opts.dry_run {
-            write_progress(&format!("[sven:dry-run] Workflow validated — {} step(s)", total));
+            write_progress(&format!(
+                "[sven:dry-run] Workflow validated — {} step(s)",
+                total
+            ));
             if let Some(t) = &title {
                 write_progress(&format!("[sven:dry-run] Title: {}", t));
             }
@@ -332,7 +343,9 @@ impl CiRunner {
                 let mode_hint = step.options.mode.as_deref().unwrap_or("(inherit)");
                 let provider_hint = step.options.provider.as_deref().unwrap_or("(inherit)");
                 let model_hint = step.options.model.as_deref().unwrap_or("(inherit)");
-                let timeout_hint = step.options.timeout_secs
+                let timeout_hint = step
+                    .options
+                    .timeout_secs
                     .map(|t| format!("{t}s"))
                     .unwrap_or_else(|| "(inherit)".to_string());
                 write_progress(&format!(
@@ -345,7 +358,9 @@ impl CiRunner {
         // ── Build model config ───────────────────────────────────────────────
         // CLI --model > frontmatter models[current_mode] > config
         let model_override = opts.model_override.clone().or_else(|| {
-            frontmatter.models.as_ref()
+            frontmatter
+                .models
+                .as_ref()
                 .and_then(|m| m.get("agent"))
                 .cloned()
         });
@@ -355,27 +370,31 @@ impl CiRunner {
             self.config.model.clone()
         };
 
-        let model = sven_model::from_config(&model_cfg)
-            .context("failed to initialise model provider")?;
+        let model =
+            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
         // (turn_metadata removed — Conversation output now streams in real-time;
         // no post-step metadata serialization needed)
 
         // ── Build runtime context ─────────────────────────────────────────────
-        let skills = sven_runtime::SharedSkills::new(
-            sven_runtime::discover_skills(opts.project_root.as_deref())
-        );
-        let agents = sven_runtime::SharedAgents::new(
-            sven_runtime::discover_agents(opts.project_root.as_deref())
-        );
+        let skills = sven_runtime::SharedSkills::new(sven_runtime::discover_skills(
+            opts.project_root.as_deref(),
+        ));
+        let agents = sven_runtime::SharedAgents::new(sven_runtime::discover_agents(
+            opts.project_root.as_deref(),
+        ));
 
         let mut runtime_ctx = RuntimeContext {
             project_root: opts.project_root.clone(),
-            git_context: opts.project_root.as_ref()
+            git_context: opts
+                .project_root
+                .as_ref()
                 .map(|r| sven_runtime::collect_git_context(r)),
             ci_context: Some(ci_ctx),
-            project_context_file: opts.project_root.as_ref()
+            project_context_file: opts
+                .project_root
+                .as_ref()
                 .and_then(|r| sven_runtime::load_project_context_file(r)),
             append_system_prompt: combined_append,
             system_prompt_override: None,
@@ -409,19 +428,21 @@ impl CiRunner {
 
         // Resolve timeouts (CLI > config)
         // Frontmatter no longer carries timeout fields (removed in redesign).
-        let run_timeout_secs = opts.run_timeout_secs
-            .or_else(|| if self.config.agent.max_run_timeout_secs > 0 {
+        let run_timeout_secs = opts.run_timeout_secs.or_else(|| {
+            if self.config.agent.max_run_timeout_secs > 0 {
                 Some(self.config.agent.max_run_timeout_secs)
             } else {
                 None
-            });
+            }
+        });
 
-        let global_step_timeout_secs = opts.step_timeout_secs
-            .or_else(|| if self.config.agent.max_step_timeout_secs > 0 {
+        let global_step_timeout_secs = opts.step_timeout_secs.or_else(|| {
+            if self.config.agent.max_step_timeout_secs > 0 {
                 Some(self.config.agent.max_step_timeout_secs)
             } else {
                 None
-            });
+            }
+        });
 
         // Resolve mode from CLI (frontmatter no longer carries a top-level mode)
         let initial_mode = opts.mode;
@@ -433,7 +454,11 @@ impl CiRunner {
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
         let task_depth = Arc::new(AtomicUsize::new(0));
 
-        let profile = ToolSetProfile::Full { question_tx: None, todos, task_depth };
+        let profile = ToolSetProfile::Full {
+            question_tx: None,
+            todos,
+            task_depth,
+        };
 
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_runtime_context(runtime_ctx)
@@ -452,17 +477,26 @@ impl CiRunner {
                                 let replayed = crate::toolcall_replay::replay_tool_calls(
                                     &mut parsed.records,
                                     agent.tools(),
-                                ).await;
+                                )
+                                .await;
                                 write_progress(&format!(
                                     "[sven:info] Replayed {} tool call(s) with fresh results",
                                     replayed
                                 ));
                                 // Rebuild history from the mutated records
-                                let msgs: Vec<Message> = parsed.records.iter()
+                                let msgs: Vec<Message> = parsed
+                                    .records
+                                    .iter()
                                     .filter_map(|r| {
                                         if let ConversationRecord::Message(m) = r {
-                                            if m.role != Role::System { Some(m.clone()) } else { None }
-                                        } else { None }
+                                            if m.role != Role::System {
+                                                Some(m.clone())
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
                                     })
                                     .collect();
                                 let count = msgs.len();
@@ -512,8 +546,8 @@ impl CiRunner {
         // Note: --load-jsonl alone does NOT imply write-back to the same file;
         // use --jsonl (which sets both) for that behaviour.  The auto-log is
         // always the fallback so there is always a JSONL record of the run.
-        let effective_output_jsonl: Option<PathBuf> = opts.output_jsonl.clone()
-            .or_else(resolve_auto_log_path);
+        let effective_output_jsonl: Option<PathBuf> =
+            opts.output_jsonl.clone().or_else(resolve_auto_log_path);
 
         // ── Accumulated full-fidelity JSONL records for this run ─────────────
         let mut run_jsonl_records: Vec<ConversationRecord> = Vec::new();
@@ -541,7 +575,9 @@ impl CiRunner {
         }
 
         // ── Cache directory for cache_key step skipping ──────────────────────
-        let cache_dir: PathBuf = opts.project_root.as_deref()
+        let cache_dir: PathBuf = opts
+            .project_root
+            .as_deref()
             .map(|r| r.join(".sven").join("cache"))
             .unwrap_or_else(|| PathBuf::from(".sven/cache"));
 
@@ -564,7 +600,10 @@ impl CiRunner {
                 let _ = std::fs::create_dir_all(parent);
             }
             if let Err(e) = std::fs::write(path, serialized) {
-                eprintln!("[sven:warn] Failed to write JSONL log {}: {e}", path.display());
+                eprintln!(
+                    "[sven:warn] Failed to write JSONL log {}: {e}",
+                    path.display()
+                );
             }
         }
 
@@ -577,12 +616,14 @@ impl CiRunner {
                 if run_start.elapsed() > Duration::from_secs(t) {
                     write_stderr(&format!(
                         "[sven:error] Total run timeout exceeded ({}s). Completed {}/{} steps.",
-                        t, step_idx - 1, total
+                        t,
+                        step_idx - 1,
+                        total
                     ));
                     std::process::exit(EXIT_TIMEOUT);
                 }
             }
-            
+
             // Apply per-step mode override
             if let Some(mode_str) = &step.options.mode {
                 if let Some(mode) = parse_agent_mode(mode_str) {
@@ -597,7 +638,10 @@ impl CiRunner {
 
             // Apply per-step provider and/or model override.
             // Priority: explicit step model/provider > frontmatter models[mode] > current model.
-            let fm_mode_model: Option<String> = step.options.mode.as_deref()
+            let fm_mode_model: Option<String> = step
+                .options
+                .mode
+                .as_deref()
                 .and_then(|m| frontmatter.models.as_ref()?.get(m).cloned())
                 .or_else(|| frontmatter.models.as_ref()?.get("agent").cloned());
 
@@ -606,9 +650,9 @@ impl CiRunner {
                 step.options.model.as_deref(),
             ) {
                 (Some(prov), Some(model)) => Some(format!("{prov}/{model}")),
-                (Some(prov), None)        => Some(prov.to_string()),
-                (None, Some(model))       => Some(model.to_string()),
-                (None, None)              => fm_mode_model,
+                (Some(prov), None) => Some(prov.to_string()),
+                (None, Some(model)) => Some(model.to_string()),
+                (None, None) => fm_mode_model,
             };
             if let Some(model_str) = &effective_model_str {
                 let step_model_cfg = sven_model::resolve_model_from_config(&self.config, model_str);
@@ -625,8 +669,7 @@ impl CiRunner {
             }
 
             // Resolve step timeout
-            let step_timeout_secs = step.options.timeout_secs
-                .or(global_step_timeout_secs);
+            let step_timeout_secs = step.options.timeout_secs.or(global_step_timeout_secs);
 
             write_progress(&format!(
                 "[sven:step:start] {}/{} label=\"{}\"",
@@ -680,7 +723,10 @@ impl CiRunner {
                         if let Ok(cached) = std::fs::read_to_string(&cache_path) {
                             write_progress(&format!(
                                 "[sven:cache:hit] {}/{} key={:?} path={}",
-                                step_idx, total, key, cache_path.display()
+                                step_idx,
+                                total,
+                                key,
+                                cache_path.display()
                             ));
                             collected.push(Message::assistant(&cached));
                             response_text = cached;
@@ -805,7 +851,8 @@ impl CiRunner {
                         match std::fs::write(&cache_path, &response_text) {
                             Ok(()) => write_progress(&format!(
                                 "[sven:cache:write] key={:?} path={}",
-                                key, cache_path.display()
+                                key,
+                                cache_path.display()
                             )),
                             Err(e) => write_stderr(&format!(
                                 "[sven:warn] Failed to write cache {}: {e}",
@@ -868,7 +915,13 @@ impl CiRunner {
             let cache_suffix = if cache_hit { " (cached)" } else { "" };
             write_progress(&format!(
                 "[sven:step:complete] {}/{} label=\"{}\" duration_ms={} tools={} success={}{}",
-                step_idx, total, label, step_duration_ms, tools_used.len(), !failed, cache_suffix
+                step_idx,
+                total,
+                label,
+                step_duration_ms,
+                tools_used.len(),
+                !failed,
+                cache_suffix
             ));
 
             if failed {
@@ -897,7 +950,10 @@ impl CiRunner {
 
         // ── Finalize JSON output ─────────────────────────────────────────────
         if opts.output_format == OutputFormat::Json {
-            let out = JsonOutput { title, steps: json_steps };
+            let out = JsonOutput {
+                title,
+                steps: json_steps,
+            };
             let json = json_output_to_string(&out);
             write_stdout(&format!("{json}\n"));
         }
@@ -905,7 +961,9 @@ impl CiRunner {
         // ── --output-last-message ─────────────────────────────────────────────
         if let Some(out_path) = &opts.output_last_message {
             // Extract the last assistant response from the collected messages.
-            let last_response = collected.iter().rev()
+            let last_response = collected
+                .iter()
+                .rev()
                 .find(|m| m.role == Role::Assistant)
                 .and_then(|m| match &m.content {
                     MessageContent::Text(t) => Some(t.clone()),
@@ -958,7 +1016,9 @@ fn emit_record(
     if output_format == OutputFormat::Jsonl {
         match serde_json::to_string(&record) {
             Ok(line) => write_stdout(&format!("{line}\n")),
-            Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize JSONL record: {e}")),
+            Err(e) => write_stderr(&format!(
+                "[sven:warn] Failed to serialize JSONL record: {e}"
+            )),
         }
     }
     records.push(record);
@@ -1033,7 +1093,10 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: tc.id.clone(),
-                    function: FunctionCall { name: tc.name.clone(), arguments: args_str.clone() },
+                    function: FunctionCall {
+                        name: tc.name.clone(),
+                        arguments: args_str.clone(),
+                    },
                 },
             };
             // Stream tool call section to stdout in conversation format
@@ -1054,9 +1117,18 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
             }
             collected.push(msg.clone());
-            emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
+            emit_record(
+                jsonl_records,
+                ConversationRecord::Message(msg),
+                output_format,
+            );
         }
-        AgentEvent::ToolCallFinished { call_id, tool_name, is_error, output } => {
+        AgentEvent::ToolCallFinished {
+            call_id,
+            tool_name,
+            is_error,
+            output,
+        } => {
             if is_error {
                 write_stderr(&format!(
                     "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
@@ -1091,10 +1163,23 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             }
             let msg = Message::tool_result(&call_id, &output);
             collected.push(msg.clone());
-            emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
+            emit_record(
+                jsonl_records,
+                ConversationRecord::Message(msg),
+                output_format,
+            );
         }
-        AgentEvent::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
-            let turn_note = if turn > 0 { format!(" (tool round {turn})") } else { String::new() };
+        AgentEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
+            let turn_note = if turn > 0 {
+                format!(" (tool round {turn})")
+            } else {
+                String::new()
+            };
             write_stderr(&format!(
                 "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
@@ -1114,27 +1199,33 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             *failed = true;
         }
         AgentEvent::TodoUpdate(todos) => {
-            let lines: Vec<String> = todos.iter().map(|t| {
-                let icon = match t.status.as_str() {
-                    "completed" => "✓",
-                    "in_progress" => "→",
-                    "cancelled" => "✗",
-                    _ => "○",
-                };
-                format!("  {icon} [{}] {}", t.id, t.content)
-            }).collect();
+            let lines: Vec<String> = todos
+                .iter()
+                .map(|t| {
+                    let icon = match t.status.as_str() {
+                        "completed" => "✓",
+                        "in_progress" => "→",
+                        "cancelled" => "✗",
+                        _ => "○",
+                    };
+                    format!("  {icon} [{}] {}", t.id, t.content)
+                })
+                .collect();
             write_stderr(&format!("[sven:todos]\n{}", lines.join("\n")));
         }
         AgentEvent::ModeChanged(mode) => {
             write_stderr(&format!("[sven:mode:changed] now in {mode} mode"));
         }
         AgentEvent::Question { questions, .. } => {
-            write_stderr(&format!(
-                "[sven:questions] {}",
-                questions.join(" | ")
-            ));
+            write_stderr(&format!("[sven:questions] {}", questions.join(" | ")));
         }
-        AgentEvent::TokenUsage { input, output, cache_read, cache_write, .. } => {
+        AgentEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            ..
+        } => {
             if cache_read > 0 || cache_write > 0 {
                 write_stderr(&format!(
                     "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
@@ -1158,7 +1249,11 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
                 let msg = Message::assistant(&partial_text);
                 collected.push(msg.clone());
-                emit_record(jsonl_records, ConversationRecord::Message(msg), output_format);
+                emit_record(
+                    jsonl_records,
+                    ConversationRecord::Message(msg),
+                    output_format,
+                );
             } else {
                 write_stderr("[sven:agent:aborted]");
             }
@@ -1259,14 +1354,23 @@ pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
 fn write_step_artifact(dir: &std::path::Path, idx: usize, label: &str, messages: &[Message]) {
     let safe_label = label
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let filename = format!("{:02}-{}.md", idx, safe_label);
     let path = dir.join(&filename);
 
     let content = serialize_conversation_turn(messages);
     if let Err(e) = std::fs::write(&path, &content) {
-        write_stderr(&format!("[sven:warn] Could not write step artifact {}: {e}", path.display()));
+        write_stderr(&format!(
+            "[sven:warn] Could not write step artifact {}: {e}",
+            path.display()
+        ));
     }
 }
 
@@ -1274,34 +1378,38 @@ fn write_conversation_artifact(dir: &std::path::Path, messages: &[Message]) {
     let path = dir.join("conversation.md");
     let content = serialize_conversation_turn(messages);
     if let Err(e) = std::fs::write(&path, &content) {
-        write_stderr(&format!("[sven:warn] Could not write conversation artifact: {e}"));
+        write_stderr(&format!(
+            "[sven:warn] Could not write conversation artifact: {e}"
+        ));
     }
 }
-
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn json_output_to_string(out: &JsonOutput) -> String {
-    let steps: Vec<serde_json::Value> = out.steps.iter().map(|s| {
-        serde_json::json!({
-            "index": s.index,
-            "label": s.label,
-            "user_input": s.user_input,
-            "agent_response": s.agent_response,
-            "tools_used": s.tools_used,
-            "duration_ms": s.duration_ms,
-            "success": s.success,
+    let steps: Vec<serde_json::Value> = out
+        .steps
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "index": s.index,
+                "label": s.label,
+                "user_input": s.user_input,
+                "agent_response": s.agent_response,
+                "tools_used": s.tools_used,
+                "duration_ms": s.duration_ms,
+                "success": s.success,
+            })
         })
-    }).collect();
+        .collect();
 
     let obj = serde_json::json!({
         "title": out.title,
         "steps": steps,
     });
 
-    serde_json::to_string_pretty(&obj).unwrap_or_else(|e| {
-        format!("{{\"error\": \"serialization failed: {e}\"}}")
-    })
+    serde_json::to_string_pretty(&obj)
+        .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"))
 }
 
 fn parse_agent_mode(s: &str) -> Option<AgentMode> {
@@ -1320,7 +1428,13 @@ fn parse_agent_mode(s: &str) -> Option<AgentMode> {
 /// landing outside `.sven/cache/`.
 fn sanitize_cache_key(key: &str) -> String {
     key.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

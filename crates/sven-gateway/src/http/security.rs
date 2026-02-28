@@ -36,8 +36,7 @@ use axum::{
 
 // ── Constant header values ────────────────────────────────────────────────────
 
-static HSTS: HeaderValue =
-    HeaderValue::from_static("max-age=31536000; includeSubDomains");
+static HSTS: HeaderValue = HeaderValue::from_static("max-age=31536000; includeSubDomains");
 static NO_SNIFF: HeaderValue = HeaderValue::from_static("nosniff");
 static DENY_FRAME: HeaderValue = HeaderValue::from_static("DENY");
 static NO_REFERRER: HeaderValue = HeaderValue::from_static("no-referrer");
@@ -140,9 +139,7 @@ fn should_reject_cross_origin(headers: &axum::http::HeaderMap) -> Option<&'stati
 
 fn is_loopback_origin(url: &str) -> bool {
     // Accept anything pointing to 127.x.x.x, localhost, or ::1.
-    url.contains("localhost")
-        || url.contains("127.0.0.")
-        || url.contains("[::1]")
+    url.contains("localhost") || url.contains("127.0.0.") || url.contains("[::1]")
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

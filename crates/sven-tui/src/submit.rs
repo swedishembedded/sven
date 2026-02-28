@@ -56,86 +56,12 @@
 
 use sven_model::Message;
 
-use std::sync::Arc;
-
 use crate::{
     agent::AgentRequest,
     app::{App, FocusPane, ModelDirective, QueuedMessage},
     chat::segment::{messages_for_resubmit, ChatSegment},
-    commands::{CommandRegistry, CompletionManager, dispatch_command, CommandContext, ImmediateAction},
+    commands::{dispatch_command, CommandContext, ImmediateAction},
 };
-
-// ── Inline slash-command expansion ───────────────────────────────────────────
-
-/// Scan `text` for embedded `/command [args]` patterns and expand them.
-///
-/// Rules:
-/// - A slash command is `/word` where `word` matches a registered command.
-/// - The argument is everything from after the command name to the end of the
-///   **current line** (newline acts as the arg terminator).
-/// - Text before the `/command` on the same line is preserved and separated
-///   from the expanded command body with a newline.
-/// - Returns `None` when no inline commands are found (caller uses `text` as-is).
-pub(crate) fn expand_inline_commands(
-    text: &str,
-    registry: &CommandRegistry,
-    ctx: &CommandContext,
-) -> Option<String> {
-    // The standard slash-command path (text starts with '/') is handled
-    // separately in submit_user_input.
-    if text.starts_with('/') {
-        return None;
-    }
-
-    let mut result_parts: Vec<String> = Vec::new();
-    let mut any_expanded = false;
-
-    for line in text.split('\n') {
-        if let Some((pre_len, expanded)) = try_expand_inline_in_line(line, registry, ctx) {
-            let before = line[..pre_len].trim_end();
-            if !before.is_empty() {
-                result_parts.push(before.to_string());
-            }
-            result_parts.push(expanded);
-            any_expanded = true;
-        } else {
-            result_parts.push(line.to_string());
-        }
-    }
-
-    if any_expanded { Some(result_parts.join("\n")) } else { None }
-}
-
-/// Scan a single line for a `/command [args]` pattern.
-///
-/// Returns `(position_of_slash, expanded_text)` on the first match, or `None`.
-fn try_expand_inline_in_line(
-    line: &str,
-    registry: &CommandRegistry,
-    ctx: &CommandContext,
-) -> Option<(usize, String)> {
-    let bytes = line.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b != b'/' {
-            continue;
-        }
-        // Skip URL-like slashes (preceded by ':').
-        if i > 0 && bytes[i - 1] == b':' {
-            continue;
-        }
-        // Must be followed by an alphanumeric character (start of a command name).
-        if !bytes.get(i + 1).map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) {
-            continue;
-        }
-        let cmd_text = &line[i..];
-        if let Some((_name, result)) = dispatch_command(cmd_text, registry, ctx) {
-            if let Some(msg) = result.message_to_send {
-                return Some((i, msg));
-            }
-        }
-    }
-    None
-}
 
 impl App {
     // ── Submit path ───────────────────────────────────────────────────────────
@@ -157,23 +83,14 @@ impl App {
     ///    - Unknown command → return `false`.
     /// 3. Plain-text (or injected `message_to_send`) path:
     ///    a. `SessionState::consume_staged()` promotes the staged model to
-    ///       `model_display` and returns `(model, mode)` for the message.
+    ///    `model_display` and returns `(model, mode)` for the message.
     ///    b. `QueuedMessage` constructed with those values.
     ///    c. Agent busy → push to queue.
-    ///       Agent idle → snapshot history, append user segment, rerender,
-    ///       send via `send_resubmit_to_agent()`.
+    ///    Agent idle → snapshot history, append user segment, rerender,
+    ///    send via `send_resubmit_to_agent()`.
     /// 4. `agent_task` receives `AgentRequest::Resubmit`.
     /// 5. `agent.set_model()` / `agent.set_mode()` / `agent.replace_history_and_submit()`.
     pub(crate) async fn submit_user_input(&mut self, text: &str) -> bool {
-        // Expand any inline `/command` patterns embedded in multi-line text.
-        if let Some(expanded) = expand_inline_commands(text, &self.command_registry, &CommandContext {
-            config: self.config.clone(),
-            current_model_provider: self.session.model_cfg.provider.clone(),
-            current_model_name: self.session.model_cfg.name.clone(),
-        }) {
-            return self.enqueue_or_send_text(&expanded).await;
-        }
-
         if text.starts_with('/') {
             let ctx = CommandContext {
                 config: self.config.clone(),
@@ -189,16 +106,6 @@ impl App {
                     if matches!(result.immediate_action, Some(ImmediateAction::Abort)) {
                         self.abort_pending = true;
                         self.send_abort_signal().await;
-                        return false;
-                    }
-
-                    if matches!(result.immediate_action, Some(ImmediateAction::RefreshSkills)) {
-                        self.refresh_skill_commands();
-                        return false;
-                    }
-
-                    if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
-                        self.clear_chat();
                         return false;
                     }
 
@@ -237,7 +144,7 @@ impl App {
         let (staged_model, staged_mode) = self.session.consume_staged();
         let qm = QueuedMessage {
             content: text.to_string(),
-            model_transition: staged_model.map(ModelDirective::SwitchTo),
+            model_transition: staged_model.map(|c| ModelDirective::SwitchTo(Box::new(c))),
             mode_transition: staged_mode,
         };
         // When abort_pending the user explicitly stopped the queue from
@@ -249,7 +156,8 @@ impl App {
         } else {
             self.sync_nvim_buffer_to_segments().await;
             let history = messages_for_resubmit(&self.chat_segments);
-            self.chat_segments.push(ChatSegment::Message(Message::user(text)));
+            self.chat_segments
+                .push(ChatSegment::Message(Message::user(text)));
             self.save_history_async();
             self.rerender_chat().await;
             self.scroll_to_bottom();
@@ -257,7 +165,6 @@ impl App {
         }
         false
     }
-
 
     /// Handle a slash command from the Neovim buffer (apply immediately, no staging).
     ///
@@ -274,17 +181,8 @@ impl App {
             if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
                 return true;
             }
-            if matches!(result.immediate_action, Some(ImmediateAction::RefreshSkills)) {
-                self.refresh_skill_commands();
-                return false;
-            }
-            if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
-                self.clear_chat();
-                return false;
-            }
             if let Some(model_str) = result.model_override {
-                let resolved =
-                    sven_model::resolve_model_from_config(&self.config, &model_str);
+                let resolved = sven_model::resolve_model_from_config(&self.config, &model_str);
                 self.session.apply_model(resolved);
             }
             if let Some(mode) = result.mode_override {
@@ -294,43 +192,6 @@ impl App {
             // the buffer already represents the full conversation state.
         }
         false
-    }
-
-    /// Clear all chat segments and reset the conversation view.
-    ///
-    /// Called when `ImmediateAction::ClearChat` is produced by `/clear`.
-    /// Model, mode, and all other settings are preserved.
-    pub(crate) fn clear_chat(&mut self) {
-        self.chat_segments.clear();
-        self.chat_lines.clear();
-        self.segment_line_ranges.clear();
-        self.collapsed_segments.clear();
-        self.edit_label_line_indices.clear();
-        self.remove_label_line_indices.clear();
-        self.rerun_label_line_indices.clear();
-        self.editing_message_index = None;
-        self.focused_chat_segment = None;
-        self.confirm_modal = None;
-        self.scroll_offset = 0;
-    }
-
-    /// Re-scan all skill and command directories, rebuild the slash command
-    /// registry and the completion manager.
-    ///
-    /// Called when `ImmediateAction::RefreshSkills` is produced by `/refresh`.
-    /// Skills are refreshed so the agent picks them up on the next turn;
-    /// commands are re-discovered so new `.cursor/commands/` files appear as
-    /// slash completions immediately.
-    pub(crate) fn refresh_skill_commands(&mut self) {
-        self.shared_skills.refresh(self.project_root.as_deref());
-        self.shared_agents.refresh(self.project_root.as_deref());
-        let commands = sven_runtime::discover_commands(self.project_root.as_deref());
-        let mut registry = CommandRegistry::with_builtins();
-        registry.register_commands(&commands);
-        registry.register_agents(&self.shared_agents.get());
-        let registry = Arc::new(registry);
-        self.completion_manager = CompletionManager::new(registry.clone());
-        self.command_registry = registry;
     }
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {
@@ -370,13 +231,15 @@ impl App {
     pub(crate) async fn try_dequeue_next(&mut self) {
         if !self.agent_busy && self.editing_queue_index.is_none() && !self.abort_pending {
             if let Some(next) = self.queued.pop_front() {
-                self.queue_selected = self.queue_selected
+                self.queue_selected = self
+                    .queue_selected
                     .map(|s| s.saturating_sub(1))
                     .filter(|_| !self.queued.is_empty());
                 if self.queued.is_empty() && self.focus == FocusPane::Queue {
                     self.focus = FocusPane::Input;
                 }
-                self.chat_segments.push(ChatSegment::Message(Message::user(&next.content)));
+                self.chat_segments
+                    .push(ChatSegment::Message(Message::user(&next.content)));
                 self.rerender_chat().await;
                 self.auto_scroll = true;
                 self.scroll_to_bottom();
@@ -436,7 +299,8 @@ impl App {
             // Clear abort_pending so subsequent turns auto-dequeue normally.
             self.abort_pending = false;
             let history = messages_for_resubmit(&self.chat_segments);
-            self.chat_segments.push(ChatSegment::Message(Message::user(&qm.content)));
+            self.chat_segments
+                .push(ChatSegment::Message(Message::user(&qm.content)));
             self.save_history_async();
             self.rerender_chat().await;
             self.auto_scroll = true;
@@ -466,7 +330,9 @@ mod submit_integration_tests {
     /// Extract the `new_user_content` from a `Resubmit` request.
     fn resubmit_content(req: &AgentRequest) -> &str {
         match req {
-            AgentRequest::Resubmit { new_user_content, .. } => new_user_content,
+            AgentRequest::Resubmit {
+                new_user_content, ..
+            } => new_user_content,
             other => panic!("expected Resubmit, got {:?}", other),
         }
     }
@@ -474,9 +340,9 @@ mod submit_integration_tests {
     /// Extract the `model_override` display label from a `Resubmit` request.
     fn resubmit_model(req: &AgentRequest) -> Option<String> {
         match req {
-            AgentRequest::Resubmit { model_override, .. } => {
-                model_override.as_ref().map(|c| format!("{}/{}", c.provider, c.name))
-            }
+            AgentRequest::Resubmit { model_override, .. } => model_override
+                .as_ref()
+                .map(|c| format!("{}/{}", c.provider, c.name)),
             other => panic!("expected Resubmit, got {:?}", other),
         }
     }
@@ -585,7 +451,10 @@ mod submit_integration_tests {
         app.inject_input("/doesnotexist foo");
         let quit = app.dispatch_action(Action::Submit).await;
         assert!(!quit);
-        assert!(rx.try_recv().is_err(), "unknown command must not send to agent");
+        assert!(
+            rx.try_recv().is_err(),
+            "unknown command must not send to agent"
+        );
     }
 
     /// When the agent is busy, messages are queued instead of sent.
@@ -608,8 +477,15 @@ mod submit_integration_tests {
         app.inject_input("second");
         app.dispatch_action(Action::Submit).await;
 
-        assert_eq!(app.queued_len(), 1, "second message should be queued while agent busy");
-        assert!(rx.try_recv().is_err(), "no second request should reach agent yet");
+        assert_eq!(
+            app.queued_len(),
+            1,
+            "second message should be queued while agent busy"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no second request should reach agent yet"
+        );
     }
 
     /// Queued message with a staged model retains the override when dequeued.
@@ -655,7 +531,10 @@ mod submit_integration_tests {
         app.inject_input("/model anthropic/claude-opus-4-6");
         app.dispatch_action(Action::Submit).await;
         // No resubmit should have been sent (it's just a model switch command).
-        assert!(rx.try_recv().is_err(), "/model alone must not send a request");
+        assert!(
+            rx.try_recv().is_err(),
+            "/model alone must not send a request"
+        );
 
         // Now start editing the existing chat message and confirm.
         app.start_editing_segment(seg_idx, "edited message");
@@ -697,14 +576,20 @@ mod submit_integration_tests {
 
         app.inject_input("/mode research");
         app.dispatch_action(Action::Submit).await;
-        assert!(rx.try_recv().is_err(), "/mode alone must not send a request");
+        assert!(
+            rx.try_recv().is_err(),
+            "/mode alone must not send a request"
+        );
 
         app.start_editing_segment(seg_idx, "do some research — edited");
         app.dispatch_action(Action::EditMessageConfirm).await;
 
         let req = rx.try_recv().expect("edit-resubmit must send a request");
-        assert_eq!(resubmit_mode(&req), Some(AgentMode::Research),
-            "staged mode must be forwarded to the agent on edit-resubmit");
+        assert_eq!(
+            resubmit_mode(&req),
+            Some(AgentMode::Research),
+            "staged mode must be forwarded to the agent on edit-resubmit"
+        );
     }
 
     /// Empty input: nothing is sent.
@@ -713,7 +598,10 @@ mod submit_integration_tests {
         let (mut app, mut rx) = App::for_testing();
         app.inject_input("   ");
         app.dispatch_action(Action::Submit).await;
-        assert!(rx.try_recv().is_err(), "empty/whitespace input must not send to agent");
+        assert!(
+            rx.try_recv().is_err(),
+            "empty/whitespace input must not send to agent"
+        );
     }
 
     // ── /abort command ────────────────────────────────────────────────────────
@@ -732,7 +620,10 @@ mod submit_integration_tests {
         // /abort while busy should set abort_pending.
         app.inject_input("/abort");
         app.dispatch_action(Action::Submit).await;
-        assert!(app.is_abort_pending(), "abort_pending must be set after /abort");
+        assert!(
+            app.is_abort_pending(),
+            "abort_pending must be set after /abort"
+        );
     }
 
     /// After /abort new messages are queued (not sent directly) even when agent is idle.
@@ -758,8 +649,15 @@ mod submit_integration_tests {
 
         app.inject_input("new message after abort");
         app.dispatch_action(Action::Submit).await;
-        assert_eq!(app.queued_len(), 1, "message should be queued when abort_pending");
-        assert!(rx.try_recv().is_err(), "message must not go to agent directly");
+        assert_eq!(
+            app.queued_len(),
+            1,
+            "message should be queued when abort_pending"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "message must not go to agent directly"
+        );
     }
 
     /// After abort, auto-dequeue is suppressed; queued messages stay queued after TurnComplete.
@@ -798,8 +696,15 @@ mod submit_integration_tests {
         // simulate_turn_complete with abort_pending should NOT dequeue.
         // (In real life this is handled in TurnComplete; here agent is already idle.)
         // Verify: queue still has the "second" message.
-        assert_eq!(app.queued_len(), 1, "queue should not have been drained while abort_pending");
-        assert!(rx.try_recv().is_err(), "no message should have been sent automatically");
+        assert_eq!(
+            app.queued_len(),
+            1,
+            "queue should not have been drained while abort_pending"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no message should have been sent automatically"
+        );
     }
 
     // ── Force-submit ──────────────────────────────────────────────────────────
@@ -834,6 +739,10 @@ mod submit_integration_tests {
 
         let req = rx.try_recv().expect("force-submit should send a request");
         assert_eq!(resubmit_content(&req), "queued message");
-        assert_eq!(app.queued_len(), 0, "queue should be empty after force-submit");
+        assert_eq!(
+            app.queued_len(),
+            0,
+            "queue should be empty after force-submit"
+        );
     }
 }

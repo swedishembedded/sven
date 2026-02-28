@@ -37,7 +37,9 @@ impl Default for ShellTool {
 
 #[async_trait]
 impl Tool for ShellTool {
-    fn name(&self) -> &str { "shell" }
+    fn name(&self) -> &str {
+        "shell"
+    }
 
     fn description(&self) -> &str {
         "Execute a shell command and return stdout + stderr.\n\
@@ -76,8 +78,12 @@ impl Tool for ShellTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
-    fn output_category(&self) -> OutputCategory { OutputCategory::HeadTail }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::HeadTail
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let command = match call.args.get("shell_command").and_then(|v| v.as_str()) {
@@ -90,8 +96,13 @@ impl Tool for ShellTool {
                 );
             }
         };
-        let workdir = call.args.get("workdir").and_then(|v| v.as_str()).map(str::to_string);
-        let timeout = call.args
+        let workdir = call
+            .args
+            .get("workdir")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let timeout = call
+            .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(self.timeout_secs);
@@ -122,15 +133,18 @@ impl Tool for ShellTool {
         // TUI state.  With setsid() the child has no controlling terminal, so
         // open("/dev/tty") fails with ENXIO.
         #[cfg(unix)]
-        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         if let Some(wd) = &workdir {
             cmd.current_dir(wd);
         }
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            cmd.output(),
-        ).await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -142,7 +156,9 @@ impl Tool for ShellTool {
                     content.push_str(&head_tail_truncate(&stdout));
                 }
                 if !stderr.is_empty() {
-                    if !content.is_empty() { content.push('\n'); }
+                    if !content.is_empty() {
+                        content.push('\n');
+                    }
                     content.push_str("[stderr]\n");
                     content.push_str(&head_tail_truncate(&stderr));
                 }
@@ -166,10 +182,7 @@ impl Tool for ShellTool {
                     };
                     ToolOutput::ok(&call.id, out)
                 } else {
-                    ToolOutput::err(
-                        &call.id,
-                        format!("[exit {code}]\n{content}"),
-                    )
+                    ToolOutput::err(&call.id, format!("[exit {code}]\n{content}"))
                 }
             }
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("spawn error: {e}")),
@@ -235,7 +248,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(id: &str, args: serde_json::Value) -> ToolCall {
-        ToolCall { id: id.into(), name: "shell".into(), args }
+        ToolCall {
+            id: id.into(),
+            name: "shell".into(),
+            args,
+        }
     }
 
     // ── Successful execution ──────────────────────────────────────────────────
@@ -243,7 +260,9 @@ mod tests {
     #[tokio::test]
     async fn executes_echo_and_returns_stdout() {
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({"command": "echo hello"}))).await;
+        let out = t
+            .execute(&call("1", json!({"command": "echo hello"})))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("hello"));
     }
@@ -251,9 +270,14 @@ mod tests {
     #[tokio::test]
     async fn stdout_and_stderr_both_captured() {
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({
-            "command": "echo out && echo err >&2"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "1",
+                json!({
+                    "command": "echo out && echo err >&2"
+                }),
+            ))
+            .await;
         assert!(out.content.contains("out"));
         assert!(out.content.contains("err"));
     }
@@ -261,10 +285,15 @@ mod tests {
     #[tokio::test]
     async fn workdir_changes_cwd() {
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({
-            "command": "pwd",
-            "workdir": "/tmp"
-        }))).await;
+        let out = t
+            .execute(&call(
+                "1",
+                json!({
+                    "command": "pwd",
+                    "workdir": "/tmp"
+                }),
+            ))
+            .await;
         assert!(!out.is_error);
         assert!(out.content.trim().ends_with("tmp") || out.content.contains("/tmp"));
     }
@@ -275,7 +304,9 @@ mod tests {
     async fn exit_1_is_not_error_but_includes_code() {
         // Exit code 1 is "no matches" for grep/rg and "false" for test — not a hard error.
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({"shell_command": "exit 1"}))).await;
+        let out = t
+            .execute(&call("1", json!({"shell_command": "exit 1"})))
+            .await;
         assert!(!out.is_error, "exit 1 should not set is_error");
         assert!(out.content.contains("[exit 1]"));
     }
@@ -283,7 +314,9 @@ mod tests {
     #[tokio::test]
     async fn exit_2_is_error() {
         let t = ShellTool::default();
-        let out = t.execute(&call("1", json!({"shell_command": "exit 2"}))).await;
+        let out = t
+            .execute(&call("1", json!({"shell_command": "exit 2"})))
+            .await;
         assert!(out.is_error, "exit code >= 2 should set is_error");
         assert!(out.content.contains("[exit 2]"));
     }
@@ -299,10 +332,15 @@ mod tests {
     #[tokio::test]
     async fn timeout_returns_error() {
         let t = ShellTool { timeout_secs: 1 };
-        let out = t.execute(&call("1", json!({
-            "command": "sleep 60",
-            "timeout_secs": 1
-        }))).await;
+        let out = t
+            .execute(&call(
+                "1",
+                json!({
+                    "command": "sleep 60",
+                    "timeout_secs": 1
+                }),
+            ))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("timeout"));
     }
@@ -321,7 +359,10 @@ mod tests {
         let line = "x".repeat(29);
         let content: String = (0..1000).map(|i| format!("line{i}: {line}\n")).collect();
         let result = head_tail_truncate(&content);
-        assert!(result.contains("omitted"), "should contain omission marker: {result}");
+        assert!(
+            result.contains("omitted"),
+            "should contain omission marker: {result}"
+        );
         assert!(result.len() < content.len(), "result should be shorter");
     }
 
@@ -330,7 +371,9 @@ mod tests {
         // Build output where first line is "BUILD START" and last is "BUILD ERROR"
         let mut lines: Vec<String> = vec!["BUILD START".to_string()];
         for i in 0..800 {
-            lines.push(format!("middle line {i} padding padding padding padding padding"));
+            lines.push(format!(
+                "middle line {i} padding padding padding padding padding"
+            ));
         }
         lines.push("BUILD ERROR".to_string());
         let content = lines.join("\n");

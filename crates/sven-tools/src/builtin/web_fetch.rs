@@ -16,7 +16,9 @@ pub struct WebFetchTool;
 
 #[async_trait]
 impl Tool for WebFetchTool {
-    fn name(&self) -> &str { "web_fetch" }
+    fn name(&self) -> &str {
+        "web_fetch"
+    }
 
     fn description(&self) -> &str {
         "Fetch a URL and return content as readable text (HTML → markdown). Read-only.\n\
@@ -42,14 +44,18 @@ impl Tool for WebFetchTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let url = match call.args.get("url").and_then(|v| v.as_str()) {
             Some(u) => u.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'url'"),
         };
-        let max_chars = call.args.get("max_chars")
+        let max_chars = call
+            .args
+            .get("max_chars")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_MAX_CHARS as u64) as usize;
 

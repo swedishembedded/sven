@@ -47,8 +47,12 @@ impl OpenAiProvider {
 
 #[async_trait]
 impl crate::ModelProvider for OpenAiProvider {
-    fn name(&self) -> &str { self.inner.name() }
-    fn model_name(&self) -> &str { self.inner.model_name() }
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         self.inner.list_models().await

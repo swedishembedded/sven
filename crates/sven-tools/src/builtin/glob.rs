@@ -13,7 +13,9 @@ pub struct GlobTool;
 
 #[async_trait]
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "glob" }
+    fn name(&self) -> &str {
+        "glob"
+    }
 
     fn description(&self) -> &str {
         "Find files matching a glob pattern. Results sorted by modification time. \
@@ -45,15 +47,26 @@ impl Tool for GlobTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'pattern'"),
         };
-        let root = call.args.get("root").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-        let max = call.args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+        let root = call
+            .args
+            .get("root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+        let max = call
+            .args
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200) as usize;
 
         debug!(pattern = %pattern, root = %root, "glob tool");
 
@@ -96,7 +109,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "g1".into(), name: "glob".into(), args }
+        ToolCall {
+            id: "g1".into(),
+            name: "glob".into(),
+            args,
+        }
     }
 
     // ── Successful searches ───────────────────────────────────────────────────
@@ -104,10 +121,12 @@ mod tests {
     #[tokio::test]
     async fn finds_toml_files_in_workspace() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.toml",
-            "root": "/data/agents/sven"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.toml",
+                "root": "/data/agents/sven"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("Cargo.toml"));
     }
@@ -115,10 +134,12 @@ mod tests {
     #[tokio::test]
     async fn finds_rs_files() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "lib.rs",
-            "root": "/data/agents/sven/crates"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "lib.rs",
+                "root": "/data/agents/sven/crates"
+            })))
+            .await;
         assert!(!out.is_error);
         assert!(out.content.contains("lib.rs"));
     }
@@ -126,10 +147,12 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_no_matches_message() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.xyz_nonexistent_ext",
-            "root": "/tmp"
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.xyz_nonexistent_ext",
+                "root": "/tmp"
+            })))
+            .await;
         assert!(!out.is_error);
         assert!(out.content.contains("no matches"));
     }
@@ -139,14 +162,20 @@ mod tests {
     #[tokio::test]
     async fn max_results_is_respected() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "*.rs",
-            "root": "/data/agents/sven",
-            "max_results": 2
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "*.rs",
+                "root": "/data/agents/sven",
+                "max_results": 2
+            })))
+            .await;
         assert!(!out.is_error);
         let lines: Vec<&str> = out.content.lines().collect();
-        assert!(lines.len() <= 2, "expected at most 2 results, got {}", lines.len());
+        assert!(
+            lines.len() <= 2,
+            "expected at most 2 results, got {}",
+            lines.len()
+        );
     }
 
     // ── Pattern normalization ─────────────────────────────────────────────────
@@ -154,11 +183,13 @@ mod tests {
     #[tokio::test]
     async fn strips_double_star_prefix() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "**/*.toml",
-            "root": "/data/agents/sven",
-            "max_results": 5
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "**/*.toml",
+                "root": "/data/agents/sven",
+                "max_results": 5
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("Cargo.toml"));
     }
@@ -166,11 +197,13 @@ mod tests {
     #[tokio::test]
     async fn handles_bare_double_star_slash_star() {
         let t = GlobTool;
-        let out = t.execute(&call(json!({
-            "pattern": "**/*",
-            "root": "/data/agents/sven/crates/sven-tools",
-            "max_results": 10
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "pattern": "**/*",
+                "root": "/data/agents/sven/crates/sven-tools",
+                "max_results": 10
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(!out.content.contains("no matches"));
     }

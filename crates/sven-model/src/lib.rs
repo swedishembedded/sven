@@ -1,28 +1,28 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
+mod anthropic;
+mod aws;
 pub mod catalog;
+mod cohere;
+mod google;
+mod mock;
+mod openai;
+pub(crate) mod openai_compat;
+mod provider;
 pub mod registry;
 pub mod sanitize;
-pub(crate) mod openai_compat;
 mod types;
-mod provider;
-mod openai;
-mod anthropic;
-mod google;
-mod aws;
-mod cohere;
-mod mock;
 mod yaml_mock;
 
-pub use catalog::{ModelCatalogEntry, InputModality};
-pub use types::*;
-pub use provider::ModelProvider;
-pub use openai::OpenAiProvider;
 pub use anthropic::AnthropicProvider;
+pub use catalog::{InputModality, ModelCatalogEntry};
 pub use mock::{MockProvider, ScriptedMockProvider};
+pub use openai::OpenAiProvider;
+pub use provider::ModelProvider;
+pub use registry::{get_driver, list_drivers, DriverMeta};
+pub use types::*;
 pub use yaml_mock::YamlMockProvider;
-pub use registry::{DriverMeta, get_driver, list_drivers};
 
 use anyhow::bail;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
@@ -40,15 +40,13 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
     // key() returns a fresh Option<String> on each call so that each match arm
     // can take ownership without cross-arm borrow issues.
     let key = || resolve_api_key(cfg);
-    let resolved_max_tokens = cfg.max_tokens.or_else(|| {
-        catalog::lookup(&cfg.provider, &cfg.name)
-            .map(|e| e.max_output_tokens)
-    });
+    let resolved_max_tokens = cfg
+        .max_tokens
+        .or_else(|| catalog::lookup(&cfg.provider, &cfg.name).map(|e| e.max_output_tokens));
 
     // Helper that reads `base_url` from config or falls back to a static default.
-    let base_url = |default: &str| -> String {
-        cfg.base_url.clone().unwrap_or_else(|| default.into())
-    };
+    let base_url =
+        |default: &str| -> String { cfg.base_url.clone().unwrap_or_else(|| default.into()) };
 
     match cfg.provider.as_str() {
         // ── Native drivers ────────────────────────────────────────────────────
@@ -98,7 +96,11 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
         "azure" => {
             let chat_url = if let Some(b) = &cfg.base_url {
                 let api_ver = cfg.azure_api_version.as_deref().unwrap_or("2024-02-01");
-                format!("{}/chat/completions?api-version={}", b.trim_end_matches('/'), api_ver)
+                format!(
+                    "{}/chat/completions?api-version={}",
+                    b.trim_end_matches('/'),
+                    api_ver
+                )
             } else {
                 let resource = cfg.azure_resource.as_deref().unwrap_or("myresource");
                 let deployment = cfg.azure_deployment.as_deref().unwrap_or(&cfg.name);
@@ -129,14 +131,19 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             resolved_max_tokens,
             cfg.temperature,
             vec![
-                ("HTTP-Referer".into(), "https://github.com/svenai/sven".into()),
+                (
+                    "HTTP-Referer".into(),
+                    "https://github.com/svenai/sven".into(),
+                ),
                 ("X-Title".into(), "sven".into()),
             ],
             AuthStyle::Bearer,
             cfg.driver_options.clone(),
         ))),
         "litellm" => {
-            let b = cfg.base_url.as_deref()
+            let b = cfg
+                .base_url
+                .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("litellm provider requires base_url in config"))?;
             Ok(Box::new(OpenAICompatProvider::new(
                 "litellm",
@@ -174,8 +181,11 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.driver_options.clone(),
         ))),
         "cloudflare" => {
-            let b = cfg.base_url.as_deref()
-                .ok_or_else(|| anyhow::anyhow!("cloudflare provider requires base_url in config (account-specific URL)"))?;
+            let b = cfg.base_url.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cloudflare provider requires base_url in config (account-specific URL)"
+                )
+            })?;
             Ok(Box::new(OpenAICompatProvider::new(
                 "cloudflare",
                 cfg.name.clone(),
@@ -416,7 +426,11 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             cfg.temperature,
             vec![],
             // vLLM accepts an optional bearer token
-            if key().is_some() { AuthStyle::Bearer } else { AuthStyle::None },
+            if key().is_some() {
+                AuthStyle::Bearer
+            } else {
+                AuthStyle::None
+            },
             cfg.driver_options.clone(),
         ))),
         "lmstudio" => Ok(Box::new(OpenAICompatProvider::new(
@@ -433,7 +447,8 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 
         // ── Testing / Mock ────────────────────────────────────────────────────
         "mock" => {
-            let responses_path = std::env::var("SVEN_MOCK_RESPONSES").ok()
+            let responses_path = std::env::var("SVEN_MOCK_RESPONSES")
+                .ok()
                 .or_else(|| cfg.mock_responses_file.clone());
             if let Some(path) = responses_path {
                 Ok(Box::new(YamlMockProvider::from_file(&path)?))
@@ -472,7 +487,11 @@ fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
 
 fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
     let mut headers = Vec::new();
-    if let Some(vk) = cfg.driver_options.get("portkey_virtual_key").and_then(|v| v.as_str()) {
+    if let Some(vk) = cfg
+        .driver_options
+        .get("portkey_virtual_key")
+        .and_then(|v| v.as_str())
+    {
         headers.push(("x-portkey-virtual-key".into(), vk.to_string()));
     }
     headers
@@ -504,7 +523,10 @@ pub struct ModelResolver<'a> {
 
 impl<'a> ModelResolver<'a> {
     pub fn new(config: &'a sven_config::Config, override_str: &'a str) -> Self {
-        Self { config, override_str }
+        Self {
+            config,
+            override_str,
+        }
     }
 
     /// Run all four resolution steps in priority order.
@@ -553,9 +575,7 @@ impl<'a> ModelResolver<'a> {
         model_suffix: Option<&str>,
     ) -> Option<ModelConfig> {
         let model_name = model_suffix?;
-        if get_driver(provider_key).is_none() {
-            return None;
-        }
+        get_driver(provider_key)?;
         let entry = catalog::lookup(provider_key, model_name)?;
         Some(self.catalog_entry_to_config(&entry))
     }
@@ -654,10 +674,7 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
 /// Thin wrapper around [`ModelResolver`] for backwards-compatible call sites.
 ///
 /// Prefer `ModelResolver::new(config, override_str).resolve()` for new code.
-pub fn resolve_model_from_config(
-    config: &sven_config::Config,
-    override_str: &str,
-) -> ModelConfig {
+pub fn resolve_model_from_config(config: &sven_config::Config, override_str: &str) -> ModelConfig {
     ModelResolver::new(config, override_str).resolve()
 }
 
@@ -793,7 +810,10 @@ mod tests {
     #[test]
     fn resolve_slash_separated_clears_api_key_on_provider_change() {
         let cfg = resolve_model_cfg(&openai_base(), "anthropic/claude-opus-4-5");
-        assert!(cfg.api_key_env.is_none(), "key env must be cleared when provider changes");
+        assert!(
+            cfg.api_key_env.is_none(),
+            "key env must be cleared when provider changes"
+        );
         assert!(cfg.api_key.is_none());
     }
 
@@ -802,8 +822,11 @@ mod tests {
         let cfg = resolve_model_cfg(&openai_base(), "gpt-4o-mini");
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "gpt-4o-mini");
-        assert_eq!(cfg.api_key_env.as_deref(), Some("OPENAI_API_KEY"),
-            "key env must be preserved when provider does not change");
+        assert_eq!(
+            cfg.api_key_env.as_deref(),
+            Some("OPENAI_API_KEY"),
+            "key env must be preserved when provider does not change"
+        );
     }
 
     #[test]
@@ -817,8 +840,11 @@ mod tests {
     fn resolve_same_provider_bare_id_keeps_key() {
         let cfg = resolve_model_cfg(&openai_base(), "openai");
         assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.api_key_env.as_deref(), Some("OPENAI_API_KEY"),
-            "key env must not be cleared when provider is unchanged");
+        assert_eq!(
+            cfg.api_key_env.as_deref(),
+            Some("OPENAI_API_KEY"),
+            "key env must not be cleared when provider is unchanged"
+        );
     }
 
     // ── resolve_model_from_config ─────────────────────────────────────────────
@@ -826,13 +852,16 @@ mod tests {
     fn config_with_named_provider() -> sven_config::Config {
         use std::collections::HashMap;
         let mut providers = HashMap::new();
-        providers.insert("my_ollama".into(), ModelConfig {
-            provider: "openai".into(),
-            base_url: Some("http://localhost:11434/v1".into()),
-            name: "llama3.2".into(),
-            api_key: Some("ollama".into()),
-            ..ModelConfig::default()
-        });
+        providers.insert(
+            "my_ollama".into(),
+            ModelConfig {
+                provider: "openai".into(),
+                base_url: Some("http://localhost:11434/v1".into()),
+                name: "llama3.2".into(),
+                api_key: Some("ollama".into()),
+                ..ModelConfig::default()
+            },
+        );
         sven_config::Config {
             providers,
             ..sven_config::Config::default()
@@ -854,8 +883,11 @@ mod tests {
         let cfg = resolve_model_from_config(&config, "my_ollama/codellama");
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "codellama");
-        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"),
-            "base_url from named provider must be kept");
+        assert_eq!(
+            cfg.base_url.as_deref(),
+            Some("http://localhost:11434/v1"),
+            "base_url from named provider must be kept"
+        );
     }
 
     #[test]
@@ -894,7 +926,10 @@ mod tests {
         };
 
         let cfg = resolve_model_from_config(&config, "gpt-4o");
-        assert_eq!(cfg.provider, "openai", "provider must be openai (from catalog)");
+        assert_eq!(
+            cfg.provider, "openai",
+            "provider must be openai (from catalog)"
+        );
         assert_eq!(cfg.name, "gpt-4o", "model name must be gpt-4o");
         assert!(
             cfg.base_url.is_none(),
@@ -952,7 +987,10 @@ mod tests {
         let cfg = resolve_model_from_config(&config, "claude-opus-4-6");
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.name, "claude-opus-4-6");
-        assert!(cfg.api_key.is_none(), "OpenAI api_key must not leak to anthropic config");
+        assert!(
+            cfg.api_key.is_none(),
+            "OpenAI api_key must not leak to anthropic config"
+        );
     }
 
     // ── ModelResolver per-step unit tests ─────────────────────────────────────
@@ -1011,8 +1049,11 @@ mod tests {
         let config = make_config_with_named("openai", "gpt-4o", "my_ollama", named);
         let cfg = ModelResolver::new(&config, "my_ollama/codellama").resolve();
         assert_eq!(cfg.name, "codellama");
-        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"),
-            "base_url from named provider preserved with model suffix");
+        assert_eq!(
+            cfg.base_url.as_deref(),
+            Some("http://localhost:11434/v1"),
+            "base_url from named provider preserved with model suffix"
+        );
     }
 
     /// Step 1 skip: an unknown prefix falls through to later steps.
@@ -1035,7 +1076,10 @@ mod tests {
         let cfg = ModelResolver::new(&config, "openai/gpt-4o").resolve();
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "gpt-4o");
-        assert!(cfg.base_url.is_none(), "catalog model must not inherit custom base_url");
+        assert!(
+            cfg.base_url.is_none(),
+            "catalog model must not inherit custom base_url"
+        );
     }
 
     /// Step 2: unknown provider in `provider/name` form bypasses catalog (step 2) and falls through.
@@ -1057,8 +1101,11 @@ mod tests {
         // openai/gpt-4o-mini — same provider, should inherit api_key.
         let cfg = ModelResolver::new(&config, "openai/gpt-4o-mini").resolve();
         assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.api_key.as_deref(), Some("sk-mykey"),
-            "api_key must be inherited for same-provider catalog model");
+        assert_eq!(
+            cfg.api_key.as_deref(),
+            Some("sk-mykey"),
+            "api_key must be inherited for same-provider catalog model"
+        );
     }
 
     // ── Step 3: catalog lookup by bare model name ──────────────────────────────

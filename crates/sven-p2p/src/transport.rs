@@ -17,8 +17,7 @@ use crate::error::P2pError;
 pub fn build_transport(
     key: &identity::Keypair,
 ) -> Result<libp2p::core::transport::Boxed<(PeerId, StreamMuxerBox)>, P2pError> {
-    let noise_config =
-        noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?;
+    let noise_config = noise::Config::new(key).map_err(|e| P2pError::Transport(e.to_string()))?;
 
     let transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true))
         .upgrade(upgrade::Version::V1)
@@ -32,8 +31,7 @@ pub fn build_transport(
 /// reservations and DCUtR hole-punching have enough time to complete.
 pub fn default_swarm_config() -> SwarmConfig {
     use std::time::Duration;
-    SwarmConfig::with_tokio_executor()
-        .with_idle_connection_timeout(Duration::from_secs(30))
+    SwarmConfig::with_tokio_executor().with_idle_connection_timeout(Duration::from_secs(30))
 }
 
 /// Load a persisted `identity::Keypair` from `path`, or generate a new one and

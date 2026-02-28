@@ -64,11 +64,7 @@
 //! # }
 //! ```
 
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
@@ -94,7 +90,9 @@ pub struct AgentHandle {
 impl AgentHandle {
     /// Send a command and optionally await a single-event reply.
     pub async fn send(&self, cmd: ControlCommand) -> anyhow::Result<()> {
-        self.cmd_tx.send((cmd, None)).await
+        self.cmd_tx
+            .send((cmd, None))
+            .await
             .map_err(|_| anyhow::anyhow!("control service has shut down"))
     }
 
@@ -173,7 +171,7 @@ impl ControlService {
     #[cfg(test)]
     pub fn new_for_test() -> (Self, AgentHandle) {
         use sven_core::AgentRuntimeContext;
-        use sven_tools::{ToolRegistry, ReadFileTool};
+        use sven_tools::{ReadFileTool, ToolRegistry};
 
         let mut registry = ToolRegistry::new();
         registry.register(ReadFileTool);
@@ -207,7 +205,10 @@ impl ControlService {
         // Internal completion channel: one slot per concurrent session is fine.
         let (completion_tx, completion_rx) = mpsc::channel(64);
 
-        let handle = AgentHandle { cmd_tx, event_tx: event_tx.clone() };
+        let handle = AgentHandle {
+            cmd_tx,
+            event_tx: event_tx.clone(),
+        };
 
         let svc = Self {
             agent: Arc::new(Mutex::new(agent)),
@@ -245,7 +246,11 @@ impl ControlService {
 
     async fn handle_command(&mut self, cmd: ControlCommand) {
         match cmd {
-            ControlCommand::NewSession { id, mode, working_dir } => {
+            ControlCommand::NewSession {
+                id,
+                mode,
+                working_dir,
+            } => {
                 self.handle_new_session(id, mode, working_dir).await;
             }
             ControlCommand::SendInput { session_id, text } => {
@@ -254,15 +259,23 @@ impl ControlService {
             ControlCommand::CancelSession { session_id } => {
                 self.handle_cancel(session_id).await;
             }
-            ControlCommand::ApproveTool { session_id, call_id } => {
-                self.handle_approve_tool(session_id, call_id, true, None).await;
+            ControlCommand::ApproveTool {
+                session_id,
+                call_id,
+            } => {
+                self.handle_approve_tool(session_id, call_id, true, None)
+                    .await;
             }
-            ControlCommand::DenyTool { session_id, call_id, reason } => {
-                self.handle_approve_tool(session_id, call_id, false, reason).await;
+            ControlCommand::DenyTool {
+                session_id,
+                call_id,
+                reason,
+            } => {
+                self.handle_approve_tool(session_id, call_id, false, reason)
+                    .await;
             }
             ControlCommand::ListSessions => {
-                let sessions: Vec<SessionInfo> =
-                    self.sessions.values().map(|s| s.info()).collect();
+                let sessions: Vec<SessionInfo> = self.sessions.values().map(|s| s.info()).collect();
                 self.broadcast(ControlEvent::SessionList { sessions });
             }
             ControlCommand::Subscribe { .. } | ControlCommand::Unsubscribe { .. } => {
@@ -272,12 +285,7 @@ impl ControlService {
         }
     }
 
-    async fn handle_new_session(
-        &mut self,
-        id: Uuid,
-        mode: AgentMode,
-        working_dir: Option<String>,
-    ) {
+    async fn handle_new_session(&mut self, id: Uuid, mode: AgentMode, working_dir: Option<String>) {
         if self.sessions.contains_key(&id) {
             self.broadcast(ControlEvent::GatewayError {
                 code: 409,
@@ -429,17 +437,20 @@ mod tests {
         let mut events = handle.subscribe();
         let session_id = Uuid::new_v4();
 
-        handle.send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::NewSession {
+                id: session_id,
+                mode: sven_config::AgentMode::Agent,
+                working_dir: None,
+            })
+            .await
+            .unwrap();
 
         // The service broadcasts SessionState::Idle on new session.
-        let ev = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events.recv(),
-        ).await.expect("no event received").unwrap();
+        let ev = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+            .await
+            .expect("no event received")
+            .unwrap();
 
         assert!(matches!(
             ev,
@@ -457,34 +468,34 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         // First NewSession — succeeds.
-        handle.send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::NewSession {
+                id: session_id,
+                mode: sven_config::AgentMode::Agent,
+                working_dir: None,
+            })
+            .await
+            .unwrap();
 
         // Drain the Idle event.
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            events.recv(),
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
 
         // Second NewSession with same id — must return GatewayError(409).
-        handle.send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::NewSession {
+                id: session_id,
+                mode: sven_config::AgentMode::Agent,
+                working_dir: None,
+            })
+            .await
+            .unwrap();
 
-        let ev = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events.recv(),
-        ).await.expect("no event received").unwrap();
+        let ev = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+            .await
+            .expect("no event received")
+            .unwrap();
 
-        assert!(matches!(
-            ev,
-            ControlEvent::GatewayError { code: 409, .. }
-        ));
+        assert!(matches!(ev, ControlEvent::GatewayError { code: 409, .. }));
     }
 
     #[tokio::test]
@@ -495,21 +506,24 @@ mod tests {
         let mut events = handle.subscribe();
         let session_id = Uuid::new_v4();
 
-        handle.send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::NewSession {
+                id: session_id,
+                mode: sven_config::AgentMode::Agent,
+                working_dir: None,
+            })
+            .await
+            .unwrap();
 
         // Drain Idle event.
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
 
         handle.send(ControlCommand::ListSessions).await.unwrap();
 
-        let ev = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events.recv(),
-        ).await.expect("no event received").unwrap();
+        let ev = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+            .await
+            .expect("no event received")
+            .unwrap();
 
         match ev {
             ControlEvent::SessionList { sessions } => {
@@ -527,9 +541,12 @@ mod tests {
         tokio::spawn(svc.run());
 
         // Should complete without panicking.
-        handle.send(ControlCommand::CancelSession {
-            session_id: Uuid::new_v4(),
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::CancelSession {
+                session_id: Uuid::new_v4(),
+            })
+            .await
+            .unwrap();
 
         // Give the service a moment to process.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -542,15 +559,18 @@ mod tests {
 
         let mut events = handle.subscribe();
 
-        handle.send(ControlCommand::SendInput {
-            session_id: Uuid::new_v4(),
-            text: "hello".to_string(),
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::SendInput {
+                session_id: Uuid::new_v4(),
+                text: "hello".to_string(),
+            })
+            .await
+            .unwrap();
 
-        let ev = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events.recv(),
-        ).await.expect("no event received").unwrap();
+        let ev = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+            .await
+            .expect("no event received")
+            .unwrap();
 
         assert!(matches!(ev, ControlEvent::GatewayError { code: 404, .. }));
     }
@@ -568,11 +588,14 @@ mod tests {
         // Create session.
         let cmd_tx = svc.completion_tx.clone();
 
-        handle.send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        }).await.unwrap();
+        handle
+            .send(ControlCommand::NewSession {
+                id: session_id,
+                mode: sven_config::AgentMode::Agent,
+                working_dir: None,
+            })
+            .await
+            .unwrap();
 
         tokio::spawn(svc.run());
 
@@ -590,16 +613,19 @@ mod tests {
         // ListSessions should now show the session as Completed.
         handle.send(ControlCommand::ListSessions).await.unwrap();
 
-        let ev = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events.recv(),
-        ).await.expect("no event received").unwrap();
+        let ev = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+            .await
+            .expect("no event received")
+            .unwrap();
 
         match ev {
             ControlEvent::SessionList { sessions } => {
                 assert_eq!(sessions.len(), 1);
-                assert_eq!(sessions[0].state, SessionState::Completed,
-                    "session must be Completed after the completion channel fires");
+                assert_eq!(
+                    sessions[0].state,
+                    SessionState::Completed,
+                    "session must be Completed after the completion channel fires"
+                );
             }
             other => panic!("expected SessionList, got {other:?}"),
         }
@@ -636,9 +662,17 @@ fn agent_event_to_control(ev: AgentEvent, session_id: Uuid) -> Option<ControlEve
             tool_name: tc.name.clone(),
             args: tc.args.clone(),
         }),
-        AgentEvent::ToolCallFinished { call_id, tool_name: _, output, is_error } => {
-            Some(ControlEvent::ToolResult { session_id, call_id, output, is_error })
-        }
+        AgentEvent::ToolCallFinished {
+            call_id,
+            tool_name: _,
+            output,
+            is_error,
+        } => Some(ControlEvent::ToolResult {
+            session_id,
+            call_id,
+            output,
+            is_error,
+        }),
         AgentEvent::Error(msg) => Some(ControlEvent::AgentError {
             session_id: Some(session_id),
             message: msg,

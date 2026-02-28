@@ -36,7 +36,10 @@
 //! Incoming Slack messages are forwarded to the agent as `SendInput` commands.
 //! Agent output is sent back to the same channel via the Slack Web API.
 
-use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     body::Bytes,
@@ -53,10 +56,7 @@ use uuid::Uuid;
 
 use crate::{
     config::SlackAccount,
-    control::{
-        protocol::ControlCommand,
-        service::AgentHandle,
-    },
+    control::{protocol::ControlCommand, service::AgentHandle},
 };
 
 // ── HTTP webhook handler ──────────────────────────────────────────────────────
@@ -122,15 +122,19 @@ async fn handle_slack_event(event: SlackEvent, agent: &AgentHandle) {
             // conversation continuity; for now we create a new session
             // per message for simplicity.
             let session_id = Uuid::new_v4();
-            let _ = agent.send(ControlCommand::NewSession {
-                id: session_id,
-                mode: sven_config::AgentMode::Agent,
-                working_dir: None,
-            }).await;
-            let _ = agent.send(ControlCommand::SendInput {
-                session_id,
-                text: text.unwrap_or_default(),
-            }).await;
+            let _ = agent
+                .send(ControlCommand::NewSession {
+                    id: session_id,
+                    mode: sven_config::AgentMode::Agent,
+                    working_dir: None,
+                })
+                .await;
+            let _ = agent
+                .send(ControlCommand::SendInput {
+                    session_id,
+                    text: text.unwrap_or_default(),
+                })
+                .await;
             // TODO: subscribe and stream response back to Slack channel.
         }
         SlackEvent::Other => {
@@ -155,7 +159,9 @@ pub fn verify_slack_signature(
     provided_sig: &str,
 ) -> Result<(), SlackVerifyError> {
     // Replay protection: reject stale timestamps (±5 minutes).
-    let ts: i64 = timestamp.parse().map_err(|_| SlackVerifyError::InvalidTimestamp)?;
+    let ts: i64 = timestamp
+        .parse()
+        .map_err(|_| SlackVerifyError::InvalidTimestamp)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -165,8 +171,8 @@ pub fn verify_slack_signature(
     }
 
     // Compute expected HMAC.
-    let mut mac = Hmac::<Sha256>::new_from_slice(signing_secret)
-        .map_err(|_| SlackVerifyError::Internal)?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(signing_secret).map_err(|_| SlackVerifyError::Internal)?;
     mac.update(b"v0:");
     mac.update(timestamp.as_bytes());
     mac.update(b":");
@@ -174,7 +180,12 @@ pub fn verify_slack_signature(
     let expected = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
 
     // Constant-time comparison — same length guaranteed by hex encoding.
-    if expected.as_bytes().ct_eq(provided_sig.as_bytes()).unwrap_u8() != 1 {
+    if expected
+        .as_bytes()
+        .ct_eq(provided_sig.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
         return Err(SlackVerifyError::InvalidSignature);
     }
     Ok(())
@@ -240,10 +251,11 @@ async fn connect_socket_mode(
     // Step 2: Connect to the WebSocket and process events.
     // Using tokio-tungstenite (already available via reqwest's dep tree) or
     // a direct Slack SDK. Here we use a minimal implementation.
-    use tokio_tungstenite::connect_async;
     use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
 
-    let (ws_stream, _) = connect_async(&wss_url).await
+    let (ws_stream, _) = connect_async(&wss_url)
+        .await
         .map_err(|e| anyhow::anyhow!("WebSocket connect: {e}"))?;
     let (mut sink, mut stream) = ws_stream.split();
 
@@ -253,9 +265,11 @@ async fn connect_socket_mode(
                 if let Ok(payload) = serde_json::from_str::<SocketModeEnvelope>(&text) {
                     // Acknowledge immediately.
                     let ack = serde_json::json!({ "envelope_id": payload.envelope_id });
-                    let _ = sink.send(
-                        tokio_tungstenite::tungstenite::Message::Text(ack.to_string())
-                    ).await;
+                    let _ = sink
+                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                            ack.to_string(),
+                        ))
+                        .await;
 
                     if let Some(event) = payload.payload {
                         dispatch_socket_mode_event(event, agent).await;
@@ -289,20 +303,29 @@ async fn fetch_socket_mode_url(app_token: &str) -> anyhow::Result<String> {
 async fn dispatch_socket_mode_event(payload: serde_json::Value, agent: &AgentHandle) {
     if let Some(event) = payload.get("event") {
         if event.get("type").and_then(|t| t.as_str()) == Some("message") {
-            let text = event.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            let channel = event.get("channel").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            let text = event
+                .get("text")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let channel = event
+                .get("channel")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
             debug!(channel, "Slack Socket Mode: incoming message");
 
             let session_id = Uuid::new_v4();
-            let _ = agent.send(ControlCommand::NewSession {
-                id: session_id,
-                mode: sven_config::AgentMode::Agent,
-                working_dir: None,
-            }).await;
-            let _ = agent.send(ControlCommand::SendInput {
-                session_id,
-                text,
-            }).await;
+            let _ = agent
+                .send(ControlCommand::NewSession {
+                    id: session_id,
+                    mode: sven_config::AgentMode::Agent,
+                    working_dir: None,
+                })
+                .await;
+            let _ = agent
+                .send(ControlCommand::SendInput { session_id, text })
+                .await;
         }
     }
 }
@@ -384,7 +407,8 @@ mod tests {
         let old_ts = (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 400)
+            .as_secs()
+            - 400)
             .to_string();
         let body = b"body";
         let sig = make_valid_sig(SECRET, &old_ts, body);

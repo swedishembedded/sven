@@ -7,8 +7,8 @@
 //! `build_tool_registry` without creating a circular dependency
 //! (sven-core → sven-tools, sven-bootstrap → sven-core + sven-tools).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -47,13 +47,20 @@ impl TaskTool {
         depth: Arc<AtomicUsize>,
         sub_agent_runtime: AgentRuntimeContext,
     ) -> Self {
-        Self { model, config, depth, sub_agent_runtime }
+        Self {
+            model,
+            config,
+            depth,
+            sub_agent_runtime,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for TaskTool {
-    fn name(&self) -> &str { "task" }
+    fn name(&self) -> &str {
+        "task"
+    }
 
     fn description(&self) -> &str {
         "Spawn a sub-agent to complete a focused task and return its final text output. \
@@ -83,16 +90,24 @@ impl Tool for TaskTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Ask }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let prompt = match call.args.get("prompt").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'prompt'"),
         };
-        let mode_str = call.args.get("mode").and_then(|v| v.as_str()).unwrap_or("agent");
+        let mode_str = call
+            .args
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("agent");
         let mode = match mode_str {
             "research" => AgentMode::Research,
             "plan" => AgentMode::Plan,

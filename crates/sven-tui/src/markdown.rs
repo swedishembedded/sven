@@ -42,7 +42,11 @@ struct MarkdownRenderer {
 impl MarkdownRenderer {
     fn new(wrap_width: u16, ascii: bool) -> Self {
         Self {
-            width: if wrap_width == 0 { 80 } else { wrap_width as usize },
+            width: if wrap_width == 0 {
+                80
+            } else {
+                wrap_width as usize
+            },
             ascii,
             lines: Vec::new(),
             current_spans: Vec::new(),
@@ -59,7 +63,8 @@ impl MarkdownRenderer {
         if self.current_spans.is_empty() {
             self.lines.push(Line::default());
         } else {
-            self.lines.push(Line::from(std::mem::take(&mut self.current_spans)));
+            self.lines
+                .push(Line::from(std::mem::take(&mut self.current_spans)));
         }
     }
 
@@ -109,26 +114,32 @@ impl MarkdownRenderer {
                     let base = self.current_style();
                     self.style_stack.push(base.add_modifier(Modifier::BOLD));
                 }
-                Event::End(TagEnd::Strong) => { self.style_stack.pop(); }
+                Event::End(TagEnd::Strong) => {
+                    self.style_stack.pop();
+                }
 
                 Event::Start(Tag::Emphasis) => {
                     let base = self.current_style();
                     self.style_stack.push(base.add_modifier(Modifier::ITALIC));
                 }
-                Event::End(TagEnd::Emphasis) => { self.style_stack.pop(); }
+                Event::End(TagEnd::Emphasis) => {
+                    self.style_stack.pop();
+                }
 
                 Event::Start(Tag::Strikethrough) => {
                     let base = self.current_style();
-                    self.style_stack.push(base.add_modifier(Modifier::CROSSED_OUT));
+                    self.style_stack
+                        .push(base.add_modifier(Modifier::CROSSED_OUT));
                 }
-                Event::End(TagEnd::Strikethrough) => { self.style_stack.pop(); }
+                Event::End(TagEnd::Strikethrough) => {
+                    self.style_stack.pop();
+                }
 
                 // ── Links ─────────────────────────────────────────────────────
                 Event::Start(Tag::Link { dest_url, .. }) => {
                     let base = self.current_style();
-                    self.style_stack.push(
-                        base.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
-                    );
+                    self.style_stack
+                        .push(base.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED));
                     let url = dest_url.to_string();
                     if !url.is_empty() && !url.starts_with('#') {
                         self.pending_link_url = Some(url);
@@ -151,10 +162,7 @@ impl MarkdownRenderer {
                     self.code_lang = match kind {
                         CodeBlockKind::Fenced(lang) => {
                             // Take only the first token (some fences have `rust,no_run`)
-                            lang.split_whitespace()
-                                .next()
-                                .unwrap_or("")
-                                .to_lowercase()
+                            lang.split_whitespace().next().unwrap_or("").to_lowercase()
                         }
                         CodeBlockKind::Indented => String::new(),
                     };
@@ -182,10 +190,8 @@ impl MarkdownRenderer {
                         }
                         _ => format!("  {} ", md_bullet(self.ascii)),
                     };
-                    self.current_spans.push(Span::styled(
-                        bullet,
-                        Style::default().fg(Color::LightBlue),
-                    ));
+                    self.current_spans
+                        .push(Span::styled(bullet, Style::default().fg(Color::LightBlue)));
                 }
                 Event::End(TagEnd::Item) => {
                     self.push_line();
@@ -238,7 +244,8 @@ impl MarkdownRenderer {
                 // ── Inline code ───────────────────────────────────────────────
                 Event::Code(t) => {
                     let style = Style::default().fg(Color::Yellow).bg(Color::Black);
-                    self.current_spans.push(Span::styled(format!("`{t}`"), style));
+                    self.current_spans
+                        .push(Span::styled(format!("`{t}`"), style));
                 }
 
                 // ── Line breaks ───────────────────────────────────────────────
@@ -298,7 +305,10 @@ fn heading_style(level: HeadingLevel) -> Style {
 }
 
 fn current_col(spans: &[Span<'_>]) -> usize {
-    spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum()
+    spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+        .sum()
 }
 
 // ── Syntect code highlighting ─────────────────────────────────────────────────
@@ -337,7 +347,10 @@ fn plain_code_lines(code: &str, max_width: usize) -> Vec<Line<'static>> {
                 out.push(Line::from(Span::styled(remaining.to_string(), style)));
                 break;
             }
-            out.push(Line::from(Span::styled(remaining[..byte_end].to_string(), style)));
+            out.push(Line::from(Span::styled(
+                remaining[..byte_end].to_string(),
+                style,
+            )));
             remaining = &remaining[byte_end..];
         }
     }
@@ -353,7 +366,10 @@ mod tests {
     #[test]
     fn render_empty_returns_some_lines() {
         let lines = render_markdown("", 80, false);
-        assert!(lines.len() <= 1, "empty input should yield at most one line");
+        assert!(
+            lines.len() <= 1,
+            "empty input should yield at most one line"
+        );
     }
 
     #[test]

@@ -58,11 +58,10 @@ pub struct TlsRuntime {
 /// self-signed certificate is generated in pure Rust (no subprocess).
 pub fn load_or_generate(cert_dir: &Path) -> anyhow::Result<TlsRuntime> {
     let cert_path = cert_dir.join("gateway-cert.pem");
-    let key_path  = cert_dir.join("gateway-key.pem");
+    let key_path = cert_dir.join("gateway-key.pem");
 
-    let needs_generate = !cert_path.exists()
-        || !key_path.exists()
-        || cert_is_expiring_soon(&cert_path);
+    let needs_generate =
+        !cert_path.exists() || !key_path.exists() || cert_is_expiring_soon(&cert_path);
 
     if needs_generate {
         generate_self_signed(cert_dir, &cert_path, &key_path)?;
@@ -73,36 +72,32 @@ pub fn load_or_generate(cert_dir: &Path) -> anyhow::Result<TlsRuntime> {
 
 // ── Certificate generation ────────────────────────────────────────────────────
 
-fn generate_self_signed(
-    cert_dir: &Path,
-    cert_path: &Path,
-    key_path: &Path,
-) -> anyhow::Result<()> {
+fn generate_self_signed(cert_dir: &Path, cert_path: &Path, key_path: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(cert_dir)
         .with_context(|| format!("creating TLS cert dir {}", cert_dir.display()))?;
 
     // ECDSA P-256: equivalent security to RSA 2048, 3× smaller keys.
     // rcgen 0.13: KeyPair::generate() defaults to ECDSA P-256.
-    let key_pair = KeyPair::generate()
-        .context("generating ECDSA P-256 key pair")?;
+    let key_pair = KeyPair::generate().context("generating ECDSA P-256 key pair")?;
 
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, "sven-gateway");
 
     let now = OffsetDateTime::now_utc();
-    let mut params = CertificateParams::new(vec!["sven-gateway".to_string()])
-        .context("building cert params")?;
+    let mut params =
+        CertificateParams::new(vec!["sven-gateway".to_string()]).context("building cert params")?;
     params.not_before = now;
     // 90 days: matches Let's Encrypt cadence, limits exposure window.
     params.not_after = now + Duration::days(CERT_VALIDITY_DAYS);
     params.distinguished_name = dn;
 
     // rcgen 0.13 API: params.self_signed(&key_pair) signs the cert.
-    let cert = params.self_signed(&key_pair)
+    let cert = params
+        .self_signed(&key_pair)
         .context("generating self-signed certificate")?;
 
     let cert_pem = cert.pem();
-    let key_pem  = key_pair.serialize_pem();
+    let key_pem = key_pair.serialize_pem();
 
     // Write cert: readable, no sensitive data.
     std::fs::write(cert_path, &cert_pem)
@@ -123,8 +118,8 @@ fn generate_self_signed(
 // ── Certificate loading ───────────────────────────────────────────────────────
 
 fn load_from_files(cert_path: &Path, key_path: &Path) -> anyhow::Result<TlsRuntime> {
-    let cert_pem = std::fs::read(cert_path)
-        .with_context(|| format!("reading {}", cert_path.display()))?;
+    let cert_pem =
+        std::fs::read(cert_path).with_context(|| format!("reading {}", cert_path.display()))?;
 
     // Compute SHA-256 fingerprint of the first certificate for display / client pinning.
     let fingerprint_sha256 = {
@@ -135,7 +130,11 @@ fn load_from_files(cert_path: &Path, key_path: &Path) -> anyhow::Result<TlsRunti
             .ok_or_else(|| anyhow::anyhow!("no certificate found in {}", cert_path.display()))?
             .context("parsing certificate")?;
         let digest = Sha256::digest(&first_cert);
-        digest.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+        digest
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(":")
     };
 
     info!(fingerprint = %fingerprint_sha256, "loaded TLS certificate");
@@ -150,9 +149,13 @@ fn load_from_files(cert_path: &Path, key_path: &Path) -> anyhow::Result<TlsRunti
 // ── Expiry check ──────────────────────────────────────────────────────────────
 
 fn cert_is_expiring_soon(cert_path: &Path) -> bool {
-    let Ok(pem) = std::fs::read(cert_path) else { return true; };
+    let Ok(pem) = std::fs::read(cert_path) else {
+        return true;
+    };
     let mut reader = std::io::Cursor::new(&pem);
-    let Ok(Some(cert_der)) = certs(&mut reader).next().transpose() else { return true; };
+    let Ok(Some(cert_der)) = certs(&mut reader).next().transpose() else {
+        return true;
+    };
 
     // Parse the X.509 certificate to get the notAfter field.
     // We use the raw DER bytes; for a quick expiry check we look for the
@@ -161,12 +164,13 @@ fn cert_is_expiring_soon(cert_path: &Path) -> bool {
     //
     // For simplicity: if the file is older than (validity - renew_before),
     // treat it as expiring. ECDSA P-256 certs are cheap to regenerate.
-    let Ok(meta) = std::fs::metadata(cert_path) else { return true; };
-    let Ok(modified) = meta.modified() else { return true; };
-    let age_days = modified
-        .elapsed()
-        .unwrap_or_default()
-        .as_secs() as i64 / 86400;
+    let Ok(meta) = std::fs::metadata(cert_path) else {
+        return true;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    let age_days = modified.elapsed().unwrap_or_default().as_secs() as i64 / 86400;
 
     let _ = cert_der; // suppress unused warning
     age_days >= (CERT_VALIDITY_DAYS - CERT_RENEW_BEFORE_DAYS)
@@ -180,7 +184,9 @@ fn write_secret(path: &Path, data: &[u8]) -> anyhow::Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new()
-            .write(true).create(true).truncate(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .mode(0o600)
             .open(path)
             .with_context(|| format!("writing {}", path.display()))?;
@@ -188,8 +194,7 @@ fn write_secret(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, data)
-            .with_context(|| format!("writing {}", path.display()))?;
+        std::fs::write(path, data).with_context(|| format!("writing {}", path.display()))?;
     }
     Ok(())
 }

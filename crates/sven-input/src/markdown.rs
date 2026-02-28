@@ -64,7 +64,10 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
     for event in parser {
         match event {
             // ── H1: title ────────────────────────────────────────────────────
-            Event::Start(Tag::Heading { level: HeadingLevel::H1, .. }) => {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H1,
+                ..
+            }) => {
                 inside_h1 = true;
                 h1_text.clear();
             }
@@ -81,10 +84,17 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
             }
 
             // ── H2: step boundary ────────────────────────────────────────────
-            Event::Start(Tag::Heading { level: HeadingLevel::H2, .. }) => {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => {
                 if in_step {
-                    flush_step(&mut steps, current_label.take(), &mut current_body,
-                               std::mem::take(&mut current_opts));
+                    flush_step(
+                        &mut steps,
+                        current_label.take(),
+                        &mut current_body,
+                        std::mem::take(&mut current_opts),
+                    );
                 }
                 inside_h2 = true;
                 h2_text.clear();
@@ -116,19 +126,35 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
             }
             Event::Code(t) => {
                 let s = format!("`{t}`");
-                if in_step { current_body.push_str(&s); } else { preamble.push_str(&s); }
+                if in_step {
+                    current_body.push_str(&s);
+                } else {
+                    preamble.push_str(&s);
+                }
             }
             Event::Start(Tag::Paragraph) => {}
             Event::End(TagEnd::Paragraph) => {
-                if in_step { current_body.push_str("\n\n"); } else { preamble.push_str("\n\n"); }
+                if in_step {
+                    current_body.push_str("\n\n");
+                } else {
+                    preamble.push_str("\n\n");
+                }
             }
             Event::Start(Tag::CodeBlock(_)) => {
                 let s = "```\n";
-                if in_step { current_body.push_str(s); } else { preamble.push_str(s); }
+                if in_step {
+                    current_body.push_str(s);
+                } else {
+                    preamble.push_str(s);
+                }
             }
             Event::End(TagEnd::CodeBlock) => {
                 let s = "```\n\n";
-                if in_step { current_body.push_str(s); } else { preamble.push_str(s); }
+                if in_step {
+                    current_body.push_str(s);
+                } else {
+                    preamble.push_str(s);
+                }
             }
 
             // ── Sven directives and HTML comments ────────────────────────────
@@ -151,8 +177,12 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
 
     // Final flush of the last step (if any)
     if in_step {
-        flush_step(&mut steps, current_label, &mut current_body,
-                   std::mem::take(&mut current_opts));
+        flush_step(
+            &mut steps,
+            current_label,
+            &mut current_body,
+            std::mem::take(&mut current_opts),
+        );
     }
 
     debug!(steps = steps.len(), "parsed workflow steps");
@@ -165,7 +195,11 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
         } else {
             preamble.trim().to_string()
         };
-        steps.push(Step { label: None, content, options: StepOptions::default() });
+        steps.push(Step {
+            label: None,
+            content,
+            options: StepOptions::default(),
+        });
         return ParsedWorkflow {
             title,
             system_prompt_append: None,
@@ -175,7 +209,11 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
 
     let system_prompt_append = {
         let t = preamble.trim().to_string();
-        if t.is_empty() { None } else { Some(t) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
     };
 
     ParsedWorkflow {
@@ -186,7 +224,7 @@ pub fn parse_workflow(input: &str) -> ParsedWorkflow {
 }
 
 /// Parse a `<!-- sven: key=value key2=value2 -->` or `<!-- key=value key2=value2 -->` comment into `opts`.
-/// 
+///
 /// Supports both formats:
 /// - `<!-- sven: mode=agent model=gpt-4o -->` (explicit sven: prefix)
 /// - `<!-- mode=agent model=gpt-4o -->` (implicit, auto-detected by presence of known keys)
@@ -210,13 +248,15 @@ fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
                     // like "step:"), and at least one must be a known sven key.
                     // This keeps "<!-- model=gpt-4o -->" working while correctly
                     // ignoring old formats like "<!-- step: mode=research -->".
-                    let all_kv = potential_content.split_whitespace()
+                    let all_kv = potential_content
+                        .split_whitespace()
                         .all(|t| t.contains('='));
-                    let has_known_key = potential_content.split_whitespace()
-                        .any(|t| matches!(
+                    let has_known_key = potential_content.split_whitespace().any(|t| {
+                        matches!(
                             t.split_once('=').map(|(k, _)| k),
                             Some("mode" | "model" | "provider" | "timeout" | "cache_key")
-                        ));
+                        )
+                    });
                     if potential_content.contains('=') && all_kv && has_known_key {
                         (start, start + e)
                     } else {
@@ -236,10 +276,10 @@ fn parse_sven_comment_into(comment: &str, opts: &mut StepOptions) {
         if let Some((key, val)) = token.split_once('=') {
             let val = val.trim_matches('"').trim_matches('\'');
             match key {
-                "mode"      => opts.mode = Some(val.to_string()),
-                "provider"  => opts.provider = Some(val.to_string()),
-                "model"     => opts.model = Some(val.to_string()),
-                "timeout"   => opts.timeout_secs = val.parse().ok(),
+                "mode" => opts.mode = Some(val.to_string()),
+                "provider" => opts.provider = Some(val.to_string()),
+                "model" => opts.model = Some(val.to_string()),
+                "timeout" => opts.timeout_secs = val.parse().ok(),
                 "cache_key" => opts.cache_key = Some(val.to_string()),
                 _ => {}
             }
@@ -263,7 +303,11 @@ fn flush_step(out: &mut Vec<Step>, label: Option<String>, body: &mut String, opt
         content
     };
 
-    out.push(Step { label, content, options });
+    out.push(Step {
+        label,
+        content,
+        options,
+    });
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
@@ -318,7 +362,10 @@ mod tests {
         let md = "# The Title\n\n## Step\nBody text.";
         let mut w = parse_workflow(md);
         let step = w.steps.pop().unwrap();
-        assert!(!step.content.contains("The Title"), "H1 text must not appear in step content");
+        assert!(
+            !step.content.contains("The Title"),
+            "H1 text must not appear in step content"
+        );
     }
 
     // ── Preamble → system_prompt_append ──────────────────────────────────────
@@ -328,7 +375,9 @@ mod tests {
         let md = "# Title\n\nIntroductory context.\n\n## Do work\nThe task.";
         let mut w = parse_workflow(md);
         assert_eq!(w.steps.len(), 1, "preamble must NOT become a step");
-        assert!(w.system_prompt_append.as_deref()
+        assert!(w
+            .system_prompt_append
+            .as_deref()
             .map(|s| s.contains("Introductory context"))
             .unwrap_or(false));
         assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Do work"));
@@ -345,7 +394,9 @@ mod tests {
     fn preamble_without_h1_still_goes_to_system_prompt() {
         let md = "Some context before any step.\n\n## Step\nContent.";
         let w = parse_workflow(md);
-        assert!(w.system_prompt_append.as_deref()
+        assert!(w
+            .system_prompt_append
+            .as_deref()
             .map(|s| s.contains("Some context"))
             .unwrap_or(false));
         assert_eq!(w.steps.len(), 1);
@@ -369,7 +420,10 @@ mod tests {
     fn step_label_strips_whitespace() {
         let md = "##   Trimmed Label   \nContent.";
         let mut w = parse_workflow(md);
-        assert_eq!(w.steps.pop().unwrap().label.as_deref(), Some("Trimmed Label"));
+        assert_eq!(
+            w.steps.pop().unwrap().label.as_deref(),
+            Some("Trimmed Label")
+        );
     }
 
     #[test]
@@ -417,7 +471,10 @@ mod tests {
         let md = "## Step\n```rust\nfn main() {}\n```";
         let mut w = parse_workflow(md);
         let s = w.steps.pop().unwrap();
-        assert!(s.content.contains("```"), "code block markers should be preserved");
+        assert!(
+            s.content.contains("```"),
+            "code block markers should be preserved"
+        );
     }
 
     // ── <!-- sven: ... --> directives ─────────────────────────────────────────
@@ -463,7 +520,10 @@ mod tests {
         let mut w = parse_workflow(md);
         let s = w.steps.pop().unwrap();
         assert_eq!(s.options.mode.as_deref(), Some("research"));
-        assert_eq!(s.options.model.as_deref(), Some("anthropic/claude-opus-4-5"));
+        assert_eq!(
+            s.options.model.as_deref(),
+            Some("anthropic/claude-opus-4-5")
+        );
     }
 
     #[test]
@@ -482,9 +542,15 @@ mod tests {
         let md = "## Step\n<!-- step: mode=research -->\nContent.";
         let mut w = parse_workflow(md);
         let s = w.steps.pop().unwrap();
-        assert!(s.options.mode.is_none(), "old <!-- step: --> syntax must not be parsed");
+        assert!(
+            s.options.mode.is_none(),
+            "old <!-- step: --> syntax must not be parsed"
+        );
         // The comment itself should still be stripped from body
-        assert!(!s.content.contains("<!-- step:"), "old comment should be stripped from body");
+        assert!(
+            !s.content.contains("<!-- step:"),
+            "old comment should be stripped from body"
+        );
     }
 
     #[test]
@@ -515,10 +581,16 @@ mod tests {
         let md = "## Say Hi\n<!-- sven: provider=anthropic model=claude-sonnet-4-5 -->\nHi Claude!";
         let mut w = parse_workflow(md);
         let s = w.steps.pop().unwrap();
-        assert_eq!(s.options.provider.as_deref(), Some("anthropic"),
-            "provider should be parsed from sven comment");
-        assert_eq!(s.options.model.as_deref(), Some("claude-sonnet-4-5"),
-            "model should be parsed from sven comment");
+        assert_eq!(
+            s.options.provider.as_deref(),
+            Some("anthropic"),
+            "provider should be parsed from sven comment"
+        );
+        assert_eq!(
+            s.options.model.as_deref(),
+            Some("claude-sonnet-4-5"),
+            "model should be parsed from sven comment"
+        );
     }
 
     #[test]
@@ -566,7 +638,9 @@ mod tests {
         );
         let mut w = parse_workflow(md);
         assert_eq!(w.title.as_deref(), Some("Token Usage Support"));
-        assert!(w.system_prompt_append.as_deref()
+        assert!(w
+            .system_prompt_append
+            .as_deref()
             .map(|s| s.contains("Investigate how token usage"))
             .unwrap_or(false));
         assert_eq!(w.steps.len(), 2);

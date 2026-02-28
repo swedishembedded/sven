@@ -21,13 +21,18 @@ pub struct SwitchModeTool {
 
 impl SwitchModeTool {
     pub fn new(current_mode: Arc<Mutex<AgentMode>>, event_tx: mpsc::Sender<ToolEvent>) -> Self {
-        Self { current_mode, event_tx }
+        Self {
+            current_mode,
+            event_tx,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for SwitchModeTool {
-    fn name(&self) -> &str { "switch_mode" }
+    fn name(&self) -> &str {
+        "switch_mode"
+    }
 
     fn description(&self) -> &str {
         "Switch the agent's operating mode.\n\
@@ -51,9 +56,13 @@ impl Tool for SwitchModeTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
 
-    fn modes(&self) -> &[AgentMode] { &[AgentMode::Agent, AgentMode::Plan] }
+    fn modes(&self) -> &[AgentMode] {
+        &[AgentMode::Agent, AgentMode::Plan]
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let mode_str = match call.args.get("mode").and_then(|v| v.as_str()) {
@@ -86,9 +95,7 @@ impl Tool for SwitchModeTool {
         if !is_downgrade {
             return ToolOutput::err(
                 &call.id,
-                format!(
-                    "cannot switch from {current} to {target}: upgrading modes is not allowed"
-                ),
+                format!("cannot switch from {current} to {target}: upgrading modes is not allowed"),
             );
         }
 
@@ -107,7 +114,13 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolCall};
 
-    fn make_tool(mode: AgentMode) -> (SwitchModeTool, Arc<Mutex<AgentMode>>, mpsc::Receiver<ToolEvent>) {
+    fn make_tool(
+        mode: AgentMode,
+    ) -> (
+        SwitchModeTool,
+        Arc<Mutex<AgentMode>>,
+        mpsc::Receiver<ToolEvent>,
+    ) {
         let current = Arc::new(Mutex::new(mode));
         let (tx, rx) = mpsc::channel(16);
         let tool = SwitchModeTool::new(current.clone(), tx);
@@ -115,7 +128,11 @@ mod tests {
     }
 
     fn call(mode: &str) -> ToolCall {
-        ToolCall { id: "s1".into(), name: "switch_mode".into(), args: json!({"mode": mode}) }
+        ToolCall {
+            id: "s1".into(),
+            name: "switch_mode".into(),
+            args: json!({"mode": mode}),
+        }
     }
 
     #[tokio::test]
@@ -170,7 +187,11 @@ mod tests {
     #[tokio::test]
     async fn missing_mode_is_error() {
         let (tool, _current, _rx) = make_tool(AgentMode::Agent);
-        let call = ToolCall { id: "1".into(), name: "switch_mode".into(), args: json!({}) };
+        let call = ToolCall {
+            id: "1".into(),
+            name: "switch_mode".into(),
+            args: json!({}),
+        };
         let out = tool.execute(&call).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing 'mode'"));

@@ -60,7 +60,9 @@ async fn mock_server_once(
             let mut line = String::new();
             reader.read_line(&mut line).await.unwrap();
             let trimmed = line.trim();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some((k, v)) = trimmed.split_once(": ") {
                 let key = k.to_lowercase();
                 if key == "content-length" {
@@ -75,7 +77,12 @@ async fn mock_server_once(
         reader.read_exact(&mut body_bytes).await.unwrap();
         let body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
 
-        let _ = tx.send(CapturedRequest { method, path, headers, body });
+        let _ = tx.send(CapturedRequest {
+            method,
+            path,
+            headers,
+            body,
+        });
 
         // Write response — Content-Length so reqwest knows when to stop
         let http_resp = format!(
@@ -169,7 +176,10 @@ async fn openai_compat_sends_bearer_auth_header() {
     while stream.next().await.is_some() {}
 
     let req = req_rx.await.unwrap();
-    let auth = req.headers.get("authorization").expect("Authorization header");
+    let auth = req
+        .headers
+        .get("authorization")
+        .expect("Authorization header");
     assert_eq!(auth, "Bearer sk-bearer-token");
 }
 
@@ -254,8 +264,15 @@ async fn openai_compat_text_and_usage_events_collected() {
     while let Some(ev) = stream.next().await {
         match ev.unwrap() {
             ResponseEvent::TextDelta(t) if !t.is_empty() => text.push_str(&t),
-            ResponseEvent::Usage { input_tokens: 10, output_tokens: 5, .. } => usage_seen = true,
-            ResponseEvent::Done => { done_seen = true; break; }
+            ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..
+            } => usage_seen = true,
+            ResponseEvent::Done => {
+                done_seen = true;
+                break;
+            }
             _ => {}
         }
     }
@@ -344,7 +361,10 @@ async fn openai_compat_non_200_response_returns_error() {
 
     assert!(result.is_err(), "non-200 response must produce an error");
     let msg = result.err().unwrap().to_string();
-    assert!(msg.contains("401"), "error message should include status 401, got: {msg}");
+    assert!(
+        msg.contains("401"),
+        "error message should include status 401, got: {msg}"
+    );
 }
 
 // ── Azure OpenAI driver ───────────────────────────────────────────────────────
@@ -439,7 +459,10 @@ async fn anthropic_sends_correct_request_format() {
     while let Some(ev) = stream.next().await {
         match ev.unwrap() {
             ResponseEvent::TextDelta(t) if t == "hi" => got_text = true,
-            ResponseEvent::Done => { got_done = true; break; }
+            ResponseEvent::Done => {
+                got_done = true;
+                break;
+            }
             _ => {}
         }
     }
@@ -462,7 +485,9 @@ async fn anthropic_sends_correct_request_format() {
 
     // Version header
     assert_eq!(
-        req.headers.get("anthropic-version").expect("anthropic-version"),
+        req.headers
+            .get("anthropic-version")
+            .expect("anthropic-version"),
         "2023-06-01"
     );
 
@@ -509,8 +534,14 @@ async fn anthropic_tools_use_input_schema_not_parameters() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0]["name"], "shell");
     // Anthropic requires "input_schema", not "parameters"
-    assert!(tools[0]["input_schema"].is_object(), "must use 'input_schema'");
-    assert!(tools[0].get("parameters").is_none(), "must not use 'parameters'");
+    assert!(
+        tools[0]["input_schema"].is_object(),
+        "must use 'input_schema'"
+    );
+    assert!(
+        tools[0].get("parameters").is_none(),
+        "must not use 'parameters'"
+    );
 }
 
 #[tokio::test]
@@ -568,8 +599,14 @@ async fn anthropic_cache_tools_adds_cache_control_to_last_tool() {
         "5m TTL should have no ttl field"
     );
     // beta header must be present
-    let beta = req.headers.get("anthropic-beta").expect("anthropic-beta header");
-    assert!(beta.contains("prompt-caching-2024-07-31"), "beta header must include prompt-caching");
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .expect("anthropic-beta header");
+    assert!(
+        beta.contains("prompt-caching-2024-07-31"),
+        "beta header must include prompt-caching"
+    );
 }
 
 #[tokio::test]
@@ -607,7 +644,10 @@ async fn anthropic_cache_tools_with_extended_ttl_adds_1h_cache_control() {
     let tools = req.body["tools"].as_array().expect("tools array");
     assert_eq!(tools[0]["cache_control"]["ttl"], "1h", "1h TTL must be set");
     // Beta header must include both caching and extended-ttl entries
-    let beta = req.headers.get("anthropic-beta").expect("anthropic-beta header");
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .expect("anthropic-beta header");
     assert!(beta.contains("prompt-caching-2024-07-31"));
     assert!(beta.contains("extended-cache-ttl-2025-04-11"));
 }
@@ -648,7 +688,10 @@ async fn anthropic_cache_conversation_adds_top_level_cache_control() {
         req.body["cache_control"]["type"], "ephemeral",
         "top-level cache_control must be set for conversation caching"
     );
-    let beta = req.headers.get("anthropic-beta").expect("anthropic-beta header");
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .expect("anthropic-beta header");
     assert!(beta.contains("prompt-caching-2024-07-31"));
 }
 
@@ -718,7 +761,9 @@ async fn anthropic_cache_system_prompt_sends_array_with_cache_control() {
 
     let req = req_rx.await.unwrap();
     // System must be an array of blocks, not a plain string
-    let system = req.body["system"].as_array().expect("system must be an array when caching");
+    let system = req.body["system"]
+        .as_array()
+        .expect("system must be an array when caching");
     assert_eq!(system.len(), 1, "one system block (no dynamic suffix)");
     assert_eq!(system[0]["type"], "text");
     assert_eq!(system[0]["text"], "be helpful");
@@ -745,12 +790,12 @@ async fn anthropic_cache_images_marks_image_block_with_cache_control() {
     let provider = from_config(&cfg).unwrap();
     let mut stream = provider
         .complete(CompletionRequest {
-            messages: vec![
-                Message::user_with_parts(vec![
-                    ContentPart::image(data_url),
-                    ContentPart::Text { text: "what is in this image?".into() },
-                ]),
-            ],
+            messages: vec![Message::user_with_parts(vec![
+                ContentPart::image(data_url),
+                ContentPart::Text {
+                    text: "what is in this image?".into(),
+                },
+            ])],
             tools: vec![],
             stream: true,
             ..Default::default()
@@ -782,7 +827,10 @@ async fn anthropic_cache_images_marks_image_block_with_cache_control() {
     );
 
     // Beta header required for caching
-    let beta = req.headers.get("anthropic-beta").expect("anthropic-beta header");
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .expect("anthropic-beta header");
     assert!(beta.contains("prompt-caching-2024-07-31"));
 }
 
@@ -820,7 +868,10 @@ async fn anthropic_cache_images_with_extended_ttl() {
     assert_eq!(img["cache_control"]["type"], "ephemeral");
     assert_eq!(img["cache_control"]["ttl"], "1h", "extended TTL must be 1h");
 
-    let beta = req.headers.get("anthropic-beta").expect("anthropic-beta header");
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .expect("anthropic-beta header");
     assert!(beta.contains("extended-cache-ttl-2025-04-11"));
 }
 
@@ -887,7 +938,7 @@ async fn anthropic_cache_tool_results_skips_small_result() {
         .complete(CompletionRequest {
             messages: vec![
                 Message::user("run ls"),
-                Message::tool_result("call_abc", "file.txt"),  // tiny result
+                Message::tool_result("call_abc", "file.txt"), // tiny result
             ],
             tools: vec![],
             stream: true,
@@ -1085,8 +1136,7 @@ async fn openrouter_sends_prompt_cache_key_when_set() {
 
     let req = req_rx.await.unwrap();
     assert_eq!(
-        req.body["prompt_cache_key"],
-        "test-session-uuid-1234",
+        req.body["prompt_cache_key"], "test-session-uuid-1234",
         "OpenRouter requests must carry the session cache key"
     );
 }
@@ -1120,8 +1170,7 @@ async fn non_openrouter_provider_does_not_send_prompt_cache_key() {
 
     let req = req_rx.await.unwrap();
     assert!(
-        req.body.get("prompt_cache_key").is_none()
-            || req.body["prompt_cache_key"].is_null(),
+        req.body.get("prompt_cache_key").is_none() || req.body["prompt_cache_key"].is_null(),
         "Non-OpenRouter providers must not receive prompt_cache_key in the body"
     );
 }

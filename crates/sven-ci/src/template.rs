@@ -92,7 +92,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -185,10 +188,7 @@ mod tests {
     fn vars_substituted_in_pass1_not_double_substituted() {
         // A var value that itself looks like a placeholder must NOT be expanded again
         std::env::set_var("SVEN_TEST_INNER", "should-not-appear");
-        let result = apply_template(
-            "{{outer}}",
-            &vars(&[("outer", "{{SVEN_TEST_INNER}}")]),
-        );
+        let result = apply_template("{{outer}}", &vars(&[("outer", "{{SVEN_TEST_INNER}}")]));
         std::env::remove_var("SVEN_TEST_INNER");
         // After pass 1, "{{outer}}" → "{{SVEN_TEST_INNER}}"
         // Pass 2 should NOT further expand this since pass 1 already ran

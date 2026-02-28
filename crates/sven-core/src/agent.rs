@@ -10,9 +10,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
 use sven_config::{AgentConfig, AgentMode, CompactionStrategy};
-use sven_model::{
-    CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role,
-};
+use sven_model::{CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role};
 use sven_tools::{events::ToolEvent, ToolCall, ToolOutput, ToolRegistry};
 
 use crate::{
@@ -112,7 +110,11 @@ impl Agent {
     ) -> anyhow::Result<()> {
         // If already cancelled, emit Aborted immediately without touching history.
         if cancel.try_recv().is_ok() {
-            let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+            let _ = tx
+                .send(AgentEvent::Aborted {
+                    partial_text: String::new(),
+                })
+                .await;
             return Ok(());
         }
 
@@ -139,7 +141,11 @@ impl Agent {
         mut cancel: tokio::sync::oneshot::Receiver<()>,
     ) -> anyhow::Result<()> {
         if cancel.try_recv().is_ok() {
-            let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+            let _ = tx
+                .send(AgentEvent::Aborted {
+                    partial_text: String::new(),
+                })
+                .await;
             return Ok(());
         }
 
@@ -389,12 +395,14 @@ impl Agent {
                     Err(e) => ToolOutput::err(&tool_calls[i].id, format!("tool panicked: {e}")),
                 };
                 self.drain_tool_events(&tx).await;
-                let _ = tx.send(AgentEvent::ToolCallFinished {
-                    call_id: tool_calls[i].id.clone(),
-                    tool_name: tool_calls[i].name.clone(),
-                    output: output.content.clone(),
-                    is_error: output.is_error,
-                }).await;
+                let _ = tx
+                    .send(AgentEvent::ToolCallFinished {
+                        call_id: tool_calls[i].id.clone(),
+                        tool_name: tool_calls[i].name.clone(),
+                        output: output.content.clone(),
+                        is_error: output.is_error,
+                    })
+                    .await;
                 outputs.push(output);
             }
 
@@ -404,15 +412,19 @@ impl Agent {
                 let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
-                    let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
-                        sven_tools::ToolOutputPart::Text(t) => {
-                            let truncated = smart_truncate(t, category, cap);
-                            ToolContentPart::Text { text: truncated }
-                        }
-                        sven_tools::ToolOutputPart::Image(url) => {
-                            ToolContentPart::Image { image_url: url.clone() }
-                        }
-                    }).collect();
+                    let parts: Vec<ToolContentPart> = output
+                        .parts
+                        .iter()
+                        .map(|p| match p {
+                            sven_tools::ToolOutputPart::Text(t) => {
+                                let truncated = smart_truncate(t, category, cap);
+                                ToolContentPart::Text { text: truncated }
+                            }
+                            sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image {
+                                image_url: url.clone(),
+                            },
+                        })
+                        .collect();
                     Message::tool_result_with_parts(&tc.id, parts)
                 } else {
                     let content = smart_truncate(&output.content, category, cap);
@@ -523,9 +535,7 @@ impl Agent {
             let mut tasks = Vec::with_capacity(tool_calls.len());
             for tc in tool_calls.clone() {
                 let registry = Arc::clone(&self.tools);
-                let task = tokio::spawn(async move {
-                    registry.execute(&tc).await
-                });
+                let task = tokio::spawn(async move { registry.execute(&tc).await });
                 tasks.push(task);
             }
 
@@ -547,12 +557,14 @@ impl Agent {
                 // Drain tool events (may arrive from any task via shared channel)
                 self.drain_tool_events(&tx).await;
 
-                let _ = tx.send(AgentEvent::ToolCallFinished {
-                    call_id: tool_calls[i].id.clone(),
-                    tool_name: tool_calls[i].name.clone(),
-                    output: output.content.clone(),
-                    is_error: output.is_error,
-                }).await;
+                let _ = tx
+                    .send(AgentEvent::ToolCallFinished {
+                        call_id: tool_calls[i].id.clone(),
+                        tool_name: tool_calls[i].name.clone(),
+                        output: output.content.clone(),
+                        is_error: output.is_error,
+                    })
+                    .await;
 
                 outputs.push(output);
             }
@@ -564,15 +576,19 @@ impl Agent {
                 let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
-                    let parts: Vec<ToolContentPart> = output.parts.iter().map(|p| match p {
-                        sven_tools::ToolOutputPart::Text(t) => {
-                            let truncated = smart_truncate(t, category, cap);
-                            ToolContentPart::Text { text: truncated }
-                        }
-                        sven_tools::ToolOutputPart::Image(url) => {
-                            ToolContentPart::Image { image_url: url.clone() }
-                        }
-                    }).collect();
+                    let parts: Vec<ToolContentPart> = output
+                        .parts
+                        .iter()
+                        .map(|p| match p {
+                            sven_tools::ToolOutputPart::Text(t) => {
+                                let truncated = smart_truncate(t, category, cap);
+                                ToolContentPart::Text { text: truncated }
+                            }
+                            sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image {
+                                image_url: url.clone(),
+                            },
+                        })
+                        .collect();
                     Message::tool_result_with_parts(&tc.id, parts)
                 } else {
                     let content = smart_truncate(&output.content, category, cap);
@@ -615,7 +631,8 @@ impl Agent {
         with_tools: bool,
     ) -> anyhow::Result<(String, Vec<ToolCall>, bool)> {
         let tools: Vec<sven_model::ToolSchema> = if with_tools {
-            self.tools.schemas_for_mode(mode)
+            self.tools
+                .schemas_for_mode(mode)
                 .into_iter()
                 .map(|s| sven_model::ToolSchema {
                     name: s.name,
@@ -647,7 +664,10 @@ impl Agent {
             cache_key: Some(self.session.id.clone()),
         };
 
-        let mut stream = self.model.complete(req).await
+        let mut stream = self
+            .model
+            .complete(req)
+            .await
             .context("model completion failed")?;
 
         let mut full_text = String::new();
@@ -676,23 +696,40 @@ impl Agent {
                     // Flush accumulated thinking when text starts arriving.
                     if !thinking_buf.is_empty() {
                         let content = std::mem::take(&mut thinking_buf);
-                        let _ = tx.send(AgentEvent::ThinkingComplete(strip_think_wrappers(content))).await;
+                        let _ = tx
+                            .send(AgentEvent::ThinkingComplete(strip_think_wrappers(content)))
+                            .await;
                     }
                     full_text.push_str(&delta);
                     let _ = tx.send(AgentEvent::TextDelta(delta)).await;
                 }
-                ResponseEvent::ToolCall { index, id, name, arguments } => {
+                ResponseEvent::ToolCall {
+                    index,
+                    id,
+                    name,
+                    arguments,
+                } => {
                     let ptc = pending_tcs.entry(index).or_insert_with(|| PendingToolCall {
                         id: String::new(),
                         name: String::new(),
                         args_buf: String::new(),
                     });
-                    if !id.is_empty() { ptc.id = id; }
-                    if !name.is_empty() { ptc.name = name; }
+                    if !id.is_empty() {
+                        ptc.id = id;
+                    }
+                    if !name.is_empty() {
+                        ptc.name = name;
+                    }
                     ptc.args_buf.push_str(&arguments);
                 }
-                ResponseEvent::Usage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } => {
-                    self.session.add_cache_usage(cache_read_tokens, cache_write_tokens);
+                ResponseEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                } => {
+                    self.session
+                        .add_cache_usage(cache_read_tokens, cache_write_tokens);
                     // Update the running calibration factor using the provider's
                     // actual input token count.  This corrects the chars/4
                     // approximation for the current workload and model.
@@ -701,21 +738,25 @@ impl Agent {
                         let estimated = self.session.token_count + self.session.schema_overhead;
                         self.session.update_calibration(actual_input, estimated);
                     }
-                    let _ = tx.send(AgentEvent::TokenUsage {
-                        input: input_tokens,
-                        output: output_tokens,
-                        cache_read: cache_read_tokens,
-                        cache_write: cache_write_tokens,
-                        cache_read_total: self.session.cache_read_total,
-                        cache_write_total: self.session.cache_write_total,
-                        max_tokens: self.session.max_tokens,
-                    }).await;
+                    let _ = tx
+                        .send(AgentEvent::TokenUsage {
+                            input: input_tokens,
+                            output: output_tokens,
+                            cache_read: cache_read_tokens,
+                            cache_write: cache_write_tokens,
+                            cache_read_total: self.session.cache_read_total,
+                            cache_write_total: self.session.cache_write_total,
+                            max_tokens: self.session.max_tokens,
+                        })
+                        .await;
                 }
                 ResponseEvent::Done => {
                     // Flush any trailing thinking block (model thought without responding).
                     if !thinking_buf.is_empty() {
                         let content = std::mem::take(&mut thinking_buf);
-                        let _ = tx.send(AgentEvent::ThinkingComplete(strip_think_wrappers(content))).await;
+                        let _ = tx
+                            .send(AgentEvent::ThinkingComplete(strip_think_wrappers(content)))
+                            .await;
                     }
                     break;
                 }
@@ -791,13 +832,13 @@ impl Agent {
     /// Estimate the token overhead for items sent with every request but NOT
     /// stored in `session.messages`: tool schemas and the dynamic context block.
     fn estimate_schema_overhead(&self, mode: AgentMode) -> usize {
-        let schema_tokens: usize = self.tools.schemas_for_mode(mode)
+        let schema_tokens: usize = self
+            .tools
+            .schemas_for_mode(mode)
             .iter()
             .map(|s| (s.name.len() + s.description.len() + s.parameters.to_string().len()) / 4)
             .sum();
-        let dynamic_tokens = self.dynamic_context()
-            .map(|s| s.len() / 4)
-            .unwrap_or(0);
+        let dynamic_tokens = self.dynamic_context().map(|s| s.len() / 4).unwrap_or(0);
         schema_tokens + dynamic_tokens
     }
 
@@ -846,7 +887,10 @@ impl Agent {
         } else {
             // Normal rolling compaction: preserve the recent tail verbatim,
             // summarise everything older.
-            let non_system: Vec<Message> = self.session.messages.iter()
+            let non_system: Vec<Message> = self
+                .session
+                .messages
+                .iter()
                 .filter(|m| m.role != Role::System)
                 .cloned()
                 .collect();
@@ -860,7 +904,11 @@ impl Agent {
 
             // Only use rolling strategy when there are enough messages to make
             // it worthwhile; otherwise summarise the full history.
-            let preserve_count = if non_system.len() > keep_n * 2 { keep_n } else { 0 };
+            let preserve_count = if non_system.len() > keep_n * 2 {
+                keep_n
+            } else {
+                0
+            };
             let mut summarize_count = non_system.len().saturating_sub(preserve_count);
 
             // Safety: adjust the split point backward until `recent_messages`
@@ -916,9 +964,13 @@ impl Agent {
                     // fall back to the deterministic emergency path which never
                     // makes a model call and always succeeds.
                     if let Err(ref e) = outcome {
-                        warn!("compaction model call failed, falling back to emergency compact: {e}");
+                        warn!(
+                            "compaction model call failed, falling back to emergency compact: {e}"
+                        );
                     } else {
-                        warn!("compaction returned empty summary, falling back to emergency compact");
+                        warn!(
+                            "compaction returned empty summary, falling back to emergency compact"
+                        );
                     }
                     self.session.messages = original_messages;
                     self.session.token_count = original_token_count;
@@ -930,12 +982,14 @@ impl Agent {
             }
         };
 
-        let _ = tx.send(AgentEvent::ContextCompacted {
-            tokens_before,
-            tokens_after: self.session.token_count,
-            strategy: strategy_used,
-            turn,
-        }).await;
+        let _ = tx
+            .send(AgentEvent::ContextCompacted {
+                tokens_before,
+                tokens_after: self.session.token_count,
+                strategy: strategy_used,
+                turn,
+            })
+            .await;
 
         Ok(())
     }
@@ -946,7 +1000,10 @@ impl Agent {
         // per-request via `system_dynamic_suffix` so it does not break prompt
         // caching across sessions.
         let stable_ctx = ctx.stable_only();
-        let custom = self.runtime.system_prompt_override.as_deref()
+        let custom = self
+            .runtime
+            .system_prompt_override
+            .as_deref()
             .or(self.config.system_prompt.as_deref());
         Message::system(system_prompt(
             mode,
@@ -974,17 +1031,19 @@ impl Agent {
     fn dynamic_context(&self) -> Option<String> {
         // When a custom system prompt override is in use, the caller controls
         // all content — skip the dynamic injection to avoid duplication.
-        if self.runtime.system_prompt_override.is_some()
-            || self.config.system_prompt.is_some()
-        {
+        if self.runtime.system_prompt_override.is_some() || self.config.system_prompt.is_some() {
             return None;
         }
         self.prompt_context().dynamic_block()
     }
 
-    pub fn session(&self) -> &Session { &self.session }
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
 
-    pub fn session_mut(&mut self) -> &mut Session { &mut self.session }
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
 
     pub fn mode(&self) -> AgentMode {
         *self.current_mode.blocking_lock()
@@ -1098,7 +1157,11 @@ impl PendingToolCall {
                                 tool_call_id = %self.id,
                                 "recovered partial fs arguments from truncated output"
                             );
-                            return ToolCall { id: self.id, name: self.name, args: v };
+                            return ToolCall {
+                                id: self.id,
+                                name: self.name,
+                                args: v,
+                            };
                         }
                     }
                     // Attempt generic JSON repairs before giving up.
@@ -1125,29 +1188,33 @@ impl PendingToolCall {
                 }
             }
         };
-        ToolCall { id: self.id, name: self.name, args }
+        ToolCall {
+            id: self.id,
+            name: self.name,
+            args,
+        }
     }
 }
 
 /// Attempt to repair common JSON syntax errors.
-/// 
+///
 /// This handles issues like:
 /// - Missing commas between key-value pairs
 /// - Missing quotes around keys or values
 /// - Truncated strings
 fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
     // Try simple repairs in sequence
-    
+
     // 1. Fix missing comma between key-value pairs like: "key1"value": "...
     // Pattern: "key"VALUE": where VALUE is alphanumeric
     let repaired = regex::Regex::new(r#""([^"]+)"([a-zA-Z_][a-zA-Z0-9_]*)":\s*"#)
         .unwrap()
         .replace_all(json_str, r#""$1", "$2": "#);
-    
+
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&repaired) {
         return Ok(v);
     }
-    
+
     // 2. Try adding missing closing quote and brace if JSON ends abruptly
     if !json_str.trim().ends_with('}') {
         let mut completed = json_str.to_string();
@@ -1163,7 +1230,7 @@ fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
             return Ok(v);
         }
     }
-    
+
     // All repair attempts failed
     anyhow::bail!("JSON repair failed: all repair strategies exhausted")
 }
@@ -1189,8 +1256,11 @@ fn extract_partial_fs_args(json_str: &str) -> Option<serde_json::Value> {
     let before_content = json_str[..content_key_pos].trim_end_matches(',').trim();
     let prefix_obj: serde_json::Value =
         serde_json::from_str(&format!("{}}}", before_content)).ok()?;
-    let operation = prefix_obj.get("operation").and_then(|v| v.as_str())?.to_string();
-    let path      = prefix_obj.get("path").and_then(|v| v.as_str())?.to_string();
+    let operation = prefix_obj
+        .get("operation")
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let path = prefix_obj.get("path").and_then(|v| v.as_str())?.to_string();
 
     // Decode the JSON string content that was generated before truncation.
     let partial_content = extract_partial_json_string(raw_value);
@@ -1211,7 +1281,7 @@ fn extract_partial_fs_args(json_str: &str) -> Option<serde_json::Value> {
 /// `"` if present, or up to the point of truncation.
 fn extract_partial_json_string(raw: &str) -> String {
     let mut result = String::new();
-    let mut chars  = raw.chars().peekable();
+    let mut chars = raw.chars().peekable();
 
     while let Some(c) = chars.next() {
         match c {
@@ -1219,15 +1289,15 @@ fn extract_partial_json_string(raw: &str) -> String {
             '"' => break,
             // Escape sequence.
             '\\' => match chars.next() {
-                Some('"')  => result.push('"'),
+                Some('"') => result.push('"'),
                 Some('\\') => result.push('\\'),
-                Some('/')  => result.push('/'),
-                Some('n')  => result.push('\n'),
-                Some('r')  => result.push('\r'),
-                Some('t')  => result.push('\t'),
-                Some('b')  => result.push('\x08'),
-                Some('f')  => result.push('\x0C'),
-                Some('u')  => {
+                Some('/') => result.push('/'),
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('b') => result.push('\x08'),
+                Some('f') => result.push('\x0C'),
+                Some('u') => {
                     // Collect up to 4 hex digits; stop at truncation.
                     let hex: String = chars.by_ref().take(4).collect();
                     if hex.len() == 4 {
@@ -1241,7 +1311,7 @@ fn extract_partial_json_string(raw: &str) -> String {
                 }
                 // Unknown escape or truncation: stop gracefully.
                 Some(c) => result.push(c),
-                None    => {}
+                None => {}
             },
             c => result.push(c),
         }
@@ -1258,24 +1328,36 @@ mod partial_write_tests {
 
     #[test]
     fn full_string_with_closing_quote() {
-        assert_eq!(extract_partial_json_string(r#"hello world""#), "hello world");
+        assert_eq!(
+            extract_partial_json_string(r#"hello world""#),
+            "hello world"
+        );
     }
 
     #[test]
     fn truncated_plain_string() {
-        assert_eq!(extract_partial_json_string("no closing quote"), "no closing quote");
+        assert_eq!(
+            extract_partial_json_string("no closing quote"),
+            "no closing quote"
+        );
     }
 
     #[test]
     fn newline_and_tab_escapes() {
         // JSON: "line1\nline2\ttabbed"
-        assert_eq!(extract_partial_json_string("line1\\nline2\\ttabbed\""), "line1\nline2\ttabbed");
+        assert_eq!(
+            extract_partial_json_string("line1\\nline2\\ttabbed\""),
+            "line1\nline2\ttabbed"
+        );
     }
 
     #[test]
     fn escaped_double_quotes_inside_value() {
         // JSON: "say \"hi\""
-        assert_eq!(extract_partial_json_string("say \\\"hi\\\"\""), "say \"hi\"");
+        assert_eq!(
+            extract_partial_json_string("say \\\"hi\\\"\""),
+            "say \"hi\""
+        );
     }
 
     #[test]
@@ -1330,7 +1412,8 @@ mod partial_write_tests {
     #[test]
     fn recovers_write_with_escaped_quotes_in_content() {
         // JSON args: {"operation":"write","path":"...","content":"She said \"hello  (truncated)
-        let json = "{\"operation\":\"write\",\"path\":\"/tmp/foo.md\",\"content\":\"She said \\\"hello";
+        let json =
+            "{\"operation\":\"write\",\"path\":\"/tmp/foo.md\",\"content\":\"She said \\\"hello";
         let v = extract_partial_fs_args(json).unwrap();
         assert_eq!(v["content"], "She said \"hello");
         assert_eq!(v["__truncated"], true);

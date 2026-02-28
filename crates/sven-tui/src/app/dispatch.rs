@@ -10,14 +10,10 @@ use crate::{
     chat::{
         markdown::parse_markdown_to_messages,
         segment::{
-            messages_for_resubmit, segment_editable_text, segment_tool_call_id,
-            ChatSegment,
+            messages_for_resubmit, segment_editable_text, segment_tool_call_id, ChatSegment,
         },
     },
-    commands::{
-        completion::CompletionItem,
-        parse, CommandContext, ParsedCommand,
-    },
+    commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
     overlay::completion::CompletionOverlay,
     pager::PagerOverlay,
@@ -144,7 +140,11 @@ impl App {
                 // that the user cannot accidentally wipe non-text entries.
                 if let Some(seg_idx) = self.focused_chat_segment {
                     // Cancel any ongoing edit that would be invalidated.
-                    if self.editing_message_index.map(|i| i >= seg_idx).unwrap_or(false) {
+                    if self
+                        .editing_message_index
+                        .map(|i| i >= seg_idx)
+                        .unwrap_or(false)
+                    {
                         self.editing_message_index = None;
                         self.edit_buffer.clear();
                         self.edit_cursor = 0;
@@ -176,17 +176,16 @@ impl App {
                     if let Some(ref call_id) = paired_id {
                         // Find the matching counterpart (ToolCall↔ToolResult).
                         for (i, seg) in self.chat_segments.iter().enumerate() {
-                            if i != seg_idx {
-                                if segment_tool_call_id(seg) == Some(call_id.as_str()) {
-                                    to_remove.push(i);
-                                }
+                            if i != seg_idx && segment_tool_call_id(seg) == Some(call_id.as_str()) {
+                                to_remove.push(i);
                             }
                         }
                     }
                     to_remove.sort_unstable_by(|a, b| b.cmp(a)); // descending
 
                     // Cancel in-progress edit if it targets a removed segment.
-                    if self.editing_message_index
+                    if self
+                        .editing_message_index
                         .map(|i| to_remove.contains(&i))
                         .unwrap_or(false)
                     {
@@ -232,25 +231,30 @@ impl App {
                 // This mirrors the `enqueue_or_send_text` flow exactly.
                 if let Some(seg_idx) = self.focused_chat_segment {
                     // Find the last user text message strictly before seg_idx.
-                    let last_user = (0..seg_idx).rev().find_map(|i| {
-                        match self.chat_segments.get(i) {
-                            Some(ChatSegment::Message(m)) => {
-                                if matches!((&m.role, &m.content),
-                                    (sven_model::Role::User, sven_model::MessageContent::Text(_)))
-                                {
-                                    match &m.content {
-                                        sven_model::MessageContent::Text(t) => {
-                                            Some((i, t.clone()))
+                    let last_user =
+                        (0..seg_idx)
+                            .rev()
+                            .find_map(|i| match self.chat_segments.get(i) {
+                                Some(ChatSegment::Message(m)) => {
+                                    if matches!(
+                                        (&m.role, &m.content),
+                                        (
+                                            sven_model::Role::User,
+                                            sven_model::MessageContent::Text(_)
+                                        )
+                                    ) {
+                                        match &m.content {
+                                            sven_model::MessageContent::Text(t) => {
+                                                Some((i, t.clone()))
+                                            }
+                                            _ => None,
                                         }
-                                        _ => None,
+                                    } else {
+                                        None
                                     }
-                                } else {
-                                    None
                                 }
-                            }
-                            _ => None,
-                        }
-                    });
+                                _ => None,
+                            });
 
                     if let Some((user_idx, user_text)) = last_user {
                         // Cancel any in-progress edit.
@@ -269,9 +273,8 @@ impl App {
 
                         // Re-add the user message (agent will add it again via
                         // Resubmit, mirroring the enqueue_or_send_text pattern).
-                        self.chat_segments.push(ChatSegment::Message(
-                            sven_model::Message::user(&user_text),
-                        ));
+                        self.chat_segments
+                            .push(ChatSegment::Message(sven_model::Message::user(&user_text)));
                         self.focused_chat_segment = None;
                         let qm = QueuedMessage {
                             content: user_text,
@@ -359,7 +362,7 @@ impl App {
                             let qm = crate::app::QueuedMessage {
                                 content: new_content.clone(),
                                 model_transition: staged_model
-                                    .map(crate::app::ModelDirective::SwitchTo),
+                                    .map(|c| crate::app::ModelDirective::SwitchTo(Box::new(c))),
                                 mode_transition: staged_mode,
                             };
                             self.chat_segments.truncate(i + 1);
@@ -412,19 +415,16 @@ impl App {
                 // Cancel chat-segment edit.
                 if let Some(idx) = self.editing_message_index {
                     if let Some(original) = self.edit_original_text.clone() {
-                        match self.chat_segments.get_mut(idx) {
-                            Some(ChatSegment::Message(m)) => {
-                                match (&m.role, &mut m.content) {
-                                    (Role::User, MessageContent::Text(t)) => {
-                                        *t = original;
-                                    }
-                                    (Role::Assistant, MessageContent::Text(t)) => {
-                                        *t = original;
-                                    }
-                                    _ => {}
+                        if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
+                            match (&m.role, &mut m.content) {
+                                (Role::User, MessageContent::Text(t)) => {
+                                    *t = original;
                                 }
+                                (Role::Assistant, MessageContent::Text(t)) => {
+                                    *t = original;
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                         self.build_display_from_segments();
                         self.search.update_matches(&self.chat_lines);
@@ -484,8 +484,10 @@ impl App {
                                 .collect();
                             self.tool_args_cache.clear();
                             for msg in &messages {
-                                if let MessageContent::ToolCall { tool_call_id, function } =
-                                    &msg.content
+                                if let MessageContent::ToolCall {
+                                    tool_call_id,
+                                    function,
+                                } = &msg.content
                                 {
                                     self.tool_args_cache
                                         .insert(tool_call_id.clone(), function.name.clone());
@@ -598,7 +600,9 @@ impl App {
             }
             Action::SearchPrevMatch => {
                 if !self.search.matches.is_empty() {
-                    self.search.current = self.search.current
+                    self.search.current = self
+                        .search
+                        .current
                         .checked_sub(1)
                         .unwrap_or(self.search.matches.len() - 1);
                     if let Some(line) = self.search.current_line() {
@@ -663,7 +667,7 @@ impl App {
                 self.input_cursor = next_word_boundary(&self.input_buffer, self.input_cursor);
             }
             Action::InputMoveLineStart => self.input_cursor = 0,
-            Action::InputMoveLineEnd   => self.input_cursor = self.input_buffer.len(),
+            Action::InputMoveLineEnd => self.input_cursor = self.input_buffer.len(),
             Action::InputMoveLineUp => {
                 let w = self.last_input_inner_width as usize;
                 if w > 0 {
@@ -706,10 +710,13 @@ impl App {
                 let w = self.last_input_inner_width as usize;
                 let h = self.last_input_inner_height as usize;
                 if w > 0 && h > 0 {
-                    let in_edit = self.editing_message_index.is_some()
-                        || self.editing_queue_index.is_some();
-                    let content =
-                        if in_edit { &self.edit_buffer } else { &self.input_buffer };
+                    let in_edit =
+                        self.editing_message_index.is_some() || self.editing_queue_index.is_some();
+                    let content = if in_edit {
+                        &self.edit_buffer
+                    } else {
+                        &self.input_buffer
+                    };
                     let ws = crate::input_wrap::wrap_content(content, w, 0);
                     let max = ws.lines.len().saturating_sub(h);
                     if in_edit {
@@ -793,9 +800,8 @@ impl App {
                                 self.focus = FocusPane::Input;
                             }
                             let history = messages_for_resubmit(&self.chat_segments);
-                            self.chat_segments.push(ChatSegment::Message(
-                                Message::user(&qm.content),
-                            ));
+                            self.chat_segments
+                                .push(ChatSegment::Message(Message::user(&qm.content)));
                             self.save_history_async();
                             self.rerender_chat().await;
                             self.auto_scroll = true;
@@ -837,7 +843,10 @@ impl App {
     fn command_line_at_cursor(&self) -> (usize, String) {
         let before_cursor = &self.input_buffer[..self.input_cursor];
         let start = before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        (start, self.input_buffer[start..self.input_cursor].to_string())
+        (
+            start,
+            self.input_buffer[start..self.input_cursor].to_string(),
+        )
     }
 
     /// Return true when the input should trigger the completion overlay.
@@ -872,8 +881,11 @@ impl App {
         if items.is_empty() {
             self.completion_overlay = None;
         } else {
-            let prev_selected =
-                self.completion_overlay.as_ref().map(|o| o.selected).unwrap_or(0);
+            let prev_selected = self
+                .completion_overlay
+                .as_ref()
+                .map(|o| o.selected)
+                .unwrap_or(0);
             let mut overlay = CompletionOverlay::new(items);
             overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
             overlay.adjust_scroll_pub();
@@ -889,14 +901,22 @@ impl App {
     pub(crate) fn apply_completion(&mut self, item: &CompletionItem) {
         let (cmd_start, cmd_line) = self.command_line_at_cursor();
         let is_multiline_cmd = cmd_line.starts_with('/') && cmd_start > 0;
-        let parse_source = if is_multiline_cmd { cmd_line } else { self.input_buffer.clone() };
+        let parse_source = if is_multiline_cmd {
+            cmd_line
+        } else {
+            self.input_buffer.clone()
+        };
 
         let parsed = parse(&parse_source);
         let new_cmd = match parsed {
             ParsedCommand::PartialCommand { .. } => {
                 format!("/{} ", item.value.trim_start_matches('/'))
             }
-            ParsedCommand::CompletingArgs { command, arg_index, partial: _ } => {
+            ParsedCommand::CompletingArgs {
+                command,
+                arg_index,
+                partial: _,
+            } => {
                 let prefix = if arg_index == 0 {
                     format!("/{} ", command)
                 } else {
@@ -930,19 +950,16 @@ impl App {
     pub(crate) fn update_editing_segment_live(&mut self) {
         if let Some(idx) = self.editing_message_index {
             let new_text = self.edit_buffer.clone();
-            match self.chat_segments.get_mut(idx) {
-                Some(ChatSegment::Message(m)) => {
-                    match (&m.role, &mut m.content) {
-                        (Role::User, MessageContent::Text(t)) => {
-                            *t = new_text;
-                        }
-                        (Role::Assistant, MessageContent::Text(t)) => {
-                            *t = new_text;
-                        }
-                        _ => {}
+            if let Some(ChatSegment::Message(m)) = self.chat_segments.get_mut(idx) {
+                match (&m.role, &mut m.content) {
+                    (Role::User, MessageContent::Text(t)) => {
+                        *t = new_text;
                     }
+                    (Role::Assistant, MessageContent::Text(t)) => {
+                        *t = new_text;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             self.build_display_from_segments();
             self.search.update_matches(&self.chat_lines);
@@ -978,17 +995,17 @@ impl App {
                     buf.remove(cur);
                 }
             }
-            Action::InputMoveCursorLeft  => cur = prev_char_boundary(&buf, cur),
+            Action::InputMoveCursorLeft => cur = prev_char_boundary(&buf, cur),
             Action::InputMoveCursorRight => {
                 if cur < buf.len() {
                     let ch = buf[cur..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
                     cur += ch;
                 }
             }
-            Action::InputMoveWordLeft  => cur = prev_word_boundary(&buf, cur),
+            Action::InputMoveWordLeft => cur = prev_word_boundary(&buf, cur),
             Action::InputMoveWordRight => cur = next_word_boundary(&buf, cur),
             Action::InputMoveLineStart => cur = 0,
-            Action::InputMoveLineEnd   => cur = buf.len(),
+            Action::InputMoveLineEnd => cur = buf.len(),
             Action::InputMoveLineUp => {
                 let w = self.last_input_inner_width as usize;
                 if w > 0 {
@@ -1017,7 +1034,7 @@ impl App {
                     }
                 }
             }
-            Action::InputDeleteToEnd   => buf.truncate(cur),
+            Action::InputDeleteToEnd => buf.truncate(cur),
             Action::InputDeleteToStart => {
                 buf = buf[cur..].to_string();
                 cur = 0;
@@ -1042,14 +1059,25 @@ pub(crate) fn prev_char_boundary(s: &str, pos: usize) -> usize {
 }
 
 pub(crate) fn prev_word_boundary(s: &str, pos: usize) -> usize {
-    let bytes   = &s.as_bytes()[..pos];
-    let trimmed = bytes.iter().rposition(|&b| b != b' ').map(|i| i + 1).unwrap_or(0);
-    bytes[..trimmed].iter().rposition(|&b| b == b' ').map(|i| i + 1).unwrap_or(0)
+    let bytes = &s.as_bytes()[..pos];
+    let trimmed = bytes
+        .iter()
+        .rposition(|&b| b != b' ')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    bytes[..trimmed]
+        .iter()
+        .rposition(|&b| b == b' ')
+        .map(|i| i + 1)
+        .unwrap_or(0)
 }
 
 pub(crate) fn next_word_boundary(s: &str, pos: usize) -> usize {
     let bytes = &s.as_bytes()[pos..];
     let start = bytes.iter().position(|&b| b != b' ').unwrap_or(0);
-    let end   = bytes[start..].iter().position(|&b| b == b' ').unwrap_or(bytes.len() - start);
+    let end = bytes[start..]
+        .iter()
+        .position(|&b| b == b' ')
+        .unwrap_or(bytes.len() - start);
     pos + start + end
 }

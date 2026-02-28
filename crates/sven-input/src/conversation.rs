@@ -319,7 +319,9 @@ fn extract_fenced_block(content: &str, lang: &str) -> Option<String> {
                     in_block = true;
                     continue;
                 }
-            } else if trimmed == open_marker.as_str() || trimmed.starts_with(&format!("{open_marker} ")) {
+            } else if trimmed == open_marker.as_str()
+                || trimmed.starts_with(&format!("{open_marker} "))
+            {
                 in_block = true;
                 continue;
             }
@@ -334,17 +336,21 @@ fn extract_fenced_block(content: &str, lang: &str) -> Option<String> {
         }
     }
 
-    if in_block { Some(result) } else { None }
+    if in_block {
+        Some(result)
+    } else {
+        None
+    }
 }
 
 /// Strip leading HTML comment (metadata) from section content.
-/// 
+///
 /// Example:
 /// ```text
 /// <!-- provider: openai, model: gpt-4o -->
 /// Response text here
 /// ```
-/// 
+///
 /// Returns: `"Response text here"`
 fn strip_leading_html_comment(content: &str) -> String {
     let trimmed = content.trim_start();
@@ -496,9 +502,11 @@ pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseE
             continue;
         }
 
-        let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-            ParseError::InvalidJsonlLine { line: line_no + 1, error: e.to_string() }
-        })?;
+        let v: serde_json::Value =
+            serde_json::from_str(line).map_err(|e| ParseError::InvalidJsonlLine {
+                line: line_no + 1,
+                error: e.to_string(),
+            })?;
 
         if v.get("type").is_some() {
             // New tagged format.
@@ -541,7 +549,11 @@ pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseE
         _ => (messages, None),
     };
 
-    Ok(ParsedJsonlConversation { records, history, pending_user_input })
+    Ok(ParsedJsonlConversation {
+        records,
+        history,
+        pending_user_input,
+    })
 }
 
 /// Serialize a slice of `ConversationRecord`s to JSONL.
@@ -649,7 +661,13 @@ fn message_to_section_with_metadata(msg: &Message, metadata: Option<&TurnMetadat
             format!("{prefix}## Sven\n{}\n\n", t.trim())
         }
 
-        (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+        (
+            Role::Assistant,
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            },
+        ) => {
             let args_value: serde_json::Value =
                 serde_json::from_str(&function.arguments).unwrap_or(serde_json::Value::Null);
             let envelope = serde_json::json!({
@@ -675,8 +693,12 @@ fn message_to_section_with_metadata(msg: &Message, metadata: Option<&TurnMetadat
 mod tests {
     use super::*;
 
-    fn user_msg(t: &str) -> Message { Message::user(t) }
-    fn sven_msg(t: &str) -> Message { Message::assistant(t) }
+    fn user_msg(t: &str) -> Message {
+        Message::user(t)
+    }
+    fn sven_msg(t: &str) -> Message {
+        Message::assistant(t)
+    }
 
     // ── Parsing ───────────────────────────────────────────────────────────────
 
@@ -730,7 +752,10 @@ mod tests {
 
         // Check Tool call at index 2
         match &conv.history[2].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(function.name, "glob");
             }
@@ -739,7 +764,10 @@ mod tests {
 
         // Check Tool result at index 3
         match &conv.history[3].content {
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(content.to_string().trim(), "src/main.rs");
             }
@@ -776,7 +804,11 @@ mod tests {
         );
         let conv = parse_conversation(md).unwrap();
         assert!(conv.pending_user_input.is_none());
-        assert_eq!(conv.history.len(), 2, "unknown h2 must stay inside the Sven section");
+        assert_eq!(
+            conv.history.len(),
+            2,
+            "unknown h2 must stay inside the Sven section"
+        );
         let body = conv.history[1].as_text().unwrap();
         assert!(body.contains("## Phase 1"), "Phase 1 preserved");
         assert!(body.contains("## Phase 2"), "Phase 2 preserved");
@@ -888,14 +920,20 @@ mod tests {
         assert!(conv.pending_user_input.is_none());
         assert_eq!(conv.history.len(), 4);
         match &conv.history[1].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "id_1");
                 assert_eq!(function.name, "glob");
             }
             _ => panic!("expected ToolCall"),
         }
         match &conv.history[2].content {
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "id_1");
                 assert_eq!(content.to_string().trim(), "src/main.rs");
             }
@@ -990,21 +1028,30 @@ mod tests {
 
         // Verify IDs are preserved correctly
         match &conv.history[1].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "c1");
                 assert_eq!(function.name, "glob");
             }
             _ => panic!("expected first ToolCall at [1]"),
         }
         match &conv.history[2].content {
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "c1");
                 assert!(content.to_string().contains("src/main.rs"));
             }
             _ => panic!("expected first ToolResult at [2]"),
         }
         match &conv.history[3].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "c2");
                 assert_eq!(function.name, "read_file");
             }
@@ -1126,10 +1173,12 @@ mod tests {
             sven_msg("Done."),
             user_msg("Second task"),
         ];
-        let jsonl = messages.iter()
+        let jsonl = messages
+            .iter()
             .map(|m| serde_json::to_string(m).unwrap())
             .collect::<Vec<_>>()
-            .join("\n") + "\n";
+            .join("\n")
+            + "\n";
 
         let conv = parse_jsonl_conversation(&jsonl).unwrap();
         assert_eq!(conv.pending_user_input.as_deref(), Some("Second task"));
@@ -1141,10 +1190,12 @@ mod tests {
     #[test]
     fn jsonl_parse_no_pending_when_last_is_assistant() {
         let messages = vec![user_msg("Task"), sven_msg("Done.")];
-        let jsonl = messages.iter()
+        let jsonl = messages
+            .iter()
             .map(|m| serde_json::to_string(m).unwrap())
             .collect::<Vec<_>>()
-            .join("\n") + "\n";
+            .join("\n")
+            + "\n";
 
         let conv = parse_jsonl_conversation(&jsonl).unwrap();
         assert!(conv.pending_user_input.is_none());
@@ -1158,10 +1209,12 @@ mod tests {
             user_msg("Hello"),
             sven_msg("Hi"),
         ];
-        let jsonl = messages.iter()
+        let jsonl = messages
+            .iter()
             .map(|m| serde_json::to_string(m).unwrap())
             .collect::<Vec<_>>()
-            .join("\n") + "\n";
+            .join("\n")
+            + "\n";
 
         let conv = parse_jsonl_conversation(&jsonl).unwrap();
         assert!(conv.pending_user_input.is_none());
@@ -1226,7 +1279,10 @@ mod tests {
         assert_eq!(conv.history.len(), 4);
 
         match &conv.history[1].content {
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 assert_eq!(tool_call_id, "call_1");
                 assert_eq!(function.name, "glob");
             }

@@ -54,8 +54,12 @@ impl GdbSessionState {
         self.connected = true;
     }
 
-    pub fn has_server(&self) -> bool { self.server.is_some() }
-    pub fn has_client(&self) -> bool { self.client.is_some() }
+    pub fn has_server(&self) -> bool {
+        self.server.is_some()
+    }
+    pub fn has_client(&self) -> bool {
+        self.client.is_some()
+    }
 
     /// Kill and drop all live processes, reset all fields.
     ///
@@ -71,7 +75,9 @@ impl GdbSessionState {
         // Send SIGTERM to the whole process group to cleanly terminate
         // JLinkGDBServer and all its child processes.
         if let Some(pgid) = self.server_pgid {
-            unsafe { libc::kill(-(pgid as i32), libc::SIGTERM); }
+            unsafe {
+                libc::kill(-(pgid as i32), libc::SIGTERM);
+            }
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -79,15 +85,14 @@ impl GdbSessionState {
         // Kill the direct child (also triggers kill_on_drop cleanup path).
         if let Some(mut child) = self.server.take() {
             let _ = child.start_kill();
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                child.wait(),
-            ).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
         }
 
         // Final SIGKILL to the process group to catch any survivors.
         if let Some(pgid) = self.server_pgid.take() {
-            unsafe { libc::kill(-(pgid as i32), libc::SIGKILL); }
+            unsafe {
+                libc::kill(-(pgid as i32), libc::SIGKILL);
+            }
         }
 
         self.server_addr = None;

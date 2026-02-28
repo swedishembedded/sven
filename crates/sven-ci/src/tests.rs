@@ -27,9 +27,8 @@
 #[cfg(test)]
 mod tests {
     use sven_input::{
-        parse_conversation, parse_jsonl_full, parse_workflow,
-        serialize_conversation_turn, serialize_jsonl_records,
-        ConversationRecord, Step, StepQueue,
+        parse_conversation, parse_jsonl_full, parse_workflow, serialize_conversation_turn,
+        serialize_jsonl_records, ConversationRecord, Step, StepQueue,
     };
     use sven_model::{Message, Role};
 
@@ -48,25 +47,37 @@ mod tests {
     #[test]
     fn conversation_format_detected_by_user_heading() {
         let md = "## User\n\nping\n\n## Sven\n\npong\n";
-        assert!(is_conv(md), "## User heading should mark conversation format");
+        assert!(
+            is_conv(md),
+            "## User heading should mark conversation format"
+        );
     }
 
     #[test]
     fn conversation_format_detected_by_sven_heading() {
         let md = "Some preamble.\n\n## Sven\n\nThe answer.\n";
-        assert!(is_conv(md), "## Sven heading should mark conversation format");
+        assert!(
+            is_conv(md),
+            "## Sven heading should mark conversation format"
+        );
     }
 
     #[test]
     fn conversation_format_detected_by_tool_heading() {
         let md = "## Tool\n\n```json\n{}\n```\n";
-        assert!(is_conv(md), "## Tool heading should mark conversation format");
+        assert!(
+            is_conv(md),
+            "## Tool heading should mark conversation format"
+        );
     }
 
     #[test]
     fn conversation_format_detected_by_tool_result_heading() {
         let md = "## Tool Result\n\n```\nok\n```\n";
-        assert!(is_conv(md), "## Tool Result heading should mark conversation format");
+        assert!(
+            is_conv(md),
+            "## Tool Result heading should mark conversation format"
+        );
     }
 
     #[test]
@@ -79,7 +90,10 @@ mod tests {
         // Standard workflow markdown uses H2 headings for step labels but
         // none of the reserved conversation heading names.
         let md = "# My Workflow\n\n## Step one\nDo it.\n\n## Step two\nAnd this.";
-        assert!(!is_conv(md), "workflow markdown should not be detected as conversation");
+        assert!(
+            !is_conv(md),
+            "workflow markdown should not be detected as conversation"
+        );
     }
 
     #[test]
@@ -192,7 +206,12 @@ mod tests {
     fn plain_text_input_becomes_one_fallback_step() {
         let mut w = parse_workflow("Do something useful.");
         assert_eq!(w.steps.len(), 1);
-        assert!(w.steps.pop().unwrap().content.contains("Do something useful"));
+        assert!(w
+            .steps
+            .pop()
+            .unwrap()
+            .content
+            .contains("Do something useful"));
     }
 
     #[test]
@@ -213,7 +232,9 @@ mod tests {
         let md = "# My Workflow\n\nThis context goes to the system prompt.\n\n## Step one\nDo it.";
         let mut w = parse_workflow(md);
         assert_eq!(w.title.as_deref(), Some("My Workflow"));
-        assert!(w.system_prompt_append.as_deref()
+        assert!(w
+            .system_prompt_append
+            .as_deref()
             .map(|s| s.contains("context goes to the system prompt"))
             .unwrap_or(false));
         assert_eq!(w.steps.len(), 1);
@@ -235,7 +256,10 @@ mod tests {
             prepended.push(s);
         }
         assert_eq!(prepended.len(), 2);
-        let first = { let mut p = prepended; p.pop().unwrap() };
+        let first = {
+            let mut p = prepended;
+            p.pop().unwrap()
+        };
         assert_eq!(first.content, "Extra context.");
     }
 
@@ -312,9 +336,7 @@ mod tests {
         let history = conv.history;
         let extra_prompt = Some("task2".to_string());
 
-        let step_content = extra_prompt
-            .or(conv.pending_user_input)
-            .unwrap_or_default();
+        let step_content = extra_prompt.or(conv.pending_user_input).unwrap_or_default();
 
         assert_eq!(step_content, "task2");
         assert_eq!(history.len(), 2, "first turn seeded into history");
@@ -361,7 +383,10 @@ mod tests {
         let jsonl = make_jsonl_conversation(&messages);
 
         assert!(is_jsonl(&jsonl), "must be detected as JSONL");
-        assert!(!is_conv(&jsonl), "must not be detected as conversation markdown");
+        assert!(
+            !is_conv(&jsonl),
+            "must not be detected as conversation markdown"
+        );
 
         let parsed = parse_jsonl_full(&jsonl).unwrap();
         assert_eq!(parsed.pending_user_input.as_deref(), Some("task2"));
@@ -370,10 +395,7 @@ mod tests {
 
     #[test]
     fn jsonl_without_trailing_user_has_no_pending() {
-        let messages = vec![
-            Message::user("task1"),
-            Message::assistant("done"),
-        ];
+        let messages = vec![Message::user("task1"), Message::assistant("done")];
         let jsonl = make_jsonl_conversation(&messages);
 
         let parsed = parse_jsonl_full(&jsonl).unwrap();
@@ -429,13 +451,21 @@ mod tests {
     fn compact_output_becomes_plain_text_step() {
         let compact_output = "Here is a bug report:\n- missing null check on line 42\n";
 
-        assert!(!is_conv(compact_output), "compact output is not conversation format");
+        assert!(
+            !is_conv(compact_output),
+            "compact output is not conversation format"
+        );
         assert!(!is_jsonl(compact_output), "compact output is not JSONL");
 
         // parse_workflow fallback: no ## sections → single step with full body
         let mut w = parse_workflow(compact_output);
         assert_eq!(w.steps.len(), 1);
-        assert!(w.steps.pop().unwrap().content.contains("missing null check"));
+        assert!(w
+            .steps
+            .pop()
+            .unwrap()
+            .content
+            .contains("missing null check"));
     }
 
     #[test]
@@ -554,8 +584,8 @@ mod tests {
 
     // ── resolve_model_cfg ─────────────────────────────────────────────────────
 
-    use sven_model::resolve_model_cfg;
     use sven_config::ModelConfig;
+    use sven_model::resolve_model_cfg;
 
     fn openai_base() -> ModelConfig {
         ModelConfig {
@@ -590,7 +620,10 @@ mod tests {
             cfg.api_key_env.is_none(),
             "api_key_env must be cleared when provider changes"
         );
-        assert!(cfg.api_key.is_none(), "api_key must be cleared when provider changes");
+        assert!(
+            cfg.api_key.is_none(),
+            "api_key must be cleared when provider changes"
+        );
     }
 
     #[test]
@@ -609,7 +642,10 @@ mod tests {
     fn bare_provider_override_clears_api_key_env() {
         let cfg = resolve_model_cfg(&openai_base(), "anthropic");
         assert_eq!(cfg.provider, "anthropic");
-        assert!(cfg.api_key_env.is_none(), "api_key_env must be cleared for bare provider change");
+        assert!(
+            cfg.api_key_env.is_none(),
+            "api_key_env must be cleared for bare provider change"
+        );
     }
 
     // ── Step label extraction ─────────────────────────────────────────────────
@@ -657,7 +693,10 @@ mod tests {
         let cli_prompt: Option<String> = None;
 
         let step_content = cli_prompt.or(pending);
-        assert!(step_content.is_none(), "runner must exit with error when both are absent");
+        assert!(
+            step_content.is_none(),
+            "runner must exit with error when both are absent"
+        );
     }
 
     // ── JSONL with thinking blocks ────────────────────────────────────────────
@@ -674,10 +713,7 @@ mod tests {
             json!({"type":"thinking","data":{"content":"Let me think..."}}),
             json!({"type":"message","data":{"role":"assistant","content":"world"}}),
         ];
-        let jsonl: String = records
-            .iter()
-            .map(|v| v.to_string() + "\n")
-            .collect();
+        let jsonl: String = records.iter().map(|v| v.to_string() + "\n").collect();
 
         assert!(is_jsonl(&jsonl));
 
@@ -714,7 +750,10 @@ mod tests {
         assert_eq!(conv.history.len(), 2);
         // The metadata comment must be stripped from the assistant message
         let response = conv.history[1].as_text().unwrap();
-        assert!(!response.contains("<!--"), "metadata comment must be stripped");
+        assert!(
+            !response.contains("<!--"),
+            "metadata comment must be stripped"
+        );
         assert!(response.contains("The answer is 4."));
     }
 
@@ -722,9 +761,7 @@ mod tests {
     fn jsonl_detection_stops_at_10_lines() {
         // Build a 20-line JSONL with the 11th being invalid — must still pass
         // because we only check the first 10.
-        let mut lines: Vec<String> = (0..10)
-            .map(|i| format!("{{\"i\":{i}}}"))
-            .collect();
+        let mut lines: Vec<String> = (0..10).map(|i| format!("{{\"i\":{i}}}")).collect();
         lines.push("not json".to_string());
         lines.extend((11..20).map(|i| format!("{{\"i\":{i}}}")));
         let s = lines.join("\n");

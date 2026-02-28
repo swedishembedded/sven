@@ -22,7 +22,9 @@ pub struct ReadFileTool;
 
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
+    fn name(&self) -> &str {
+        "read_file"
+    }
 
     fn description(&self) -> &str {
         "Reads a file. Default: 200 lines / 20 KB — whichever comes first.\n\
@@ -58,23 +60,37 @@ impl Tool for ReadFileTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-    fn output_category(&self) -> OutputCategory { OutputCategory::FileContent }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::FileContent
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let path = match call.args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'path'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'path'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
-        let offset = call.args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-        let limit = call.args.get("limit").and_then(|v| v.as_u64())
+        let offset = call
+            .args
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as usize;
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_LINE_LIMIT as u64) as usize;
 
         debug!(path = %path, offset, limit, "read_file tool");
@@ -89,10 +105,13 @@ impl Tool for ReadFileTool {
             return match sven_image::load_image(std::path::Path::new(&path)) {
                 Ok(img) => {
                     let data_url = img.into_data_url();
-                    ToolOutput::with_parts(&call.id, vec![
-                        ToolOutputPart::Text(format!("Image file: {path}")),
-                        ToolOutputPart::Image(data_url),
-                    ])
+                    ToolOutput::with_parts(
+                        &call.id,
+                        vec![
+                            ToolOutputPart::Text(format!("Image file: {path}")),
+                            ToolOutputPart::Image(data_url),
+                        ],
+                    )
                 }
                 Err(e) => ToolOutput::err(&call.id, format!("failed to read image: {e}")),
             };
@@ -127,20 +146,26 @@ impl Tool for ReadFileTool {
             let ihex_lines = to_ihex_lines(&bytes);
             let total = ihex_lines.len();
             let start = offset.saturating_sub(1);
-            let slice: Vec<&str> = ihex_lines.iter()
+            let slice: Vec<&str> = ihex_lines
+                .iter()
                 .skip(start)
                 .take(limit)
                 .map(String::as_str)
                 .collect();
             let last = start + slice.len();
-            let mut content = format!(
+            let mut content =
+                format!(
                 "note: binary file ({} bytes) rendered as Intel HEX ({} lines, 16 bytes/line)\n{}",
                 bytes.len(), total, slice.join("\n")
             );
             if last < total {
                 content.push_str(&format!(
                     "\n...[{} more lines — showing L{}-L{} of {}; use offset={} to continue]",
-                    total - last, offset, offset + slice.len() - 1, total, last + 1
+                    total - last,
+                    offset,
+                    offset + slice.len() - 1,
+                    total,
+                    last + 1
                 ));
             }
             if let Some(note) = resolved_note {
@@ -201,7 +226,8 @@ impl Tool for ReadFileTool {
 /// Returns `true` for extensions that are always binary and never useful to
 /// read as text.  This is a fast-path that avoids reading the file at all.
 fn is_binary_extension(ext: &str) -> bool {
-    matches!(ext.to_ascii_lowercase().as_str(),
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
         // Object / library / executable
         "o" | "a" | "so" | "elf" | "exe" | "dll" | "wasm" | "pdb" |
         // Archives / compressed
@@ -230,7 +256,8 @@ fn has_binary_content(bytes: &[u8]) -> bool {
     if sample.contains(&0u8) {
         return true;
     }
-    let non_printable = sample.iter()
+    let non_printable = sample
+        .iter()
         .filter(|&&b| b < 9 || (b > 13 && b < 32))
         .count();
     non_printable * 100 / sample.len() > 30
@@ -279,10 +306,13 @@ fn to_ihex_lines(data: &[u8]) -> Vec<String> {
         let mut cs = n
             .wrapping_add((a16 >> 8) as u8)
             .wrapping_add((a16 & 0xFF) as u8);
-        let data_hex: String = chunk.iter().map(|b| {
-            cs = cs.wrapping_add(*b);
-            format!("{:02X}", b)
-        }).collect();
+        let data_hex: String = chunk
+            .iter()
+            .map(|b| {
+                cs = cs.wrapping_add(*b);
+                format!("{:02X}", b)
+            })
+            .collect();
         cs = (!cs).wrapping_add(1);
         lines.push(format!(":{:02X}{:04X}00{}{:02X}", n, a16, data_hex, cs));
     }
@@ -365,7 +395,11 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "r1".into(), name: "read_file".into(), args }
+        ToolCall {
+            id: "r1".into(),
+            name: "read_file".into(),
+            args,
+        }
     }
 
     fn tmp_file(content: &str) -> String {
@@ -395,11 +429,13 @@ mod tests {
     async fn offset_and_limit_work() {
         let path = tmp_file("line1\nline2\nline3\nline4\nline5\n");
         let t = ReadFileTool;
-        let out = t.execute(&call(json!({
-            "path": path,
-            "offset": 2,
-            "limit": 2
-        }))).await;
+        let out = t
+            .execute(&call(json!({
+                "path": path,
+                "offset": 2,
+                "limit": 2
+            })))
+            .await;
         assert!(!out.is_error);
         assert!(out.content.contains("L2:line2"));
         assert!(out.content.contains("L3:line3"));
@@ -411,7 +447,9 @@ mod tests {
     #[tokio::test]
     async fn missing_file_is_error() {
         let t = ReadFileTool;
-        let out = t.execute(&call(json!({"path": "/tmp/sven_no_such_file_xyz.txt"}))).await;
+        let out = t
+            .execute(&call(json!({"path": "/tmp/sven_no_such_file_xyz.txt"})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("read error"));
     }
@@ -433,7 +471,11 @@ mod tests {
         let t = ReadFileTool;
         let out = t.execute(&call(json!({"path": path, "limit": 2}))).await;
         assert!(!out.is_error);
-        assert!(out.content.contains("offset=3"), "should suggest next offset: {}", out.content);
+        assert!(
+            out.content.contains("offset=3"),
+            "should suggest next offset: {}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -443,7 +485,11 @@ mod tests {
         let t = ReadFileTool;
         let out = t.execute(&call(json!({"path": path, "limit": 200}))).await;
         assert!(!out.is_error);
-        assert!(!out.content.contains("offset="), "should not paginate: {}", out.content);
+        assert!(
+            !out.content.contains("offset="),
+            "should not paginate: {}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -459,10 +505,18 @@ mod tests {
         // Request 500 lines but byte cap should kick in first
         let out = t.execute(&call(json!({"path": path, "limit": 500}))).await;
         assert!(!out.is_error);
-        assert!(out.content.contains("byte limit"), "should mention byte limit: {}", out.content);
+        assert!(
+            out.content.contains("byte limit"),
+            "should mention byte limit: {}",
+            out.content
+        );
         // Should have fewer than 500 lines
         let l_count = out.content.lines().filter(|l| l.starts_with('L')).count();
-        assert!(l_count < 500, "should be fewer than 500 lines: got {}", l_count);
+        assert!(
+            l_count < 500,
+            "should be fewer than 500 lines: got {}",
+            l_count
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -533,7 +587,10 @@ mod tests {
         assert!(ela.starts_with(":02000004"), "expected ELA: {ela}");
         // Second line is the data record
         let data_rec = &lines[1];
-        assert!(data_rec.starts_with(":01000000FF"), "unexpected record: {data_rec}");
+        assert!(
+            data_rec.starts_with(":01000000FF"),
+            "unexpected record: {data_rec}"
+        );
     }
 
     #[test]
@@ -543,7 +600,10 @@ mod tests {
         // ELA + one 16-byte data record + EOF = 3 lines
         assert_eq!(lines.len(), 3, "expected 3 lines for 16 bytes: {:?}", lines);
         let rec = &lines[1];
-        assert!(rec.starts_with(":10000000"), "expected 16-byte record: {rec}");
+        assert!(
+            rec.starts_with(":10000000"),
+            "expected 16-byte record: {rec}"
+        );
     }
 
     #[test]
@@ -552,7 +612,10 @@ mod tests {
         let data = vec![0xAAu8; 65537];
         let lines = to_ihex_lines(&data);
         let ela_count = lines.iter().filter(|l| l.contains("000004")).count();
-        assert!(ela_count >= 2, "expected at least 2 ELA records: {ela_count}");
+        assert!(
+            ela_count >= 2,
+            "expected at least 2 ELA records: {ela_count}"
+        );
     }
 
     #[tokio::test]
@@ -566,8 +629,16 @@ mod tests {
         let t = ReadFileTool;
         let out = t.execute(&call(json!({"path": path}))).await;
         assert!(!out.is_error, "binary should succeed: {}", out.content);
-        assert!(out.content.contains("Intel HEX"), "should mention Intel HEX: {}", out.content);
-        assert!(out.content.contains(":"), "should contain HEX records: {}", out.content);
+        assert!(
+            out.content.contains("Intel HEX"),
+            "should mention Intel HEX: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains(":"),
+            "should contain HEX records: {}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -584,7 +655,11 @@ mod tests {
         // Limit to 2 lines (excluding the header note line)
         let out = t.execute(&call(json!({"path": path, "limit": 2}))).await;
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("offset="), "should suggest next offset: {}", out.content);
+        assert!(
+            out.content.contains("offset="),
+            "should suggest next offset: {}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -595,10 +670,7 @@ mod tests {
         use std::fs;
         // Create structure: /tmp/sven_ascend_test/<workspace>/project/subdir/file.txt
         // but file actually lives at /tmp/sven_ascend_test/<workspace>/subdir/file.txt
-        let base = std::env::temp_dir().join(format!(
-            "sven_ascend_test_{}",
-            std::process::id()
-        ));
+        let base = std::env::temp_dir().join(format!("sven_ascend_test_{}", std::process::id()));
         let workspace = base.join("workspace");
         let project = workspace.join("project");
         let workspace_subdir = workspace.join("subdir");
@@ -612,7 +684,11 @@ mod tests {
         assert!(!wrong_path.exists(), "wrong path should not exist");
 
         let found = ascend_to_find(&wrong_path.to_string_lossy());
-        assert_eq!(found.as_deref(), Some(real_file.as_path()), "should find file one level up");
+        assert_eq!(
+            found.as_deref(),
+            Some(real_file.as_path()),
+            "should find file one level up"
+        );
 
         let _ = fs::remove_dir_all(&base);
     }
@@ -632,10 +708,7 @@ mod tests {
     #[tokio::test]
     async fn read_file_resolves_via_ascend_and_reports_note() {
         use std::fs;
-        let base = std::env::temp_dir().join(format!(
-            "sven_ascend_read_{}",
-            std::process::id()
-        ));
+        let base = std::env::temp_dir().join(format!("sven_ascend_read_{}", std::process::id()));
         let workspace = base.join("ws");
         let project = workspace.join("proj");
         let real_dir = workspace.join("knowledge");
@@ -648,10 +721,18 @@ mod tests {
         let wrong_path = project.join("knowledge").join("spec.md");
 
         let t = ReadFileTool;
-        let out = t.execute(&call(json!({"path": wrong_path.to_str().unwrap()}))).await;
+        let out = t
+            .execute(&call(json!({"path": wrong_path.to_str().unwrap()})))
+            .await;
         assert!(!out.is_error, "should succeed via ascend: {}", out.content);
-        assert!(out.content.contains("content line"), "file content should be present");
-        assert!(out.content.contains("note: resolved to"), "should report resolution note");
+        assert!(
+            out.content.contains("content line"),
+            "file content should be present"
+        );
+        assert!(
+            out.content.contains("note: resolved to"),
+            "should report resolution note"
+        );
 
         let _ = fs::remove_dir_all(&base);
     }

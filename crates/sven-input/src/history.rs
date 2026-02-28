@@ -85,13 +85,11 @@ pub fn save_to(path: &Path, messages: &[Message]) -> Result<()> {
     }
 
     // Preserve an existing title so repeated saves don't lose it.
-    let existing_title: Option<String> = fs::read_to_string(path)
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("# ") && !l.starts_with("## "))
-                .map(|l| l[2..].trim().to_string())
-        });
+    let existing_title: Option<String> = fs::read_to_string(path).ok().and_then(|s| {
+        s.lines()
+            .find(|l| l.starts_with("# ") && !l.starts_with("## "))
+            .map(|l| l[2..].trim().to_string())
+    });
 
     let title = existing_title.or_else(|| {
         messages
@@ -102,8 +100,7 @@ pub fn save_to(path: &Path, messages: &[Message]) -> Result<()> {
     });
 
     let content = serialize_conversation(title.as_deref(), messages);
-    fs::write(path, &content)
-        .with_context(|| format!("writing conversation to {}", path.display()))
+    fs::write(path, &content).with_context(|| format!("writing conversation to {}", path.display()))
 }
 
 // ─── List ────────────────────────────────────────────────────────────────────
@@ -145,7 +142,13 @@ pub fn list(limit: Option<usize>) -> Result<Vec<HistoryEntry>> {
         let (timestamp, title) = parse_stem_and_title(&stem, &path);
         let turns = count_turns(&path);
 
-        entries.push(HistoryEntry { id: stem, path, timestamp, title, turns });
+        entries.push(HistoryEntry {
+            id: stem,
+            path,
+            timestamp,
+            title,
+            turns,
+        });
     }
 
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -314,7 +317,11 @@ fn read_title_from_file(path: &Path) -> Option<String> {
             }
             if !line.trim().is_empty() {
                 let s: String = line.chars().take(60).collect();
-                return Some(if line.len() > 60 { format!("{s}…") } else { s });
+                return Some(if line.len() > 60 {
+                    format!("{s}…")
+                } else {
+                    s
+                });
             }
         }
     }
@@ -325,8 +332,5 @@ fn count_turns(path: &Path) -> usize {
     let Ok(content) = fs::read_to_string(path) else {
         return 0;
     };
-    content
-        .lines()
-        .filter(|l| l.trim() == "## User")
-        .count()
+    content.lines().filter(|l| l.trim() == "## User").count()
 }

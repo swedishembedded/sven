@@ -56,7 +56,19 @@ impl AnthropicProvider {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Self {
-        Self::with_cache(model, api_key, base_url, max_tokens, temperature, false, false, false, false, false, false)
+        Self::with_cache(
+            model,
+            api_key,
+            base_url,
+            max_tokens,
+            temperature,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -92,8 +104,12 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl crate::ModelProvider for AnthropicProvider {
-    fn name(&self) -> &str { "anthropic" }
-    fn model_name(&self) -> &str { &self.model }
+    fn name(&self) -> &str {
+        "anthropic"
+    }
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 
     /// Anthropic does not expose a public list-models endpoint with full
     /// metadata, so we return the static catalog entries for this provider.
@@ -107,7 +123,10 @@ impl crate::ModelProvider for AnthropicProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        let key = self.api_key.as_deref().context("ANTHROPIC_API_KEY not set")?;
+        let key = self
+            .api_key
+            .as_deref()
+            .context("ANTHROPIC_API_KEY not set")?;
 
         let (system_text, mut messages) = build_anthropic_messages(&req.messages);
 
@@ -137,9 +156,8 @@ impl crate::ModelProvider for AnthropicProvider {
         // TTL ordering is preserved: images and tool results receive the same
         // TTL tier as system/tools (`cache_ctrl`), which is always ≥ the 5-min
         // TTL used by automatic conversation caching.
-        let slots_used = self.cache_system_prompt as u8
-            + self.cache_tools as u8
-            + self.cache_conversation as u8;
+        let slots_used =
+            self.cache_system_prompt as u8 + self.cache_tools as u8 + self.cache_conversation as u8;
         let avail = 4u8.saturating_sub(slots_used);
 
         if avail > 0 && (self.cache_images || self.cache_tool_results) {
@@ -171,28 +189,37 @@ impl crate::ModelProvider for AnthropicProvider {
         // Anthropic caches the entire tools array as a prefix.
         let tools: Vec<Value> = if !req.tools.is_empty() && self.cache_tools {
             let last = req.tools.len() - 1;
-            req.tools.iter().enumerate().map(|(i, t)| {
-                if i == last {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": t.parameters,
-                        "cache_control": cache_ctrl,
-                    })
-                } else {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": t.parameters,
-                    })
-                }
-            }).collect()
+            req.tools
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    if i == last {
+                        json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "input_schema": t.parameters,
+                            "cache_control": cache_ctrl,
+                        })
+                    } else {
+                        json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "input_schema": t.parameters,
+                        })
+                    }
+                })
+                .collect()
         } else {
-            req.tools.iter().map(|t| json!({
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.parameters,
-            })).collect()
+            req.tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    })
+                })
+                .collect()
         };
 
         let mut body = json!({
@@ -275,7 +302,8 @@ impl crate::ModelProvider for AnthropicProvider {
             "sending anthropic request",
         );
 
-        let mut request_builder = self.client
+        let mut request_builder = self
+            .client
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01");
@@ -293,8 +321,7 @@ impl crate::ModelProvider for AnthropicProvider {
             if self.extended_cache_time {
                 betas.push("extended-cache-ttl-2025-04-11");
             }
-            request_builder = request_builder
-                .header("anthropic-beta", betas.join(","));
+            request_builder = request_builder.header("anthropic-beta", betas.join(","));
         }
 
         let resp = request_builder
@@ -343,7 +370,12 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                 }
                 "input_json_delta" => {
                     let partial = delta["partial_json"].as_str().unwrap_or("").to_string();
-                    Ok(ResponseEvent::ToolCall { index, id: String::new(), name: String::new(), arguments: partial })
+                    Ok(ResponseEvent::ToolCall {
+                        index,
+                        id: String::new(),
+                        name: String::new(),
+                        arguments: partial,
+                    })
                 }
                 // Extended thinking: Claude streams the chain-of-thought as a
                 // separate delta type.  Map it to ThinkingDelta so the CI runner
@@ -369,7 +401,12 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
             if block["type"].as_str() == Some("tool_use") {
                 let id = block["id"].as_str().unwrap_or("").to_string();
                 let name = block["name"].as_str().unwrap_or("").to_string();
-                Ok(ResponseEvent::ToolCall { index, id, name, arguments: String::new() })
+                Ok(ResponseEvent::ToolCall {
+                    index,
+                    id,
+                    name,
+                    arguments: String::new(),
+                })
             } else {
                 Ok(ResponseEvent::TextDelta(String::new()))
             }
@@ -400,10 +437,10 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                     input_tokens: usage["input_tokens"].as_u64().unwrap_or(0) as u32,
                     output_tokens: 0,
                     // Anthropic reports these only in message_start.
-                    cache_read_tokens: usage["cache_read_input_tokens"]
-                        .as_u64().unwrap_or(0) as u32,
-                    cache_write_tokens: usage["cache_creation_input_tokens"]
-                        .as_u64().unwrap_or(0) as u32,
+                    cache_read_tokens: usage["cache_read_input_tokens"].as_u64().unwrap_or(0)
+                        as u32,
+                    cache_write_tokens: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
+                        as u32,
                 });
             }
             Ok(ResponseEvent::TextDelta(String::new()))
@@ -418,9 +455,7 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
 /// Returns `(system_text, conversation_messages)`.  The system message is
 /// separated out because Anthropic expects it as a top-level `system` field,
 /// not as a conversation turn.
-pub(crate) fn build_anthropic_messages(
-    messages: &[crate::Message],
-) -> (String, Vec<Value>) {
+pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, Vec<Value>) {
     use crate::{ContentPart, MessageContent, Role, ToolContentPart, ToolResultContent};
 
     let mut system_text = String::new();
@@ -444,34 +479,41 @@ pub(crate) fn build_anthropic_messages(
                 out.push(json!({ "role": role, "content": t }));
             }
             MessageContent::ContentParts(parts) if !parts.is_empty() => {
-                let content: Vec<Value> = parts.iter().map(|p| match p {
-                    ContentPart::Text { text } => {
-                        json!({ "type": "text", "text": text })
-                    }
-                    ContentPart::Image { image_url, .. } => {
-                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
-                            json!({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime,
-                                    "data": data,
-                                }
-                            })
-                        } else {
-                            json!({
-                                "type": "image",
-                                "source": { "type": "url", "url": image_url }
-                            })
+                let content: Vec<Value> = parts
+                    .iter()
+                    .map(|p| match p {
+                        ContentPart::Text { text } => {
+                            json!({ "type": "text", "text": text })
                         }
-                    }
-                }).collect();
+                        ContentPart::Image { image_url, .. } => {
+                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url)
+                            {
+                                json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": data,
+                                    }
+                                })
+                            } else {
+                                json!({
+                                    "type": "image",
+                                    "source": { "type": "url", "url": image_url }
+                                })
+                            }
+                        }
+                    })
+                    .collect();
                 out.push(json!({ "role": role, "content": content }));
             }
             MessageContent::ContentParts(_) => {
                 out.push(json!({ "role": role, "content": "" }));
             }
-            MessageContent::ToolCall { tool_call_id, function } => {
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } => {
                 // Anthropic requires tool_use.id to match `^[a-zA-Z0-9_-]+$`.
                 // An empty id can arise when a content_block_start event was
                 // missing from the stream.  Rather than sending an invalid
@@ -498,32 +540,40 @@ pub(crate) fn build_anthropic_messages(
                     }]
                 }));
             }
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 let wire_content: Value = match content {
                     ToolResultContent::Text(t) => json!(t),
                     ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                        let arr: Vec<Value> = parts.iter().map(|p| match p {
-                            ToolContentPart::Text { text } => {
-                                json!({ "type": "text", "text": text })
-                            }
-                            ToolContentPart::Image { image_url } => {
-                                if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
-                                    json!({
-                                        "type": "image",
-                                        "source": {
-                                            "type": "base64",
-                                            "media_type": mime,
-                                            "data": data,
-                                        }
-                                    })
-                                } else {
-                                    json!({
-                                        "type": "image",
-                                        "source": { "type": "url", "url": image_url }
-                                    })
+                        let arr: Vec<Value> = parts
+                            .iter()
+                            .map(|p| match p {
+                                ToolContentPart::Text { text } => {
+                                    json!({ "type": "text", "text": text })
                                 }
-                            }
-                        }).collect();
+                                ToolContentPart::Image { image_url } => {
+                                    if let Ok((mime, data)) =
+                                        crate::types::parse_data_url_parts(image_url)
+                                    {
+                                        json!({
+                                            "type": "image",
+                                            "source": {
+                                                "type": "base64",
+                                                "media_type": mime,
+                                                "data": data,
+                                            }
+                                        })
+                                    } else {
+                                        json!({
+                                            "type": "image",
+                                            "source": { "type": "url", "url": image_url }
+                                        })
+                                    }
+                                }
+                            })
+                            .collect();
                         json!(arr)
                     }
                     ToolResultContent::Parts(_) => json!(""),
@@ -549,9 +599,7 @@ mod tests {
 
     #[test]
     fn provider_name_and_model() {
-        let p = AnthropicProvider::new(
-            "claude-3-5-sonnet-20241022".into(), None, None, None, None,
-        );
+        let p = AnthropicProvider::new("claude-3-5-sonnet-20241022".into(), None, None, None, None);
         assert_eq!(p.name(), "anthropic");
         assert_eq!(p.model_name(), "claude-3-5-sonnet-20241022");
     }
@@ -568,7 +616,14 @@ mod tests {
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 42, output_tokens: 0, .. }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 42,
+                    output_tokens: 0,
+                    ..
+                }
+            ),
             "unexpected: {ev:?}"
         );
     }
@@ -588,12 +643,15 @@ mod tests {
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage {
-                input_tokens: 100,
-                cache_read_tokens: 80,
-                cache_write_tokens: 20,
-                ..
-            }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 100,
+                    cache_read_tokens: 80,
+                    cache_write_tokens: 20,
+                    ..
+                }
+            ),
             "unexpected: {ev:?}"
         );
     }
@@ -726,7 +784,14 @@ mod tests {
         });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(
-            matches!(ev, ResponseEvent::Usage { input_tokens: 0, output_tokens: 88, .. }),
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 0,
+                    output_tokens: 88,
+                    ..
+                }
+            ),
             "unexpected: {ev:?}"
         );
     }
@@ -766,10 +831,8 @@ mod tests {
     #[test]
     fn system_message_extracted_to_system_text() {
         use crate::Message;
-        let (sys, msgs) = build_anthropic_messages(&[
-            Message::system("be helpful"),
-            Message::user("hi"),
-        ]);
+        let (sys, msgs) =
+            build_anthropic_messages(&[Message::system("be helpful"), Message::user("hi")]);
         assert_eq!(sys, "be helpful");
         assert_eq!(msgs.len(), 1);
     }
@@ -779,7 +842,9 @@ mod tests {
         use crate::{ContentPart, Message};
         let data_url = "data:image/png;base64,iVBORw0KGgo=";
         let msg = Message::user_with_parts(vec![
-            ContentPart::Text { text: "look at this".into() },
+            ContentPart::Text {
+                text: "look at this".into(),
+            },
             ContentPart::image(data_url),
         ]);
         let (_, msgs) = build_anthropic_messages(&[msg]);
@@ -796,9 +861,7 @@ mod tests {
     fn content_parts_image_https_url_uses_url_source() {
         use crate::{ContentPart, Message};
         let url = "https://example.com/img.jpg";
-        let msg = Message::user_with_parts(vec![
-            ContentPart::image(url),
-        ]);
+        let msg = Message::user_with_parts(vec![ContentPart::image(url)]);
         let (_, msgs) = build_anthropic_messages(&[msg]);
         let img = &msgs[0]["content"][0];
         assert_eq!(img["source"]["type"], "url");
@@ -809,10 +872,17 @@ mod tests {
     fn tool_result_parts_with_image_serialized_as_tool_result_content_array() {
         use crate::{Message, ToolContentPart};
         let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
-        let msg = Message::tool_result_with_parts("tc-42", vec![
-            ToolContentPart::Text { text: "screenshot".into() },
-            ToolContentPart::Image { image_url: data_url.into() },
-        ]);
+        let msg = Message::tool_result_with_parts(
+            "tc-42",
+            vec![
+                ToolContentPart::Text {
+                    text: "screenshot".into(),
+                },
+                ToolContentPart::Image {
+                    image_url: data_url.into(),
+                },
+            ],
+        );
         let (_, msgs) = build_anthropic_messages(&[msg]);
         assert_eq!(msgs[0]["role"], "user");
         let block = &msgs[0]["content"][0];

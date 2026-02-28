@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Image {
         /// Data URL (`data:image/png;base64,...`) or HTTPS URL.
         image_url: String,
@@ -38,14 +40,20 @@ impl ContentPart {
 
     /// Convenience constructor for an image part with the provider default detail.
     pub fn image(image_url: impl Into<String>) -> Self {
-        Self::Image { image_url: image_url.into(), detail: None }
+        Self::Image {
+            image_url: image_url.into(),
+            detail: None,
+        }
     }
 
     /// Convenience constructor for an image with an explicit OpenAI detail level.
     ///
     /// `detail` should be `"low"`, `"high"`, or `"auto"`.
     pub fn image_with_detail(image_url: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self::Image { image_url: image_url.into(), detail: Some(detail.into()) }
+        Self::Image {
+            image_url: image_url.into(),
+            detail: Some(detail.into()),
+        }
     }
 }
 
@@ -119,7 +127,9 @@ impl std::fmt::Display for ToolResultContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolContentPart {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Image {
         /// Data URL (`data:image/png;base64,...`).
         image_url: String,
@@ -149,15 +159,24 @@ pub struct Message {
 
 impl Message {
     pub fn system(text: impl Into<String>) -> Self {
-        Self { role: Role::System, content: MessageContent::Text(text.into()) }
+        Self {
+            role: Role::System,
+            content: MessageContent::Text(text.into()),
+        }
     }
 
     pub fn user(text: impl Into<String>) -> Self {
-        Self { role: Role::User, content: MessageContent::Text(text.into()) }
+        Self {
+            role: Role::User,
+            content: MessageContent::Text(text.into()),
+        }
     }
 
     pub fn assistant(text: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: MessageContent::Text(text.into()) }
+        Self {
+            role: Role::Assistant,
+            content: MessageContent::Text(text.into()),
+        }
     }
 
     pub fn tool_result(id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -174,10 +193,7 @@ impl Message {
     ///
     /// If `parts` is empty, this falls back to `ToolResultContent::Text("")` to
     /// avoid sending an empty content array to provider APIs.
-    pub fn tool_result_with_parts(
-        id: impl Into<String>,
-        parts: Vec<ToolContentPart>,
-    ) -> Self {
+    pub fn tool_result_with_parts(id: impl Into<String>, parts: Vec<ToolContentPart>) -> Self {
         let content = if parts.is_empty() {
             ToolResultContent::Text(String::new())
         } else if parts.len() == 1 {
@@ -215,7 +231,10 @@ impl Message {
         } else {
             MessageContent::ContentParts(parts)
         };
-        Self { role: Role::User, content }
+        Self {
+            role: Role::User,
+            content,
+        }
     }
 
     /// Return the plain text of this message, if it has exactly one text part.
@@ -260,7 +279,11 @@ impl Message {
                     ContentPart::Image { detail, .. } => {
                         // "low" → fixed 85 tokens regardless of image size.
                         // auto / high / None → ~765 tokens (conservative upper bound).
-                        let tokens = if detail.as_deref() == Some("low") { 85 } else { 765 };
+                        let tokens = if detail.as_deref() == Some("low") {
+                            85
+                        } else {
+                            765
+                        };
                         tokens * 4
                     }
                 })
@@ -444,7 +467,10 @@ mod tests {
         assert_eq!(m.role, Role::Tool);
         assert!(m.as_text().is_none(), "tool_result has no text accessor");
         match &m.content {
-            MessageContent::ToolResult { tool_call_id, content } => {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "id-1");
                 assert_eq!(content.as_text(), Some("output"));
             }
@@ -455,8 +481,12 @@ mod tests {
     #[test]
     fn message_tool_result_with_image_parts() {
         let parts = vec![
-            ToolContentPart::Text { text: "here is the chart".into() },
-            ToolContentPart::Image { image_url: "data:image/png;base64,ABC".into() },
+            ToolContentPart::Text {
+                text: "here is the chart".into(),
+            },
+            ToolContentPart::Image {
+                image_url: "data:image/png;base64,ABC".into(),
+            },
         ];
         let m = Message::tool_result_with_parts("call-1", parts);
         assert_eq!(m.role, Role::Tool);
@@ -466,7 +496,9 @@ mod tests {
     #[test]
     fn message_user_with_parts_image() {
         let parts = vec![
-            ContentPart::Text { text: "what is this?".into() },
+            ContentPart::Text {
+                text: "what is this?".into(),
+            },
             ContentPart::image("data:image/png;base64,XYZ"),
         ];
         let m = Message::user_with_parts(parts);
@@ -482,7 +514,10 @@ mod tests {
             role: Role::Assistant,
             content: MessageContent::ToolCall {
                 tool_call_id: "x".into(),
-                function: FunctionCall { name: "f".into(), arguments: "{}".into() },
+                function: FunctionCall {
+                    name: "f".into(),
+                    arguments: "{}".into(),
+                },
             },
         };
         assert!(m.as_text().is_none());
@@ -515,7 +550,7 @@ mod tests {
             content: MessageContent::ToolCall {
                 tool_call_id: "id".into(),
                 function: FunctionCall {
-                    name: "aaaa".into(),       // 4 chars
+                    name: "aaaa".into(),          // 4 chars
                     arguments: "bbbbbbbb".into(), // 8 chars
                 },
             },
@@ -539,14 +574,20 @@ mod tests {
 
     #[test]
     fn approx_tokens_image_detail_low_uses_85_tokens() {
-        let parts = vec![ContentPart::image_with_detail("data:image/png;base64,A", "low")];
+        let parts = vec![ContentPart::image_with_detail(
+            "data:image/png;base64,A",
+            "low",
+        )];
         let m = Message::user_with_parts(parts);
         assert_eq!(m.approx_tokens(), 85);
     }
 
     #[test]
     fn approx_tokens_image_detail_high_uses_765_tokens() {
-        let parts = vec![ContentPart::image_with_detail("data:image/png;base64,A", "high")];
+        let parts = vec![ContentPart::image_with_detail(
+            "data:image/png;base64,A",
+            "high",
+        )];
         let m = Message::user_with_parts(parts);
         assert_eq!(m.approx_tokens(), 765);
     }
@@ -595,7 +636,10 @@ mod tests {
         let p = ContentPart::image_with_detail("data:image/png;base64,ABC", "low");
         let json = serde_json::to_string(&p).unwrap();
         // "detail" field must be present in JSON
-        assert!(json.contains("\"detail\""), "detail should be serialized when Some: {json}");
+        assert!(
+            json.contains("\"detail\""),
+            "detail should be serialized when Some: {json}"
+        );
         let back: ContentPart = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);
     }
@@ -604,7 +648,10 @@ mod tests {
     fn content_part_image_without_detail_omits_field() {
         let p = ContentPart::image("data:image/png;base64,ABC");
         let json = serde_json::to_string(&p).unwrap();
-        assert!(!json.contains("\"detail\""), "detail should not appear when None: {json}");
+        assert!(
+            !json.contains("\"detail\""),
+            "detail should not appear when None: {json}"
+        );
     }
 
     #[test]

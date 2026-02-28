@@ -13,15 +13,9 @@
 //!
 //! Requires the `git-discovery` crate feature.
 
-use std::{
-    path::PathBuf,
-    str::FromStr,
-    sync::Mutex,
-};
+use std::{path::PathBuf, str::FromStr, sync::Mutex};
 
-use git2::{
-    CredentialType, FetchOptions, ObjectType, PushOptions, RemoteCallbacks, Repository,
-};
+use git2::{CredentialType, FetchOptions, ObjectType, PushOptions, RemoteCallbacks, Repository};
 use libp2p::{Multiaddr, PeerId};
 use sha2::{Digest, Sha256};
 
@@ -113,7 +107,9 @@ pub struct GitDiscoveryProvider {
 impl GitDiscoveryProvider {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, P2pError> {
         let repo = Repository::open(path.into()).map_err(git_err)?;
-        Ok(Self { repo: Mutex::new(RepoGuard(repo)) })
+        Ok(Self {
+            repo: Mutex::new(RepoGuard(repo)),
+        })
     }
 }
 
@@ -135,14 +131,17 @@ impl DiscoveryProvider for GitDiscoveryProvider {
             let ref_name = addr_ref_name(addr);
             let data = addr.to_string();
             let oid = repo.blob(data.as_bytes()).map_err(git_err)?;
-            repo.reference(&ref_name, oid, true, "relay addr publish").map_err(git_err)?;
+            repo.reference(&ref_name, oid, true, "relay addr publish")
+                .map_err(git_err)?;
             ref_names.push(ref_name);
         }
 
         let refspecs: Vec<String> = ref_names.iter().map(|r| format!("+{r}:{r}")).collect();
         let refspecs_str: Vec<&str> = refspecs.iter().map(|s| s.as_str()).collect();
         let mut remote = repo.find_remote("origin").map_err(git_err)?;
-        remote.push(&refspecs_str, Some(&mut push_opts())).map_err(git_err)?;
+        remote
+            .push(&refspecs_str, Some(&mut push_opts()))
+            .map_err(git_err)?;
         Ok(())
     }
 
@@ -162,9 +161,9 @@ impl DiscoveryProvider for GitDiscoveryProvider {
                 None,
             ) {
                 Ok(()) => tracing::debug!("Fetched refs/relay/* successfully"),
-                Err(e) => tracing::warn!(
-                    "git fetch refs/relay/* failed, falling back to local refs: {e}"
-                ),
+                Err(e) => {
+                    tracing::warn!("git fetch refs/relay/* failed, falling back to local refs: {e}")
+                }
             }
         } else {
             tracing::warn!("No 'origin' remote configured, using local refs/relay/*");
@@ -191,10 +190,7 @@ impl DiscoveryProvider for GitDiscoveryProvider {
             return Err(P2pError::NoRelayAddrs);
         }
 
-        tracing::info!(
-            "Discovered {} relay address(es) from git",
-            addrs.len()
-        );
+        tracing::info!("Discovered {} relay address(es) from git", addrs.len());
         Ok(addrs)
     }
 
@@ -230,16 +226,24 @@ impl DiscoveryProvider for GitDiscoveryProvider {
         Ok(())
     }
 
-    fn publish_peer(&self, room: &str, peer_id: &PeerId, relay_addr: &Multiaddr) -> Result<(), P2pError> {
+    fn publish_peer(
+        &self,
+        room: &str,
+        peer_id: &PeerId,
+        relay_addr: &Multiaddr,
+    ) -> Result<(), P2pError> {
         let guard = self.repo.lock().unwrap();
         let repo = &guard.0;
         let data = format!("{}|{}", peer_id, relay_addr);
         let oid = repo.blob(data.as_bytes()).map_err(git_err)?;
         let ref_name = format!("refs/peers/{}/{}", room, peer_id);
-        repo.reference(&ref_name, oid, true, "peer publish").map_err(git_err)?;
+        repo.reference(&ref_name, oid, true, "peer publish")
+            .map_err(git_err)?;
         let refspec = format!("+{ref_name}:{ref_name}");
         let mut remote = repo.find_remote("origin").map_err(git_err)?;
-        remote.push(&[refspec.as_str()], Some(&mut push_opts())).map_err(git_err)?;
+        remote
+            .push(&[refspec.as_str()], Some(&mut push_opts()))
+            .map_err(git_err)?;
         Ok(())
     }
 
@@ -287,5 +291,8 @@ fn parse_peer_record(content: &str) -> Option<PeerInfo> {
     let mut parts = s.splitn(2, '|');
     let peer_id = PeerId::from_str(parts.next()?).ok()?;
     let relay_addr = Multiaddr::from_str(parts.next()?).ok()?;
-    Some(PeerInfo { peer_id, relay_addr })
+    Some(PeerInfo {
+        peer_id,
+        relay_addr,
+    })
 }

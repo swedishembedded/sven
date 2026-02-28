@@ -10,13 +10,24 @@ use crate::commands::{
 pub struct QuitCommand;
 
 impl SlashCommand for QuitCommand {
-    fn name(&self) -> &str { "quit" }
+    fn name(&self) -> &str {
+        "quit"
+    }
 
-    fn description(&self) -> &str { "Exit sven" }
+    fn description(&self) -> &str {
+        "Exit sven"
+    }
 
-    fn arguments(&self) -> Vec<CommandArgument> { vec![] }
+    fn arguments(&self) -> Vec<CommandArgument> {
+        vec![]
+    }
 
-    fn complete(&self, _arg_index: usize, _partial: &str, _ctx: &CommandContext) -> Vec<CompletionItem> {
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -45,7 +56,10 @@ mod tests {
     fn execute_ignores_unexpected_args() {
         // /quit should quit regardless of any trailing arguments.
         let result = QuitCommand.execute(vec!["now".into(), "please".into()]);
-        assert!(matches!(result.immediate_action, Some(ImmediateAction::Quit)));
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::Quit)
+        ));
     }
 
     #[test]

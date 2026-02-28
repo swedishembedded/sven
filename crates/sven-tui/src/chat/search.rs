@@ -37,7 +37,9 @@ impl SearchState {
                     l.spans.iter().any(|s| re.is_match(&s.content))
                 } else {
                     let q = self.query.to_lowercase();
-                    l.spans.iter().any(|s| s.content.to_lowercase().contains(&q))
+                    l.spans
+                        .iter()
+                        .any(|s| s.content.to_lowercase().contains(&q))
                 }
             })
             .map(|(i, _)| i)

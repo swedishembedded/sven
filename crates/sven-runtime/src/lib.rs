@@ -13,10 +13,13 @@ pub mod shared;
 pub use shared::Shared;
 
 pub mod agents;
-pub use agents::{AgentInfo, SharedAgents, discover_agents};
+pub use agents::{discover_agents, AgentInfo, SharedAgents};
 
 pub mod skills;
-pub use skills::{discover_commands, discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta};
+pub use skills::{
+    discover_commands, discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo,
+    SvenSkillMeta,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -96,8 +99,8 @@ pub fn find_project_root() -> Result<PathBuf> {
 /// Note: `.sven/` is intentionally **not** a workspace marker because it is
 /// a project-level directory that lives *inside* the git repository.
 const WORKSPACE_MARKERS: &[&str] = &[
-    ".west",    // Zephyr West workspace root (west init)
-    ".cursor",  // Cursor IDE workspace root
+    ".west",   // Zephyr West workspace root (west init)
+    ".cursor", // Cursor IDE workspace root
 ];
 
 /// Heuristically locate the workspace root — the directory above the git
@@ -197,7 +200,12 @@ pub fn collect_git_context(project_root: &Path) -> GitContext {
         .map(|s| s.lines().count())
         .unwrap_or(0);
 
-    GitContext { branch, commit, remote_url, dirty_count }
+    GitContext {
+        branch,
+        commit,
+        remote_url,
+        dirty_count,
+    }
 }
 
 /// Run a git command in `dir` with a hard timeout.
@@ -223,7 +231,11 @@ fn run_git_timed(args: &[&str], dir: &Path) -> Option<String> {
     }
     let raw = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(GIT_OUTPUT_LIMIT)]);
     let s = raw.trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 impl GitContext {
@@ -366,7 +378,8 @@ pub fn detect_ci_context() -> CiContext {
     } else if std::env::var("TF_BUILD").as_deref() == Ok("True") {
         ctx.provider = Some("Azure Pipelines".to_string());
         ctx.repo = std::env::var("BUILD_REPOSITORY_NAME").ok();
-        ctx.branch = std::env::var("BUILD_SOURCEBRANCH").ok()
+        ctx.branch = std::env::var("BUILD_SOURCEBRANCH")
+            .ok()
             .map(|b| b.trim_start_matches("refs/heads/").to_string());
         ctx.commit = std::env::var("BUILD_SOURCEVERSION").ok();
         ctx.run_id = std::env::var("BUILD_BUILDID").ok();
@@ -430,15 +443,33 @@ pub fn ci_template_vars(ci: &CiContext) -> std::collections::HashMap<String, Str
     let mut vars = std::collections::HashMap::new();
 
     let raw_vars: &[&str] = &[
-        "GITHUB_SHA", "GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GITHUB_RUN_ID",
-        "GITHUB_EVENT_NUMBER", "GITHUB_ACTOR", "GITHUB_WORKFLOW",
-        "CI_COMMIT_SHA", "CI_COMMIT_REF_NAME", "CI_PROJECT_PATH",
-        "CI_PIPELINE_ID", "CI_MERGE_REQUEST_IID",
-        "CIRCLE_SHA1", "CIRCLE_BRANCH", "CIRCLE_BUILD_NUM",
-        "TRAVIS_COMMIT", "TRAVIS_BRANCH", "TRAVIS_REPO_SLUG",
-        "BUILD_SOURCEVERSION", "BUILD_SOURCEBRANCH", "BUILD_REPOSITORY_NAME",
-        "BITBUCKET_COMMIT", "BITBUCKET_BRANCH",
-        "GIT_COMMIT", "GIT_BRANCH", "BUILD_NUMBER", "BRANCH_NAME",
+        "GITHUB_SHA",
+        "GITHUB_REF_NAME",
+        "GITHUB_REPOSITORY",
+        "GITHUB_RUN_ID",
+        "GITHUB_EVENT_NUMBER",
+        "GITHUB_ACTOR",
+        "GITHUB_WORKFLOW",
+        "CI_COMMIT_SHA",
+        "CI_COMMIT_REF_NAME",
+        "CI_PROJECT_PATH",
+        "CI_PIPELINE_ID",
+        "CI_MERGE_REQUEST_IID",
+        "CIRCLE_SHA1",
+        "CIRCLE_BRANCH",
+        "CIRCLE_BUILD_NUM",
+        "TRAVIS_COMMIT",
+        "TRAVIS_BRANCH",
+        "TRAVIS_REPO_SLUG",
+        "BUILD_SOURCEVERSION",
+        "BUILD_SOURCEBRANCH",
+        "BUILD_REPOSITORY_NAME",
+        "BITBUCKET_COMMIT",
+        "BITBUCKET_BRANCH",
+        "GIT_COMMIT",
+        "GIT_BRANCH",
+        "BUILD_NUMBER",
+        "BRANCH_NAME",
     ];
     for name in raw_vars {
         if let Ok(val) = std::env::var(name) {
@@ -446,10 +477,18 @@ pub fn ci_template_vars(ci: &CiContext) -> std::collections::HashMap<String, Str
         }
     }
 
-    if let Some(v) = &ci.branch    { vars.entry("branch".into()).or_insert_with(|| v.clone()); }
-    if let Some(v) = &ci.commit    { vars.entry("commit".into()).or_insert_with(|| v.clone()); }
-    if let Some(v) = &ci.repo      { vars.entry("repo".into()).or_insert_with(|| v.clone()); }
-    if let Some(v) = &ci.pr_number { vars.entry("pr".into()).or_insert_with(|| v.clone()); }
+    if let Some(v) = &ci.branch {
+        vars.entry("branch".into()).or_insert_with(|| v.clone());
+    }
+    if let Some(v) = &ci.commit {
+        vars.entry("commit".into()).or_insert_with(|| v.clone());
+    }
+    if let Some(v) = &ci.repo {
+        vars.entry("repo".into()).or_insert_with(|| v.clone());
+    }
+    if let Some(v) = &ci.pr_number {
+        vars.entry("pr".into()).or_insert_with(|| v.clone());
+    }
 
     vars
 }
@@ -506,7 +545,10 @@ mod tests {
         let _ = std::fs::create_dir_all(tmp.join(".cursor"));
 
         let ws = find_workspace_root(&project);
-        assert_eq!(ws, tmp, "marker at same level should be found regardless of order");
+        assert_eq!(
+            ws, tmp,
+            "marker at same level should be found regardless of order"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -522,8 +564,10 @@ mod tests {
         // No marker exists above `project`, so we expect a fallback.
 
         let ws = find_workspace_root(&project);
-        assert_eq!(ws, project,
-            "markers inside the project root should not be treated as workspace boundary");
+        assert_eq!(
+            ws, project,
+            "markers inside the project root should not be treated as workspace boundary"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -535,7 +579,10 @@ mod tests {
         let _ = std::fs::create_dir_all(&project);
 
         let ws = find_workspace_root(&project);
-        assert_eq!(ws, project, "should fall back to project root when no marker found");
+        assert_eq!(
+            ws, project,
+            "should fall back to project root when no marker found"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -630,10 +677,14 @@ mod tests {
         let result = resolve_auto_log_path();
         if let Some(path) = result {
             // If a path was found, it must be a .jsonl file inside .sven/logs/
-            assert!(path.extension().and_then(|e| e.to_str()) == Some("jsonl"),
-                "auto-log path must have .jsonl extension: {path:?}");
-            assert!(path.to_string_lossy().contains("logs"),
-                "auto-log path must be inside logs/ directory: {path:?}");
+            assert!(
+                path.extension().and_then(|e| e.to_str()) == Some("jsonl"),
+                "auto-log path must have .jsonl extension: {path:?}"
+            );
+            assert!(
+                path.to_string_lossy().contains("logs"),
+                "auto-log path must be inside logs/ directory: {path:?}"
+            );
         }
         // None is also acceptable when no .sven/ directory exists in the tree
         let _ = std::fs::remove_dir_all(&tmp);
@@ -657,8 +708,11 @@ mod tests {
         let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".jsonl";
         assert!(filename.ends_with(".jsonl"));
         // Timestamp format check: YYYY-MM-DD_HH-MM-SS.mmm.jsonl
-        assert_eq!(filename.len(), "2026-01-01_00-00-00.000.jsonl".len(),
-            "filename format should match expected length: {filename}");
+        assert_eq!(
+            filename.len(),
+            "2026-01-01_00-00-00.000.jsonl".len(),
+            "filename format should match expected length: {filename}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

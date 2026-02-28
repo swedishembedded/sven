@@ -6,8 +6,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, Paragraph,
-        Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
     },
     Frame,
 };
@@ -22,22 +22,46 @@ use crate::pager::{highlight_match_in_line, tint_match_line};
 // ── Character sets ────────────────────────────────────────────────────────────
 
 fn sep(ascii: bool) -> &'static str {
-    if ascii { "|" } else { "│" }
+    if ascii {
+        "|"
+    } else {
+        "│"
+    }
 }
 fn busy_char(ascii: bool) -> &'static str {
-    if ascii { "* " } else { "⠿ " }
+    if ascii {
+        "* "
+    } else {
+        "⠿ "
+    }
 }
 fn rule_char(ascii: bool) -> char {
-    if ascii { '-' } else { '─' }
+    if ascii {
+        '-'
+    } else {
+        '─'
+    }
 }
 fn blockquote_prefix(ascii: bool) -> &'static str {
-    if ascii { "> " } else { "▌ " }
+    if ascii {
+        "> "
+    } else {
+        "▌ "
+    }
 }
 fn bullet(ascii: bool) -> &'static str {
-    if ascii { "- " } else { "• " }
+    if ascii {
+        "- "
+    } else {
+        "• "
+    }
 }
 fn border_type(ascii: bool) -> BorderType {
-    if ascii { BorderType::Plain } else { BorderType::Rounded }
+    if ascii {
+        BorderType::Plain
+    } else {
+        BorderType::Rounded
+    }
 }
 
 // ── Draw functions ────────────────────────────────────────────────────────────
@@ -63,10 +87,7 @@ pub fn draw_status(
     let separator = sep(ascii);
 
     let tool_span: Span<'static> = if let Some(t) = current_tool {
-        Span::styled(
-            format!(" ⚙ {t} "),
-            Style::default().fg(Color::Yellow),
-        )
+        Span::styled(format!(" ⚙ {t} "), Style::default().fg(Color::Yellow))
     } else {
         Span::raw("")
     };
@@ -130,9 +151,9 @@ pub fn draw_status(
 /// All three icons are shown on every labeled row; unavailable actions use a dim style.
 /// Content is pre-wrapped to leave these columns blank (see `build_display_from_segments`).
 pub struct ChatLabels {
-    pub edit_label_lines:    std::collections::HashSet<usize>,
-    pub remove_label_lines:  std::collections::HashSet<usize>,
-    pub rerun_label_lines:   std::collections::HashSet<usize>,
+    pub edit_label_lines: std::collections::HashSet<usize>,
+    pub remove_label_lines: std::collections::HashSet<usize>,
+    pub rerun_label_lines: std::collections::HashSet<usize>,
     /// Absolute line index of a segment awaiting delete confirmation.
     /// The `[✕]` label on that line is rendered brightly to signal pending state.
     pub pending_delete_line: Option<usize>,
@@ -165,8 +186,7 @@ pub fn draw_chat(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let match_set: std::collections::HashSet<usize> =
-        search_matches.iter().copied().collect();
+    let match_set: std::collections::HashSet<usize> = search_matches.iter().copied().collect();
     let current_match_line = search_matches.get(search_current).copied();
 
     let visible: Vec<Line<'static>> = lines
@@ -175,11 +195,8 @@ pub fn draw_chat(
         .skip(scroll_offset as usize)
         .take(inner.height as usize)
         .map(|(i, line)| {
-            let is_current = !search_query.is_empty()
-                && current_match_line == Some(i);
-            let is_other = !search_query.is_empty()
-                && !is_current
-                && match_set.contains(&i);
+            let is_current = !search_query.is_empty() && current_match_line == Some(i);
+            let is_other = !search_query.is_empty() && !is_current && match_set.contains(&i);
             if is_current {
                 highlight_match_in_line(line.clone(), search_query, search_regex)
             } else if is_other {
@@ -233,16 +250,20 @@ pub fn draw_chat(
         ("↻", "✎", "✕")
     };
     if inner.width > 6 {
-        let unavailable    = Style::default().fg(Color::Rgb(50, 50, 50));  // near-invisible
-        let edit_active    = Style::default().fg(Color::White);
-        let edit_inactive  = unavailable;
-        let rerun_active   = Style::default().fg(Color::Green).add_modifier(Modifier::DIM);
+        let unavailable = Style::default().fg(Color::Rgb(50, 50, 50)); // near-invisible
+        let edit_active = Style::default().fg(Color::White);
+        let edit_inactive = unavailable;
+        let rerun_active = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::DIM);
         let rerun_inactive = unavailable;
-        let delete_style   = Style::default().fg(Color::Red).add_modifier(Modifier::DIM);
-        let confirm_style  = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let delete_style = Style::default().fg(Color::Red).add_modifier(Modifier::DIM);
+        let confirm_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
 
-        let x_rerun  = inner.x + inner.width.saturating_sub(6);
-        let x_edit   = inner.x + inner.width.saturating_sub(4);
+        let x_rerun = inner.x + inner.width.saturating_sub(6);
+        let x_edit = inner.x + inner.width.saturating_sub(4);
         let x_delete = inner.x + inner.width.saturating_sub(2);
 
         let buf = frame.buffer_mut();
@@ -263,10 +284,18 @@ pub fn draw_chat(
                 // Confirmation pending: replace all icons with a bright prompt.
                 buf.set_string(x_rerun, y, "del?", confirm_style);
             } else {
-                let rs = if labels.rerun_label_lines.contains(&abs_line) { rerun_active } else { rerun_inactive };
-                let es = if labels.edit_label_lines.contains(&abs_line)   { edit_active  } else { edit_inactive  };
-                buf.set_string(x_rerun,  y, icon_rerun,  rs);
-                buf.set_string(x_edit,   y, icon_edit,   es);
+                let rs = if labels.rerun_label_lines.contains(&abs_line) {
+                    rerun_active
+                } else {
+                    rerun_inactive
+                };
+                let es = if labels.edit_label_lines.contains(&abs_line) {
+                    edit_active
+                } else {
+                    edit_inactive
+                };
+                buf.set_string(x_rerun, y, icon_rerun, rs);
+                buf.set_string(x_edit, y, icon_edit, es);
                 buf.set_string(x_delete, y, icon_delete, delete_style);
             }
         }
@@ -320,6 +349,7 @@ pub fn draw_chat(
 ///   than the visible area.
 /// * The terminal cursor is placed at the exact column/row of `cursor_pos`
 ///   (a UTF-8 byte index), accounting for wrapping and the scroll offset.
+///
 /// What kind of content the input box is currently editing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEditMode {
@@ -331,6 +361,7 @@ pub enum InputEditMode {
     Queue,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_input(
     frame: &mut Frame,
     area: Rect,
@@ -342,9 +373,9 @@ pub fn draw_input(
     edit_mode: InputEditMode,
 ) {
     let title: String = match edit_mode {
-        InputEditMode::Queue   => "Edit queue  [Enter:update  Esc:cancel]".to_string(),
+        InputEditMode::Queue => "Edit queue  [Enter:update  Esc:cancel]".to_string(),
         InputEditMode::Segment => "Edit  [Enter:confirm  Esc:cancel]".to_string(),
-        InputEditMode::Normal  => "Input  [Enter:send  Shift+Enter:newline  ^w k:↑chat]".to_string(),
+        InputEditMode::Normal => "Input  [Enter:send  Shift+Enter:newline  ^w k:↑chat]".to_string(),
     };
 
     let block = pane_block(&title, focused, ascii);
@@ -437,8 +468,7 @@ pub fn draw_search(
             current_match + 1,
         )
     };
-    let para = Paragraph::new(text)
-        .style(Style::default().fg(Color::Yellow).bg(Color::Black));
+    let para = Paragraph::new(text).style(Style::default().fg(Color::Yellow).bg(Color::Black));
     frame.render_widget(para, area);
 }
 
@@ -450,7 +480,9 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
     let help_text = vec![
         Line::from(Span::styled(
             "  Sven Key Bindings",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::LightBlue),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::LightBlue),
         )),
         Line::default(),
         Line::from(" ^w k     Focus chat pane"),
@@ -514,6 +546,7 @@ pub fn draw_help(frame: &mut Frame, ascii: bool) {
 /// Returns the absolute screen coordinates of the two button zones so the
 /// caller can use them for mouse-click detection:
 /// `(confirm_rect, cancel_rect)` — both are `None` for info-only dialogs.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_confirm_modal(
     frame: &mut Frame,
     title: &str,
@@ -528,10 +561,12 @@ pub fn draw_confirm_modal(
     let bt = border_type(ascii);
 
     // Size the modal to the message content (min 40, max 60).
-    let modal_w = (message.len() as u16 + 4).clamp(40, 60).min(area.width.saturating_sub(4));
+    let modal_w = (message.len() as u16 + 4)
+        .clamp(40, 60)
+        .min(area.width.saturating_sub(4));
     // 1 blank + message lines + 1 blank + buttons + 1 blank
     let message_lines = message.lines().count() as u16;
-    let modal_h = (1 + message_lines + 1 + 1 + 1 + 2)  // border top/bottom adds 2
+    let modal_h = (1 + message_lines + 1 + 1 + 1 + 2) // border top/bottom adds 2
         .max(7)
         .min(area.height.saturating_sub(2));
     let x = area.width.saturating_sub(modal_w) / 2;
@@ -562,13 +597,16 @@ pub fn draw_confirm_modal(
         )));
     }
     lines.push(Line::from("")); // padding before buttons
-    // Hint
+                                // Hint
     let hint = if has_action {
         "←/→: move  Enter: confirm  Esc: cancel"
     } else {
         "Enter / Esc: close"
     };
-    lines.push(Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(Span::styled(
+        hint,
+        Style::default().fg(Color::DarkGray),
+    )));
 
     frame.render_widget(Paragraph::new(lines), inner);
 
@@ -582,12 +620,11 @@ pub fn draw_confirm_modal(
         let bw = lbl.len() as u16 + 2;
         let bx = inner.x + (inner.width.saturating_sub(bw)) / 2;
         let btn_area = Rect::new(bx, btn_row_y, bw, 1);
-        let style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!("[{lbl}]"),
-                style,
-            ))),
+            Paragraph::new(Line::from(Span::styled(format!("[{lbl}]"), style))),
             btn_area,
         );
         return (None, Some(btn_area));
@@ -601,9 +638,12 @@ pub fn draw_confirm_modal(
     let bx = inner.x + inner.width.saturating_sub(total) / 2;
 
     let confirm_rect = Rect::new(bx, btn_row_y, cw, 1);
-    let cancel_rect  = Rect::new(bx + cw + gap, btn_row_y, xw, 1);
+    let cancel_rect = Rect::new(bx + cw + gap, btn_row_y, xw, 1);
 
-    let focused_style   = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED);
+    let focused_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::REVERSED);
     let unfocused_style = Style::default().fg(Color::DarkGray);
 
     let (cs, xs) = if focused_button == 0 {
@@ -656,7 +696,9 @@ pub fn draw_question_modal(
     } else {
         8
     };
-    let modal_h = (content_rows + 2).min(area.height.saturating_sub(2)).max(10);
+    let modal_h = (content_rows + 2)
+        .min(area.height.saturating_sub(2))
+        .max(10);
     let x = area.width.saturating_sub(modal_w) / 2;
     let y = area.height.saturating_sub(modal_h) / 2;
     let modal_area = Rect::new(x, y, modal_w, modal_h);
@@ -667,7 +709,9 @@ pub fn draw_question_modal(
     let block = Block::default()
         .title(Span::styled(
             " Questions from agent ",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(bt)
@@ -683,7 +727,9 @@ pub fn draw_question_modal(
         // Header: question number and prompt
         lines.push(Line::from(Span::styled(
             format!("Q{}/{}: {}", current_q + 1, questions.len(), q.prompt),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from("")); // blank
 
@@ -704,8 +750,8 @@ pub fn draw_question_modal(
         // Regular option rows
         for (i, opt) in q.options.iter().enumerate() {
             let is_selected = selected_options.contains(&i);
-            let is_focused  = focused_option == i && !other_selected;
-            let indicator   = if is_selected { checked } else { checkbox };
+            let is_focused = focused_option == i && !other_selected;
+            let indicator = if is_selected { checked } else { checkbox };
 
             let focus_prefix = if is_focused { focus_arrow } else { "  " };
             let text_style = if is_selected {
@@ -723,9 +769,9 @@ pub fn draw_question_modal(
         }
 
         // "Other" row — when active it shows the text input inline
-        let other_focused   = focused_option == q.options.len() && !other_selected;
+        let other_focused = focused_option == q.options.len() && !other_selected;
         let other_indicator = if other_selected { checked } else { checkbox };
-        let other_prefix    = if other_focused { focus_arrow } else { "  " };
+        let other_prefix = if other_focused { focus_arrow } else { "  " };
         let other_label_style = if other_selected {
             Style::default().fg(Color::Green)
         } else if other_focused {
@@ -737,7 +783,7 @@ pub fn draw_question_modal(
             // Active text-input row.  The terminal cursor (set below) is the
             // only cursor indicator — no secondary visual caret span needed.
             let before = &other_input[..other_cursor.min(other_input.len())];
-            let after  = &other_input[other_cursor.min(other_input.len())..];
+            let after = &other_input[other_cursor.min(other_input.len())..];
             let mut row_spans = vec![
                 Span::styled("  ", Style::default()),
                 Span::styled(format!("{} ", other_indicator), other_label_style),
@@ -748,7 +794,10 @@ pub fn draw_question_modal(
                 Span::styled(before.to_owned(), Style::default().fg(Color::White)),
             ];
             if !after.is_empty() {
-                row_spans.push(Span::styled(after.to_owned(), Style::default().fg(Color::White)));
+                row_spans.push(Span::styled(
+                    after.to_owned(),
+                    Style::default().fg(Color::White),
+                ));
             }
             lines.push(Line::from(row_spans));
         } else {
@@ -759,14 +808,22 @@ pub fn draw_question_modal(
                 const MAX_PREVIEW: usize = 35;
                 let preview: String = other_input.chars().take(MAX_PREVIEW + 1).collect();
                 let label = if preview.chars().count() > MAX_PREVIEW {
-                    format!("{}. Other: {}…", q.options.len() + 1, preview.chars().take(MAX_PREVIEW).collect::<String>())
+                    format!(
+                        "{}. Other: {}…",
+                        q.options.len() + 1,
+                        preview.chars().take(MAX_PREVIEW).collect::<String>()
+                    )
                 } else {
                     format!("{}. Other: {}", q.options.len() + 1, other_input)
                 };
                 label
             };
             // When other_input has text, show the row as "selected" (filled indicator).
-            let display_indicator = if !other_input.trim().is_empty() { checked } else { other_indicator };
+            let display_indicator = if !other_input.trim().is_empty() {
+                checked
+            } else {
+                other_indicator
+            };
             let display_style = if !other_input.trim().is_empty() && !other_focused {
                 Style::default().fg(Color::Green)
             } else {
@@ -791,7 +848,10 @@ pub fn draw_question_modal(
         } else {
             "↑/↓: move  Space: select  Enter: select/submit"
         };
-        lines.push(Line::from(Span::styled(nav_hint, Style::default().fg(Color::DarkGray))));
+        lines.push(Line::from(Span::styled(
+            nav_hint,
+            Style::default().fg(Color::DarkGray),
+        )));
 
         // Hint line 2: back / cancel
         let back_hint = if has_prev {
@@ -799,7 +859,10 @@ pub fn draw_question_modal(
         } else {
             "Esc: cancel"
         };
-        lines.push(Line::from(Span::styled(back_hint, Style::default().fg(Color::DarkGray))));
+        lines.push(Line::from(Span::styled(
+            back_hint,
+            Style::default().fg(Color::DarkGray),
+        )));
 
         frame.render_widget(Paragraph::new(lines), inner);
 
@@ -811,17 +874,18 @@ pub fn draw_question_modal(
             //   "  "  (2 cols) + "{indicator} " (display width + 1 space)
             //   + "N. Other: " (ASCII, so chars == cols)
             use unicode_width::UnicodeWidthChar;
-            let indicator_w: usize = other_indicator.chars().map(|c| c.width().unwrap_or(1)).sum();
-            let number_part = format!("{}. Other: ", q.options.len() + 1);
-            let prefix_cols = 2                  // leading "  "
-                + indicator_w + 1                // indicator + space
-                + number_part.len();             // pure ASCII
-            // other_cursor is a BYTE index; convert to display-column offset.
-            let text_before = &other_input[..other_cursor.min(other_input.len())];
-            let cursor_col_offset: usize = text_before
+            let indicator_w: usize = other_indicator
                 .chars()
                 .map(|c| c.width().unwrap_or(1))
                 .sum();
+            let number_part = format!("{}. Other: ", q.options.len() + 1);
+            let prefix_cols = 2                  // leading "  "
+                + indicator_w + 1                // indicator + space
+                + number_part.len(); // pure ASCII
+                                     // other_cursor is a BYTE index; convert to display-column offset.
+            let text_before = &other_input[..other_cursor.min(other_input.len())];
+            let cursor_col_offset: usize =
+                text_before.chars().map(|c| c.width().unwrap_or(1)).sum();
             let cursor_x = (inner.x + prefix_cols as u16 + cursor_col_offset as u16)
                 .min(inner.x + inner.width.saturating_sub(1));
             frame.set_cursor_position((cursor_x, other_row_y));
@@ -863,12 +927,15 @@ pub fn draw_queue_panel(
         .take(inner.height as usize)
         .map(|(i, (text, model_ov, mode_ov))| {
             let is_selected = selected == Some(i);
-            let is_editing  = editing  == Some(i);
+            let is_editing = editing == Some(i);
 
             let num_span = Span::styled(
                 format!(" {} ", i + 1),
                 if is_selected || is_editing {
-                    Style::default().fg(Color::Black).bg(Color::LightBlue).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::LightBlue)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::DarkGray)
                 },
@@ -877,24 +944,38 @@ pub fn draw_queue_panel(
             // Build override badge when present (e.g. "[gpt-4o, research]")
             let badge: String = match (model_ov.as_deref(), mode_ov) {
                 (Some(m), Some(mo)) => format!("[{m}, {mo}] "),
-                (Some(m), None)     => format!("[{m}] "),
-                (None, Some(mo))    => format!("[{mo}] "),
-                (None, None)        => String::new(),
+                (Some(m), None) => format!("[{m}] "),
+                (None, Some(mo)) => format!("[{mo}] "),
+                (None, None) => String::new(),
             };
 
             // Truncate preview to fit the inner width minus the number badge and badge.
             let badge_len = badge.chars().count();
             let max_text = inner.width.saturating_sub(6 + badge_len as u16) as usize;
-            let preview: String = text.lines().next().unwrap_or("").chars().take(max_text).collect();
-            let ellipsis = if text.len() > preview.len() + 1 || text.contains('\n') { "…" } else { "" };
+            let preview: String = text
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(max_text)
+                .collect();
+            let ellipsis = if text.len() > preview.len() + 1 || text.contains('\n') {
+                "…"
+            } else {
+                ""
+            };
             let text_content = format!(" {preview}{ellipsis}");
 
             let text_span = Span::styled(
                 text_content,
                 if is_editing {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::ITALIC)
                 } else if is_selected {
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::Gray)
                 },
@@ -958,18 +1039,19 @@ pub fn draw_completion_overlay(
     let bt = border_type(ascii);
     let total = overlay.items.len();
     let scroll_indicator = if total > overlay.max_visible {
-        format!(
-            " [{}/{}]",
-            overlay.selected + 1,
-            total,
-        )
+        format!(" [{}/{}]", overlay.selected + 1, total,)
     } else {
         String::new()
     };
 
     let title = format!(" Commands{scroll_indicator} ");
     let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
         .borders(Borders::ALL)
         .border_type(bt)
         .border_style(Style::default().fg(Color::Cyan))
@@ -1018,12 +1100,10 @@ pub fn draw_completion_overlay(
                 let remaining = max_val_width.saturating_sub(disp_chars.len());
 
                 if !desc_str.is_empty() && remaining > 3 {
-                    let short_desc: String = desc_str.chars().take(remaining.saturating_sub(2)).collect();
+                    let short_desc: String =
+                        desc_str.chars().take(remaining.saturating_sub(2)).collect();
                     Line::from(vec![
-                        Span::styled(
-                            format!(" {disp_chars}"),
-                            Style::default().fg(Color::White),
-                        ),
+                        Span::styled(format!(" {disp_chars}"), Style::default().fg(Color::White)),
                         Span::styled(
                             format!("  {short_desc}"),
                             Style::default().fg(Color::DarkGray),
@@ -1066,15 +1146,21 @@ pub(crate) fn pane_block(title: &str, focused: bool, ascii: bool) -> Block<'stat
         .border_style(border_style)
 }
 
-pub(crate) fn md_rule_char(ascii: bool) -> char { rule_char(ascii) }
-pub(crate) fn md_blockquote(ascii: bool) -> &'static str { blockquote_prefix(ascii) }
-pub(crate) fn md_bullet(ascii: bool) -> &'static str { bullet(ascii) }
+pub(crate) fn md_rule_char(ascii: bool) -> char {
+    rule_char(ascii)
+}
+pub(crate) fn md_blockquote(ascii: bool) -> &'static str {
+    blockquote_prefix(ascii)
+}
+pub(crate) fn md_bullet(ascii: bool) -> &'static str {
+    bullet(ascii)
+}
 
 fn mode_style(mode: AgentMode) -> Style {
     match mode {
         AgentMode::Research => Style::default().fg(Color::LightGreen),
-        AgentMode::Plan     => Style::default().fg(Color::LightYellow),
-        AgentMode::Agent    => Style::default().fg(Color::LightMagenta),
+        AgentMode::Plan => Style::default().fg(Color::LightYellow),
+        AgentMode::Agent => Style::default().fg(Color::LightMagenta),
     }
 }
 

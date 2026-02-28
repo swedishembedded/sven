@@ -53,16 +53,14 @@ use std::{path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::{
-    Multiaddr, PeerId, StreamProtocol,
     identity::Keypair,
-    mdns,
-    noise,
+    mdns, noise,
     request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux,
+    tcp, yamux, Multiaddr, PeerId, StreamProtocol,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, Mutex};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -102,29 +100,51 @@ pub struct ControlCodec;
 #[async_trait]
 impl request_response::Codec for ControlCodec {
     type Protocol = StreamProtocol;
-    type Request  = ControlP2pRequest;
+    type Request = ControlP2pRequest;
     type Response = ControlP2pResponse;
 
-    async fn read_request<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Request>
-    where T: AsyncRead + Unpin + Send,
+    async fn read_request<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Request>
+    where
+        T: AsyncRead + Unpin + Send,
     {
         read_cbor_framed(io).await
     }
 
-    async fn read_response<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Response>
-    where T: AsyncRead + Unpin + Send,
+    async fn read_response<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Response>
+    where
+        T: AsyncRead + Unpin + Send,
     {
         read_cbor_framed(io).await
     }
 
-    async fn write_request<T>(&mut self, _: &StreamProtocol, io: &mut T, req: Self::Request) -> std::io::Result<()>
-    where T: AsyncWrite + Unpin + Send,
+    async fn write_request<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> std::io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
     {
         write_cbor_framed(io, &req).await
     }
 
-    async fn write_response<T>(&mut self, _: &StreamProtocol, io: &mut T, resp: Self::Response) -> std::io::Result<()>
-    where T: AsyncWrite + Unpin + Send,
+    async fn write_response<T>(
+        &mut self,
+        _: &StreamProtocol,
+        io: &mut T,
+        resp: Self::Response,
+    ) -> std::io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
     {
         write_cbor_framed(io, &resp).await
     }
@@ -209,7 +229,10 @@ mod tests {
         };
         let recovered: ControlP2pRequest = round_trip(original).await;
         match recovered.command {
-            ControlCommand::SendInput { text, session_id: sid } => {
+            ControlCommand::SendInput {
+                text,
+                session_id: sid,
+            } => {
                 assert_eq!(text, "hello from operator");
                 assert_eq!(sid, session_id);
             }
@@ -272,8 +295,7 @@ mod tests {
         fake_stream.extend(vec![0u8; 8]); // dummy payload
 
         let mut cursor = futures::io::Cursor::new(fake_stream);
-        let result: std::io::Result<ControlP2pRequest> =
-            read_cbor_framed(&mut cursor).await;
+        let result: std::io::Result<ControlP2pRequest> = read_cbor_framed(&mut cursor).await;
 
         assert!(result.is_err(), "oversized frame must be rejected");
         let err = result.unwrap_err();
@@ -307,8 +329,7 @@ mod tests {
         buf.truncate(5); // just past the 4-byte prefix, incomplete payload
 
         let mut cursor = futures::io::Cursor::new(buf);
-        let result: std::io::Result<ControlP2pRequest> =
-            read_cbor_framed(&mut cursor).await;
+        let result: std::io::Result<ControlP2pRequest> = read_cbor_framed(&mut cursor).await;
         assert!(result.is_err(), "truncated frame must return an error");
     }
 }
@@ -318,10 +339,10 @@ mod tests {
 #[derive(NetworkBehaviour)]
 struct ControlBehaviour {
     relay_client: libp2p::relay::client::Behaviour,
-    identify:     libp2p::identify::Behaviour,
-    ping:         libp2p::ping::Behaviour,
-    mdns:         mdns::tokio::Behaviour,
-    control:      request_response::Behaviour<ControlCodec>,
+    identify: libp2p::identify::Behaviour,
+    ping: libp2p::ping::Behaviour,
+    mdns: mdns::tokio::Behaviour,
+    control: request_response::Behaviour<ControlCodec>,
 }
 
 // ── Per-peer event buffer ─────────────────────────────────────────────────────
@@ -334,7 +355,10 @@ struct PeerBuffer {
 
 impl PeerBuffer {
     fn new(rx: broadcast::Receiver<ControlEvent>) -> Self {
-        Self { rx, pending: Vec::new() }
+        Self {
+            rx,
+            pending: Vec::new(),
+        }
     }
 
     /// Drain any events that arrived since the last poll.
@@ -390,32 +414,37 @@ impl P2pControlNode {
             )?
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|key, relay_client| {
-                let identify = libp2p::identify::Behaviour::new(
-                    libp2p::identify::Config::new(
-                        "/sven-gateway/1.0.0".into(),
-                        key.public(),
-                    ),
-                );
+                let identify = libp2p::identify::Behaviour::new(libp2p::identify::Config::new(
+                    "/sven-gateway/1.0.0".into(),
+                    key.public(),
+                ));
                 let ping = libp2p::ping::Behaviour::new(
-                    libp2p::ping::Config::new()
-                        .with_interval(std::time::Duration::from_secs(30)),
+                    libp2p::ping::Config::new().with_interval(std::time::Duration::from_secs(30)),
                 );
                 let mdns_cfg = if enable_mdns {
                     mdns::Config::default()
                 } else {
-                    mdns::Config { ttl: std::time::Duration::from_secs(0), ..Default::default() }
+                    mdns::Config {
+                        ttl: std::time::Duration::from_secs(0),
+                        ..Default::default()
+                    }
                 };
-                let mdns_behaviour = mdns::tokio::Behaviour::new(
-                    mdns_cfg,
-                    PeerId::from(key.public()),
-                ).expect("mDNS init");
+                let mdns_behaviour =
+                    mdns::tokio::Behaviour::new(mdns_cfg, PeerId::from(key.public()))
+                        .expect("mDNS init");
                 let control = request_response::Behaviour::with_codec(
-                    ControlCodec::default(),
+                    ControlCodec,
                     [(CONTROL_PROTO, ProtocolSupport::Full)],
                     request_response::Config::default(),
                 );
 
-                Ok(ControlBehaviour { relay_client, identify, ping, mdns: mdns_behaviour, control })
+                Ok(ControlBehaviour {
+                    relay_client,
+                    identify,
+                    ping,
+                    mdns: mdns_behaviour,
+                    control,
+                })
             })?
             .with_swarm_config(|cfg| {
                 cfg.with_idle_connection_timeout(std::time::Duration::from_secs(120))
@@ -435,7 +464,9 @@ impl P2pControlNode {
     /// Run the P2P event loop. Returns when the swarm is shut down.
     pub async fn run(mut self) {
         loop {
-            let Some(event) = self.swarm.next().await else { break };
+            let Some(event) = self.swarm.next().await else {
+                break;
+            };
             self.handle_swarm_event(event).await;
         }
     }
@@ -458,9 +489,7 @@ impl P2pControlNode {
                 self.peer_buffers.remove(&peer_id);
             }
 
-            SwarmEvent::Behaviour(ControlBehaviourEvent::Mdns(
-                mdns::Event::Discovered(peers)
-            )) => {
+            SwarmEvent::Behaviour(ControlBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                 for (peer_id, addr) in peers {
                     debug!(%peer_id, %addr, "mDNS: discovered peer");
                     let _ = self.swarm.dial(addr);
@@ -471,11 +500,13 @@ impl P2pControlNode {
                 request_response::Event::Message {
                     peer,
                     connection_id: _,
-                    message: request_response::Message::Request {
-                        request, channel,
-                        request_id: _,
-                    },
-                }
+                    message:
+                        request_response::Message::Request {
+                            request,
+                            channel,
+                            request_id: _,
+                        },
+                },
             )) => {
                 self.handle_request(peer, request, channel).await;
             }
@@ -505,7 +536,11 @@ impl P2pControlNode {
                     error: Some("not authorized".to_string()),
                     events: vec![],
                 };
-                let _ = self.swarm.behaviour_mut().control.send_response(channel, resp);
+                let _ = self
+                    .swarm
+                    .behaviour_mut()
+                    .control
+                    .send_response(channel, resp);
                 return;
             }
         };
@@ -521,14 +556,19 @@ impl P2pControlNode {
                         error: Some("observer role: command not permitted".to_string()),
                         events: vec![],
                     };
-                    let _ = self.swarm.behaviour_mut().control.send_response(channel, resp);
+                    let _ = self
+                        .swarm
+                        .behaviour_mut()
+                        .control
+                        .send_response(channel, resp);
                     return;
                 }
             }
         }
 
         // Drain buffered events for this peer.
-        let events = self.peer_buffers
+        let events = self
+            .peer_buffers
             .get_mut(&peer)
             .map(|b| b.drain())
             .unwrap_or_default();
@@ -540,11 +580,23 @@ impl P2pControlNode {
                 error: Some(format!("service error: {e}")),
                 events,
             };
-            let _ = self.swarm.behaviour_mut().control.send_response(channel, resp);
+            let _ = self
+                .swarm
+                .behaviour_mut()
+                .control
+                .send_response(channel, resp);
             return;
         }
 
-        let resp = ControlP2pResponse { ok: true, error: None, events };
-        let _ = self.swarm.behaviour_mut().control.send_response(channel, resp);
+        let resp = ControlP2pResponse {
+            ok: true,
+            error: None,
+            events,
+        };
+        let _ = self
+            .swarm
+            .behaviour_mut()
+            .control
+            .send_response(channel, resp);
     }
 }

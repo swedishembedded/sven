@@ -14,7 +14,9 @@ pub struct SearchCodebaseTool;
 
 #[async_trait]
 impl Tool for SearchCodebaseTool {
-    fn name(&self) -> &str { "search_codebase" }
+    fn name(&self) -> &str {
+        "search_codebase"
+    }
 
     fn description(&self) -> &str {
         "Ripgrep across the codebase with standard exclusions: \
@@ -55,25 +57,49 @@ impl Tool for SearchCodebaseTool {
         })
     }
 
-    fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
-    fn output_category(&self) -> OutputCategory { OutputCategory::MatchList }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn output_category(&self) -> OutputCategory {
+        OutputCategory::MatchList
+    }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let query = match call.args.get("query").and_then(|v| v.as_str()) {
             Some(q) => q.to_string(),
             None => {
-                let args_preview = serde_json::to_string(&call.args)
-                    .unwrap_or_else(|_| "null".to_string());
+                let args_preview =
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
                 return ToolOutput::err(
                     &call.id,
-                    format!("missing required parameter 'query'. Received: {}", args_preview)
+                    format!(
+                        "missing required parameter 'query'. Received: {}",
+                        args_preview
+                    ),
                 );
             }
         };
-        let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-        let include = call.args.get("include").and_then(|v| v.as_str()).map(str::to_string);
-        let case_sensitive = call.args.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(true);
-        let limit = call.args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let path = call
+            .args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+        let include = call
+            .args
+            .get("include")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let case_sensitive = call
+            .args
+            .get("case_sensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100) as usize;
 
         debug!(query = %query, path = %path, "search_codebase tool");
 
@@ -89,15 +115,22 @@ impl Tool for SearchCodebaseTool {
         let output = if has_rg {
             let mut args = vec![
                 "--vimgrep".to_string(),
-                "--color".to_string(), "never".to_string(),
+                "--color".to_string(),
+                "never".to_string(),
                 "--no-heading".to_string(),
                 // Exclude build artifacts
-                "--glob".to_string(), "!.git/**".to_string(),
-                "--glob".to_string(), "!target/**".to_string(),
-                "--glob".to_string(), "!node_modules/**".to_string(),
-                "--glob".to_string(), "!dist/**".to_string(),
-                "--glob".to_string(), "!__pycache__/**".to_string(),
-                "--glob".to_string(), "!*.lock".to_string(),
+                "--glob".to_string(),
+                "!.git/**".to_string(),
+                "--glob".to_string(),
+                "!target/**".to_string(),
+                "--glob".to_string(),
+                "!node_modules/**".to_string(),
+                "--glob".to_string(),
+                "!dist/**".to_string(),
+                "--glob".to_string(),
+                "!__pycache__/**".to_string(),
+                "--glob".to_string(),
+                "!*.lock".to_string(),
             ];
             if !case_sensitive {
                 args.push("--ignore-case".to_string());
@@ -116,7 +149,9 @@ impl Tool for SearchCodebaseTool {
                 .await
         } else {
             let mut cmd_parts = vec!["grep -rn".to_string()];
-            if !case_sensitive { cmd_parts.push("-i".to_string()); }
+            if !case_sensitive {
+                cmd_parts.push("-i".to_string());
+            }
             cmd_parts.push("--exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist".to_string());
             if let Some(glob) = &include {
                 cmd_parts.push(format!("--include={glob}"));
@@ -142,7 +177,8 @@ impl Tool for SearchCodebaseTool {
                     let total = text.lines().count();
                     let mut result = lines.join("\n");
                     if total > limit {
-                        result.push_str(&format!("\n...[{} more matches not shown]", total - limit));
+                        result
+                            .push_str(&format!("\n...[{} more matches not shown]", total - limit));
                     }
                     ToolOutput::ok(&call.id, result)
                 }
@@ -164,15 +200,21 @@ mod tests {
     use crate::tool::{Tool, ToolCall};
 
     fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall { id: "s1".into(), name: "search_codebase".into(), args }
+        ToolCall {
+            id: "s1".into(),
+            name: "search_codebase".into(),
+            args,
+        }
     }
 
     #[tokio::test]
     async fn finds_in_sven_codebase() {
-        let out = SearchCodebaseTool.execute(&call(json!({
-            "query": "ToolRegistry",
-            "path": "/data/agents/sven/crates/sven-tools/src"
-        }))).await;
+        let out = SearchCodebaseTool
+            .execute(&call(json!({
+                "query": "ToolRegistry",
+                "path": "/data/agents/sven/crates/sven-tools/src"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(!out.content.contains("(no matches)"));
     }
@@ -187,11 +229,13 @@ mod tests {
     #[tokio::test]
     async fn include_glob_narrows_results() {
         // Search only in .toml files — should not return .rs matches
-        let out = SearchCodebaseTool.execute(&call(json!({
-            "query": "version",
-            "path": "/data/agents/sven",
-            "include_glob": "*.toml"
-        }))).await;
+        let out = SearchCodebaseTool
+            .execute(&call(json!({
+                "query": "version",
+                "path": "/data/agents/sven",
+                "include_glob": "*.toml"
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         // All matched lines should come from .toml files
         if !out.content.contains("(no matches)") {
@@ -205,11 +249,13 @@ mod tests {
 
     #[tokio::test]
     async fn case_insensitive_search() {
-        let out = SearchCodebaseTool.execute(&call(json!({
-            "query": "TOOLREGISTRY",
-            "path": "/data/agents/sven/crates/sven-tools/src",
-            "case_sensitive": false
-        }))).await;
+        let out = SearchCodebaseTool
+            .execute(&call(json!({
+                "query": "TOOLREGISTRY",
+                "path": "/data/agents/sven/crates/sven-tools/src",
+                "case_sensitive": false
+            })))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         // Should find ToolRegistry in a case-insensitive way
         assert!(

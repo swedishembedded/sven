@@ -107,7 +107,10 @@ impl DiscoveryProvider for InMemoryDiscovery {
             .iter()
             .filter_map(|(id_str, addr)| {
                 let peer_id = id_str.parse::<PeerId>().ok()?;
-                Some(PeerInfo { peer_id, relay_addr: addr.clone() })
+                Some(PeerInfo {
+                    peer_id,
+                    relay_addr: addr.clone(),
+                })
             })
             .collect();
         Ok(peers)

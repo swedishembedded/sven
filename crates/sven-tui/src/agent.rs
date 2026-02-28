@@ -55,6 +55,7 @@ pub enum AgentRequest {
 /// to interrupt the current run.  The task creates a fresh channel before
 /// every Submit/Resubmit and stores the sender in the slot; it is cleared
 /// when the submission completes.
+#[allow(clippy::too_many_arguments)]
 pub async fn agent_task(
     config: Arc<Config>,
     startup_model_cfg: ModelConfig,
@@ -66,13 +67,14 @@ pub async fn agent_task(
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
 ) {
-    let model: Arc<dyn sven_model::ModelProvider> = match sven_model::from_config(&startup_model_cfg) {
-        Ok(m) => Arc::from(m),
-        Err(e) => {
-            let _ = tx.send(AgentEvent::Error(format!("model init: {e}"))).await;
-            return;
-        }
-    };
+    let model: Arc<dyn sven_model::ModelProvider> =
+        match sven_model::from_config(&startup_model_cfg) {
+            Ok(m) => Arc::from(m),
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Error(format!("model init: {e}"))).await;
+                return;
+            }
+        };
 
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
     let task_depth = Arc::new(AtomicUsize::new(0));
@@ -101,12 +103,18 @@ pub async fn agent_task(
 
     while let Some(req) = rx.recv().await {
         match req {
-            AgentRequest::Submit { content, model_override, mode_override } => {
+            AgentRequest::Submit {
+                content,
+                model_override,
+                mode_override,
+            } => {
                 debug!(msg_len = content.len(), "agent task received message");
 
                 if let Some(ref model_cfg) = model_override {
                     match sven_model::from_config(model_cfg) {
-                        Ok(m) => { agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>); }
+                        Ok(m) => {
+                            agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>);
+                        }
                         Err(e) => {
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))
@@ -122,18 +130,27 @@ pub async fn agent_task(
 
                 let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
                 *cancel_handle.lock().await = Some(cancel_tx);
-                let result = agent.submit_with_cancel(&content, tx.clone(), cancel_rx).await;
+                let result = agent
+                    .submit_with_cancel(&content, tx.clone(), cancel_rx)
+                    .await;
                 cancel_handle.lock().await.take();
                 if let Err(e) = result {
                     let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
                 }
             }
-            AgentRequest::Resubmit { messages, new_user_content, model_override, mode_override } => {
+            AgentRequest::Resubmit {
+                messages,
+                new_user_content,
+                model_override,
+                mode_override,
+            } => {
                 debug!("agent task received resubmit");
 
                 if let Some(ref model_cfg) = model_override {
                     match sven_model::from_config(model_cfg) {
-                        Ok(m) => { agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>); }
+                        Ok(m) => {
+                            agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>);
+                        }
                         Err(e) => {
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))

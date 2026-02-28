@@ -50,10 +50,19 @@ pub async fn replay_tool_calls(
         .filter_map(|(i, record)| {
             if let ConversationRecord::Message(Message {
                 role: Role::Assistant,
-                content: MessageContent::ToolCall { tool_call_id, function },
+                content:
+                    MessageContent::ToolCall {
+                        tool_call_id,
+                        function,
+                    },
             }) = record
             {
-                Some((i, tool_call_id.clone(), function.name.clone(), function.arguments.clone()))
+                Some((
+                    i,
+                    tool_call_id.clone(),
+                    function.name.clone(),
+                    function.arguments.clone(),
+                ))
             } else {
                 None
             }
@@ -66,7 +75,11 @@ pub async fn replay_tool_calls(
             .unwrap_or(serde_json::Value::Object(Default::default()));
 
         // Execute the tool call with fresh inputs.
-        let tc = ToolCall { id: tool_call_id.clone(), name, args };
+        let tc = ToolCall {
+            id: tool_call_id.clone(),
+            name,
+            args,
+        };
         let output = tools.execute(&tc).await;
 
         // Find the matching ToolResult record after the call and update it in place.
@@ -74,9 +87,10 @@ pub async fn replay_tool_calls(
         let mut found = false;
         for slot in after_call.iter_mut() {
             if is_tool_result_for(slot, &tool_call_id) {
-                *slot = ConversationRecord::Message(
-                    Message::tool_result(&tool_call_id, &output.content),
-                );
+                *slot = ConversationRecord::Message(Message::tool_result(
+                    &tool_call_id,
+                    &output.content,
+                ));
                 found = true;
                 break;
             }
@@ -100,12 +114,24 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Tool for EchoTool {
-        fn name(&self) -> &str { "echo" }
-        fn description(&self) -> &str { "echoes message" }
-        fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({}) }
-        fn default_policy(&self) -> ApprovalPolicy { ApprovalPolicy::Auto }
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn description(&self) -> &str {
+            "echoes message"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
-            let msg = call.args.get("message").and_then(|v| v.as_str()).unwrap_or("(none)");
+            let msg = call
+                .args
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(none)");
             ToolOutput::ok(&call.id, format!("echo: {msg}"))
         }
     }
@@ -138,7 +164,10 @@ mod tests {
             match &m.content {
                 MessageContent::ToolResult { content, .. } => {
                     let text = content.as_text().unwrap_or("").to_string();
-                    assert!(text.contains("echo: hello"), "Expected fresh result, got: {text}");
+                    assert!(
+                        text.contains("echo: hello"),
+                        "Expected fresh result, got: {text}"
+                    );
                 }
                 _ => panic!("Expected ToolResult"),
             }
@@ -172,7 +201,10 @@ mod tests {
         if let ConversationRecord::Message(m) = &records[1] {
             if let MessageContent::ToolResult { content, .. } = &m.content {
                 let text = content.as_text().unwrap_or("");
-                assert_ne!(text, "stale", "stale result should have been replaced by error output");
+                assert_ne!(
+                    text, "stale",
+                    "stale result should have been replaced by error output"
+                );
             }
         }
     }
@@ -188,7 +220,10 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "c1".into(),
-                    function: FunctionCall { name: "echo".into(), arguments: r#"{"message":"one"}"#.into() },
+                    function: FunctionCall {
+                        name: "echo".into(),
+                        arguments: r#"{"message":"one"}"#.into(),
+                    },
                 },
             }),
             ConversationRecord::Message(Message::tool_result("c1", "stale-1")),
@@ -196,7 +231,10 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "c2".into(),
-                    function: FunctionCall { name: "echo".into(), arguments: r#"{"message":"two"}"#.into() },
+                    function: FunctionCall {
+                        name: "echo".into(),
+                        arguments: r#"{"message":"two"}"#.into(),
+                    },
                 },
             }),
             ConversationRecord::Message(Message::tool_result("c2", "stale-2")),
@@ -208,16 +246,30 @@ mod tests {
         let text1 = if let ConversationRecord::Message(m) = &records[1] {
             if let MessageContent::ToolResult { content, .. } = &m.content {
                 content.as_text().unwrap_or("").to_string()
-            } else { panic!("expected ToolResult") }
-        } else { panic!("expected Message") };
-        assert!(text1.contains("echo: one"), "first result should be refreshed: {text1}");
+            } else {
+                panic!("expected ToolResult")
+            }
+        } else {
+            panic!("expected Message")
+        };
+        assert!(
+            text1.contains("echo: one"),
+            "first result should be refreshed: {text1}"
+        );
 
         let text2 = if let ConversationRecord::Message(m) = &records[3] {
             if let MessageContent::ToolResult { content, .. } = &m.content {
                 content.as_text().unwrap_or("").to_string()
-            } else { panic!("expected ToolResult") }
-        } else { panic!("expected Message") };
-        assert!(text2.contains("echo: two"), "second result should be refreshed: {text2}");
+            } else {
+                panic!("expected ToolResult")
+            }
+        } else {
+            panic!("expected Message")
+        };
+        assert!(
+            text2.contains("echo: two"),
+            "second result should be refreshed: {text2}"
+        );
     }
 
     #[tokio::test]
@@ -234,8 +286,12 @@ mod tests {
         let count = replay_tool_calls(&mut records, &reg).await;
         assert_eq!(count, 0);
         // Records should be completely unchanged
-        assert!(matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some(user_text)));
-        assert!(matches!(&records[1], ConversationRecord::Message(m) if m.as_text() == Some(assistant_text)));
+        assert!(
+            matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some(user_text))
+        );
+        assert!(
+            matches!(&records[1], ConversationRecord::Message(m) if m.as_text() == Some(assistant_text))
+        );
     }
 
     #[tokio::test]
@@ -250,7 +306,10 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: "c-orphan".into(),
-                    function: FunctionCall { name: "echo".into(), arguments: r#"{"message":"hi"}"#.into() },
+                    function: FunctionCall {
+                        name: "echo".into(),
+                        arguments: r#"{"message":"hi"}"#.into(),
+                    },
                 },
             }),
             // No ToolResult follows

@@ -36,7 +36,12 @@ pub fn format_todos_markdown(todos: &[TodoItem]) -> String {
 pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
     match seg {
         ChatSegment::Message(m) => message_to_markdown(m, tool_args_cache),
-        ChatSegment::ContextCompacted { tokens_before, tokens_after, strategy, turn } => {
+        ChatSegment::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
             use sven_core::CompactionStrategyUsed;
             let label = match strategy {
                 CompactionStrategyUsed::Structured => "Context compacted (structured)",
@@ -48,13 +53,14 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
             } else {
                 String::new()
             };
-            format!(
-                "\n---\n*{label}: {tokens_before} → {tokens_after} tokens{turn_note}*\n\n"
-            )
+            format!("\n---\n*{label}: {tokens_before} → {tokens_after} tokens{turn_note}*\n\n")
         }
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {
-            format!("\n**Agent:thinking**\n💭 **Thought**\n```\n{}\n```\n", content)
+            format!(
+                "\n**Agent:thinking**\n💭 **Thought**\n```\n{}\n```\n",
+                content
+            )
         }
     }
 }
@@ -78,19 +84,31 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
                 let ellipsis = if has_more { "…" } else { "" };
                 format!("\n**Agent:** `{preview}{ellipsis}` ▶ click to expand\n")
             }
-            (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+            (
+                Role::Assistant,
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                },
+            ) => {
                 let args_preview = serde_json::from_str::<serde_json::Value>(&function.arguments)
                     .map(|v| {
                         if let serde_json::Value::Object(map) = &v {
-                            let parts: Vec<String> = map.iter().take(2).map(|(k, val)| {
-                                let s = match val {
-                                    serde_json::Value::String(s) =>
-                                        s.chars().take(40).collect::<String>(),
-                                    other =>
-                                        other.to_string().chars().take(40).collect::<String>(),
-                                };
-                                format!("{}={}", k, s)
-                            }).collect();
+                            let parts: Vec<String> = map
+                                .iter()
+                                .take(2)
+                                .map(|(k, val)| {
+                                    let s = match val {
+                                        serde_json::Value::String(s) => {
+                                            s.chars().take(40).collect::<String>()
+                                        }
+                                        other => {
+                                            other.to_string().chars().take(40).collect::<String>()
+                                        }
+                                    };
+                                    format!("{}={}", k, s)
+                                })
+                                .collect();
                             parts.join(" ")
                         } else {
                             function.arguments.chars().take(60).collect::<String>()
@@ -102,15 +120,30 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
                     tool_call_id, function.name, args_preview
                 )
             }
-            (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
+            (
+                Role::Tool,
+                MessageContent::ToolResult {
+                    tool_call_id,
+                    content,
+                },
+            ) => {
                 let tool_name = tool_args_cache
                     .get(tool_call_id)
                     .map(|s| s.as_str())
                     .unwrap_or("tool");
                 let content_text = content.to_string();
-                let preview: String =
-                    content_text.lines().next().unwrap_or("").chars().take(80).collect();
-                let truncated = if content_text.len() > preview.len() + 1 { "…" } else { "" };
+                let preview: String = content_text
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(80)
+                    .collect();
+                let truncated = if content_text.len() > preview.len() + 1 {
+                    "…"
+                } else {
+                    ""
+                };
                 format!(
                     "\n**Tool:{}**\n✅ **Tool Response: {}** `{}{}` ▶ click to expand\n",
                     tool_call_id, tool_name, preview, truncated
@@ -119,9 +152,18 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
-            let preview: String =
-                content.lines().next().unwrap_or("").chars().take(80).collect();
-            let truncated = if content.len() > preview.len() + 1 { "…" } else { "" };
+            let preview: String = content
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect();
+            let truncated = if content.len() > preview.len() + 1 {
+                "…"
+            } else {
+                ""
+            };
             format!(
                 "\n**Agent:thinking**\n💭 **Thought** `{}{}` ▶ click to expand\n",
                 preview, truncated
@@ -159,20 +201,22 @@ pub fn format_conversation(
 pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
-            (Role::User, MessageContent::Text(_)) =>
-                (Some(Style::default().fg(Color::Green)), false),
-            (Role::Assistant, MessageContent::Text(_)) =>
-                (Some(Style::default().fg(Color::Blue)), false),
-            (Role::Assistant, MessageContent::ToolCall { .. }) =>
-                (Some(Style::default().fg(Color::Yellow)), false),
-            (Role::Tool, MessageContent::ToolResult { .. }) =>
-                (Some(Style::default().fg(Color::Yellow)), false),
+            (Role::User, MessageContent::Text(_)) => {
+                (Some(Style::default().fg(Color::Green)), false)
+            }
+            (Role::Assistant, MessageContent::Text(_)) => {
+                (Some(Style::default().fg(Color::Blue)), false)
+            }
+            (Role::Assistant, MessageContent::ToolCall { .. }) => {
+                (Some(Style::default().fg(Color::Yellow)), false)
+            }
+            (Role::Tool, MessageContent::ToolResult { .. }) => {
+                (Some(Style::default().fg(Color::Yellow)), false)
+            }
             _ => (None, false),
         },
-        ChatSegment::Thinking { .. } =>
-            (Some(Style::default().fg(Color::Magenta)), false),
-        ChatSegment::Error(_) =>
-            (Some(Style::default().fg(Color::Red)), false),
+        ChatSegment::Thinking { .. } => (Some(Style::default().fg(Color::Magenta)), false),
+        ChatSegment::Error(_) => (Some(Style::default().fg(Color::Red)), false),
         _ => (None, false),
     }
 }
@@ -184,7 +228,11 @@ pub fn apply_bar_and_dim(
     dim: bool,
     bar_char: &str,
 ) -> StyledLines {
-    let modifier = if dim { Modifier::DIM } else { Modifier::empty() };
+    let modifier = if dim {
+        Modifier::DIM
+    } else {
+        Modifier::empty()
+    };
     lines
         .into_iter()
         .map(|line| {
@@ -205,13 +253,20 @@ pub fn apply_bar_and_dim(
 
 /// Format a single `Message` as markdown.  This is the per-message building
 /// block for `format_conversation` and the round-trip parse tests.
-pub(crate) fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String, String>) -> String {
+pub(crate) fn message_to_markdown(
+    m: &Message,
+    tool_args_cache: &HashMap<String, String>,
+) -> String {
     match (&m.role, &m.content) {
-        (Role::User, MessageContent::Text(t)) =>
-            format!("---\n\n**You:** {}\n", t),
-        (Role::Assistant, MessageContent::Text(t)) =>
-            format!("\n**Agent:** {}\n", t),
-        (Role::Assistant, MessageContent::ToolCall { tool_call_id, function }) => {
+        (Role::User, MessageContent::Text(t)) => format!("---\n\n**You:** {}\n", t),
+        (Role::Assistant, MessageContent::Text(t)) => format!("\n**Agent:** {}\n", t),
+        (
+            Role::Assistant,
+            MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            },
+        ) => {
             let pretty_args = serde_json::from_str::<serde_json::Value>(&function.arguments)
                 .and_then(|v| serde_json::to_string_pretty(&v))
                 .unwrap_or_else(|_| function.arguments.clone());
@@ -220,7 +275,13 @@ pub(crate) fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String,
                 tool_call_id, function.name, pretty_args
             )
         }
-        (Role::Tool, MessageContent::ToolResult { tool_call_id, content }) => {
+        (
+            Role::Tool,
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            },
+        ) => {
             let tool_name = tool_args_cache
                 .get(tool_call_id)
                 .map(|s| s.as_str())
@@ -230,8 +291,7 @@ pub(crate) fn message_to_markdown(m: &Message, tool_args_cache: &HashMap<String,
                 tool_call_id, tool_name, content
             )
         }
-        (Role::System, MessageContent::Text(t)) =>
-            format!("**System:** {}\n\n", t),
+        (Role::System, MessageContent::Text(t)) => format!("**System:** {}\n\n", t),
         _ => String::new(),
     }
 }
@@ -326,7 +386,10 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
 
 fn extract_text_content(lines: &[&str], i: &mut usize, prefix: &str) -> Result<String, String> {
     let first_line = lines[*i].trim();
-    let inline_text = first_line.strip_prefix(prefix).map(|s| s.trim()).unwrap_or("");
+    let inline_text = first_line
+        .strip_prefix(prefix)
+        .map(|s| s.trim())
+        .unwrap_or("");
     let mut text = String::from(inline_text);
     *i += 1;
     // Track consecutive blank lines so they can be reproduced faithfully.
@@ -431,17 +494,26 @@ mod tests {
     use crate::chat::segment::ChatSegment;
 
     fn user_seg(text: &str) -> ChatSegment {
-        ChatSegment::Message(Message { role: Role::User, content: MessageContent::Text(text.into()) })
+        ChatSegment::Message(Message {
+            role: Role::User,
+            content: MessageContent::Text(text.into()),
+        })
     }
     fn agent_seg(text: &str) -> ChatSegment {
-        ChatSegment::Message(Message { role: Role::Assistant, content: MessageContent::Text(text.into()) })
+        ChatSegment::Message(Message {
+            role: Role::Assistant,
+            content: MessageContent::Text(text.into()),
+        })
     }
     fn tool_call_seg(call_id: &str, name: &str) -> ChatSegment {
         ChatSegment::Message(Message {
             role: Role::Assistant,
             content: MessageContent::ToolCall {
                 tool_call_id: call_id.into(),
-                function: FunctionCall { name: name.into(), arguments: "{}".into() },
+                function: FunctionCall {
+                    name: name.into(),
+                    arguments: "{}".into(),
+                },
             },
         })
     }
@@ -459,21 +531,34 @@ mod tests {
 
     #[test]
     fn user_message_formatted_with_separator_and_you_label() {
-        let msg   = Message { role: Role::User, content: MessageContent::Text("hello world".into()) };
+        let msg = Message {
+            role: Role::User,
+            content: MessageContent::Text("hello world".into()),
+        };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
-        assert!(md.starts_with("---"),       "must start with --- separator; got: {:?}", md);
-        assert!(md.contains("**You:**"),     "must carry **You:** label");
+        assert!(
+            md.starts_with("---"),
+            "must start with --- separator; got: {:?}",
+            md
+        );
+        assert!(md.contains("**You:**"), "must carry **You:** label");
         assert!(md.contains("hello world"), "must contain the user text");
-        assert!(!md.starts_with('\n'),       "separator must be the first character");
+        assert!(
+            !md.starts_with('\n'),
+            "separator must be the first character"
+        );
     }
 
     #[test]
     fn agent_message_formatted_with_agent_label() {
-        let msg   = Message { role: Role::Assistant, content: MessageContent::Text("response text".into()) };
+        let msg = Message {
+            role: Role::Assistant,
+            content: MessageContent::Text("response text".into()),
+        };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
-        assert!(md.contains("**Agent:**"),    "must carry **Agent:** label");
+        assert!(md.contains("**Agent:**"), "must carry **Agent:** label");
         assert!(md.contains("response text"), "must contain the agent text");
     }
 
@@ -483,15 +568,21 @@ mod tests {
             role: Role::Assistant,
             content: MessageContent::ToolCall {
                 tool_call_id: "id1".into(),
-                function: FunctionCall { name: "read_file".into(), arguments: r#"{"path":"/tmp/x"}"#.into() },
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"/tmp/x"}"#.into(),
+                },
             },
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
-        assert!(md.contains("Tool Call"),  "must carry 'Tool Call' heading");
+        assert!(md.contains("Tool Call"), "must carry 'Tool Call' heading");
         assert!(md.contains("read_file"), "must include the tool name");
         let name_count = md.matches("read_file").count();
-        assert_eq!(name_count, 1, "tool name must appear exactly once; found {name_count} in: {md:?}");
+        assert_eq!(
+            name_count, 1,
+            "tool name must appear exactly once; found {name_count} in: {md:?}"
+        );
     }
 
     #[test]
@@ -500,14 +591,26 @@ mod tests {
         cache.insert("id1".to_string(), "read_file".to_string());
         let msg = Message {
             role: Role::Tool,
-            content: MessageContent::ToolResult { tool_call_id: "id1".into(), content: "file contents here".into() },
+            content: MessageContent::ToolResult {
+                tool_call_id: "id1".into(),
+                content: "file contents here".into(),
+            },
         };
         let md = message_to_markdown(&msg, &cache);
-        assert!(md.contains("Tool Response"),       "must carry 'Tool Response' heading");
-        assert!(md.contains("file contents here"),  "must include the tool output");
-        assert!(md.contains("```"),                 "output must be inside a code fence");
+        assert!(
+            md.contains("Tool Response"),
+            "must carry 'Tool Response' heading"
+        );
+        assert!(
+            md.contains("file contents here"),
+            "must include the tool output"
+        );
+        assert!(md.contains("```"), "output must be inside a code fence");
         let name_count = md.matches("read_file").count();
-        assert_eq!(name_count, 1, "tool name must appear exactly once; found {name_count} in: {md:?}");
+        assert_eq!(
+            name_count, 1,
+            "tool name must appear exactly once; found {name_count} in: {md:?}"
+        );
     }
 
     // ── format_conversation ───────────────────────────────────────────────────
@@ -515,52 +618,78 @@ mod tests {
     #[test]
     fn empty_conversation_produces_empty_output() {
         let result = format_conversation(&[], "", &HashMap::new());
-        assert!(result.trim().is_empty(), "empty conversation must produce empty string; got: {result:?}");
+        assert!(
+            result.trim().is_empty(),
+            "empty conversation must produce empty string; got: {result:?}"
+        );
     }
 
     #[test]
     fn single_user_message_starts_without_leading_newline() {
         let result = format_conversation(&[user_seg("hello")], "", &HashMap::new());
-        assert!(result.starts_with("---"), "must begin with --- separator; got: {result:?}");
+        assert!(
+            result.starts_with("---"),
+            "must begin with --- separator; got: {result:?}"
+        );
         assert!(!result.starts_with('\n'), "must not have a leading newline");
     }
 
     #[test]
     fn conversation_with_user_and_agent_contains_both_labels_and_texts() {
-        let result = format_conversation(&[user_seg("question"), agent_seg("answer")], "", &HashMap::new());
-        assert!(result.contains("**You:**"),   "You label present");
-        assert!(result.contains("question"),   "user text present");
+        let result = format_conversation(
+            &[user_seg("question"), agent_seg("answer")],
+            "",
+            &HashMap::new(),
+        );
+        assert!(result.contains("**You:**"), "You label present");
+        assert!(result.contains("question"), "user text present");
         assert!(result.contains("**Agent:**"), "Agent label present");
-        assert!(result.contains("answer"),     "agent text present");
+        assert!(result.contains("answer"), "agent text present");
     }
 
     #[test]
     fn multi_turn_conversation_has_no_triple_newlines() {
         let segs = vec![user_seg("a"), agent_seg("b"), user_seg("c"), agent_seg("d")];
         let result = format_conversation(&segs, "", &HashMap::new());
-        assert!(!result.contains("\n\n\n"), "triple newlines must not appear; got:\n{result}");
+        assert!(
+            !result.contains("\n\n\n"),
+            "triple newlines must not appear; got:\n{result}"
+        );
     }
 
     #[test]
     fn streaming_buffer_appended_after_all_committed_segments() {
         let result = format_conversation(&[user_seg("hello")], "partial response", &HashMap::new());
-        assert!(result.contains("hello"),            "committed segment present");
-        assert!(result.contains("partial response"), "streaming buffer present");
-        let user_pos   = result.find("hello").unwrap();
+        assert!(result.contains("hello"), "committed segment present");
+        assert!(
+            result.contains("partial response"),
+            "streaming buffer present"
+        );
+        let user_pos = result.find("hello").unwrap();
         let stream_pos = result.find("partial response").unwrap();
-        assert!(stream_pos > user_pos, "streaming text must come after the committed segment");
+        assert!(
+            stream_pos > user_pos,
+            "streaming text must come after the committed segment"
+        );
     }
 
     #[test]
     fn tool_call_and_result_both_appear_with_name_at_most_twice() {
         let mut cache = HashMap::new();
         cache.insert("id1".to_string(), "glob".to_string());
-        let segs = vec![user_seg("find files"), tool_call_seg("id1", "glob"), tool_result_seg("id1", "result.txt")];
+        let segs = vec![
+            user_seg("find files"),
+            tool_call_seg("id1", "glob"),
+            tool_result_seg("id1", "result.txt"),
+        ];
         let result = format_conversation(&segs, "", &cache);
-        assert!(result.contains("glob"),       "tool name must appear");
+        assert!(result.contains("glob"), "tool name must appear");
         assert!(result.contains("result.txt"), "tool output must appear");
         let name_count = result.matches("glob").count();
-        assert!(name_count <= 2, "tool name must appear at most twice; found {name_count}:\n{result}");
+        assert!(
+            name_count <= 2,
+            "tool name must appear at most twice; found {name_count}:\n{result}"
+        );
     }
 
     // ── parse_markdown_to_messages ────────────────────────────────────────────
@@ -580,7 +709,8 @@ mod tests {
 
     #[test]
     fn parse_user_and_agent_messages_preserves_order_and_content() {
-        let messages = parse_markdown_to_messages("---\n\n**You:** question\n\n**Agent:** answer\n").unwrap();
+        let messages =
+            parse_markdown_to_messages("---\n\n**You:** question\n\n**Agent:** answer\n").unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].as_text(), Some("question"));
@@ -594,13 +724,18 @@ mod tests {
             "**Agent:tool_call:abc123**\n",
             "🔧 **Tool Call: read_file**\n",
             "```json\n",
-            r#"{"path": "/tmp/test.txt"}"#, "\n",
+            r#"{"path": "/tmp/test.txt"}"#,
+            "\n",
             "```\n",
         );
         let messages = parse_markdown_to_messages(md).unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::Assistant);
-        if let MessageContent::ToolCall { tool_call_id, function } = &messages[0].content {
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &messages[0].content
+        {
             assert_eq!(tool_call_id, "abc123");
             assert_eq!(function.name, "read_file");
             assert_eq!(function.arguments.trim(), r#"{"path": "/tmp/test.txt"}"#);
@@ -622,7 +757,11 @@ mod tests {
         let messages = parse_markdown_to_messages(md).unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::Tool);
-        if let MessageContent::ToolResult { tool_call_id, content } = &messages[0].content {
+        if let MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } = &messages[0].content
+        {
             assert_eq!(tool_call_id, "xyz789");
             assert_eq!(content.to_string().trim(), "file1.rs\nfile2.rs");
         } else {
@@ -632,7 +771,8 @@ mod tests {
 
     #[test]
     fn parse_system_message_extracts_role_and_text() {
-        let messages = parse_markdown_to_messages("**System:** You are a helpful assistant.\n\n").unwrap();
+        let messages =
+            parse_markdown_to_messages("**System:** You are a helpful assistant.\n\n").unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::System);
         assert_eq!(messages[0].as_text(), Some("You are a helpful assistant."));
@@ -646,7 +786,10 @@ mod tests {
             Message::user("second question"),
         ];
         let cache = HashMap::new();
-        let md: String = original.iter().map(|m| message_to_markdown(m, &cache)).collect();
+        let md: String = original
+            .iter()
+            .map(|m| message_to_markdown(m, &cache))
+            .collect();
         let parsed = parse_markdown_to_messages(&md).unwrap();
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].as_text(), original[0].as_text());
@@ -679,20 +822,43 @@ mod tests {
             },
             Message::assistant("The file contains three lines"),
         ];
-        let md: String = original.iter().map(|m| message_to_markdown(m, &cache)).collect();
+        let md: String = original
+            .iter()
+            .map(|m| message_to_markdown(m, &cache))
+            .collect();
         let parsed = parse_markdown_to_messages(&md).unwrap();
         assert_eq!(parsed.len(), 4, "all messages must be preserved");
         assert_eq!(parsed[0].role, Role::User);
         assert_eq!(parsed[0].as_text(), Some("read the file"));
-        if let MessageContent::ToolCall { tool_call_id, function } = &parsed[1].content {
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &parsed[1].content
+        {
             assert_eq!(tool_call_id, "call1");
             assert_eq!(function.name, "read_file");
-            assert!(function.arguments.contains("utf8"), "full args must be preserved; got: {}", function.arguments);
-        } else { panic!("expected ToolCall"); }
-        if let MessageContent::ToolResult { tool_call_id, content } = &parsed[2].content {
+            assert!(
+                function.arguments.contains("utf8"),
+                "full args must be preserved; got: {}",
+                function.arguments
+            );
+        } else {
+            panic!("expected ToolCall");
+        }
+        if let MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } = &parsed[2].content
+        {
             assert_eq!(tool_call_id, "call1");
-            assert!(content.to_string().contains("line three"), "full output must be preserved; got: {}", content);
-        } else { panic!("expected ToolResult"); }
+            assert!(
+                content.to_string().contains("line three"),
+                "full output must be preserved; got: {}",
+                content
+            );
+        } else {
+            panic!("expected ToolResult");
+        }
         assert_eq!(parsed[3].as_text(), Some("The file contains three lines"));
     }
 
@@ -702,9 +868,9 @@ mod tests {
         let messages = parse_markdown_to_messages(md).unwrap();
         assert_eq!(messages.len(), 1);
         let text = messages[0].as_text().unwrap();
-        assert!(text.contains("first line"),  "first line present");
+        assert!(text.contains("first line"), "first line present");
         assert!(text.contains("second line"), "second line present");
-        assert!(text.contains("third line"),  "third line present");
+        assert!(text.contains("third line"), "third line present");
     }
 
     #[test]
@@ -724,7 +890,11 @@ mod tests {
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
         let messages = parse_markdown_to_messages(&md).unwrap();
-        assert_eq!(messages.len(), 1, "should produce exactly one message; md was: {md:?}");
+        assert_eq!(
+            messages.len(),
+            1,
+            "should produce exactly one message; md was: {md:?}"
+        );
         let text = messages[0].as_text().unwrap();
         assert!(
             text.contains("First paragraph\n\nSecond paragraph"),
@@ -740,10 +910,16 @@ mod tests {
         let messages = parse_markdown_to_messages(md).unwrap();
         assert_eq!(messages.len(), 1, "should produce exactly one message");
         let text = messages[0].as_text().unwrap();
-        assert!(text.contains("bold continuation"),
-            "bold continuation line must be preserved; got: {:?}", text);
-        assert!(text.contains("third line"),
-            "third line must be present; got: {:?}", text);
+        assert!(
+            text.contains("bold continuation"),
+            "bold continuation line must be preserved; got: {:?}",
+            text
+        );
+        assert!(
+            text.contains("third line"),
+            "third line must be present; got: {:?}",
+            text
+        );
     }
 
     #[test]
@@ -763,13 +939,31 @@ mod tests {
         let edited_md = original_md.replace("ORIGINAL_QUESTION", "EDITED_QUESTION");
         let parsed = parse_markdown_to_messages(&edited_md).unwrap();
         assert_eq!(parsed.len(), 7, "all messages must be present");
-        assert_eq!(parsed[0].as_text(), Some("EDITED_QUESTION"), "first message was edited");
-        assert_eq!(parsed[1].as_text(), Some("first answer"), "second message unchanged");
-        assert_eq!(parsed[5].as_text(), Some("second question"), "later messages unchanged");
-        if let MessageContent::ToolCall { tool_call_id, function } = &parsed[2].content {
+        assert_eq!(
+            parsed[0].as_text(),
+            Some("EDITED_QUESTION"),
+            "first message was edited"
+        );
+        assert_eq!(
+            parsed[1].as_text(),
+            Some("first answer"),
+            "second message unchanged"
+        );
+        assert_eq!(
+            parsed[5].as_text(),
+            Some("second question"),
+            "later messages unchanged"
+        );
+        if let MessageContent::ToolCall {
+            tool_call_id,
+            function,
+        } = &parsed[2].content
+        {
             assert_eq!(tool_call_id, "c1");
             assert_eq!(function.name, "glob");
-        } else { panic!("tool call structure must be preserved"); }
+        } else {
+            panic!("tool call structure must be preserved");
+        }
     }
 
     #[test]
@@ -786,7 +980,11 @@ mod tests {
         let parsed = parse_markdown_to_messages(&edited_md).unwrap();
         assert_eq!(parsed.len(), 4);
         assert_eq!(parsed[0].as_text(), Some("question 1"));
-        assert_eq!(parsed[1].as_text(), Some("EDITED_RESPONSE"), "agent message edited");
+        assert_eq!(
+            parsed[1].as_text(),
+            Some("EDITED_RESPONSE"),
+            "agent message edited"
+        );
         assert_eq!(parsed[2].as_text(), Some("question 2"));
         assert_eq!(parsed[3].as_text(), Some("answer 2"));
     }

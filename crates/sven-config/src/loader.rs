@@ -56,10 +56,10 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
 
     if let Some(p) = extra {
         debug!(path = %p.display(), "loading explicit config");
-        let text = std::fs::read_to_string(p)
-            .with_context(|| format!("reading {}", p.display()))?;
-        let layer: serde_yaml::Value = serde_yaml::from_str(&text)
-            .with_context(|| format!("parsing {}", p.display()))?;
+        let text =
+            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let layer: serde_yaml::Value =
+            serde_yaml::from_str(&text).with_context(|| format!("parsing {}", p.display()))?;
         merge_yaml(&mut merged, layer);
     }
 

@@ -29,23 +29,19 @@ use tracing::debug;
 
 use crate::{
     agent::{agent_task, AgentRequest},
-    chat::{
-        search::SearchState,
-        segment::ChatSegment,
-    },
+    chat::{search::SearchState, segment::ChatSegment},
     commands::{CommandRegistry, CompletionManager},
     keys::Action,
     layout::AppLayout,
     markdown::StyledLines,
     nvim::NvimBridge,
-    overlay::{
-        completion::CompletionOverlay,
-        confirm::ConfirmModal,
-        question::QuestionModal,
-    },
+    overlay::{completion::CompletionOverlay, confirm::ConfirmModal, question::QuestionModal},
     pager::PagerOverlay,
     state::SessionState,
-    widgets::{draw_chat, draw_completion_overlay, draw_confirm_modal, draw_help, draw_input, draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode},
+    widgets::{
+        draw_chat, draw_completion_overlay, draw_confirm_modal, draw_help, draw_input,
+        draw_question_modal, draw_queue_panel, draw_search, draw_status, InputEditMode,
+    },
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -65,7 +61,7 @@ pub enum ModelDirective {
     #[allow(dead_code)]
     Unchanged,
     /// Switch to the given pre-resolved model configuration.
-    SwitchTo(ModelConfig),
+    SwitchTo(Box<ModelConfig>),
 }
 
 impl ModelDirective {
@@ -73,7 +69,7 @@ impl ModelDirective {
     pub fn into_model_config(self) -> ModelConfig {
         match self {
             ModelDirective::Unchanged => ModelConfig::default(),
-            ModelDirective::SwitchTo(c) => c,
+            ModelDirective::SwitchTo(c) => *c,
         }
     }
 }
@@ -94,7 +90,11 @@ pub struct QueuedMessage {
 
 impl QueuedMessage {
     pub fn plain(content: String) -> Self {
-        Self { content, model_transition: None, mode_transition: None }
+        Self {
+            content,
+            model_transition: None,
+            mode_transition: None,
+        }
     }
 }
 
@@ -137,7 +137,7 @@ pub enum FocusPane {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
-    /// The top-level TUI application state.
+/// The top-level TUI application state.
 pub struct App {
     pub(crate) config: Arc<Config>,
     /// Unified model/mode session state.  Replaces five previously parallel
@@ -195,8 +195,7 @@ pub struct App {
     pub(crate) event_rx: Option<mpsc::Receiver<AgentEvent>>,
     /// Shared cancel handle: holds the sender half of the current submission's
     /// oneshot channel.  Dropping or sending on it cancels the running turn.
-    pub(crate) cancel_handle:
-        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    pub(crate) cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// When `true` after an abort, new messages typed in the input box are
     /// queued rather than sent directly, and auto-dequeue is suppressed.
     /// Cleared when the user manually submits a message.
@@ -243,9 +242,9 @@ pub struct App {
     /// Original text saved for cancel/restore.
     pub(crate) edit_original_text: Option<String>,
     pub(crate) nvim_bridge: Option<Arc<tokio::sync::Mutex<NvimBridge>>>,
-    pub(crate) nvim_flush_notify:  Option<Arc<tokio::sync::Notify>>,
+    pub(crate) nvim_flush_notify: Option<Arc<tokio::sync::Notify>>,
     pub(crate) nvim_submit_notify: Option<Arc<tokio::sync::Notify>>,
-    pub(crate) nvim_quit_notify:   Option<Arc<tokio::sync::Notify>>,
+    pub(crate) nvim_quit_notify: Option<Arc<tokio::sync::Notify>>,
     pub(crate) history_path: Option<PathBuf>,
     /// When set, the full conversation is written to this JSONL file after
     /// every turn and every message edit.
@@ -271,6 +270,7 @@ pub struct App {
     /// that `/refresh` also picks up new agent markdown files.
     pub(crate) shared_agents: sven_runtime::SharedAgents,
     /// Project root detected at startup, used to re-discover skills on refresh.
+    #[allow(dead_code)]
     pub(crate) project_root: Option<PathBuf>,
 }
 
@@ -350,14 +350,12 @@ impl App {
 
         // Discover skills once at startup and build the shared live reference.
         let project_root = sven_runtime::find_project_root().ok();
-        let shared_skills = sven_runtime::SharedSkills::new(
-            sven_runtime::discover_skills(project_root.as_deref())
-        );
+        let shared_skills =
+            sven_runtime::SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
 
         // Discover subagents once at startup.
-        let shared_agents = sven_runtime::SharedAgents::new(
-            sven_runtime::discover_agents(project_root.as_deref())
-        );
+        let shared_agents =
+            sven_runtime::SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
 
         // Discover user-invocable commands from .cursor/commands/ etc. and
         // register them as slash commands.  Skills are intentionally excluded
@@ -426,7 +424,8 @@ impl App {
             nvim_submit_notify: None,
             nvim_quit_notify: None,
             history_path,
-            jsonl_path: opts.jsonl_path
+            jsonl_path: opts
+                .jsonl_path
                 .or_else(|| opts.jsonl_load_path.clone())
                 .or_else(resolve_auto_log_path),
             no_nvim: opts.no_nvim,
@@ -468,15 +467,15 @@ impl App {
     /// Run the TUI event loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> anyhow::Result<()> {
         let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
-        let (event_tx, event_rx)   = mpsc::channel::<AgentEvent>(512);
+        let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
         self.agent_tx = Some(submit_tx.clone());
         self.event_rx = Some(event_rx);
 
-        let cfg                = self.config.clone();
-        let mode               = self.session.mode;
-        let startup_model_cfg  = self.session.model_cfg.clone();
+        let cfg = self.config.clone();
+        let mode = self.session.mode;
+        let startup_model_cfg = self.session.model_cfg.clone();
         let cancel_handle_task = self.cancel_handle.clone();
         let shared_skills_task = self.shared_skills.clone();
         let shared_agents_task = self.shared_agents.clone();
@@ -501,7 +500,11 @@ impl App {
                 .chat_segments
                 .iter()
                 .filter_map(|seg| {
-                    if let ChatSegment::Message(m) = seg { Some(m.clone()) } else { None }
+                    if let ChatSegment::Message(m) = seg {
+                        Some(m.clone())
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             if !messages.is_empty() {
@@ -525,11 +528,7 @@ impl App {
         // Initialize NvimBridge unless disabled by --no-nvim.
         if !self.no_nvim {
             let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
-                let layout = AppLayout::compute(
-                    Rect::new(0, 0, size.width, size.height),
-                    false,
-                    0,
-                );
+                let layout = AppLayout::compute(Rect::new(0, 0, size.width, size.height), false, 0);
                 (
                     layout.chat_pane.width.saturating_sub(2),
                     layout.chat_inner_height().max(1),
@@ -543,9 +542,9 @@ impl App {
                     if let Err(e) = bridge.configure_buffer().await {
                         tracing::warn!("Failed to configure Neovim buffer: {}", e);
                     }
-                    self.nvim_flush_notify  = Some(bridge.flush_notify.clone());
+                    self.nvim_flush_notify = Some(bridge.flush_notify.clone());
                     self.nvim_submit_notify = Some(bridge.submit_notify.clone());
-                    self.nvim_quit_notify   = Some(bridge.quit_notify.clone());
+                    self.nvim_quit_notify = Some(bridge.quit_notify.clone());
                     self.nvim_bridge = Some(Arc::new(tokio::sync::Mutex::new(bridge)));
                 }
                 Err(e) => {
@@ -560,7 +559,8 @@ impl App {
         }
 
         if let Some(qm) = self.queued.pop_front() {
-            self.chat_segments.push(ChatSegment::Message(Message::user(&qm.content)));
+            self.chat_segments
+                .push(ChatSegment::Message(Message::user(&qm.content)));
             self.rerender_chat().await;
             self.send_to_agent(qm).await;
         }
@@ -578,20 +578,16 @@ impl App {
                 // Clamp scroll_offset to the valid range whenever chat_height or
                 // chat_lines changes (e.g. terminal resize, content shrink, or
                 // stale initial value from the default chat_height: 24).
-                let max_scroll = (self.chat_lines.len() as u16)
-                    .saturating_sub(self.chat_height);
+                let max_scroll = (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
                 if self.scroll_offset > max_scroll {
                     self.scroll_offset = max_scroll;
                 }
                 self.last_chat_pane = layout.chat_pane;
                 // Track chat pane inner width for pre-wrap in the markdown renderer.
-                self.last_chat_inner_width =
-                    layout.chat_pane.width.saturating_sub(2).max(20);
+                self.last_chat_inner_width = layout.chat_pane.width.saturating_sub(2).max(20);
                 // Track input pane dimensions for scroll adjustment and mouse routing.
-                self.last_input_inner_width =
-                    layout.input_pane.width.saturating_sub(2);
-                self.last_input_inner_height =
-                    layout.input_pane.height.saturating_sub(2);
+                self.last_input_inner_width = layout.input_pane.width.saturating_sub(2);
+                self.last_input_inner_height = layout.input_pane.height.saturating_sub(2);
                 self.last_input_pane = layout.input_pane;
                 self.last_queue_pane = layout.queue_pane;
             }
@@ -622,11 +618,10 @@ impl App {
             if self.needs_terminal_recover {
                 self.needs_terminal_recover = false;
                 use crossterm::{
-                    execute,
                     event::{
-                        EnableMouseCapture,
-                        KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+                        EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
                     },
+                    execute,
                 };
                 let raw_was_disabled = !crossterm::terminal::is_raw_mode_enabled().unwrap_or(true);
                 if raw_was_disabled {
@@ -654,7 +649,7 @@ impl App {
             let (nvim_lines, nvim_draw_scroll, nvim_cursor) =
                 if let Some(nvim_bridge) = &self.nvim_bridge {
                     let bridge = nvim_bridge.lock().await;
-                    let lines  = bridge.render_to_lines(0, bridge.height).await;
+                    let lines = bridge.render_to_lines(0, bridge.height).await;
                     let cursor = bridge.get_cursor_pos().await;
                     (lines, 0u16, Some(cursor))
                 } else {
@@ -673,10 +668,14 @@ impl App {
                     );
                     if self.search.active {
                         let area = frame.area();
-                        let search_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
+                        let search_area =
+                            Rect::new(0, area.height.saturating_sub(1), area.width, 1);
                         draw_search(
-                            frame, search_area, &self.search.query,
-                            self.search.matches.len(), self.search.current,
+                            frame,
+                            search_area,
+                            &self.search.query,
+                            self.search.matches.len(),
+                            self.search.current,
                         );
                     }
                     return;
@@ -685,28 +684,45 @@ impl App {
                 let layout = AppLayout::new(frame, self.search.active, self.queued.len());
 
                 draw_status(
-                    frame, layout.status_bar, &self.session.model_display,
-                    self.session.mode, self.context_pct, self.cache_hit_pct, self.agent_busy,
+                    frame,
+                    layout.status_bar,
+                    &self.session.model_display,
+                    self.session.mode,
+                    self.context_pct,
+                    self.cache_hit_pct,
+                    self.agent_busy,
                     self.current_tool.as_deref(),
                     self.session.staged_model_label().as_deref(),
                     self.session.staged_mode,
                     ascii,
                 );
 
-                let lines_to_draw = if !nvim_lines.is_empty() { &nvim_lines } else { &self.chat_lines };
-                let editing_range = self.editing_message_index
+                let lines_to_draw = if !nvim_lines.is_empty() {
+                    &nvim_lines
+                } else {
+                    &self.chat_lines
+                };
+                let editing_range = self
+                    .editing_message_index
                     .and_then(|idx| self.segment_line_ranges.get(idx))
                     .copied();
                 draw_chat(
-                    frame, layout.chat_pane, lines_to_draw, nvim_draw_scroll,
-                    self.focus == FocusPane::Chat, ascii,
-                    &self.search.query, &self.search.matches, self.search.current,
-                    self.search.regex.as_ref(), nvim_cursor,
+                    frame,
+                    layout.chat_pane,
+                    lines_to_draw,
+                    nvim_draw_scroll,
+                    self.focus == FocusPane::Chat,
+                    ascii,
+                    &self.search.query,
+                    &self.search.matches,
+                    self.search.current,
+                    self.search.regex.as_ref(),
+                    nvim_cursor,
                     editing_range,
                     &crate::widgets::ChatLabels {
-                        edit_label_lines:    self.edit_label_line_indices.clone(),
-                        remove_label_lines:  self.remove_label_line_indices.clone(),
-                        rerun_label_lines:   self.rerun_label_line_indices.clone(),
+                        edit_label_lines: self.edit_label_line_indices.clone(),
+                        remove_label_lines: self.remove_label_line_indices.clone(),
+                        rerun_label_lines: self.rerun_label_line_indices.clone(),
                         pending_delete_line: None, // confirmations now use the modal
                     },
                     self.no_nvim,
@@ -725,28 +741,47 @@ impl App {
                     && self.question_modal.is_none()
                     && self.confirm_modal.is_none();
                 draw_input(
-                    frame, layout.input_pane,
-                    if in_edit { &self.edit_buffer } else { &self.input_buffer },
-                    if in_edit { self.edit_cursor } else { self.input_cursor },
-                    if in_edit { self.edit_scroll_offset } else { self.input_scroll_offset },
+                    frame,
+                    layout.input_pane,
+                    if in_edit {
+                        &self.edit_buffer
+                    } else {
+                        &self.input_buffer
+                    },
+                    if in_edit {
+                        self.edit_cursor
+                    } else {
+                        self.input_cursor
+                    },
+                    if in_edit {
+                        self.edit_scroll_offset
+                    } else {
+                        self.input_scroll_offset
+                    },
                     input_cursor_active,
-                    ascii, edit_mode,
+                    ascii,
+                    edit_mode,
                 );
                 if !self.queued.is_empty() {
                     let queued_items: Vec<(String, Option<String>, Option<AgentMode>)> = self
                         .queued
                         .iter()
-                        .map(|qm| (
-                            qm.content.clone(),
-                            qm.model_transition.as_ref().map(|d| match d {
-                                ModelDirective::SwitchTo(c) => format!("{}/{}", c.provider, c.name),
-                                ModelDirective::Unchanged => String::new(),
-                            }),
-                            qm.mode_transition,
-                        ))
+                        .map(|qm| {
+                            (
+                                qm.content.clone(),
+                                qm.model_transition.as_ref().map(|d| match d {
+                                    ModelDirective::SwitchTo(c) => {
+                                        format!("{}/{}", c.provider, c.name)
+                                    }
+                                    ModelDirective::Unchanged => String::new(),
+                                }),
+                                qm.mode_transition,
+                            )
+                        })
                         .collect();
                     draw_queue_panel(
-                        frame, layout.queue_pane,
+                        frame,
+                        layout.queue_pane,
                         &queued_items,
                         self.queue_selected,
                         self.editing_queue_index,
@@ -759,8 +794,11 @@ impl App {
                 }
                 if self.search.active {
                     draw_search(
-                        frame, layout.search_bar, &self.search.query,
-                        self.search.matches.len(), self.search.current,
+                        frame,
+                        layout.search_bar,
+                        &self.search.query,
+                        self.search.matches.len(),
+                        self.search.current,
                     );
                 }
                 if self.show_help {
@@ -793,9 +831,9 @@ impl App {
                 }
             })?;
 
-            let flush_notify_clone  = self.nvim_flush_notify.clone();
+            let flush_notify_clone = self.nvim_flush_notify.clone();
             let submit_notify_clone = self.nvim_submit_notify.clone();
-            let quit_notify_clone   = self.nvim_quit_notify.clone();
+            let quit_notify_clone = self.nvim_quit_notify.clone();
             tokio::select! {
                 Some(agent_event) = self.recv_agent_event() => {
                     if self.handle_agent_event(agent_event).await { break; }
@@ -820,13 +858,17 @@ impl App {
     }
 
     async fn recv_agent_event(&mut self) -> Option<AgentEvent> {
-        if let Some(rx) = &mut self.event_rx { rx.recv().await } else { None }
+        if let Some(rx) = &mut self.event_rx {
+            rx.recv().await
+        } else {
+            None
+        }
     }
 
     async fn nvim_notify_future(notify: Option<&tokio::sync::Notify>) {
         match notify {
             Some(n) => n.notified().await,
-            None    => std::future::pending().await,
+            None => std::future::pending().await,
         }
     }
 
@@ -894,9 +936,10 @@ impl App {
     /// Returns the segment index.
     pub fn inject_chat_user_message(&mut self, text: &str) -> usize {
         let idx = self.chat_segments.len();
-        self.chat_segments.push(crate::chat::segment::ChatSegment::Message(
-            sven_model::Message::user(text),
-        ));
+        self.chat_segments
+            .push(crate::chat::segment::ChatSegment::Message(
+                sven_model::Message::user(text),
+            ));
         idx
     }
 

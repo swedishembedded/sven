@@ -38,8 +38,8 @@ impl App {
                 }
 
                 let in_search = self.search.active;
-                let in_input  = self.focus == FocusPane::Input;
-                let in_queue  = self.focus == FocusPane::Queue;
+                let in_input = self.focus == FocusPane::Input;
+                let in_queue = self.focus == FocusPane::Queue;
 
                 if self.focus == FocusPane::Chat
                     && !in_search
@@ -61,25 +61,24 @@ impl App {
                 // When the completion overlay is visible and the input pane
                 // has focus, intercept navigation and accept/dismiss keys
                 // before they reach the normal input handlers.
-                if self.completion_overlay.is_some()
-                    && in_input
-                    && !in_search
-                    && !self.pending_nav
+                if self.completion_overlay.is_some() && in_input && !in_search && !self.pending_nav
                 {
                     use crossterm::event::KeyCode;
                     let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
-                    let ctrl  = k.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
-                    let alt   = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+                    let ctrl = k
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL);
+                    let alt = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                     let overlay_action = match k.code {
                         // Plain Enter accepts the highlighted completion.
                         // Shift/Ctrl/Alt+Enter inserts a newline instead of accepting — let
                         // the action fall through to the regular key handler below.
                         KeyCode::Enter if !shift && !ctrl && !alt => Some(Action::CompletionSelect),
-                        KeyCode::Esc   => Some(Action::CompletionCancel),
-                        KeyCode::Down  => Some(Action::CompletionNext),
-                        KeyCode::Up    => Some(Action::CompletionPrev),
+                        KeyCode::Esc => Some(Action::CompletionCancel),
+                        KeyCode::Down => Some(Action::CompletionNext),
+                        KeyCode::Up => Some(Action::CompletionPrev),
                         KeyCode::Tab if !shift => Some(Action::CompletionNext),
-                        KeyCode::BackTab       => Some(Action::CompletionPrev),
+                        KeyCode::BackTab => Some(Action::CompletionPrev),
                         _ => None,
                     };
                     if let Some(action) = overlay_action {
@@ -88,11 +87,16 @@ impl App {
                     }
                 }
 
-                let in_edit_mode = self.editing_message_index.is_some()
-                    || self.editing_queue_index.is_some();
-                if let Some(action) =
-                    map_key(k, in_search, in_input, self.pending_nav, in_edit_mode, in_queue)
-                {
+                let in_edit_mode =
+                    self.editing_message_index.is_some() || self.editing_queue_index.is_some();
+                if let Some(action) = map_key(
+                    k,
+                    in_search,
+                    in_input,
+                    self.pending_nav,
+                    in_edit_mode,
+                    in_queue,
+                ) {
                     if action == Action::NavPrefix {
                         self.pending_nav = true;
                         return false;
@@ -111,8 +115,8 @@ impl App {
                     let over_queue = self.last_queue_pane.height > 0
                         && mouse.row >= self.last_queue_pane.y
                         && mouse.row < self.last_queue_pane.y + self.last_queue_pane.height;
-                    let in_edit = self.editing_message_index.is_some()
-                        || self.editing_queue_index.is_some();
+                    let in_edit =
+                        self.editing_message_index.is_some() || self.editing_queue_index.is_some();
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if over_input {
@@ -223,8 +227,8 @@ impl App {
                             }
 
                             // Skip segment-click logic when the click landed on the scrollbar.
-                            let clicked_scrollbar = mouse.column == scrollbar_col
-                                && total_chat_lines > chat_inner_h;
+                            let clicked_scrollbar =
+                                mouse.column == scrollbar_col && total_chat_lines > chat_inner_h;
                             if mouse.row >= content_start_row
                                 && !over_queue
                                 && !over_input
@@ -248,13 +252,17 @@ impl App {
                                         self.remove_label_line_indices.contains(&click_line);
 
                                     // Zone boundaries (cols, right-edge relative, non-overlapping)
-                                    let label_area_start  = chat_inner_x + chat_inner_w.saturating_sub(6);
-                                    let edit_zone_start   = chat_inner_x + chat_inner_w.saturating_sub(5);
-                                    let delete_zone_start = chat_inner_x + chat_inner_w.saturating_sub(3);
+                                    let label_area_start =
+                                        chat_inner_x + chat_inner_w.saturating_sub(6);
+                                    let edit_zone_start =
+                                        chat_inner_x + chat_inner_w.saturating_sub(5);
+                                    let delete_zone_start =
+                                        chat_inner_x + chat_inner_w.saturating_sub(3);
 
                                     let clicked_delete = is_header_line
                                         && mouse.column >= delete_zone_start
-                                        && mouse.column < chat_inner_x + chat_inner_w.saturating_sub(1);
+                                        && mouse.column
+                                            < chat_inner_x + chat_inner_w.saturating_sub(1);
                                     let clicked_edit = is_header_line
                                         && self.edit_label_line_indices.contains(&click_line)
                                         && mouse.column >= edit_zone_start
@@ -268,21 +276,21 @@ impl App {
 
                                     if clicked_delete {
                                         // Open the confirmation modal.
-                                        use crate::overlay::confirm::{ConfirmModal, ConfirmedAction};
-                                        let preview = segment_short_preview(
-                                            self.chat_segments.get(seg_idx),
-                                        );
+                                        use crate::overlay::confirm::{
+                                            ConfirmModal, ConfirmedAction,
+                                        };
+                                        let preview =
+                                            segment_short_preview(self.chat_segments.get(seg_idx));
                                         self.confirm_modal = Some(ConfirmModal::new(
                                             "Delete message",
-                                            &format!("Remove this message from the conversation?\n{preview}"),
+                                            format!("Remove this message from the conversation?\n{preview}"),
                                             ConfirmedAction::RemoveSegment(seg_idx),
                                         ));
                                     } else if clicked_edit {
                                         // Load segment into the edit buffer.
-                                        if let Some(text) = segment_editable_text(
-                                            &self.chat_segments,
-                                            seg_idx,
-                                        ) {
+                                        if let Some(text) =
+                                            segment_editable_text(&self.chat_segments, seg_idx)
+                                        {
                                             self.editing_message_index = Some(seg_idx);
                                             self.edit_cursor = text.len();
                                             self.edit_original_text = Some(text.clone());
@@ -334,8 +342,7 @@ impl App {
                                             // remains visible.
                                             let max_offset = (self.chat_lines.len() as u16)
                                                 .saturating_sub(self.chat_height);
-                                            self.scroll_offset =
-                                                self.scroll_offset.min(max_offset);
+                                            self.scroll_offset = self.scroll_offset.min(max_offset);
                                             // If the collapsed segment now starts below the
                                             // viewport, scroll up to bring it into view.
                                             if let Some(&(seg_start, _)) =
@@ -364,7 +371,7 @@ impl App {
                         self.search.active,
                         self.queued.len(),
                     );
-                    let chat_width  = layout.chat_pane.width.saturating_sub(2);
+                    let chat_width = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();
                     let mut bridge = nvim_bridge.lock().await;
                     if let Err(e) = bridge.resize(chat_width, chat_height).await {
@@ -412,7 +419,8 @@ impl App {
             //   • Regular row, nothing selected yet → auto-select it, then submit
             //   • Regular row, something selected   → submit as-is
             KeyCode::Enter if !modal.other_selected => {
-                let n_opts = modal.questions
+                let n_opts = modal
+                    .questions
                     .get(modal.current_q)
                     .map(|q| q.options.len())
                     .unwrap_or(0);
@@ -497,8 +505,7 @@ impl App {
             }
             KeyCode::Left if modal.other_selected => {
                 if modal.other_cursor > 0 {
-                    modal.other_cursor =
-                        prev_char_boundary(&modal.other_input, modal.other_cursor);
+                    modal.other_cursor = prev_char_boundary(&modal.other_input, modal.other_cursor);
                 }
             }
             KeyCode::Right if modal.other_selected => {
@@ -529,12 +536,9 @@ impl App {
     /// - `←` / `→` / `Tab`: toggle focus between Confirm and Cancel buttons
     /// - `Enter`: activate the focused button (confirm or cancel)
     /// - `Esc`: cancel (same as activating Cancel)
-    pub(crate) async fn handle_confirm_modal_key(
-        &mut self,
-        k: crossterm::event::KeyEvent,
-    ) -> bool {
-        use crossterm::event::KeyCode;
+    pub(crate) async fn handle_confirm_modal_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
         use crate::overlay::confirm::ConfirmedAction;
+        use crossterm::event::KeyCode;
 
         match k.code {
             KeyCode::Esc => {
@@ -601,8 +605,7 @@ impl App {
             }
             PagerAction::SearchNext => {
                 if !self.search.matches.is_empty() {
-                    self.search.current =
-                        (self.search.current + 1) % self.search.matches.len();
+                    self.search.current = (self.search.current + 1) % self.search.matches.len();
                     if let Some(line) = self.search.current_line() {
                         if let Some(pager) = &mut self.pager {
                             pager.scroll_to_line(line);
@@ -612,7 +615,9 @@ impl App {
             }
             PagerAction::SearchPrev => {
                 if !self.search.matches.is_empty() {
-                    self.search.current = self.search.current
+                    self.search.current = self
+                        .search
+                        .current
                         .checked_sub(1)
                         .unwrap_or(self.search.matches.len() - 1);
                     if let Some(line) = self.search.current_line() {

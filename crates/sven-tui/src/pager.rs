@@ -67,7 +67,11 @@ impl PagerOverlay {
     /// Returns the clamped scroll offset for the given visible height.
     fn clamped_offset(&self, visible_height: usize) -> usize {
         let max = self.lines.len().saturating_sub(visible_height);
-        if self.scroll_offset == usize::MAX { max } else { self.scroll_offset.min(max) }
+        if self.scroll_offset == usize::MAX {
+            max
+        } else {
+            self.scroll_offset.min(max)
+        }
     }
 
     fn scroll_up(&mut self, n: usize) {
@@ -99,8 +103,8 @@ impl PagerOverlay {
             KeyCode::Char('q') | KeyCode::Esc => return PagerAction::Close,
 
             // ── Line scrolling ────────────────────────────────────────────────
-            KeyCode::Char('j') | KeyCode::Down  => self.scroll_down(1),
-            KeyCode::Char('k') | KeyCode::Up    => self.scroll_up(1),
+            KeyCode::Char('j') | KeyCode::Down => self.scroll_down(1),
+            KeyCode::Char('k') | KeyCode::Up => self.scroll_up(1),
             KeyCode::Char('J') => self.scroll_down(1),
             KeyCode::Char('K') => self.scroll_up(1),
 
@@ -110,13 +114,13 @@ impl PagerOverlay {
 
             // ── Full-page ─────────────────────────────────────────────────────
             KeyCode::Char('f') if ctrl => self.scroll_down(full),
-            KeyCode::PageDown          => self.scroll_down(full),
+            KeyCode::PageDown => self.scroll_down(full),
             KeyCode::Char('b') if ctrl => self.scroll_up(full),
-            KeyCode::PageUp            => self.scroll_up(full),
+            KeyCode::PageUp => self.scroll_up(full),
 
             // ── Jump to bottom ────────────────────────────────────────────────
             KeyCode::Char('G') => self.scroll_offset = usize::MAX,
-            KeyCode::End       => self.scroll_offset = usize::MAX,
+            KeyCode::End => self.scroll_offset = usize::MAX,
 
             // ── `gg` → jump to top ────────────────────────────────────────────
             KeyCode::Char('g') if !ctrl => {
@@ -155,8 +159,8 @@ impl PagerOverlay {
         let area = frame.area();
         let content_h = area.height.saturating_sub(3); // 1 header + 2 footer
         let content_area = Rect::new(area.x, area.y + 1, area.width, content_h);
-        let sep_area    = Rect::new(area.x, area.y + 1 + content_h, area.width, 1);
-        let hints_area  = Rect::new(area.x, area.y + 2 + content_h, area.width, 1);
+        let sep_area = Rect::new(area.x, area.y + 1 + content_h, area.width, 1);
+        let hints_area = Rect::new(area.x, area.y + 2 + content_h, area.width, 1);
 
         self.last_visible_height = content_h as usize;
 
@@ -171,7 +175,9 @@ impl PagerOverlay {
             Span::styled(fill.clone(), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 " TRANSCRIPT ",
-                Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(fill, Style::default().fg(Color::DarkGray)),
         ]);
@@ -185,19 +191,15 @@ impl PagerOverlay {
         let offset = self.clamped_offset(visible_height);
 
         // Build a set of match lines for O(1) lookup
-        let match_set: std::collections::HashSet<usize> =
-            search_matches.iter().copied().collect();
-        let current_match_line: Option<usize> =
-            search_matches.get(search_current).copied();
+        let match_set: std::collections::HashSet<usize> = search_matches.iter().copied().collect();
+        let current_match_line: Option<usize> = search_matches.get(search_current).copied();
 
         let visible_lines: Vec<Line<'static>> = (offset..offset + visible_height)
             .map(|i| match self.lines.get(i) {
                 Some(line) => {
-                    let is_current = !search_query.is_empty()
-                        && current_match_line == Some(i);
-                    let is_other_match = !search_query.is_empty()
-                        && match_set.contains(&i)
-                        && !is_current;
+                    let is_current = !search_query.is_empty() && current_match_line == Some(i);
+                    let is_other_match =
+                        !search_query.is_empty() && match_set.contains(&i) && !is_current;
                     if is_current {
                         highlight_match_in_line(line.clone(), search_query, search_regex)
                     } else if is_other_match {
@@ -207,11 +209,7 @@ impl PagerOverlay {
                     }
                 }
                 // Lines below content: vim-style `~`
-                None => Line::from(Span::styled(
-                    "~",
-                    Style::default()
-                        .fg(Color::DarkGray),
-                )),
+                None => Line::from(Span::styled("~", Style::default().fg(Color::DarkGray))),
             })
             .collect();
 
@@ -241,13 +239,20 @@ impl PagerOverlay {
         let k = Style::default().fg(Color::Gray);
         let d = Style::default().fg(Color::DarkGray);
         let hints = Line::from(vec![
-            Span::styled(" j/k/J/K", k), Span::styled(":line  ", d),
-            Span::styled("^u/^d", k), Span::styled(":½pg  ", d),
-            Span::styled("^b/^f", k), Span::styled(":page  ", d),
-            Span::styled("gg/G", k),  Span::styled(":top/bot  ", d),
-            Span::styled("/", k),     Span::styled(":search  ", d),
-            Span::styled("n/N", k),   Span::styled(":match  ", d),
-            Span::styled("q", k),     Span::styled(":close", d),
+            Span::styled(" j/k/J/K", k),
+            Span::styled(":line  ", d),
+            Span::styled("^u/^d", k),
+            Span::styled(":½pg  ", d),
+            Span::styled("^b/^f", k),
+            Span::styled(":page  ", d),
+            Span::styled("gg/G", k),
+            Span::styled(":top/bot  ", d),
+            Span::styled("/", k),
+            Span::styled(":search  ", d),
+            Span::styled("n/N", k),
+            Span::styled(":match  ", d),
+            Span::styled("q", k),
+            Span::styled(":close", d),
         ]);
         frame.render_widget(Paragraph::new(hints), hints_area);
     }

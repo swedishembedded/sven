@@ -30,23 +30,20 @@ pub mod ws;
 
 use std::net::SocketAddr;
 
+use anyhow::Context as _;
 use axum::{
-    Router,
     extract::State,
     http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::{get, post},
+    Router,
 };
-use anyhow::Context as _;
 use axum_server::tls_rustls::RustlsConfig;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{info, warn};
 
-use crate::{
-    config::HttpConfig,
-    control::service::AgentHandle,
-};
+use crate::{config::HttpConfig, control::service::AgentHandle};
 use auth::{AsAuthState, AuthState};
 use security::{csrf_guard, security_headers};
 
@@ -58,7 +55,9 @@ pub struct AppState {
 }
 
 impl AsAuthState for AppState {
-    fn auth_state(&self) -> &AuthState { &self.auth }
+    fn auth_state(&self) -> &AuthState {
+        &self.auth
+    }
 }
 
 /// Start the HTTP server.
@@ -70,7 +69,9 @@ pub async fn serve(
     token_hash: crate::crypto::token::StoredToken,
     slack_states: Vec<slack::SlackWebhookState>,
 ) -> anyhow::Result<()> {
-    let addr: SocketAddr = config.bind.parse()
+    let addr: SocketAddr = config
+        .bind
+        .parse()
         .map_err(|e| anyhow::anyhow!("invalid bind address {:?}: {e}", config.bind))?;
 
     let app_state = AppState {
@@ -91,7 +92,10 @@ pub async fn serve(
     let protected = Router::new()
         .route("/ws", get(ws_handler_entry))
         .route("/api/v1/sessions", get(list_sessions_handler))
-        .layer(middleware::from_fn_with_state(app_state.clone(), auth::bearer_auth_mw::<AppState>));
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            auth::bearer_auth_mw::<AppState>,
+        ));
 
     let app = Router::new()
         .route("/healthz", get(health_handler))
@@ -111,7 +115,9 @@ pub async fn serve(
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
-        let cert_dir = config.tls_cert_dir.clone()
+        let cert_dir = config
+            .tls_cert_dir
+            .clone()
             .unwrap_or_else(tls::default_cert_dir);
         let tls_runtime = tls::load_or_generate(&cert_dir)?;
 
@@ -125,11 +131,10 @@ pub async fn serve(
             tls_runtime.fingerprint_sha256,
         );
 
-        let rustls_config = RustlsConfig::from_pem_file(
-            &tls_runtime.cert_path,
-            &tls_runtime.key_path,
-        ).await
-        .context("loading TLS config from PEM files")?;
+        let rustls_config =
+            RustlsConfig::from_pem_file(&tls_runtime.cert_path, &tls_runtime.key_path)
+                .await
+                .context("loading TLS config from PEM files")?;
 
         axum_server::bind_rustls(addr, rustls_config)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
