@@ -1115,6 +1115,14 @@ impl Agent {
         Ok(())
     }
 
+    /// Returns the system message that will be (or was) used for `mode`.
+    ///
+    /// Callers can persist this to a JSONL log so that resumed conversations
+    /// replay with exactly the same prompt.
+    pub fn current_system_message(&self, mode: AgentMode) -> Message {
+        self.system_message(mode)
+    }
+
     fn system_message(&self, mode: AgentMode) -> Message {
         let ctx = self.prompt_context();
         // Use the STABLE portion only — volatile context (git/CI) is injected

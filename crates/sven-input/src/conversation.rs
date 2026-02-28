@@ -487,6 +487,11 @@ pub struct ParsedJsonlConversation {
     /// The text of the last user message if it has no following assistant
     /// response.  `None` when there is nothing pending.
     pub pending_user_input: Option<String>,
+    /// The text content of the system message found in the file, if any.
+    /// When present and `--regen-system-prompt` is not set, callers should
+    /// use this as the `system_prompt_override` so that resumed conversations
+    /// use the exact same prompt they were started with.
+    pub system_message: Option<String>,
 }
 
 /// Parse a full-fidelity JSONL conversation file.
@@ -527,6 +532,16 @@ pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseE
         }
     }
 
+    // Extract the first system message text (if any) for the caller to reuse.
+    let system_message: Option<String> = records.iter().find_map(|r| {
+        if let ConversationRecord::Message(m) = r {
+            if m.role == Role::System {
+                return m.as_text().map(|t| t.to_string());
+            }
+        }
+        None
+    });
+
     // Build history: only Message records, system messages stripped, pending stripped.
     let messages: Vec<Message> = records
         .iter()
@@ -553,6 +568,7 @@ pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseE
         records,
         history,
         pending_user_input,
+        system_message,
     })
 }
 

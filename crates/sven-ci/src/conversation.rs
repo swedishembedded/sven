@@ -368,16 +368,39 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
             output,
             cache_read,
             cache_write,
-            ..
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
         } => {
-            if cache_read > 0 || cache_write > 0 {
-                write_stderr(&format!(
-                    "[sven:tokens] input={input} output={output} \
-                     cache_read={cache_read} cache_write={cache_write}"
-                ));
+            let total_ctx = input + cache_read + cache_write;
+            let ctx_pct = if max_tokens > 0 {
+                ((total_ctx as u64 * 100) / max_tokens as u64).min(100) as u32
             } else {
-                write_stderr(&format!("[sven:tokens] input={input} output={output}"));
+                0
+            };
+            let cache_pct = if total_ctx > 0 {
+                cache_read * 100 / total_ctx
+            } else {
+                0
+            };
+            let mut line = format!("[sven:tokens] input={input} output={output}");
+            if cache_read > 0 || cache_write > 0 {
+                line.push_str(&format!(
+                    " cache_read={cache_read} cache_write={cache_write}"
+                ));
             }
+            if max_tokens > 0 {
+                line.push_str(&format!(" ctx_pct={ctx_pct}"));
+            }
+            if cache_pct > 0 {
+                line.push_str(&format!(" cache_pct={cache_pct}"));
+            }
+            if cache_read_total > 0 || cache_write_total > 0 {
+                line.push_str(&format!(
+                    " cache_read_total={cache_read_total} cache_write_total={cache_write_total}"
+                ));
+            }
+            write_stderr(&line);
         }
 
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}

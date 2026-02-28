@@ -16,7 +16,8 @@ use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_input::{
     history, parse_conversation, parse_frontmatter, parse_jsonl_full, parse_workflow,
-    serialize_conversation_turn, serialize_jsonl_records, ConversationRecord, Step, StepQueue,
+    serialize_conversation_turn, serialize_jsonl_records, ConversationRecord,
+    ParsedJsonlConversation, Step, StepQueue,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
@@ -121,6 +122,11 @@ pub struct CiOptions {
     /// Replay all tool calls in the loaded JSONL with fresh results before
     /// submitting to the model.  Only meaningful when `load_jsonl` is set.
     pub rerun_toolcalls: bool,
+    /// When loading a JSONL conversation, ignore the system message stored in
+    /// that file and regenerate a fresh one from current skills and config.
+    /// By default the stored system message is reused so that resumed
+    /// conversations are fully reproducible.
+    pub regen_system_prompt: bool,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -426,6 +432,51 @@ impl CiRunner {
             }
         }
 
+        // ── Pre-parse JSONL for system message (before building agent) ────────
+        // Parse the JSONL file early so that the system message stored in it can
+        // be injected as `system_prompt_override` before the agent is built.
+        // This ensures resumed conversations are fully reproducible by default.
+        // `--regen-system-prompt` or `--system-prompt-file` bypass this.
+        let pre_parsed_jsonl: Option<ParsedJsonlConversation> =
+            if let Some(ref jpath) = opts.load_jsonl {
+                match std::fs::read_to_string(jpath) {
+                    Ok(content) => match parse_jsonl_full(&content) {
+                        Ok(parsed) => {
+                            // Apply stored system message unless caller asked to regenerate
+                            // or already provided an explicit override via --system-prompt-file.
+                            if !opts.regen_system_prompt
+                                && opts.system_prompt_file.is_none()
+                                && runtime_ctx.system_prompt_override.is_none()
+                            {
+                                if let Some(ref sys_text) = parsed.system_message {
+                                    runtime_ctx.system_prompt_override = Some(sys_text.clone());
+                                    write_progress(
+                                        "[sven:info] System prompt loaded from JSONL conversation",
+                                    );
+                                }
+                            }
+                            Some(parsed)
+                        }
+                        Err(e) => {
+                            write_stderr(&format!(
+                                "[sven:error] Failed to parse --load-jsonl {}: {e}",
+                                jpath.display()
+                            ));
+                            std::process::exit(EXIT_VALIDATION_ERROR);
+                        }
+                    },
+                    Err(e) => {
+                        write_stderr(&format!(
+                            "[sven:error] Failed to read --load-jsonl {}: {e}",
+                            jpath.display()
+                        ));
+                        std::process::exit(EXIT_VALIDATION_ERROR);
+                    }
+                }
+            } else {
+                None
+            };
+
         // Resolve timeouts (CLI > config)
         // Frontmatter no longer carries timeout fields (removed in redesign).
         let run_timeout_secs = opts.run_timeout_secs.or_else(|| {
@@ -465,66 +516,48 @@ impl CiRunner {
             .build(initial_mode, model, profile)
             .await;
 
+        // ── Capture system message for JSONL persistence ──────────────────────
+        // Always record the exact system message used for this run so the JSONL
+        // log is fully self-contained and conversations can be resumed verbatim.
+        let run_system_record =
+            ConversationRecord::Message(agent.current_system_message(initial_mode));
+
         // ── Load JSONL history ───────────────────────────────────────────────
-        // If --load-jsonl was set, parse and seed the agent with that history.
-        // This takes priority over piped conversation history.
-        let (existing_jsonl_records, jsonl_seed_count) = if let Some(ref jpath) = opts.load_jsonl {
-            match std::fs::read_to_string(jpath) {
-                Ok(content) => {
-                    match parse_jsonl_full(&content) {
-                        Ok(mut parsed) => {
-                            // If --rerun-toolcalls: replay tool calls in-place before seeding
-                            if opts.rerun_toolcalls {
-                                let replayed = crate::toolcall_replay::replay_tool_calls(
-                                    &mut parsed.records,
-                                    agent.tools(),
-                                )
-                                .await;
-                                write_progress(&format!(
-                                    "[sven:info] Replayed {} tool call(s) with fresh results",
-                                    replayed
-                                ));
-                                // Rebuild history from the mutated records
-                                let msgs: Vec<Message> = parsed
-                                    .records
-                                    .iter()
-                                    .filter_map(|r| {
-                                        if let ConversationRecord::Message(m) = r {
-                                            if m.role != Role::System {
-                                                Some(m.clone())
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                let count = msgs.len();
-                                agent.seed_history(msgs).await;
-                                (parsed.records, count)
+        // Use the pre-parsed JSONL (if any); fall back to piped conversation.
+        let (existing_jsonl_records, jsonl_seed_count) = if let Some(mut parsed) = pre_parsed_jsonl
+        {
+            // If --rerun-toolcalls: replay tool calls in-place before seeding
+            if opts.rerun_toolcalls {
+                let replayed =
+                    crate::toolcall_replay::replay_tool_calls(&mut parsed.records, agent.tools())
+                        .await;
+                write_progress(&format!(
+                    "[sven:info] Replayed {} tool call(s) with fresh results",
+                    replayed
+                ));
+                // Rebuild history from the mutated records
+                let msgs: Vec<Message> = parsed
+                    .records
+                    .iter()
+                    .filter_map(|r| {
+                        if let ConversationRecord::Message(m) = r {
+                            if m.role != Role::System {
+                                Some(m.clone())
                             } else {
-                                let count = parsed.history.len();
-                                agent.seed_history(parsed.history).await;
-                                (parsed.records, count)
+                                None
                             }
+                        } else {
+                            None
                         }
-                        Err(e) => {
-                            write_stderr(&format!(
-                                "[sven:error] Failed to parse --load-jsonl {}: {e}",
-                                jpath.display()
-                            ));
-                            std::process::exit(EXIT_VALIDATION_ERROR);
-                        }
-                    }
-                }
-                Err(e) => {
-                    write_stderr(&format!(
-                        "[sven:error] Failed to read --load-jsonl {}: {e}",
-                        jpath.display()
-                    ));
-                    std::process::exit(EXIT_VALIDATION_ERROR);
-                }
+                    })
+                    .collect();
+                let count = msgs.len();
+                agent.seed_history(msgs).await;
+                (parsed.records, count)
+            } else {
+                let count = parsed.history.len();
+                agent.seed_history(parsed.history).await;
+                (parsed.records, count)
             }
         } else if !conversation_history.is_empty() {
             // Piped markdown conversation (legacy path)
@@ -587,15 +620,29 @@ impl CiRunner {
         let mut step_idx = 0usize;
         let mut collected: Vec<Message> = Vec::new();
         let mut json_steps: Vec<JsonStep> = Vec::new();
+        // Running session-level token counters for [sven:tokens] output.
+        let mut session_input_total: u32 = 0;
+        let mut session_output_total: u32 = 0;
 
-        // Write combined JSONL (existing seed records + new run records) to path.
+        // Write combined JSONL to path.
+        //
+        // Layout: [system_record] ++ [existing non-system] ++ [new non-system]
+        // The system record from `system_record` is always placed first so the
+        // file is fully self-contained and reproducible.  Any system messages
+        // already present in `existing` are stripped to avoid duplication.
         fn flush_jsonl(
             path: &PathBuf,
+            system_record: Option<&ConversationRecord>,
             existing: &[ConversationRecord],
             new_records: &[ConversationRecord],
         ) {
-            let mut all: Vec<ConversationRecord> = existing.to_vec();
-            all.extend_from_slice(new_records);
+            let is_system = |r: &ConversationRecord| matches!(r, ConversationRecord::Message(m) if m.role == Role::System);
+            let mut all: Vec<ConversationRecord> = Vec::new();
+            if let Some(sys) = system_record {
+                all.push(sys.clone());
+            }
+            all.extend(existing.iter().filter(|r| !is_system(r)).cloned());
+            all.extend(new_records.iter().filter(|r| !is_system(r)).cloned());
             let serialized = serialize_jsonl_records(&all);
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -773,7 +820,7 @@ impl CiRunner {
                                     let _ = history::save(&collected);
                                 }
                                 if let Some(ref path) = effective_output_jsonl {
-                                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+                                    flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
                                 }
                                 std::process::exit(EXIT_TIMEOUT);
                             }
@@ -785,7 +832,7 @@ impl CiRunner {
                                 let _ = history::save(&collected);
                             }
                             if let Some(ref path) = effective_output_jsonl {
-                                flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+                                flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
                             }
                             std::process::exit(EXIT_INTERRUPT);
                         }
@@ -801,6 +848,8 @@ impl CiRunner {
                                 trace_level: opts.trace_level,
                                 output_format: opts.output_format,
                                 sven_header_emitted: &mut sven_header_emitted,
+                                session_input_total: &mut session_input_total,
+                                session_output_total: &mut session_output_total,
                             });
 
                             // Abort if too many consecutive tool errors
@@ -816,7 +865,7 @@ impl CiRunner {
                                     let _ = history::save(&collected);
                                 }
                                 if let Some(ref path) = effective_output_jsonl {
-                                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+                                    flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
                                 }
                                 std::process::exit(EXIT_AGENT_ERROR);
                             }
@@ -840,6 +889,8 @@ impl CiRunner {
                                     trace_level: opts.trace_level,
                                     output_format: opts.output_format,
                                     sven_header_emitted: &mut sven_header_emitted,
+                                    session_input_total: &mut session_input_total,
+                                    session_output_total: &mut session_output_total,
                                 });
                             }
                             break;
@@ -881,7 +932,12 @@ impl CiRunner {
 
             // ── Flush JSONL after every step ────────────────────────────────
             if let Some(ref path) = effective_output_jsonl {
-                flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+                flush_jsonl(
+                    path,
+                    Some(&run_system_record),
+                    &existing_jsonl_records,
+                    &run_jsonl_records,
+                );
             }
 
             // ── Write step output to stdout ──────────────────────────────────
@@ -941,7 +997,12 @@ impl CiRunner {
                     let _ = history::save(&collected);
                 }
                 if let Some(ref path) = effective_output_jsonl {
-                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+                    flush_jsonl(
+                        path,
+                        Some(&run_system_record),
+                        &existing_jsonl_records,
+                        &run_jsonl_records,
+                    );
                 }
                 std::process::exit(EXIT_AGENT_ERROR);
             }
@@ -954,7 +1015,12 @@ impl CiRunner {
         // ── Final JSONL flush ────────────────────────────────────────────────
         // Ensure the last step is persisted even if no prior flush fired.
         if let Some(ref path) = effective_output_jsonl {
-            flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
+            flush_jsonl(
+                path,
+                Some(&run_system_record),
+                &existing_jsonl_records,
+                &run_jsonl_records,
+            );
             write_progress(&format!("[sven:jsonl] Log written to {}", path.display()));
         }
 
@@ -1045,6 +1111,10 @@ struct StepState<'a> {
     trace_level: u8,
     output_format: OutputFormat,
     sven_header_emitted: &'a mut bool,
+    /// Running total of non-cached input tokens across the whole session.
+    session_input_total: &'a mut u32,
+    /// Running total of output tokens across the whole session.
+    session_output_total: &'a mut u32,
 }
 
 /// Process a single agent event: write diagnostics to stderr, collect
@@ -1234,15 +1304,45 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             output,
             cache_read,
             cache_write,
-            ..
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
         } => {
-            if cache_read > 0 || cache_write > 0 {
-                write_stderr(&format!(
-                    "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
-                ));
+            *s.session_input_total += input;
+            *s.session_output_total += output;
+            let total_ctx = input + cache_read + cache_write;
+            let ctx_pct = if max_tokens > 0 {
+                ((total_ctx as u64 * 100) / max_tokens as u64).min(100) as u32
             } else {
-                write_stderr(&format!("[sven:tokens] input={input} output={output}"));
+                0
+            };
+            let cache_pct = if total_ctx > 0 {
+                cache_read * 100 / total_ctx
+            } else {
+                0
+            };
+            let mut line = format!("[sven:tokens] input={input} output={output}");
+            if cache_read > 0 || cache_write > 0 {
+                line.push_str(&format!(
+                    " cache_read={cache_read} cache_write={cache_write}"
+                ));
             }
+            if max_tokens > 0 {
+                line.push_str(&format!(" ctx_pct={ctx_pct}"));
+            }
+            if cache_pct > 0 {
+                line.push_str(&format!(" cache_pct={cache_pct}"));
+            }
+            line.push_str(&format!(
+                " input_total={} output_total={}",
+                s.session_input_total, s.session_output_total
+            ));
+            if cache_read_total > 0 || cache_write_total > 0 {
+                line.push_str(&format!(
+                    " cache_read_total={cache_read_total} cache_write_total={cache_write_total}"
+                ));
+            }
+            write_stderr(&line);
         }
         AgentEvent::ThinkingDelta(_) => {}
         AgentEvent::ThinkingComplete(content) => {

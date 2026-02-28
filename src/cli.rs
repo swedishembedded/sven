@@ -200,6 +200,13 @@ pub struct Cli {
     #[arg(long)]
     pub rerun_toolcalls: bool,
 
+    /// When loading a conversation with --load-jsonl or --jsonl, regenerate the
+    /// system prompt from the current skills and config instead of reusing the
+    /// one stored in the JSONL file.  By default the stored system prompt is
+    /// used so that resumed conversations are fully reproducible.
+    #[arg(long)]
+    pub regen_system_prompt: bool,
+
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,

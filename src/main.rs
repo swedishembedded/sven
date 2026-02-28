@@ -678,6 +678,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         load_jsonl,
         output_jsonl,
         rerun_toolcalls: cli.rerun_toolcalls,
+        regen_system_prompt: cli.regen_system_prompt,
     };
 
     CiRunner::new(config).run(opts).await
