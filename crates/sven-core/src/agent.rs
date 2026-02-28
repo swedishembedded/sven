@@ -255,6 +255,8 @@ impl Agent {
     ) -> anyhow::Result<()> {
         let mut rounds = 0u32;
         let mut partial_text = String::new();
+        let mut empty_turn_retries = 0u32;
+        const MAX_EMPTY_TURN_RETRIES: u32 = 2;
 
         loop {
             // Check cancel before each round.
@@ -332,9 +334,31 @@ impl Agent {
             }
 
             if !had_tool_calls {
+                if text.is_empty() && empty_turn_retries < MAX_EMPTY_TURN_RETRIES {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You produced a thinking block but no response or tool call. \
+                         Please continue with your next action.",
+                    ));
+                    continue;
+                }
+                if !text.is_empty()
+                    && text_contains_malformed_tool_call(&text)
+                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
+                {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You output a tool call using an incorrect format (XML/function tags \
+                         in the text response). Do not include tool calls in your text. \
+                         Use the JSON tool-call protocol provided by your schema.",
+                    ));
+                    continue;
+                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 break;
             }
+
+            empty_turn_retries = 0;
 
             // Phase 1: push all assistant tool-call messages.
             for tc in &tool_calls {
@@ -407,6 +431,8 @@ impl Agent {
     /// The main agent loop: model call → optional tool calls → repeat
     async fn run_agentic_loop(&mut self, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
         let mut rounds = 0u32;
+        let mut empty_turn_retries = 0u32;
+        const MAX_EMPTY_TURN_RETRIES: u32 = 2;
 
         loop {
             rounds += 1;
@@ -444,9 +470,35 @@ impl Agent {
             }
 
             if !had_tool_calls {
+                if text.is_empty() && empty_turn_retries < MAX_EMPTY_TURN_RETRIES {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You produced a thinking block but no response or tool call. \
+                         Please continue with your next action.",
+                    ));
+                    continue;
+                }
+                // Detect XML / Hermes-style tool call syntax written into the text
+                // stream.  Some models emit <tool_call>...</tool_call> as plain text
+                // instead of using the JSON tool-call protocol.  Push a correction so
+                // the model retries in the correct format rather than wasting the turn.
+                if !text.is_empty()
+                    && text_contains_malformed_tool_call(&text)
+                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
+                {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You output a tool call using an incorrect format (XML/function tags \
+                         in the text response). Do not include tool calls in your text. \
+                         Use the JSON tool-call protocol provided by your schema.",
+                    ));
+                    continue;
+                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 break;
             }
+
+            empty_turn_retries = 0;
 
             // Phase 1: push all assistant tool-call messages (must all come
             // before any tool-result messages for OpenAI's parallel-tool-call
@@ -624,7 +676,7 @@ impl Agent {
                     // Flush accumulated thinking when text starts arriving.
                     if !thinking_buf.is_empty() {
                         let content = std::mem::take(&mut thinking_buf);
-                        let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                        let _ = tx.send(AgentEvent::ThinkingComplete(strip_think_wrappers(content))).await;
                     }
                     full_text.push_str(&delta);
                     let _ = tx.send(AgentEvent::TextDelta(delta)).await;
@@ -663,7 +715,7 @@ impl Agent {
                     // Flush any trailing thinking block (model thought without responding).
                     if !thinking_buf.is_empty() {
                         let content = std::mem::take(&mut thinking_buf);
-                        let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                        let _ = tx.send(AgentEvent::ThinkingComplete(strip_think_wrappers(content))).await;
                     }
                     break;
                 }
@@ -671,6 +723,20 @@ impl Agent {
                     warn!("model stream error: {e}");
                 }
                 _ => {}
+            }
+        }
+
+        // When a model that doesn't use reasoning_content (e.g. a local GGUF
+        // served without reasoning_format: deepseek) emits its thinking as
+        // plain <think>...</think> text, full_text ends up containing the tag
+        // wrapper but no real response.  Detect this: if the entire text output
+        // is a single <think>...</think> block (possibly unclosed if the model
+        // truncated), reclassify it as thinking and clear full_text so the
+        // agent loop correctly sees a thinking-only turn and applies the retry.
+        if !full_text.is_empty() && thinking_buf.is_empty() {
+            if let Some(inline_think) = extract_inline_think_block(&full_text) {
+                let _ = tx.send(AgentEvent::ThinkingComplete(inline_think)).await;
+                full_text.clear();
             }
         }
 
@@ -930,6 +996,64 @@ impl Agent {
         let mut m = self.current_mode.lock().await;
         *m = mode;
     }
+}
+
+/// Strip `<think>` / `</think>` wrapper tags from accumulated thinking content.
+///
+/// Some model servers (llama.cpp without `reasoning_format: deepseek`,
+/// certain OpenAI-compat proxies) forget to strip these tags before placing
+/// the text in `reasoning_content`.  The result is that the thinking buffer
+/// contains the raw markup, e.g. `<think>\nStep 1: …\n</think>`, instead of
+/// the clean inner text.  Stripping them here keeps the thinking log readable
+/// and prevents the `<think>` noise from leaking into conversation history.
+fn strip_think_wrappers(s: String) -> String {
+    let trimmed = s.trim();
+    let inner = trimmed.strip_prefix("<think>").unwrap_or(trimmed);
+    let inner = inner.strip_suffix("</think>").unwrap_or(inner);
+    inner.trim().to_string()
+}
+
+/// Detect a `<think>...</think>` block occupying the *entire* text.
+///
+/// Some models emit thinking as plain text deltas (no `reasoning_content`)
+/// when the serving layer isn't configured for reasoning extraction.  If the
+/// whole text response is a `<think>` block — with or without a closing tag
+/// (the model may have been cut off) — the "response" carries no useful
+/// content.  Return the extracted inner text so the caller can reclassify
+/// it as thinking and clear `full_text`, which causes the agent loop to
+/// treat this as a thinking-only turn and apply the empty-turn retry nudge.
+///
+/// Returns `None` when the text contains content outside the `<think>` block.
+fn extract_inline_think_block(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    // Must start with <think>
+    let inner = trimmed.strip_prefix("<think>")?;
+    // Strip an optional closing tag; an unclosed block (model truncated) is
+    // still all-thinking if there is nothing after the last </think>.
+    let inner = inner.strip_suffix("</think>").unwrap_or(inner);
+    // Reject if there's a *second* </think> inside, which would mean there's
+    // real content after the first block.
+    if inner.contains("</think>") {
+        return None;
+    }
+    Some(inner.trim().to_string())
+}
+
+/// Return true when `text` contains tool-call markup that was written by the
+/// model into the text stream instead of being emitted as a structured tool
+/// call.  Some fine-tuned models (Qwen, older Llama variants) occasionally
+/// fall back to XML-style or Hermes-style function call syntax even when the
+/// provider tool-call protocol is available.
+///
+/// Patterns detected:
+/// - `<tool_call>` / `</tool_call>` (Qwen XML format)
+/// - `<function=name>` (Hermes/Nous function tag)
+/// - `[TOOL_CALL]` (some other open-source variants)
+fn text_contains_malformed_tool_call(text: &str) -> bool {
+    text.contains("<tool_call>")
+        || text.contains("</tool_call>")
+        || text.contains("<function=")
+        || text.contains("[TOOL_CALL]")
 }
 
 struct PendingToolCall {
