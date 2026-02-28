@@ -267,6 +267,11 @@ impl Agent {
         // Used to detect mid-task stalls where the model emits text but no
         // tool calls after already having called tools earlier in the loop.
         let mut had_tool_calls_this_step = false;
+        // Separate flag for the mid-task stall nudge so it fires at most once
+        // per step.  Intentionally NOT reset when a tool call succeeds — if we
+        // reset it, the model obeying the nudge (making a tool call) would
+        // re-arm the nudge and create an infinite loop.
+        let mut stall_nudge_sent = false;
 
         loop {
             // Check cancel before each round.
@@ -367,12 +372,12 @@ impl Agent {
                 // Mid-task stall: the model emitted text-only after already
                 // calling tools earlier in this step.  Some reasoning models
                 // (Qwen, DeepSeek) occasionally produce a transition sentence
-                // without following it with tool calls.  Nudge once to continue.
-                if !text.is_empty()
-                    && had_tool_calls_this_step
-                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
-                {
-                    empty_turn_retries += 1;
+                // without following it with tool calls.  Nudge at most once —
+                // the flag is never reset so that a model which obeys the nudge
+                // (makes a tool call) and then finishes in text is allowed to
+                // stop rather than being nudged into an infinite loop.
+                if !text.is_empty() && had_tool_calls_this_step && !stall_nudge_sent {
+                    stall_nudge_sent = true;
                     self.session.push(Message::user(
                         "You have not finished the task yet. \
                          Please continue with your next tool call.",
@@ -466,6 +471,11 @@ impl Agent {
         let mut empty_turn_retries = 0u32;
         const MAX_EMPTY_TURN_RETRIES: u32 = 2;
         let mut had_tool_calls_this_step = false;
+        // Separate flag for the mid-task stall nudge so it fires at most once
+        // per step.  Intentionally NOT reset when a tool call succeeds — if we
+        // reset it, the model obeying the nudge (making a tool call) would
+        // re-arm the nudge and create an infinite loop.
+        let mut stall_nudge_sent = false;
 
         loop {
             rounds += 1;
@@ -528,12 +538,12 @@ impl Agent {
                     continue;
                 }
                 // Mid-task stall: the model emitted text-only after already
-                // calling tools earlier in this step.  Nudge it once to continue.
-                if !text.is_empty()
-                    && had_tool_calls_this_step
-                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
-                {
-                    empty_turn_retries += 1;
+                // calling tools earlier in this step.  Nudge at most once —
+                // the flag is never reset so that a model which obeys the nudge
+                // (makes a tool call) and then finishes in text is allowed to
+                // stop rather than being nudged into an infinite loop.
+                if !text.is_empty() && had_tool_calls_this_step && !stall_nudge_sent {
+                    stall_nudge_sent = true;
                     self.session.push(Message::user(
                         "You have not finished the task yet. \
                          Please continue with your next tool call.",

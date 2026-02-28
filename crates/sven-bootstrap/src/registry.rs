@@ -142,7 +142,9 @@ pub fn build_tool_registry(
             reg.register(UpdateMemoryTool {
                 memory_file: cfg.tools.memory.memory_file.clone(),
             });
-            reg.register(AskQuestionTool::new());
+            // ask_question is intentionally omitted: sub-agents run headless
+            // and have no UI channel to display the modal.  The model won't
+            // attempt to call a tool that isn't in the registry.
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
             reg.register(SwitchModeTool::new(mode_lock, tool_event_tx));
             reg.register(WriteTool);

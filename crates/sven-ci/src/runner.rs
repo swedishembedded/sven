@@ -769,9 +769,11 @@ impl CiRunner {
                                     "[sven:error] Step {step_idx} ({label:?}) timed out after {}s",
                                     step_timeout_secs.unwrap_or(0)
                                 ));
-                                // Save partial conversation and JSONL trace before aborting
                                 if !collected.is_empty() {
                                     let _ = history::save(&collected);
+                                }
+                                if let Some(ref path) = effective_output_jsonl {
+                                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
                                 }
                                 std::process::exit(EXIT_TIMEOUT);
                             }
@@ -781,6 +783,9 @@ impl CiRunner {
                             write_stderr("[sven:interrupted] Ctrl+C received — saving partial conversation");
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
+                            }
+                            if let Some(ref path) = effective_output_jsonl {
+                                flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
                             }
                             std::process::exit(EXIT_INTERRUPT);
                         }
@@ -809,6 +814,9 @@ impl CiRunner {
                                 ));
                                 if !collected.is_empty() {
                                     let _ = history::save(&collected);
+                                }
+                                if let Some(ref path) = effective_output_jsonl {
+                                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
                                 }
                                 std::process::exit(EXIT_AGENT_ERROR);
                             }
@@ -929,10 +937,11 @@ impl CiRunner {
                 write_stderr(&format!(
                     "[sven:error] Step {step_idx} ({label:?}) reported an error. Aborting."
                 ));
-                // Save partial conversation and JSONL trace.
-                // submit_fut is out of scope here so we can borrow agent directly.
                 if !collected.is_empty() {
                     let _ = history::save(&collected);
+                }
+                if let Some(ref path) = effective_output_jsonl {
+                    flush_jsonl(path, &existing_jsonl_records, &run_jsonl_records);
                 }
                 std::process::exit(EXIT_AGENT_ERROR);
             }
