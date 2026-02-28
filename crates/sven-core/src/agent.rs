@@ -263,6 +263,10 @@ impl Agent {
         let mut partial_text = String::new();
         let mut empty_turn_retries = 0u32;
         const MAX_EMPTY_TURN_RETRIES: u32 = 2;
+        // True once at least one tool call has been executed in this step.
+        // Used to detect mid-task stalls where the model emits text but no
+        // tool calls after already having called tools earlier in the loop.
+        let mut had_tool_calls_this_step = false;
 
         loop {
             // Check cancel before each round.
@@ -360,11 +364,27 @@ impl Agent {
                     ));
                     continue;
                 }
+                // Mid-task stall: the model emitted text-only after already
+                // calling tools earlier in this step.  Some reasoning models
+                // (Qwen, DeepSeek) occasionally produce a transition sentence
+                // without following it with tool calls.  Nudge once to continue.
+                if !text.is_empty()
+                    && had_tool_calls_this_step
+                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
+                {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You have not finished the task yet. \
+                         Please continue with your next tool call.",
+                    ));
+                    continue;
+                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 break;
             }
 
             empty_turn_retries = 0;
+            had_tool_calls_this_step = true;
 
             // Phase 1: push all assistant tool-call messages.
             for tc in &tool_calls {
@@ -445,6 +465,7 @@ impl Agent {
         let mut rounds = 0u32;
         let mut empty_turn_retries = 0u32;
         const MAX_EMPTY_TURN_RETRIES: u32 = 2;
+        let mut had_tool_calls_this_step = false;
 
         loop {
             rounds += 1;
@@ -506,11 +527,25 @@ impl Agent {
                     ));
                     continue;
                 }
+                // Mid-task stall: the model emitted text-only after already
+                // calling tools earlier in this step.  Nudge it once to continue.
+                if !text.is_empty()
+                    && had_tool_calls_this_step
+                    && empty_turn_retries < MAX_EMPTY_TURN_RETRIES
+                {
+                    empty_turn_retries += 1;
+                    self.session.push(Message::user(
+                        "You have not finished the task yet. \
+                         Please continue with your next tool call.",
+                    ));
+                    continue;
+                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 break;
             }
 
             empty_turn_retries = 0;
+            had_tool_calls_this_step = true;
 
             // Phase 1: push all assistant tool-call messages (must all come
             // before any tool-result messages for OpenAI's parallel-tool-call

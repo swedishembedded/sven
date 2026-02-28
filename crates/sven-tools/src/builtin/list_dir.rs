@@ -162,8 +162,11 @@ async fn collect_entries(
         let full_path = format!("{}/{}", dir.trim_end_matches('/'), name);
         let rel = relative_path(base, &full_path);
         if is_dir {
+            if is_excluded(&name) {
+                continue;
+            }
             entries.push(format!("{}/", rel));
-            if current_depth < max_depth && !is_excluded(&name) {
+            if current_depth < max_depth {
                 collect_entries(
                     base,
                     &full_path,
@@ -249,6 +252,29 @@ mod tests {
             !out.content.contains("inner.txt"),
             "inner.txt should not appear at depth=0"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn excluded_dirs_are_not_listed() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let n = CTR.fetch_add(1, Ordering::Relaxed);
+        let dir = format!("/tmp/sven_listdir_excl_{}_{n}", std::process::id());
+        std::fs::create_dir_all(format!("{dir}/.git/objects")).unwrap();
+        std::fs::create_dir_all(format!("{dir}/target/debug")).unwrap();
+        std::fs::create_dir_all(format!("{dir}/node_modules/pkg")).unwrap();
+        std::fs::write(format!("{dir}/README.md"), "x").unwrap();
+
+        let t = ListDirTool;
+        let out = t.execute(&call(json!({"path": dir, "depth": 5}))).await;
+        assert!(!out.content.contains(".git"), ".git must not appear");
+        assert!(!out.content.contains("target"), "target must not appear");
+        assert!(
+            !out.content.contains("node_modules"),
+            "node_modules must not appear"
+        );
+        assert!(out.content.contains("README.md"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -311,7 +311,12 @@ pub fn draw_chat(
         if total_lines > visible_height {
             let sb_x = inner.x + inner.width - 1;
             let sb_area = Rect::new(sb_x, inner.y, 1, inner.height);
-            let mut sb_state = ScrollbarState::new(total_lines)
+            // Ratatui's scrollbar puts the thumb at the bottom only when
+            // position == content_length - 1.  Our max scroll_offset is
+            // total_lines - visible_height, so we set content_length to
+            // total_lines - visible_height + 1 so those two values coincide.
+            let scrollable_range = total_lines.saturating_sub(visible_height) + 1;
+            let mut sb_state = ScrollbarState::new(scrollable_range)
                 .position(scroll_offset as usize)
                 .viewport_content_length(visible_height);
             frame.render_stateful_widget(
@@ -428,7 +433,10 @@ pub fn draw_input(
     // Scrollbar (only when content overflows).
     if needs_scrollbar && inner.width > 1 {
         let sb_area = Rect::new(inner.x + text_width, inner.y, 1, inner.height);
-        let mut sb_state = ScrollbarState::new(total_lines)
+        // Same fix as for the chat scrollbar: content_length must equal
+        // (max_scroll_offset + 1) so the thumb reaches the very bottom.
+        let scrollable_range = total_lines.saturating_sub(visible_height) + 1;
+        let mut sb_state = ScrollbarState::new(scrollable_range)
             .position(scroll)
             .viewport_content_length(visible_height);
         frame.render_stateful_widget(
