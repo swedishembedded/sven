@@ -120,12 +120,26 @@ impl App {
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if over_input {
-                                if in_edit {
-                                    self.edit_scroll_offset =
-                                        self.edit_scroll_offset.saturating_sub(1);
-                                } else {
-                                    self.input_scroll_offset =
-                                        self.input_scroll_offset.saturating_sub(1);
+                                let w = self.last_input_inner_width as usize;
+                                if w > 0 {
+                                    let (buf, cursor) = if in_edit {
+                                        (self.edit_buffer.clone(), self.edit_cursor)
+                                    } else {
+                                        (self.input_buffer.clone(), self.input_cursor)
+                                    };
+                                    let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
+                                    let new_row = wrap.cursor_row.saturating_sub(1);
+                                    let new_cursor = crate::input_wrap::byte_offset_at_row_col(
+                                        &buf,
+                                        w,
+                                        new_row,
+                                        wrap.cursor_col,
+                                    );
+                                    if in_edit {
+                                        self.edit_cursor = new_cursor;
+                                    } else {
+                                        self.input_cursor = new_cursor;
+                                    }
                                 }
                             } else if self.nvim_bridge.is_some() {
                                 if let Some(nvim_bridge) = &self.nvim_bridge {
@@ -139,26 +153,25 @@ impl App {
                         MouseEventKind::ScrollDown => {
                             if over_input {
                                 let w = self.last_input_inner_width as usize;
-                                let h = self.last_input_inner_height as usize;
-                                if w > 0 && h > 0 {
-                                    let total = crate::input_wrap::wrap_content(
-                                        if in_edit {
-                                            &self.edit_buffer
-                                        } else {
-                                            &self.input_buffer
-                                        },
-                                        w,
-                                        0,
-                                    )
-                                    .lines
-                                    .len();
-                                    let max = total.saturating_sub(h);
-                                    if in_edit {
-                                        self.edit_scroll_offset =
-                                            (self.edit_scroll_offset + 1).min(max);
+                                if w > 0 {
+                                    let (buf, cursor) = if in_edit {
+                                        (self.edit_buffer.clone(), self.edit_cursor)
                                     } else {
-                                        self.input_scroll_offset =
-                                            (self.input_scroll_offset + 1).min(max);
+                                        (self.input_buffer.clone(), self.input_cursor)
+                                    };
+                                    let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
+                                    let max_row = wrap.lines.len().saturating_sub(1);
+                                    let new_row = (wrap.cursor_row + 1).min(max_row);
+                                    let new_cursor = crate::input_wrap::byte_offset_at_row_col(
+                                        &buf,
+                                        w,
+                                        new_row,
+                                        wrap.cursor_col,
+                                    );
+                                    if in_edit {
+                                        self.edit_cursor = new_cursor;
+                                    } else {
+                                        self.input_cursor = new_cursor;
                                     }
                                 }
                             } else if self.nvim_bridge.is_some() {
