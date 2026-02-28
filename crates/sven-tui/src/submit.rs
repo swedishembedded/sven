@@ -314,17 +314,18 @@ impl App {
         self.scroll_offset = 0;
     }
 
-    /// Re-scan all skill directories, update [`SharedSkills`], rebuild the
-    /// slash command registry and the completion manager.
+    /// Re-scan all skill and command directories, rebuild the slash command
+    /// registry and the completion manager.
     ///
     /// Called when `ImmediateAction::RefreshSkills` is produced by `/refresh`.
-    /// Because [`SharedSkills`] is shared with the agent task, the next agent
-    /// turn automatically picks up new skills when building the system prompt.
+    /// Skills are refreshed so the agent picks them up on the next turn;
+    /// commands are re-discovered so new `.cursor/commands/` files appear as
+    /// slash completions immediately.
     pub(crate) fn refresh_skill_commands(&mut self) {
         self.shared_skills.refresh(self.project_root.as_deref());
-        let current_skills = self.shared_skills.get();
+        let commands = sven_runtime::discover_commands(self.project_root.as_deref());
         let mut registry = CommandRegistry::with_builtins();
-        registry.register_skills(&current_skills);
+        registry.register_commands(&commands);
         let registry = Arc::new(registry);
         self.completion_manager = CompletionManager::new(registry.clone());
         self.command_registry = registry;

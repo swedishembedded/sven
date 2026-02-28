@@ -201,6 +201,60 @@ pub fn make_skill_commands(skills: &[SkillInfo]) -> Vec<SkillCommand> {
     commands
 }
 
+/// Build [`SkillCommand`] instances from a slice of user-authored commands.
+///
+/// Unlike [`make_skill_commands`], this function preserves the command name
+/// exactly as derived from the filename (e.g. `review-code.md` → `/review-code`).
+/// Only the last-path-component is lowercased; hyphens are kept intact so
+/// commands behave identically to Cursor's `.cursor/commands/` convention.
+///
+/// Duplicate names are disambiguated by appending `-2`, `-3`, etc.
+#[must_use]
+pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> {
+    let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::with_capacity(commands.len());
+
+    for cmd in commands {
+        // Normalise: lowercase each path segment, preserve hyphens and slashes.
+        let normalised = cmd.command
+            .split('/')
+            .map(|seg| seg.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        // Deduplicate with hyphen-style suffix to stay consistent with the
+        // filename convention (e.g. `review-code`, `review-code-2`).
+        let unique_name = resolve_unique_command_name(normalised, &mut used_names);
+
+        result.push(SkillCommand {
+            name: unique_name,
+            description: truncate_description(&cmd.description, MAX_DESCRIPTION_LEN),
+            content: cmd.content.clone(),
+            skill_dir: cmd.skill_dir.clone(),
+        });
+    }
+
+    result
+}
+
+fn resolve_unique_command_name(
+    base: String,
+    used: &mut std::collections::HashSet<String>,
+) -> String {
+    if used.insert(base.clone()) {
+        return base;
+    }
+    for i in 2..1000usize {
+        let candidate = format!("{base}-{i}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    let fallback = format!("{base}-x");
+    used.insert(fallback.clone());
+    fallback
+}
+
 fn resolve_unique_name(base: String, used: &mut std::collections::HashSet<String>) -> String {
     if used.insert(base.clone()) {
         return base;

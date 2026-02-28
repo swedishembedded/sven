@@ -158,8 +158,8 @@ pub fn draw_chat(
     search_regex: Option<&regex::Regex>,
     nvim_cursor: Option<(u16, u16)>,
     editing_line_range: Option<(usize, usize)>,
-    focused_line_range: Option<(usize, usize)>,
     labels: &ChatLabels,
+    no_nvim: bool,
 ) {
     let block = pane_block("Chat", focused, ascii);
     let inner = block.inner(area);
@@ -199,27 +199,17 @@ pub fn draw_chat(
     // ── Full-row segment highlights ────────────────────────────────────────────
     // Applied AFTER the paragraph so every cell in a highlighted row (including
     // the empty trailing area) receives the same background colour.
-    {
+    if editing_line_range.is_some() {
         let buf = frame.buffer_mut();
         for vis_row in 0..inner.height as usize {
             let abs_line = vis_row + scroll_offset as usize;
-            let bg = if editing_line_range
+            if editing_line_range
                 .map(|(s, e)| abs_line >= s && abs_line < e)
                 .unwrap_or(false)
             {
-                Some(Color::Rgb(0, 45, 65))   // editing: cyan tint
-            } else if focused_line_range
-                .map(|(s, e)| abs_line >= s && abs_line < e)
-                .unwrap_or(false)
-            {
-                Some(Color::Rgb(28, 28, 50))  // focused: subtle blue
-            } else {
-                None
-            };
-            if let Some(bg) = bg {
                 let y = inner.y + vis_row as u16;
                 for x in inner.x..inner.x + inner.width {
-                    buf[(x, y)].set_bg(bg);
+                    buf[(x, y)].set_bg(Color::Rgb(0, 45, 65));
                 }
             }
         }
@@ -279,6 +269,29 @@ pub fn draw_chat(
                 buf.set_string(x_edit,   y, icon_edit,   es);
                 buf.set_string(x_delete, y, icon_delete, delete_style);
             }
+        }
+    }
+
+    // ── Chat scrollbar (no-nvim mode only) ────────────────────────────────────
+    // Placed in the rightmost column of the inner area (the 1-col right margin
+    // that is already kept blank by the label_reserve in build_display_from_segments).
+    // This is to the right of the action-icon columns so it never overlaps them.
+    if no_nvim && inner.width > 1 {
+        let total_lines = lines.len();
+        let visible_height = inner.height as usize;
+        if total_lines > visible_height {
+            let sb_x = inner.x + inner.width - 1;
+            let sb_area = Rect::new(sb_x, inner.y, 1, inner.height);
+            let mut sb_state = ScrollbarState::new(total_lines)
+                .position(scroll_offset as usize)
+                .viewport_content_length(visible_height);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                sb_area,
+                &mut sb_state,
+            );
         }
     }
 

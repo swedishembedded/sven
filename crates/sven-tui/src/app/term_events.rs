@@ -118,18 +118,18 @@ impl App {
                             if over_input {
                                 if in_edit {
                                     self.edit_scroll_offset =
-                                        self.edit_scroll_offset.saturating_sub(3);
+                                        self.edit_scroll_offset.saturating_sub(1);
                                 } else {
                                     self.input_scroll_offset =
-                                        self.input_scroll_offset.saturating_sub(3);
+                                        self.input_scroll_offset.saturating_sub(1);
                                 }
                             } else if self.nvim_bridge.is_some() {
                                 if let Some(nvim_bridge) = &self.nvim_bridge {
                                     let mut bridge = nvim_bridge.lock().await;
-                                    let _ = bridge.send_input("<C-y><C-y><C-y>").await;
+                                    let _ = bridge.send_input("<C-y>").await;
                                 }
                             } else {
-                                self.scroll_up(3);
+                                self.scroll_up(1);
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -151,19 +151,19 @@ impl App {
                                     let max = total.saturating_sub(h);
                                     if in_edit {
                                         self.edit_scroll_offset =
-                                            (self.edit_scroll_offset + 3).min(max);
+                                            (self.edit_scroll_offset + 1).min(max);
                                     } else {
                                         self.input_scroll_offset =
-                                            (self.input_scroll_offset + 3).min(max);
+                                            (self.input_scroll_offset + 1).min(max);
                                     }
                                 }
                             } else if self.nvim_bridge.is_some() {
                                 if let Some(nvim_bridge) = &self.nvim_bridge {
                                     let mut bridge = nvim_bridge.lock().await;
-                                    let _ = bridge.send_input("<C-e><C-e><C-e>").await;
+                                    let _ = bridge.send_input("<C-e>").await;
                                 }
                             } else {
-                                self.scroll_down(3);
+                                self.scroll_down(1);
                             }
                         }
                         MouseEventKind::Down(crossterm::event::MouseButton::Left)
@@ -194,8 +194,42 @@ impl App {
                             // and column last_chat_pane.x + 1 (border).
                             let chat_inner_x = self.last_chat_pane.x + 1;
                             let chat_inner_w = self.last_chat_pane.width.saturating_sub(2);
+                            let chat_inner_h = self.last_chat_pane.height.saturating_sub(2);
                             let content_start_row = self.last_chat_pane.y + 1;
-                            if mouse.row >= content_start_row && !over_queue && !over_input {
+
+                            // ── Scrollbar click ──────────────────────────────────
+                            // The scrollbar occupies the rightmost column of the
+                            // inner chat area.  Clicking it scrolls proportionally.
+                            let scrollbar_col = chat_inner_x + chat_inner_w.saturating_sub(1);
+                            let total_chat_lines = self.chat_lines.len() as u16;
+                            let over_chat = mouse.row >= content_start_row
+                                && mouse.row < content_start_row + chat_inner_h
+                                && !over_queue
+                                && !over_input;
+                            if over_chat
+                                && mouse.column == scrollbar_col
+                                && chat_inner_h > 0
+                                && total_chat_lines > chat_inner_h
+                            {
+                                let rel_row = mouse.row - content_start_row;
+                                let new_offset = (rel_row as u32
+                                    * (total_chat_lines - chat_inner_h) as u32
+                                    / chat_inner_h.saturating_sub(1).max(1) as u32)
+                                    as u16;
+                                self.scroll_offset =
+                                    new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
+                                self.auto_scroll = false;
+                                self.recompute_focused_segment();
+                            }
+
+                            // Skip segment-click logic when the click landed on the scrollbar.
+                            let clicked_scrollbar = mouse.column == scrollbar_col
+                                && total_chat_lines > chat_inner_h;
+                            if mouse.row >= content_start_row
+                                && !over_queue
+                                && !over_input
+                                && !clicked_scrollbar
+                            {
                                 let click_line = (mouse.row - content_start_row) as usize
                                     + self.scroll_offset as usize;
                                 if let Some(seg_idx) =
@@ -295,6 +329,23 @@ impl App {
                                             }
                                             self.build_display_from_segments();
                                             self.search.update_matches(&self.chat_lines);
+                                            // Clamp scroll so collapsing content never leaves a
+                                            // blank viewport, then ensure the toggled segment
+                                            // remains visible.
+                                            let max_offset = (self.chat_lines.len() as u16)
+                                                .saturating_sub(self.chat_height);
+                                            self.scroll_offset =
+                                                self.scroll_offset.min(max_offset);
+                                            // If the collapsed segment now starts below the
+                                            // viewport, scroll up to bring it into view.
+                                            if let Some(&(seg_start, _)) =
+                                                self.segment_line_ranges.get(seg_idx)
+                                            {
+                                                if (seg_start as u16) < self.scroll_offset {
+                                                    self.scroll_offset = seg_start as u16;
+                                                }
+                                            }
+                                            self.recompute_focused_segment();
                                         }
                                     }
                                 }

@@ -123,7 +123,7 @@ pub async fn agent_task(
                 let result = agent.submit_with_cancel(&content, tx.clone(), cancel_rx).await;
                 cancel_handle.lock().await.take();
                 if let Err(e) = result {
-                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
                 }
             }
             AgentRequest::Resubmit { messages, new_user_content, model_override, mode_override } => {
@@ -157,7 +157,7 @@ pub async fn agent_task(
                     .await;
                 cancel_handle.lock().await.take();
                 if let Err(e) = result {
-                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
                 }
             }
             AgentRequest::LoadHistory(messages) => {

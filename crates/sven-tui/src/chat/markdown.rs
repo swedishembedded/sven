@@ -171,6 +171,8 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
         },
         ChatSegment::Thinking { .. } =>
             (Some(Style::default().fg(Color::Magenta)), false),
+        ChatSegment::Error(_) =>
+            (Some(Style::default().fg(Color::Red)), false),
         _ => (None, false),
     }
 }

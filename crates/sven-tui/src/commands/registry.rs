@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: MIT
 //! Command registry: central store for all registered slash commands.
 //!
-//! Built-in commands are registered at startup.  Future extension points
-//! for MCP prompts and Skills are exposed as async discovery methods that
-//! currently return immediately (stubs to be filled in later).
+//! Built-in commands are registered at startup via [`CommandRegistry::with_builtins`].
+//! User-authored commands discovered from `.cursor/commands/` directories are
+//! registered via [`CommandRegistry::register_commands`].  Skills are intentionally
+//! excluded from the slash command list — they are auto-loaded by the agent.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -69,14 +70,15 @@ impl CommandRegistry {
 
     // ── Extension points ──────────────────────────────────────────────────────
 
-    /// Register slash commands for all discovered skills.
+    /// Register slash commands for all discovered user commands.
     ///
-    /// Each skill in `skills` becomes a `/skill-name` command.  Skills with
-    /// `user_invocable_only: true` are included (slash commands are explicitly
-    /// user-invoked).  Duplicate sanitized names are disambiguated with `_2`,
-    /// `_3`, etc.
-    pub fn register_skills(&mut self, skills: &[SkillInfo]) {
-        for cmd in super::skill::make_skill_commands(skills) {
+    /// Commands are `.md` files found in `commands/` directories (e.g.
+    /// `.cursor/commands/`).  Each file becomes one slash command whose name
+    /// mirrors its path relative to the commands root with the `.md` extension
+    /// removed.  Hyphens in filenames are preserved (e.g. `review-code.md` →
+    /// `/review-code`) to match the Cursor commands convention.
+    pub fn register_commands(&mut self, commands: &[SkillInfo]) {
+        for cmd in super::skill::make_command_slash_commands(commands) {
             self.register(Arc::new(cmd));
         }
     }

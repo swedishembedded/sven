@@ -351,8 +351,12 @@ impl App {
             sven_runtime::discover_skills(project_root.as_deref())
         );
 
+        // Discover user-invocable commands from .cursor/commands/ etc. and
+        // register them as slash commands.  Skills are intentionally excluded
+        // from the slash command list — they are auto-loaded by the agent.
         let mut registry = CommandRegistry::with_builtins();
-        registry.register_skills(&shared_skills.get());
+        let startup_commands = sven_runtime::discover_commands(project_root.as_deref());
+        registry.register_commands(&startup_commands);
         let registry = Arc::new(registry);
         let completion_manager = CompletionManager::new(registry.clone());
 
@@ -491,6 +495,17 @@ impl App {
                 let _ = submit_tx.send(AgentRequest::LoadHistory(messages)).await;
             }
             self.rerender_chat().await;
+            // Update chat_height from the actual terminal before scrolling so
+            // the initial scroll position is correct (the default of 24 is
+            // almost always wrong and would leave empty rows at the bottom).
+            if let Ok(size) = terminal.size() {
+                let layout = AppLayout::compute(
+                    Rect::new(0, 0, size.width, size.height),
+                    false,
+                    self.queued.len(),
+                );
+                self.chat_height = layout.chat_inner_height().max(1);
+            }
             self.scroll_to_bottom();
         }
 
@@ -547,6 +562,14 @@ impl App {
                     self.queued.len(),
                 );
                 self.chat_height = layout.chat_inner_height().max(1);
+                // Clamp scroll_offset to the valid range whenever chat_height or
+                // chat_lines changes (e.g. terminal resize, content shrink, or
+                // stale initial value from the default chat_height: 24).
+                let max_scroll = (self.chat_lines.len() as u16)
+                    .saturating_sub(self.chat_height);
+                if self.scroll_offset > max_scroll {
+                    self.scroll_offset = max_scroll;
+                }
                 self.last_chat_pane = layout.chat_pane;
                 // Track chat pane inner width for pre-wrap in the markdown renderer.
                 self.last_chat_inner_width =
@@ -658,11 +681,7 @@ impl App {
                 );
 
                 let lines_to_draw = if !nvim_lines.is_empty() { &nvim_lines } else { &self.chat_lines };
-                // Compute editing / focused line ranges for the chat highlight overlay.
                 let editing_range = self.editing_message_index
-                    .and_then(|idx| self.segment_line_ranges.get(idx))
-                    .copied();
-                let focused_range = self.focused_chat_segment
                     .and_then(|idx| self.segment_line_ranges.get(idx))
                     .copied();
                 draw_chat(
@@ -671,13 +690,13 @@ impl App {
                     &self.search.query, &self.search.matches, self.search.current,
                     self.search.regex.as_ref(), nvim_cursor,
                     editing_range,
-                    focused_range,
                     &crate::widgets::ChatLabels {
                         edit_label_lines:    self.edit_label_line_indices.clone(),
                         remove_label_lines:  self.remove_label_line_indices.clone(),
                         rerun_label_lines:   self.rerun_label_line_indices.clone(),
                         pending_delete_line: None, // confirmations now use the modal
                     },
+                    self.no_nvim,
                 );
                 let edit_mode = if self.editing_queue_index.is_some() {
                     InputEditMode::Queue
