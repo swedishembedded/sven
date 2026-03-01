@@ -59,7 +59,7 @@ similar      = "2"
 
 [package]
 name    = "sven"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "A CLI and CI AI coding agent"
 license = "Apache-2.0"
