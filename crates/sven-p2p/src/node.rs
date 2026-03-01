@@ -1345,12 +1345,11 @@ impl NodeState {
         // instead of connected_relay_addrs (currently connected) would allow
         // dialing circuits through a dropped relay, causing immediate failures
         // and churn until the relay reconnects.
-        if is_circuit_addr(&info.relay_addr) {
-            if peer_id_from_addr(&info.relay_addr)
+        if is_circuit_addr(&info.relay_addr)
+            && peer_id_from_addr(&info.relay_addr)
                 .is_none_or(|r| !self.connected_relay_addrs.contains_key(&r))
-            {
-                return;
-            }
+        {
+            return;
         }
 
         if self.dialed.insert(info.peer_id) {

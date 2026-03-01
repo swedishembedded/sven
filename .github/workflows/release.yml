@@ -101,6 +101,12 @@ jobs:
   build-macos:
     name: macOS (universal)
     runs-on: macos-latest
+    # openssl-sys (pulled in by git2) cannot find a system OpenSSL when
+    # cross-compiling x86_64 on an Apple Silicon runner. OPENSSL_VENDORED=1
+    # tells openssl-sys to compile OpenSSL from its bundled source for the
+    # target arch, bypassing any system/pkg-config lookup entirely.
+    env:
+      OPENSSL_VENDORED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

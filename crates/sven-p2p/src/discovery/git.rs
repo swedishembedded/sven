@@ -15,6 +15,7 @@
 //! Readers verify:
 //!   1. The public key re-derives the same `PeerId` as the record's peer-id field.
 //!   2. The signature is valid over `{room}\0{peer_id}\0{relay_addr}`.
+//!
 //! This prevents any principal with git push access from injecting fake peer
 //! entries or redirecting peers through attacker-controlled relay addresses.
 //!
@@ -373,6 +374,7 @@ impl DiscoveryProvider for GitDiscoveryProvider {
 ///   1. Decode `pubkey_hex` as a protobuf-encoded Ed25519 public key.
 ///   2. Assert `PeerId::from(&pub_key) == peer_id` (key owns the identity).
 ///   3. Verify signature over `peer_record_sign_bytes(room, peer_id, relay_addr)`.
+///
 ///   Returns `None` if any check fails.
 ///
 /// * **Legacy unsigned** (2 fields): `{peer_id}|{relay_addr}`
