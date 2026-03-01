@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 use sven_config::CompactionStrategy;
 use sven_model::{Message, Role};
 use sven_tools::OutputCategory;

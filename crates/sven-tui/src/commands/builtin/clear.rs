@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! `/clear` command — erase all chat segments and reset the conversation view.
 
 use crate::commands::{

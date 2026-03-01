@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Slash command system for the interactive TUI.
 //!
 //! Commands are invoked by typing `/command [args]` in the input box.

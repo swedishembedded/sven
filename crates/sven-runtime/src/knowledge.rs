@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Knowledge base discovery, parsing, and drift detection.
 //!
 //! Knowledge documents are plain Markdown files with YAML frontmatter stored

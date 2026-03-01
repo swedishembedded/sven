@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Conversation ↔ Markdown: serialise `ChatSegment`s to the display-markdown
 //! format used by the Neovim buffer, and parse that format back to `Message`s
 //! for edit-and-resubmit.

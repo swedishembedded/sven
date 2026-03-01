@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Wrapping and cursor-positioning logic for the multiline input box.
 //!
 //! [`wrap_content`] converts a raw string and byte-index cursor into a list of

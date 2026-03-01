@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! AWS Bedrock driver — native Converse API with SigV4 authentication.
 //!
 //! Uses the non-streaming `POST /model/{modelId}/converse` endpoint and wraps

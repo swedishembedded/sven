@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! `NvimBridge`: manages the embedded Neovim process, buffer content, and the
 //! connection between Neovim's redraw grid and the ratatui render pipeline.
 

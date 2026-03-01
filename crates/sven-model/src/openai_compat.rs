@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Shared base implementation for OpenAI-compatible chat completion APIs.
 //!
 //! Roughly 25 providers speak the same `/chat/completions` + `/models` wire

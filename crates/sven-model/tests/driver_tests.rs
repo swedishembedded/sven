@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Shared test harness for integration-testing model drivers against live APIs.
 //!
 //! All tests in this module are `#[ignore]`d by default so they do not run

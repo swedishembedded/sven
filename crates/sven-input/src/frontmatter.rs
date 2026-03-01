@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 
 /// Metadata parsed from simple YAML-style frontmatter at the top of a

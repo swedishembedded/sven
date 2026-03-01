@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //!
 //! P2P control node — accepts connections from authorized native clients
 //! (mobile apps, remote CLI) and bridges them to the [`ControlService`].

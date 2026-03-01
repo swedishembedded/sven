@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 /// Agent intelligence for discovering the GDB server command and firmware ELF
 /// from common project structures including Zephyr/sysbuild, PlatformIO, Cargo
 /// embedded, and CMake/Make projects.

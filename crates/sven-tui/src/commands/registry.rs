@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Command registry: central store for all registered slash commands.
 //!
 //! Built-in commands are registered at startup via [`CommandRegistry::with_builtins`].

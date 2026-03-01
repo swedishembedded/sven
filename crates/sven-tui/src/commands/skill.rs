@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Skill-based slash commands loaded from SKILL.md files.
 //!
 //! Each discovered skill is registered as a slash command whose name is the

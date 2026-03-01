@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Generic thread-safe shared list for live-refreshable discovery collections.
 //!
 //! [`Shared<T>`] is a thin wrapper around `Arc<RwLock<Arc<[T]>>>` that

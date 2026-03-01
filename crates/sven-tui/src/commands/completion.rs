@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Fuzzy completion matching and the CompletionManager.
 //!
 //! The completion manager bridges the parser output, the command registry,

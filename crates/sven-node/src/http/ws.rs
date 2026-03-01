@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //!
 //! WebSocket bridge — translates browser WebSocket connections to the internal
 //! `ControlCommand` / `ControlEvent` protocol.

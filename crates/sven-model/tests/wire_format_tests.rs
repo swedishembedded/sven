@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Wire-format tests: spin up a minimal HTTP/1.1 mock server, configure each
 //! driver to point at it, issue a `CompletionRequest`, and assert both the
 //! HTTP request the driver sent and the `ResponseEvent`s it emitted.

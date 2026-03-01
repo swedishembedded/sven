@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Tool that loads a named skill's full content into the conversation context.
 //!
 //! The model calls this tool after recognising that a user request matches one

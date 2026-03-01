@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Subagent discovery and shared types.
 //!
 //! Subagents are specialized AI assistants defined as markdown files with YAML

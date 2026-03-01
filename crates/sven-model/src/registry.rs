@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! Driver registry: static metadata for every supported model provider.
 //!
 //! This module acts as the single source of truth for which provider IDs exist

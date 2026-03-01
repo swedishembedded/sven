@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! OpenAI driver — thin wrapper around the shared [`OpenAICompatProvider`].
 //!
 //! Kept as a named type so that the public `sven_model::OpenAiProvider` export

@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //! `/provider` command — switch provider for the next queued message.
 //!
 //! When only a provider is specified the current model name is kept but the
