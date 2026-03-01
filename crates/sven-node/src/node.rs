@@ -390,11 +390,11 @@ async fn execute_inbound_task(
     }
 
     // ── Hard cycle guard ─────────────────────────────────────────────────────
-    if request.chain.contains(&our_card.peer_id) {
+    let our_peer_id_str = p2p.local_peer_id_string();
+    if !our_peer_id_str.is_empty() && request.chain.contains(&our_peer_id_str) {
         let reason = format!(
-            "Task rejected: circular delegation — this node ({}) is already in \
+            "Task rejected: circular delegation — this node ({our_peer_id_str}) is already in \
              the chain: [{}]",
-            our_card.peer_id,
             request.chain.join(" → ")
         );
         tracing::warn!(task_id = %task_id, %from, "{reason}");

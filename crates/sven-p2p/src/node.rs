@@ -5,7 +5,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use futures::{future, StreamExt};
@@ -129,6 +129,10 @@ pub struct P2pHandle {
     event_tx: broadcast::Sender<P2pEvent>,
     log_tx: broadcast::Sender<LogEntry>,
     roster: Arc<Mutex<HashMap<String, RoomState>>>,
+    /// Set once by `P2pNode::run()` after the keypair is loaded.
+    /// Available to callers that need the local identity (e.g. for building
+    /// delegation chains) without having to wait for a full connection.
+    local_peer_id: Arc<OnceLock<PeerId>>,
 }
 
 impl P2pHandle {
@@ -210,6 +214,19 @@ impl P2pHandle {
     pub async fn shutdown(&self) {
         let _ = self.cmd_tx.send(P2pCommand::Shutdown).await;
     }
+
+    /// Return the local libp2p [`PeerId`] as a base-58 string, or an empty
+    /// string if the P2P node has not started yet.
+    ///
+    /// The peer ID is derived from the node's Ed25519 keypair and is set once
+    /// by [`P2pNode::run`] before any connections are established, so by the
+    /// time any agent tool runs in practice this will always be populated.
+    pub fn local_peer_id_string(&self) -> String {
+        self.local_peer_id
+            .get()
+            .map(|p| p.to_base58())
+            .unwrap_or_default()
+    }
 }
 
 // ── P2pNode ───────────────────────────────────────────────────────────────────
@@ -221,6 +238,7 @@ pub struct P2pNode {
     cmd_tx: mpsc::Sender<P2pCommand>,
     cmd_rx: mpsc::Receiver<P2pCommand>,
     roster: Arc<Mutex<HashMap<String, RoomState>>>,
+    local_peer_id: Arc<OnceLock<PeerId>>,
 }
 
 impl P2pNode {
@@ -248,6 +266,7 @@ impl P2pNode {
             cmd_tx,
             cmd_rx,
             roster,
+            local_peer_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -257,6 +276,7 @@ impl P2pNode {
             event_tx: self.event_tx.clone(),
             log_tx: self.log_tx.clone(),
             roster: Arc::clone(&self.roster),
+            local_peer_id: Arc::clone(&self.local_peer_id),
         }
     }
 
@@ -269,6 +289,9 @@ impl P2pNode {
             None => libp2p::identity::Keypair::generate_ed25519(),
         };
         let local_peer_id = PeerId::from(key.public());
+        // Publish the peer ID through the OnceLock so P2pHandle::local_peer_id_string()
+        // returns the real value before any connections are established.
+        let _ = self.local_peer_id.set(local_peer_id);
         let mut agent_card = self.config.agent_card.clone();
         agent_card.peer_id = local_peer_id.to_string();
         tracing::info!("P2pNode starting peer_id={local_peer_id}");

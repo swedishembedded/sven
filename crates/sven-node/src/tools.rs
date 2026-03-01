@@ -243,10 +243,12 @@ impl Tool for DelegateTool {
                 );
             }
 
-            // Build the chain for the outgoing request: append our own peer ID
-            // so the receiver knows we have already processed this task.
+            // Build the chain for the outgoing request: append our real libp2p
+            // peer ID so the receiver knows we have already processed this task.
+            // We get the ID from P2pHandle (set when the swarm starts) rather
+            // than from AgentCard.peer_id, which is empty at construction time.
             let mut new_chain = current_chain;
-            new_chain.push(self.our_card.peer_id.clone());
+            new_chain.push(self.p2p.local_peer_id_string());
             (current_depth + 1, new_chain)
         };
 
