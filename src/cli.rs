@@ -25,22 +25,41 @@ pub enum McpCommands {
     /// disconnects).  It does not fork, does not bind a port, and requires
     /// no authentication — security is inherited from the host process.
     Serve {
-        /// Comma-separated list of tool names to expose.
+        /// Comma-separated list of tool names to expose (local mode only).
         ///
         /// Defaults to all MCP-safe built-in tools (see `sven_mcp::DEFAULT_TOOL_NAMES`).
         /// Pass `all` to include every registered tool explicitly.
+        /// Ignored when `--node-url` is set (the node's own registry is used).
         ///
         /// Example: --tools read_file,write_file,grep,run_terminal_command
         #[arg(long, value_name = "TOOL,...")]
         tools: Option<String>,
 
-        /// Brave Search API key for the web_search tool.
+        /// Brave Search API key for the web_search tool (local mode only).
         ///
         /// May also be provided via the BRAVE_API_KEY environment variable.
-        /// When absent, web_search is still registered but returns an error
-        /// on invocation.
+        /// Ignored when `--node-url` is set.
         #[arg(long, env = "BRAVE_API_KEY", value_name = "KEY")]
         brave_api_key: Option<String>,
+
+        /// WebSocket URL of a running `sven node` to proxy tool calls through.
+        ///
+        /// When provided, the MCP server connects to the node over WebSocket
+        /// and forwards every tool call to it.  This exposes the full node tool
+        /// registry, including P2P tools like `list_peers` and `delegate_task`.
+        ///
+        /// Example: --node-url wss://127.0.0.1:18790/ws
+        #[arg(long, value_name = "URL")]
+        node_url: Option<String>,
+
+        /// Bearer token for authenticating with the sven node.
+        ///
+        /// Required when `--node-url` is set.  This is the raw token printed by
+        /// `sven node start` on first launch (not the hash stored on disk).
+        ///
+        /// May also be provided via the SVEN_GATEWAY_TOKEN environment variable.
+        #[arg(long, env = "SVEN_GATEWAY_TOKEN", value_name = "TOKEN")]
+        token: Option<String>,
     },
 }
 

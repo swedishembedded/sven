@@ -278,6 +278,49 @@ impl ControlService {
                 let sessions: Vec<SessionInfo> = self.sessions.values().map(|s| s.info()).collect();
                 self.broadcast(ControlEvent::SessionList { sessions });
             }
+            ControlCommand::ListTools => {
+                let tools = { self.agent.lock().await.tools().clone() };
+                let tools_info = tools
+                    .schemas()
+                    .into_iter()
+                    .map(|s| super::protocol::ToolSchemaInfo {
+                        name: s.name,
+                        description: s.description,
+                        parameters: s.parameters,
+                    })
+                    .collect();
+                self.broadcast(ControlEvent::ToolList { tools: tools_info });
+            }
+            ControlCommand::CallTool {
+                call_id,
+                name,
+                args,
+            } => {
+                let tools = { self.agent.lock().await.tools().clone() };
+                let call = sven_tools::ToolCall {
+                    id: call_id.clone(),
+                    name,
+                    args,
+                };
+                let output = tools.execute(&call).await;
+                let output_str = output
+                    .parts
+                    .iter()
+                    .filter_map(|p| {
+                        if let sven_tools::ToolOutputPart::Text(t) = p {
+                            Some(t.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                self.broadcast(ControlEvent::ToolCallOutput {
+                    call_id,
+                    output: output_str,
+                    is_error: output.is_error,
+                });
+            }
             ControlCommand::Subscribe { .. } | ControlCommand::Unsubscribe { .. } => {
                 // Handled at the transport layer (subscribe/unsubscribe the
                 // broadcast receiver); nothing to do in the service itself.

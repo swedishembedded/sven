@@ -145,6 +145,12 @@ fn log_command(cmd: &ControlCommand, peer: SocketAddr) {
         } => {
             info!(%peer, session=%session_id, call=%call_id, "tool denied");
         }
+        ControlCommand::ListTools => {
+            info!(%peer, "list tools requested");
+        }
+        ControlCommand::CallTool { call_id, name, .. } => {
+            info!(%peer, call=%call_id, tool=%name, "direct tool call");
+        }
         _ => {}
     }
 }

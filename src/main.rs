@@ -161,12 +161,23 @@ async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
         McpCommands::Serve {
             tools,
             brave_api_key,
+            node_url,
+            token,
         } => {
-            let registry = std::sync::Arc::new(sven_mcp::build_mcp_registry(
-                brave_api_key.clone(),
-                tools.as_deref(),
-            ));
-            sven_mcp::serve_stdio(registry).await
+            if let Some(url) = node_url {
+                let tok = token.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--token (or SVEN_GATEWAY_TOKEN) is required when --node-url is set"
+                    )
+                })?;
+                sven_mcp::serve_stdio_node_proxy(url.clone(), tok).await
+            } else {
+                let registry = std::sync::Arc::new(sven_mcp::build_mcp_registry(
+                    brave_api_key.clone(),
+                    tools.as_deref(),
+                ));
+                sven_mcp::serve_stdio(registry).await
+            }
         }
     }
 }

@@ -90,6 +90,22 @@ pub enum ControlCommand {
 
     /// Request the current list of sessions.
     ListSessions,
+
+    /// Request the schemas of all tools registered on the node.
+    ///
+    /// The gateway responds with a [`ControlEvent::ToolList`] broadcast.
+    ListTools,
+
+    /// Execute a single tool directly on the node's tool registry.
+    ///
+    /// No LLM session is created; the tool runs immediately and the result is
+    /// broadcast as [`ControlEvent::ToolCallOutput`] with the same `call_id`.
+    CallTool {
+        /// Client-supplied correlation ID echoed back in the response.
+        call_id: String,
+        name: String,
+        args: serde_json::Value,
+    },
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -156,6 +172,16 @@ pub enum ControlEvent {
 
     /// Gateway-level error (not session-specific).
     GatewayError { code: u32, message: String },
+
+    /// Response to a [`ControlCommand::ListTools`] request.
+    ToolList { tools: Vec<ToolSchemaInfo> },
+
+    /// Response to a [`ControlCommand::CallTool`] request.
+    ToolCallOutput {
+        call_id: String,
+        output: String,
+        is_error: bool,
+    },
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -174,6 +200,15 @@ pub enum SessionState {
     Completed,
     /// The session was cancelled.
     Cancelled,
+}
+
+/// Tool schema entry returned by [`ControlEvent::ToolList`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSchemaInfo {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema object describing the tool's parameters.
+    pub parameters: serde_json::Value,
 }
 
 /// Summary of a session returned by `ListSessions`.
