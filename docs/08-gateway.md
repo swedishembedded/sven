@@ -109,18 +109,42 @@ The file is reloaded automatically on change — no restart needed.
 
 ### 3. Build a team of agents
 
-To have two agents collaborate, simply start the gateway on a second machine:
+Agent-to-agent connections use a **deny-all allowlist** — each node must
+explicitly list the peer IDs it is willing to connect to.
 
-```sh
-# machine B
-sven node start
+**Step 1 — Start each node and note its agent peer ID.**
+
+The agent peer ID is printed on startup:
+
+```
+P2pNode starting peer_id=12D3KooWQwZgQPdd4TZeputvRdmaoq2whU358qYULJMiNGvJcB98
 ```
 
-Both agents discover each other via mDNS within a few seconds — no pairing,
-no configuration needed on a local network.  Each agent automatically gets
-`list_peers` and `delegate_task` tools pointing at the other.
+> **Note:** there are two peer IDs in the log.  Use the one from the
+> `P2pNode starting` line — that is the agent mesh identity.  The other
+> (`P2P control node identity`) is for the operator control channel.
 
-To give each agent a distinct identity, set their names in the config:
+**Step 2 — Add each node's peer ID to the other's config.**
+
+```yaml
+# machine A — .gateway.yaml
+p2p:
+  peers:
+    "12D3KooW<machine-B-agent-peer-id>": "machine-b"
+```
+
+```yaml
+# machine B — .gateway.yaml
+p2p:
+  peers:
+    "12D3KooW<machine-A-agent-peer-id>": "machine-a"
+```
+
+Authorization is not automatic — both sides must list each other.
+
+**Step 3 — (Re)start both nodes.**  They will connect within seconds via mDNS.
+
+To give each agent a distinct identity, also set their names in the config:
 
 ```yaml
 # machine A — .gateway.yaml
@@ -247,6 +271,12 @@ p2p:
   # Rooms group agents together for discovery
   rooms: ["default", "team-alpha"]
 
+  # Agent peers allowed to join this node's mesh (deny-all if omitted).
+  # Use the peer_id from the other node's "P2pNode starting peer_id=…" log line.
+  peers:
+    "12D3KooWXyZaBcDeFgHiJkLmNo12345678": "frontend-agent"
+    "12D3KooW11223344556677889900aAbBcC": "devops-agent"
+
   # Relay for connecting agents across networks (optional)
   relays:
     - "/ip4/relay.example.com/tcp/9000/p2p/12D3KooW..."
@@ -284,6 +314,7 @@ slack:
 | `rooms` | `["default"]` | Discovery namespaces; peers in the same room find each other |
 | `agent_keypair_path` | `~/.config/sven/gateway/agent-keypair` | Persist the agent routing keypair |
 | `relays` | `[]` | Relay multiaddrs for cross-network connectivity |
+| `peers` | `{}` (deny-all) | Agent peers allowed to join the mesh — maps peer ID → label. Both nodes must list each other. |
 
 #### `slack`
 
@@ -387,8 +418,14 @@ sven node authorize "sven://..."
 
 ### Peers not appearing after `list_peers`
 
-- **LAN**: mDNS takes 5–10 seconds.  Both gateways must be running and in the
-  same room (`p2p.rooms`).
+- **p2p.peers not configured**: Each node must list the other's agent peer ID
+  under `p2p.peers` — the mesh is deny-all by default.  Check the startup log
+  for the line `P2pNode starting peer_id=…` and add that ID to the other node's
+  config (and vice versa).  After editing, restart both nodes.
+- **LAN**: mDNS takes 5–10 seconds.  Both nodes must be running and in the
+  same room (`p2p.rooms`).  Check the logs for
+  `mDNS: discovered agent peer but p2p.peers is empty` — this confirms
+  discovery works but the allowlist is the blocker.
 - **Cross-network**: configure a relay with `p2p.relays`.
 
 ### "P2P error: relay connection failed"

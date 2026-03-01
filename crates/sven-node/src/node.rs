@@ -105,6 +105,31 @@ pub async fn run(
         .clone()
         .or_else(|| default_agent_keypair_path());
 
+    // Parse the `p2p.peers` map (peer_id_base58 → label) into a typed set.
+    // Invalid peer ID strings are skipped with a warning so a typo doesn't
+    // silently lock out all peers without a clear error.
+    let agent_peers: std::collections::HashSet<libp2p::PeerId> = config
+        .p2p
+        .peers
+        .keys()
+        .filter_map(|s| match s.parse::<libp2p::PeerId>() {
+            Ok(pid) => Some(pid),
+            Err(e) => {
+                tracing::warn!("p2p.peers: invalid peer ID {:?}: {e}", s);
+                None
+            }
+        })
+        .collect();
+
+    if agent_peers.is_empty() {
+        info!(
+            "Agent mesh is in deny-all mode (p2p.peers is empty). \
+             Add peer IDs to p2p.peers in your config to allow agent-to-agent connections."
+        );
+    } else {
+        info!(count = agent_peers.len(), "Agent peer allowlist loaded");
+    }
+
     let p2p_config = P2pConfig {
         listen_addr: agent_p2p_listen,
         rooms: config.p2p.rooms.clone(),
@@ -112,6 +137,7 @@ pub async fn run(
         discovery: Arc::new(InMemoryDiscovery::default()),
         keypair_path: agent_keypair_path,
         discovery_poll_interval: std::time::Duration::from_secs(30),
+        agent_peers,
     };
 
     let p2p_node = P2pNode::new(p2p_config);

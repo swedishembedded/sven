@@ -50,7 +50,10 @@
 //!       bot_token: "xoxb-..."
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -156,6 +159,31 @@ pub struct P2pGatewayConfig {
     /// control keypair).  Defaults to
     /// `~/.config/sven/gateway/agent-keypair`.
     pub agent_keypair_path: Option<PathBuf>,
+
+    /// Agent peers allowed to join this node's mesh.
+    ///
+    /// Maps peer ID (base58 string) → human-readable label.  **An empty map
+    /// (the default) means deny-all** — no remote agent can connect until at
+    /// least one entry is added here.
+    ///
+    /// Get the peer ID from the other node's startup log:
+    ///
+    /// ```text
+    /// P2pNode starting peer_id=12D3KooW…
+    /// ```
+    ///
+    /// Example config:
+    ///
+    /// ```yaml
+    /// p2p:
+    ///   peers:
+    ///     "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz": "machine-b"
+    ///     "12D3KooWXyZaBcDeFgHiJkLmNo12345678": "machine-c"
+    /// ```
+    ///
+    /// Both nodes must list each other — authorization is not automatic.
+    #[serde(default)]
+    pub peers: HashMap<String, String>,
 }
 
 /// Human-readable identity broadcast to other agents when they connect.
@@ -189,6 +217,7 @@ impl Default for P2pGatewayConfig {
             agent: AgentIdentityConfig::default(),
             rooms: default_rooms(),
             agent_keypair_path: None,
+            peers: HashMap::new(),
         }
     }
 }

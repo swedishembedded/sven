@@ -1,6 +1,6 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
-use libp2p::Multiaddr;
+use libp2p::{Multiaddr, PeerId};
 
 use crate::{discovery::DiscoveryProvider, protocol::types::AgentCard};
 
@@ -23,6 +23,20 @@ pub struct P2pConfig {
 
     /// How often to poll the discovery provider for new peers (dial mode).
     pub discovery_poll_interval: Duration,
+
+    /// Allowlist of peer IDs permitted to join the agent mesh.
+    ///
+    /// **Deny-all by default** — an empty set means no remote agent can connect
+    /// until at least one peer ID is explicitly added here.  Configure this with
+    /// the peer IDs shown in the other nodes' startup logs:
+    ///
+    /// ```text
+    /// P2pNode starting peer_id=12D3KooW…
+    /// ```
+    ///
+    /// This enforces the "deny-all" security default documented in the gateway.
+    /// Inbound Announce requests from unlisted peers are rejected with a warning.
+    pub agent_peers: HashSet<PeerId>,
 }
 
 impl P2pConfig {
@@ -39,6 +53,7 @@ impl P2pConfig {
             discovery,
             keypair_path: None,
             discovery_poll_interval: Duration::from_secs(5),
+            agent_peers: HashSet::new(),
         }
     }
 }

@@ -293,6 +293,7 @@ impl P2pNode {
             relay_connection_ids: HashMap::new(),
             pending_inbound: HashMap::new(),
             pending_outbound: HashMap::new(),
+            agent_peers: self.config.agent_peers.clone(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -343,6 +344,9 @@ struct NodeState {
     /// OutboundRequestId → oneshot sender.
     /// Populated in `on_command(SendTask)`; fired when the response arrives.
     pending_outbound: HashMap<request_response::OutboundRequestId, TaskReplySender>,
+    /// Allowlist of peer IDs permitted to join the agent mesh.
+    /// An empty set means deny-all (secure default).
+    agent_peers: HashSet<PeerId>,
 }
 
 impl NodeState {
@@ -576,6 +580,10 @@ impl NodeState {
             // reappear in the registry.
             self.dialed.remove(&peer_id);
             self.announced_to.remove(&peer_id);
+            // Clear the rejected flag so the peer can be retried after a restart
+            // or software update — stale UnsupportedProtocols marks must not
+            // block reconnection forever.
+            self.rejected.remove(&peer_id);
 
             // Clean the peer out of every room in the shared roster so that
             // list_peers / all_peers do not return stale entries.
@@ -697,6 +705,22 @@ impl NodeState {
         card: AgentCard,
         channel: request_response::ResponseChannel<P2pResponse>,
     ) {
+        // Enforce the agent peer allowlist.  An empty allowlist means deny-all.
+        if self.agent_peers.is_empty() || !self.agent_peers.contains(&peer) {
+            tracing::warn!(
+                %peer,
+                "Rejected Announce from agent peer not in p2p.peers allowlist; \
+                 add this peer ID to connect"
+            );
+            // Respond so the request_response channel doesn't hang, but do not
+            // add the peer to the roster.
+            let _ = swarm
+                .behaviour_mut()
+                .task
+                .send_response(channel, P2pResponse::Ack);
+            return;
+        }
+
         {
             let mut r = self.roster.lock().unwrap();
             for room in &self.rooms {
@@ -747,16 +771,17 @@ impl NodeState {
         error: request_response::OutboundFailure,
     ) {
         // "UnsupportedProtocols" means the remote peer does not speak our task
-        // protocol at all.  The most common cause: the P2pControlNode (operator
-        // control swarm, same process) cross-discovers the P2pNode via mDNS.
+        // protocol at all.  The most common cause: a non-agent peer (e.g. a
+        // P2pControlNode from the same process) was discovered via mDNS.
         // Retrying is pointless and creates a tight infinite loop.  Mark the
         // peer as rejected and move on.
         if matches!(
             error,
             request_response::OutboundFailure::UnsupportedProtocols
         ) {
-            tracing::debug!(
-                "Peer {peer} does not support the task protocol (likely a non-agent peer); \
+            tracing::warn!(
+                %peer,
+                "Peer does not support the agent task protocol (not a sven agent); \
                  skipping future requests"
             );
             self.rejected.insert(peer);
@@ -853,7 +878,7 @@ impl NodeState {
         } else {
             // Transient error to an app peer — remove from dialed so the next
             // peer poll can attempt a fresh dial if the peer is still in git.
-            tracing::debug!("Connection error to {peer_id:?}: {error}");
+            tracing::warn!("Connection error to {peer_id:?}: {error}");
             if let Some(pid) = peer_id {
                 self.dialed.remove(&pid);
             }
@@ -874,6 +899,21 @@ impl NodeState {
             if peer_id == self.local_peer_id {
                 continue;
             }
+
+            // Enforce the agent peer allowlist before doing anything with this peer.
+            if self.agent_peers.is_empty() {
+                tracing::info!(
+                    %peer_id,
+                    "mDNS: discovered agent peer but p2p.peers is empty (deny-all); \
+                     add this peer ID to your config to connect"
+                );
+                continue;
+            }
+            if !self.agent_peers.contains(&peer_id) {
+                tracing::debug!(%peer_id, "mDNS: discovered peer not in p2p.peers allowlist; skipping");
+                continue;
+            }
+
             // Strip the trailing /p2p/<peer_id> component so the TCP transport
             // receives a plain transport address it can actually dial.
             let transport_addr = strip_p2p_suffix(addr.clone());
@@ -1077,6 +1117,10 @@ impl NodeState {
             return;
         }
         if self.rejected.contains(&info.peer_id) {
+            return;
+        }
+        // Allowlist check — same deny-all logic as mDNS discovery.
+        if self.agent_peers.is_empty() || !self.agent_peers.contains(&info.peer_id) {
             return;
         }
 
