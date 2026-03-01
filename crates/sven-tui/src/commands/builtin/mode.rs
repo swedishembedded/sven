@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn complete_returns_all_three_modes_when_filter_is_empty() {
-        use crate::commands::{CommandContext, CompletionItem};
+        use crate::commands::CommandContext;
         use std::sync::Arc;
         use sven_config::Config;
         let ctx = CommandContext {

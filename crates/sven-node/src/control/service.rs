@@ -599,7 +599,7 @@ mod tests {
         // in the HashMap must transition from Running → Completed so that
         // a subsequent SendInput is accepted rather than rejected.
 
-        let (mut svc, handle) = ControlService::new_for_test();
+        let (svc, handle) = ControlService::new_for_test();
         let mut events = handle.subscribe();
         let session_id = Uuid::new_v4();
 

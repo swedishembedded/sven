@@ -948,10 +948,10 @@ mod tests {
             assert_eq!(row_top, 0);
             bridge.send_input("G").await.unwrap();
             sleep(Duration::from_millis(200)).await;
-            let (row_G, _) = bridge.get_cursor_pos().await;
+            let (row_g, _) = bridge.get_cursor_pos().await;
             assert!(
-                row_G > row_top,
-                "G must move cursor below row 0; got row_G={row_G}"
+                row_g > row_top,
+                "G must move cursor below row 0; got row_g={row_g}"
             );
             let rendered = bridge.render_to_lines(0, bridge.height).await;
             let all_text: String = rendered

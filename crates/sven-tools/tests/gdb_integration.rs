@@ -28,7 +28,7 @@ mod gdb_integration {
     use sven_tools::tool::{Tool, ToolCall};
     use sven_tools::{
         GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
-        GdbStatusTool, GdbStopTool, GdbWaitStoppedTool,
+        GdbStopTool,
     };
 
     fn call(name: &str, args: serde_json::Value) -> ToolCall {
@@ -58,35 +58,6 @@ mod gdb_integration {
             server_startup_wait_ms: 200,
             ..cfg()
         }
-    }
-
-    // ── Mock-server helpers ───────────────────────────────────────────────────
-
-    /// Start a fake GDB/MI server on a random port using netcat.
-    /// Returns the port number. The server will accept one connection, send a
-    /// minimal GDB/MI greeting, and then exit.
-    async fn start_mock_gdb_server() -> Option<u16> {
-        use tokio::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").await.ok()?;
-        let port = listener.local_addr().ok()?.port();
-
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            if let Ok((mut stream, _)) = listener.accept().await {
-                // Send a minimal GDB/MI greeting: version banner + prompt
-                let greeting = b"=thread-group-added,id=\"i1\"\r\n\
-                                  ~\"GNU gdb (GDB) 12.0\\n\"\r\n\
-                                  ~\"Remote debugging using 127.0.0.1:0\\n\"\r\n\
-                                  (gdb) \r\n";
-                let _ = stream.write_all(greeting).await;
-                // Keep the connection open briefly
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        });
-
-        // Give the server a moment to bind
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        Some(port)
     }
 
     // ── Server lifecycle tests (no probe required) ────────────────────────────

@@ -419,7 +419,6 @@ mod tests {
         // exits immediately, confirming the guard was bypassed.
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let occupied_port = listener.local_addr().unwrap().port();
         let _listener = listener;
 
         let state = Arc::new(Mutex::new(GdbSessionState::default()));

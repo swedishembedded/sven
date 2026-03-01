@@ -162,7 +162,7 @@ mod agent_tests {
         let model = ScriptedMockProvider::tool_then_text(
             "tc-1",
             "shell",
-            r#"{"command":"echo ok"}"#,
+            r#"{"shell_command":"echo ok"}"#,
             "done",
         );
         let mut reg = ToolRegistry::new();
@@ -184,7 +184,7 @@ mod agent_tests {
         let model = ScriptedMockProvider::tool_then_text(
             "tc-1",
             "shell",
-            r#"{"command":"echo finished"}"#,
+            r#"{"shell_command":"echo finished"}"#,
             "done",
         );
         let mut reg = ToolRegistry::new();
@@ -206,7 +206,7 @@ mod agent_tests {
         let model = ScriptedMockProvider::tool_then_text(
             "tc-1",
             "shell",
-            r#"{"command":"echo expected_output"}"#,
+            r#"{"shell_command":"echo expected_output"}"#,
             "done",
         );
         let mut reg = ToolRegistry::new();
@@ -236,7 +236,7 @@ mod agent_tests {
         let model = ScriptedMockProvider::tool_then_text(
             "tc-1",
             "shell",
-            r#"{"command":"echo hi"}"#,
+            r#"{"shell_command":"echo hi"}"#,
             "done",
         );
         let mut reg = ToolRegistry::new();
@@ -297,7 +297,7 @@ mod agent_tests {
                         index: 0,
                         id: "x".into(),
                         name: "shell".into(),
-                        arguments: r#"{"command":"echo loop"}"#.into(),
+                        arguments: r#"{"shell_command":"echo loop"}"#.into(),
                     },
                     ResponseEvent::Done,
                 ]
@@ -714,7 +714,7 @@ mod agent_tests {
         let model = ScriptedMockProvider::tool_then_text(
             "tc-1",
             "shell",
-            r#"{"command":"echo path"}"#,
+            r#"{"shell_command":"echo path"}"#,
             "/some/path/to/file.rs",
         );
         let mut reg = ToolRegistry::new();
@@ -766,7 +766,7 @@ mod agent_tests {
                     index: 0,
                     id: "tc-1".into(),
                     name: "shell".into(),
-                    arguments: r#"{"command":"echo step1"}"#.into(),
+                    arguments: r#"{"shell_command":"echo step1"}"#.into(),
                 },
                 ResponseEvent::Done,
             ],
@@ -776,7 +776,7 @@ mod agent_tests {
                     index: 0,
                     id: "tc-2".into(),
                     name: "shell".into(),
-                    arguments: r#"{"command":"echo step2"}"#.into(),
+                    arguments: r#"{"shell_command":"echo step2"}"#.into(),
                 },
                 ResponseEvent::Done,
             ],
@@ -839,13 +839,13 @@ mod agent_tests {
                     index: 0,
                     id: "call_1".into(),
                     name: "shell".into(),
-                    arguments: r#"{"command":"echo first"}"#.into(),
+                    arguments: r#"{"shell_command":"echo first"}"#.into(),
                 },
                 ResponseEvent::ToolCall {
                     index: 1,
                     id: "call_2".into(),
                     name: "shell".into(),
-                    arguments: r#"{"command":"echo second"}"#.into(),
+                    arguments: r#"{"shell_command":"echo second"}"#.into(),
                 },
                 ResponseEvent::Done,
             ],

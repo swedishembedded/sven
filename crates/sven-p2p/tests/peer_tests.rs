@@ -104,28 +104,6 @@ async fn spawn_relay(
     (relay_peer_id, relay_addr, jh)
 }
 
-/// Wait for the first matching event from a broadcast receiver.
-async fn wait_for_event<F>(
-    rx: &mut tokio::sync::broadcast::Receiver<P2pEvent>,
-    matcher: F,
-    label: &str,
-) where
-    F: Fn(&P2pEvent) -> bool,
-{
-    timeout(Duration::from_secs(15), async {
-        loop {
-            match rx.recv().await {
-                Ok(ev) if matcher(&ev) => return,
-                Ok(_) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(e) => panic!("{label}: channel error: {e}"),
-            }
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("timeout waiting for: {label}"));
-}
-
 // ── Test: Ctrl-C cleanup ──────────────────────────────────────────────────────
 
 /// Verify that a node removes its discovery registration on shutdown.

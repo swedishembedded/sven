@@ -355,12 +355,6 @@ mod submit_integration_tests {
         }
     }
 
-    /// Check that `queued_message_retains_model_override` still works after the rename.
-    /// `model_display()` reflects what was consumed into `session.model_display`.
-    fn expected_model_display_after_queue(app: &crate::app::App) -> &str {
-        app.model_display()
-    }
-
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     /// Plain message: no overrides — content reaches agent unchanged.
