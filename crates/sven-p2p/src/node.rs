@@ -45,6 +45,12 @@ type NodeSwarm = Swarm<P2pBehaviour>;
 /// reconnect to any relay that dropped or newly appeared.
 const RELAY_POLL_SECS: u64 = 30;
 
+/// How often to send a [`P2pRequest::Heartbeat`] to each connected roster
+/// peer.  The heartbeat opens a real application substream, which resets the
+/// swarm's idle-connection timer.  Must be shorter than the idle timeout set
+/// in [`crate::transport::default_swarm_config`] (currently 300 s).
+const HEARTBEAT_INTERVAL_SECS: u64 = 60;
+
 // ── Public event / command types ──────────────────────────────────────────────
 
 /// Events emitted by the P2P node to the host application.
@@ -294,6 +300,7 @@ impl P2pNode {
             pending_inbound: HashMap::new(),
             pending_outbound: HashMap::new(),
             agent_peers: self.config.agent_peers.clone(),
+            pending_heartbeats: HashSet::new(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -347,6 +354,9 @@ struct NodeState {
     /// Allowlist of peer IDs permitted to join the agent mesh.
     /// An empty set means deny-all (secure default).
     agent_peers: HashSet<PeerId>,
+    /// Outstanding heartbeat request IDs.  Used to distinguish heartbeat
+    /// `OutboundFailure` events from announce/task failures.
+    pending_heartbeats: HashSet<request_response::OutboundRequestId>,
 }
 
 impl NodeState {
@@ -364,6 +374,10 @@ impl NodeState {
         let mut relay_poll = interval_at(Instant::now() + relay_interval, relay_interval);
         relay_poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
+        let heartbeat_interval = Duration::from_secs(HEARTBEAT_INTERVAL_SECS);
+        let mut heartbeat = interval_at(Instant::now() + heartbeat_interval, heartbeat_interval);
+        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 event = swarm.select_next_some() => {
@@ -374,6 +388,9 @@ impl NodeState {
                 }
                 _ = relay_poll.tick() => {
                     self.on_relay_poll_tick(&mut swarm).await;
+                }
+                _ = heartbeat.tick() => {
+                    self.on_heartbeat_tick(&mut swarm);
                 }
                 Some(cmd) = cmd_rx.recv() => {
                     if self.on_command(&mut swarm, cmd) { break; }
@@ -584,6 +601,10 @@ impl NodeState {
             // or software update — stale UnsupportedProtocols marks must not
             // block reconnection forever.
             self.rejected.remove(&peer_id);
+            // Drop any in-flight heartbeat request IDs for this peer so the
+            // pending set doesn't grow unboundedly on repeated connect/disconnect.
+            // (request_ids are not peer-keyed so we can't selectively remove
+            //  them; they'll be cleared by the OutboundFailure path instead.)
 
             // Clean the peer out of every room in the shared roster so that
             // list_peers / all_peers do not return stale entries.
@@ -667,6 +688,36 @@ impl NodeState {
         });
     }
 
+    // ── Heartbeat ────────────────────────────────────────────────────────────
+
+    /// Send a [`P2pRequest::Heartbeat`] to every peer currently in the roster.
+    ///
+    /// Opening a heartbeat substream resets the swarm's idle-connection timer,
+    /// keeping the TCP connection alive between tasks.  Called every
+    /// [`HEARTBEAT_INTERVAL_SECS`] seconds from the event loop.
+    fn on_heartbeat_tick(&mut self, swarm: &mut NodeSwarm) {
+        let peers: Vec<PeerId> = {
+            let r = self.roster.lock().unwrap();
+            r.values()
+                .flat_map(|room| room.peers.keys().copied())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect()
+        };
+
+        for peer in peers {
+            if self.relay_peers.contains(&peer) {
+                continue;
+            }
+            let req_id = swarm
+                .behaviour_mut()
+                .task
+                .send_request(&peer, P2pRequest::Heartbeat);
+            self.pending_heartbeats.insert(req_id);
+            tracing::debug!(%peer, "heartbeat sent");
+        }
+    }
+
     // ── Request/response messages ────────────────────────────────────────────
 
     fn on_task_message(
@@ -681,12 +732,23 @@ impl NodeState {
             } => match request {
                 P2pRequest::Announce(card) => self.on_announce_request(swarm, peer, card, channel),
                 P2pRequest::Task(req) => self.on_task_request(swarm, peer, req, channel),
+                P2pRequest::Heartbeat => {
+                    let _ = swarm
+                        .behaviour_mut()
+                        .task
+                        .send_response(channel, P2pResponse::Ack);
+                }
             },
             request_response::Message::Response {
                 request_id,
                 response,
                 ..
             } => {
+                // Ack from a heartbeat — just clear the pending set.
+                if self.pending_heartbeats.remove(&request_id) {
+                    tracing::debug!(%peer, "heartbeat ack received");
+                    return;
+                }
                 if let P2pResponse::TaskResult(resp) = response {
                     // Fire the waiting oneshot for the caller of send_task().
                     if let Some(reply_tx) = self.pending_outbound.remove(&request_id) {
@@ -792,6 +854,13 @@ impl NodeState {
                     "peer {peer} does not support the task protocol"
                 ))));
             }
+            return;
+        }
+
+        // Heartbeat failure — the connection is likely dead; libp2p will close
+        // it naturally.  No action needed here other than clearing the set.
+        if self.pending_heartbeats.remove(&request_id) {
+            tracing::debug!(%peer, "heartbeat failed; connection may be dead");
             return;
         }
 

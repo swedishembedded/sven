@@ -75,9 +75,14 @@
 //!   bind: "127.0.0.1:18790"   # loopback-only by default
 //!   insecure_dev_mode: false   # TLS is on — keep it that way
 //!
-//! p2p:
-//!   listen: "/ip4/0.0.0.0/tcp/0"
-//!   keypair_path: "~/.config/sven/gateway/keypair"
+//! swarm:
+//!   listen: "/ip4/0.0.0.0/tcp/4010"   # fixed port for agent mesh (open in firewall)
+//!   keypair_path: "~/.config/sven/gateway/agent-keypair"
+//!
+//! # Operator control node — omit entirely to disable native/mobile access
+//! # control:
+//! #   listen: "/ip4/0.0.0.0/tcp/4009"
+//! #   keypair_path: "~/.config/sven/gateway/control-keypair"
 //!
 //! slack:
 //!   accounts:
@@ -130,7 +135,8 @@
 //! | TLS version                  | TLS 1.3 only                         |
 //! | Certificate algorithm        | ECDSA P-256, 90-day validity         |
 //! | P2P encryption               | Noise (always on, cannot disable)    |
-//! | P2P peer authorization       | Deny-all by default                  |
+//! | P2P peer authorization       | Deny-all by default (swarm.peers)    |
+//! | Operator control node        | **Disabled** by default              |
 //! | HTTP rate limiting           | 5 failures/minute → 60s lockout      |
 //! | Token storage                | SHA-256 hash only (never plaintext)  |
 //! | HTTP bind                    | `127.0.0.1` (loopback only)          |
@@ -149,7 +155,7 @@ pub mod node;
 pub mod p2p;
 pub mod tools;
 
-pub use config::{GatewayConfig, HttpConfig, P2pGatewayConfig, SlackConfig};
+pub use config::{ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig};
 pub use control::service::AgentHandle;
 pub use error::GatewayError;
 pub use node::{build_agent_card, exec_task, list_peers, run};

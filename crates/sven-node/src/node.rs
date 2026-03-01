@@ -96,28 +96,28 @@ pub async fn run(
 
     // ── Agent-to-agent P2P node ───────────────────────────────────────────────
     let agent_p2p_listen: Multiaddr = config
-        .p2p
-        .agent_listen
+        .swarm
+        .listen
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid p2p.agent_listen address: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid swarm.listen address: {e}"))?;
 
     let agent_keypair_path = config
-        .p2p
-        .agent_keypair_path
+        .swarm
+        .keypair_path
         .clone()
         .or_else(|| default_agent_keypair_path());
 
-    // Parse the `p2p.peers` map (peer_id_base58 → label) into a typed set.
+    // Parse the `swarm.peers` map (peer_id_base58 → label) into a typed set.
     // Invalid peer ID strings are skipped with a warning so a typo doesn't
     // silently lock out all peers without a clear error.
     let agent_peers: std::collections::HashSet<libp2p::PeerId> = config
-        .p2p
+        .swarm
         .peers
         .keys()
         .filter_map(|s| match s.parse::<libp2p::PeerId>() {
             Ok(pid) => Some(pid),
             Err(e) => {
-                tracing::warn!("p2p.peers: invalid peer ID {:?}: {e}", s);
+                tracing::warn!("swarm.peers: invalid peer ID {:?}: {e}", s);
                 None
             }
         })
@@ -125,8 +125,8 @@ pub async fn run(
 
     if agent_peers.is_empty() {
         info!(
-            "Agent mesh is in deny-all mode (p2p.peers is empty). \
-             Add peer IDs to p2p.peers in your config to allow agent-to-agent connections."
+            "Agent mesh is in deny-all mode (swarm.peers is empty). \
+             Add peer IDs to swarm.peers in your config to allow agent-to-agent connections."
         );
     } else {
         info!(count = agent_peers.len(), "Agent peer allowlist loaded");
@@ -134,7 +134,7 @@ pub async fn run(
 
     let p2p_config = P2pConfig {
         listen_addr: agent_p2p_listen,
-        rooms: config.p2p.rooms.clone(),
+        rooms: config.swarm.rooms.clone(),
         agent_card: agent_card.clone(),
         discovery: Arc::new(InMemoryDiscovery::default()),
         keypair_path: agent_keypair_path,
@@ -150,7 +150,7 @@ pub async fn run(
         &sven_config,
         p2p_handle.clone(),
         agent_card.clone(),
-        config.p2p.rooms.clone(),
+        config.swarm.rooms.clone(),
     )
     .await?;
 
@@ -168,7 +168,7 @@ pub async fn run(
     ));
 
     // ── Spawn the P2pNode swarm ───────────────────────────────────────────────
-    let rooms = config.p2p.rooms.clone();
+    let rooms = config.swarm.rooms.clone();
     tokio::spawn(async move {
         match p2p_node.run().await {
             Ok(()) => info!("agent P2P node stopped"),
@@ -199,38 +199,43 @@ pub async fn run(
         StoredTokenFile::load(&token_path)?.token_hash
     };
 
-    // ── P2P operator allowlist ────────────────────────────────────────────────
-    let peers_path = config
-        .p2p
-        .authorized_peers_file
-        .clone()
-        .unwrap_or_else(default_peers_path);
-    let allowlist = PeerAllowlist::load(&peers_path).unwrap_or_default();
-    let allowlist = Arc::new(Mutex::new(allowlist));
+    // ── P2P operator control node (optional) ─────────────────────────────────
+    if let Some(ref ctrl) = config.control {
+        let peers_path = ctrl
+            .authorized_peers_file
+            .clone()
+            .unwrap_or_else(default_peers_path);
+        let allowlist = PeerAllowlist::load(&peers_path).unwrap_or_default();
+        let allowlist = Arc::new(Mutex::new(allowlist));
 
-    if allowlist.lock().await.operator_count() == 0 {
+        if allowlist.lock().await.operator_count() == 0 {
+            info!(
+                "No P2P operator devices paired yet.\n  \
+                 To authorize a device: sven node authorize <sven://...>"
+            );
+        }
+
+        let listen_addr: Multiaddr = ctrl
+            .listen
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid control.listen address: {e}"))?;
+
+        let p2p_control_node = P2pControlNode::new(
+            listen_addr,
+            ctrl.keypair_path.as_ref(),
+            allowlist,
+            agent_handle.clone(),
+        )
+        .await?;
+
+        tokio::spawn(p2p_control_node.run());
+        info!(listen = %ctrl.listen, "operator control node started");
+    } else {
         info!(
-            "No P2P operator devices paired yet (optional — for mobile/native clients).\n  \
-             To authorize a device: sven node authorize <sven://...>"
+            "Operator control node disabled (no `control` section in config). \
+             Native/mobile operator clients will not be able to connect."
         );
     }
-
-    // ── P2P operator control node ─────────────────────────────────────────────
-    let listen_addr: Multiaddr = config
-        .p2p
-        .listen
-        .parse()
-        .map_err(|e| anyhow::anyhow!("invalid P2P listen address: {e}"))?;
-
-    let p2p_control_node = P2pControlNode::new(
-        listen_addr,
-        config.p2p.keypair_path.as_ref(),
-        allowlist,
-        agent_handle.clone(),
-    )
-    .await?;
-
-    tokio::spawn(p2p_control_node.run());
 
     // ── Slack ─────────────────────────────────────────────────────────────────
     let mut slack_http_states = Vec::new();
@@ -517,9 +522,15 @@ pub async fn pair_peer(
     let stdin = std::io::stdin();
     let line = stdin.lock().lines().next().unwrap_or(Ok(String::new()))?;
 
+    let ctrl = config
+        .control
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!(
+            "operator control node is not configured — add a `control` section to your gateway config"
+        ))?;
+
     if line.trim().eq_ignore_ascii_case("y") {
-        let peers_path = config
-            .p2p
+        let peers_path = ctrl
             .authorized_peers_file
             .clone()
             .unwrap_or_else(default_peers_path);
@@ -539,8 +550,14 @@ pub async fn revoke_peer(config: &GatewayConfig, peer_id_str: &str) -> anyhow::R
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid PeerId: {e}"))?;
 
-    let peers_path = config
-        .p2p
+    let ctrl = config
+        .control
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!(
+            "operator control node is not configured — add a `control` section to your gateway config"
+        ))?;
+
+    let peers_path = ctrl
         .authorized_peers_file
         .clone()
         .unwrap_or_else(default_peers_path);
@@ -576,8 +593,13 @@ pub fn regenerate_token(config: &GatewayConfig) -> anyhow::Result<()> {
 /// `sven node pair`. This is NOT the same as the agent `list_peers` tool,
 /// which shows other sven nodes available for task delegation.
 pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
-    let peers_path = config
-        .p2p
+    let ctrl = config.control.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "operator control node is not configured — add a `control` section to your gateway config"
+        )
+    })?;
+
+    let peers_path = ctrl
         .authorized_peers_file
         .clone()
         .unwrap_or_else(default_peers_path);
@@ -616,10 +638,10 @@ pub fn build_agent_card(config: &GatewayConfig) -> AgentCard {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "sven-agent".to_string());
 
-    let name = config.p2p.agent.name.clone().unwrap_or(default_name);
+    let name = config.swarm.agent.name.clone().unwrap_or(default_name);
 
     let description = config
-        .p2p
+        .swarm
         .agent
         .description
         .clone()
@@ -629,7 +651,7 @@ pub fn build_agent_card(config: &GatewayConfig) -> AgentCard {
         peer_id: String::new(), // filled in by P2pNode::run() with the real PeerId
         name,
         description,
-        capabilities: config.p2p.agent.capabilities.clone(),
+        capabilities: config.swarm.agent.capabilities.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }

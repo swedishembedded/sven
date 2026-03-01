@@ -27,11 +27,19 @@ pub fn build_transport(
     Ok(transport)
 }
 
-/// Default swarm configuration: 30 s idle connection timeout so that relay
-/// reservations and DCUtR hole-punching have enough time to complete.
+/// Default swarm configuration.
+///
+/// The idle-connection timeout is set to 5 minutes.  Agent connections are
+/// kept alive by a periodic [`P2pRequest::Heartbeat`] (every 60 s) which opens
+/// a substream and resets this timer, so the timeout only fires for connections
+/// that have been completely silent (no tasks, no heartbeats) for that window.
+///
+/// Note: `ping::Behaviour` is present in the behaviour graph but explicitly
+/// marks its streams with `ignore_for_keep_alive()`, so pings do NOT reset the
+/// idle timer — only real application substreams (task / heartbeat) do.
 pub fn default_swarm_config() -> SwarmConfig {
     use std::time::Duration;
-    SwarmConfig::with_tokio_executor().with_idle_connection_timeout(Duration::from_secs(30))
+    SwarmConfig::with_tokio_executor().with_idle_connection_timeout(Duration::from_secs(300))
 }
 
 /// Load a persisted `identity::Keypair` from `path`, or generate a new one and

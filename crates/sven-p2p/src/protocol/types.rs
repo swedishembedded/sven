@@ -130,6 +130,12 @@ pub enum P2pRequest {
     Announce(AgentCard),
     /// Send a task (or plain text message) to the remote peer.
     Task(TaskRequest),
+    /// Periodic keep-alive probe sent to all roster peers.
+    ///
+    /// Receiver responds with [`P2pResponse::Ack`].  Opening this substream
+    /// resets the swarm's idle-connection timer, preventing the connection from
+    /// being closed between tasks.
+    Heartbeat,
 }
 
 /// Top-level response sent back in reply to a `P2pRequest`.

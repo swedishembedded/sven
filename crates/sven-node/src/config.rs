@@ -27,7 +27,8 @@
 //! // Defaults are secure.
 //! assert!(!config.http.insecure_dev_mode);     // TLS is on
 //! assert!(config.http.bind.starts_with("127.0.0.1")); // loopback only
-//! assert!(config.p2p.mdns);                    // mDNS for LAN discovery
+//! assert!(config.control.is_none());           // control node off by default
+//! assert!(config.swarm.peers.is_empty());      // agent mesh deny-all by default
 //! ```
 //!
 //! # Example full config
@@ -38,10 +39,15 @@
 //!   insecure_dev_mode: false
 //!   token_file: "~/.config/sven/gateway-token.yaml"
 //!
-//! p2p:
-//!   listen: "/ip4/0.0.0.0/tcp/0"
-//!   keypair_path: "~/.config/sven/gateway-keypair"
-//!   authorized_peers_file: "~/.config/sven/authorized_peers.yaml"
+//! swarm:
+//!   listen: "/ip4/0.0.0.0/tcp/4010"   # fixed port for agent mesh; open in firewall
+//!   keypair_path: "~/.config/sven/gateway/agent-keypair"
+//!
+//! # Operator control node — omit to disable native/mobile access entirely
+//! # control:
+//! #   listen: "/ip4/0.0.0.0/tcp/4009"
+//! #   keypair_path: "~/.config/sven/gateway/control-keypair"
+//! #   authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
 //!
 //! slack:
 //!   accounts:
@@ -62,17 +68,28 @@ use tracing::debug;
 fn default_http_bind() -> String {
     "127.0.0.1:18790".to_string()
 }
-fn default_true() -> bool {
-    true
-}
 
 /// Top-level gateway configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayConfig {
     #[serde(default)]
     pub http: HttpConfig,
+
+    /// Agent-to-agent mesh configuration.
     #[serde(default)]
-    pub p2p: P2pGatewayConfig,
+    pub swarm: SwarmConfig,
+
+    /// Operator control node (P2P channel for native/mobile clients).
+    ///
+    /// **Disabled by default** — omit this section entirely to run without a
+    /// control node.  Only add it when you need to pair a native or mobile
+    /// operator client via the `sven://` URI flow.
+    ///
+    /// The operator control channel is completely separate from the agent mesh
+    /// (`swarm`): it carries human operator commands, not agent-to-agent tasks.
+    #[serde(default)]
+    pub control: Option<ControlConfig>,
+
     #[serde(default)]
     pub slack: SlackConfig,
 }
@@ -120,64 +137,42 @@ impl Default for HttpConfig {
     }
 }
 
-/// libp2p P2P listener configuration.
+/// Agent-to-agent mesh configuration (the `swarm` section).
+///
+/// Controls how this node participates in the sven agent network: which port
+/// it listens on for peer connections, its identity, and which other agents it
+/// trusts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct P2pGatewayConfig {
-    /// libp2p listen address for the **operator control channel**.
+pub struct SwarmConfig {
+    /// Listen address for the agent mesh.
     ///
-    /// This is the port used by mobile/native operator clients that pair via
-    /// `sven node authorize`.  It does **not** handle agent-to-agent traffic.
+    /// Other sven nodes dial this address to exchange tasks.  Use a fixed port
+    /// and open it in your firewall when connecting across machines, e.g.
+    /// `/ip4/0.0.0.0/tcp/4010`.
     ///
-    /// Default: `/ip4/0.0.0.0/tcp/0` (OS-assigned port).
-    /// Recommended for cross-machine use: set a fixed port and open it in your
-    /// firewall, e.g. `/ip4/0.0.0.0/tcp/4009`.
-    #[serde(default = "default_p2p_listen")]
+    /// Default: OS-assigned random port (`/ip4/0.0.0.0/tcp/0`).
+    #[serde(default = "default_swarm_listen")]
     pub listen: String,
 
-    /// libp2p listen address for the **agent-to-agent mesh**.
+    /// Path for persisting the agent mesh Ed25519 keypair.
     ///
-    /// This is the port other sven agents dial when they connect to this node
-    /// for task delegation.  It is separate from the operator control port.
-    ///
-    /// Default: `/ip4/0.0.0.0/tcp/0` (OS-assigned random port).
-    /// **Must be set to a fixed port and opened in your firewall** when nodes
-    /// run on different machines, e.g. `/ip4/0.0.0.0/tcp/4010`.
-    #[serde(default = "default_agent_listen")]
-    pub agent_listen: String,
-
-    /// Path for persisting the gateway's Ed25519 keypair. When absent a new
-    /// keypair is generated each run (ephemeral identity — mobile operators
-    /// would need to re-pair after each restart).
+    /// When absent a new keypair is generated on every restart (ephemeral
+    /// identity — peer nodes would need to re-add this node to their `peers`
+    /// list after each restart).  Defaults to
+    /// `~/.config/sven/gateway/agent-keypair`.
     pub keypair_path: Option<PathBuf>,
 
-    /// YAML file listing authorized peer IDs and their roles.
-    /// See [`crate::p2p::auth::PeerAllowlist`].
-    /// Default: `~/.config/sven/gateway/authorized_peers.yaml`
-    pub authorized_peers_file: Option<PathBuf>,
-
-    /// mDNS local-network discovery is **enabled by default** so nearby
-    /// mobile clients can find the gateway without configuration.
-    #[serde(default = "default_true")]
-    pub mdns: bool,
-
-    /// Identity advertised to other agents over the task-routing P2P channel.
-    /// If omitted, a default card is generated from the system hostname.
+    /// Identity this node advertises to peer agents on connection.
     #[serde(default)]
     pub agent: AgentIdentityConfig,
 
-    /// Rooms this agent participates in for agent-to-agent task routing.
-    /// A "room" is a named discovery namespace; peers in the same room find
-    /// each other via mDNS (LAN) or relay (WAN).
+    /// Discovery rooms.  A room is a named namespace; only peers configured in
+    /// the same room discover each other via mDNS or relay.
     /// Default: `["default"]`.
     #[serde(default = "default_rooms")]
     pub rooms: Vec<String>,
 
-    /// Path for persisting the agent P2P keypair (separate from the operator
-    /// control keypair).  Defaults to
-    /// `~/.config/sven/gateway/agent-keypair`.
-    pub agent_keypair_path: Option<PathBuf>,
-
-    /// Agent peers allowed to join this node's mesh.
+    /// Allowed agent peers (deny-all if empty).
     ///
     /// Maps peer ID (base58 string) → human-readable label.  **An empty map
     /// (the default) means deny-all** — no remote agent can connect until at
@@ -189,18 +184,43 @@ pub struct P2pGatewayConfig {
     /// P2pNode starting peer_id=12D3KooW…
     /// ```
     ///
-    /// Example config:
-    ///
-    /// ```yaml
-    /// p2p:
-    ///   peers:
-    ///     "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz": "machine-b"
-    ///     "12D3KooWXyZaBcDeFgHiJkLmNo12345678": "machine-c"
-    /// ```
-    ///
     /// Both nodes must list each other — authorization is not automatic.
     #[serde(default)]
     pub peers: HashMap<String, String>,
+}
+
+/// Operator control node configuration (the `control` section).
+///
+/// **Disabled by default** — this entire section can be omitted to run without
+/// a control node.  Add it only when you need to pair a native or mobile
+/// operator client via `sven node authorize`.
+///
+/// The control node is completely separate from the agent mesh (`swarm`): it
+/// carries human operator commands over the `/sven/control/1.0.0` protocol,
+/// not agent-to-agent tasks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlConfig {
+    /// Listen address for the operator control channel.
+    ///
+    /// Because this channel grants full control of the agent, the default
+    /// binds to **loopback only** (`/ip4/127.0.0.1/tcp/0`).  To allow a
+    /// mobile client on the same LAN, change this to
+    /// `/ip4/0.0.0.0/tcp/4009` and open the port in your firewall.
+    #[serde(default = "default_control_listen")]
+    pub listen: String,
+
+    /// Path for persisting the control node Ed25519 keypair.
+    ///
+    /// When absent a new keypair is generated on every restart — mobile
+    /// operators would need to re-pair after each restart.
+    pub keypair_path: Option<PathBuf>,
+
+    /// YAML file listing authorized operator peer IDs and their roles.
+    ///
+    /// Default: `~/.config/sven/gateway/authorized_peers.yaml`
+    ///
+    /// See [`crate::p2p::auth::PeerAllowlist`] for the file format.
+    pub authorized_peers_file: Option<PathBuf>,
 }
 
 /// Human-readable identity broadcast to other agents when they connect.
@@ -216,29 +236,25 @@ pub struct AgentIdentityConfig {
     pub capabilities: Vec<String>,
 }
 
-fn default_p2p_listen() -> String {
+fn default_swarm_listen() -> String {
     "/ip4/0.0.0.0/tcp/0".to_string()
 }
 
-fn default_agent_listen() -> String {
-    "/ip4/0.0.0.0/tcp/0".to_string()
+fn default_control_listen() -> String {
+    "/ip4/127.0.0.1/tcp/0".to_string()
 }
 
 fn default_rooms() -> Vec<String> {
     vec!["default".to_string()]
 }
 
-impl Default for P2pGatewayConfig {
+impl Default for SwarmConfig {
     fn default() -> Self {
         Self {
-            listen: default_p2p_listen(),
-            agent_listen: default_agent_listen(),
+            listen: default_swarm_listen(),
             keypair_path: None,
-            authorized_peers_file: None,
-            mdns: true,
             agent: AgentIdentityConfig::default(),
             rooms: default_rooms(),
-            agent_keypair_path: None,
             peers: HashMap::new(),
         }
     }
@@ -370,9 +386,30 @@ mod tests {
     }
 
     #[test]
-    fn default_mdns_is_enabled() {
+    fn default_control_node_is_disabled() {
         let c = GatewayConfig::default();
-        assert!(c.p2p.mdns, "mDNS must be on by default");
+        assert!(
+            c.control.is_none(),
+            "control node must be disabled by default"
+        );
+    }
+
+    #[test]
+    fn default_swarm_peers_deny_all() {
+        let c = GatewayConfig::default();
+        assert!(c.swarm.peers.is_empty(), "swarm must deny-all by default");
+    }
+
+    #[test]
+    fn control_config_listen_defaults_to_loopback() {
+        let yaml = "control:\n  keypair_path: null\n";
+        let c: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        let ctrl = c.control.expect("control section present");
+        assert!(
+            ctrl.listen.contains("127.0.0.1"),
+            "control listen must default to loopback, got: {}",
+            ctrl.listen
+        );
     }
 
     #[test]

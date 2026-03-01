@@ -128,14 +128,14 @@ P2pNode starting peer_id=12D3KooWQwZgQPdd4TZeputvRdmaoq2whU358qYULJMiNGvJcB98
 
 ```yaml
 # machine A — .gateway.yaml
-p2p:
+swarm:
   peers:
     "12D3KooW<machine-B-agent-peer-id>": "machine-b"
 ```
 
 ```yaml
 # machine B — .gateway.yaml
-p2p:
+swarm:
   peers:
     "12D3KooW<machine-A-agent-peer-id>": "machine-a"
 ```
@@ -148,14 +148,14 @@ To give each agent a distinct identity, also set their names in the config:
 
 ```yaml
 # machine A — .gateway.yaml
-p2p:
+swarm:
   agent:
     name: "backend-agent"
     description: "Rust and PostgreSQL specialist"
     capabilities: ["rust", "postgres"]
 
 # machine B — .gateway.yaml
-p2p:
+swarm:
   agent:
     name: "frontend-agent"
     description: "React and TypeScript specialist"
@@ -216,7 +216,9 @@ be weakened by accident:
 | HTTP TLS | On — ECDSA P-256, 90-day auto-generated cert |
 | TLS version | TLS 1.3 only |
 | P2P encryption | Noise protocol (Ed25519), always on |
-| P2P authorisation | Deny-all — every peer must be explicitly paired |
+| Agent mesh authorisation | Deny-all — every agent peer must be in `swarm.peers` |
+| Operator control node | **Disabled** by default — add `control:` section to enable |
+| Control node bind | `127.0.0.1` — loopback only by default |
 | HTTP binding | `127.0.0.1` — loopback only |
 | Rate limiting | 5 failures/min locks out the source for 60 s |
 | Bearer token storage | SHA-256 hash only — plaintext never written to disk |
@@ -243,8 +245,8 @@ The gateway config is YAML, merged in order from:
 http:
   bind: "127.0.0.1:18790"
 
-p2p:
-  keypair_path: "~/.config/sven/gateway/keypair"
+swarm:
+  keypair_path: "~/.config/sven/gateway/agent-keypair"
 ```
 
 ### Full example
@@ -256,12 +258,10 @@ http:
   tls_cert_dir: "~/.config/sven/gateway/tls"
   token_file: "~/.config/sven/gateway/token.yaml"
 
-p2p:
-  listen: "/ip4/0.0.0.0/tcp/4009"       # operator control channel (pair with mobile/native clients)
-  agent_listen: "/ip4/0.0.0.0/tcp/4010" # agent mesh (node-to-node task delegation)
-  keypair_path: "~/.config/sven/gateway/keypair"
-  authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
-  mdns: true
+# Agent-to-agent mesh
+swarm:
+  listen: "/ip4/0.0.0.0/tcp/4010"  # fixed port — open this in your firewall
+  keypair_path: "~/.config/sven/gateway/agent-keypair"
 
   # Identity this agent shows to other agents
   agent:
@@ -278,9 +278,11 @@ p2p:
     "12D3KooWXyZaBcDeFgHiJkLmNo12345678": "frontend-agent"
     "12D3KooW11223344556677889900aAbBcC": "devops-agent"
 
-  # Relay for connecting agents across networks (optional)
-  relays:
-    - "/ip4/relay.example.com/tcp/9000/p2p/12D3KooW..."
+# Operator control node — omit this entire section to disable native/mobile access
+# control:
+#   listen: "/ip4/0.0.0.0/tcp/4009"  # open in firewall only if needed
+#   keypair_path: "~/.config/sven/gateway/control-keypair"
+#   authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
 
 slack:
   accounts:
@@ -301,22 +303,33 @@ slack:
 | `token_file` | `~/.config/sven/gateway/token.yaml` | Hashed bearer token storage |
 | `max_body_bytes` | `4194304` | Max request body size (4 MiB) |
 
-#### `p2p`
+#### `swarm`
+
+The agent-to-agent mesh.  Handles task delegation between sven nodes.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `listen` | `/ip4/0.0.0.0/tcp/0` | Operator control channel port (for mobile/native clients) |
-| `agent_listen` | `/ip4/0.0.0.0/tcp/0` | Agent mesh port (for node-to-node task delegation) — **must be a fixed port and opened in your firewall for cross-machine use** |
-| `keypair_path` | — (ephemeral) | Persist the operator keypair across restarts |
-| `authorized_peers_file` | `~/.config/sven/gateway/authorized_peers.yaml` | Operator allowlist |
-| `mdns` | `true` | mDNS for automatic LAN discovery |
+| `listen` | `/ip4/0.0.0.0/tcp/0` (random) | Listen address for the agent mesh — **set a fixed port and open it in your firewall for cross-machine use** |
+| `keypair_path` | `~/.config/sven/gateway/agent-keypair` | Persist the agent mesh keypair; ephemeral if unset |
 | `agent.name` | system hostname | Name shown to peer agents |
 | `agent.description` | `"General-purpose sven agent"` | Free-form description |
 | `agent.capabilities` | `[]` | Tags other agents use to choose this agent |
 | `rooms` | `["default"]` | Discovery namespaces; peers in the same room find each other |
-| `agent_keypair_path` | `~/.config/sven/gateway/agent-keypair` | Persist the agent routing keypair |
-| `relays` | `[]` | Relay multiaddrs for cross-network connectivity |
 | `peers` | `{}` (deny-all) | Agent peers allowed to join the mesh — maps peer ID → label. Both nodes must list each other. |
+
+#### `control` *(optional — disabled by default)*
+
+The operator control node.  Carries commands from native/mobile operator
+clients.  **Omit this section entirely** to run without a control node.
+
+The operator control channel is completely separate from the agent mesh and
+has nothing to do with agent-to-agent task delegation.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `listen` | `/ip4/127.0.0.1/tcp/0` | Listen address — defaults to loopback only. Set to `/ip4/0.0.0.0/tcp/4009` (and open the port) to allow mobile/native clients |
+| `keypair_path` | — (ephemeral) | Persist the operator control keypair; ephemeral if unset means operators must re-pair after restart |
+| `authorized_peers_file` | `~/.config/sven/gateway/authorized_peers.yaml` | YAML file of authorized operator peer IDs |
 
 #### `slack`
 
@@ -401,7 +414,7 @@ discover it.  Copy the printed multiaddr (including `/p2p/<peer-id>`) into
 your gateway config:
 
 ```yaml
-p2p:
+swarm:
   relays:
     - "/ip4/relay.example.com/tcp/9000/p2p/12D3KooW..."
 ```
@@ -424,40 +437,43 @@ This is almost always a **firewall** issue.  Two separate ports are involved:
 
 | Port | Config key | Purpose |
 |------|-----------|---------|
-| `p2p.listen` (e.g. 4009) | Operator control | Mobile/native operator clients |
-| `p2p.agent_listen` (e.g. 4010) | Agent mesh | Node-to-node task delegation |
+| `swarm.listen` (e.g. 4010) | Agent mesh | Node-to-node task delegation |
+| `control.listen` (e.g. 4009) | Operator control | Mobile/native operator clients only |
 
-Opening only the operator port (`p2p.listen`) is not enough — agents dial the
-**agent mesh port** (`p2p.agent_listen`) to delegate tasks.  Without a fixed
-`agent_listen` the OS assigns a random port on every restart, making firewall
-rules impossible.
+Agents dial the **agent mesh port** (`swarm.listen`) to delegate tasks.
+Without a fixed `swarm.listen` the OS assigns a random port on every restart,
+making firewall rules impossible.
 
 Recommended config for cross-machine deployments:
 
 ```yaml
-p2p:
-  listen: "/ip4/0.0.0.0/tcp/4009"       # open this in your firewall
-  agent_listen: "/ip4/0.0.0.0/tcp/4010" # open this too
+swarm:
+  listen: "/ip4/0.0.0.0/tcp/4010"  # open this in your firewall on every machine
 ```
 
-Open both ports on every machine running `sven node start`.
+If you also need native/mobile operator access:
+
+```yaml
+control:
+  listen: "/ip4/0.0.0.0/tcp/4009"  # open this too, only where needed
+```
 
 ### Peers not appearing after `list_peers`
 
-- **p2p.peers not configured**: Each node must list the other's agent peer ID
-  under `p2p.peers` — the mesh is deny-all by default.  Check the startup log
+- **swarm.peers not configured**: Each node must list the other's agent peer ID
+  under `swarm.peers` — the mesh is deny-all by default.  Check the startup log
   for the line `P2pNode starting peer_id=…` and add that ID to the other node's
   config (and vice versa).  After editing, restart both nodes.
 - **LAN**: mDNS takes 5–10 seconds.  Both nodes must be running and in the
-  same room (`p2p.rooms`).  Check the logs for
-  `mDNS: discovered agent peer but p2p.peers is empty` — this confirms
+  same room (`swarm.rooms`).  Check the logs for
+  `mDNS: discovered agent peer but swarm.peers is empty` — this confirms
   discovery works but the allowlist is the blocker.
-- **Cross-network**: configure a relay with `p2p.relays`.
+- **Cross-network**: configure a relay with `swarm.relays`.
 
 ### "P2P error: relay connection failed"
 
 1. Confirm the relay is running.
-2. Check the multiaddr in `p2p.relays` matches what the relay printed on startup.
+2. Check the multiaddr in `swarm.relays` matches what the relay printed on startup.
 3. Check network connectivity: `ping relay.example.com`.
 
 ### "TLS error: certificate not found"
