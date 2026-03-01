@@ -1,22 +1,66 @@
 # Agent Sven
 
-A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works in
-two modes that share the same agent core:
+A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works
+as an interactive TUI, a headless CI runner, and a networked node that teams
+up with other sven instances — all from the same binary.
 
-- **Interactive TUI** -- a full-screen terminal interface with a scrollable markdown
-  chat log, vim-style navigation, and live-streamed responses.
-- **Headless / CI** -- reads instructions from stdin or a markdown file, writes
-  clean text to stdout, and exits with a meaningful code. Designed to compose
-  with other tools via pipes.
+---
+
+## What sven does
+
+Give sven a task in plain English. It reads your code, runs commands, writes
+files, searches the web, debugs hardware, and delegates subtasks to peer agents
+— all autonomously, all in your terminal.
+
+### Interactive TUI
+
+A full-screen Ratatui interface with a scrollable markdown chat log, vim-style
+navigation, and live-streamed responses. Swap between a plain ratatui view and
+an embedded Neovim buffer with `--nvim`.
+
+### Headless / CI
+
+Reads instructions from stdin or a markdown file, writes clean text to stdout,
+and exits with a meaningful code. Designed to compose with other tools via
+pipes.
+
+```sh
+# Pipe a task
+echo "Summarise the project" | sven
+
+# Multi-step workflow file
+sven --file plan.md
+
+# Chain agents: plan → implement
+sven --file plan.md | sven --mode agent "Implement the plan above."
+```
+
+### Node (agent + P2P + HTTP)
+
+```sh
+sven node start
+```
+
+Runs the full agent plus a P2P networking stack and an HTTPS/WebSocket
+endpoint. The node IS the agent — not a proxy. Multiple nodes discover each
+other automatically on a local network (or via a relay across the internet) and
+can delegate work to each other.
+
+```sh
+# Send a task to a running node from the command line
+export SVEN_NODE_TOKEN=<token from first startup>
+sven node exec "delegate the database migration to backend-agent and the UI changes to frontend-agent"
+```
 
 ---
 
 ## GDB-native hardware debugging
 
 Sven is the **first AI agent with native GDB integration** for autonomous
-embedded hardware debugging. Give it a plain-English task and it will start
-a GDB server, connect, load your firmware, set breakpoints, inspect registers
-and variables, and report its findings -- all without leaving your terminal.
+embedded hardware debugging. Give it a plain-English task and it will start a
+GDB server, connect to the target, load your firmware, set breakpoints, inspect
+registers and variables, and report its findings — all without leaving your
+terminal.
 
 ```
 You: Use gdb tools to connect to the target, reset it, and set a breakpoint on
@@ -24,46 +68,64 @@ You: Use gdb tools to connect to the target, reset it, and set a breakpoint on
      first time and show me what they are. Use zephyr.elf as the executable.
 ```
 
-The agent then autonomously calls the five GDB tools in sequence:
+The agent then autonomously calls the GDB tools in sequence:
 
 ```
-gdb_start_server -> gdb_connect -> gdb_command (xN) -> gdb_stop
+gdb_start_server → gdb_connect → gdb_command (×N) → gdb_stop
 ```
-
-**Ratatui TUI** -- task start and target discovery:
 
 ![sven GDB session start](docs/sven-gdb-1.png)
 
-**Ratatui TUI** -- inspecting UART parameters and final summary:
-
 ![sven GDB session result](docs/sven-gdb-2.png)
-
-**Neovim buffer** -- the same session with the embedded Neovim chat view (with proper folds!):
 
 ![sven GDB session in Neovim](docs/sven-gdb-nvim.png)
 
-The five GDB tools form a complete debug lifecycle:
-
 | Tool | What it does |
 |------|-------------|
-| `gdb_start_server` | Start JLinkGDBServer / OpenOCD in the background (auto-discovers config from project files) |
+| `gdb_start_server` | Start JLinkGDBServer / OpenOCD (auto-discovers config from project files) |
 | `gdb_connect` | Connect `gdb-multiarch --interpreter=mi3` and optionally load an ELF |
 | `gdb_command` | Run any GDB/MI command and return structured output |
 | `gdb_interrupt` | Send Ctrl+C to a running target |
+| `gdb_wait_stopped` | Poll until the target halts (after a step, breakpoint, or interrupt) |
+| `gdb_status` | Query the current run state and any pending stop events |
 | `gdb_stop` | Kill the debug session and free the probe |
 
 See [Example 11](docs/06-examples.md#example-11--embedded-gdb-debugging-session)
-and the [User Guide GDB section](docs/03-user-guide.md#gdb-debugging-tools) for
-full details.
+and the [User Guide GDB section](docs/03-user-guide.md#gdb-debugging-tools).
+
+---
+
+## Agent-to-agent task routing
+
+Multiple sven nodes find each other on a local network via mDNS — or across
+networks via a relay — and each node automatically gains two tools the LLM can
+use during any session:
+
+| Tool | What it does |
+|------|-------------|
+| `list_peers` | List connected peer agents with their name, description, and capabilities |
+| `delegate_task` | Send a task to a named peer; the remote agent runs it through its own model+tool loop and returns the full result |
+
+```
+You are the orchestrator for a small team. Use list_peers to find who is
+online, then:
+1. Delegate the database migration to the backend-agent.
+2. Delegate the UI changes to the frontend-agent.
+3. Summarise what each agent did.
+```
+
+sven handles the rest — calling `list_peers`, picking the right peers, calling
+`delegate_task` for each, and assembling the results.
+
+See [docs/08-gateway.md](docs/08-gateway.md) for setup, security, and configuration.
 
 ---
 
 ## Features
 
-### Workflow files -- unique to sven
+### Workflow files — unique to sven
 
-sven treats markdown files as first-class workflow definitions.  No other
-agent-CLI has an equivalent:
+sven treats markdown files as first-class workflow definitions:
 
 ```markdown
 # Security Audit
@@ -82,64 +144,92 @@ Look for OWASP Top-10 issues and insecure defaults.
 Produce a structured security report with severity ratings.
 ```
 
-Run it with:
-
 ```sh
 sven --file audit.md --var context="Focus on authentication."
 ```
 
-Key capabilities the workflow format provides:
-
 | Feature | sven | Codex | Claude Code | OpenClaw |
 |---------|------|-------|-------------|----------|
-| Markdown workflow files (`##` steps) | [x] native | [ ] | [ ] | [ ] |
-| YAML frontmatter (mode, timeouts, vars) | [x] | [ ] | [ ] | [ ] |
-| Per-step options (`<!-- sven: ... -->`) | [x] | [ ] | [ ] | [ ] |
-| Variable templating (`{{key}}`) | [x] | [ ] | [ ] | [ ] |
-| Pipeable conversation output | [x] full conv. | last msg only | last msg only | [ ] |
-| `sven validate --file` dry-run | [x] | [ ] | [ ] | [ ] |
-| Per-step artifacts directory | [x] | [ ] | [ ] | [ ] |
-| `conversation` / `json` / `compact` output | [x] | `json` only | `stream-json` | `json` |
-| Auto-detect CI environment | [x] GA/GL/Jenkins | [ ] | [ ] | [ ] |
-| Git context injection (branch/commit/dirty) | [x] | [x] | partial | [ ] |
-| Auto-load `AGENTS.md` / `.sven/context.md` | [x] | [x] | `CLAUDE.md` | `AGENTS.md` |
-| **Native GDB hardware debugging** | [x] first-class | [ ] | [ ] | [ ] |
-| Zero runtime dependencies | [x] native Rust | Node.js | Node.js | Node.js |
-| TUI + headless in one binary | [x] | separate | separate | separate |
+| Markdown workflow files (`##` steps) | ✓ native | — | — | — |
+| YAML frontmatter (mode, timeouts, vars) | ✓ | — | — | — |
+| Per-step options (`<!-- sven: ... -->`) | ✓ | — | — | — |
+| Variable templating (`{{key}}`) | ✓ | — | — | — |
+| Pipeable conversation output | ✓ full conv. | last msg only | last msg only | — |
+| `sven validate --file` dry-run | ✓ | — | — | — |
+| Per-step artifacts directory | ✓ | — | — | — |
+| `conversation` / `json` / `compact` / `jsonl` output | ✓ | `json` only | `stream-json` | `json` |
+| Auto-detect CI environment | ✓ GA/GL/Jenkins | — | — | — |
+| Git context injection (branch/commit/dirty) | ✓ | ✓ | partial | — |
+| Auto-load `AGENTS.md` / `.sven/context.md` | ✓ | ✓ | `CLAUDE.md` | `AGENTS.md` |
+| **Native GDB hardware debugging** | ✓ first-class | — | — | — |
+| **Agent-to-agent P2P task routing** | ✓ built-in | — | — | — |
+| **Skills system** | ✓ built-in | — | — | — |
+| Zero runtime dependencies | ✓ native Rust | Node.js | Node.js | Node.js |
+| TUI + headless + node in one binary | ✓ | separate | separate | separate |
 
-### Pipeable conversations
+### Tool suite
 
-sven headless output is valid sven conversation markdown -- it can be piped
-directly into another sven instance or loaded back with `--conversation`:
+The agent has a rich built-in toolset:
 
-```sh
-# Chain agents: plan -> implement
-sven --file plan.md | sven --mode agent "Implement the plan above."
+| Category | Tools |
+|----------|-------|
+| **Files** | `read_file`, `write_file`, `edit_file`, `delete_file`, `list_dir` |
+| **Search** | `find_file`, `grep`, `search_codebase` |
+| **Shell** | `run_terminal_command`, `shell` |
+| **Web** | `web_fetch`, `web_search` |
+| **Images** | `read_image` |
+| **Sub-agents** | `task` — spawn a focused sub-agent for a self-contained subtask |
+| **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
+| **Agent networking** | `list_peers`, `delegate_task` *(node mode only)* |
+| **Session** | `switch_mode`, `todo_write`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
-# Save and resume
-sven --file review.md > review.conv.md
-sven --file review.conv.md --conversation  # continue from where you left off
-```
+†`ask_question` is only available in interactive TUI sessions.
+
+Each tool call goes through an approval policy — auto-approved, denied, or
+presented for confirmation based on glob patterns you configure.
+
+### Skills system
+
+Skills are markdown instruction files that the agent loads on demand to gain
+specialized expertise for a task. Skills can encode coding standards, project
+conventions, domain knowledge, or multi-step procedures. Load a skill with
+`load_skill` or configure auto-loading in `.cursor/skills/`.
 
 ### Project awareness
 
-When a workflow runs, sven automatically:
+When a session starts, sven automatically:
 
 1. Walks up the directory tree to find the `.git` root.
-2. Injects the absolute project path into the system prompt -- tools use it for
-   all file operations.
-3. Collects live git metadata (branch, commit, remote, dirty status) and injects
-   it so the agent knows the repository context without being asked.
-4. Reads `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md` from the project root
-   and injects the contents as project-level instructions.
+2. Injects the absolute project path so tools use it for all file operations.
+3. Collects live git metadata (branch, commit, remote, dirty status).
+4. Reads `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md` and injects the
+   contents as project-level instructions.
+
+### Persistent memory
+
+`update_memory` writes durable facts to a memory file that is injected at the
+start of every session. The agent can learn and remember things about your
+project across conversations.
+
+### Pipeable conversations
+
+sven headless output is valid sven conversation markdown — it can be piped
+directly into another sven instance:
+
+```sh
+# Chain agents: plan → implement
+sven --file plan.md | sven --mode agent "Implement the plan above."
+
+# Save the full trace for fine-tuning (includes system prompts, OpenAI format)
+sven --file workflow.md --output-jsonl trace.jsonl
+```
 
 ---
 
 ## Model Providers
 
-Sven supports **35+ model providers** natively in Rust -- no external gateway
-required.  Every provider is registered in the driver registry, so `sven
-list-providers` always shows a complete, up-to-date list.
+Sven supports **35+ model providers** natively in Rust — no external gateway
+required.
 
 | Category | Providers |
 |----------|-----------|
@@ -151,31 +241,18 @@ list-providers` always shows a complete, up-to-date list.
 | Regional | DeepSeek, Moonshot, Qwen/DashScope, GLM, MiniMax, Baidu Qianfan |
 | Local / OSS | Ollama, vLLM, LM Studio |
 
-All drivers implement the same `ModelProvider` trait -- tool calling, streaming,
-and catalog metadata work consistently across providers.  See
-[docs/providers.md](docs/providers.md) for configuration details and
-[crates/sven-model/DRIVERS.md](crates/sven-model/DRIVERS.md) for adding new
-drivers.
-
 ```sh
-# List all registered providers
 sven list-providers --verbose
-
-# Switch provider on the fly
-sven -M anthropic/claude-3-5-sonnet-20241022 "Refactor this code"
+sven -M anthropic/claude-opus-4-5 "Refactor this code"
 sven -M groq/llama-3.3-70b-versatile "Explain the algorithm"
 sven -M ollama/llama3.2 "Quick local question"
 ```
 
+See [docs/providers.md](docs/providers.md) for configuration details.
+
+---
+
 ## Documentation
-
-The `docs/` directory contains the full user guide split into focused sections.
-Build it locally with:
-
-```sh
-make docs        # single markdown file -> target/docs/sven-user-guide.md
-make docs-pdf    # PDF (requires pandoc) -> target/docs/sven-user-guide.pdf
-```
 
 | Section | Topic |
 |---------|-------|
@@ -187,272 +264,134 @@ make docs-pdf    # PDF (requires pandoc) -> target/docs/sven-user-guide.pdf
 | [Configuration](docs/05-configuration.md) | All config options explained |
 | [Examples](docs/06-examples.md) | Real-world use cases |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
+| [Node / P2P](docs/08-gateway.md) | Remote access, device pairing, agent networking |
+
+Build the full user guide locally:
+
+```sh
+make docs        # → target/docs/sven-user-guide.md
+make docs-pdf    # → target/docs/sven-user-guide.pdf (requires pandoc)
+```
 
 ---
 
-## Concepts
-
-### Agent modes
-
-Every invocation runs in one of three modes that constrain what the agent is
-allowed to do:
+## Agent modes
 
 | Mode | Behaviour |
 |------|-----------|
-| `research` | Read-only tools only. Good for exploration and analysis. |
+| `research` | Read-only tools. Good for exploration and analysis. |
 | `plan` | No file writes. Produces structured plans without side effects. |
-| `agent` | Full read/write access. The default for interactive use. |
+| `agent` | Full read/write access. Default for interactive use. |
 
-The mode can be set on the command line (`--mode`) or cycled live in the TUI.
+Set with `--mode` or cycle live in the TUI with `F4`.
 
-### Tools
+---
 
-The agent has access to three built-in tools:
-
-- **shell** -- runs arbitrary shell commands with a configurable timeout and an
-  optional Docker sandbox.
-- **fs** -- reads, writes, appends, and lists files.
-- **glob** -- searches the filesystem by pattern.
-
-Each tool call goes through an approval policy before it executes. Commands can
-be auto-approved, denied, or presented for confirmation based on glob patterns
-you configure.
-
-### CI / pipeline mode
+## CI / pipeline mode
 
 When stdin is not a TTY, or when `--headless` is passed, sven enters headless
-mode. Input is parsed as a workflow markdown document:
+mode:
 
 - The first `#` H1 heading is the conversation title.
-- Text between the H1 and the first `##` heading is appended to the system prompt.
-- Each `##` H2 heading starts a step sent to the model as a user message.
-- `<!-- sven: mode=X model=Y timeout=Z -->` directives inside a step set options for that step.
-
-Output is full conversation markdown on stdout by default. Errors go to stderr.
-A failed step exits non-zero, so the pipeline aborts naturally under `set -e`.
-
-Use `--jsonl-output <path>` to save the complete raw conversation trace (including
-system prompts) as JSONL -- one message per line in raw API format, suitable for
-creating fine-tuning datasets.
+- Text between H1 and the first `##` is appended to the system prompt.
+- Each `##` H2 heading is a step sent to the model.
+- `<!-- sven: mode=X model=Y timeout=Z -->` directives set per-step options.
 
 ```sh
-# Simple pipe
-echo "Summarise the project" | sven
-
-# Multi-step workflow file
-sven --file plan.md
-
-# Structured JSON output
-sven --file audit.md --output-format json
-
-# Save just the final answer to a file
-sven --file plan.md --output-last-message answer.txt
-
-# Save complete trace for fine-tuning (includes system prompts, OpenAI format)
-sven --file workflow.md --jsonl-output trace.jsonl
-
-# Chained agents: plan then implement
-sven --file plan.md | sven --mode agent "Implement the plan above."
-
-# Variable substitution
+sven --file plan.md                              # run a workflow
+sven --file audit.md --output-format json        # structured JSON output
+sven --file plan.md --output-last-message out.txt
+sven --file workflow.md --output-jsonl trace.jsonl  # full trace for fine-tuning
 sven --file review.md --var branch=main --var pr=42
-
-# Custom system prompt
-sven --file tasks.md --system-prompt-file .sven/custom-prompt.md
-
-# Append to default system prompt
-sven --file tasks.md --append-system-prompt "Always write tests."
-
-# Validate a workflow without running it
-sven validate --file plan.md
-sven --file plan.md --dry-run
+sven validate --file plan.md                     # dry-run: parse only
 ```
 
-**Exit codes:** `0` success . `1` agent error . `2` validation error . `124` timeout . `130` interrupt
+**Exit codes:** `0` success · `1` agent error · `2` validation error · `124` timeout · `130` interrupt
 
-### Conversation files
+---
 
-Conversation mode lets you use a single markdown file as a persistent,
-human-editable conversation log. Run sven on it repeatedly, and each run loads
-the existing history and appends the new agent turn back to the file.
-
-The format uses H2 sections as turn boundaries:
-
-| Section | Role |
-|---------|------|
-| `## User` | Your message or task |
-| `## Sven` | Agent's text response |
-| `## Tool` | A tool call (JSON code block) |
-| `## Tool Result` | Output of the tool call |
-
-An optional H1 line at the top is treated as the conversation title.
-
-Everything inside a section is plain markdown -- code blocks, lists, and
-headings at H3 or below are all safe to use without escaping.
-
-**Execution rule:** if the file ends with a `## User` section that has no
-following `## Sven` section, sven treats it as the next instruction to execute
-and appends the result.
+## Node — remote access and agent networking
 
 ```sh
-# Create a conversation file
-cat > work.md << 'EOF'
-# Codebase Analysis
+# Start the node (generates TLS cert and bearer token on first run)
+sven node start [--config .node.yaml]
 
-## User
-Summarise the project structure.
-EOF
+# Send a task to the running node from another terminal
+export SVEN_NODE_TOKEN=<token>
+sven node exec "What files are in the current directory?"
 
-# First run -- sven executes the ## User section and appends ## Sven (+ any tool sections)
-sven --file work.md --conversation
+# Pair a mobile/native operator device
+sven node pair "sven-pair://12D3KooW..."
 
-# You can then append a follow-up yourself
-printf '\n## User\nNow list all public API entry points.\n' >> work.md
+# Rotate the bearer token
+sven node regenerate-token
 
-# Second run -- history is loaded, only the new ## User is executed
-sven --file work.md --conversation
+# List paired devices
+sven node list-peers
 ```
 
-After two runs the file might look like:
+Security defaults — all on, none optional:
 
-```markdown
-# Codebase Analysis
-
-## User
-Summarise the project structure.
-
-## Sven
-The project is a Rust workspace with crates for config, model, tools ...
-
-## User
-Now list all public API entry points.
-
-## Tool
-```json
-{
-  "tool_call_id": "call_001",
-  "name": "glob_file_search",
-  "args": {"pattern": "**/*.rs"}
-}
-```
-
-## Tool Result
-```
-src/main.rs
-crates/sven-core/src/lib.rs
-...
-```
-
-## Sven
-The public entry points are `src/main.rs` (binary) and the `pub` items in ...
-```
-
-### Context management
-
-The agent tracks token usage and compacts the conversation history
-automatically before the context window fills up. The compaction threshold is
-configurable.
+| What | Default |
+|------|---------|
+| HTTP TLS | On — ECDSA P-256, 90-day auto-generated cert |
+| TLS version | TLS 1.3 only |
+| P2P encryption | Noise protocol (Ed25519), always on |
+| P2P authorisation | Deny-all — every operator device must be explicitly paired |
+| HTTP binding | `127.0.0.1` — loopback only |
+| Bearer token storage | SHA-256 hash only — plaintext never written to disk |
 
 ---
 
 ## Building
 
 ```sh
-# Debug build
-make build
-
-# Optimised release build
-make release
-
-# Debian package (uses cargo-deb if installed, otherwise scripts/build-deb.sh)
-make deb
+make build      # debug build
+make release    # optimised release build
+make deb        # Debian package
 ```
 
-Requires a recent stable Rust toolchain. No other system dependencies are
-needed for a basic build.
+Requires a recent stable Rust toolchain. No other system dependencies.
 
 ---
 
 ## Configuration
 
-sven looks for YAML config files and merges them from lowest to highest priority:
+sven merges YAML config files from lowest to highest priority:
 
-1. `/etc/sven/config.yaml` (system-wide)
-2. `~/.config/sven/config.yaml` (user-level)
-3. `.sven/config.yaml` (workspace-local)
-4. `sven.yaml` (project root)
-5. Path given with `--config` (highest priority)
+1. `/etc/sven/config.yaml`
+2. `~/.config/sven/config.yaml`
+3. `.sven/config.yaml`
+4. `sven.yaml`
+5. `--config <path>`
 
-Run `sven show-config` to see the full resolved configuration with all defaults
-filled in. The schema is defined in `crates/sven-config/src/schema.rs`.
+Run `sven show-config` to see the full resolved config. Key sections:
 
-Key sections:
-
-- `model` -- provider, model name, API key env var, base URL override for
-  local proxies (e.g. LiteLLM), token limits.
-- `agent` -- default mode, maximum autonomous tool rounds, compaction
-  threshold, optional system prompt override.
-- `tools` -- tool timeout, Docker sandbox toggle, auto-approve and deny glob
-  patterns.
-- `tui` -- theme, markdown wrap width, ASCII-border fallback for terminals
-  with limited font support.
-
-### Listing available models
-
-```sh
-sven list-models                    # static built-in catalog
-sven list-models --provider openai  # filter by provider
-sven list-models --refresh          # query provider API for live list
-sven list-models --json             # JSON output
-```
-
-### Model providers
-
-Set `model.provider` to one of:
-
-| Provider | Notes |
-|----------|-------|
-| `openai` | Default. Set `OPENAI_API_KEY`. |
-| `anthropic` | Set `ANTHROPIC_API_KEY`. |
-| `mock` | Returns scripted responses from a YAML file -- useful for tests and offline work. |
-
-The `base_url` field lets you point any provider at a compatible proxy without
-changing anything else.
+- `model` — provider, model name, API key env var, base URL override, token limits.
+- `agent` — default mode, max autonomous rounds, compaction threshold, system prompt override.
+- `tools` — timeout, Docker sandbox, auto-approve and deny glob patterns.
+- `tui` — theme, markdown wrap width, ASCII-border fallback.
 
 ---
 
-## The mock provider
+## Workspace layout
 
-The mock provider loads responses from a YAML file and matches them against
-incoming messages by content. Match types include exact equality, substring,
-prefix, regex, and a catch-all default. A rule can return plain text or trigger
-a sequence of tool calls followed by a final reply.
-
-```yaml
-rules:
-  - match: "ping"
-    match_type: equals
-    reply: "pong"
-
-  - match: "write.*file"
-    match_type: regex
-    tool_calls:
-      - round: 1
-        name: fs
-        args: '{"operation":"write","path":"/tmp/out.txt","content":"hello"}'
-      - round: 2
-        reply: "Done."
-
-  - match: ".*"
-    match_type: regex
-    reply: "I don't know how to answer that."
 ```
-
-Point sven at the file with `SVEN_MOCK_RESPONSES=/path/to/file.yaml` or the
-`model.mock_responses_file` config key, then pass `--model mock`.
-
-The end-to-end bats test suite in `tests/bats/` uses this mechanism so the
-full CI pipeline can be validated without a live model API.
+sven/
+├── src/                    # binary entry-point and CLI
+└── crates/
+    ├── sven-config/        # config schema and loader
+    ├── sven-model/         # ModelProvider trait + 35+ drivers
+    ├── sven-core/          # agent loop, session, context compaction
+    ├── sven-tools/         # full tool suite + approval policy
+    ├── sven-input/         # markdown step parser and message queue
+    ├── sven-ci/            # headless runner and output formatting
+    ├── sven-tui/           # Ratatui TUI: layout, widgets, key bindings
+    ├── sven-p2p/           # libp2p node: Noise, mDNS, relay, task routing
+    ├── sven-node/          # node: HTTP/WS gateway + P2P + Slack + agent wiring
+    ├── sven-runtime/       # shared runtime utilities
+    └── sven-bootstrap/     # first-run setup helpers
+```
 
 ---
 
@@ -463,31 +402,3 @@ make test       # unit and integration tests (cargo test)
 make bats       # end-to-end tests (requires bats-core)
 make check      # clippy lints
 ```
-
-The bats suite covers CLI flags, headless mode behaviour, mock provider
-matching, and multi-stage pipeline composition.
-
----
-
-## Workspace layout
-
-```
-sven/
-+-- src/                    # binary entry-point
-+-- crates/
-|   +-- sven-config/        # TOML schema and config loader
-|   +-- sven-model/         # model provider trait + OpenAI, Anthropic, mock
-|   +-- sven-core/          # agent loop, session, context compaction
-|   +-- sven-tools/         # shell / fs / glob tools and approval policy
-|   +-- sven-input/         # markdown step parser and message queue
-|   +-- sven-ci/            # headless runner and output formatting
-|   +-- sven-tui/           # Ratatui TUI: layout, widgets, key bindings
-+-- tests/
-    +-- bats/               # end-to-end bats tests
-    +-- fixtures/           # shared test data (mock responses, sample plans)
-```
-
-Each crate has a focused responsibility and its own unit tests. The dependency
-graph is acyclic: `sven-config` and `sven-model` are leaves; `sven-core`
-depends on both; `sven-ci` and `sven-tui` depend on `sven-core`; the root
-binary wires everything together.

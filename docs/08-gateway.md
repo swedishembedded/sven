@@ -1,6 +1,6 @@
 # Remote Gateway
 
-`sven gateway start` starts the agent together with everything it needs to be
+`sven node start` starts the agent together with everything it needs to be
 reachable remotely and to work alongside other agents.
 
 **The gateway is the agent.** It runs the language model, all tools, and a P2P
@@ -20,18 +20,20 @@ It gives you two things at once:
 ### 1. Start the agent
 
 ```sh
-sven gateway start
+sven node start
 ```
 
 On first run sven generates a TLS certificate, a bearer token (printed once —
 save it), and a cryptographic identity for P2P.
 
 ```
-0.003s  INFO  Gateway bearer token (shown once — save it now!):
+0.003s  INFO  =======================================================
+0.003s  INFO  HTTP bearer token (shown once — save it now!):
 0.003s  INFO    eyJ0eXAiOiJKV1QiLCJhbGc...
-0.005s  INFO  No authorized P2P operators yet. Run:
-0.005s  INFO    sven gateway pair <sven-pair://...>
-0.008s  INFO  starting HTTP gateway bind=127.0.0.1:18790 tls=true
+0.003s  INFO    export SVEN_NODE_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGc...
+0.003s  INFO  =======================================================
+0.005s  INFO  No P2P operator devices paired yet (optional).
+0.008s  INFO  starting HTTP node bind=127.0.0.1:18790 tls=true
 ```
 
 The peer ID printed in the logs is this agent's P2P identity on the **operator
@@ -40,14 +42,14 @@ nothing to do with agent-to-agent connectivity (that is automatic).
 
 ### 2. Pair a human operator device
 
-`sven gateway pair` authorises a **human operator** — a phone, laptop, or CLI
+`sven node pair` authorises a **human operator** — a phone, laptop, or CLI
 client — to send commands to this agent.  It is not used for connecting agents
 to each other; that happens automatically.
 
 The device to be authorised shows a `sven-pair://` URI.  Paste it:
 
 ```sh
-sven gateway pair "sven-pair://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz?fingerprint=abc123"
+sven node pair "sven-pair://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz?fingerprint=abc123"
 ```
 
 sven shows the peer ID and a short fingerprint for visual confirmation, then
@@ -78,7 +80,7 @@ To have two agents collaborate, simply start the gateway on a second machine:
 
 ```sh
 # machine B
-sven gateway start
+sven node start
 ```
 
 Both agents discover each other via mDNS within a few seconds — no pairing,
@@ -266,29 +268,29 @@ slack:
 
 ```sh
 # Start the agent
-sven gateway start [--config PATH]
+sven node start [--config PATH]
 
 # Send a task to the running agent and stream the response
-export SVEN_GATEWAY_TOKEN=<token-from-first-startup>
-sven gateway exec "delegate a task to say hi to the frontend-agent"
+export SVEN_NODE_TOKEN=<token-from-first-startup>
+sven node exec "delegate a task to say hi to the frontend-agent"
 
 # Authorize a human operator device (paste the sven-pair:// URI it shows)
-sven gateway pair "sven-pair://12D3KooW..." [--label "my-phone"]
+sven node pair "sven-pair://12D3KooW..." [--label "my-phone"]
 
 # Revoke a device
-sven gateway revoke 12D3KooW...
+sven node revoke 12D3KooW...
 
 # List authorized devices
-sven gateway list-peers [--config PATH]
+sven node list-peers [--config PATH]
 
 # Rotate the HTTP bearer token
-sven gateway regenerate-token [--config PATH]
+sven node regenerate-token [--config PATH]
 
 # Print the resolved configuration
-sven gateway show-config [--config PATH]
+sven node show-config [--config PATH]
 ```
 
-### `sven gateway exec` in detail
+### `sven node exec` in detail
 
 `exec` is the primary way to interact with a running gateway from the command
 line.  It connects to the local gateway over WebSocket, submits the task, and
@@ -296,23 +298,23 @@ streams the agent's response to stdout.
 
 ```sh
 # Set the token once (it was shown the first time the gateway started)
-export SVEN_GATEWAY_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGc...
+export SVEN_NODE_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGc...
 
 # Ask the agent a question
-sven gateway exec "What files are in the current directory?"
+sven node exec "What files are in the current directory?"
 
 # Trigger delegation to a peer agent
-sven gateway exec "Use list_peers to find connected agents, then delegate \
+sven node exec "Use list_peers to find connected agents, then delegate \
   a hello-world task to whichever one is available"
 
 # Use a different gateway URL or config
-sven gateway exec "summarise recent changes" \
+sven node exec "summarise recent changes" \
   --url wss://192.168.1.10:18790/ws \
   --config /etc/sven/gateway.yaml
 ```
 
 The token is the one printed **once** when the gateway first started.  If you
-lost it, rotate it with `sven gateway regenerate-token`.
+lost it, rotate it with `sven node regenerate-token`.
 
 ---
 
@@ -347,7 +349,7 @@ p2p:
 The peer is not in the allowlist.  Authorise it with:
 
 ```sh
-sven gateway pair "sven-pair://..."
+sven node pair "sven-pair://..."
 ```
 
 ### Peers not appearing after `list_peers`
@@ -368,10 +370,10 @@ Delete the stale cert and restart:
 
 ```sh
 rm ~/.config/sven/gateway/tls/*.pem
-sven gateway start
+sven node start
 ```
 
-### No log output from `sven gateway start`
+### No log output from `sven node start`
 
 The gateway logs to `stderr` at `info` level.  Try `sven -v gateway start` for
 debug-level output.
