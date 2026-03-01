@@ -61,7 +61,7 @@ name    = "sven"
 version = "0.1.0"
 edition = "2021"
 description = "A CLI and CI AI coding agent"
-license = "MIT"
+license = "Apache-2.0"
 
 [[bin]]
 name = "sven"
