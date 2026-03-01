@@ -54,7 +54,7 @@ use async_trait::async_trait;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::{
     identity::Keypair,
-    mdns, noise,
+    noise,
     request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, StreamProtocol,
@@ -336,12 +336,19 @@ mod tests {
 
 // ── libp2p behaviour composition ──────────────────────────────────────────────
 
+/// Behaviour for the P2P operator control node.
+///
+/// mDNS is intentionally omitted.  Operator devices pair explicitly via a
+/// `sven://` URI — they are never discovered automatically.  Including mDNS
+/// here causes the control node and the agent-to-agent `P2pNode` (both running
+/// in the same process) to cross-discover each other via multicast, producing
+/// hundreds of spurious "discovered/expired" log lines and establishing
+/// unwanted inbound connections from every local network interface.
 #[derive(NetworkBehaviour)]
 struct ControlBehaviour {
     relay_client: libp2p::relay::client::Behaviour,
     identify: libp2p::identify::Behaviour,
     ping: libp2p::ping::Behaviour,
-    mdns: mdns::tokio::Behaviour,
     control: request_response::Behaviour<ControlCodec>,
 }
 
@@ -395,7 +402,6 @@ impl P2pControlNode {
         keypair_path: Option<&PathBuf>,
         allowlist: Arc<Mutex<PeerAllowlist>>,
         agent: AgentHandle,
-        enable_mdns: bool,
     ) -> anyhow::Result<Self> {
         let keypair = match keypair_path {
             Some(path) => sven_p2p::transport::load_or_create_keypair(path)?,
@@ -421,17 +427,6 @@ impl P2pControlNode {
                 let ping = libp2p::ping::Behaviour::new(
                     libp2p::ping::Config::new().with_interval(std::time::Duration::from_secs(30)),
                 );
-                let mdns_cfg = if enable_mdns {
-                    mdns::Config::default()
-                } else {
-                    mdns::Config {
-                        ttl: std::time::Duration::from_secs(0),
-                        ..Default::default()
-                    }
-                };
-                let mdns_behaviour =
-                    mdns::tokio::Behaviour::new(mdns_cfg, PeerId::from(key.public()))
-                        .expect("mDNS init");
                 let control = request_response::Behaviour::with_codec(
                     ControlCodec,
                     [(CONTROL_PROTO, ProtocolSupport::Full)],
@@ -442,7 +437,6 @@ impl P2pControlNode {
                     relay_client,
                     identify,
                     ping,
-                    mdns: mdns_behaviour,
                     control,
                 })
             })?
@@ -487,13 +481,6 @@ impl P2pControlNode {
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
                 debug!(%peer_id, "P2P connection closed");
                 self.peer_buffers.remove(&peer_id);
-            }
-
-            SwarmEvent::Behaviour(ControlBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
-                for (peer_id, addr) in peers {
-                    debug!(%peer_id, %addr, "mDNS: discovered peer");
-                    let _ = self.swarm.dial(addr);
-                }
             }
 
             SwarmEvent::Behaviour(ControlBehaviourEvent::Control(
