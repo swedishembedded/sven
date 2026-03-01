@@ -15,9 +15,6 @@ use crate::tool::{Tool, ToolCall, ToolOutput};
 /// Minimum similarity ratio (0–1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
 
-/// Number of "did you mean?" suggestions shown in the failure message.
-const MAX_SUGGESTIONS: usize = 3;
-
 // ── Hunk data structures ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

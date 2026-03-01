@@ -14,12 +14,12 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
-    events::ToolEvent, AskQuestionTool, DeleteFileTool, EditFileTool, GdbCommandTool,
+    events::ToolEvent, AskQuestionTool, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool,
     GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
-    GdbStopTool, GdbWaitStoppedTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool,
-    LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
-    SearchCodebaseTool, ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool,
-    WebFetchTool, WebSearchTool, WriteTool,
+    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, LoadSkillTool, ReadFileTool,
+    ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, ShellTool,
+    SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool,
+    WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -63,8 +63,7 @@ pub fn build_tool_registry(
             reg.register(ReadFileTool);
             reg.register(ReadImageTool);
             reg.register(ListDirTool);
-            reg.register(GlobFileSearchTool);
-            reg.register(GlobTool);
+            reg.register(FindFileTool);
             reg.register(GrepTool);
             reg.register(SearchCodebaseTool);
             reg.register(WebFetchTool);
@@ -127,8 +126,7 @@ pub fn build_tool_registry(
             reg.register(ReadFileTool);
             reg.register(ReadImageTool);
             reg.register(ListDirTool);
-            reg.register(GlobFileSearchTool);
-            reg.register(GlobTool);
+            reg.register(FindFileTool);
             reg.register(GrepTool);
             reg.register(SearchCodebaseTool);
             reg.register(WebFetchTool);

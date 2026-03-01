@@ -4,7 +4,7 @@
 pub mod ask_question;
 pub mod delete_file;
 pub mod edit_file;
-pub mod glob_file_search;
+pub mod find_file;
 pub mod grep;
 pub mod list_dir;
 pub mod load_skill;
@@ -21,9 +21,6 @@ pub mod web_search;
 pub mod write_file;
 
 pub mod gdb;
-
-// Legacy modules kept for backwards compatibility
-pub mod glob;
 pub mod shell;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
@@ -145,8 +142,8 @@ mod output_category_tests {
     }
 
     #[test]
-    fn glob_tool_is_generic() {
-        let t = super::glob::GlobTool;
+    fn find_file_tool_is_generic() {
+        let t = super::find_file::FindFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 }

@@ -16,7 +16,7 @@ pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 pub use builtin::ask_question::{AskQuestionTool, Question, QuestionRequest};
 pub use builtin::delete_file::DeleteFileTool;
 pub use builtin::edit_file::EditFileTool;
-pub use builtin::glob_file_search::GlobFileSearchTool;
+pub use builtin::find_file::FindFileTool;
 pub use builtin::grep::GrepTool;
 pub use builtin::list_dir::ListDirTool;
 pub use builtin::read_file::ReadFileTool;
@@ -41,6 +41,4 @@ pub use builtin::gdb::{
 // Skill loading tool
 pub use builtin::load_skill::LoadSkillTool;
 
-// Legacy exports preserved for backwards compatibility
-pub use builtin::glob::GlobTool;
 pub use builtin::shell::ShellTool;

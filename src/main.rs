@@ -134,7 +134,7 @@ async fn build_agent_for_gateway(
 ) -> anyhow::Result<sven_core::Agent> {
     use std::sync::Arc;
     use sven_tools::{
-        DeleteFileTool, EditFileTool, GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool,
+        DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ListDirTool, ReadFileTool,
         ReadLintsTool, RunTerminalCommandTool, SwitchModeTool, TodoItem, TodoWriteTool, ToolEvent,
         ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
     };
@@ -154,7 +154,7 @@ async fn build_agent_for_gateway(
     registry.register(ReadFileTool);
     registry.register(WriteTool);
     registry.register(EditFileTool);
-    registry.register(GlobFileSearchTool);
+    registry.register(FindFileTool);
     registry.register(GrepTool);
     registry.register(ListDirTool);
     registry.register(DeleteFileTool);
