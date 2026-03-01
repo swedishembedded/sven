@@ -14,7 +14,10 @@ use libp2p::{
     dcutr, identify, mdns,
     multiaddr::Protocol,
     noise, relay, request_response,
-    swarm::{dial_opts::DialOpts, ConnectionId, DialError, Swarm, SwarmEvent},
+    swarm::{
+        dial_opts::{DialOpts, PeerCondition},
+        ConnectionId, DialError, Swarm, SwarmEvent,
+    },
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
 use tokio::{
@@ -417,6 +420,12 @@ impl NodeState {
                 relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
             )) => {
                 self.on_relay_reservation_accepted(relay_peer_id);
+                // Kick off peer discovery immediately after the circuit is
+                // confirmed via the fallback path (AutoNAT never fired so
+                // ExternalAddrConfirmed was not emitted).  Without this the
+                // node sits idle for up to discovery_poll_interval before
+                // dialing any peers it could now reach through this relay.
+                self.fetch_and_dial_peers(swarm).await;
             }
 
             SwarmEvent::Behaviour(P2pBehaviourEvent::Task(request_response::Event::Message {
@@ -425,6 +434,17 @@ impl NodeState {
                 ..
             })) => {
                 self.on_task_message(swarm, peer, message);
+            }
+
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Task(
+                request_response::Event::OutboundFailure {
+                    peer,
+                    request_id,
+                    error,
+                    ..
+                },
+            )) => {
+                self.on_outbound_request_failure(swarm, peer, request_id, error);
             }
 
             SwarmEvent::Behaviour(P2pBehaviourEvent::Identify(identify::Event::Received {
@@ -465,9 +485,12 @@ impl NodeState {
         endpoint: &ConnectedPoint,
     ) {
         let via_relay = endpoint.is_relayed();
-        self.emit(P2pEvent::Connected { peer_id, via_relay });
+        let kind = if via_relay { "relay" } else { "direct" };
 
         if self.relay_peers.contains(&peer_id) {
+            tracing::info!("Relay server {peer_id} connected");
+            // Do not emit P2pEvent::Connected for relay servers — they are
+            // infrastructure, not agent peers.
             // Register a circuit-relay listen address for every relay we connect
             // to so peers can reach us through any available relay server.
             if let std::collections::hash_map::Entry::Vacant(e) =
@@ -484,8 +507,11 @@ impl NodeState {
         } else if via_relay {
             // Application peer reachable only via relay — record the connection
             // so we can close it once DCUtR successfully upgrades to direct.
+            tracing::info!("Connected to {peer_id} (via relay)");
+            self.emit(P2pEvent::Connected { peer_id, via_relay });
             self.relay_connection_ids.insert(peer_id, connection_id);
             if self.announced_to.insert(peer_id) {
+                tracing::info!("Sending Announce to {peer_id} (via relay)");
                 swarm
                     .behaviour_mut()
                     .task
@@ -496,11 +522,15 @@ impl NodeState {
             // connection, close the relay leg now that we have a better path.
             if let Some(relay_conn) = self.relay_connection_ids.remove(&peer_id) {
                 tracing::info!(
-                    "Direct connection to {peer_id} established;                      closing relayed fallback connection"
+                    "Direct connection to {peer_id} established ({kind}); closing relayed fallback"
                 );
                 swarm.close_connection(relay_conn);
+            } else {
+                tracing::info!("Connected to {peer_id} ({kind})");
             }
+            self.emit(P2pEvent::Connected { peer_id, via_relay });
             if self.announced_to.insert(peer_id) {
+                tracing::info!("Sending Announce to {peer_id} ({kind})");
                 swarm
                     .behaviour_mut()
                     .task
@@ -541,10 +571,39 @@ impl NodeState {
                 }
             }
         } else {
-            // Application peer fully disconnected — allow the peer poll to
-            // rediscover and re-dial them if they reappear in the registry.
+            // Application peer fully disconnected — remove from roster and
+            // allow the peer poll to rediscover and re-dial them if they
+            // reappear in the registry.
             self.dialed.remove(&peer_id);
             self.announced_to.remove(&peer_id);
+
+            // Clean the peer out of every room in the shared roster so that
+            // list_peers / all_peers do not return stale entries.
+            // Capture the peer name first (before removal) for the disconnect log.
+            let (departed_rooms, peer_name): (Vec<String>, Option<String>) = {
+                let mut r = self.roster.lock().unwrap();
+                let mut rooms = Vec::new();
+                let mut name = None;
+                for (room, state) in r.iter_mut() {
+                    if let Some(card) = state.peers.remove(&peer_id) {
+                        if name.is_none() {
+                            name = Some(card.name.clone());
+                        }
+                        rooms.push(room.clone());
+                    }
+                }
+                (rooms, name)
+            };
+
+            match peer_name {
+                Some(ref name) => tracing::info!("Agent \"{name}\" ({peer_id}) disconnected"),
+                None => tracing::info!("Peer {peer_id} disconnected"),
+            }
+
+            for room in departed_rooms {
+                self.emit(P2pEvent::PeerLeft { room, peer_id });
+            }
+
             self.emit(P2pEvent::Disconnected { peer_id });
         }
     }
@@ -650,6 +709,13 @@ impl NodeState {
                     .insert(peer, card.clone());
             }
         }
+
+        let caps = if card.capabilities.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", card.capabilities.join(", "))
+        };
+        tracing::info!("Agent \"{}\" ({peer}) connected{caps}", card.name,);
         for room in &self.rooms {
             self.emit(P2pEvent::PeerDiscovered {
                 room: room.clone(),
@@ -661,6 +727,67 @@ impl NodeState {
             .behaviour_mut()
             .task
             .send_response(channel, P2pResponse::Ack);
+    }
+
+    /// Called when a request_response outbound request fails.
+    ///
+    /// Two distinct cases:
+    ///
+    /// 1. **Task request** — the caller of `P2pHandle::send_task` is waiting on
+    ///    a oneshot channel that will never fire unless we explicitly signal the
+    ///    error here.  Without this, `send_task` hangs until node shutdown.
+    ///
+    /// 2. **Announce request** — the remote peer will not add us to its roster.
+    ///    Re-send the Announce so the roster is eventually consistent.
+    fn on_outbound_request_failure(
+        &mut self,
+        _swarm: &mut NodeSwarm,
+        peer: PeerId,
+        request_id: request_response::OutboundRequestId,
+        error: request_response::OutboundFailure,
+    ) {
+        // "UnsupportedProtocols" means the remote peer does not speak our task
+        // protocol at all.  The most common cause: the P2pControlNode (operator
+        // control swarm, same process) cross-discovers the P2pNode via mDNS.
+        // Retrying is pointless and creates a tight infinite loop.  Mark the
+        // peer as rejected and move on.
+        if matches!(
+            error,
+            request_response::OutboundFailure::UnsupportedProtocols
+        ) {
+            tracing::debug!(
+                "Peer {peer} does not support the task protocol (likely a non-agent peer); \
+                 skipping future requests"
+            );
+            self.rejected.insert(peer);
+            self.announced_to.remove(&peer);
+            // Drain any pending outbound task for this peer so callers don't hang.
+            if let Some(reply_tx) = self.pending_outbound.remove(&request_id) {
+                let _ = reply_tx.send(Err(P2pError::Transport(format!(
+                    "peer {peer} does not support the task protocol"
+                ))));
+            }
+            return;
+        }
+
+        tracing::warn!("request_response outbound failure to {peer}: {error}");
+
+        // If this was a task request, unblock the waiting send_task() caller.
+        if let Some(reply_tx) = self.pending_outbound.remove(&request_id) {
+            let _ = reply_tx.send(Err(P2pError::Transport(format!(
+                "outbound failure to {peer}: {error}"
+            ))));
+            return; // Task failure — nothing else to do here.
+        }
+
+        // If it was an Announce and the failure was transient, allow it to be
+        // re-sent on the next connection attempt.  Do NOT immediately retry
+        // while still connected — that creates a retry storm for persistent
+        // failures.
+        if !self.relay_peers.contains(&peer) {
+            self.announced_to.remove(&peer);
+            tracing::info!("Will re-announce to {peer} on next connection");
+        }
     }
 
     fn on_task_request(
@@ -747,11 +874,23 @@ impl NodeState {
             if peer_id == self.local_peer_id {
                 continue;
             }
-            swarm.add_peer_address(peer_id, addr.clone());
-            tracing::info!("mDNS: discovered local peer {peer_id} at {addr}");
+            // Strip the trailing /p2p/<peer_id> component so the TCP transport
+            // receives a plain transport address it can actually dial.
+            let transport_addr = strip_p2p_suffix(addr.clone());
+            swarm.add_peer_address(peer_id, transport_addr.clone());
+            tracing::info!("mDNS: discovered local peer {peer_id} at {transport_addr}");
             if !self.rejected.contains(&peer_id) && self.dialed.insert(peer_id) {
-                if let Err(e) = swarm.dial(peer_id) {
-                    tracing::warn!("mDNS: dial {peer_id} failed: {e}");
+                // Only open a connection if none exists yet.  Without this
+                // guard both sides race to dial each other and end up with
+                // 4-6 simultaneous connections; the request_response Announce
+                // can then be sent on a connection that gets closed
+                // immediately, silently dropping the roster update.
+                let opts = DialOpts::peer_id(peer_id)
+                    .condition(PeerCondition::Disconnected)
+                    .addresses(vec![transport_addr])
+                    .build();
+                if let Err(e) = swarm.dial(opts) {
+                    tracing::debug!("mDNS: dial {peer_id} skipped or failed: {e}");
                     self.dialed.remove(&peer_id);
                 }
             }
@@ -814,6 +953,23 @@ impl NodeState {
             self.relay_dial_addrs.insert(*pid, addrs.clone());
         }
 
+        // Prune relays that have disappeared from the discovery backend and
+        // are no longer connected.  Without this, a permanently-gone relay
+        // gets re-dialed every RELAY_POLL_SECS forever.
+        let stale: Vec<PeerId> = self
+            .relay_dial_addrs
+            .keys()
+            .filter(|pid| {
+                !fresh.contains_key(*pid) && !self.connected_relay_addrs.contains_key(*pid)
+            })
+            .copied()
+            .collect();
+        for pid in stale {
+            tracing::info!("Pruning stale relay {pid} (no longer in discovery)");
+            self.relay_peers.remove(&pid);
+            self.relay_dial_addrs.remove(&pid);
+        }
+
         // Re-dial every relay we know about but are not currently connected to.
         for (pid, addrs) in &self.relay_dial_addrs.clone() {
             if !self.connected_relay_addrs.contains_key(pid) {
@@ -859,9 +1015,18 @@ impl NodeState {
                 false
             }
             P2pCommand::Announce => {
-                let connected: Vec<PeerId> = swarm.connected_peers().copied().collect();
+                // Force a re-announce to every connected application peer.
+                // Clear announced_to first so we can re-use the dedup guard —
+                // this prevents duplicate sends if the command is called while
+                // a connection event is in flight.
+                let connected: Vec<PeerId> = swarm
+                    .connected_peers()
+                    .filter(|p| !self.relay_peers.contains(p))
+                    .copied()
+                    .collect();
                 for peer in connected {
-                    if !self.relay_peers.contains(&peer) {
+                    self.announced_to.remove(&peer);
+                    if self.announced_to.insert(peer) {
                         swarm
                             .behaviour_mut()
                             .task
@@ -877,22 +1042,32 @@ impl NodeState {
     // ── Discovery helpers ────────────────────────────────────────────────────
 
     /// Fetch all peers from every room and dial any that are new and reachable.
+    ///
+    /// Failures are handled per-room: a transient error on one room does not
+    /// prevent peers in other rooms from being dialed.
     async fn fetch_and_dial_peers(&mut self, swarm: &mut NodeSwarm) {
         let disc = Arc::clone(&self.discovery);
         let rooms = self.rooms.clone();
-        let all: Vec<Vec<PeerInfo>> = match tokio::task::spawn_blocking(move || {
-            rooms
-                .iter()
-                .map(|r| disc.fetch_peers(r))
-                .collect::<Result<Vec<_>, _>>()
+        let all: Vec<PeerInfo> = match tokio::task::spawn_blocking(move || {
+            let mut peers = Vec::new();
+            for room in &rooms {
+                match disc.fetch_peers(room) {
+                    Ok(ps) => peers.extend(ps),
+                    Err(e) => tracing::warn!("fetch_peers({room}): {e}"),
+                }
+            }
+            peers
         })
         .await
         {
-            Ok(Ok(v)) => v,
-            _ => return,
+            Ok(peers) => peers,
+            Err(e) => {
+                tracing::warn!("fetch_and_dial_peers spawn error: {e}");
+                return;
+            }
         };
 
-        for info in all.into_iter().flatten() {
+        for info in all {
             self.try_dial_peer(swarm, info);
         }
     }
@@ -905,11 +1080,15 @@ impl NodeState {
             return;
         }
 
-        // For relay circuit addresses, only dial when we're connected to that
-        // relay. For direct TCP addresses (no /p2p-circuit component), dial
-        // unconditionally — the remote is reachable without a relay.
+        // For relay circuit addresses, only dial when we have an *active*
+        // connection to that relay.  Checking relay_peers (ever-discovered)
+        // instead of connected_relay_addrs (currently connected) would allow
+        // dialing circuits through a dropped relay, causing immediate failures
+        // and churn until the relay reconnects.
         if is_circuit_addr(&info.relay_addr) {
-            if peer_id_from_addr(&info.relay_addr).is_none_or(|r| !self.relay_peers.contains(&r)) {
+            if peer_id_from_addr(&info.relay_addr)
+                .is_none_or(|r| !self.connected_relay_addrs.contains_key(&r))
+            {
                 return;
             }
         }
@@ -1071,6 +1250,21 @@ async fn fetch_and_dial_relays(
 /// routes through a relay server rather than connecting directly to the target.
 fn is_circuit_addr(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| matches!(p, Protocol::P2pCircuit))
+}
+
+/// Remove a trailing `/p2p/<peer_id>` component from a multiaddr so the TCP
+/// transport receives a plain dial address.
+///
+/// mDNS and Identify often advertise addresses like
+/// `/ip4/1.2.3.4/tcp/1234/p2p/12D3KooW…`.  The `/p2p` suffix is a routing
+/// hint understood by relay/circuit transports, but the plain TCP transport
+/// cannot use it and will reject the dial.  Stripping it gives us the
+/// transport-layer address the TCP stack actually needs.
+fn strip_p2p_suffix(mut addr: Multiaddr) -> Multiaddr {
+    if matches!(addr.iter().last(), Some(Protocol::P2p(_))) {
+        addr.pop();
+    }
+    addr
 }
 
 fn peer_id_from_addr(addr: &Multiaddr) -> Option<PeerId> {

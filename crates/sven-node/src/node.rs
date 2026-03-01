@@ -194,12 +194,19 @@ pub async fn run(
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid P2P listen address: {e}"))?;
 
+    // The control node is for human operator devices that connect via an
+    // explicit sven:// URI — they are never discovered via mDNS.  Enabling
+    // mDNS here causes the control node and the agent-to-agent P2pNode (both
+    // running in the same process) to cross-discover each other.  The agent
+    // P2pNode then tries to send a task-protocol Announce to the control node,
+    // which fails with "none of the requested protocols", flooding the log and
+    // triggering an infinite retry loop.
     let p2p_control_node = P2pControlNode::new(
         listen_addr,
         config.p2p.keypair_path.as_ref(),
         allowlist,
         agent_handle.clone(),
-        config.p2p.mdns,
+        false, // mDNS disabled — operator devices pair explicitly via sven:// URI
     )
     .await?;
 
