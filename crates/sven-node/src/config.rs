@@ -123,10 +123,27 @@ impl Default for HttpConfig {
 /// libp2p P2P listener configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2pGatewayConfig {
-    /// libp2p listen address for operator connections.
+    /// libp2p listen address for the **operator control channel**.
+    ///
+    /// This is the port used by mobile/native operator clients that pair via
+    /// `sven node authorize`.  It does **not** handle agent-to-agent traffic.
+    ///
     /// Default: `/ip4/0.0.0.0/tcp/0` (OS-assigned port).
+    /// Recommended for cross-machine use: set a fixed port and open it in your
+    /// firewall, e.g. `/ip4/0.0.0.0/tcp/4009`.
     #[serde(default = "default_p2p_listen")]
     pub listen: String,
+
+    /// libp2p listen address for the **agent-to-agent mesh**.
+    ///
+    /// This is the port other sven agents dial when they connect to this node
+    /// for task delegation.  It is separate from the operator control port.
+    ///
+    /// Default: `/ip4/0.0.0.0/tcp/0` (OS-assigned random port).
+    /// **Must be set to a fixed port and opened in your firewall** when nodes
+    /// run on different machines, e.g. `/ip4/0.0.0.0/tcp/4010`.
+    #[serde(default = "default_agent_listen")]
+    pub agent_listen: String,
 
     /// Path for persisting the gateway's Ed25519 keypair. When absent a new
     /// keypair is generated each run (ephemeral identity — mobile operators
@@ -203,6 +220,10 @@ fn default_p2p_listen() -> String {
     "/ip4/0.0.0.0/tcp/0".to_string()
 }
 
+fn default_agent_listen() -> String {
+    "/ip4/0.0.0.0/tcp/0".to_string()
+}
+
 fn default_rooms() -> Vec<String> {
     vec!["default".to_string()]
 }
@@ -211,6 +232,7 @@ impl Default for P2pGatewayConfig {
     fn default() -> Self {
         Self {
             listen: default_p2p_listen(),
+            agent_listen: default_agent_listen(),
             keypair_path: None,
             authorized_peers_file: None,
             mdns: true,

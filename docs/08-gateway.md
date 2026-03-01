@@ -257,7 +257,8 @@ http:
   token_file: "~/.config/sven/gateway/token.yaml"
 
 p2p:
-  listen: "/ip4/0.0.0.0/tcp/0"
+  listen: "/ip4/0.0.0.0/tcp/4009"       # operator control channel (pair with mobile/native clients)
+  agent_listen: "/ip4/0.0.0.0/tcp/4010" # agent mesh (node-to-node task delegation)
   keypair_path: "~/.config/sven/gateway/keypair"
   authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
   mdns: true
@@ -304,7 +305,8 @@ slack:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `listen` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address (OS picks the port) |
+| `listen` | `/ip4/0.0.0.0/tcp/0` | Operator control channel port (for mobile/native clients) |
+| `agent_listen` | `/ip4/0.0.0.0/tcp/0` | Agent mesh port (for node-to-node task delegation) — **must be a fixed port and opened in your firewall for cross-machine use** |
 | `keypair_path` | — (ephemeral) | Persist the operator keypair across restarts |
 | `authorized_peers_file` | `~/.config/sven/gateway/authorized_peers.yaml` | Operator allowlist |
 | `mdns` | `true` | mDNS for automatic LAN discovery |
@@ -415,6 +417,30 @@ The peer is not in the allowlist.  Authorize it with:
 ```sh
 sven node authorize "sven://..."
 ```
+
+### "Handshake failed: input error" between two nodes
+
+This is almost always a **firewall** issue.  Two separate ports are involved:
+
+| Port | Config key | Purpose |
+|------|-----------|---------|
+| `p2p.listen` (e.g. 4009) | Operator control | Mobile/native operator clients |
+| `p2p.agent_listen` (e.g. 4010) | Agent mesh | Node-to-node task delegation |
+
+Opening only the operator port (`p2p.listen`) is not enough — agents dial the
+**agent mesh port** (`p2p.agent_listen`) to delegate tasks.  Without a fixed
+`agent_listen` the OS assigns a random port on every restart, making firewall
+rules impossible.
+
+Recommended config for cross-machine deployments:
+
+```yaml
+p2p:
+  listen: "/ip4/0.0.0.0/tcp/4009"       # open this in your firewall
+  agent_listen: "/ip4/0.0.0.0/tcp/4010" # open this too
+```
+
+Open both ports on every machine running `sven node start`.
 
 ### Peers not appearing after `list_peers`
 

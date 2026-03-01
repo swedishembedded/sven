@@ -95,9 +95,11 @@ pub async fn run(
     );
 
     // ── Agent-to-agent P2P node ───────────────────────────────────────────────
-    let agent_p2p_listen: Multiaddr = "/ip4/0.0.0.0/tcp/0"
+    let agent_p2p_listen: Multiaddr = config
+        .p2p
+        .agent_listen
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid agent P2P listen address: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid p2p.agent_listen address: {e}"))?;
 
     let agent_keypair_path = config
         .p2p
