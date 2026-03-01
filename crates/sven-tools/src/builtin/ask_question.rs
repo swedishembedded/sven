@@ -33,17 +33,32 @@ pub struct QuestionRequest {
 pub struct AskQuestionTool {
     /// When set, routes questions to the TUI instead of reading from stdin.
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    /// Force headless mode regardless of TTY detection. Used in tests and CI.
+    force_headless: bool,
 }
 
 impl AskQuestionTool {
     pub fn new() -> Self {
-        Self { question_tx: None }
+        Self {
+            question_tx: None,
+            force_headless: false,
+        }
     }
 
     /// Create a TUI-aware instance that sends questions via `tx`.
     pub fn new_tui(tx: mpsc::Sender<QuestionRequest>) -> Self {
         Self {
             question_tx: Some(tx),
+            force_headless: false,
+        }
+    }
+
+    /// Create an instance that always behaves as headless (non-interactive).
+    /// Use in tests and CI environments where stdin must not be read.
+    pub fn new_headless() -> Self {
+        Self {
+            question_tx: None,
+            force_headless: true,
         }
     }
 }
@@ -197,7 +212,7 @@ impl Tool for AskQuestionTool {
         }
 
         // ── Plain terminal / headless mode ────────────────────────────────────
-        if !stdin_is_tty() {
+        if self.force_headless || !stdin_is_tty() {
             let question_list = questions
                 .iter()
                 .enumerate()
@@ -393,16 +408,16 @@ mod tests {
         assert!(out.content.contains("at most 3"));
     }
 
-    /// In CI / test environments stdin is never a real TTY, so the tool must
-    /// return a descriptive error rather than blocking forever on empty stdin.
+    /// In headless/CI mode the tool must return a descriptive error rather than
+    /// blocking forever waiting for interactive input.
     #[tokio::test]
     async fn headless_mode_returns_error_with_question_list() {
         use crate::tool::ToolCall;
         use serde_json::json;
 
-        // Tests always run with stdin as a pipe (not a TTY), so we don't need
-        // to mock anything — stdin_is_tty() will return false naturally.
-        let t = AskQuestionTool::new();
+        // Use new_headless() so the test is deterministic regardless of whether
+        // the test runner inherits a TTY from the calling terminal.
+        let t = AskQuestionTool::new_headless();
         let call = ToolCall {
             id: "1".into(),
             name: "ask_question".into(),

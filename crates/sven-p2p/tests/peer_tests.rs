@@ -15,7 +15,6 @@ use tokio::time::timeout;
 
 use sven_p2p::{
     discovery::{memory::InMemoryDiscovery, DiscoveryProvider},
-    node::P2pEvent,
     protocol::types::AgentCard,
 };
 
