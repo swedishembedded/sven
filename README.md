@@ -82,7 +82,7 @@ gdb_start_server → gdb_connect → gdb_command (×N) → gdb_stop
 
 | Tool | What it does |
 |------|-------------|
-| `gdb_start_server` | Start JLinkGDBServer / OpenOCD (auto-discovers config from project files) |
+| `gdb_start_server` | Start JLinkGDBServer / OpenOCD / pyocd (auto-discovers config from project files) |
 | `gdb_connect` | Connect `gdb-multiarch --interpreter=mi3` and optionally load an ELF |
 | `gdb_command` | Run any GDB/MI command and return structured output |
 | `gdb_interrupt` | Send Ctrl+C to a running target |
@@ -158,13 +158,13 @@ sven --file audit.md --var context="Focus on authentication."
 | `sven validate --file` dry-run | ✓ | — | — | — |
 | Per-step artifacts directory | ✓ | — | — | — |
 | `conversation` / `json` / `compact` / `jsonl` output | ✓ | `json` only | `stream-json` | `json` |
-| Auto-detect CI environment | ✓ GA/GL/Jenkins | — | — | — |
+| Auto-detect CI environment | ✓ GHA/GL/CircleCI/Travis/Jenkins/Azure/Bitbucket | — | — | — |
 | Git context injection (branch/commit/dirty) | ✓ | ✓ | partial | — |
-| Auto-load `AGENTS.md` / `.sven/context.md` | ✓ | ✓ | `CLAUDE.md` | `AGENTS.md` |
+| Auto-load `AGENTS.md` / `.sven/context.md` / `CLAUDE.md` | ✓ all three | ✓ `AGENTS.md` | ✓ `CLAUDE.md` | ✓ `AGENTS.md` |
 | **Native GDB hardware debugging** | ✓ first-class | — | — | — |
 | **Agent-to-agent P2P task routing** | ✓ built-in | — | — | — |
 | **Skills system** | ✓ built-in | — | — | — |
-| Zero runtime dependencies | ✓ native Rust | Node.js | Node.js | Node.js |
+| Zero runtime dependencies | ✓ native Rust | ✓ native Rust | Node.js | Node.js |
 | TUI + headless + node in one binary | ✓ | separate | separate | separate |
 
 ### Tool suite
@@ -228,7 +228,7 @@ sven --file workflow.md --output-jsonl trace.jsonl
 
 ## Model Providers
 
-Sven supports **35+ model providers** natively in Rust — no external gateway
+Sven supports **32 model providers** natively in Rust — no external gateway
 required.
 
 | Category | Providers |
@@ -243,7 +243,7 @@ required.
 
 ```sh
 sven list-providers --verbose
-sven -M anthropic/claude-opus-4-5 "Refactor this code"
+sven -M anthropic/claude-opus-4-6 "Refactor this code"
 sven -M groq/llama-3.3-70b-versatile "Explain the algorithm"
 sven -M ollama/llama3.2 "Quick local question"
 ```
@@ -381,7 +381,7 @@ sven/
 ├── src/                    # binary entry-point and CLI
 └── crates/
     ├── sven-config/        # config schema and loader
-    ├── sven-model/         # ModelProvider trait + 35+ drivers
+    ├── sven-model/         # ModelProvider trait + 32 drivers
     ├── sven-core/          # agent loop, session, context compaction
     ├── sven-tools/         # full tool suite + approval policy
     ├── sven-input/         # markdown step parser and message queue
