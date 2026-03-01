@@ -11,7 +11,7 @@ use std::{
 use futures::{future, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade, ConnectedPoint},
-    dcutr, identify,
+    dcutr, identify, mdns,
     multiaddr::Protocol,
     noise, relay, request_response,
     swarm::{dial_opts::DialOpts, ConnectionId, DialError, Swarm, SwarmEvent},
@@ -439,6 +439,14 @@ impl NodeState {
                 on_dcutr_event(event);
             }
 
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
+                self.on_mdns_discovered(swarm, peers);
+            }
+
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
+                self.on_mdns_expired(peers);
+            }
+
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 self.on_outgoing_error(peer_id, error);
             }
@@ -724,12 +732,45 @@ impl NodeState {
             }
         }
     }
+    // ── mDNS (LAN discovery) ─────────────────────────────────────────────────
+
+    /// Called when mDNS announces a new peer on the local network.
+    ///
+    /// We register the address in the swarm's address book and dial the peer
+    /// directly — no relay needed for same-LAN peers.
+    fn on_mdns_discovered(
+        &mut self,
+        swarm: &mut NodeSwarm,
+        peers: Vec<(PeerId, libp2p::Multiaddr)>,
+    ) {
+        for (peer_id, addr) in peers {
+            if peer_id == self.local_peer_id {
+                continue;
+            }
+            swarm.add_peer_address(peer_id, addr.clone());
+            tracing::info!("mDNS: discovered local peer {peer_id} at {addr}");
+            if !self.rejected.contains(&peer_id) && self.dialed.insert(peer_id) {
+                if let Err(e) = swarm.dial(peer_id) {
+                    tracing::warn!("mDNS: dial {peer_id} failed: {e}");
+                    self.dialed.remove(&peer_id);
+                }
+            }
+        }
+    }
+
+    fn on_mdns_expired(&mut self, peers: Vec<(PeerId, libp2p::Multiaddr)>) {
+        for (peer_id, _) in peers {
+            tracing::debug!("mDNS: {peer_id} expired from local network");
+        }
+    }
+
     // ── Periodic discovery polls ─────────────────────────────────────────────
 
     async fn on_poll_tick(&mut self, swarm: &mut NodeSwarm) {
-        if !self.published_relays.is_empty() {
-            self.fetch_and_dial_peers(swarm).await;
-        }
+        // Always poll the discovery backend — relay is not required for the
+        // git/memory backend (two peers behind the same relay or on a LAN
+        // can share addresses without either having published a circuit).
+        self.fetch_and_dial_peers(swarm).await;
     }
 
     /// Runs every `RELAY_POLL_SECS` seconds.
@@ -863,14 +904,26 @@ impl NodeState {
         if self.rejected.contains(&info.peer_id) {
             return;
         }
-        // Only dial peers whose published relay is one we are connected to.
-        if peer_id_from_addr(&info.relay_addr).is_none_or(|r| !self.relay_peers.contains(&r)) {
-            return;
+
+        // For relay circuit addresses, only dial when we're connected to that
+        // relay. For direct TCP addresses (no /p2p-circuit component), dial
+        // unconditionally — the remote is reachable without a relay.
+        if is_circuit_addr(&info.relay_addr) {
+            if peer_id_from_addr(&info.relay_addr).is_none_or(|r| !self.relay_peers.contains(&r)) {
+                return;
+            }
         }
+
         if self.dialed.insert(info.peer_id) {
-            tracing::info!("Dialing {} via relay", info.peer_id);
+            let via = if is_circuit_addr(&info.relay_addr) {
+                "relay"
+            } else {
+                "direct"
+            };
+            tracing::info!("Dialing {} ({})", info.peer_id, via);
             if let Err(e) = swarm.dial(info.relay_addr) {
                 tracing::warn!("dial failed: {e}");
+                self.dialed.remove(&info.peer_id);
             }
         }
     }
@@ -1013,6 +1066,12 @@ async fn fetch_and_dial_relays(
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
+
+/// Returns `true` when `addr` contains a `/p2p-circuit` component, meaning it
+/// routes through a relay server rather than connecting directly to the target.
+fn is_circuit_addr(addr: &Multiaddr) -> bool {
+    addr.iter().any(|p| matches!(p, Protocol::P2pCircuit))
+}
 
 fn peer_id_from_addr(addr: &Multiaddr) -> Option<PeerId> {
     addr.iter().find_map(|p| match p {

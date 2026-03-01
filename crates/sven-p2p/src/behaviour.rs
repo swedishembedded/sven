@@ -4,8 +4,8 @@
 //! `RelayBehaviour` — used by the relay server.
 
 use libp2p::{
-    autonat, dcutr, identify, identity, ping, relay, request_response, swarm::NetworkBehaviour,
-    PeerId,
+    autonat, dcutr, identify, identity, mdns, ping, relay, request_response,
+    swarm::NetworkBehaviour, PeerId,
 };
 use rand::rngs::OsRng;
 use std::time::Duration;
@@ -24,6 +24,7 @@ const APP_PROTO: &str = "/sven-p2p/1.0.0";
 /// - `identify`      — to exchange multiaddr and protocol lists with peers
 /// - `autonat`       — to probe NAT type
 /// - `ping`          — to keep idle connections alive
+/// - `mdns`          — zero-config LAN peer discovery (multicast DNS)
 /// - `task`          — CBOR request/response for `AgentCard` announcements and task exchange
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "P2pBehaviourEvent")]
@@ -33,6 +34,7 @@ pub struct P2pBehaviour {
     pub identify: identify::Behaviour,
     pub autonat: autonat::v2::client::Behaviour<OsRng>,
     pub ping: ping::Behaviour,
+    pub mdns: mdns::tokio::Behaviour,
     pub task: request_response::Behaviour<P2pCodec>,
 }
 
@@ -45,6 +47,7 @@ pub enum P2pBehaviourEvent {
     Identify(identify::Event),
     Autonat(autonat::v2::client::Event),
     Ping(ping::Event),
+    Mdns(mdns::Event),
     Task(
         request_response::Event<
             crate::protocol::types::P2pRequest,
@@ -78,6 +81,11 @@ impl From<ping::Event> for P2pBehaviourEvent {
         P2pBehaviourEvent::Ping(e)
     }
 }
+impl From<mdns::Event> for P2pBehaviourEvent {
+    fn from(e: mdns::Event) -> Self {
+        P2pBehaviourEvent::Mdns(e)
+    }
+}
 impl
     From<
         request_response::Event<
@@ -99,6 +107,8 @@ impl
 impl P2pBehaviour {
     pub fn new(key: &identity::Keypair, relay_client: relay::client::Behaviour) -> Self {
         let local_peer_id = PeerId::from(key.public());
+        let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)
+            .expect("mDNS init failed");
         Self {
             relay_client,
             dcutr: dcutr::Behaviour::new(local_peer_id),
@@ -108,6 +118,7 @@ impl P2pBehaviour {
             )),
             autonat: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
             ping: ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(15))),
+            mdns,
             task: request_response::Behaviour::with_codec(
                 P2pCodec,
                 [(TASK_PROTO, request_response::ProtocolSupport::Full)],
