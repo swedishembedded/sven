@@ -42,7 +42,7 @@ impl Tool for GlobTool {
                     "description": "Maximum number of results (default 200)"
                 }
             },
-            "required": ["pattern"],
+            "required": ["pattern", "root", "max_results"],
             "additionalProperties": false
         })
     }

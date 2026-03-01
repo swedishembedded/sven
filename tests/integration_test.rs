@@ -123,7 +123,7 @@ async fn shell_tool_executes_echo() {
     let call = ToolCall {
         id: "1".into(),
         name: "shell".into(),
-        args: serde_json::json!({ "command": "echo hello_world" }),
+        args: serde_json::json!({ "shell_command": "echo hello_world" }),
     };
     let output = tool.execute(&call).await;
     assert!(!output.is_error);

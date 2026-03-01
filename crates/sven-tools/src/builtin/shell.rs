@@ -73,7 +73,7 @@ impl Tool for ShellTool {
                     "description": "Execution timeout in seconds (optional)"
                 }
             },
-            "required": ["shell_command"],
+            "required": ["shell_command", "workdir", "timeout_secs"],
             "additionalProperties": false
         })
     }
@@ -261,7 +261,7 @@ mod tests {
     async fn executes_echo_and_returns_stdout() {
         let t = ShellTool::default();
         let out = t
-            .execute(&call("1", json!({"command": "echo hello"})))
+            .execute(&call("1", json!({"shell_command": "echo hello"})))
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("hello"));
@@ -274,7 +274,7 @@ mod tests {
             .execute(&call(
                 "1",
                 json!({
-                    "command": "echo out && echo err >&2"
+                    "shell_command": "echo out && echo err >&2"
                 }),
             ))
             .await;
@@ -289,7 +289,7 @@ mod tests {
             .execute(&call(
                 "1",
                 json!({
-                    "command": "pwd",
+                    "shell_command": "pwd",
                     "workdir": "/tmp"
                 }),
             ))
@@ -326,7 +326,7 @@ mod tests {
         let t = ShellTool::default();
         let out = t.execute(&call("1", json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'command'"));
+        assert!(out.content.contains("shell_command"));
     }
 
     #[tokio::test]
@@ -336,7 +336,7 @@ mod tests {
             .execute(&call(
                 "1",
                 json!({
-                    "command": "sleep 60",
+                    "shell_command": "sleep 60",
                     "timeout_secs": 1
                 }),
             ))

@@ -42,7 +42,7 @@ impl Tool for WebSearchTool {
                     "description": "Number of results to return (default 5, max 10)"
                 }
             },
-            "required": ["query"],
+            "required": ["query", "count"],
             "additionalProperties": false
         })
     }

@@ -52,7 +52,7 @@ impl Tool for SearchCodebaseTool {
                     "description": "Maximum number of matches to return (default 100)"
                 }
             },
-            "required": ["query"],
+            "required": ["query", "path", "include", "case_sensitive", "limit"],
             "additionalProperties": false
         })
     }

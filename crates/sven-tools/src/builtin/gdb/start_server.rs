@@ -119,6 +119,7 @@ impl Tool for GdbStartServerTool {
                         server running. Default: false."
                 }
             },
+            "required": ["command", "force"],
             "additionalProperties": false
         })
     }

@@ -63,7 +63,7 @@ impl Tool for GrepTool {
                     "description": "Lines of context before and after each match (default 0)"
                 }
             },
-            "required": ["pattern"],
+            "required": ["pattern", "path", "include", "case_sensitive", "limit", "output_mode", "context_lines"],
             "additionalProperties": false
         })
     }

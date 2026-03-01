@@ -60,7 +60,7 @@ impl Tool for GdbCommandTool {
                         Default: the configured command_timeout_secs (typically 10s)."
                 }
             },
-            "required": ["command"],
+            "required": ["command", "timeout_secs"],
             "additionalProperties": false
         })
     }

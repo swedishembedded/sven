@@ -72,7 +72,7 @@ impl Tool for RunTerminalCommandTool {
                     "description": "Execution timeout in seconds (optional)"
                 }
             },
-            "required": ["command"],
+            "required": ["command", "workdir", "timeout_secs"],
             "additionalProperties": false
         })
     }

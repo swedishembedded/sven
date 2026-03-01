@@ -1134,12 +1134,7 @@ impl Agent {
             .system_prompt_override
             .as_deref()
             .or(self.config.system_prompt.as_deref());
-        Message::system(system_prompt(
-            mode,
-            custom,
-            &self.tools.names_for_mode(mode),
-            stable_ctx,
-        ))
+        Message::system(system_prompt(mode, custom, stable_ctx))
     }
 
     /// Build a `PromptContext` from the current runtime environment.

@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
+use chrono::Local;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -97,45 +98,35 @@ impl<'a> PromptContext<'a> {
 
 mod guidelines {
     pub fn general() -> &'static str {
-        "- Be concise and precise. Use tools instead of guessing — always verify tool outputs.\n\
-         - When a task is ambiguous or you need information to proceed, use the `ask_question` \
-           tool to collect structured answers from the user rather than making assumptions or \
-           writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
-           prefer it over free-form text questions whenever the user is interactive.\n\
+        "- Be concise and precise. Use tools instead of guessing.\n\
          - Check `update_memory` (list) at session start for stored project context."
     }
 
     pub fn tool_usage() -> &'static str {
         "- NEVER use `run_terminal_command` for file I/O — use `read_file`/`write`/`edit_file`/`grep`/`glob`.\n\
          - Prefer `edit_file` over `write` for modifying existing files (preserves surrounding context).\n\
-         - Discovery workflow: `glob` to find files → `grep` with output_mode='files_with_matches' to narrow → `read_file` for full context.\n\
+         - Discovery workflow: `glob` to find files → `grep` to narrow → `read_file` with specific ranges for context.\n\
          - Use `grep` output_mode='content' + context_lines for code-level inspection; use `search_codebase` for broad whole-repo sweeps.\n\
-         - Use `edit_file` with replace_all=true to rename a symbol throughout a single file.\n\
+         - Use shell one liners like sed and awk for replacements at scale. \n\
          - Batch `read_file` calls in parallel — read all potentially relevant files in one turn."
     }
 
     pub fn code_quality() -> &'static str {
-        "- Follow existing project conventions discovered via file analysis before writing any code.\n\
-         - NEVER create new files proactively unless explicitly requested.\n\
-         - Run `read_lints` (scoped to edited files) after every substantive code change.\n\
-         - Include tests when adding new functionality; preserve existing test coverage.\n\
-         - Preserve existing code structure and naming patterns."
+        "- Make sure all the code you generate is production quality and follows good separation of concerns and clean code principles.\n\
+         - NEVER create new files proactively unless explicitly requested. Do not create 'summary' md files unless requested.\n\
+         - Write tests when adding new functionality. \n\
+         - Preserve existing code structure and coding style patterns."
     }
 
     pub fn workflow_efficiency() -> &'static str {
-        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete immediately.\n\
+        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete after completing each step.\n\
          - Use `switch_mode` to transition between Research, Plan, and Agent modes proactively.\n\
          - Store project-specific conventions in `update_memory`; retrieve them at the start of new sessions.\n\
-         - Batch independent tool calls in parallel to reduce round-trips."
+         - Batch independent tool calls in parallel to increase efficiency."
     }
 
     pub fn error_handling() -> &'static str {
-        "- When a tool fails, read the error message carefully and adjust your approach.\n\
-         - `edit_file` tries exact → strip-prefixes → indent-normalized → fuzzy automatically.\n\
-         - `edit_file` 'not found': all strategies failed — check the 'Most similar sections' in\n\
-           the error to see the actual file content, then copy old_str from there.\n\
-           Re-read the file after each successful edit before making the next one.\n\
-         - `edit_file` 'N times': add more unique surrounding context, or use replace_all=true.\n\
+        "- When a tool fails, try a different approach.\n\
          - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
          - NEVER skip git hooks or force-push without explicit user permission."
     }
@@ -144,12 +135,7 @@ mod guidelines {
         "- When asked to debug, diagnose a crash, inspect runtime state, or step through code on a \
            target device: you MUST use the GDB tools (`gdb_start_server`, `gdb_connect`, \
            `gdb_command`, `gdb_interrupt`, `gdb_stop`). \
-           Do NOT substitute reading source code for actual runtime debugging — source reading \
-           answers 'what does the code say', GDB answers 'what is the program actually doing'.\n\
-         - Lifecycle: `gdb_start_server` (or skip if server already running) → `gdb_connect` → \
-           `gdb_command` (load / break / continue / step / info registers / backtrace) → `gdb_stop`.\n\
-         - If `gdb_start_server` reports a server is already running, call `gdb_connect` directly.\n\
-         - Use `gdb_wait_stopped` after `continue` or `step` commands before issuing the next command."
+           Do NOT substitute reading source code for actual runtime debugging - GDB is a better source of truth."
     }
 }
 
@@ -254,9 +240,8 @@ pub fn build_skills_section(skills: &[SkillInfo]) -> String {
         "## Skills\n\n\
          When you recognize that the current task matches one of the available skills listed \
          below, call the `load_skill` tool to load the full skill instructions before \
-         proceeding.  Match the skill `<description>` trigger phrases against the user's \
-         request.  Load at most one skill per task; do not load a skill unless it clearly \
-         applies.\
+         proceeding. Use the skill `<description>` to decide which skill is absolutely needed for the task.
+         Load at most one skill per task; do not load a skill unless it clearly applies.\
          {truncation_note}\n\n\
          <available_skills>\n{}\n</available_skills>",
         all_entries.join("\n")
@@ -362,57 +347,11 @@ fn build_guidelines_section() -> String {
     )
 }
 
-fn build_tool_examples_section() -> &'static str {
-    "## Tool Usage Examples\n\n\
-     Example 1: Locate and modify a function\n\
-     <example>\n\
-     1. grep: pattern=\"fn process_data\", output_mode=\"files_with_matches\" → Discover which files contain it\n\
-     2. read_file: path=\"/project/src/processor.rs\" → Read full file for context\n\
-     3. edit_file: old_str=\"<lines from the file — strip Ln: prefix if copied from read_file>\", new_str=\"...\" → Apply change\n\
-     Note: edit_file auto-corrects minor indent/prefix differences; on failure it shows 'Most similar sections'.\n\
-     4. read_lints: paths=[\"/project/src/processor.rs\"] → Verify no new errors\n\
-     </example>\n\n\
-     Example 2: Rename a symbol across a file\n\
-     <example>\n\
-     edit_file: path=\"src/lib.rs\", old_str=\"OldName\", new_str=\"NewName\", replace_all=true\n\
-     Then: read_lints to confirm no type errors introduced.\n\
-     </example>\n\n\
-     Example 3: Parallel exploration before making changes\n\
-     <example>\n\
-     In one turn, call in parallel:\n\
-     - read_file: path=\"/project/src/main.rs\"\n\
-     - read_file: path=\"/project/Cargo.toml\"\n\
-     - grep: pattern=\"TODO|FIXME\", output_mode=\"files_with_matches\"\n\
-     - update_memory: operation=\"list\"  (check stored project context)\n\
-     </example>\n\n\
-     Example 4: Deep code inspection with context\n\
-     <example>\n\
-     grep: pattern=\"unsafe\", include=\"*.rs\", output_mode=\"content\", context_lines=3\n\
-     → See 3 lines of surrounding code for each match to understand usage.\n\
-     </example>\n\n\
-     Example 5: Research → Plan → Implement workflow\n\
-     <example>\n\
-     1. switch_mode: mode=\"research\"\n\
-     2. search_codebase: query=\"authentication\" → Broad sweep of auth-related files\n\
-     3. grep: pattern=\"fn (login|authenticate)\", include=\"*.rs\", output_mode=\"files_with_matches\"\n\
-     4. read_file: (all relevant files in parallel)\n\
-     5. switch_mode: mode=\"plan\" → Design the approach\n\
-     6. switch_mode: mode=\"agent\" → Implement\n\
-     7. run_terminal_command: command=\"cargo test\" → Verify\n\
-     </example>"
-}
-
 /// Build the system prompt for the given agent mode.
 ///
-/// `tool_names` lists the tools available in this mode so the model knows
-/// exactly what it can use.  `ctx` carries optional project / CI / git
-/// context injected when running in headless mode.
-pub fn system_prompt(
-    mode: AgentMode,
-    custom: Option<&str>,
-    tool_names: &[String],
-    ctx: PromptContext<'_>,
-) -> String {
+/// `ctx` carries optional project / CI / git context injected when running
+/// in headless mode.
+pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'_>) -> String {
     if let Some(custom) = custom {
         // Even with a custom prompt, honour append if set.
         if let Some(extra) = ctx.append {
@@ -423,47 +362,46 @@ pub fn system_prompt(
 
     // Enhanced agent identity highlighting Sven's unique features
     let agent_identity = format!(
-        "You are Sven, a specialized AI coding agent built for professional software development.\n\n\
+        "You are Sven, a specialized AI coding agent built for professional software engineering.\n\n\
          Operating Mode: `{mode}`\n\n\
+         Current date and time: `{current_date_time}`\n\n\
+         Current working directory: `{current_working_directory}`\n\
          Core Capabilities:\n\
          - Multi-mode operation (Research, Plan, Agent) with dynamic mode switching\n\
          - Persistent memory across sessions via `update_memory` tool\n\
          - Integrated debugging support with GDB tools\n\
          - Markdown-driven workflows with frontmatter configuration\n\
          - Comprehensive linting and test integration\n\
-         - Full CI/CD pipeline integration and awareness"
-    );
+         - Full CI/CD pipeline integration and awareness",
+        current_date_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        current_working_directory = std::env::current_dir().unwrap().display().to_string());
 
     let mode_instructions = match mode {
         AgentMode::Research => {
             "You are a research assistant.  You may read files, search the codebase, and look up \
-             information.  You MUST NOT write, modify, or delete any files.  Focus on \
-             gathering and summarising information accurately."
+             information.  You MUST NOT write, modify, or delete any files. Research mode \
+             is non-destructive. Focus on gathering all the information needed in order to \
+             satisfy user's request."
         }
         AgentMode::Plan => {
             "You are a planning assistant.  Analyse the request and produce a clear, structured \
              plan with numbered steps.  You may read files to inform the plan, but MUST NOT \
-             modify them.  Output the plan in Markdown."
+             modify them.  Output the plan in Markdown. \
+             When a task is ambiguous or you need information to proceed, use the `ask_question` \
+             tool to collect structured answers from the user rather than making assumptions or \
+             writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
+             prefer it over free-form text questions whenever the user is interactive."
         }
         AgentMode::Agent => {
             "You are a capable coding agent.  You can read and write files, run shell commands, \
              and search the codebase.  Work systematically, verify your changes, and report \
-             your progress clearly."
+             your progress clearly.\n\
+             Keep in mind the following:
+             - Maximize parallel tool calls.\n\
+             - Always complete all todos before completing your turn.\n\
+             - Always complete the task requested by the user before completion your turn."
         }
     };
-
-    let tools_section = if tool_names.is_empty() {
-        String::new()
-    } else {
-        let list = tool_names
-            .iter()
-            .map(|n| format!("- `{n}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("\n\n## Available Tools\n{list}")
-    };
-
-    let tool_examples_section = format!("\n\n{}", build_tool_examples_section());
 
     let project_section = if let Some(root) = ctx.project_root {
         format!(
@@ -529,7 +467,7 @@ pub fn system_prompt(
 
     format!(
         "{agent_identity}\n\n\
-         {mode_instructions}{tools_section}{tool_examples_section}{project_section}{git_section}\
+         {mode_instructions}{project_section}{git_section}\
          {context_file_section}{skills_section}{agents_section}{ci_section}\n\n\
          {guidelines_section}\
          {append_section}",
@@ -544,9 +482,6 @@ mod tests {
     use std::path::PathBuf;
     use sven_config::AgentMode;
 
-    fn no_tools() -> Vec<String> {
-        vec![]
-    }
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
     }
@@ -556,12 +491,7 @@ mod tests {
 
     #[test]
     fn custom_prompt_is_returned_verbatim() {
-        let prompt = system_prompt(
-            AgentMode::Agent,
-            Some("Custom instructions here."),
-            &no_tools(),
-            empty(),
-        );
+        let prompt = system_prompt(AgentMode::Agent, Some("Custom instructions here."), empty());
         assert_eq!(prompt, "Custom instructions here.");
     }
 
@@ -571,14 +501,14 @@ mod tests {
             append: Some("Extra rule."),
             ..Default::default()
         };
-        let prompt = system_prompt(AgentMode::Agent, Some("Base."), &no_tools(), ctx);
+        let prompt = system_prompt(AgentMode::Agent, Some("Base."), ctx);
         assert!(prompt.contains("Base."));
         assert!(prompt.contains("Extra rule."));
     }
 
     #[test]
     fn research_mode_mentions_read_only() {
-        let pr = system_prompt(AgentMode::Research, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Research, None, empty());
         assert!(
             pr.contains("read-only") || pr.contains("MUST NOT write"),
             "Research mode should forbid writes"
@@ -587,7 +517,7 @@ mod tests {
 
     #[test]
     fn plan_mode_mentions_structured_plan() {
-        let pr = system_prompt(AgentMode::Plan, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Plan, None, empty());
         assert!(
             pr.to_lowercase().contains("plan"),
             "Plan mode prompt should mention 'plan'"
@@ -596,7 +526,7 @@ mod tests {
 
     #[test]
     fn agent_mode_mentions_write_capability() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("write files") || pr.contains("read and write"),
             "Agent mode should mention write capability"
@@ -606,7 +536,7 @@ mod tests {
     #[test]
     fn all_modes_name_sven() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, &no_tools(), empty());
+            let pr = system_prompt(mode, None, empty());
             assert!(
                 pr.contains("Sven"),
                 "prompt should identify the agent as Sven"
@@ -621,7 +551,7 @@ mod tests {
             (AgentMode::Plan, "plan"),
             (AgentMode::Agent, "agent"),
         ] {
-            let pr = system_prompt(mode, None, &no_tools(), empty());
+            let pr = system_prompt(mode, None, empty());
             assert!(
                 pr.contains(expected),
                 "prompt for {mode} should contain the mode name"
@@ -632,7 +562,7 @@ mod tests {
     #[test]
     fn all_modes_include_guidelines_section() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, &no_tools(), empty());
+            let pr = system_prompt(mode, None, empty());
             assert!(
                 pr.contains("Guidelines"),
                 "prompt should contain a Guidelines section"
@@ -642,7 +572,7 @@ mod tests {
 
     #[test]
     fn guidelines_include_debugging_section_with_gdb() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("Debugging"),
             "prompt should contain a Debugging section"
@@ -664,20 +594,12 @@ mod tests {
     #[test]
     fn debugging_guideline_present_in_all_modes() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, &no_tools(), empty());
+            let pr = system_prompt(mode, None, empty());
             assert!(
                 pr.contains("gdb_connect"),
                 "mode {mode} prompt should mention gdb_connect in debugging guideline"
             );
         }
-    }
-
-    #[test]
-    fn tools_list_appears_in_prompt() {
-        let tools = vec!["read_file".to_string(), "grep".to_string()];
-        let pr = system_prompt(AgentMode::Research, None, &tools, empty());
-        assert!(pr.contains("`read_file`"));
-        assert!(pr.contains("`grep`"));
     }
 
     #[test]
@@ -687,7 +609,7 @@ mod tests {
             project_root: Some(&root),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(
             pr.contains("/home/user/my-project"),
             "project root should appear in prompt"
@@ -700,7 +622,7 @@ mod tests {
 
     #[test]
     fn no_project_root_no_section() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(!pr.contains("Project Context"));
     }
 
@@ -711,7 +633,7 @@ mod tests {
             ci_context: Some(ci),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(pr.contains("GitHub Actions"));
         assert!(pr.contains("Branch: main"));
     }
@@ -723,7 +645,7 @@ mod tests {
             git_context: Some(git),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(pr.contains("Git Context"));
         assert!(pr.contains("abc1234"));
     }
@@ -735,7 +657,7 @@ mod tests {
             project_context_file: Some(file_content),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(pr.contains("Project Instructions"));
         assert!(pr.contains("Always write tests"));
     }
@@ -746,7 +668,7 @@ mod tests {
             append: Some("Custom rule: never delete files."),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         let guidelines_pos = pr.find("Guidelines").unwrap();
         let append_pos = pr.find("Custom rule").unwrap();
         assert!(
@@ -757,7 +679,7 @@ mod tests {
 
     #[test]
     fn enhanced_agent_identity_mentions_core_capabilities() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("specialized AI coding agent"),
             "identity should emphasize specialization"
@@ -779,7 +701,7 @@ mod tests {
 
     #[test]
     fn guidelines_section_has_multiple_categories() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("### General Principles"),
             "guidelines should have General Principles"
@@ -804,7 +726,7 @@ mod tests {
 
     #[test]
     fn guidelines_section_contains_minimum_items() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         // Count bullet points in guidelines section. Guidelines are rendered with
         // Rust \n\ line continuations so each bullet starts with "\n- " (no indent).
         let guidelines_section = pr.split("## Guidelines").nth(1).unwrap();
@@ -818,7 +740,7 @@ mod tests {
 
     #[test]
     fn guidelines_mention_critical_tools() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("`run_terminal_command`"),
             "guidelines should mention run_terminal_command"
@@ -836,24 +758,8 @@ mod tests {
     }
 
     #[test]
-    fn prompt_contains_tool_usage_examples() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
-        assert!(
-            pr.contains("## Tool Usage Examples"),
-            "should have Tool Usage Examples section"
-        );
-        assert!(
-            pr.contains("<example>"),
-            "examples should use <example> tags"
-        );
-        assert!(pr.contains("Example 1:"), "should have multiple examples");
-        assert!(pr.contains("Example 2:"), "should have multiple examples");
-        assert!(pr.contains("Example 3:"), "should have multiple examples");
-    }
-
-    #[test]
     fn guidelines_include_git_safety_warning() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("NEVER") || pr.contains("never skip"),
             "guidelines should include safety warnings"
@@ -862,7 +768,7 @@ mod tests {
 
     #[test]
     fn guidelines_mention_parallel_operations() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("parallel"),
             "guidelines should mention parallel tool usage"
@@ -871,7 +777,7 @@ mod tests {
 
     #[test]
     fn guidelines_mention_mode_switching() {
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), empty());
+        let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
             pr.contains("switch_mode"),
             "guidelines should mention mode switching"
@@ -885,7 +791,7 @@ mod tests {
     #[test]
     fn all_modes_have_enhanced_identity() {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, &no_tools(), empty());
+            let pr = system_prompt(mode, None, empty());
             assert!(
                 pr.contains("specialized AI coding agent"),
                 "all modes should use enhanced identity"
@@ -924,7 +830,7 @@ mod tests {
             skills: Arc::from(skills.into_boxed_slice()),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(
             pr.contains("## Skills"),
             "prompt should include Skills section"
@@ -953,7 +859,7 @@ mod tests {
             skills: Arc::from(Vec::<SkillInfo>::new()),
             ..Default::default()
         };
-        let pr = system_prompt(AgentMode::Agent, None, &no_tools(), ctx);
+        let pr = system_prompt(AgentMode::Agent, None, ctx);
         assert!(
             !pr.contains("## Skills"),
             "prompt should not include Skills section when empty"

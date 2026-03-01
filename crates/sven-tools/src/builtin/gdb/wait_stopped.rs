@@ -61,6 +61,7 @@ impl Tool for GdbWaitStoppedTool {
                         Increase for long-running tests or slow targets."
                 }
             },
+            "required": ["timeout_secs"],
             "additionalProperties": false
         })
     }

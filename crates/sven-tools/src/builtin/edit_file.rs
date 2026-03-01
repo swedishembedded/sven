@@ -234,7 +234,7 @@ impl Tool for EditFileTool {
                     "description": "Replace all occurrences instead of requiring uniqueness (default false)"
                 }
             },
-            "required": ["path", "old_str", "new_str"],
+            "required": ["path", "old_str", "new_str", "replace_all"],
             "additionalProperties": false
         })
     }

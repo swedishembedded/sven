@@ -69,6 +69,7 @@ impl Tool for GdbConnectTool {
                         (default from config, typically 'gdb-multiarch')."
                 }
             },
+            "required": ["host", "port", "executable", "gdb_path"],
             "additionalProperties": false
         })
     }

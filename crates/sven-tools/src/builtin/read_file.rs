@@ -27,15 +27,15 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Reads a file. Default: 200 lines / 20 KB — whichever comes first.\n\
-         Binary files (detected by extension or content) are rendered as Intel HEX;\n\
-         limit/offset apply to HEX line numbers (each line = 16 bytes).\n\
+        "Read a file. If offset is not provided then first 200 lines are returned.\n\
+         Binary files are returned as Intel HEX;\n\
+         For binary files limit/offset apply to HEX line numbers (each line = 16 bytes).\n\
          Images (png/jpg/gif/webp/bmp/tiff) → returned as base64 data URL.\n\
-         Lines formatted as L{n}:content (1-indexed). For edit_file old_str strip the L{n}: prefix.\n\
-         When more lines exist, a pagination notice shows the next offset.\n\
-         Strategy: use grep to find the relevant region first, then read only those lines\n\
-         with offset+limit. Avoid reading a whole large file — pull only what you need.\n\
-         Batch multiple reads in parallel when exploring related files."
+         Returned lines are formatted as L{n}:content (1-indexed). For edit_file old_str strip the L{n}: prefix.\n\
+         When more lines exist, a pagination notice shows the next offset. \n\
+         You must provide 'offset' to read more than initial 200 lines. \n\
+         Strategy: use grep to find the relevant region first, then read only those lines by passing offset and limit.\n\
+         Avoid reading a whole large file - read only what you need."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -44,19 +44,19 @@ impl Tool for ReadFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file"
+                    "description": "Path to the file to read"
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "1-indexed line number to start reading from (default 1)"
+                    "description": "1-indexed line number to start reading from"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of lines to return (default 200)"
+                    "description": "Maximum number of lines to return"
                 }
             },
-            "required": ["path"],
-            "additionalProperties": false
+            "required": ["path", "offset", "limit"],
+            "additionalProperties": true
         })
     }
 

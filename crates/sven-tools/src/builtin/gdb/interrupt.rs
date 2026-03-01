@@ -64,6 +64,7 @@ impl Tool for GdbInterruptTool {
                     "description": "Seconds to wait for the target to halt after interrupt (default: 5)"
                 }
             },
+            "required": ["timeout_secs"],
             "additionalProperties": false
         })
     }
