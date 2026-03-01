@@ -8,6 +8,11 @@ Sven runs without a TUI whenever it detects a non-interactive context:
 | `--file` flag | `sven --file workflow.md` |
 | Piped stdin | `echo "analyse the codebase" \| sven` |
 
+> **`--headless` is required** when running sven from a terminal prompt without
+> piping stdin.  Without it, sven opens the interactive TUI instead of writing
+> to stdout.  When stdin is already a pipe (e.g. in a CI script or shell
+> pipeline), headless mode is detected automatically and the flag is optional.
+
 ---
 
 ## Quick Start
@@ -68,12 +73,24 @@ stdout pipeline stays clean.
 | Value | Description |
 |-------|-------------|
 | `conversation` (default) | Full `## User` / `## Sven` / `## Tool` markdown |
-| `compact` | Plain text responses only (legacy behaviour) |
+| `compact` | Plain text responses only — no headings, no markup |
 | `json` | Structured JSON with step metadata |
+
+Use `--output-format compact` whenever the caller only needs the agent's answer
+text and nothing else — for example when the response is a shell command to be
+executed, a value to be parsed, or input for another tool.
 
 ```bash
 # JSON output – useful for CI dashboards
 sven --file workflow.md --output-format json | jq '.steps[].success'
+
+# Compact output — only the agent's response, no markdown formatting
+sven --headless --output-format compact "List the top 5 TODO files" 2>/dev/null
+
+# Generate a shell command and execute it directly
+sven --headless --output-format compact \
+     "Write a one-liner that prints CPU usage. Reply with the command only." \
+     2>/dev/null | sh
 ```
 
 ---

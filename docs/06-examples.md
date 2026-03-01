@@ -330,7 +330,45 @@ sven --file firmware-debug.md --conversation
 
 ---
 
-## Example 12 — Export conversation traces for fine-tuning
+## Example 12 — Generate and execute shell commands
+
+Use `--headless` and `--output-format compact` together to get a response that
+contains nothing but the agent's plain-text reply.  This makes it possible to
+ask sven to produce a shell command and pipe it directly into execution.
+
+`--headless` is **required** when invoking sven from a terminal prompt without
+piping stdin — otherwise sven opens the TUI.  `--output-format compact` strips
+all conversation formatting so only the answer text reaches stdout.  Redirect
+stderr to `/dev/null` to silence diagnostic progress lines.
+
+```sh
+# Ask for a CPU-usage one-liner and run it immediately
+sven --headless --output-format compact \
+     "Generate a shell one-liner for getting system CPU usage. Reply ONLY with the shell command and nothing else." \
+     2>/dev/null | sh
+
+# Capture the command first, inspect it, then run it
+CMD=$(sven --headless --output-format compact \
+      "Generate a shell one-liner for disk usage sorted by size. Reply with the command only." \
+      2>/dev/null)
+echo "Will run: $CMD"
+eval "$CMD"
+
+# Chain with other tools — ask sven to transform command output
+sven --headless --output-format compact \
+     "Write a one-liner that lists the 10 largest files under /var/log. Reply with the command only." \
+     2>/dev/null \
+  | bash \
+  | sven --headless --output-format compact \
+         "Summarise this disk usage report in one sentence."
+```
+
+> **Safety note:** Always review generated commands before executing them,
+> especially outside of controlled environments.
+
+---
+
+## Example 13 — Export conversation traces for fine-tuning
 
 When building fine-tuning datasets from real agent interactions, use
 `--jsonl-output` to capture the complete conversation including system prompts:

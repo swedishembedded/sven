@@ -183,13 +183,20 @@ agent:
 
 ### sven opens the TUI instead of running headlessly
 
-Headless mode requires that standard input is not a TTY. Make sure you are
-piping input in:
+Headless mode is enabled automatically when stdin is a pipe.  When invoking
+sven directly from a terminal prompt you **must** pass `--headless` explicitly:
 
 ```sh
-echo "my task" | sven          # headless
-sven "my task"                  # opens TUI (stdin is a TTY)
-sven --headless "my task"       # headless (explicit flag)
+echo "my task" | sven           # headless — auto-detected from pipe
+sven "my task"                   # opens TUI (stdin is a TTY, no --headless)
+sven --headless "my task"        # headless — explicit flag required here
+```
+
+To also suppress conversation-format markdown and get only the agent's plain
+response text, add `--output-format compact`:
+
+```sh
+sven --headless --output-format compact "my task" 2>/dev/null
 ```
 
 ### Output contains ANSI colour codes in a CI log

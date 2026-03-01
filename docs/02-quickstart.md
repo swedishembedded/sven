@@ -110,17 +110,50 @@ sven opens the TUI, pre-fills the prompt, and submits it immediately.
 
 ## Headless mode (no TUI)
 
-When you pipe input into sven, or pass `--headless`, it skips the TUI and
-writes the result to standard output:
+Sven runs headlessly — without a TUI — in two situations:
+
+- **Piped stdin**: when stdin is not a terminal, sven auto-detects this and
+  skips the TUI automatically.
+- **`--headless` flag**: required when invoking sven directly from a terminal
+  prompt without piping, so that sven writes its response to stdout instead of
+  opening the interactive TUI.
 
 ```sh
+# Piped — headless is automatic
 echo "Summarise the README in three bullet points." | sven
+
+# Terminal prompt — --headless is mandatory to avoid the TUI
+sven --headless "Summarise the README in three bullet points."
 ```
 
 The output is plain text — easy to pipe into other tools or save to a file:
 
 ```sh
 echo "Summarise the README." | sven > summary.txt
+sven --headless "Summarise the README." > summary.txt
+```
+
+### Suppressing formatting with `--output-format compact`
+
+By default headless output is conversation-format markdown (with `## User` /
+`## Sven` headings).  Pass `--output-format compact` to get only the agent's
+raw response text with no surrounding markup — useful when you want to capture
+or execute the result directly.
+
+Combine `--headless`, `--output-format compact`, and `2>/dev/null` to get
+output that can be used directly in a shell pipeline:
+
+```sh
+# Ask sven for a shell command and execute it immediately
+CMD=$(sven --headless --output-format compact \
+      "Generate a one-liner for CPU usage. Reply with the shell command only." \
+      2>/dev/null)
+eval "$CMD"
+
+# Or pipe the command text to sh
+sven --headless --output-format compact \
+     "Generate a one-liner for CPU usage. Reply with the shell command only." \
+     2>/dev/null | sh
 ```
 
 ---
