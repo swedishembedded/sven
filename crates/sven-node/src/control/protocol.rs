@@ -32,7 +32,7 @@
 //! # CBOR codec example
 //!
 //! ```rust
-//! # use sven_gateway::control::protocol::*;
+//! # use sven_node::control::protocol::*;
 //! # use uuid::Uuid;
 //! let cmd = ControlCommand::SendInput {
 //!     session_id: Uuid::new_v4(),

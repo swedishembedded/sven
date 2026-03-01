@@ -415,7 +415,7 @@ impl P2pControlNode {
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(|key, relay_client| {
                 let identify = libp2p::identify::Behaviour::new(libp2p::identify::Config::new(
-                    "/sven-gateway/1.0.0".into(),
+                    "/sven-node/1.0.0".into(),
                     key.public(),
                 ));
                 let ping = libp2p::ping::Behaviour::new(

@@ -16,7 +16,7 @@
 //! # Usage
 //!
 //! ```rust
-//! use sven_gateway::crypto::token::{RawToken, StoredTokenFile};
+//! use sven_node::crypto::token::{RawToken, StoredTokenFile};
 //!
 //! // Generate and display a token once.
 //! let raw = RawToken::generate();
@@ -32,7 +32,7 @@
 //! To generate **and** write to disk atomically (mode 0o600):
 //!
 //! ```rust,no_run
-//! # use sven_gateway::crypto::token::StoredTokenFile;
+//! # use sven_node::crypto::token::StoredTokenFile;
 //! # use std::path::Path;
 //! let raw = StoredTokenFile::generate_and_save(Path::new("/tmp/token.yaml")).unwrap();
 //! println!("New token (save it!): {}", raw.as_str());

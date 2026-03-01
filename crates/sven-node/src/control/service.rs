@@ -32,8 +32,8 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! # use sven_gateway::control::service::{ControlService, AgentHandle};
-//! # use sven_gateway::control::protocol::{ControlCommand, ControlEvent, SessionState};
+//! # use sven_node::control::service::{ControlService, AgentHandle};
+//! # use sven_node::control::protocol::{ControlCommand, ControlEvent, SessionState};
 //! # use sven_core::Agent;
 //! # use uuid::Uuid;
 //! # async fn example(agent: Agent) {
@@ -302,7 +302,7 @@ impl ControlService {
             session_id: id,
             state: SessionState::Idle,
         });
-        debug!(%id, ?mode, "new session created");
+        info!(%id, ?mode, "session created");
     }
 
     async fn handle_send_input(&mut self, session_id: Uuid, text: String) {
@@ -326,6 +326,7 @@ impl ControlService {
         }
 
         session.state = SessionState::Running;
+        info!(%session_id, "session running");
         self.broadcast(ControlEvent::SessionState {
             session_id,
             state: SessionState::Running,
@@ -359,6 +360,22 @@ impl ControlService {
         let completion_tx = self.completion_tx.clone();
         tokio::spawn(async move {
             while let Some(ev) = event_rx.recv().await {
+                // Log tool calls at info so operators can see what the agent does.
+                if let AgentEvent::ToolCallStarted(ref tc) = ev {
+                    info!(%session_id, tool=%tc.name, "tool call");
+                }
+                if let AgentEvent::ToolCallFinished {
+                    ref tool_name,
+                    is_error,
+                    ..
+                } = ev
+                {
+                    if is_error {
+                        warn!(%session_id, tool=%tool_name, "tool error");
+                    } else {
+                        debug!(%session_id, tool=%tool_name, "tool finished");
+                    }
+                }
                 let ctrl_ev = agent_event_to_control(ev, session_id);
                 if let Some(ev) = ctrl_ev {
                     let _ = broadcast_tx2.send(ev);
@@ -367,6 +384,7 @@ impl ControlService {
             // Agent run finished: broadcast to operators AND notify the service
             // to update the session state in its HashMap (so future SendInput
             // requests are not rejected with "already running").
+            info!(%session_id, "session completed");
             let _ = broadcast_tx.send(ControlEvent::SessionState {
                 session_id,
                 state: SessionState::Completed,

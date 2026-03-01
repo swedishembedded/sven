@@ -6,25 +6,25 @@ use clap_complete::{generate, Shell};
 use std::path::PathBuf;
 use sven_config::AgentMode;
 
-// ── Gateway subcommand ────────────────────────────────────────────────────────
+// ── Node subcommand ───────────────────────────────────────────────────────────
 
-/// `sven gateway` subcommands.
+/// `sven node` subcommands.
 #[derive(Subcommand, Debug)]
-pub enum GatewayCommands {
-    /// Start the remote-control gateway (HTTP + P2P).
+pub enum NodeCommands {
+    /// Start the sven node (agent + HTTP + P2P).
     ///
     /// Exposes the agent over HTTPS/WebSocket and libp2p so it can be
     /// controlled from a mobile app, Slack, or any other operator client.
     ///
     /// TLS is enabled by default. A bearer token is generated on first run
-    /// and printed once. Mobile clients pair via `sven gateway pair`.
+    /// and printed once. Mobile clients pair via `sven node pair`.
     Start {
-        /// Path to the gateway config file.
+        /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
     },
 
-    /// Authorize a device to control this agent via P2P.
+    /// Authorize a device to control this node via P2P.
     ///
     /// The device displays a `sven-pair://` URI (or QR code). Paste it here.
     /// The peer's PeerId and short fingerprint are shown for visual confirmation.
@@ -34,7 +34,7 @@ pub enum GatewayCommands {
         /// Human-readable label for this device (e.g. "my-phone").
         #[arg(long, short = 'l')]
         label: Option<String>,
-        /// Path to the gateway config file.
+        /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
     },
@@ -43,7 +43,7 @@ pub enum GatewayCommands {
     Revoke {
         /// PeerId (base58) to revoke.
         peer_id: String,
-        /// Path to the gateway config file.
+        /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
     },
@@ -52,16 +52,55 @@ pub enum GatewayCommands {
     ///
     /// The new token is printed once. The old token is immediately invalidated.
     RegenerateToken {
-        /// Path to the gateway config file.
+        /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
     },
 
-    /// Print the current gateway configuration and exit.
+    /// Print the current node configuration and exit.
     ShowConfig {
-        /// Path to the gateway config file.
+        /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
+    },
+
+    /// List all authorized operator peers.
+    ///
+    /// Shows the peers in `authorized_peers.yaml` — the devices authorized
+    /// to control this node via P2P.  Use `sven node pair` to add
+    /// devices and `sven node revoke` to remove them.
+    ListPeers {
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Send a task to a running node and stream the response.
+    ///
+    /// Connects to the local node over WebSocket and submits a task as
+    /// if you were using the web UI.  The response is streamed to stdout.
+    ///
+    /// The bearer token must be provided via the SVEN_NODE_TOKEN
+    /// environment variable or the --token flag.
+    ///
+    /// Example:
+    ///   export SVEN_NODE_TOKEN=<token shown at first startup>
+    ///   sven node exec "delegate a task to say hi to agent local"
+    Exec {
+        /// The task to send to the agent.
+        task: String,
+        /// Bearer token (or set SVEN_NODE_TOKEN).
+        #[arg(long, env = "SVEN_NODE_TOKEN")]
+        token: String,
+        /// Node WebSocket URL.
+        #[arg(long, default_value = "wss://127.0.0.1:18790/ws")]
+        url: String,
+        /// Path to the node config file (used to locate the TLS cert).
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+        /// Skip TLS certificate verification (unsafe — for dev only).
+        #[arg(long)]
+        insecure: bool,
     },
 }
 
@@ -214,13 +253,13 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Remote-control gateway: start, pair devices, manage tokens.
+    /// Node: start the agent, pair devices, manage tokens.
     ///
-    /// Run `sven gateway start` to expose this agent to mobile apps, Slack,
-    /// and other clients. Run `sven gateway pair <uri>` to authorize a device.
-    Gateway {
+    /// Run `sven node start` to expose this agent to mobile apps, Slack,
+    /// and other clients. Run `sven node pair <uri>` to authorize a device.
+    Node {
         #[command(subcommand)]
-        command: GatewayCommands,
+        command: NodeCommands,
     },
 
     /// Generate shell completion script

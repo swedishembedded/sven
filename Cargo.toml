@@ -13,7 +13,7 @@ members = [
     "crates/sven-ci",
     "crates/sven-tui",
     "crates/sven-p2p",
-    "crates/sven-gateway",
+    "crates/sven-node",
 ]
 
 [workspace.dependencies]
@@ -30,6 +30,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait  = "0.1"
 futures      = "0.3"
 reqwest      = { version = "0.12", features = ["json", "stream", "rustls-tls", "gzip"], default-features = false }
+rustls       = { version = "0.23", features = ["ring"] }
 html2text    = "0.12"
 async-recursion = "1"
 clap         = { version = "4", features = ["derive", "env", "string"] }
@@ -75,10 +76,11 @@ sven-tools   = { path = "crates/sven-tools" }
 sven-core    = { path = "crates/sven-core" }
 sven-ci      = { path = "crates/sven-ci" }
 sven-tui     = { path = "crates/sven-tui" }
-sven-gateway = { path = "crates/sven-gateway" }
+sven-node    = { path = "crates/sven-node" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }
+rustls      = { workspace = true }
 clap_complete = { workspace = true }
 tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }

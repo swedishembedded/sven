@@ -35,6 +35,9 @@ code, and running shell commands. Common uses include:
   is the first AI agent that can start a GDB server, connect to a physical
   device, set breakpoints, inspect memory and variables, and report findings
   entirely on its own
+- **Agent-to-agent task routing** — multiple sven instances can find each other
+  on a local network (or across the internet via a relay), delegate subtasks to
+  each other, and assemble the results — no human in the loop required
 
 ---
 
@@ -81,3 +84,4 @@ to standard output.
 - **[Configuration](05-configuration.md)** — customise model, tools, and appearance
 - **[Examples](06-examples.md)** — real-world use cases
 - **[Troubleshooting](07-troubleshooting.md)** — common issues and fixes
+- **[Remote Gateway](08-gateway.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents

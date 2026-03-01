@@ -111,7 +111,7 @@ impl P2pBehaviour {
             task: request_response::Behaviour::with_codec(
                 P2pCodec,
                 [(TASK_PROTO, request_response::ProtocolSupport::Full)],
-                request_response::Config::default(),
+                request_response::Config::default().with_request_timeout(Duration::from_secs(900)),
             ),
         }
     }

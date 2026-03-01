@@ -18,7 +18,7 @@ use libp2p::{
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, oneshot},
     time::{interval_at, Duration, Instant, MissedTickBehavior},
 };
 use uuid::Uuid;
@@ -31,6 +31,9 @@ use crate::{
     protocol::types::{AgentCard, LogEntry, P2pRequest, P2pResponse, TaskRequest, TaskResponse},
     transport::{default_swarm_config, load_or_create_keypair},
 };
+
+/// Alias for the channel half used to reply to an inbound task.
+type TaskReplySender = oneshot::Sender<Result<TaskResponse, P2pError>>;
 
 /// Convenience alias used throughout this module.
 type NodeSwarm = Swarm<P2pBehaviour>;
@@ -82,7 +85,18 @@ pub enum P2pEvent {
 
 #[derive(Debug)]
 pub(crate) enum P2pCommand {
-    SendTask { peer: PeerId, request: TaskRequest },
+    /// Send a task to a peer and await the `TaskResponse` via the provided channel.
+    SendTask {
+        peer: PeerId,
+        request: TaskRequest,
+        reply_tx: TaskReplySender,
+    },
+    /// Reply to an inbound task request (called by the task executor after it
+    /// finishes running the agent).
+    TaskReply {
+        id: uuid::Uuid,
+        response: P2pResponse,
+    },
     Announce,
     Shutdown,
 }
@@ -127,11 +141,54 @@ impl P2pHandle {
             .unwrap_or_default()
     }
 
-    pub async fn send_task(&self, peer: PeerId, request: TaskRequest) -> Result<(), P2pError> {
+    /// Send a task to `peer` and wait for the `TaskResponse`.
+    ///
+    /// Returns when the remote agent sends back a `TaskResult`, or with
+    /// `P2pError::Shutdown` if the local node shuts down before the reply
+    /// arrives.  The caller is responsible for applying its own timeout.
+    pub async fn send_task(
+        &self,
+        peer: PeerId,
+        request: TaskRequest,
+    ) -> Result<TaskResponse, P2pError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
-            .send(P2pCommand::SendTask { peer, request })
+            .send(P2pCommand::SendTask {
+                peer,
+                request,
+                reply_tx,
+            })
+            .await
+            .map_err(|_| P2pError::Shutdown)?;
+        reply_rx.await.map_err(|_| P2pError::Shutdown)?
+    }
+
+    /// Reply to an inbound task request.  Called by the task executor in the
+    /// gateway once the agent has finished processing the task.
+    pub async fn reply_to_task(
+        &self,
+        id: uuid::Uuid,
+        response: P2pResponse,
+    ) -> Result<(), P2pError> {
+        self.cmd_tx
+            .send(P2pCommand::TaskReply { id, response })
             .await
             .map_err(|_| P2pError::Shutdown)
+    }
+
+    /// Return all peers known across every room (deduplicated by PeerId).
+    pub fn all_peers(&self) -> Vec<(PeerId, AgentCard)> {
+        let r = self.roster.lock().unwrap();
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+        for room_state in r.values() {
+            for (peer_id, card) in &room_state.peers {
+                if seen.insert(*peer_id) {
+                    result.push((*peer_id, card.clone()));
+                }
+            }
+        }
+        result
     }
 
     pub async fn announce(&self) -> Result<(), P2pError> {
@@ -213,7 +270,7 @@ impl P2pNode {
             .map_err(|e| P2pError::Transport(e.to_string()))?;
 
         let (relay_peers, relay_dial_addrs) =
-            fetch_and_dial_relays(&self.config.discovery, &mut swarm).await?;
+            fetch_and_dial_relays(&self.config.discovery, &mut swarm).await;
 
         let state = NodeState {
             local_peer_id,
@@ -231,6 +288,8 @@ impl P2pNode {
             rejected: HashSet::new(),
             announced_to: HashSet::new(),
             relay_connection_ids: HashMap::new(),
+            pending_inbound: HashMap::new(),
+            pending_outbound: HashMap::new(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -274,6 +333,13 @@ struct NodeState {
     /// Active relayed `ConnectionId` per application peer.  When DCUtR establishes
     /// a direct connection we close the relay leg and remove the entry.
     relay_connection_ids: HashMap<PeerId, ConnectionId>,
+    /// Inbound task requests awaiting execution: task_id → response channel.
+    /// Populated in `on_task_request`; drained by `P2pCommand::TaskReply`.
+    pending_inbound: HashMap<Uuid, request_response::ResponseChannel<P2pResponse>>,
+    /// Outbound task requests awaiting a `TaskResult` from the remote peer:
+    /// OutboundRequestId → oneshot sender.
+    /// Populated in `on_command(SendTask)`; fired when the response arrives.
+    pending_outbound: HashMap<request_response::OutboundRequestId, TaskReplySender>,
 }
 
 impl NodeState {
@@ -541,8 +607,16 @@ impl NodeState {
                 P2pRequest::Announce(card) => self.on_announce_request(swarm, peer, card, channel),
                 P2pRequest::Task(req) => self.on_task_request(swarm, peer, req, channel),
             },
-            request_response::Message::Response { response, .. } => {
+            request_response::Message::Response {
+                request_id,
+                response,
+                ..
+            } => {
                 if let P2pResponse::TaskResult(resp) = response {
+                    // Fire the waiting oneshot for the caller of send_task().
+                    if let Some(reply_tx) = self.pending_outbound.remove(&request_id) {
+                        let _ = reply_tx.send(Ok(resp.clone()));
+                    }
                     self.on_task_response(peer, resp);
                 }
             }
@@ -583,21 +657,24 @@ impl NodeState {
 
     fn on_task_request(
         &mut self,
-        swarm: &mut NodeSwarm,
+        _swarm: &mut NodeSwarm,
         peer: PeerId,
         req: TaskRequest,
         channel: request_response::ResponseChannel<P2pResponse>,
     ) {
         let id = req.id;
+        // Store the response channel keyed by task ID.  The task executor
+        // (running in the gateway) will call P2pHandle::reply_to_task(id, ...)
+        // which sends P2pCommand::TaskReply back to this event loop, where we
+        // look up the channel and call send_response.  This keeps the
+        // ResponseChannel inside the swarm event loop (the only place allowed
+        // to call send_response) and keeps P2pEvent clean.
+        self.pending_inbound.insert(id, channel);
         self.emit(P2pEvent::TaskRequested {
             id,
             from: peer,
             request: req,
         });
-        let _ = swarm
-            .behaviour_mut()
-            .task
-            .send_response(channel, P2pResponse::Ack);
     }
 
     fn on_task_response(&self, peer: PeerId, resp: TaskResponse) {
@@ -713,11 +790,31 @@ impl NodeState {
     /// Returns `true` when the loop should exit.
     fn on_command(&mut self, swarm: &mut NodeSwarm, cmd: P2pCommand) -> bool {
         match cmd {
-            P2pCommand::SendTask { peer, request } => {
-                swarm
+            P2pCommand::SendTask {
+                peer,
+                request,
+                reply_tx,
+            } => {
+                let req_id = swarm
                     .behaviour_mut()
                     .task
                     .send_request(&peer, P2pRequest::Task(request));
+                self.pending_outbound.insert(req_id, reply_tx);
+                false
+            }
+            P2pCommand::TaskReply { id, response } => {
+                if let Some(channel) = self.pending_inbound.remove(&id) {
+                    if swarm
+                        .behaviour_mut()
+                        .task
+                        .send_response(channel, response)
+                        .is_err()
+                    {
+                        tracing::warn!("TaskReply {id}: failed to send response (channel expired)");
+                    }
+                } else {
+                    tracing::warn!("TaskReply {id}: no pending inbound channel (already replied?)");
+                }
                 false
             }
             P2pCommand::Announce => {
@@ -864,26 +961,31 @@ fn build_node_swarm(
 /// Fetch all relay addresses from discovery, group them by peer ID, and dial
 /// each relay server.
 ///
-/// Each relay's peer ID is extracted from the `/p2p/<peer-id>` component of
-/// the stored Multiaddr.  libp2p verifies this identity via the Noise handshake;
-/// if the relay presents a different key the dial fails with `WrongPeerId` and
-/// must not be retried (the relay must update git instead).
-///
-/// Returns the set of relay peer IDs for use by the event loop.
+/// Returns empty sets when no relays are configured — the node will still
+/// work via mDNS for local peers.  Relay support is additive.
 async fn fetch_and_dial_relays(
     discovery: &Arc<dyn DiscoveryProvider>,
     swarm: &mut NodeSwarm,
-) -> Result<(HashSet<PeerId>, HashMap<PeerId, Vec<Multiaddr>>), P2pError> {
+) -> (HashSet<PeerId>, HashMap<PeerId, Vec<Multiaddr>>) {
     let disc = Arc::clone(discovery);
-    let relay_addrs = tokio::task::spawn_blocking(move || disc.fetch_relay_addrs())
-        .await
-        .map_err(|e| P2pError::Discovery(e.to_string()))??;
+    let relay_addrs = match tokio::task::spawn_blocking(move || disc.fetch_relay_addrs()).await {
+        Ok(Ok(addrs)) => addrs,
+        Ok(Err(e)) => {
+            tracing::debug!("No relay addresses found (discovery: {e}); running without relay");
+            return (HashSet::new(), HashMap::new());
+        }
+        Err(e) => {
+            tracing::debug!("Relay discovery task error: {e}; running without relay");
+            return (HashSet::new(), HashMap::new());
+        }
+    };
 
     let relay_peers: HashSet<PeerId> = relay_addrs.iter().filter_map(peer_id_from_addr).collect();
     if relay_peers.is_empty() {
-        return Err(P2pError::Discovery(
-            "relay addrs have no /p2p component".into(),
-        ));
+        tracing::debug!(
+            "Discovery returned addresses but none had /p2p component; running without relay"
+        );
+        return (HashSet::new(), HashMap::new());
     }
 
     // Group transport addresses (strip /p2p suffix) by relay peer ID so we can
@@ -902,12 +1004,12 @@ async fn fetch_and_dial_relays(
 
     for (pid, addrs) in &relay_dial_addrs {
         tracing::info!("Dialing relay {pid} with {} address(es)", addrs.len());
-        swarm
-            .dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build())
-            .map_err(|e| P2pError::Dial(format!("dial relay {pid}: {e}")))?;
+        if let Err(e) = swarm.dial(DialOpts::peer_id(*pid).addresses(addrs.clone()).build()) {
+            tracing::warn!("Failed to dial relay {pid}: {e}");
+        }
     }
 
-    Ok((relay_peers, relay_dial_addrs))
+    (relay_peers, relay_dial_addrs)
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────

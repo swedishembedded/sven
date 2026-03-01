@@ -18,7 +18,7 @@
 //! # Usage
 //!
 //! ```rust
-//! # use sven_gateway::p2p::auth::{PeerAllowlist, PeerRole};
+//! # use sven_node::p2p::auth::{PeerAllowlist, PeerRole};
 //! # use libp2p::{PeerId, identity::Keypair};
 //! // Empty allowlist denies everyone.
 //! let list = PeerAllowlist::default();
@@ -27,7 +27,7 @@
 //! ```
 //!
 //! ```rust,no_run
-//! # use sven_gateway::p2p::auth::PeerAllowlist;
+//! # use sven_node::p2p::auth::PeerAllowlist;
 //! # use std::path::Path;
 //! // Load from disk; missing file → empty (secure) default.
 //! let mut list = PeerAllowlist::load(Path::new("~/.config/sven/gateway/authorized_peers.yaml"))
@@ -165,6 +165,30 @@ impl PeerAllowlist {
         self.observers.len()
     }
 
+    /// Return all peers with their labels and roles.
+    pub fn all_peers(&self) -> Vec<(PeerId, PeerListEntry)> {
+        let mut out = Vec::new();
+        for (id, label) in &self.operators {
+            out.push((
+                *id,
+                PeerListEntry {
+                    label: label.clone(),
+                    role: PeerRole::Operator,
+                },
+            ));
+        }
+        for (id, label) in &self.observers {
+            out.push((
+                *id,
+                PeerListEntry {
+                    label: label.clone(),
+                    role: PeerRole::Observer,
+                },
+            ));
+        }
+        out
+    }
+
     fn persist(&self) -> anyhow::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -210,6 +234,13 @@ impl PeerAllowlist {
 
         Ok(())
     }
+}
+
+/// A single entry in the authorized peers list, returned by [`PeerAllowlist::all_peers`].
+#[derive(Debug, Clone)]
+pub struct PeerListEntry {
+    pub label: String,
+    pub role: PeerRole,
 }
 
 /// Error returned when a peer is not in the allowlist.

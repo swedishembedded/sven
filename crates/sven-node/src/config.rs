@@ -19,7 +19,7 @@
 //! # Loading
 //!
 //! ```rust
-//! use sven_gateway::config::{GatewayConfig, load};
+//! use sven_node::config::{GatewayConfig, load};
 //!
 //! // Load from the default search paths (no explicit file).
 //! let config = load(None).unwrap();
@@ -139,10 +139,44 @@ pub struct P2pGatewayConfig {
     /// mobile clients can find the gateway without configuration.
     #[serde(default = "default_true")]
     pub mdns: bool,
+
+    /// Identity advertised to other agents over the task-routing P2P channel.
+    /// If omitted, a default card is generated from the system hostname.
+    #[serde(default)]
+    pub agent: AgentIdentityConfig,
+
+    /// Rooms this agent participates in for agent-to-agent task routing.
+    /// A "room" is a named discovery namespace; peers in the same room find
+    /// each other via mDNS (LAN) or relay (WAN).
+    /// Default: `["default"]`.
+    #[serde(default = "default_rooms")]
+    pub rooms: Vec<String>,
+
+    /// Path for persisting the agent P2P keypair (separate from the operator
+    /// control keypair).  Defaults to
+    /// `~/.config/sven/gateway/agent-keypair`.
+    pub agent_keypair_path: Option<PathBuf>,
+}
+
+/// Human-readable identity broadcast to other agents when they connect.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentIdentityConfig {
+    /// Short display name, e.g. `"backend-agent"`.
+    /// Defaults to the system hostname.
+    pub name: Option<String>,
+    /// Free-form description of this agent's expertise.
+    pub description: Option<String>,
+    /// Capability tags for peer discovery, e.g. `["rust", "backend", "postgres"]`.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_p2p_listen() -> String {
     "/ip4/0.0.0.0/tcp/0".to_string()
+}
+
+fn default_rooms() -> Vec<String> {
+    vec!["default".to_string()]
 }
 
 impl Default for P2pGatewayConfig {
@@ -152,6 +186,9 @@ impl Default for P2pGatewayConfig {
             keypair_path: None,
             authorized_peers_file: None,
             mdns: true,
+            agent: AgentIdentityConfig::default(),
+            rooms: default_rooms(),
+            agent_keypair_path: None,
         }
     }
 }

@@ -28,7 +28,9 @@ pub mod slack;
 pub mod tls;
 pub mod ws;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
+
+use axum::extract::ConnectInfo;
 
 use anyhow::Context as _;
 use axum::{
@@ -106,12 +108,22 @@ pub async fn serve(
         .layer(RequestBodyLimitLayer::new(config.max_body_bytes))
         .with_state(app_state);
 
+    // Graceful shutdown on Ctrl+C / SIGTERM.
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        info!("shutdown signal received — stopping HTTP server");
+        shutdown_handle.graceful_shutdown(Some(Duration::from_secs(5)));
+    });
+
     if config.insecure_dev_mode {
         warn!(
             "⚠  HTTP gateway running WITHOUT TLS (insecure_dev_mode: true). \
              Never use this in production."
         );
         axum_server::bind(addr)
+            .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
@@ -137,11 +149,33 @@ pub async fn serve(
                 .context("loading TLS config from PEM files")?;
 
         axum_server::bind_rustls(addr, rustls_config)
+            .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     }
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+
+    #[cfg(not(unix))]
+    ctrl_c.await;
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -150,12 +184,13 @@ async fn health_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
-/// WebSocket handler entry point — extracts agent from combined state.
+/// WebSocket handler entry point — extracts agent and client IP from combined state.
 async fn ws_handler_entry(
     ws: axum::extract::ws::WebSocketUpgrade,
+    ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, state.agent))
+    ws.on_upgrade(move |socket| ws::handle_socket(socket, state.agent, addr))
 }
 
 async fn list_sessions_handler(State(state): State<AppState>) -> impl IntoResponse {

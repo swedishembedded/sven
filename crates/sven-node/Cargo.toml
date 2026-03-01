@@ -1,5 +1,5 @@
 [package]
-name    = "sven-gateway"
+name    = "sven-node"
 version = "0.1.0"
 edition = "2021"
 description = "Secure remote-control gateway for sven agents"
@@ -48,12 +48,16 @@ tokio              = { workspace = true }
 tokio-stream       = { workspace = true }
 futures            = { workspace = true }
 tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
+tungstenite        = { version = "0.24", features = ["native-tls"] }
+native-tls         = "0.2"
 reqwest            = { workspace = true }
 async-trait        = { workspace = true }
+tokio-util         = { version = "0.7" }
 
 # ── Sven internal crates ──────────────────────────────────────────────────────
 sven-core     = { path = "../sven-core" }
 sven-config   = { path = "../sven-config" }
+sven-model    = { path = "../sven-model" }
 sven-tools    = { path = "../sven-tools" }
 sven-p2p      = { path = "../sven-p2p" }
 
@@ -64,6 +68,7 @@ tracing       = { workspace = true }
 uuid          = { workspace = true, features = ["serde"] }
 chrono        = { workspace = true }
 dirs          = { workspace = true }
+hostname      = "0.4"
 
 [dev-dependencies]
 tokio    = { workspace = true }

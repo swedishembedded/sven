@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 //!
-//! `sven-gateway` — secure remote-control gateway for sven agents.
+//! `sven-node` — secure remote-control gateway for sven agents.
 //!
 //! The gateway exposes a running [`sven_core::Agent`] to remote operators
 //! over two transport paths:
@@ -46,7 +46,7 @@
 //!            │ /sven/control/1.0.0            │ axum HTTPS
 //!            ▼                               ▼
 //!    ┌────────────────────────────────────────────┐
-//!    │             sven-gateway                   │
+//!    │             sven-node                   │
 //!    │  P2PControlNode  │   HTTP (axum+rustls)    │
 //!    │  PeerAllowlist   │   Auth middleware        │
 //!    │  (deny-default)  │   CSRF guard             │
@@ -139,15 +139,17 @@
 //! | Slack HTTP                   | HMAC-SHA256 + 5-min replay window    |
 //! | Secret files                 | `0o600` permissions (Unix)           |
 
+pub mod agent_builder;
 pub mod config;
 pub mod control;
 pub mod crypto;
 pub mod error;
-pub mod gateway;
 pub mod http;
+pub mod node;
 pub mod p2p;
+pub mod tools;
 
 pub use config::{GatewayConfig, HttpConfig, P2pGatewayConfig, SlackConfig};
 pub use control::service::AgentHandle;
 pub use error::GatewayError;
-pub use gateway::run;
+pub use node::{build_agent_card, exec_task, list_peers, run};

@@ -12,7 +12,7 @@ use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
-use cli::{Cli, Commands, GatewayCommands, OutputFormatArg};
+use cli::{Cli, Commands, NodeCommands, OutputFormatArg};
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
@@ -21,6 +21,11 @@ use sven_tui::{App, AppOptions, ModelDirective, QueuedMessage};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install the ring crypto provider for rustls before any TLS code runs.
+    // Multiple crates (reqwest, axum-server, libp2p) all pull in rustls 0.23
+    // and without an explicit process-level provider rustls panics.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let cli = Cli::parse();
 
     // In TUI mode writing to stderr corrupts the ratatui display.
@@ -28,13 +33,14 @@ async fn main() -> anyhow::Result<()> {
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
     // (writes to stderr — only useful with headless / CI mode).
     let is_tui = !cli.is_headless() && cli.command.is_none();
-    init_logging(cli.verbose, is_tui);
+    let is_gateway = matches!(&cli.command, Some(Commands::Node { .. }));
+    init_logging(cli.verbose, is_tui, is_gateway);
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
         match cmd {
-            Commands::Gateway { command } => {
-                return run_gateway_command(command).await;
+            Commands::Node { command } => {
+                return run_node_command(command).await;
             }
             Commands::Completions { shell } => {
                 cli::print_completions(*shell);
@@ -75,111 +81,71 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-// ── Gateway command handler ───────────────────────────────────────────────────
+// ── Node command handler ──────────────────────────────────────────────────────
 
-async fn run_gateway_command(cmd: &GatewayCommands) -> anyhow::Result<()> {
+async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
     match cmd {
-        GatewayCommands::Start {
+        NodeCommands::Start {
             config: config_path,
         } => {
-            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
+            let node_config = sven_node::config::load(config_path.as_deref())?;
             let sven_config = Arc::new(sven_config::load(None)?);
-
-            // Build the agent the same way the TUI/CI does.
-            let agent = build_agent_for_gateway(&sven_config).await?;
-
-            sven_gateway::gateway::run(gw_config, agent).await
+            sven_node::node::run(node_config, sven_config).await
         }
 
-        GatewayCommands::Pair {
+        NodeCommands::Pair {
             uri,
             label,
             config: config_path,
         } => {
-            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
-            sven_gateway::gateway::pair_peer(&gw_config, uri, label.clone()).await
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::node::pair_peer(&node_config, uri, label.clone()).await
         }
 
-        GatewayCommands::Revoke {
+        NodeCommands::Revoke {
             peer_id,
             config: config_path,
         } => {
-            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
-            sven_gateway::gateway::revoke_peer(&gw_config, peer_id).await
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::node::revoke_peer(&node_config, peer_id).await
         }
 
-        GatewayCommands::RegenerateToken {
+        NodeCommands::RegenerateToken {
             config: config_path,
         } => {
-            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
-            sven_gateway::gateway::regenerate_token(&gw_config)
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::node::regenerate_token(&node_config)
         }
 
-        GatewayCommands::ShowConfig {
+        NodeCommands::ShowConfig {
             config: config_path,
         } => {
-            let gw_config = sven_gateway::config::load(config_path.as_deref())?;
-            println!("{}", serde_yaml::to_string(&gw_config).unwrap_or_default());
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            println!(
+                "{}",
+                serde_yaml::to_string(&node_config).unwrap_or_default()
+            );
             Ok(())
         }
+
+        NodeCommands::ListPeers {
+            config: config_path,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::list_peers(&node_config)
+        }
+
+        NodeCommands::Exec {
+            task,
+            token,
+            url,
+            config: config_path,
+            insecure,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::exec_task(&node_config, url, token, task, *insecure).await
+        }
     }
-}
-
-/// Build a bare `sven_core::Agent` suitable for gateway use.
-///
-/// Uses the same model/tools configuration as the TUI/CI runner but without
-/// starting a TUI or CI session. The gateway's `ControlService` owns the agent.
-async fn build_agent_for_gateway(
-    config: &Arc<sven_config::Config>,
-) -> anyhow::Result<sven_core::Agent> {
-    use std::sync::Arc;
-    use sven_tools::{
-        DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ListDirTool, ReadFileTool,
-        ReadLintsTool, RunTerminalCommandTool, SwitchModeTool, TodoItem, TodoWriteTool, ToolEvent,
-        ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
-    };
-    use tokio::sync::{mpsc, Mutex};
-
-    let model: Arc<dyn sven_model::ModelProvider> =
-        Arc::from(sven_model::from_config(&config.model)?);
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
-
-    let mode = Arc::new(Mutex::new(config.agent.default_mode));
-    let (tool_tx, tool_rx) = mpsc::channel::<ToolEvent>(64);
-
-    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-
-    let mut registry = ToolRegistry::new();
-    registry.register(RunTerminalCommandTool::default());
-    registry.register(ReadFileTool);
-    registry.register(WriteTool);
-    registry.register(EditFileTool);
-    registry.register(FindFileTool);
-    registry.register(GrepTool);
-    registry.register(ListDirTool);
-    registry.register(DeleteFileTool);
-    registry.register(WebFetchTool);
-    registry.register(WebSearchTool {
-        api_key: config.tools.web.search.api_key.clone(),
-    });
-    registry.register(ReadLintsTool);
-    registry.register(UpdateMemoryTool {
-        memory_file: config.tools.memory.memory_file.clone(),
-    });
-    registry.register(TodoWriteTool::new(todos, tool_tx.clone()));
-    registry.register(SwitchModeTool::new(mode.clone(), tool_tx));
-
-    let runtime = sven_core::AgentRuntimeContext::default();
-
-    Ok(sven_core::Agent::new(
-        model,
-        Arc::new(registry),
-        Arc::new(config.agent.clone()),
-        runtime,
-        mode,
-        tool_rx,
-        max_ctx,
-    ))
 }
 
 /// Validate a workflow file: parse frontmatter, count steps, report to stdout.
@@ -894,7 +860,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     result
 }
 
-fn init_logging(verbosity: u8, is_tui: bool) {
+fn init_logging(verbosity: u8, is_tui: bool, is_gateway: bool) {
     // In TUI mode tracing output written to stderr corrupts the ratatui
     // display.  We suppress all logging unless the caller opts in:
     //   • Set SVEN_LOG_FILE=/path/to/file  → logs go to that file (any mode)
@@ -931,14 +897,20 @@ fn init_logging(verbosity: u8, is_tui: bool) {
     }
 
     let level = match verbosity {
+        0 if is_gateway => "info",
         0 => "warn",
         1 => "debug",
         _ => "trace",
     };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
+    let layer = fmt::layer()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_timer(fmt::time::uptime());
+
     let _ = tracing_subscriber::registry()
-        .with(fmt::layer().with_target(false).with_writer(std::io::stderr))
+        .with(layer)
         .with(filter)
         .try_init();
 }

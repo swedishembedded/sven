@@ -27,6 +27,8 @@
 //! The HTTP layer currently grants full operator access to anyone with a
 //! valid token. Future work could issue scoped tokens (observer-only).
 
+use std::net::SocketAddr;
+
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -35,7 +37,7 @@ use axum::{
     response::Response,
 };
 use tokio::sync::broadcast;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::control::{
     protocol::{ControlCommand, ControlEvent},
@@ -46,11 +48,13 @@ use crate::control::{
 ///
 /// Upgrades to WebSocket, then bridges JSON ↔ ControlCommand/ControlEvent.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(agent): State<AgentHandle>) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, agent))
+    let addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    ws.on_upgrade(move |socket| handle_socket(socket, agent, addr))
 }
 
 /// Publicly accessible socket handler for direct use from HTTP router.
-pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle) {
+pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle, peer: SocketAddr) {
+    info!(%peer, "WebSocket operator connected");
     let mut events = agent.subscribe();
 
     loop {
@@ -61,12 +65,14 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle) {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ControlCommand>(&text) {
                             Ok(cmd) => {
+                                log_command(&cmd, peer);
                                 if let Err(e) = agent.send(cmd).await {
-                                    warn!("failed to forward command: {e}");
+                                    warn!(%peer, "failed to forward command: {e}");
                                     break;
                                 }
                             }
                             Err(e) => {
+                                warn!(%peer, "invalid command JSON: {e}");
                                 let err = ControlEvent::GatewayError {
                                     code: 400,
                                     message: format!("invalid JSON command: {e}"),
@@ -83,7 +89,7 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle) {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(_)) => {} // binary frames ignored
                     Some(Err(e)) => {
-                        debug!("WebSocket recv error: {e}");
+                        debug!(%peer, "WebSocket recv error: {e}");
                         break;
                     }
                 }
@@ -95,7 +101,7 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle) {
                         send_event(&mut socket, &ev).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("WebSocket operator lagged by {n} events");
+                        warn!(%peer, "WebSocket operator lagged by {n} events");
                         let err = ControlEvent::GatewayError {
                             code: 503,
                             message: format!("event stream lagged by {n} events"),
@@ -108,7 +114,39 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle) {
         }
     }
 
-    debug!("WebSocket connection closed");
+    info!(%peer, "WebSocket operator disconnected");
+}
+
+/// Log commands at the appropriate level — input text is truncated to avoid
+/// flooding the log with the full prompt.
+fn log_command(cmd: &ControlCommand, peer: SocketAddr) {
+    match cmd {
+        ControlCommand::NewSession { id, mode, .. } => {
+            info!(%peer, session=%id, ?mode, "new session");
+        }
+        ControlCommand::SendInput { session_id, text } => {
+            let preview: String = text.chars().take(80).collect();
+            let truncated = if text.len() > 80 { "…" } else { "" };
+            info!(%peer, session=%session_id, input=?format!("{preview}{truncated}"), "input received");
+        }
+        ControlCommand::CancelSession { session_id } => {
+            info!(%peer, session=%session_id, "session cancelled by operator");
+        }
+        ControlCommand::ApproveTool {
+            session_id,
+            call_id,
+        } => {
+            info!(%peer, session=%session_id, call=%call_id, "tool approved");
+        }
+        ControlCommand::DenyTool {
+            session_id,
+            call_id,
+            ..
+        } => {
+            info!(%peer, session=%session_id, call=%call_id, "tool denied");
+        }
+        _ => {}
+    }
 }
 
 async fn send_event(socket: &mut WebSocket, ev: &ControlEvent) {

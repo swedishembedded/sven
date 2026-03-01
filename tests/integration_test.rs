@@ -132,27 +132,26 @@ async fn shell_tool_executes_echo() {
 
 #[tokio::test]
 async fn fs_tool_write_read_roundtrip() {
-    use sven_tools::{FsTool, Tool, ToolCall};
+    use sven_tools::{ReadFileTool, Tool, ToolCall, WriteTool};
 
-    let tool = FsTool;
     let path = format!("/tmp/sven_test_{}.txt", uuid::Uuid::new_v4());
 
     let write_call = ToolCall {
         id: "w1".into(),
-        name: "fs".into(),
-        args: serde_json::json!({ "operation": "write", "path": path, "content": "roundtrip" }),
+        name: "write_file".into(),
+        args: serde_json::json!({ "path": path, "text": "roundtrip", "append": false }),
     };
-    let wo = tool.execute(&write_call).await;
+    let wo = WriteTool.execute(&write_call).await;
     assert!(!wo.is_error, "write failed: {}", wo.content);
 
     let read_call = ToolCall {
         id: "r1".into(),
-        name: "fs".into(),
-        args: serde_json::json!({ "operation": "read", "path": path }),
+        name: "read_file".into(),
+        args: serde_json::json!({ "path": path }),
     };
-    let ro = tool.execute(&read_call).await;
+    let ro = ReadFileTool.execute(&read_call).await;
     assert!(!ro.is_error);
-    assert_eq!(ro.content.trim(), "roundtrip");
+    assert!(ro.content.contains("roundtrip"));
 
     let _ = std::fs::remove_file(&path);
 }

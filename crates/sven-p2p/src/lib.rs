@@ -10,6 +10,7 @@ pub mod behaviour;
 pub mod transport;
 
 pub use config::{P2pConfig, RelayConfig};
+pub use discovery::memory::InMemoryDiscovery;
 pub use error::P2pError;
 pub use node::{P2pEvent, P2pHandle, P2pNode, RoomState};
 pub use protocol::types::{

@@ -6,7 +6,7 @@
 //!
 //! # Choices vs. openclaw
 //!
-//! | Property         | openclaw              | sven-gateway              |
+//! | Property         | openclaw              | sven-node              |
 //! |------------------|-----------------------|---------------------------|
 //! | Key algorithm    | RSA 2048              | ECDSA P-256 (smaller+faster) |
 //! | Cert validity    | 10 years              | 90 days (like Let's Encrypt) |
@@ -81,11 +81,15 @@ fn generate_self_signed(cert_dir: &Path, cert_path: &Path, key_path: &Path) -> a
     let key_pair = KeyPair::generate().context("generating ECDSA P-256 key pair")?;
 
     let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, "sven-gateway");
+    dn.push(DnType::CommonName, "sven-node");
 
     let now = OffsetDateTime::now_utc();
-    let mut params =
-        CertificateParams::new(vec!["sven-gateway".to_string()]).context("building cert params")?;
+    let mut params = CertificateParams::new(vec![
+        "sven-node".to_string(),
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .context("building cert params")?;
     params.not_before = now;
     // 90 days: matches Let's Encrypt cadence, limits exposure window.
     params.not_after = now + Duration::days(CERT_VALIDITY_DAYS);
