@@ -56,7 +56,7 @@ impl Tool for ReadFileTool {
                 }
             },
             "required": ["path", "offset", "limit"],
-            "additionalProperties": true
+            "additionalProperties": false
         })
     }
 

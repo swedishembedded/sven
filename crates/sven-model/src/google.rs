@@ -176,24 +176,31 @@ impl crate::ModelProvider for GoogleProvider {
         }
 
         let byte_stream = resp.bytes_stream();
-        let event_stream = byte_stream.flat_map(|chunk| {
-            let lines = match chunk {
-                Ok(b) => String::from_utf8_lossy(&b).to_string(),
-                Err(e) => return futures::stream::iter(vec![Err(anyhow::anyhow!(e))]),
-            };
-            let events: Vec<anyhow::Result<ResponseEvent>> = lines
-                .lines()
-                .filter_map(|line| {
-                    let line = line.strip_prefix("data: ")?.trim();
-                    if line == "[DONE]" {
-                        return Some(Ok(ResponseEvent::Done));
+        let event_stream = byte_stream
+            .scan(String::new(), |buf, chunk| {
+                let text = match chunk {
+                    Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                    Err(e) => {
+                        return futures::future::ready(Some(vec![Err(anyhow::anyhow!(e))]));
                     }
-                    let v: Value = serde_json::from_str(line).ok()?;
-                    Some(parse_gemini_chunk(&v))
-                })
-                .collect();
-            futures::stream::iter(events)
-        });
+                };
+                buf.push_str(&text);
+                let mut events = Vec::new();
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim_end_matches('\r').to_string();
+                    buf.drain(..=pos);
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        let data = data.trim();
+                        if data == "[DONE]" {
+                            events.push(Ok(ResponseEvent::Done));
+                        } else if let Ok(v) = serde_json::from_str::<Value>(data) {
+                            events.push(parse_gemini_chunk(&v));
+                        }
+                    }
+                }
+                futures::future::ready(Some(events))
+            })
+            .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
     }

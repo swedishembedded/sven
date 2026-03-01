@@ -84,19 +84,40 @@ impl Tool for TodoWriteTool {
         };
 
         let mut items: Vec<TodoItem> = Vec::new();
-        for item in &todos_value {
-            let id = match item.get("id").and_then(|v| v.as_str()) {
-                Some(s) => s.to_string(),
-                None => return ToolOutput::err(&call.id, "todo item missing 'id'"),
-            };
-            let content = match item.get("content").and_then(|v| v.as_str()) {
-                Some(s) => s.to_string(),
-                None => return ToolOutput::err(&call.id, format!("todo '{id}' missing 'content'")),
-            };
-            let status = match item.get("status").and_then(|v| v.as_str()) {
-                Some(s) => s.to_string(),
-                None => return ToolOutput::err(&call.id, format!("todo '{id}' missing 'status'")),
-            };
+        for (i, item) in todos_value.iter().enumerate() {
+            let id_val = item.get("id").and_then(|v| v.as_str()).map(str::to_string);
+            let content_val = item
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let status_val = item
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+
+            let missing: Vec<_> = [
+                ("id", &id_val),
+                ("content", &content_val),
+                ("status", &status_val),
+            ]
+            .iter()
+            .filter_map(|(name, v)| v.is_none().then_some(*name))
+            .collect();
+            if !missing.is_empty() {
+                let fallback = format!("item {}", i + 1);
+                let label = id_val.as_deref().unwrap_or(&fallback);
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Missing required parameters for todo '{label}': {}. Please provide all required parameters for this tool.",
+                        missing.join(", ")
+                    ),
+                );
+            }
+
+            let id = id_val.unwrap();
+            let content = content_val.unwrap();
+            let status = status_val.unwrap();
             if !["pending", "in_progress", "completed", "cancelled"].contains(&status.as_str()) {
                 return ToolOutput::err(
                     &call.id,

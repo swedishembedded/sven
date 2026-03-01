@@ -19,12 +19,11 @@ pub mod todo_write;
 pub mod update_memory;
 pub mod web_fetch;
 pub mod web_search;
-pub mod write;
+pub mod write_file;
 
 pub mod gdb;
 
 // Legacy modules kept for backwards compatibility
-pub mod fs;
 pub mod glob;
 pub mod shell;
 
@@ -108,17 +107,11 @@ mod output_category_tests {
         assert_eq!(t.output_category(), OutputCategory::FileContent);
     }
 
-    #[test]
-    fn fs_tool_is_filecontent() {
-        let t = super::fs::FsTool;
-        assert_eq!(t.output_category(), OutputCategory::FileContent);
-    }
-
     // ── Generic tools (no override — hard truncation) ─────────────────────────
 
     #[test]
     fn write_tool_is_generic() {
-        let t = super::write::WriteTool;
+        let t = super::write_file::WriteTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 

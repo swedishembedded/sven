@@ -248,42 +248,43 @@ impl Tool for EditFileTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'path'. Received: {}",
-                        serde_json::to_string(&call.args).unwrap_or_default()
-                    ),
-                )
-            }
-        };
-        let old_str = match call.args.get("old_str").and_then(|v| v.as_str()) {
-            Some(s) => s.to_string(),
-            None => {
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'old_str'. Received: {}",
-                        serde_json::to_string(&call.args).unwrap_or_default()
-                    ),
-                )
-            }
-        };
-        let new_str = match call.args.get("new_str").and_then(|v| v.as_str()) {
-            Some(s) => s.to_string(),
-            None => {
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'new_str'. Received: {}",
-                        serde_json::to_string(&call.args).unwrap_or_default()
-                    ),
-                )
-            }
-        };
+        let path_val = call
+            .args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let old_str_val = call
+            .args
+            .get("old_str")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let new_str_val = call
+            .args
+            .get("new_str")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        let missing: Vec<_> = [
+            ("path", &path_val),
+            ("old_str", &old_str_val),
+            ("new_str", &new_str_val),
+        ]
+        .iter()
+        .filter_map(|(name, v)| v.is_none().then_some(*name))
+        .collect();
+        if !missing.is_empty() {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "Missing required parameters: {}. Please provide all required parameters for this tool.",
+                    missing.join(", ")
+                ),
+            );
+        }
+
+        let path = path_val.unwrap();
+        let old_str = old_str_val.unwrap();
+        let new_str = new_str_val.unwrap();
 
         if old_str.is_empty() {
             return ToolOutput::err(
@@ -556,7 +557,7 @@ mod tests {
             .execute(&call(json!({"old_str": "a", "new_str": "b"})))
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'path'"));
+        assert!(out.content.contains("Missing required parameters: path"));
     }
 
     #[test]
@@ -575,7 +576,7 @@ mod tests {
             .execute(&call(json!({"path": path, "old_str": "hello"})))
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'new_str'"));
+        assert!(out.content.contains("Missing required parameters: new_str"));
         let _ = std::fs::remove_file(&path);
     }
 

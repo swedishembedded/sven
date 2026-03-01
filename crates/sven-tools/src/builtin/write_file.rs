@@ -15,7 +15,7 @@ pub struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
     fn name(&self) -> &str {
-        "write"
+        "write_file"
     }
 
     fn description(&self) -> &str {
@@ -57,34 +57,33 @@ impl Tool for WriteTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
-                let args_preview =
-                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'path'. Received: {}",
-                        args_preview
-                    ),
-                );
-            }
-        };
-        let content = match call.args.get("text").and_then(|v| v.as_str()) {
-            Some(c) => c.to_string(),
-            None => {
-                let args_preview =
-                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'text'. Received: {}",
-                        args_preview
-                    ),
-                );
-            }
-        };
+        let path_val = call
+            .args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let text_val = call
+            .args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        let missing: Vec<_> = [("path", &path_val), ("text", &text_val)]
+            .iter()
+            .filter_map(|(name, v)| v.is_none().then_some(*name))
+            .collect();
+        if !missing.is_empty() {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "Missing required parameters: {}. Please provide all required parameters for this tool.",
+                    missing.join(", ")
+                ),
+            );
+        }
+
+        let path = path_val.unwrap();
+        let content = text_val.unwrap();
         let should_append = call
             .args
             .get("append")
@@ -144,7 +143,7 @@ mod tests {
     fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {
             id: "w1".into(),
-            name: "write".into(),
+            name: "write_file".into(),
             args,
         }
     }
@@ -220,7 +219,7 @@ mod tests {
         let t = WriteTool;
         let out = t.execute(&call(json!({"text": "x"}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'path'"));
+        assert!(out.content.contains("Missing required parameters: path"));
     }
 
     #[tokio::test]
@@ -228,7 +227,7 @@ mod tests {
         let t = WriteTool;
         let out = t.execute(&call(json!({"path": "/tmp/x.txt"}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing required parameter 'text'"));
+        assert!(out.content.contains("Missing required parameters: text"));
     }
 
     #[test]

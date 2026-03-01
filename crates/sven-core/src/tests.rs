@@ -11,7 +11,7 @@ mod agent_tests {
 
     use sven_config::{AgentConfig, AgentMode};
     use sven_model::{MessageContent, ResponseEvent, ScriptedMockProvider};
-    use sven_tools::{events::ToolEvent, FsTool, ShellTool, ToolRegistry};
+    use sven_tools::{events::ToolEvent, ShellTool, ToolRegistry, WriteTool};
     use tokio::sync::{mpsc, Mutex};
 
     use crate::{Agent, AgentEvent, AgentRuntimeContext};
@@ -258,7 +258,7 @@ mod agent_tests {
     // ── File tool integration ─────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn fs_tool_write_via_agent_turn() {
+    async fn write_file_tool_via_agent_turn() {
         let path = format!(
             "/tmp/sven_agent_test_{}.txt",
             std::time::SystemTime::now()
@@ -266,12 +266,12 @@ mod agent_tests {
                 .unwrap()
                 .subsec_nanos()
         );
-        let args =
-            format!(r#"{{"operation":"write","path":"{path}","content":"agent wrote this"}}"#);
+        let args = format!(r#"{{"path":"{path}","text":"agent wrote this"}}"#);
 
-        let model = ScriptedMockProvider::tool_then_text("fs-1", "fs", &args, "file written");
+        let model =
+            ScriptedMockProvider::tool_then_text("wf-1", "write_file", &args, "file written");
         let mut reg = ToolRegistry::new();
-        reg.register(FsTool);
+        reg.register(WriteTool);
         let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
         let (tx, rx) = mpsc::channel(64);
 

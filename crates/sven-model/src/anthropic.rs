@@ -337,21 +337,33 @@ impl crate::ModelProvider for AnthropicProvider {
         }
 
         let byte_stream = resp.bytes_stream();
-        let event_stream = byte_stream.flat_map(|chunk| {
-            let lines = match chunk {
-                Ok(b) => String::from_utf8_lossy(&b).to_string(),
-                Err(e) => return futures::stream::iter(vec![Err(anyhow::anyhow!(e))]),
-            };
-            let events: Vec<anyhow::Result<ResponseEvent>> = lines
-                .lines()
-                .filter_map(|line| {
-                    let line = line.strip_prefix("data: ")?.trim();
-                    let v: Value = serde_json::from_str(line).ok()?;
-                    Some(parse_anthropic_event(&v))
-                })
-                .collect();
-            futures::stream::iter(events)
-        });
+        // SSE lines can be split across TCP chunks, so we carry a remainder
+        // buffer forward.  Only complete lines (terminated by '\n') are parsed;
+        // anything left over is prepended to the next chunk.
+        let event_stream = byte_stream
+            .scan(String::new(), |buf, chunk| {
+                let text = match chunk {
+                    Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                    Err(e) => {
+                        return futures::future::ready(Some(vec![Err(anyhow::anyhow!(e))]));
+                    }
+                };
+                buf.push_str(&text);
+                let mut events = Vec::new();
+                // Process every complete line (i.e. everything before the last '\n').
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim_end_matches('\r').to_string();
+                    buf.drain(..=pos);
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        let data = data.trim();
+                        if let Ok(v) = serde_json::from_str::<Value>(data) {
+                            events.push(parse_anthropic_event(&v));
+                        }
+                    }
+                }
+                futures::future::ready(Some(events))
+            })
+            .flat_map(futures::stream::iter);
 
         Ok(Box::pin(event_stream))
     }

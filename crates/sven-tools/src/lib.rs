@@ -30,7 +30,7 @@ pub use builtin::todo_write::TodoWriteTool;
 pub use builtin::update_memory::UpdateMemoryTool;
 pub use builtin::web_fetch::WebFetchTool;
 pub use builtin::web_search::WebSearchTool;
-pub use builtin::write::WriteTool;
+pub use builtin::write_file::WriteTool;
 
 // GDB debugging tools
 pub use builtin::gdb::state::GdbSessionState;
@@ -43,6 +43,5 @@ pub use builtin::gdb::{
 pub use builtin::load_skill::LoadSkillTool;
 
 // Legacy exports preserved for backwards compatibility
-pub use builtin::fs::FsTool;
 pub use builtin::glob::GlobTool;
 pub use builtin::shell::ShellTool;

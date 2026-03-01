@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
-    events::ToolEvent, ApplyPatchTool, AskQuestionTool, DeleteFileTool, EditFileTool, FsTool,
+    events::ToolEvent, ApplyPatchTool, AskQuestionTool, DeleteFileTool, EditFileTool,
     GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
     GdbStatusTool, GdbStopTool, GdbWaitStoppedTool, GlobFileSearchTool, GlobTool, GrepTool,
     ListDirTool, LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
@@ -63,7 +63,6 @@ pub fn build_tool_registry(
             reg.register(ReadFileTool);
             reg.register(ReadImageTool);
             reg.register(ListDirTool);
-            reg.register(FsTool);
             reg.register(GlobFileSearchTool);
             reg.register(GlobTool);
             reg.register(GrepTool);
@@ -129,7 +128,6 @@ pub fn build_tool_registry(
             reg.register(ReadFileTool);
             reg.register(ReadImageTool);
             reg.register(ListDirTool);
-            reg.register(FsTool);
             reg.register(GlobFileSearchTool);
             reg.register(GlobTool);
             reg.register(GrepTool);

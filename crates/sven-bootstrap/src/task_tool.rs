@@ -86,7 +86,8 @@ impl Tool for TaskTool {
                     "description": "Maximum tool-call rounds (default: from config)"
                 }
             },
-            "required": ["prompt"]
+            "required": ["prompt"],
+            "additionalProperties": false
         })
     }
 
