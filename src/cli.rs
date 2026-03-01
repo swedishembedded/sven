@@ -6,6 +6,44 @@ use clap_complete::{generate, Shell};
 use std::path::PathBuf;
 use sven_config::AgentMode;
 
+// ── Mcp subcommand ────────────────────────────────────────────────────────────
+
+/// `sven mcp` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum McpCommands {
+    /// Expose sven as an MCP server over stdio.
+    ///
+    /// Starts a Model Context Protocol server that speaks line-delimited
+    /// JSON-RPC on stdin/stdout.  Any MCP-compatible host can launch sven
+    /// as a subprocess and call its tools:
+    ///
+    ///   Cursor / Claude Desktop / opencode (`mcp.json`):
+    ///
+    ///   { "mcpServers": { "sven": { "command": "sven", "args": ["mcp", "serve"] } } }
+    ///
+    /// The server blocks until stdin reaches EOF (i.e. until the host
+    /// disconnects).  It does not fork, does not bind a port, and requires
+    /// no authentication — security is inherited from the host process.
+    Serve {
+        /// Comma-separated list of tool names to expose.
+        ///
+        /// Defaults to all MCP-safe built-in tools (see `sven_mcp::DEFAULT_TOOL_NAMES`).
+        /// Pass `all` to include every registered tool explicitly.
+        ///
+        /// Example: --tools read_file,write_file,grep,run_terminal_command
+        #[arg(long, value_name = "TOOL,...")]
+        tools: Option<String>,
+
+        /// Brave Search API key for the web_search tool.
+        ///
+        /// May also be provided via the BRAVE_API_KEY environment variable.
+        /// When absent, web_search is still registered but returns an error
+        /// on invocation.
+        #[arg(long, env = "BRAVE_API_KEY", value_name = "KEY")]
+        brave_api_key: Option<String>,
+    },
+}
+
 // ── Node subcommand ───────────────────────────────────────────────────────────
 
 /// `sven node` subcommands.
@@ -267,6 +305,16 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Expose sven as an MCP server for use with Cursor, Claude Desktop, and
+    /// other MCP-compatible hosts.
+    ///
+    /// Run `sven mcp serve` to start the server.  The process blocks on
+    /// stdin/stdout until the host disconnects.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommands,
+    },
+
     /// Node: start the agent, pair devices, manage tokens.
     ///
     /// Run `sven node start` to expose this agent to mobile apps, Slack,

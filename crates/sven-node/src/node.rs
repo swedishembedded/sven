@@ -121,7 +121,7 @@ pub async fn run(
         .swarm
         .keypair_path
         .clone()
-        .or_else(|| default_agent_keypair_path());
+        .or_else(default_agent_keypair_path);
 
     // Parse the `swarm.peers` map (peer_id_base58 → label) into a typed set.
     // Invalid peer ID strings are skipped with a warning so a typo doesn't
@@ -928,10 +928,11 @@ pub async fn exec_task(
                 ws.send(tungstenite::Message::Text(approve)).await?;
                 eprintln!("[auto-approved: {tool_name}]");
             }
-            ControlEvent::SessionState { state, .. } => match state {
-                SessionState::Completed | SessionState::Cancelled => break,
-                _ => {}
-            },
+            ControlEvent::SessionState {
+                state: SessionState::Completed | SessionState::Cancelled,
+                ..
+            } => break,
+            ControlEvent::SessionState { .. } => {}
             ControlEvent::GatewayError { message, .. } => {
                 anyhow::bail!("gateway error: {message}");
             }

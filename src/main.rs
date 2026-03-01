@@ -12,7 +12,7 @@ use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
-use cli::{Cli, Commands, NodeCommands, OutputFormatArg};
+use cli::{Cli, Commands, McpCommands, NodeCommands, OutputFormatArg};
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
@@ -33,12 +33,18 @@ async fn main() -> anyhow::Result<()> {
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
     // (writes to stderr — only useful with headless / CI mode).
     let is_tui = !cli.is_headless() && cli.command.is_none();
-    let is_gateway = matches!(&cli.command, Some(Commands::Node { .. }));
+    let is_gateway = matches!(
+        &cli.command,
+        Some(Commands::Node { .. }) | Some(Commands::Mcp { .. })
+    );
     init_logging(cli.verbose, is_tui, is_gateway);
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
         match cmd {
+            Commands::Mcp { command } => {
+                return run_mcp_command(command).await;
+            }
             Commands::Node { command } => {
                 return run_node_command(command).await;
             }
@@ -144,6 +150,23 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;
             sven_node::exec_task(&node_config, url, token, task, *insecure).await
+        }
+    }
+}
+
+// ── MCP command handler ───────────────────────────────────────────────────────
+
+async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
+    match cmd {
+        McpCommands::Serve {
+            tools,
+            brave_api_key,
+        } => {
+            let registry = std::sync::Arc::new(sven_mcp::build_mcp_registry(
+                brave_api_key.clone(),
+                tools.as_deref(),
+            ));
+            sven_mcp::serve_stdio(registry).await
         }
     }
 }

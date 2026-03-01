@@ -14,6 +14,7 @@ members = [
     "crates/sven-tui",
     "crates/sven-p2p",
     "crates/sven-node",
+    "crates/sven-mcp",
 ]
 
 [workspace.dependencies]
@@ -56,6 +57,7 @@ rmpv         = "1.3"
 image        = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 base64       = "0.22"
 similar      = "2"
+rmcp         = { version = "0.15", default-features = false }
 
 [package]
 name    = "sven"
@@ -77,6 +79,7 @@ sven-core    = { path = "crates/sven-core" }
 sven-ci      = { path = "crates/sven-ci" }
 sven-tui     = { path = "crates/sven-tui" }
 sven-node    = { path = "crates/sven-node" }
+sven-mcp     = { path = "crates/sven-mcp" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }

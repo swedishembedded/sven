@@ -117,6 +117,7 @@ pub async fn build_task_agent(
 
 /// Shared internal builder used by both [`build_gateway_agent`] and
 /// [`build_task_agent`].
+#[allow(clippy::too_many_arguments)]
 async fn build_agent_with(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
