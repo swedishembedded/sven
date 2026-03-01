@@ -4,7 +4,7 @@
 mod agent;
 mod compact;
 mod events;
-mod prompts;
+pub mod prompts;
 mod runtime_context;
 mod session;
 #[cfg(test)]

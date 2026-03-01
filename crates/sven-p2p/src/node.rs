@@ -979,7 +979,11 @@ impl NodeState {
                 continue;
             }
             if !self.agent_peers.contains(&peer_id) {
-                tracing::debug!(%peer_id, "mDNS: discovered peer not in p2p.peers allowlist; skipping");
+                tracing::info!(
+                    %peer_id,
+                    "mDNS: discovered peer not in swarm.peers allowlist; \
+                     add this peer ID to swarm.peers in your config to connect"
+                );
                 continue;
             }
 

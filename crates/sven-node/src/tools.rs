@@ -31,8 +31,11 @@
 //!   "task": "Run the database migration and report any errors." }
 //! ```
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 
 use sven_p2p::{
     protocol::types::{AgentCard, ContentBlock, TaskRequest, TaskStatus},
@@ -40,17 +43,84 @@ use sven_p2p::{
 };
 use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
+/// Maximum number of delegation hops before a task is rejected.
+///
+/// With `MAX_DELEGATION_DEPTH = 3` the longest possible chain is:
+/// human → A → B → C → D where D only executes locally.
+/// Any further forwarding attempt is refused before the LLM runs.
+pub const MAX_DELEGATION_DEPTH: u32 = 3;
+
+/// Shared state describing the delegation chain of the task currently
+/// being executed by the local agent.
+///
+/// Set by [`crate::node::execute_inbound_task`] just before the agent
+/// session starts, and cleared after it finishes.  The [`DelegateTool`]
+/// reads it to enforce cycle and depth limits on any outbound delegation.
+///
+/// # Concurrency note
+///
+/// This is a single shared slot.  If two inbound tasks are executing
+/// concurrently the slot holds whichever context was set last, which may
+/// be stale for the other task.  The **hard depth check in
+/// `execute_inbound_task`** (which fires *before* the LLM) provides the
+/// correctness guarantee in all cases; the context here adds an early
+/// cycle-detection path that is best-effort under high concurrency.
+#[derive(Debug, Clone, Default)]
+pub struct DelegationContext {
+    /// Depth at which the current task is executing (0 = local, 1 = once
+    /// delegated, …).
+    pub depth: u32,
+    /// Peer IDs already in the delegation chain, in hop order.
+    pub chain: Vec<String>,
+}
+
+/// Thread-safe handle to the shared delegation context.
+pub type DelegationContextHandle = Arc<Mutex<Option<DelegationContext>>>;
+
 // ── DelegateTool ─────────────────────────────────────────────────────────────
 
 /// Sends a task to a named or identified peer agent and waits for the result.
 ///
-/// The LLM uses this to break up work: it discovers peers with `list_peers`,
-/// then delegates subtasks with `delegate_task`.  The call blocks until the
-/// remote agent replies (up to 15 minutes).
+/// # LAST RESORT — read before using
+///
+/// This tool exists for cases where a task **genuinely cannot be completed
+/// locally** because it requires capabilities or resources that are only
+/// available on a specific remote peer.  It is **not** a routing mechanism.
+///
+/// **Always attempt the task locally first.**  Only call `delegate_task` if
+/// you have already tried local execution and confirmed that it is
+/// impossible without the remote peer's specific capabilities.
+///
+/// **Never delegate back to the peer that sent you the current task.**  The
+/// runtime enforces this with a hard cycle check — the request will be
+/// rejected and you will receive an error.
+///
+/// # Cycle and depth protection
+///
+/// Before forwarding, the tool checks two hard conditions enforced in code
+/// (not by the LLM):
+///
+/// 1. **Depth limit** — rejects if the current delegation depth is already
+///    at [`MAX_DELEGATION_DEPTH`].
+/// 2. **Cycle detection** — rejects if the target peer is already in the
+///    delegation chain for this task.
+///
+/// The outgoing [`TaskRequest`] carries the incremented depth and extended
+/// chain so every node in the path applies the same checks.
+///
+/// # Delegation context
+///
+/// `delegation_context` is pre-populated at agent construction time with
+/// the depth and chain of the inbound task this agent is executing.  Each
+/// inbound-task agent gets its own context — there is no shared mutable
+/// state between concurrent tasks.
 pub struct DelegateTool {
     pub p2p: P2pHandle,
     pub rooms: Vec<String>,
     pub our_card: AgentCard,
+    /// Per-task delegation context, pre-populated by `build_task_agent`.
+    /// Never shared between concurrent tasks.
+    pub delegation_context: DelegationContextHandle,
 }
 
 impl DelegateTool {
@@ -85,11 +155,13 @@ impl Tool for DelegateTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to another connected agent peer and wait for the result. \
-         Use list_peers first to discover available agents and their capabilities. \
-         The remote agent will run the task through its own model+tool loop and \
-         return the final response. Blocks until the remote agent finishes \
-         (up to 15 minutes)."
+        "LAST RESORT ONLY: Send a task to a peer agent when local execution is genuinely \
+         impossible. You MUST attempt the task locally with your own tools first. Only use \
+         this tool if (1) you have already tried and failed locally, and (2) the task \
+         explicitly requires a capability that only exists on a specific other peer. \
+         Never delegate back to the peer that sent you the current task — it will deadlock. \
+         Use list_peers first to see available peers and their capabilities. \
+         Blocks until the remote agent responds (up to 15 minutes)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -141,13 +213,57 @@ impl Tool for DelegateTool {
             }
         };
 
+        // ── Cycle and depth checks ────────────────────────────────────────────
+        let (outgoing_depth, outgoing_chain) = {
+            let ctx = self.delegation_context.lock().await;
+            let (current_depth, current_chain) = ctx
+                .as_ref()
+                .map(|c| (c.depth, c.chain.clone()))
+                .unwrap_or((0, vec![]));
+
+            if current_depth >= MAX_DELEGATION_DEPTH {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Cannot delegate: maximum delegation depth ({MAX_DELEGATION_DEPTH}) \
+                         reached. Execute this sub-task locally instead."
+                    ),
+                );
+            }
+
+            let target_id = peer_id.to_base58();
+            if current_chain.contains(&target_id) {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Cannot delegate to '{peer_str}': circular delegation detected. \
+                         Peer {target_id} is already in the delegation chain: [{}].",
+                        current_chain.join(" → ")
+                    ),
+                );
+            }
+
+            // Build the chain for the outgoing request: append our own peer ID
+            // so the receiver knows we have already processed this task.
+            let mut new_chain = current_chain;
+            new_chain.push(self.our_card.peer_id.clone());
+            (current_depth + 1, new_chain)
+        };
+
         let room = self
             .rooms
             .first()
             .cloned()
             .unwrap_or_else(|| "default".to_string());
 
-        let request = TaskRequest::new(room, task_text, vec![]);
+        let request = TaskRequest {
+            id: uuid::Uuid::new_v4(),
+            originator_room: room,
+            description: task_text,
+            payload: vec![],
+            depth: outgoing_depth,
+            chain: outgoing_chain,
+        };
         let task_id = request.id;
 
         tracing::info!(

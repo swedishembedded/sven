@@ -71,6 +71,26 @@ pub struct TaskRequest {
     pub description: String,
     /// Multimodal payload (text prompts, images, JSON context…).
     pub payload: Vec<ContentBlock>,
+
+    /// Number of delegation hops this request has already traversed.
+    ///
+    /// `0` = request originated directly from a human operator or the local
+    /// agent.  Each time an agent forwards the task to a peer via
+    /// `delegate_task` this counter is incremented.  The receiving gateway
+    /// **rejects** requests that reach [`MAX_DELEGATION_DEPTH`] before running
+    /// the LLM, preventing runaway delegation storms.
+    #[serde(default)]
+    pub depth: u32,
+
+    /// Ordered list of peer IDs that have already handled this task request,
+    /// starting from the originator.
+    ///
+    /// Each forwarding agent appends its own peer ID before sending.  The
+    /// receiver checks whether its own peer ID already appears in this list
+    /// and **rejects** the request if so, breaking A→B→A and A→B→C→A cycles
+    /// before the LLM ever runs.
+    #[serde(default)]
+    pub chain: Vec<String>,
 }
 
 impl TaskRequest {
@@ -84,6 +104,8 @@ impl TaskRequest {
             originator_room: room.into(),
             description: description.into(),
             payload,
+            depth: 0,
+            chain: Vec::new(),
         }
     }
 }

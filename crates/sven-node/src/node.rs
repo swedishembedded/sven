@@ -56,27 +56,27 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tracing::info;
 use uuid::Uuid;
 
 use libp2p::{Multiaddr, PeerId};
+use sven_core::AgentEvent;
 use sven_p2p::{
     protocol::types::{AgentCard, ContentBlock, P2pResponse, TaskStatus},
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
 use crate::{
-    agent_builder::build_gateway_agent,
+    agent_builder::{build_gateway_agent, build_task_agent},
     config::{GatewayConfig, SlackMode},
-    control::{
-        protocol::{ControlCommand, ControlEvent, SessionState},
-        service::{AgentHandle, ControlService},
-    },
+    control::service::ControlService,
     crypto::token::StoredTokenFile,
     http::slack::{run_socket_mode, SlackWebhookState},
     p2p::{auth::PeerAllowlist, handler::P2pControlNode},
 };
+// `tools` is only needed from agent_builder for per-task agent construction.
+use crate::tools::MAX_DELEGATION_DEPTH;
 
 /// Start the gateway, assembling all subsystems.
 ///
@@ -146,8 +146,14 @@ pub async fn run(
     let p2p_handle = p2p_node.handle();
 
     // ── Build the agent with P2P routing tools ────────────────────────────────
+    // Create the model provider once.  The Arc is shared with every per-task
+    // agent built later so we only open one HTTP connection / API client.
+    let model: Arc<dyn sven_model::ModelProvider> =
+        Arc::from(sven_model::from_config(&sven_config.model)?);
+
     let agent = build_gateway_agent(
         &sven_config,
+        Arc::clone(&model),
         p2p_handle.clone(),
         agent_card.clone(),
         config.swarm.rooms.clone(),
@@ -163,8 +169,10 @@ pub async fn run(
     tokio::spawn(run_task_executor(
         p2p_event_rx,
         p2p_handle.clone(),
-        agent_handle.clone(),
         agent_card.clone(),
+        sven_config.clone(),
+        Arc::clone(&model),
+        config.swarm.rooms.clone(),
     ));
 
     // ── Spawn the P2pNode swarm ───────────────────────────────────────────────
@@ -276,24 +284,28 @@ pub async fn run(
 // ── Inbound task executor ─────────────────────────────────────────────────────
 
 /// Listens for `P2pEvent::TaskRequested` events from the agent P2P node and
-/// executes each task via the `ControlService`.
+/// executes each task via a freshly built per-task [`Agent`].
 ///
 /// Each task is processed in its own spawned task so multiple inbound tasks
-/// can be served concurrently.
+/// are served concurrently with complete state isolation between them.
 async fn run_task_executor(
     mut event_rx: tokio::sync::broadcast::Receiver<P2pEvent>,
     p2p: P2pHandle,
-    agent: AgentHandle,
     our_card: AgentCard,
+    config: Arc<sven_config::Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    rooms: Vec<String>,
 ) {
     loop {
         match event_rx.recv().await {
             Ok(P2pEvent::TaskRequested { id, from, request }) => {
                 let p2p = p2p.clone();
-                let agent = agent.clone();
                 let card = our_card.clone();
+                let cfg = Arc::clone(&config);
+                let mdl = Arc::clone(&model);
+                let rms = rooms.clone();
                 tokio::spawn(async move {
-                    execute_inbound_task(id, from, request, p2p, agent, card).await;
+                    execute_inbound_task(id, from, request, p2p, card, cfg, mdl, rms).await;
                 });
             }
             Ok(_) => {}
@@ -305,14 +317,32 @@ async fn run_task_executor(
     }
 }
 
-/// Execute one inbound task through the local agent and send back the result.
+/// Execute one inbound P2P task through a fresh, per-task [`Agent`].
+///
+/// # Isolation guarantee
+///
+/// Every call builds its own `Agent` via [`build_task_agent`], with the
+/// delegation context (depth + chain) pre-baked at construction time.
+/// Concurrent inbound tasks never share any mutable state — there is no
+/// global context slot to race over.
+///
+/// # Hard guards (run before the LLM)
+///
+/// 1. **Depth limit** — rejected if `request.depth >= MAX_DELEGATION_DEPTH`.
+/// 2. **Cycle check** — rejected if our own peer ID is already in
+///    `request.chain`, meaning the task has looped back to us.
+///
+/// Both checks fire synchronously before any model call.
+#[allow(clippy::too_many_arguments)]
 async fn execute_inbound_task(
     task_id: Uuid,
     from: PeerId,
     request: sven_p2p::protocol::types::TaskRequest,
     p2p: P2pHandle,
-    agent: AgentHandle,
     our_card: AgentCard,
+    config: Arc<sven_config::Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    rooms: Vec<String>,
 ) {
     use std::time::Instant;
     let start = Instant::now();
@@ -320,42 +350,16 @@ async fn execute_inbound_task(
     tracing::info!(
         task_id = %task_id,
         from = %from,
+        depth = request.depth,
         description = %request.description,
         "executing inbound P2P task"
     );
 
-    // Build a prompt from the task request.
-    let mut prompt = format!(
-        "You have received a task from a peer agent (peer ID: {from}).\n\n\
-         **Task:** {}\n",
-        request.description
-    );
-    for block in &request.payload {
-        match block {
-            ContentBlock::Text { text } => {
-                prompt.push_str("\n\n**Context:**\n");
-                prompt.push_str(text);
-            }
-            ContentBlock::Json { value } => {
-                prompt.push_str("\n\n**Context (JSON):**\n```json\n");
-                prompt.push_str(&serde_json::to_string_pretty(value).unwrap_or_default());
-                prompt.push_str("\n```");
-            }
-            ContentBlock::Image { .. } => {
-                prompt.push_str("\n\n[Image context received but not yet supported]");
-            }
-        }
-    }
-
-    // Create a dedicated control session for this task.
-    let session_id = Uuid::new_v4();
-    let mut event_rx = agent.subscribe();
-
-    let fail = |reason: String| {
+    // Helper: send a failure reply without a model call.
+    let fail_reply = |reason: String, duration_ms: u64| {
         let p2p = p2p.clone();
         let our_card = our_card.clone();
         let request_id = request.id;
-        let duration_ms = start.elapsed().as_millis() as u64;
         async move {
             tracing::warn!(task_id = %task_id, "P2P task failed: {reason}");
             let _ = p2p
@@ -373,118 +377,149 @@ async fn execute_inbound_task(
         }
     };
 
-    if let Err(e) = agent
-        .send(ControlCommand::NewSession {
-            id: session_id,
-            mode: sven_config::AgentMode::Agent,
-            working_dir: None,
-        })
-        .await
-    {
-        fail(format!("failed to create session: {e}")).await;
+    // ── Hard depth guard ─────────────────────────────────────────────────────
+    if request.depth >= MAX_DELEGATION_DEPTH {
+        let reason = format!(
+            "Task rejected: maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached. \
+             Chain: [{}]",
+            request.chain.join(" → ")
+        );
+        tracing::warn!(task_id = %task_id, %from, "{reason}");
+        fail_reply(reason, start.elapsed().as_millis() as u64).await;
         return;
     }
 
-    // Drain the initial Idle event so our subscription is aligned.
-    drain_until_idle(&mut event_rx, session_id).await;
-
-    if let Err(e) = agent
-        .send(ControlCommand::SendInput {
-            session_id,
-            text: prompt,
-        })
-        .await
-    {
-        fail(format!("failed to send task input: {e}")).await;
+    // ── Hard cycle guard ─────────────────────────────────────────────────────
+    if request.chain.contains(&our_card.peer_id) {
+        let reason = format!(
+            "Task rejected: circular delegation — this node ({}) is already in \
+             the chain: [{}]",
+            our_card.peer_id,
+            request.chain.join(" → ")
+        );
+        tracing::warn!(task_id = %task_id, %from, "{reason}");
+        fail_reply(reason, start.elapsed().as_millis() as u64).await;
         return;
     }
 
-    // Collect the final agent response (last OutputComplete before Completed).
-    let task_timeout = tokio::time::Duration::from_secs(900);
-    let deadline = tokio::time::Instant::now() + task_timeout;
+    // ── Build a fresh, isolated per-task agent ────────────────────────────────
+    // delegation_context is pre-populated inside build_task_agent with this
+    // task's depth and chain.  No global slot, no race condition.
+    let mut task_agent = match build_task_agent(
+        &config,
+        Arc::clone(&model),
+        p2p.clone(),
+        our_card.clone(),
+        rooms,
+        request.depth,
+        request.chain.clone(),
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            fail_reply(
+                format!("failed to build task agent: {e}"),
+                start.elapsed().as_millis() as u64,
+            )
+            .await;
+            return;
+        }
+    };
 
-    let mut last_response = String::new();
+    // ── Build the task prompt ────────────────────────────────────────────────
+    let chain_note = if request.chain.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nDelegation chain so far: [{}]. \
+             Do NOT delegate back to any peer in this chain.",
+            request.chain.join(" → ")
+        )
+    };
 
-    loop {
-        match tokio::time::timeout_at(deadline, event_rx.recv()).await {
-            Ok(Ok(ControlEvent::OutputComplete {
-                session_id: sid,
-                text,
-                role,
-            })) if sid == session_id && role == "assistant" => {
-                last_response = text;
+    let mut prompt = format!(
+        "You have received a task from peer agent {from}.{chain_note}\n\n\
+         **Task:** {}\n",
+        request.description
+    );
+    for block in &request.payload {
+        match block {
+            ContentBlock::Text { text } => {
+                prompt.push_str("\n\n**Context:**\n");
+                prompt.push_str(text);
             }
-            Ok(Ok(ControlEvent::SessionState {
-                session_id: sid,
-                state: SessionState::Completed,
-            })) if sid == session_id => {
-                break;
+            ContentBlock::Json { value } => {
+                prompt.push_str("\n\n**Context (JSON):**\n```json\n");
+                prompt.push_str(&serde_json::to_string_pretty(value).unwrap_or_default());
+                prompt.push_str("\n```");
             }
-            Ok(Ok(ControlEvent::AgentError {
-                session_id: Some(sid),
-                message,
-            })) if sid == session_id => {
-                fail(message).await;
-                return;
-            }
-            Ok(Ok(ControlEvent::SessionState {
-                session_id: sid,
-                state: SessionState::Cancelled,
-            })) if sid == session_id => {
-                fail("task session was cancelled".to_string()).await;
-                return;
-            }
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
-            Ok(_) => continue,
-            Err(_) => {
-                fail("task timed out after 15 minutes".to_string()).await;
-                return;
+            ContentBlock::Image { .. } => {
+                prompt.push_str("\n\n[Image context received — not yet supported]");
             }
         }
     }
+
+    // ── Run the agent directly (no ControlService indirection) ───────────────
+    // Each task runs in its own agent instance, so there is no shared session
+    // state with the interactive gateway agent or with other concurrent tasks.
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(64);
+    let prompt_clone = prompt.clone();
+
+    let task_timeout = tokio::time::Duration::from_secs(900);
+
+    let agent_fut = async move { task_agent.submit(&prompt_clone, event_tx).await };
+
+    let collect_fut = async {
+        let mut last_response = String::new();
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                AgentEvent::TextComplete(text) => {
+                    last_response = text;
+                }
+                AgentEvent::Error(e) => {
+                    return Err(e);
+                }
+                AgentEvent::Aborted { .. } => {
+                    return Err("task agent was aborted".to_string());
+                }
+                _ => {}
+            }
+        }
+        Ok(last_response)
+    };
+
+    let result =
+        tokio::time::timeout(task_timeout, async { tokio::join!(agent_fut, collect_fut) }).await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    tracing::info!(
-        task_id = %task_id,
-        duration_ms,
-        "P2P task completed"
-    );
 
-    let _ = p2p
-        .reply_to_task(
-            task_id,
-            P2pResponse::TaskResult(sven_p2p::protocol::types::TaskResponse {
-                request_id: request.id,
-                agent: our_card,
-                result: vec![ContentBlock::text(last_response)],
-                status: TaskStatus::Completed,
-                duration_ms,
-            }),
-        )
-        .await;
-}
-
-/// Drain events until we see `SessionState::Idle` for `session_id`,
-/// or until the broadcast lags / closes.
-async fn drain_until_idle(
-    rx: &mut tokio::sync::broadcast::Receiver<ControlEvent>,
-    session_id: Uuid,
-) {
-    let timeout = tokio::time::Duration::from_millis(500);
-    let _ = tokio::time::timeout(timeout, async {
-        loop {
-            match rx.recv().await {
-                Ok(ControlEvent::SessionState {
-                    session_id: sid,
-                    state: SessionState::Idle,
-                }) if sid == session_id => return,
-                Ok(_) => continue,
-                Err(_) => return,
-            }
+    match result {
+        Err(_elapsed) => {
+            fail_reply("task timed out after 15 minutes".to_string(), duration_ms).await;
         }
-    })
-    .await;
+        Ok((Err(agent_err), _)) => {
+            fail_reply(format!("agent error: {agent_err}"), duration_ms).await;
+        }
+        Ok((Ok(()), Err(collect_err))) => {
+            fail_reply(collect_err, duration_ms).await;
+        }
+        Ok((Ok(()), Ok(last_response))) => {
+            tracing::info!(task_id = %task_id, duration_ms, "P2P task completed");
+            let _ = p2p
+                .reply_to_task(
+                    task_id,
+                    P2pResponse::TaskResult(sven_p2p::protocol::types::TaskResponse {
+                        request_id: request.id,
+                        agent: our_card,
+                        result: vec![ContentBlock::text(last_response)],
+                        status: TaskStatus::Completed,
+                        duration_ms,
+                    }),
+                )
+                .await;
+        }
+    }
 }
 
 // ── Pairing subcommand ────────────────────────────────────────────────────────
