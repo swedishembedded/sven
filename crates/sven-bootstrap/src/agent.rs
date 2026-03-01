@@ -87,6 +87,8 @@ impl AgentBuilder {
             system_prompt_override: self.runtime_ctx.system_prompt_override,
             skills: self.runtime_ctx.skills,
             agents: self.runtime_ctx.agents,
+            knowledge: self.runtime_ctx.knowledge,
+            knowledge_drift_note: self.runtime_ctx.knowledge_drift_note,
         };
 
         // Pass runtime.clone() as sub_agent_runtime so TaskTool sub-agents

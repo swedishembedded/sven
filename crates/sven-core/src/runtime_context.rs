@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use sven_runtime::{SharedAgents, SharedSkills};
+use sven_runtime::{SharedAgents, SharedKnowledge, SharedSkills};
 
 /// Environment-detected context injected into an agent at construction time.
 #[derive(Debug, Default, Clone)]
@@ -39,4 +39,14 @@ pub struct AgentRuntimeContext {
     /// Held as [`SharedAgents`] so the TUI can trigger a live refresh and the
     /// next agent turn picks up new subagents when rebuilding the system prompt.
     pub agents: SharedAgents,
+    /// Knowledge documents discovered from `.sven/knowledge/`.
+    ///
+    /// Held as [`SharedKnowledge`] for live-refresh parity with skills and
+    /// agents.  The `list_knowledge` and `search_knowledge` tools hold a clone
+    /// of this and serve reads without touching the filesystem on every call.
+    pub knowledge: SharedKnowledge,
+    /// Pre-formatted knowledge drift warning block, computed once at session
+    /// start.  Injected into the system prompt so the agent is immediately
+    /// aware of subsystems whose documentation may be stale.
+    pub knowledge_drift_note: Option<String>,
 }

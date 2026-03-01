@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_runtime::{CiContext, GitContext, SharedAgents, SharedSkills};
+use sven_runtime::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 use sven_tools::{events::TodoItem, QuestionRequest};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
@@ -46,10 +46,15 @@ pub struct RuntimeContext {
     pub skills: SharedSkills,
     /// Subagents discovered from the standard search hierarchy.
     pub agents: SharedAgents,
+    /// Knowledge documents discovered from `.sven/knowledge/`.
+    pub knowledge: SharedKnowledge,
+    /// Pre-formatted knowledge drift warning (computed once at startup).
+    /// `None` when all documents are current or none have `updated:` fields.
+    pub knowledge_drift_note: Option<String>,
 }
 
 impl RuntimeContext {
-    /// Create with auto-detected project, git, CI context, and skills.
+    /// Create with auto-detected project, git, CI context, skills, and knowledge.
     pub fn auto_detect() -> Self {
         let project_root = sven_runtime::find_project_root().ok();
         let git_context = project_root
@@ -62,6 +67,14 @@ impl RuntimeContext {
         let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
         let agents = SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
 
+        // Discover knowledge docs and check for drift against recent git commits.
+        let knowledge_items = sven_runtime::discover_knowledge(project_root.as_deref());
+        let knowledge_drift_note = project_root
+            .as_ref()
+            .map(|r| sven_runtime::check_knowledge_drift(r, &knowledge_items))
+            .and_then(|warnings| sven_runtime::format_drift_warnings(&warnings));
+        let knowledge = SharedKnowledge::new(knowledge_items);
+
         Self {
             project_root,
             git_context,
@@ -71,12 +84,17 @@ impl RuntimeContext {
             system_prompt_override: None,
             skills,
             agents,
+            knowledge,
+            knowledge_drift_note,
         }
     }
 
     /// Create an empty context (no project/git/CI detection).
     pub fn empty() -> Self {
-        Self::default()
+        Self {
+            knowledge: SharedKnowledge::empty(),
+            ..Default::default()
+        }
     }
 }
 

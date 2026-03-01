@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sven_config::AgentMode;
-use sven_runtime::{AgentInfo, SkillInfo};
+use sven_runtime::{AgentInfo, KnowledgeInfo, SkillInfo};
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -37,6 +37,14 @@ pub struct PromptContext<'a> {
     /// stable system prompt so the model can suggest delegation and the user
     /// can invoke them via slash commands.
     pub agents: Arc<[AgentInfo]>,
+    /// Discovered knowledge documents.  A summary section is injected into the
+    /// stable system prompt so the model knows the knowledge base exists and
+    /// which subsystems it covers.
+    pub knowledge: Arc<[KnowledgeInfo]>,
+    /// Pre-formatted knowledge drift warning (computed once at session start).
+    /// Injected verbatim into the stable system-prompt block.  `None` when all
+    /// knowledge documents are current or no `updated:` fields are set.
+    pub knowledge_drift_note: Option<&'a str>,
 }
 
 impl<'a> Default for PromptContext<'a> {
@@ -49,6 +57,8 @@ impl<'a> Default for PromptContext<'a> {
             append: None,
             skills: Arc::from(Vec::<SkillInfo>::new()),
             agents: Arc::from(Vec::<AgentInfo>::new()),
+            knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
+            knowledge_drift_note: None,
         }
     }
 }
@@ -57,8 +67,9 @@ impl<'a> PromptContext<'a> {
     /// Return a version of this context with the volatile fields cleared.
     ///
     /// Used to build the *stable* (cacheable) portion of the system prompt.
-    /// Skills and agents are stable within a session (discovered once at
-    /// startup) so they are included in the stable slice.
+    /// Skills, agents, knowledge docs, and drift notes are stable within a
+    /// session (discovered once at startup) so they are included in the stable
+    /// slice.
     pub fn stable_only(&self) -> Self {
         Self {
             project_root: self.project_root,
@@ -68,6 +79,8 @@ impl<'a> PromptContext<'a> {
             append: self.append,
             skills: self.skills.clone(),
             agents: self.agents.clone(),
+            knowledge: self.knowledge.clone(),
+            knowledge_drift_note: self.knowledge_drift_note,
         }
     }
 
@@ -122,7 +135,9 @@ mod guidelines {
         "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete after completing each step.\n\
          - Use `switch_mode` to transition between Research, Plan, and Agent modes proactively.\n\
          - Store project-specific conventions in `update_memory`; retrieve them at the start of new sessions.\n\
-         - Batch independent tool calls in parallel to increase efficiency."
+         - Batch independent tool calls in parallel to increase efficiency.\n\
+         - Before modifying a subsystem, call `search_knowledge` to retrieve any existing knowledge spec.\n\
+         - After significant structural changes to a subsystem, update the `.sven/knowledge/` doc's `updated:` date and relevant sections."
     }
 
     pub fn error_handling() -> &'static str {
@@ -347,6 +362,82 @@ pub fn p2p_task_guidelines() -> &'static str {
        respond with a clear failure message explaining what is missing."
 }
 
+// ─── Knowledge section ────────────────────────────────────────────────────────
+
+/// Maximum total characters for the `<knowledge_base>` block.
+pub const MAX_KNOWLEDGE_PROMPT_CHARS: usize = 8_000;
+
+/// Format the knowledge-base overview block for injection into the system
+/// prompt.  Shows subsystem names and their covered file patterns so the model
+/// knows which domains have specifications without loading all doc bodies.
+///
+/// Returns an empty string when `knowledge` is empty.
+pub fn build_knowledge_section(knowledge: &[KnowledgeInfo]) -> String {
+    if knowledge.is_empty() {
+        return String::new();
+    }
+
+    let entries: Vec<String> = knowledge
+        .iter()
+        .map(|k| {
+            let files_hint = if k.files.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", k.files.join(", "))
+            };
+            let updated_hint = k
+                .updated
+                .as_deref()
+                .map(|d| format!(" — updated {d}"))
+                .unwrap_or_default();
+            format!(
+                "  <doc>\n    <subsystem>{}</subsystem>{}{}\n  </doc>",
+                k.subsystem, files_hint, updated_hint
+            )
+        })
+        .collect();
+
+    // Fit within budget.
+    let mut used = 0usize;
+    let fitted_count = entries
+        .iter()
+        .take_while(|e| {
+            let next = used + e.len();
+            if next <= MAX_KNOWLEDGE_PROMPT_CHARS {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count();
+
+    if fitted_count == 0 {
+        return String::new();
+    }
+
+    let fitted = &entries[..fitted_count];
+    let truncation_note = if fitted_count < entries.len() {
+        format!(
+            "\n⚠ Knowledge base truncated: showing {} of {}.",
+            fitted_count,
+            knowledge.len()
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        "## Knowledge Base\n\n\
+         Project knowledge documents are available for these subsystems.  Use \
+         `search_knowledge \"<topic>\"` to find relevant specs before modifying a \
+         subsystem, or `list_knowledge` to see all documents with their covered \
+         file patterns.{truncation_note}\n\n\
+         <knowledge_base>\n{}\n</knowledge_base>",
+        fitted.join("\n")
+    )
+}
+
 fn build_guidelines_section() -> String {
     format!(
         "## Guidelines\n\n\
@@ -481,6 +572,23 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
     };
 
+    // Knowledge base overview — stable, injected after agents.
+    let knowledge_section = {
+        let s = build_knowledge_section(&ctx.knowledge);
+        if s.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{s}")
+        }
+    };
+
+    // Knowledge drift warning — stable (computed once at session start).
+    let knowledge_drift_section = if let Some(note) = ctx.knowledge_drift_note {
+        format!("\n\n{note}")
+    } else {
+        String::new()
+    };
+
     let guidelines_section = build_guidelines_section();
 
     let append_section = if let Some(extra) = ctx.append {
@@ -492,7 +600,8 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     format!(
         "{agent_identity}\n\n\
          {mode_instructions}{project_section}{git_section}\
-         {context_file_section}{skills_section}{agents_section}{ci_section}\n\n\
+         {context_file_section}{skills_section}{agents_section}\
+         {knowledge_section}{knowledge_drift_section}{ci_section}\n\n\
          {guidelines_section}\
          {append_section}",
     )

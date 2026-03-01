@@ -7,12 +7,14 @@ pub mod edit_file;
 pub mod find_file;
 pub mod grep;
 pub mod list_dir;
+pub mod list_knowledge;
 pub mod load_skill;
 pub mod read_file;
 pub mod read_image;
 pub mod read_lints;
 pub mod run_terminal_command;
 pub mod search_codebase;
+pub mod search_knowledge;
 pub mod switch_mode;
 pub mod todo_write;
 pub mod update_memory;
@@ -145,5 +147,23 @@ mod output_category_tests {
     fn find_file_tool_is_generic() {
         let t = super::find_file::FindFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
+    }
+
+    // ── Knowledge tools ───────────────────────────────────────────────────────
+
+    #[test]
+    fn list_knowledge_is_matchlist() {
+        let t = super::list_knowledge::ListKnowledgeTool {
+            knowledge: sven_runtime::SharedKnowledge::empty(),
+        };
+        assert_eq!(t.output_category(), OutputCategory::MatchList);
+    }
+
+    #[test]
+    fn search_knowledge_is_matchlist() {
+        let t = super::search_knowledge::SearchKnowledgeTool {
+            knowledge: sven_runtime::SharedKnowledge::empty(),
+        };
+        assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 }

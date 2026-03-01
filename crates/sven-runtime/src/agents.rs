@@ -79,6 +79,11 @@ pub struct AgentInfo {
     pub content: String,
     /// Absolute path to the agent markdown file.
     pub agent_md_path: std::path::PathBuf,
+    /// Knowledge document filenames cross-referenced by this agent spec.
+    ///
+    /// When set, `load_skill` appends a hint pointing the model to these
+    /// knowledge docs.  Files are resolved from `.sven/knowledge/`.
+    pub knowledge: Vec<String>,
 }
 
 /// A shared, live-refreshable collection of discovered subagents.
@@ -113,6 +118,9 @@ struct AgentFrontmatter {
     readonly: bool,
     #[serde(default)]
     is_background: bool,
+    /// Knowledge doc filenames this agent cross-references.
+    #[serde(default)]
+    knowledge: Vec<String>,
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
@@ -146,6 +154,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
                 model: None,
                 readonly: false,
                 is_background: false,
+                knowledge: vec![],
             },
             rest.to_string(),
         )
@@ -179,6 +188,24 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         .model
         .filter(|m| !m.trim().is_empty() && m.trim() != "inherit");
 
+    // Append knowledge hint to the content body so it is visible whenever
+    // the agent spec is loaded (slash command, task invocation, etc.).
+    let content = if fm.knowledge.is_empty() {
+        content
+    } else {
+        let files: Vec<String> = fm
+            .knowledge
+            .iter()
+            .map(|f| format!("  - .sven/knowledge/{f}"))
+            .collect();
+        format!(
+            "{content}\n\n---\n\
+             **Relevant knowledge docs** — call `search_knowledge \"<topic>\"` or \
+             `read_file` to load:\n{}",
+            files.join("\n")
+        )
+    };
+
     Some(AgentInfo {
         name,
         description,
@@ -187,6 +214,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         is_background: fm.is_background,
         content,
         agent_md_path: path.to_path_buf(),
+        knowledge: fm.knowledge,
     })
 }
 

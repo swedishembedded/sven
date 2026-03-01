@@ -16,10 +16,10 @@ use sven_model::ModelProvider;
 use sven_tools::{
     events::ToolEvent, AskQuestionTool, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool,
     GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
-    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, LoadSkillTool, ReadFileTool,
-    ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, ShellTool,
-    SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool,
-    WriteTool,
+    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool,
+    ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
+    SearchKnowledgeTool, ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool,
+    WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -98,6 +98,12 @@ pub fn build_tool_registry(
                 sub_agent_runtime.clone(),
             ));
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
+            reg.register(ListKnowledgeTool {
+                knowledge: sub_agent_runtime.knowledge.clone(),
+            });
+            reg.register(SearchKnowledgeTool {
+                knowledge: sub_agent_runtime.knowledge.clone(),
+            });
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(
@@ -153,6 +159,12 @@ pub fn build_tool_registry(
             });
             // TaskTool intentionally omitted to limit sub-agent nesting
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
+            reg.register(ListKnowledgeTool {
+                knowledge: sub_agent_runtime.knowledge.clone(),
+            });
+            reg.register(SearchKnowledgeTool {
+                knowledge: sub_agent_runtime.knowledge.clone(),
+            });
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(

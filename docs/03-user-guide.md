@@ -552,3 +552,54 @@ automatically.
 **Override globals with project skills.**  A project-level skill at
 `.sven/skills/deploy/` silently replaces any global skill with the same command.
 This lets you tailor shared skills for a specific repository.
+
+---
+
+## Agent routing convention
+
+For projects with multiple specialist agents or skills, a routing table in the
+project context file (`AGENTS.md` or `.sven/context.md`) encodes which domain
+expert to consult before editing a given area of the codebase.
+
+The agent reads this table as part of "Project Instructions" and follows it
+automatically — no additional tooling required.
+
+### Format
+
+Add an `## Agent Routing` section to your `AGENTS.md`:
+
+```markdown
+## Agent Routing
+
+Before modifying files that match the patterns below, load the indicated skill
+or agent first.
+
+| File pattern              | Before changes: load              |
+|---------------------------|-----------------------------------|
+| crates/sven-p2p/**        | `/p2p-specialist`                 |
+| crates/sven-model/**      | `/model-integrator`               |
+| .sven/knowledge/**        | update `updated:` date when done  |
+| src/auth/**               | `/security-auditor` (readonly)    |
+```
+
+### Why it works
+
+The routing table is written for the AI, not for humans.  When Sven sees
+"Project Instructions" in its system prompt, it treats the table as binding
+rules.  The model will call `load_skill` or suggest the indicated agent before
+touching matching files.
+
+### Tips
+
+- **Use glob patterns.** `crates/sven-p2p/**` matches any file under that
+  directory; `src/**/*.rs` matches all Rust source files.
+- **Cross-reference with knowledge docs.** If a subsystem has a knowledge doc,
+  note it in the routing table:
+  ```markdown
+  | crates/sven-p2p/**  | search_knowledge "P2P Networking" before changes |
+  ```
+- **Combine with skills.** Skills can themselves contain routing sub-tables
+  for their own sub-components.
+- **Start small.** A two-row routing table covering your two most error-prone
+  subsystems is more effective than a twenty-row table the model ignores due
+  to length.

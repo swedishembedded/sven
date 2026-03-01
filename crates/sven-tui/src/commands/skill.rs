@@ -296,6 +296,7 @@ mod tests {
             is_background: false,
             content: content.to_string(),
             agent_md_path: PathBuf::from(format!("/tmp/agents/{name}.md")),
+            knowledge: vec![],
         }
     }
 
@@ -425,6 +426,7 @@ mod tests {
             is_background: false,
             content: "body".to_string(),
             agent_md_path: PathBuf::from("/tmp/agent.md"),
+            knowledge: vec![],
         };
         let cmds = make_agent_slash_commands(&[agent]);
         assert!(cmds[0].model_override.is_none());

@@ -41,4 +41,8 @@ pub use builtin::gdb::{
 // Skill loading tool
 pub use builtin::load_skill::LoadSkillTool;
 
+// Knowledge base tools
+pub use builtin::list_knowledge::ListKnowledgeTool;
+pub use builtin::search_knowledge::SearchKnowledgeTool;
+
 pub use builtin::shell::ShellTool;

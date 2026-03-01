@@ -21,6 +21,12 @@ pub use skills::{
     SvenSkillMeta,
 };
 
+pub mod knowledge;
+pub use knowledge::{
+    check_knowledge_drift, discover_knowledge, format_drift_warnings, DriftWarning, KnowledgeInfo,
+    SharedKnowledge,
+};
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -209,6 +215,13 @@ pub fn collect_git_context(project_root: &Path) -> GitContext {
 }
 
 /// Run a git command in `dir` with a hard timeout.
+///
+/// Exposed as `pub(crate)` so that sub-modules (e.g. `knowledge`) can reuse
+/// it without duplicating the timeout logic.
+pub(crate) fn run_git_timed_pub(args: &[&str], dir: &Path) -> Option<String> {
+    run_git_timed(args, dir)
+}
+
 fn run_git_timed(args: &[&str], dir: &Path) -> Option<String> {
     use std::sync::mpsc;
     use std::thread;

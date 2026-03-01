@@ -391,6 +391,14 @@ impl CiRunner {
             opts.project_root.as_deref(),
         ));
 
+        let knowledge_items = sven_runtime::discover_knowledge(opts.project_root.as_deref());
+        let knowledge_drift_note = opts
+            .project_root
+            .as_ref()
+            .map(|r| sven_runtime::check_knowledge_drift(r, &knowledge_items))
+            .and_then(|w| sven_runtime::format_drift_warnings(&w));
+        let knowledge = sven_runtime::SharedKnowledge::new(knowledge_items);
+
         let mut runtime_ctx = RuntimeContext {
             project_root: opts.project_root.clone(),
             git_context: opts
@@ -406,6 +414,8 @@ impl CiRunner {
             system_prompt_override: None,
             skills,
             agents,
+            knowledge,
+            knowledge_drift_note,
         };
 
         if runtime_ctx.project_context_file.is_some() {

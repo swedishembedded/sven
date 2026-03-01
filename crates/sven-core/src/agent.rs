@@ -1151,6 +1151,8 @@ impl Agent {
             append: self.runtime.append_system_prompt.as_deref(),
             skills: self.runtime.skills.get(),
             agents: self.runtime.agents.get(),
+            knowledge: self.runtime.knowledge.get(),
+            knowledge_drift_note: self.runtime.knowledge_drift_note.as_deref(),
         }
     }
 

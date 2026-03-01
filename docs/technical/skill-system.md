@@ -281,6 +281,72 @@ sent.  The model discovers and loads children via the sub-skill hint returned by
 
 ---
 
+## Domain knowledge convention
+
+Skills and agents covering complex subsystems benefit from embedded domain
+knowledge — not just procedural instructions, but project-specific facts,
+correctness invariants, and known failure modes.
+
+### Recommended sections for domain-rich skills
+
+When writing a skill (or agent spec) for a complex subsystem, include the
+following sections after the procedural instructions:
+
+```markdown
+## Domain Knowledge
+
+### Correctness Invariants
+- List the properties that must always hold.  Frame as "MUST" / "MUST NOT".
+- Example: "All relay pathspecs MUST use the `:(glob)` prefix on non-Linux platforms."
+
+### Known Failure Modes
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Connection drops after 30 s | KEEP_ALIVE not sent | Enable `SwarmConfig::keep_alive` |
+| mDNS silent in Docker | Multicast routing disabled | Use relay-only discovery mode |
+
+### Critical Patterns
+- Specific code patterns that must be followed and why.
+- Example: "Always call `Swarm::dial()` with a `DialOpts::peer_id()` guard to avoid duplicate dials."
+```
+
+### Relationship with the knowledge base
+
+The knowledge base (`.sven/knowledge/`) stores *project-level* specifications
+that any agent can retrieve.  Skills and agents can cross-reference them with
+an optional `knowledge:` frontmatter field:
+
+```markdown
+---
+name: p2p-specialist
+description: P2P networking expert. Use when modifying sven-p2p or sven-node.
+knowledge:
+  - sven-p2p.md
+  - sven-node.md
+---
+
+… procedural instructions …
+
+## Domain Knowledge
+
+… embedded domain facts that are always needed …
+```
+
+When an agent spec declares `knowledge:` files, `load_skill` appends a hint:
+
+```
+Relevant knowledge docs (use search_knowledge or read_file to load):
+  - .sven/knowledge/sven-p2p.md  (P2P Networking)
+  - .sven/knowledge/sven-node.md (Node Gateway)
+```
+
+**Guideline:** embed the core correctness invariants and most-common failure
+modes directly in the skill/agent spec (they are always needed), and link to
+the knowledge base for the full architecture narrative and extended failure
+tables (loaded on demand).
+
+---
+
 ## Token efficiency design
 
 Token efficiency is a first-class concern:
