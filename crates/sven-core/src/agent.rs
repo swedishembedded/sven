@@ -263,10 +263,13 @@ impl Agent {
         let mut partial_text = String::new();
         let mut empty_turn_retries = 0u32;
         const MAX_EMPTY_TURN_RETRIES: u32 = 2;
-        // True once at least one tool call has been executed in this step.
+        // Counts how many loop rounds included at least one tool call.
         // Used to detect mid-task stalls where the model emits text but no
         // tool calls after already having called tools earlier in the loop.
-        let mut had_tool_calls_this_step = false;
+        // We require ≥2 tool-call rounds before nudging: a single tool call
+        // followed by a text answer is the normal "gather info, then reply"
+        // pattern and must not be treated as a stall.
+        let mut tool_call_rounds_this_step = 0u32;
         // Separate flag for the mid-task stall nudge so it fires at most once
         // per step.  Intentionally NOT reset when a tool call succeeds — if we
         // reset it, the model obeying the nudge (making a tool call) would
@@ -370,13 +373,15 @@ impl Agent {
                     continue;
                 }
                 // Mid-task stall: the model emitted text-only after already
-                // calling tools earlier in this step.  Some reasoning models
-                // (Qwen, DeepSeek) occasionally produce a transition sentence
-                // without following it with tool calls.  Nudge at most once —
-                // the flag is never reset so that a model which obeys the nudge
+                // completing multiple tool-call rounds in this step.  Some
+                // reasoning models (Qwen, DeepSeek) occasionally produce a
+                // transition sentence without following it with tool calls.
+                // We require ≥2 tool-call rounds before nudging so that the
+                // normal "1 tool call → answer" pattern is never interrupted.
+                // The flag is never reset so that a model which obeys the nudge
                 // (makes a tool call) and then finishes in text is allowed to
                 // stop rather than being nudged into an infinite loop.
-                if !text.is_empty() && had_tool_calls_this_step && !stall_nudge_sent {
+                if !text.is_empty() && tool_call_rounds_this_step >= 2 && !stall_nudge_sent {
                     stall_nudge_sent = true;
                     self.session.push(Message::user(
                         "You have not finished the task yet. \
@@ -389,7 +394,7 @@ impl Agent {
             }
 
             empty_turn_retries = 0;
-            had_tool_calls_this_step = true;
+            tool_call_rounds_this_step += 1;
 
             // Phase 1: push all assistant tool-call messages.
             for tc in &tool_calls {
@@ -470,7 +475,10 @@ impl Agent {
         let mut rounds = 0u32;
         let mut empty_turn_retries = 0u32;
         const MAX_EMPTY_TURN_RETRIES: u32 = 2;
-        let mut had_tool_calls_this_step = false;
+        // Counts how many loop rounds included at least one tool call.
+        // We require ≥2 tool-call rounds before nudging so that the normal
+        // "1 tool call → answer" pattern is never interrupted.
+        let mut tool_call_rounds_this_step = 0u32;
         // Separate flag for the mid-task stall nudge so it fires at most once
         // per step.  Intentionally NOT reset when a tool call succeeds — if we
         // reset it, the model obeying the nudge (making a tool call) would
@@ -538,11 +546,13 @@ impl Agent {
                     continue;
                 }
                 // Mid-task stall: the model emitted text-only after already
-                // calling tools earlier in this step.  Nudge at most once —
-                // the flag is never reset so that a model which obeys the nudge
+                // completing multiple tool-call rounds in this step.  Nudge at
+                // most once.  We require ≥2 tool-call rounds so that the normal
+                // "1 tool call → answer" pattern is never interrupted.
+                // The flag is never reset so that a model which obeys the nudge
                 // (makes a tool call) and then finishes in text is allowed to
                 // stop rather than being nudged into an infinite loop.
-                if !text.is_empty() && had_tool_calls_this_step && !stall_nudge_sent {
+                if !text.is_empty() && tool_call_rounds_this_step >= 2 && !stall_nudge_sent {
                     stall_nudge_sent = true;
                     self.session.push(Message::user(
                         "You have not finished the task yet. \
@@ -555,7 +565,7 @@ impl Agent {
             }
 
             empty_turn_retries = 0;
-            had_tool_calls_this_step = true;
+            tool_call_rounds_this_step += 1;
 
             // Phase 1: push all assistant tool-call messages (must all come
             // before any tool-result messages for OpenAI's parallel-tool-call

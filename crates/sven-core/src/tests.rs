@@ -703,6 +703,130 @@ mod agent_tests {
         );
     }
 
+    // ── Stall nudge behaviour ─────────────────────────────────────────────────
+
+    /// One tool call followed immediately by a text answer is the normal
+    /// "gather info → reply" pattern.  The stall nudge must NOT fire here,
+    /// so the agent loop should end in exactly 2 model calls (1 tool round +
+    /// 1 text round) with no extra "you have not finished" injection.
+    #[tokio::test]
+    async fn one_tool_call_then_answer_does_not_trigger_stall_nudge() {
+        let model = ScriptedMockProvider::tool_then_text(
+            "tc-1",
+            "shell",
+            r#"{"command":"echo path"}"#,
+            "/some/path/to/file.rs",
+        );
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool::default());
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit("find the file", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        // Exactly one tool call must have been made.
+        let tool_calls: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolCallStarted(_)))
+            .collect();
+        assert_eq!(tool_calls.len(), 1, "must have exactly 1 tool call");
+
+        // The final text must be the direct answer, not an apology triggered
+        // by a spurious stall nudge.
+        let text: String = events
+            .iter()
+            .filter_map(|e| {
+                if let AgentEvent::TextDelta(d) = e {
+                    Some(d.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            text.contains("/some/path/to/file.rs"),
+            "answer should be the direct reply, got: {text:?}"
+        );
+        // Must end cleanly.
+        let has_complete = events.iter().any(|e| matches!(e, AgentEvent::TurnComplete));
+        assert!(has_complete, "must emit TurnComplete");
+    }
+
+    /// Two tool-call rounds followed by a text transition (no third tool call)
+    /// should still trigger the stall nudge exactly once.
+    #[tokio::test]
+    async fn two_tool_call_rounds_then_stall_triggers_nudge() {
+        use sven_model::ResponseEvent;
+
+        let scripts = vec![
+            // Round 1: first tool call
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc-1".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"command":"echo step1"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            // Round 2: second tool call
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc-2".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"command":"echo step2"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            // Round 3: text-only stall (model forgets to call a tool)
+            vec![
+                ResponseEvent::TextDelta("I will now complete the task.".into()),
+                ResponseEvent::Done,
+            ],
+            // Round 4: model responds to the stall nudge with the final answer
+            vec![
+                ResponseEvent::TextDelta("All done.".into()),
+                ResponseEvent::Done,
+            ],
+        ];
+
+        let model = ScriptedMockProvider::new(scripts);
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool::default());
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(64);
+
+        agent.submit("do two steps", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        // Both tool calls must have been made.
+        let tool_call_count = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolCallStarted(_)))
+            .count();
+        assert_eq!(tool_call_count, 2, "both tool calls must complete");
+
+        // The final output must contain the post-nudge reply.
+        let text: String = events
+            .iter()
+            .filter_map(|e| {
+                if let AgentEvent::TextDelta(d) = e {
+                    Some(d.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            text.contains("All done."),
+            "post-nudge reply must be present; got: {text:?}"
+        );
+        let has_complete = events.iter().any(|e| matches!(e, AgentEvent::TurnComplete));
+        assert!(has_complete, "must emit TurnComplete");
+    }
+
     // ── Parallel tool execution ───────────────────────────────────────────────
 
     #[tokio::test]
