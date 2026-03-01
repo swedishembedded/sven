@@ -321,7 +321,7 @@ export SVEN_NODE_TOKEN=<token>
 sven node exec "What files are in the current directory?"
 
 # Pair a mobile/native operator device
-sven node pair "sven-pair://12D3KooW..."
+sven node authorize "sven://12D3KooW..."
 
 # Rotate the bearer token
 sven node regenerate-token

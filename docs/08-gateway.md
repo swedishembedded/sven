@@ -40,31 +40,53 @@ The peer ID printed in the logs is this agent's P2P identity on the **operator
 control channel**.  It is used only for pairing human operator devices — it has
 nothing to do with agent-to-agent connectivity (that is automatic).
 
-### 2. Pair a human operator device
+### 2. Connect as an operator
 
-`sven node pair` authorises a **human operator** — a phone, laptop, or CLI
-client — to send commands to this agent.  It is **not** used for connecting
-agents to each other; that happens automatically.
+There are **two ways** to send commands to a running node.  They are completely
+independent — use whichever fits your setup.
 
-> **Two separate peer lists — don't confuse them:**
->
-> - `sven node list-operators` — human operator devices paired with
->   `sven node pair`.  These control the agent.
-> - The `list_peers` **agent tool** — other sven nodes running
->   `sven node start` that discovered each other via mDNS or relay.
->   These are available for task delegation.
->
-> A device in `list-operators` is not an agent peer and cannot receive
-> delegated tasks.
+#### Option A: HTTP bearer token (recommended for CLI use)
 
-The device to be authorised shows a `sven-pair://` URI.  Paste it:
+This is the primary path and requires no extra setup:
 
 ```sh
-sven node pair "sven-pair://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz?fingerprint=abc123"
+export SVEN_NODE_TOKEN=<token-shown-at-first-startup>
+sven node exec "write a hello world in Rust"
+```
+
+The token was printed once when the node started.  If you lost it, rotate it:
+
+```sh
+sven node regenerate-token
+```
+
+#### Option B: P2P operator channel (for native/mobile clients)
+
+This path is for native applications (e.g. a mobile app) that connect via
+libp2p rather than HTTP.  It uses `sven node authorize` to add a device to
+the allowlist.
+
+> **This has nothing to do with agent-to-agent connections.**
+> Node-to-node connections happen automatically via mDNS or relay — there is
+> no command to run and no pairing needed.
+
+The operator device displays a `sven://` URI.  Paste it:
+
+```sh
+sven node authorize "sven://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz"
 ```
 
 sven shows the peer ID and a short fingerprint for visual confirmation, then
 asks `[y/N]` before writing to the allowlist.
+
+> **`list-operators` vs `list_peers` (agent tool) — don't confuse them:**
+>
+> - `sven node list-operators` — human operator devices added with
+>   `sven node authorize`. These send commands to the agent.
+> - The `list_peers` **agent tool** — other sven nodes that found each other
+>   via mDNS or relay. These receive delegated tasks.
+>
+> A device in `list-operators` cannot receive delegated tasks.
 
 The allowlist is saved to `~/.config/sven/gateway/authorized_peers.yaml`.  You
 can also edit it by hand — useful for pre-provisioning or revoking access
@@ -281,14 +303,14 @@ slack:
 # Start the agent
 sven node start [--config PATH]
 
-# Send a task to the running agent and stream the response
+# Send a task to the running agent and stream the response (primary CLI path)
 export SVEN_NODE_TOKEN=<token-from-first-startup>
 sven node exec "delegate a task to say hi to the frontend-agent"
 
-# Authorize a human operator device (paste the sven-pair:// URI it shows)
-sven node pair "sven-pair://12D3KooW..." [--label "my-phone"]
+# Authorize a mobile/native operator device (P2P path — paste the sven:// URI it shows)
+sven node authorize "sven://12D3KooW..." [--label "my-phone"]
 
-# Revoke a device
+# Revoke an authorized device
 sven node revoke 12D3KooW...
 
 # List authorized operator devices (NOT the same as agent peers)
@@ -357,10 +379,10 @@ p2p:
 
 ### "P2P error: not authorized"
 
-The peer is not in the allowlist.  Authorise it with:
+The peer is not in the allowlist.  Authorize it with:
 
 ```sh
-sven node pair "sven-pair://..."
+sven node authorize "sven://..."
 ```
 
 ### Peers not appearing after `list_peers`

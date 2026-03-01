@@ -47,8 +47,8 @@
 //!
 //! ```text
 //! 1.  New device starts → generates Ed25519 keypair on first run.
-//! 2.  Device displays:  sven-pair://12D3KooW.../ip4/1.2.3.4/tcp/4001
-//! 3.  Operator runs:    sven gateway pair "sven-pair://12D3KooW..."
+//! 2.  Device displays:  sven://12D3KooW.../ip4/1.2.3.4/tcp/4001
+//! 3.  Operator runs:    sven node authorize "sven://12D3KooW..."
 //! 4.  CLI shows PeerId + short fingerprint, asks for confirmation.
 //! 5.  On "y":           PeerId added to authorized_peers.yaml (0o600).
 //! 6.  Next P2P connection from that device is accepted.
@@ -183,7 +183,7 @@ pub async fn run(
     if allowlist.lock().await.operator_count() == 0 {
         info!(
             "No P2P operator devices paired yet (optional — for mobile/native clients).\n  \
-             To pair a device: sven gateway pair <sven-pair://...>"
+             To authorize a device: sven node authorize <sven://...>"
         );
     }
 
@@ -457,7 +457,7 @@ async fn drain_until_idle(
 
 // ── Pairing subcommand ────────────────────────────────────────────────────────
 
-/// Add a peer to the operator allowlist via a `sven-pair://` URI.
+/// Add a peer to the operator allowlist via a `sven://` pairing URI.
 ///
 /// Called by `sven gateway pair <uri>`.
 pub async fn pair_peer(
@@ -561,7 +561,7 @@ pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
     if peers.is_empty() {
         println!("No authorized operator devices.");
         println!();
-        println!("Pair a device with:  sven node pair \"sven-pair://...\"");
+        println!("Authorize a device with:  sven node authorize \"sven://...\"");
         println!();
         println!("Note: to see connected agent peers for task delegation, use");
         println!("      the list_peers tool inside a running session.");

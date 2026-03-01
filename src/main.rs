@@ -93,7 +93,7 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
             sven_node::node::run(node_config, sven_config).await
         }
 
-        NodeCommands::Pair {
+        NodeCommands::Authorize {
             uri,
             label,
             config: config_path,

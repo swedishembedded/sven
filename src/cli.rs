@@ -17,19 +17,28 @@ pub enum NodeCommands {
     /// controlled from a mobile app, Slack, or any other operator client.
     ///
     /// TLS is enabled by default. A bearer token is generated on first run
-    /// and printed once. Mobile clients pair via `sven node pair`.
+    /// and printed once. Mobile/native clients can be authorized via
+    /// `sven node authorize`; CLI clients use the bearer token directly.
     Start {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
     },
 
-    /// Authorize a device to control this node via P2P.
+    /// Authorize a mobile/native operator device to control this node via P2P.
     ///
-    /// The device displays a `sven-pair://` URI (or QR code). Paste it here.
-    /// The peer's PeerId and short fingerprint are shown for visual confirmation.
-    Pair {
-        /// The `sven-pair://` URI displayed by the device.
+    /// This is for native clients (e.g. a mobile app) that connect over libp2p
+    /// rather than HTTP.  For CLI use, the bearer token (`sven node exec`) is
+    /// the simpler path and does not require this command.
+    ///
+    /// The operator device displays a `sven://` URI (or QR code).
+    /// Paste it here; the peer ID and fingerprint are shown for confirmation
+    /// before any change is written to disk.
+    ///
+    /// Note: this has nothing to do with connecting two sven nodes together.
+    /// Node-to-node connections happen automatically via mDNS or relay.
+    Authorize {
+        /// The `sven://` URI displayed by the operator device.
         uri: String,
         /// Human-readable label for this device (e.g. "my-phone").
         #[arg(long, short = 'l')]
@@ -39,7 +48,7 @@ pub enum NodeCommands {
         config: Option<PathBuf>,
     },
 
-    /// Revoke a previously authorized peer.
+    /// Revoke a previously authorized operator device.
     Revoke {
         /// PeerId (base58) to revoke.
         peer_id: String,
@@ -73,6 +82,7 @@ pub enum NodeCommands {
     ///
     /// Note: this is NOT the same as the agent `list_peers` tool, which
     /// shows other sven nodes available for task delegation.
+    /// Use `sven node authorize` to add devices, `sven node revoke` to remove.
     ListOperators {
         /// Path to the node config file.
         #[arg(long, short = 'c')]

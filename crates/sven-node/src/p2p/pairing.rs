@@ -9,9 +9,9 @@
 //! 1. The new device generates an Ed25519 keypair (done automatically by
 //!    libp2p on first start).
 //! 2. The device displays a pairing URI and/or QR code:
-//!    `sven-pair://<peer_id>/<relay_multiaddr>`
-//! 3. The agent operator runs:
-//!    `sven gateway pair "sven-pair://12D3KooW.../ip4/1.2.3.4/tcp/4001/p2p/..."`
+//!    `sven://<peer_id>/<relay_multiaddr>`
+//! 3. The node operator runs:
+//!    `sven node authorize "sven://12D3KooW.../ip4/1.2.3.4/tcp/4001/p2p/..."`
 //! 4. The CLI shows the PeerId and a short fingerprint for visual confirmation:
 //!    `"Authorize peer 12D3KooW...? Fingerprint: AB:CD:EF:12 [y/N]"`
 //! 5. On confirmation the PeerId is added to the allowlist.
@@ -23,7 +23,7 @@
 
 use libp2p::{Multiaddr, PeerId};
 
-/// A parsed `sven-pair://` URI.
+/// A parsed `sven://` pairing URI.
 #[derive(Debug, Clone)]
 pub struct PairingUri {
     /// The device's libp2p PeerId (base58-encoded in the URI).
@@ -33,15 +33,15 @@ pub struct PairingUri {
 }
 
 impl PairingUri {
-    /// Parse a `sven-pair://` URI.
+    /// Parse a `sven://` pairing URI.
     ///
     /// Accepted forms:
-    /// - `sven-pair://<peer_id>`
-    /// - `sven-pair://<peer_id>/<multiaddr>`
+    /// - `sven://<peer_id>`
+    /// - `sven://<peer_id>/<multiaddr>`
     pub fn parse(uri: &str) -> anyhow::Result<Self> {
         let rest = uri
-            .strip_prefix("sven-pair://")
-            .ok_or_else(|| anyhow::anyhow!("URI must start with sven-pair://"))?;
+            .strip_prefix("sven://")
+            .ok_or_else(|| anyhow::anyhow!("URI must start with sven://"))?;
 
         let (peer_str, addr_str) = match rest.find('/') {
             Some(pos) => (&rest[..pos], Some(&rest[pos + 1..])),
@@ -61,11 +61,11 @@ impl PairingUri {
         Ok(Self { peer_id, addr })
     }
 
-    /// Encode as a `sven-pair://` URI.
+    /// Encode as a `sven://` pairing URI.
     pub fn to_uri(&self) -> String {
         match &self.addr {
-            Some(addr) => format!("sven-pair://{}/{}", self.peer_id.to_base58(), addr),
-            None => format!("sven-pair://{}", self.peer_id.to_base58()),
+            Some(addr) => format!("sven://{}/{}", self.peer_id.to_base58(), addr),
+            None => format!("sven://{}", self.peer_id.to_base58()),
         }
     }
 
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn parse_uri_without_addr() {
         let peer = sample_peer();
-        let uri = format!("sven-pair://{}", peer.to_base58());
+        let uri = format!("sven://{}", peer.to_base58());
         let parsed = PairingUri::parse(&uri).unwrap();
         assert_eq!(parsed.peer_id, peer);
         assert!(parsed.addr.is_none());
@@ -142,6 +142,7 @@ mod tests {
     fn parse_rejects_wrong_scheme() {
         assert!(PairingUri::parse("https://something").is_err());
         assert!(PairingUri::parse("not-a-uri").is_err());
+        assert!(PairingUri::parse("sven-pair://something").is_err());
     }
 
     #[test]
