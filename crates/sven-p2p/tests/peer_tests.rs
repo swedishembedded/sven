@@ -289,6 +289,10 @@ fn task_request_response_codec_roundtrip() {
             ContentBlock::text("Use LTspice-compatible components."),
             ContentBlock::json(serde_json::json!({ "cutoff_hz": 1000 })),
         ],
+        depth: 0,
+        chain: vec![],
+        hop_public_key: None,
+        hop_signature: None,
     };
 
     // Codec round-trip for request.

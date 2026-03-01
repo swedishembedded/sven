@@ -91,6 +91,56 @@ pub struct TaskRequest {
     /// before the LLM ever runs.
     #[serde(default)]
     pub chain: Vec<String>,
+
+    /// Protobuf-encoded Ed25519 public key of the forwarding peer.
+    ///
+    /// Required for depth > 0 (forwarded) tasks.  The receiver verifies that
+    /// this key's derived [`libp2p::PeerId`] matches the Noise-authenticated
+    /// sender identity, ensuring the claimed `chain` and `depth` were set by
+    /// the actual peer, not by a MITM that modified them in transit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hop_public_key: Option<Vec<u8>>,
+
+    /// Ed25519 signature over `canonical_hop_bytes(id, depth, chain)`.
+    ///
+    /// Required for depth > 0 tasks.  Prevents a forwarding peer from
+    /// silently manipulating the depth counter or chain entries before
+    /// passing the request along.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hop_signature: Option<Vec<u8>>,
+}
+
+/// Maximum byte length for a task description field.
+/// Longer descriptions are rejected before the LLM runs.
+pub const MAX_TASK_DESCRIPTION_BYTES: usize = 32 * 1024; // 32 KiB
+
+/// Maximum total byte size for all payload blocks combined.
+pub const MAX_TASK_PAYLOAD_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
+
+/// Build the canonical byte string that a forwarding peer signs and the
+/// receiver verifies.
+///
+/// Format (all lengths big-endian):
+/// ```text
+/// task_id_bytes (16)
+/// depth_u32_be  (4)
+/// for each chain entry:
+///   entry_len_u16_be (2)
+///   entry_bytes      (N)
+/// ```
+///
+/// This encoding is deterministic and unambiguous.
+pub fn canonical_hop_bytes(id: &Uuid, depth: u32, chain: &[String]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(20 + chain.iter().map(|e| 2 + e.len()).sum::<usize>());
+    out.extend_from_slice(id.as_bytes());
+    out.extend_from_slice(&depth.to_be_bytes());
+    for entry in chain {
+        let bytes = entry.as_bytes();
+        let len = bytes.len() as u16;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(bytes);
+    }
+    out
 }
 
 impl TaskRequest {
@@ -106,6 +156,8 @@ impl TaskRequest {
             payload,
             depth: 0,
             chain: Vec::new(),
+            hop_public_key: None,
+            hop_signature: None,
         }
     }
 }

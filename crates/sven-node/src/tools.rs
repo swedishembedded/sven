@@ -124,28 +124,61 @@ pub struct DelegateTool {
 }
 
 impl DelegateTool {
-    /// Resolve `peer_str` to a PeerId by searching all room rosters.
+    /// Resolve `peer_str` to a `PeerId` by searching all room rosters.
     ///
-    /// Matches (in order):
-    /// 1. Exact base58 peer ID string.
-    /// 2. Agent `name` field (case-sensitive).
-    fn resolve_peer(&self, peer_str: &str) -> Option<libp2p::PeerId> {
-        // Check all rooms first via room_peers(), then fall back to all_peers().
-        for room in &self.rooms {
-            for (peer_id, card) in self.p2p.room_peers(room) {
-                if peer_id.to_base58() == peer_str || card.name == peer_str {
-                    return Some(peer_id);
-                }
+    /// # Resolution order
+    ///
+    /// 1. **Exact base58 peer ID string** — unambiguous cryptographic identity.
+    ///    Preferred and strongly recommended by the tool description.
+    /// 2. **Agent name** — only accepted when the name is **unique** across all
+    ///    known peers.  If two peers share the same name the call returns
+    ///    `Err(ambiguous_names)` so the caller can report the conflict to the
+    ///    LLM and ask it to retry with an explicit peer ID.
+    ///
+    /// # Security note
+    ///
+    /// Name-based resolution is intentionally strict: an authorized peer that
+    /// registers a name already used by another peer causes an error rather
+    /// than silently routing to whichever peer happened to be seen first.
+    /// This prevents an attacker from intercepting tasks by cloning a victim's
+    /// agent name.
+    fn resolve_peer(&self, peer_str: &str) -> Result<libp2p::PeerId, ResolveError> {
+        // Collect all known peers once to avoid redundant roster lookups.
+        let all = self.p2p.all_peers();
+
+        // ── Pass 1: exact peer-ID match (preferred, unambiguous) ─────────────
+        for (peer_id, _) in &all {
+            if peer_id.to_base58() == peer_str {
+                return Ok(*peer_id);
             }
         }
-        // Also check peers discovered outside configured rooms (e.g. mDNS).
-        for (peer_id, card) in self.p2p.all_peers() {
-            if peer_id.to_base58() == peer_str || card.name == peer_str {
-                return Some(peer_id);
+
+        // ── Pass 2: name match with duplicate detection ───────────────────────
+        let name_matches: Vec<libp2p::PeerId> = all
+            .iter()
+            .filter(|(_, card)| card.name == peer_str)
+            .map(|(pid, _)| *pid)
+            .collect();
+
+        match name_matches.len() {
+            0 => Err(ResolveError::NotFound),
+            1 => Ok(name_matches[0]),
+            _ => {
+                // Multiple peers share this name — require explicit peer ID to
+                // prevent accidental or malicious misdirection.
+                let ids: Vec<String> = name_matches.iter().map(|p| p.to_base58()).collect();
+                Err(ResolveError::Ambiguous(ids))
             }
         }
-        None
     }
+}
+
+/// Error returned by [`DelegateTool::resolve_peer`].
+#[derive(Debug)]
+enum ResolveError {
+    NotFound,
+    /// Multiple peers share the same name; the Vec contains their peer IDs.
+    Ambiguous(Vec<String>),
 }
 
 #[async_trait]
@@ -161,6 +194,9 @@ impl Tool for DelegateTool {
          explicitly requires a capability that only exists on a specific other peer. \
          Never delegate back to the peer that sent you the current task — it will deadlock. \
          Use list_peers first to see available peers and their capabilities. \
+         SECURITY: Always use the base58 peer ID (not the name) as the `peer` parameter \
+         to avoid name-collision attacks. If you pass a name and multiple peers share it, \
+         the call will fail with an ambiguity error. \
          Blocks until the remote agent responds (up to 15 minutes)."
     }
 
@@ -196,8 +232,8 @@ impl Tool for DelegateTool {
         };
 
         let peer_id = match self.resolve_peer(&peer_str) {
-            Some(pid) => pid,
-            None => {
+            Ok(pid) => pid,
+            Err(ResolveError::NotFound) => {
                 let known: Vec<String> = self
                     .p2p
                     .all_peers()
@@ -210,6 +246,16 @@ impl Tool for DelegateTool {
                     format!("Known peers: {}", known.join(", "))
                 };
                 return ToolOutput::err(&call.id, format!("Peer '{peer_str}' not found. {hint}"));
+            }
+            Err(ResolveError::Ambiguous(ids)) => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Ambiguous peer name '{peer_str}': multiple peers share this name. \
+                         Use the explicit peer ID instead. Matching peer IDs: {}",
+                        ids.join(", ")
+                    ),
+                );
             }
         };
 
@@ -265,6 +311,10 @@ impl Tool for DelegateTool {
             payload: vec![],
             depth: outgoing_depth,
             chain: outgoing_chain,
+            // Signing is performed by NodeState::on_command(SendTask) just
+            // before the request is written to the wire.
+            hop_public_key: None,
+            hop_signature: None,
         };
         let task_id = request.id;
 

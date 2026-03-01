@@ -136,6 +136,10 @@ fn task_request_preserves_uuid() {
         originator_room: "test".into(),
         description: "test".into(),
         payload: vec![],
+        depth: 0,
+        chain: vec![],
+        hop_public_key: None,
+        hop_signature: None,
     };
     let decoded = roundtrip(&req);
     assert_eq!(decoded.id, id);

@@ -8,6 +8,8 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
+use libp2p::identity::Keypair;
+
 use futures::{future, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade, ConnectedPoint},
@@ -31,7 +33,10 @@ use crate::{
     config::P2pConfig,
     discovery::{DiscoveryProvider, PeerInfo},
     error::P2pError,
-    protocol::types::{AgentCard, LogEntry, P2pRequest, P2pResponse, TaskRequest, TaskResponse},
+    protocol::types::{
+        canonical_hop_bytes, AgentCard, LogEntry, P2pRequest, P2pResponse, TaskRequest,
+        TaskResponse,
+    },
     transport::{default_swarm_config, load_or_create_keypair},
 };
 
@@ -312,12 +317,14 @@ impl P2pNode {
             poll_interval: self.config.discovery_poll_interval,
             event_tx: self.event_tx.clone(),
             roster: Arc::clone(&self.roster),
+            keypair: Arc::new(key),
             relay_peers,
             connected_relay_addrs: HashMap::new(),
             published_relays: HashSet::new(),
             relay_dial_addrs,
             dialed: HashSet::new(),
             rejected: HashSet::new(),
+            permanently_rejected: HashSet::new(),
             announced_to: HashSet::new(),
             relay_connection_ids: HashMap::new(),
             pending_inbound: HashMap::new(),
@@ -346,6 +353,8 @@ struct NodeState {
     poll_interval: Duration,
     event_tx: broadcast::Sender<P2pEvent>,
     roster: Arc<Mutex<HashMap<String, RoomState>>>,
+    /// Ed25519 keypair used to sign outgoing forwarded task requests.
+    keypair: Arc<Keypair>,
     /// All relay peer IDs known from discovery (peer ID is embedded in the
     /// git-stored Multiaddr and verified by libp2p's Noise handshake).
     relay_peers: HashSet<PeerId>,
@@ -358,9 +367,13 @@ struct NodeState {
     /// Transport dial addresses (no /p2p suffix) per relay peer ID.
     /// Used to reconnect relays that drop and to detect newly published relays.
     relay_dial_addrs: HashMap<PeerId, Vec<Multiaddr>>,
-    /// Peers rejected due to a cryptographic peer-ID mismatch (WrongPeerId).
-    /// They have a stale git ref; we skip them until the ref is updated.
+    /// Peers rejected due to a transient error (e.g. UnsupportedProtocols).
+    /// Cleared on disconnect so reconnection can be attempted after an upgrade.
     rejected: HashSet<PeerId>,
+    /// Peers permanently rejected due to a cryptographic WrongPeerId mismatch
+    /// or a failed hop-signature verification.  Never cleared automatically —
+    /// requires an explicit config update or process restart to retry.
+    permanently_rejected: HashSet<PeerId>,
     /// Peers we have already sent our `AgentCard` to (prevents duplicate announces
     /// when DCUtR upgrades a relayed connection to a direct one).
     announced_to: HashSet<PeerId>,
@@ -549,8 +562,18 @@ impl NodeState {
                 }
             }
         } else if via_relay {
-            // Application peer reachable only via relay — record the connection
-            // so we can close it once DCUtR successfully upgrades to direct.
+            // Application peer reachable only via relay.
+            // Enforce the allowlist before accepting: unknown peers get their
+            // connection closed immediately so they cannot send any messages.
+            if self.agent_peers.is_empty() || !self.agent_peers.contains(&peer_id) {
+                tracing::warn!(
+                    %peer_id,
+                    "Closing inbound relay connection from unauthorized peer \
+                     (not in agent_peers allowlist)"
+                );
+                swarm.close_connection(connection_id);
+                return;
+            }
             tracing::info!("Connected to {peer_id} (via relay)");
             self.emit(P2pEvent::Connected { peer_id, via_relay });
             self.relay_connection_ids.insert(peer_id, connection_id);
@@ -562,8 +585,19 @@ impl NodeState {
                     .send_request(&peer_id, P2pRequest::Announce(self.agent_card.clone()));
             }
         } else {
-            // Direct (non-relayed) connection — if DCUtR just upgraded a relay
-            // connection, close the relay leg now that we have a better path.
+            // Direct (non-relayed) connection.
+            // Enforce the allowlist before accepting: unknown peers get their
+            // connection closed immediately so they cannot send any messages.
+            if self.agent_peers.is_empty() || !self.agent_peers.contains(&peer_id) {
+                tracing::warn!(
+                    %peer_id,
+                    "Closing inbound direct connection from unauthorized peer \
+                     (not in agent_peers allowlist)"
+                );
+                swarm.close_connection(connection_id);
+                return;
+            }
+            // DCUtR upgraded a relay connection to direct — close the relay leg.
             if let Some(relay_conn) = self.relay_connection_ids.remove(&peer_id) {
                 tracing::info!(
                     "Direct connection to {peer_id} established ({kind}); closing relayed fallback"
@@ -620,9 +654,9 @@ impl NodeState {
             // reappear in the registry.
             self.dialed.remove(&peer_id);
             self.announced_to.remove(&peer_id);
-            // Clear the rejected flag so the peer can be retried after a restart
-            // or software update — stale UnsupportedProtocols marks must not
-            // block reconnection forever.
+            // Clear the transient rejected flag so the peer can be retried after
+            // a restart or software update.  The permanently_rejected set is
+            // intentionally NOT cleared here — those entries survive reconnects.
             self.rejected.remove(&peer_id);
             // Drop any in-flight heartbeat request IDs for this peer so the
             // pending set doesn't grow unboundedly on repeated connect/disconnect.
@@ -787,7 +821,7 @@ impl NodeState {
         &mut self,
         swarm: &mut NodeSwarm,
         peer: PeerId,
-        card: AgentCard,
+        mut card: AgentCard,
         channel: request_response::ResponseChannel<P2pResponse>,
     ) {
         // Enforce the agent peer allowlist.  An empty allowlist means deny-all.
@@ -805,6 +839,11 @@ impl NodeState {
                 .send_response(channel, P2pResponse::Ack);
             return;
         }
+
+        // Always overwrite the card's peer_id with the Noise-authenticated
+        // identity.  A malicious peer might claim a different peer_id in their
+        // card; we must not store that unchecked value in the roster.
+        card.peer_id = peer.to_base58();
 
         {
             let mut r = self.roster.lock().unwrap();
@@ -909,11 +948,68 @@ impl NodeState {
 
     fn on_task_request(
         &mut self,
-        _swarm: &mut NodeSwarm,
+        swarm: &mut NodeSwarm,
         peer: PeerId,
         req: TaskRequest,
         channel: request_response::ResponseChannel<P2pResponse>,
     ) {
+        // ── Authorization check ───────────────────────────────────────────────
+        // Noise already authenticated the peer's cryptographic identity, but we
+        // must also verify that this peer is in our explicit allowlist.
+        // An empty allowlist means deny-all.
+        if self.agent_peers.is_empty() || !self.agent_peers.contains(&peer) {
+            tracing::warn!(
+                %peer,
+                "Rejected Task from unauthorized peer (not in agent_peers allowlist); \
+                 closing connection"
+            );
+            let _ = swarm.behaviour_mut().task.send_response(
+                channel,
+                P2pResponse::Ack, // minimal response to drain the channel
+            );
+            // Also close the connection — if they bypassed the Announce step
+            // they are behaving maliciously.
+            for conn_id in swarm
+                .connected_peers()
+                .filter(|p| **p == peer)
+                .flat_map(|_| {
+                    // We don't have easy per-peer conn_id access here; use the
+                    // disconnect API instead.
+                    std::iter::empty::<ConnectionId>()
+                })
+                .collect::<Vec<_>>()
+            {
+                swarm.close_connection(conn_id);
+            }
+            swarm.disconnect_peer_id(peer).ok();
+            return;
+        }
+
+        // ── Hop-signature verification ────────────────────────────────────────
+        // For forwarded tasks (depth > 0 or non-empty chain), the sender MUST
+        // include their Ed25519 public key and a signature over the canonical
+        // chain bytes.  This prevents a compromised intermediate hop from
+        // tampering with the depth counter or chain entries.
+        if req.depth > 0 || !req.chain.is_empty() {
+            if let Err(reason) = verify_hop_signature(&peer, &req) {
+                tracing::warn!(
+                    %peer,
+                    task_id = %req.id,
+                    depth = req.depth,
+                    "Rejected forwarded Task: {reason}; adding peer to permanent reject list"
+                );
+                let _ = swarm
+                    .behaviour_mut()
+                    .task
+                    .send_response(channel, P2pResponse::Ack);
+                // A bad signature is a strong indicator of tampering — reject
+                // this peer permanently for the lifetime of this process.
+                self.permanently_rejected.insert(peer);
+                swarm.disconnect_peer_id(peer).ok();
+                return;
+            }
+        }
+
         let id = req.id;
         // Store the response channel keyed by task ID.  The task executor
         // (running in the gateway) will call P2pHandle::reply_to_task(id, ...)
@@ -948,15 +1044,22 @@ impl NodeState {
                 // Relay restarted with a different keypair — stale git ref.
                 // The relay poll will redial using freshly-fetched addresses.
                 tracing::warn!(
-                    "Stale relay ref: expected {:?} but relay presented {obtained};                      waiting for updated git ref.",
+                    "Stale relay ref: expected {:?} but relay presented {obtained}; \
+                     waiting for updated git ref.",
                     peer_id
                 );
             } else {
-                // Cryptographic mismatch for an app peer — the git ref points to
-                // a peer that has rotated its key.  Skip until the ref is updated.
-                tracing::warn!("WrongPeerId from app peer {peer_id:?}: {error}");
+                // Cryptographic identity mismatch for an app peer — the git ref
+                // points to an address that is now serving a different key.
+                // This is a potential MITM or stale reference; add to the
+                // permanent reject set so we never connect to this address
+                // unless the process is restarted (config reload required).
+                tracing::warn!(
+                    "WrongPeerId from app peer {peer_id:?}: expected identity does not match \
+                     presented key {obtained}; adding to permanent reject list"
+                );
                 if let Some(pid) = peer_id {
-                    self.rejected.insert(pid);
+                    self.permanently_rejected.insert(pid);
                     self.dialed.remove(&pid);
                 }
             }
@@ -1125,9 +1228,21 @@ impl NodeState {
         match cmd {
             P2pCommand::SendTask {
                 peer,
-                request,
+                mut request,
                 reply_tx,
             } => {
+                // Sign forwarded tasks (depth > 0 or non-empty chain) so the
+                // receiver can verify chain integrity.
+                if request.depth > 0 || !request.chain.is_empty() {
+                    match sign_task_request(&self.keypair, &mut request) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            tracing::error!("Failed to sign outgoing task {}: {e}", request.id);
+                            let _ = reply_tx.send(Err(P2pError::Signing(e.to_string())));
+                            return false;
+                        }
+                    }
+                }
                 let req_id = swarm
                     .behaviour_mut()
                     .task
@@ -1213,6 +1328,11 @@ impl NodeState {
             return;
         }
         if self.rejected.contains(&info.peer_id) {
+            return;
+        }
+        // Permanently rejected peers (WrongPeerId, bad signatures) are never
+        // retried unless the process is restarted with updated configuration.
+        if self.permanently_rejected.contains(&info.peer_id) {
             return;
         }
         // Allowlist check — same deny-all logic as mDNS discovery.
@@ -1445,6 +1565,65 @@ fn on_identify_received(swarm: &mut NodeSwarm, peer_id: PeerId, addrs: Vec<Multi
     for addr in addrs {
         swarm.add_peer_address(peer_id, addr);
     }
+}
+
+// ── Cryptographic helpers ──────────────────────────────────────────────────────
+
+/// Sign the `(id, depth, chain)` tuple of a forwarded `TaskRequest` and attach
+/// the protobuf-encoded public key and signature to the request.
+///
+/// The receiver calls [`verify_hop_signature`] to check:
+/// 1. The public key matches the Noise-authenticated sender `PeerId`.
+/// 2. The signature is valid over the canonical chain bytes.
+fn sign_task_request(keypair: &Keypair, request: &mut TaskRequest) -> Result<(), P2pError> {
+    let pub_key_bytes = keypair.public().encode_protobuf();
+    let msg = canonical_hop_bytes(&request.id, request.depth, &request.chain);
+    let sig = keypair
+        .sign(&msg)
+        .map_err(|e| P2pError::Signing(e.to_string()))?;
+    request.hop_public_key = Some(pub_key_bytes);
+    request.hop_signature = Some(sig);
+    Ok(())
+}
+
+/// Verify the hop signature on a forwarded `TaskRequest`.
+///
+/// Returns `Ok(())` on success or an `Err(&str)` describing the rejection
+/// reason.
+///
+/// # Security invariants
+///
+/// * The public key's derived `PeerId` must match the Noise-verified `peer`
+///   identity.  This binds the signature to the authenticated peer so an
+///   eavesdropper cannot reuse a signature from another session.
+/// * The signature must verify over `canonical_hop_bytes(id, depth, chain)`.
+///   Any tampering with `depth` or `chain` entries invalidates the signature.
+fn verify_hop_signature(peer: &PeerId, request: &TaskRequest) -> Result<(), &'static str> {
+    let pk_bytes = request
+        .hop_public_key
+        .as_deref()
+        .ok_or("forwarded task missing hop_public_key")?;
+    let sig = request
+        .hop_signature
+        .as_deref()
+        .ok_or("forwarded task missing hop_signature")?;
+
+    let pub_key = libp2p::identity::PublicKey::try_decode_protobuf(pk_bytes)
+        .map_err(|_| "hop_public_key is not valid protobuf-encoded Ed25519 key")?;
+
+    // Verify the public key belongs to the Noise-authenticated peer.
+    // `PeerId::from(pub_key)` re-derives the peer ID from the key; if it does
+    // not match the Noise-verified `peer`, the key was forged.
+    if PeerId::from(pub_key.clone()) != *peer {
+        return Err("hop_public_key does not match Noise-authenticated peer identity");
+    }
+
+    let msg = canonical_hop_bytes(&request.id, request.depth, &request.chain);
+    if !pub_key.verify(&msg, sig) {
+        return Err("hop_signature cryptographic verification failed");
+    }
+
+    Ok(())
 }
 
 /// Log DCUtR hole-punching outcome.

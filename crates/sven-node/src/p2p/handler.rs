@@ -354,35 +354,57 @@ struct ControlBehaviour {
 
 // ── Per-peer event buffer ─────────────────────────────────────────────────────
 
+/// Hard cap on buffered events per connected operator.
+///
+/// An operator that connects but polls infrequently (or stops polling entirely)
+/// must not cause unbounded memory growth on the server.  When this limit is
+/// reached, the oldest events are dropped (FIFO eviction) so the buffer never
+/// exceeds `MAX_PENDING_EVENTS` entries.
+const MAX_PENDING_EVENTS: usize = 500;
+
 /// Buffered events for a connected operator.
 struct PeerBuffer {
     rx: broadcast::Receiver<ControlEvent>,
-    pending: Vec<ControlEvent>,
+    pending: std::collections::VecDeque<ControlEvent>,
 }
 
 impl PeerBuffer {
     fn new(rx: broadcast::Receiver<ControlEvent>) -> Self {
         Self {
             rx,
-            pending: Vec::new(),
+            pending: std::collections::VecDeque::new(),
         }
     }
 
     /// Drain any events that arrived since the last poll.
+    ///
+    /// The returned `Vec` contains at most `MAX_PENDING_EVENTS` events.
+    /// Events beyond the cap are silently dropped (oldest first), preventing
+    /// an idle or slow operator from causing unbounded memory growth.
     fn drain(&mut self) -> Vec<ControlEvent> {
         // Non-blocking drain of the broadcast channel.
         loop {
             match self.rx.try_recv() {
-                Ok(ev) => self.pending.push(ev),
+                Ok(ev) => {
+                    self.pending.push_back(ev);
+                    // Evict oldest entries when the cap is exceeded.
+                    if self.pending.len() > MAX_PENDING_EVENTS {
+                        self.pending.pop_front();
+                        warn!(
+                            "P2P operator event buffer at capacity ({MAX_PENDING_EVENTS}); \
+                             oldest event dropped — operator is polling too slowly"
+                        );
+                    }
+                }
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    warn!("P2P operator buffer lagged by {n} events");
+                    warn!("P2P operator broadcast channel lagged by {n} events");
                     break;
                 }
                 Err(broadcast::error::TryRecvError::Closed) => break,
             }
         }
-        std::mem::take(&mut self.pending)
+        self.pending.drain(..).collect()
     }
 }
 

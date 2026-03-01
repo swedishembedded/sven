@@ -76,7 +76,7 @@ pub fn load_or_create_keypair(path: &Path) -> Result<identity::Keypair, P2pError
                 let encoded = key
                     .to_protobuf_encoding()
                     .map_err(|e| P2pError::Keypair(e.to_string()))?;
-                fs::write(path, &encoded).map_err(|e| P2pError::Keypair(e.to_string()))?;
+                write_secret_file(path, &encoded).map_err(|e| P2pError::Keypair(e.to_string()))?;
                 return Ok(key);
             }
         }
@@ -98,7 +98,29 @@ pub fn load_or_create_keypair(path: &Path) -> Result<identity::Keypair, P2pError
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| P2pError::Keypair(e.to_string()))?;
     }
-    fs::write(path, &raw).map_err(|e| P2pError::Keypair(e.to_string()))?;
+    write_secret_file(path, &raw).map_err(|e| P2pError::Keypair(e.to_string()))?;
     tracing::info!("Generated new keypair at {}", path.display());
     Ok(key)
+}
+
+/// Write sensitive key material to `path` with mode 0o600 on Unix
+/// (owner read/write only).  On non-Unix platforms falls back to a plain write.
+fn write_secret_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(data)?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, data)?;
+    }
+    Ok(())
 }

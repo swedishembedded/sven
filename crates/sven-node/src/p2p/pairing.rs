@@ -22,6 +22,7 @@
 //! in transit.
 
 use libp2p::{Multiaddr, PeerId};
+use sha2::{Digest, Sha256};
 
 /// A parsed `sven://` pairing URI.
 #[derive(Debug, Clone)]
@@ -69,16 +70,30 @@ impl PairingUri {
         }
     }
 
-    /// Return a short human-friendly fingerprint (first 4 bytes of the
-    /// multihash, hex-formatted as `AA:BB:CC:DD`) for visual confirmation.
+    /// Return a human-verifiable fingerprint of this peer's identity for use
+    /// during the pairing confirmation step.
     ///
-    /// This mirrors how SSH displays host key fingerprints.
+    /// # Security properties
+    ///
+    /// The fingerprint is the **SHA-256 of the full PeerId multihash bytes**,
+    /// displayed as 16 colon-separated hex pairs (128 bits visible out of 256
+    /// bits of digest).  This matches the format used by OpenSSH for SHA-256
+    /// fingerprints and provides:
+    ///
+    /// * **Collision resistance**: an attacker must invert SHA-256 over the
+    ///   full 256-bit PeerId space — computationally infeasible.
+    /// * **Preimage resistance**: knowing the fingerprint does not reveal the
+    ///   private key or allow key derivation.
+    ///
+    /// The previous 4-byte (32-bit) fingerprint could be brute-forced in
+    /// ~65 536 keypair generations (seconds on modern hardware); this
+    /// 128-bit display requires ~2^64 attempts — decades even with dedicated
+    /// ASICs.
     pub fn short_fingerprint(&self) -> String {
-        let bytes = self.peer_id.to_bytes();
-        // Take the first 4 bytes (skip the varint multihash prefix when
-        // present; for Ed25519 keys the payload starts at byte 2).
-        let start = bytes.len().saturating_sub(6);
-        bytes[start..start + 4.min(bytes.len() - start)]
+        let digest = Sha256::digest(self.peer_id.to_bytes());
+        // Display the first 16 bytes (128 bits) as colon-separated hex pairs,
+        // matching the SSH `SHA256:` fingerprint display convention.
+        digest[..16]
             .iter()
             .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
@@ -153,10 +168,32 @@ mod tests {
             addr: None,
         };
         let fp = uri.short_fingerprint();
-        // Should look like "AB:CD:EF:12" — colons between hex pairs
+        // Should look like "AB:CD:EF:…" — 16 colon-separated hex pairs (128 bits)
         assert!(fp.contains(':'), "fingerprint must contain colons: {fp}");
-        for part in fp.split(':') {
-            assert!(part.len() == 2, "each part must be 2 hex chars: {part}");
+        let parts: Vec<&str> = fp.split(':').collect();
+        assert_eq!(parts.len(), 16, "fingerprint must have 16 hex pairs: {fp}");
+        for part in &parts {
+            assert_eq!(part.len(), 2, "each part must be 2 hex chars: {part}");
         }
+    }
+
+    #[test]
+    fn different_peers_have_different_fingerprints() {
+        let peer1 = sample_peer();
+        let peer2 = sample_peer();
+        let fp1 = PairingUri {
+            peer_id: peer1,
+            addr: None,
+        }
+        .short_fingerprint();
+        let fp2 = PairingUri {
+            peer_id: peer2,
+            addr: None,
+        }
+        .short_fingerprint();
+        assert_ne!(
+            fp1, fp2,
+            "different peers must produce different fingerprints"
+        );
     }
 }

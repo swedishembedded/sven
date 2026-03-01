@@ -28,6 +28,12 @@ pub enum P2pError {
 
     #[error("keypair error: {0}")]
     Keypair(String),
+
+    #[error("signing error: {0}")]
+    Signing(String),
+
+    #[error("signature verification failed: {0}")]
+    InvalidSignature(String),
 }
 
 impl From<std::io::Error> for P2pError {
