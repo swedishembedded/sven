@@ -87,9 +87,9 @@ runs:
       shell: bash
       run: |
         echo "Installing sven ${{ inputs.sven-version }}..."
-        # Adjust this URL pattern to match your release distribution
-        curl -sSL "https://github.com/your-org/sven/releases/download/v${{ inputs.sven-version }}/sven-x86_64-unknown-linux-gnu.tar.gz" \
-          | tar -xz -C /usr/local/bin/ sven
+        curl -fsSL "https://github.com/swedishembedded/sven/releases/download/v${{ inputs.sven-version }}/sven-linux-x86_64" \
+          -o /usr/local/bin/sven
+        chmod +x /usr/local/bin/sven
         sven --version
 
     - name: Run sven workflow

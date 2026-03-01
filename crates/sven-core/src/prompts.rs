@@ -488,8 +488,8 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
          - Markdown-driven workflows with frontmatter configuration\n\
          - Comprehensive linting and test integration\n\
          - Full CI/CD pipeline integration and awareness",
-        current_date_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        current_working_directory = std::env::current_dir().unwrap().display().to_string());
+        current_date_time = Local::now().format("%Y-%m-%d %H:%M:%S"),
+        current_working_directory = std::env::current_dir().unwrap().display());
 
     let mode_instructions = match mode {
         AgentMode::Research => {

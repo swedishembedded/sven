@@ -1,4 +1,5 @@
 name: CI
+run-name: "CI – ${{ github.ref_name }} (${{ github.event_name }})"
 
 on:
   push:
