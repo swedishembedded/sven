@@ -98,13 +98,14 @@ jobs:
           path: dist/
 
   # ── macOS universal binary ────────────────────────────────────────────────────
+  # TODO: openssl-sys cross-compilation from aarch64 → x86_64 runner is broken.
+  # The job is kept here so we don't lose the workflow structure, but it does not
+  # block the release (continue-on-error: true) and its artifact is not uploaded
+  # to the GitHub Release until the OpenSSL issue is resolved.
   build-macos:
-    name: macOS (universal)
+    name: macOS (universal) [experimental]
     runs-on: macos-latest
-    # openssl-sys (pulled in by git2) cannot find a system OpenSSL when
-    # cross-compiling x86_64 on an Apple Silicon runner. OPENSSL_VENDORED=1
-    # tells openssl-sys to compile OpenSSL from its bundled source for the
-    # target arch, bypassing any system/pkg-config lookup entirely.
+    continue-on-error: true
     env:
       OPENSSL_VENDORED: "1"
     steps:
@@ -138,13 +139,23 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux-x86_64, build-linux-aarch64, build-macos]
+    # macOS is excluded from needs so a macOS build failure does not block the release.
+    needs: [build-linux-x86_64, build-linux-aarch64]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
         with:
+          pattern: linux-*
           merge-multiple: true
+          path: dist
+
+      - name: Download macOS artifact (if available)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: macos
           path: dist
 
       - name: List artifacts
@@ -161,12 +172,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/sven-linux-x86_64
-            dist/sven-linux-x86_64.deb
-            dist/sven-linux-aarch64
-            dist/sven-linux-aarch64.deb
-            dist/sven-darwin-universal
-            dist/checksums.txt
+          files: dist/*
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
