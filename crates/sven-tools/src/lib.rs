@@ -13,7 +13,6 @@ pub use registry::{ToolRegistry, ToolSchema};
 pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 
 // New tool exports
-pub use builtin::apply_patch::ApplyPatchTool;
 pub use builtin::ask_question::{AskQuestionTool, Question, QuestionRequest};
 pub use builtin::delete_file::DeleteFileTool;
 pub use builtin::edit_file::EditFileTool;

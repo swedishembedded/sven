@@ -14,10 +14,10 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
-    events::ToolEvent, ApplyPatchTool, AskQuestionTool, DeleteFileTool, EditFileTool,
-    GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool,
-    GdbStatusTool, GdbStopTool, GdbWaitStoppedTool, GlobFileSearchTool, GlobTool, GrepTool,
-    ListDirTool, LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
+    events::ToolEvent, AskQuestionTool, DeleteFileTool, EditFileTool, GdbCommandTool,
+    GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
+    GdbStopTool, GdbWaitStoppedTool, GlobFileSearchTool, GlobTool, GrepTool, ListDirTool,
+    LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
     SearchCodebaseTool, ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool,
     WebFetchTool, WebSearchTool, WriteTool,
 };
@@ -86,7 +86,6 @@ pub fn build_tool_registry(
             reg.register(WriteTool);
             reg.register(EditFileTool);
             reg.register(DeleteFileTool);
-            reg.register(ApplyPatchTool);
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
@@ -148,7 +147,6 @@ pub fn build_tool_registry(
             reg.register(WriteTool);
             reg.register(EditFileTool);
             reg.register(DeleteFileTool);
-            reg.register(ApplyPatchTool);
             reg.register(RunTerminalCommandTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });

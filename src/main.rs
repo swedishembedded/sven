@@ -134,10 +134,9 @@ async fn build_agent_for_gateway(
 ) -> anyhow::Result<sven_core::Agent> {
     use std::sync::Arc;
     use sven_tools::{
-        ApplyPatchTool, DeleteFileTool, EditFileTool, GlobFileSearchTool, GrepTool, ListDirTool,
-        ReadFileTool, ReadLintsTool, RunTerminalCommandTool, SwitchModeTool, TodoItem,
-        TodoWriteTool, ToolEvent, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool,
-        WriteTool,
+        DeleteFileTool, EditFileTool, GlobFileSearchTool, GrepTool, ListDirTool, ReadFileTool,
+        ReadLintsTool, RunTerminalCommandTool, SwitchModeTool, TodoItem, TodoWriteTool, ToolEvent,
+        ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
     };
     use tokio::sync::{mpsc, Mutex};
 
@@ -163,7 +162,6 @@ async fn build_agent_for_gateway(
     registry.register(WebSearchTool {
         api_key: config.tools.web.search.api_key.clone(),
     });
-    registry.register(ApplyPatchTool);
     registry.register(ReadLintsTool);
     registry.register(UpdateMemoryTool {
         memory_file: config.tools.memory.memory_file.clone(),

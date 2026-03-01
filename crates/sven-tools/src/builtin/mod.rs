@@ -1,7 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: MIT
-pub mod apply_patch;
 pub mod ask_question;
 pub mod delete_file;
 pub mod edit_file;
@@ -130,12 +129,6 @@ mod output_category_tests {
     #[test]
     fn delete_file_is_generic() {
         let t = super::delete_file::DeleteFileTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    #[test]
-    fn apply_patch_is_generic() {
-        let t = super::apply_patch::ApplyPatchTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
