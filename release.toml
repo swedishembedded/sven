@@ -1,0 +1,25 @@
+# cargo-release configuration
+# Install: cargo install cargo-release   (Makefile does this automatically)
+# Usage:   make release/patch   (or /minor  /major)
+#
+# What cargo-release does on --execute:
+#   1. Runs pre-release-hook (full test suite)
+#   2. Bumps version in Cargo.toml
+#   3. git commit "chore: release vX.Y.Z"
+#   4. git tag  vX.Y.Z  (annotated)
+#   5. git push + git push --tags
+#   → The pushed tag triggers .github/workflows/release.yml
+
+push         = true
+publish      = false          # sven is a binary tool, not a crates.io library
+sign-tag     = false
+sign-commit  = false
+
+pre-release-commit-message = "chore: release v{{version}}"
+
+tag-name    = "v{{version}}"
+tag-message = "Release v{{version}}"
+
+allow-branch = ["main"]
+
+pre-release-hook = ["cargo", "test", "--all", "--"]

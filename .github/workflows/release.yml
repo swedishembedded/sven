@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ── Linux x86_64 ─────────────────────────────────────────────────────────────
+  build-linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Generate shell completions
+        run: |
+          mkdir -p target/completions
+          target/release/sven completions bash > target/completions/sven.bash
+          target/release/sven completions zsh  > target/completions/_sven
+          target/release/sven completions fish > target/completions/sven.fish
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb package
+        run: cargo deb --output target/debian/
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/sven         dist/sven-linux-x86_64
+          cp target/debian/sven_*.deb    dist/sven-linux-x86_64.deb
+          # Keep completions as a shared artifact for the arm64 deb build
+          cp -r target/completions       dist/completions
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/
+
+  # ── Linux aarch64 ────────────────────────────────────────────────────────────
+  # Cross-compiles via `cross` (Docker-based), reuses completions from x86 job.
+  build-linux-aarch64:
+    name: Linux aarch64
+    runs-on: ubuntu-latest
+    needs: build-linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build release binary (cross)
+        run: cross build --release --target aarch64-unknown-linux-gnu
+
+      - name: Download x86_64 completions
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: x86-artifacts
+
+      - name: Build .deb package (arm64)
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          bash scripts/build-deb.sh \
+            --out-dir target/debian \
+            --arch arm64 \
+            --binary target/aarch64-unknown-linux-gnu/release/sven \
+            --completions-dir x86-artifacts/completions
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp target/aarch64-unknown-linux-gnu/release/sven  dist/sven-linux-aarch64
+          cp target/debian/sven_*_arm64.deb                 dist/sven-linux-aarch64.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64
+          path: dist/
+
+  # ── macOS universal binary ────────────────────────────────────────────────────
+  build-macos:
+    name: macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/x86_64-apple-darwin/release/sven \
+            target/aarch64-apple-darwin/release/sven \
+            -output dist/sven-darwin-universal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/
+
+  # ── GitHub Release ────────────────────────────────────────────────────────────
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-linux-x86_64, build-linux-aarch64, build-macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          # Remove the completions directory (not a release artifact)
+          rm -rf completions
+          sha256sum sven-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/sven-linux-x86_64
+            dist/sven-linux-x86_64.deb
+            dist/sven-linux-aarch64
+            dist/sven-linux-aarch64.deb
+            dist/sven-darwin-universal
+            dist/checksums.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true

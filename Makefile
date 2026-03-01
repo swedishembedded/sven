@@ -13,10 +13,16 @@ endif
 NPROC := $(shell nproc)
 CARGO_FLAGS ?= --jobs $(NPROC)
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+TAG     := v$(VERSION)
+DIST    ?= dist
 DEB_OUT := target/debian
+REPO    := swedishembedded/sven
 
 .PHONY: all build release test bats bats-fast deb clean help fmt check docs docs-pdf \
-        relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test
+        relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
+        release/build release/publish release/tag \
+        release/patch release/minor release/major \
+        _require-cargo-release
 
 all: build
 
@@ -140,8 +146,74 @@ p2p-test:
 ## clean     – remove build artefacts
 clean:
 	$(CARGO) clean
-	rm -rf target/debian target/debian-staging target/completions target/docs
+	rm -rf target/debian target/debian-staging target/completions target/docs $(DIST)
 
 ## help      – show this message
 help:
 	@grep -E '^##' Makefile | sed 's/^## /  /'
+
+# ── Release targets ───────────────────────────────────────────────────────────
+## release/build   – build release artifacts for current platform into dist/
+release/build:
+	@bash scripts/release-build.sh --out-dir $(DIST)
+
+## release/tag     – create an annotated git tag for current version and push
+release/tag:
+	@echo "Current version: $(VERSION)"
+	@if git rev-parse "$(TAG)" >/dev/null 2>&1; then \
+	    echo "error: tag $(TAG) already exists. Bump the version first."; \
+	    exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+	    echo "error: working tree is dirty. Commit your changes before tagging."; \
+	    git status --short; \
+	    exit 1; \
+	fi
+	@echo "Tagging $(TAG) on $$(git rev-parse --short HEAD)..."
+	@git tag -a "$(TAG)" -m "Release $(TAG)"
+	@git push origin "$(TAG)"
+	@echo ""
+	@echo "Tag $(TAG) pushed → GitHub Actions release workflow will start."
+	@echo "Watch: https://github.com/$(REPO)/actions"
+
+## release/publish – create a GitHub Release and upload dist/ artifacts via gh CLI
+release/publish:
+	@if [ -z "$$(ls $(DIST)/sven-* 2>/dev/null)" ]; then \
+	    echo "error: no artifacts found in $(DIST)/"; \
+	    echo "       Run 'make release/build' first."; \
+	    exit 1; \
+	fi
+	@if ! command -v gh >/dev/null 2>&1; then \
+	    echo "error: gh CLI not found."; \
+	    echo "       Install from https://cli.github.com/"; \
+	    exit 1; \
+	fi
+	@echo "Publishing $(TAG) to github.com/$(REPO)..."
+	@ARTIFACTS=$$(find $(DIST) -maxdepth 1 -type f | sort | tr '\n' ' '); \
+	gh release create "$(TAG)" \
+	    --repo "$(REPO)" \
+	    --title "sven $(TAG)" \
+	    --generate-notes \
+	    $$ARTIFACTS
+	@echo ""
+	@echo "Release: https://github.com/$(REPO)/releases/tag/$(TAG)"
+
+## release/patch   – bump patch version (0.1.x→0.1.x+1), tag, push → triggers CI
+release/patch: _require-cargo-release
+	@cargo release patch -p sven --execute
+
+## release/minor   – bump minor version (0.x.0→0.x+1.0), tag, push → triggers CI
+release/minor: _require-cargo-release
+	@cargo release minor -p sven --execute
+
+## release/major   – bump major version (x.0.0→x+1.0.0), tag, push → triggers CI
+release/major: _require-cargo-release
+	@cargo release major -p sven --execute
+
+# Install cargo-release if not already present.
+.PHONY: _require-cargo-release
+_require-cargo-release:
+	@if ! cargo release --version >/dev/null 2>&1; then \
+	    echo "cargo-release not found — installing..."; \
+	    cargo install cargo-release --locked; \
+	fi
