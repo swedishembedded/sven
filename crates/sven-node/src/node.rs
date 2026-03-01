@@ -543,7 +543,11 @@ pub fn regenerate_token(config: &GatewayConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// List authorized operator peers (from the allowlist file).
+/// List authorized operator devices (from the allowlist file).
+///
+/// These are human operator devices (phones, laptops) paired with
+/// `sven node pair`. This is NOT the same as the agent `list_peers` tool,
+/// which shows other sven nodes available for task delegation.
 pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
     let peers_path = config
         .p2p
@@ -555,16 +559,23 @@ pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
     let peers = allowlist.all_peers();
 
     if peers.is_empty() {
-        println!("No authorized peers.");
+        println!("No authorized operator devices.");
         println!();
-        println!("Authorize a device with:  sven gateway pair \"sven-pair://...\"");
+        println!("Pair a device with:  sven node pair \"sven-pair://...\"");
+        println!();
+        println!("Note: to see connected agent peers for task delegation, use");
+        println!("      the list_peers tool inside a running session.");
         return Ok(());
     }
 
-    println!("{} authorized peer(s):\n", peers.len());
+    println!("{} authorized operator device(s):\n", peers.len());
     for (peer_id, entry) in &peers {
         println!("  {} — {} (role: {:?})", entry.label, peer_id, entry.role);
     }
+    println!();
+    println!("Note: these are human operator devices, not agent peers.");
+    println!("      To delegate tasks between agents, both nodes must be running");
+    println!("      `sven node start` and discover each other via mDNS or relay.");
     Ok(())
 }
 

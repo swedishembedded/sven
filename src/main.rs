@@ -128,7 +128,7 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
             Ok(())
         }
 
-        NodeCommands::ListPeers {
+        NodeCommands::ListOperators {
             config: config_path,
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;

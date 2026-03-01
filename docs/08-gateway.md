@@ -43,8 +43,19 @@ nothing to do with agent-to-agent connectivity (that is automatic).
 ### 2. Pair a human operator device
 
 `sven node pair` authorises a **human operator** — a phone, laptop, or CLI
-client — to send commands to this agent.  It is not used for connecting agents
-to each other; that happens automatically.
+client — to send commands to this agent.  It is **not** used for connecting
+agents to each other; that happens automatically.
+
+> **Two separate peer lists — don't confuse them:**
+>
+> - `sven node list-operators` — human operator devices paired with
+>   `sven node pair`.  These control the agent.
+> - The `list_peers` **agent tool** — other sven nodes running
+>   `sven node start` that discovered each other via mDNS or relay.
+>   These are available for task delegation.
+>
+> A device in `list-operators` is not an agent peer and cannot receive
+> delegated tasks.
 
 The device to be authorised shows a `sven-pair://` URI.  Paste it:
 
@@ -280,8 +291,8 @@ sven node pair "sven-pair://12D3KooW..." [--label "my-phone"]
 # Revoke a device
 sven node revoke 12D3KooW...
 
-# List authorized devices
-sven node list-peers [--config PATH]
+# List authorized operator devices (NOT the same as agent peers)
+sven node list-operators [--config PATH]
 
 # Rotate the HTTP bearer token
 sven node regenerate-token [--config PATH]

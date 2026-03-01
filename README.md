@@ -326,8 +326,8 @@ sven node pair "sven-pair://12D3KooW..."
 # Rotate the bearer token
 sven node regenerate-token
 
-# List paired devices
-sven node list-peers
+# List authorized operator devices (NOT agent peers — see below)
+sven node list-operators
 ```
 
 Security defaults — all on, none optional:

@@ -64,12 +64,16 @@ pub enum NodeCommands {
         config: Option<PathBuf>,
     },
 
-    /// List all authorized operator peers.
+    /// List all authorized operator devices.
     ///
-    /// Shows the peers in `authorized_peers.yaml` — the devices authorized
-    /// to control this node via P2P.  Use `sven node pair` to add
-    /// devices and `sven node revoke` to remove them.
-    ListPeers {
+    /// Shows the devices in `authorized_peers.yaml` — the human operator
+    /// devices (phones, laptops, CLI clients) authorized to control this
+    /// node via P2P.  Use `sven node pair` to add devices and
+    /// `sven node revoke` to remove them.
+    ///
+    /// Note: this is NOT the same as the agent `list_peers` tool, which
+    /// shows other sven nodes available for task delegation.
+    ListOperators {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
