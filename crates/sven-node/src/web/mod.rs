@@ -68,7 +68,7 @@ pub fn web_router(state: WebState) -> Router {
     let assets = Router::new()
         .route("/web/", get(serve_index))
         .route("/web", get(|| async { Redirect::permanent("/web/") }))
-        .route("/web/assets/{*path}", get(serve_asset))
+        .route("/web/assets/*path", get(serve_asset))
         .with_state(state.clone());
 
     // Auth routes — no CSRF (WebAuthn provides its own protection).

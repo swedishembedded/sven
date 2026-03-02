@@ -96,7 +96,11 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;
             let sven_config = Arc::new(sven_config::load(None)?);
-            sven_node::node::run(node_config, sven_config).await
+            if let Err(e) = sven_node::node::run(node_config, sven_config).await {
+                tracing::error!("{e:#}");
+                std::process::exit(1);
+            }
+            Ok(())
         }
 
         NodeCommands::Authorize {
@@ -153,6 +157,56 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
         }
 
         NodeCommands::WebDevices { command } => run_web_devices_command(command).await,
+
+        NodeCommands::InstallCa {
+            config: config_path,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            let cert_dir = node_config
+                .http
+                .tls_cert_dir
+                .clone()
+                .unwrap_or_else(sven_node::tls_default_cert_dir);
+            match sven_node::export_ca_cert(&cert_dir)? {
+                None => {
+                    eprintln!(
+                        "No local CA found in {}.\n\
+                         Start the node once with tls_mode: local-ca (or auto) to generate it.",
+                        cert_dir.display()
+                    );
+                    std::process::exit(1);
+                }
+                Some(_) => {
+                    sven_node::print_install_instructions(&cert_dir.join("ca-cert.pem"));
+                    Ok(())
+                }
+            }
+        }
+
+        NodeCommands::ExportCa {
+            config: config_path,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            let cert_dir = node_config
+                .http
+                .tls_cert_dir
+                .clone()
+                .unwrap_or_else(sven_node::tls_default_cert_dir);
+            match sven_node::export_ca_cert(&cert_dir)? {
+                None => {
+                    eprintln!(
+                        "No local CA found in {}.\n\
+                         Start the node once with tls_mode: local-ca (or auto) to generate it.",
+                        cert_dir.display()
+                    );
+                    std::process::exit(1);
+                }
+                Some(pem) => {
+                    print!("{pem}");
+                    Ok(())
+                }
+            }
+        }
     }
 }
 

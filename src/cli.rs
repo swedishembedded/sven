@@ -190,6 +190,35 @@ pub enum NodeCommands {
         #[command(subcommand)]
         command: WebDevicesCommands,
     },
+
+    /// Print the local CA certificate and platform-specific trust instructions.
+    ///
+    /// When `tls_mode` is `local-ca` or `auto` (default), sven generates a
+    /// local CA certificate on first start.  Run this command once on each
+    /// device that should trust the node — it will print the exact commands
+    /// needed for your platform (macOS, Linux, iOS, Android).
+    ///
+    /// Example:
+    ///   sven node install-ca
+    ///   sven node install-ca --config /etc/sven/node.yaml
+    InstallCa {
+        /// Path to the node config file (locates the TLS cert directory).
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Print the local CA certificate PEM to stdout.
+    ///
+    /// Useful for piping to other tools, serving over HTTP for mobile import,
+    /// or adding to a custom trust bundle:
+    ///
+    ///   sven node export-ca > ca.pem
+    ///   python3 -m http.server --directory . 8080  # then open on phone
+    ExportCa {
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
 }
 
 /// `sven node web-devices` subcommands.

@@ -123,6 +123,8 @@ pub async fn serve_stdio(registry: Arc<ToolRegistry>) -> Result<()> {
 ///
 /// This function blocks until stdin closes or a fatal error occurs.
 pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()> {
+    eprintln!("sven mcp: node-proxy mode — forwarding tools from {ws_url}");
+    eprintln!("sven mcp: waiting for MCP client on stdin…");
     let server = NodeProxyServer::new(ws_url, token);
     let running = server
         .serve((tokio::io::stdin(), tokio::io::stdout()))

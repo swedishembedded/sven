@@ -140,20 +140,46 @@ pub async fn serve(
             "⚠  HTTP gateway running WITHOUT TLS (insecure_dev_mode: true). \
              Never use this in production."
         );
+        info!(%addr, "HTTP gateway listening (no TLS)");
         axum_server::bind(addr)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "HTTP gateway failed to bind to {addr} — \
+                     make sure that address is assigned to a local interface \
+                     (use 0.0.0.0 to listen on all interfaces)"
+                )
+            })?;
     } else {
         let cert_dir = config
             .tls_cert_dir
             .clone()
             .unwrap_or_else(tls::default_cert_dir);
-        let tls_runtime = tls::load_or_generate(&cert_dir)?;
+        let tls_runtime = tls::provision(
+            &config.tls_mode,
+            &cert_dir,
+            &config.bind,
+            &config.tls_san_extra,
+        )?;
+
+        let rustls_config =
+            RustlsConfig::from_pem_file(&tls_runtime.cert_path, &tls_runtime.key_path)
+                .await
+                .context("loading TLS config from PEM files")?;
+
+        let mode_label = match &tls_runtime.mode_used {
+            tls::TlsModeUsed::Tailscale { fqdn } => format!("Tailscale ({fqdn})"),
+            tls::TlsModeUsed::LocalCa => "local CA (run `sven node install-ca` to trust)".into(),
+            tls::TlsModeUsed::SelfSigned => "self-signed (pin fingerprint below)".into(),
+            tls::TlsModeUsed::Files => "user-provided files".into(),
+        };
 
         info!(
             %addr,
             fingerprint = %tls_runtime.fingerprint_sha256,
+            mode = %mode_label,
             "HTTPS gateway listening (TLS 1.3, ECDSA P-256)",
         );
         info!(
@@ -161,15 +187,17 @@ pub async fn serve(
             tls_runtime.fingerprint_sha256,
         );
 
-        let rustls_config =
-            RustlsConfig::from_pem_file(&tls_runtime.cert_path, &tls_runtime.key_path)
-                .await
-                .context("loading TLS config from PEM files")?;
-
         axum_server::bind_rustls(addr, rustls_config)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "HTTPS gateway failed to bind to {addr} — \
+                     make sure that address is assigned to a local interface \
+                     (use 0.0.0.0 to listen on all interfaces)"
+                )
+            })?;
     }
 
     Ok(())

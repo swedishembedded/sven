@@ -250,10 +250,13 @@ impl ServerHandler for NodeProxyServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         async move {
-            let schemas = self.fetch_tool_list().await.map_err(|e| McpError {
-                code: rmcp::model::ErrorCode::INTERNAL_ERROR,
-                message: e.to_string().into(),
-                data: None,
+            let schemas = self.fetch_tool_list().await.map_err(|e| {
+                tracing::error!(url = %self.ws_url, "list_tools proxy failed: {e:#}");
+                McpError {
+                    code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+                    message: e.to_string().into(),
+                    data: None,
+                }
             })?;
 
             let tools: Vec<McpTool> = schemas
@@ -293,10 +296,13 @@ impl ServerHandler for NodeProxyServer {
         let (output, is_error) = self
             .execute_tool(request.name.to_string(), args)
             .await
-            .map_err(|e| McpError {
-                code: rmcp::model::ErrorCode::INTERNAL_ERROR,
-                message: e.to_string().into(),
-                data: None,
+            .map_err(|e| {
+                tracing::error!(url = %self.ws_url, tool = %request.name, "call_tool proxy failed: {e:#}");
+                McpError {
+                    code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+                    message: e.to_string().into(),
+                    data: None,
+                }
             })?;
 
         let content = vec![Content::text(output)];

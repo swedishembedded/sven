@@ -156,9 +156,14 @@ pub mod p2p;
 pub mod tools;
 pub mod web;
 
-pub use config::{ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig, WebConfig};
+pub use config::{
+    ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig, TlsMode, WebConfig,
+};
 pub use control::service::AgentHandle;
 pub use error::GatewayError;
+pub use http::tls::{
+    default_cert_dir as tls_default_cert_dir, export_ca_cert, print_install_instructions,
+};
 pub use node::{
     build_agent_card, exec_task, list_peers, run, web_devices_approve, web_devices_list,
     web_devices_revoke,

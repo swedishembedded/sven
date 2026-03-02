@@ -206,6 +206,101 @@ sven handles the rest: it calls `list_peers`, picks the right peers, calls
 
 ---
 
+## HTTPS / TLS
+
+TLS is **on by default**.  Three provisioning modes are available, controlled
+by `http.tls_mode`.  The default (`auto`) tries them in order:
+
+### Mode 1 — Tailscale (zero setup, browser-trusted)
+
+If [Tailscale](https://tailscale.com) is installed and the machine is enrolled
+in a tailnet, sven calls `tailscale cert` automatically to obtain a real
+Let's Encrypt certificate for your `<machine>.ts.net` hostname.  The certificate
+is issued by Let's Encrypt and trusted by every browser with no additional steps.
+
+```
+INFO  HTTPS gateway listening mode="Tailscale (mybox.example.ts.net)"
+```
+
+Access the node at `https://mybox.example.ts.net:18790`.
+
+This is the recommended setup for LAN machines — Tailscale is free, provides
+end-to-end encrypted access from anywhere, and the certs just work.
+
+### Mode 2 — Local CA (trust once per device)
+
+When Tailscale is not available, sven generates a local ECDSA P-256 Certificate
+Authority (10-year validity) and signs a 90-day server certificate with it.
+The CA cert lives at `~/.config/sven/gateway/tls/ca-cert.pem`.
+
+Install the CA on each device that will access the node:
+
+```sh
+sven node install-ca          # prints platform-specific commands
+```
+
+For example, on Linux:
+
+```sh
+sudo cp ~/.config/sven/gateway/tls/ca-cert.pem \
+        /usr/local/share/ca-certificates/sven-ca.crt
+sudo update-ca-certificates
+```
+
+After that one-time step, every future 90-day rotation is completely transparent
+— no browser interaction ever again.  The same CA cert is reused across
+rotations, so you only install it once.
+
+To distribute the CA cert to a phone:
+
+```sh
+sven node export-ca > ca.pem
+python3 -m http.server 8080     # serve it; open http://<ip>:8080/ca.pem on the phone
+```
+
+### Mode 3 — Self-signed (fingerprint pinning)
+
+The browser shows a warning on every new cert rotation.  You can accept the
+warning once (click through "Advanced → Proceed"), or pin the fingerprint
+printed at startup in any native client that supports TOFU.
+
+Explicitly opt in:
+
+```yaml
+http:
+  tls_mode: self-signed
+```
+
+### Mode 4 — Your own certificates
+
+```yaml
+http:
+  tls_mode: files
+  tls_cert_dir: "/etc/sven/tls"    # must contain gateway-cert.pem + gateway-key.pem
+```
+
+Bring your own certs from any ACME client, internal PKI, or Let's Encrypt
+with a DNS-01 challenge.
+
+---
+
+### Making HTTPS work from LAN IPs
+
+Generated certificates include `localhost` and `127.0.0.1` by default.  To
+also cover your LAN IP or hostname, add it to `tls_san_extra`:
+
+```yaml
+http:
+  bind: "0.0.0.0:18790"
+  tls_san_extra:
+    - "192.168.1.42"
+    - "mybox.local"
+```
+
+The next cert rotation (or a cert delete + restart) picks up the new SANs.
+
+---
+
 ## Security defaults
 
 Everything is secure out of the box.  These defaults are hardcoded and cannot
@@ -214,6 +309,7 @@ be weakened by accident:
 | What | Default |
 |------|---------|
 | HTTP TLS | On — ECDSA P-256, 90-day auto-generated cert |
+| TLS provisioning mode | `auto` — Tailscale if available, else local CA |
 | TLS version | TLS 1.3 only |
 | P2P encryption | Noise protocol (Ed25519), always on |
 | Agent mesh authorisation | Deny-all — every agent peer must be in `swarm.peers` |
@@ -225,8 +321,10 @@ be weakened by accident:
 | Secret file permissions | `0o600` on Unix |
 | Task timeout | 15 minutes per inbound delegated task |
 
-To expose the gateway beyond loopback, set `http.bind` explicitly in your
-config and make sure the machine is behind a firewall.
+To expose the gateway beyond loopback, set `http.bind: "0.0.0.0:18790"` in
+your config.  `bind` must be an address actually assigned to a local interface
+— binding to an IP the machine does not own causes an immediate startup error
+with a clear message explaining the fix.
 
 ---
 
@@ -249,12 +347,31 @@ swarm:
   keypair_path: "~/.config/sven/gateway/agent-keypair"
 ```
 
+### LAN / mobile access example
+
+```yaml
+http:
+  bind: "0.0.0.0:18790"        # listen on all interfaces
+  tls_san_extra:
+    - "192.168.1.42"            # your LAN IP — added to the cert's SAN list
+  # tls_mode defaults to "auto": uses Tailscale if present, else local CA
+
+web:                            # browser web terminal (optional)
+  rp_id: "192.168.1.42"        # must match the hostname/IP in the browser bar
+  rp_origin: "https://192.168.1.42:18790"
+
+swarm:
+  keypair_path: "~/.config/sven/gateway/agent-keypair"
+```
+
 ### Full example
 
 ```yaml
 http:
-  bind: "127.0.0.1:18790"
+  bind: "0.0.0.0:18790"
   insecure_dev_mode: false  # only set true for local development
+  tls_mode: auto            # tailscale → local-ca → (or set tailscale/local-ca/self-signed/files)
+  tls_san_extra: []         # extra IPs/hostnames to include in generated cert SANs
   tls_cert_dir: "~/.config/sven/gateway/tls"
   token_file: "~/.config/sven/gateway/token.yaml"
 
@@ -297,11 +414,32 @@ slack:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `bind` | `127.0.0.1:18790` | Address and port to listen on |
-| `insecure_dev_mode` | `false` | Disable TLS for local development only |
-| `tls_cert_dir` | `~/.config/sven/gateway/tls` | Where to store the auto-generated certificate |
+| `bind` | `127.0.0.1:18790` | Address and port to listen on.  Use `0.0.0.0:18790` to listen on all interfaces.  Must be an IP the machine actually owns — binding to a non-local address causes an immediate startup error. |
+| `insecure_dev_mode` | `false` | Disable TLS entirely — for local development only |
+| `tls_mode` | `auto` | TLS provisioning: `auto`, `tailscale`, `local-ca`, `self-signed`, or `files` |
+| `tls_san_extra` | `[]` | Extra hostnames or IPs to add to generated cert SANs (e.g. your LAN IP) |
+| `tls_cert_dir` | `~/.config/sven/gateway/tls` | Where to store / load certificates |
 | `token_file` | `~/.config/sven/gateway/token.yaml` | Hashed bearer token storage |
 | `max_body_bytes` | `4194304` | Max request body size (4 MiB) |
+
+#### `web` *(optional — disabled by default)*
+
+Browser-based web terminal served at `/web`.  Authentication uses WebAuthn
+passkeys (biometric / platform authenticator).  New devices are held in
+`pending` state until approved with `sven node web-devices approve`.
+
+**WebAuthn requires HTTPS.**  `rp_id` and `rp_origin` must match the hostname
+or IP address the browser uses to reach the node — if they don't match,
+registration and login will be rejected by the browser.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `rp_id` | `localhost` | WebAuthn relying party ID — the hostname/IP in the browser bar |
+| `rp_origin` | `https://localhost:18790` | Full origin shown in the browser address bar |
+| `rp_name` | `Sven Node` | Human-readable name shown during passkey ceremony |
+| `devices_file` | `~/.config/sven/gateway/web_devices.yaml` | Registered device registry |
+| `session_ttl_secs` | `86400` | Session JWT lifetime (24 h) |
+| `pty_command` | `["tmux", "new-session", "-A", "-s", "sven-{id}"]` | Command run in the PTY.  `{id}` is replaced with the first 8 chars of the device UUID. |
 
 #### `swarm`
 
@@ -368,6 +506,54 @@ sven node regenerate-token [--config PATH]
 # Print the resolved configuration
 sven node show-config [--config PATH]
 ```
+
+### TLS certificate commands
+
+```sh
+# Print platform-specific instructions to trust the local CA (run once per device)
+sven node install-ca [--config PATH]
+
+# Print the local CA certificate PEM to stdout (pipe it to a phone, bundle it, etc.)
+sven node export-ca [--config PATH]
+sven node export-ca > ca.pem
+
+# Serve the CA cert over HTTP so a phone can import it
+sven node export-ca | { mkdir -p /tmp/ca && cat > /tmp/ca/ca-cert.pem; \
+  python3 -m http.server --directory /tmp/ca 8080; }
+# Then open http://<your-ip>:8080/ca-cert.pem on the phone
+```
+
+### Web terminal commands
+
+The web terminal (`/web`) uses WebAuthn passkeys for authentication.  New
+devices start in `pending` state and must be approved before gaining access.
+
+```sh
+# List all registered browser devices (pending, approved, revoked)
+sven node web-devices list --token <token>
+sven node web-devices list --token <token> --filter pending
+
+# Approve a pending device (no restart required)
+sven node web-devices approve <device-uuid> --token <token>
+
+# Revoke an approved device (PTY session is terminated immediately)
+sven node web-devices revoke <device-uuid> --token <token>
+```
+
+**Typical first-use workflow:**
+
+```
+1.  Start node:        sven node start --config .node.yaml
+2.  Open browser:      https://<node-ip>:18790/web
+3.  Register passkey:  follow the on-screen prompts (fingerprint / Face ID)
+4.  Browser shows:     "Device <uuid> is waiting for approval"
+5.  Admin runs:        sven node web-devices approve <uuid> --token <token>
+6.  Browser:           immediately opens a full-screen tmux terminal
+```
+
+On subsequent visits the browser logs in with the stored passkey — no approval
+needed.  The terminal session (tmux) persists across browser disconnects and
+can be reattached from any approved device.
 
 ### `sven node exec` in detail
 
@@ -476,18 +662,62 @@ control:
 2. Check the multiaddr in `swarm.relays` matches what the relay printed on startup.
 3. Check network connectivity: `ping relay.example.com`.
 
-### "TLS error: certificate not found"
+### "Cannot assign requested address (os error 99)"
 
-Delete the stale cert and restart:
+`http.bind` contains an IP address that is not assigned to any local interface.
+Either use `0.0.0.0:18790` to listen on all interfaces, or change the IP to
+one that `ip addr` shows on this machine.  The startup log will now print a
+clear message with the fix rather than just the raw OS error.
+
+### Browser shows "Invalid HTTP response"
+
+The server is running with TLS.  Use `https://` not `http://`:
+
+```
+https://localhost:18790/web
+```
+
+### Browser shows a certificate warning
+
+- **With Tailscale** (`tls_mode: tailscale` or `auto` when Tailscale is
+  running): the cert is issued by Let's Encrypt and should be trusted
+  automatically.  Make sure you're connecting via the `*.ts.net` hostname, not
+  the raw LAN IP.
+- **With local CA**: run `sven node install-ca` once on this device, then
+  restart the browser.
+- **With self-signed**: click "Advanced → Proceed" once, or switch to
+  `local-ca` mode.
+
+### "TLS error: certificate not found" / stale cert
+
+Delete the certs and restart; they will be regenerated:
 
 ```sh
-rm ~/.config/sven/gateway/tls/*.pem
+rm ~/.config/sven/gateway/tls/gateway-cert.pem \
+   ~/.config/sven/gateway/tls/gateway-key.pem
 sven node start
 ```
 
+The CA cert (`ca-cert.pem`) and CA key (`ca-key.pem`) are preserved so that
+existing device trust is not invalidated.
+
+### "WebAuthn error: rpid mismatch" / passkey registration fails
+
+`web.rp_id` must exactly match the hostname or IP in the browser address bar.
+If you access the node via `192.168.1.42`, set:
+
+```yaml
+web:
+  rp_id: "192.168.1.42"
+  rp_origin: "https://192.168.1.42:18790"
+```
+
+WebAuthn also requires HTTPS (or `localhost`).  A plain `http://` connection
+will be rejected by the browser before sven is even involved.
+
 ### No log output from `sven node start`
 
-The gateway logs to `stderr` at `info` level.  Try `sven -v gateway start` for
+The gateway logs to `stderr` at `info` level.  Try `sven -v node start` for
 debug-level output.
 
 ---

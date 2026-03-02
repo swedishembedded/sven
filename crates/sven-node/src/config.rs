@@ -63,6 +63,32 @@ use std::{
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+
+// ── Tilde-expansion serde helpers ─────────────────────────────────────────────
+//
+// YAML deserialization of `PathBuf` stores the string as-is, so any path like
+// `~/foo` ends up with a literal `~` rather than the home directory.  These
+// helpers are attached via `#[serde(deserialize_with = "…")]` on every PathBuf
+// field in the config structs below.
+
+/// Expand a leading `~` to the current user's home directory.
+fn expand_tilde(s: &str) -> PathBuf {
+    if let Some(rest) = s.strip_prefix("~/") {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(rest)
+    } else if s == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        PathBuf::from(s)
+    }
+}
+
+/// Serde deserializer for `Option<PathBuf>` that expands a leading `~`.
+fn de_opt_path<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<PathBuf>, D::Error> {
+    let s: Option<String> = Option::deserialize(d)?;
+    Ok(s.as_deref().map(expand_tilde))
+}
 use tracing::debug;
 
 fn default_http_bind() -> String {
@@ -102,6 +128,46 @@ pub struct GatewayConfig {
     pub web: Option<WebConfig>,
 }
 
+/// TLS provisioning strategy.
+///
+/// # `auto` (default)
+/// Try Tailscale first (if the `tailscale` CLI is present and the machine is
+/// enrolled in a tailnet). If that fails, fall back to `local-ca`.
+///
+/// # `tailscale`
+/// Use `tailscale cert` to fetch a Let's Encrypt certificate for the
+/// machine's `*.ts.net` FQDN. These certs are trusted by all browsers with
+/// zero additional setup. Requires Tailscale to be installed and running.
+///
+/// # `local-ca`
+/// Generate a local ECDSA P-256 CA certificate (10-year validity) and sign a
+/// 90-day server certificate with it. The CA cert is stored at
+/// `<tls_cert_dir>/ca-cert.pem`. Trust it once with `sven node install-ca`
+/// and every future server cert is automatically accepted by the browser.
+///
+/// # `self-signed`
+/// Pure self-signed certificate — the existing behaviour. The browser will
+/// always warn unless the cert is manually added as a trusted exception.
+///
+/// # `files`
+/// Read `gateway-cert.pem` / `gateway-key.pem` from `tls_cert_dir` as-is.
+/// Bring your own certificates (e.g. from an external ACME client).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TlsMode {
+    /// Try Tailscale, fall back to local CA.
+    #[default]
+    Auto,
+    /// `tailscale cert` — browser-trusted via Let's Encrypt.
+    Tailscale,
+    /// Local CA — trust once with `sven node install-ca`.
+    LocalCa,
+    /// Pure self-signed — browser warning every time.
+    SelfSigned,
+    /// User-supplied cert/key files in `tls_cert_dir`.
+    Files,
+}
+
 /// HTTP/WebSocket listener configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
@@ -115,13 +181,33 @@ pub struct HttpConfig {
     #[serde(default)]
     pub insecure_dev_mode: bool,
 
-    /// Directory where the auto-generated ECDSA P-256 certificate and private
-    /// key are stored. Defaults to `~/.config/sven/gateway/tls/`.
+    /// TLS certificate provisioning strategy.
+    ///
+    /// Default: `auto` — tries Tailscale, falls back to `local-ca`.
+    /// See [`TlsMode`] for all options.
+    #[serde(default)]
+    pub tls_mode: TlsMode,
+
+    /// Directory where TLS certificates are stored / generated.
+    /// Defaults to `~/.config/sven/gateway/tls/`.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub tls_cert_dir: Option<PathBuf>,
+
+    /// Extra Subject Alternative Names to add to generated server certs.
+    ///
+    /// Use this to include your machine's LAN IP or custom hostname so the
+    /// cert is valid when accessed from other machines:
+    /// ```yaml
+    /// http:
+    ///   tls_san_extra: ["192.168.1.42", "mybox.local"]
+    /// ```
+    #[serde(default)]
+    pub tls_san_extra: Vec<String>,
 
     /// Path to the YAML file that stores the SHA-256 hashed HTTP bearer token.
     /// If `None`, the token file is auto-located at
     /// `~/.config/sven/gateway/token.yaml`.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub token_file: Option<PathBuf>,
 
     /// Maximum request body size in bytes (default: 4 MiB).
@@ -138,7 +224,9 @@ impl Default for HttpConfig {
         Self {
             bind: default_http_bind(),
             insecure_dev_mode: false,
+            tls_mode: TlsMode::default(),
             tls_cert_dir: None,
+            tls_san_extra: Vec::new(),
             token_file: None,
             max_body_bytes: default_max_body(),
         }
@@ -168,6 +256,7 @@ pub struct SwarmConfig {
     /// identity — peer nodes would need to re-add this node to their `peers`
     /// list after each restart).  Defaults to
     /// `~/.config/sven/gateway/agent-keypair`.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub keypair_path: Option<PathBuf>,
 
     /// Identity this node advertises to peer agents on connection.
@@ -221,6 +310,7 @@ pub struct ControlConfig {
     ///
     /// When absent a new keypair is generated on every restart — mobile
     /// operators would need to re-pair after each restart.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub keypair_path: Option<PathBuf>,
 
     /// YAML file listing authorized operator peer IDs and their roles.
@@ -228,6 +318,7 @@ pub struct ControlConfig {
     /// Default: `~/.config/sven/gateway/authorized_peers.yaml`
     ///
     /// See [`crate::p2p::auth::PeerAllowlist`] for the file format.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub authorized_peers_file: Option<PathBuf>,
 }
 
@@ -306,6 +397,7 @@ pub struct WebConfig {
 
     /// Path to the YAML file storing registered web devices.
     /// Default: `~/.config/sven/gateway/web_devices.yaml`.
+    #[serde(default, deserialize_with = "de_opt_path")]
     pub devices_file: Option<PathBuf>,
 
     /// Session JWT lifetime in seconds. Default: 86400 (24 hours).
