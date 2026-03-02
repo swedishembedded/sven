@@ -92,6 +92,14 @@ pub struct GatewayConfig {
 
     #[serde(default)]
     pub slack: SlackConfig,
+
+    /// Browser-based web terminal (passkey auth + PTY sessions).
+    ///
+    /// When present, the node serves a web terminal at `/web` that allows
+    /// browser-based access via WebAuthn passkeys (biometric auth).  New
+    /// devices are held for admin approval before gaining PTY access.
+    #[serde(default)]
+    pub web: Option<WebConfig>,
 }
 
 /// HTTP/WebSocket listener configuration.
@@ -256,6 +264,103 @@ impl Default for SwarmConfig {
             agent: AgentIdentityConfig::default(),
             rooms: default_rooms(),
             peers: HashMap::new(),
+        }
+    }
+}
+
+/// Web terminal configuration (the `web` section).
+///
+/// Enables a browser-based terminal at `/web`. Authentication uses WebAuthn
+/// passkeys — device-bound biometrics (Face ID, Touch ID, fingerprint). New
+/// devices are placed in a `Pending` state until approved with
+/// `sven node web-devices approve <id>`.
+///
+/// **WebAuthn requires HTTPS.** The `rp_id` must match the hostname or IP
+/// address that the browser uses to reach this node.
+///
+/// # Minimal example
+/// ```yaml
+/// web:
+///   rp_id: "192.168.1.10"
+///   rp_origin: "https://192.168.1.10:18790"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// WebAuthn relying party ID (the "effective domain").
+    ///
+    /// For local network access set this to the node's IP or hostname.
+    /// Default: `"localhost"` (loopback only).
+    #[serde(default = "default_rp_id")]
+    pub rp_id: String,
+
+    /// Full HTTPS origin that browsers use to reach this node.
+    ///
+    /// Must match what appears in the browser address bar exactly.
+    /// Default: `"https://localhost:18790"`.
+    #[serde(default = "default_rp_origin")]
+    pub rp_origin: String,
+
+    /// Human-readable name shown to users during the WebAuthn ceremony.
+    #[serde(default = "default_rp_name")]
+    pub rp_name: String,
+
+    /// Path to the YAML file storing registered web devices.
+    /// Default: `~/.config/sven/gateway/web_devices.yaml`.
+    pub devices_file: Option<PathBuf>,
+
+    /// Session JWT lifetime in seconds. Default: 86400 (24 hours).
+    #[serde(default = "default_session_ttl")]
+    pub session_ttl_secs: u64,
+
+    /// Command to run inside the PTY session.
+    ///
+    /// `{id}` is replaced with the first 8 chars of the device UUID, giving
+    /// each device its own persistent tmux session named `sven-<short_id>`.
+    ///
+    /// Default starts a sven TUI inside tmux so the terminal is immediately
+    /// usable as an orchestrator session.  Override with a plain shell or
+    /// custom command if you prefer a different default experience.
+    ///
+    /// Default: `["tmux", "new-session", "-A", "-s", "sven-{id}", "sven"]`.
+    #[serde(default = "default_pty_command")]
+    pub pty_command: Vec<String>,
+}
+
+fn default_rp_id() -> String {
+    "localhost".to_string()
+}
+fn default_rp_origin() -> String {
+    "https://localhost:18790".to_string()
+}
+fn default_rp_name() -> String {
+    "Sven Node".to_string()
+}
+fn default_session_ttl() -> u64 {
+    86_400
+}
+fn default_pty_command() -> Vec<String> {
+    vec![
+        "tmux".to_string(),
+        "new-session".to_string(),
+        "-A".to_string(),
+        "-s".to_string(),
+        "sven-{id}".to_string(),
+        // Launch sven TUI as the default session program so the terminal is
+        // immediately useful as an orchestrator.  SVEN_GATEWAY_TOKEN and
+        // SVEN_GATEWAY_URL are injected into the PTY environment automatically.
+        "sven".to_string(),
+    ]
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            rp_id: default_rp_id(),
+            rp_origin: default_rp_origin(),
+            rp_name: default_rp_name(),
+            devices_file: None,
+            session_ttl_secs: default_session_ttl(),
+            pty_command: default_pty_command(),
         }
     }
 }

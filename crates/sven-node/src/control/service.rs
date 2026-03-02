@@ -74,7 +74,10 @@ use uuid::Uuid;
 use sven_config::AgentMode;
 use sven_core::{Agent, AgentEvent};
 
-use super::protocol::{ControlCommand, ControlEvent, SessionInfo, SessionState};
+use super::protocol::{
+    ControlCommand, ControlEvent, SessionInfo, SessionState, WebDeviceFilter, WebDeviceSummary,
+};
+use crate::web::auth::devices::{DeviceRegistry, DeviceStatus};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -159,6 +162,10 @@ pub struct ControlService {
     completion_tx: mpsc::Sender<Uuid>,
     event_tx: broadcast::Sender<ControlEvent>,
     sessions: HashMap<Uuid, Session>,
+    /// Web device registry — present only when the web terminal is enabled.
+    web_devices: Option<DeviceRegistry>,
+    /// Approval broadcast channel — notifies pending SSE streams.
+    web_approval_tx: Option<tokio::sync::broadcast::Sender<Uuid>>,
 }
 
 impl ControlService {
@@ -217,9 +224,23 @@ impl ControlService {
             completion_tx,
             event_tx,
             sessions: HashMap::new(),
+            web_devices: None,
+            web_approval_tx: None,
         };
 
         (svc, handle)
+    }
+
+    /// Attach the web device registry to enable `WebDevice*` commands.
+    ///
+    /// Call this after constructing the service but before calling `run()`.
+    pub fn set_web_devices(
+        &mut self,
+        registry: DeviceRegistry,
+        approval_tx: tokio::sync::broadcast::Sender<Uuid>,
+    ) {
+        self.web_devices = Some(registry);
+        self.web_approval_tx = Some(approval_tx);
     }
 
     /// Run the service event loop. Blocks until the command channel closes.
@@ -325,7 +346,114 @@ impl ControlService {
                 // Handled at the transport layer (subscribe/unsubscribe the
                 // broadcast receiver); nothing to do in the service itself.
             }
+
+            // ── Web device management ─────────────────────────────────────────
+            ControlCommand::WebDeviceApprove { device_id } => {
+                self.handle_web_device_approve(device_id).await;
+            }
+            ControlCommand::WebDeviceRevoke { device_id } => {
+                self.handle_web_device_revoke(device_id).await;
+            }
+            ControlCommand::WebDeviceList { filter } => {
+                self.handle_web_device_list(filter).await;
+            }
         }
+    }
+
+    async fn handle_web_device_approve(&self, device_id: Uuid) {
+        let Some(ref registry) = self.web_devices else {
+            self.broadcast(ControlEvent::WebDeviceError {
+                message: "web terminal not enabled".to_string(),
+            });
+            return;
+        };
+
+        match registry.approve(device_id).await {
+            Ok(true) => {
+                info!(device_id = %device_id, "web device approved via operator command");
+                // Fire the SSE approval broadcast so the waiting browser
+                // transitions immediately without polling.
+                if let Some(ref tx) = self.web_approval_tx {
+                    let _ = tx.send(device_id);
+                }
+                self.broadcast(ControlEvent::WebDeviceUpdated {
+                    device_id,
+                    status: "approved".to_string(),
+                });
+            }
+            Ok(false) => {
+                self.broadcast(ControlEvent::WebDeviceError {
+                    message: format!("device {device_id} not found or cannot be approved"),
+                });
+            }
+            Err(e) => {
+                warn!(device_id = %device_id, "web device approve error: {e}");
+                self.broadcast(ControlEvent::WebDeviceError {
+                    message: format!("approve failed: {e}"),
+                });
+            }
+        }
+    }
+
+    async fn handle_web_device_revoke(&self, device_id: Uuid) {
+        let Some(ref registry) = self.web_devices else {
+            self.broadcast(ControlEvent::WebDeviceError {
+                message: "web terminal not enabled".to_string(),
+            });
+            return;
+        };
+
+        match registry.revoke(device_id).await {
+            Ok(true) => {
+                info!(device_id = %device_id, "web device revoked via operator command");
+                self.broadcast(ControlEvent::WebDeviceUpdated {
+                    device_id,
+                    status: "revoked".to_string(),
+                });
+            }
+            Ok(false) => {
+                self.broadcast(ControlEvent::WebDeviceError {
+                    message: format!("device {device_id} not found"),
+                });
+            }
+            Err(e) => {
+                warn!(device_id = %device_id, "web device revoke error: {e}");
+                self.broadcast(ControlEvent::WebDeviceError {
+                    message: format!("revoke failed: {e}"),
+                });
+            }
+        }
+    }
+
+    async fn handle_web_device_list(&self, filter: WebDeviceFilter) {
+        let Some(ref registry) = self.web_devices else {
+            self.broadcast(ControlEvent::WebDeviceError {
+                message: "web terminal not enabled".to_string(),
+            });
+            return;
+        };
+
+        let status_filter = match filter {
+            WebDeviceFilter::All => None,
+            WebDeviceFilter::Pending => Some(DeviceStatus::Pending),
+            WebDeviceFilter::Approved => Some(DeviceStatus::Approved),
+            WebDeviceFilter::Revoked => Some(DeviceStatus::Revoked),
+        };
+
+        let devices = registry.list(status_filter).await;
+        let summaries: Vec<WebDeviceSummary> = devices
+            .iter()
+            .map(|d| WebDeviceSummary {
+                id: d.id,
+                display_name: d.display_name.clone(),
+                status: d.status.to_string(),
+                created_at: d.created_at.to_rfc3339(),
+                approved_at: d.approved_at.map(|t| t.to_rfc3339()),
+                last_seen: d.last_seen.map(|t| t.to_rfc3339()),
+            })
+            .collect();
+
+        self.broadcast(ControlEvent::WebDeviceList { devices: summaries });
     }
 
     async fn handle_new_session(&mut self, id: Uuid, mode: AgentMode, working_dir: Option<String>) {

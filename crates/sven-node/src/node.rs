@@ -70,10 +70,21 @@ use sven_p2p::{
 use crate::{
     agent_builder::{build_gateway_agent, build_task_agent},
     config::{GatewayConfig, SlackMode},
-    control::service::ControlService,
+    control::{
+        protocol::{ControlCommand, ControlEvent},
+        service::ControlService,
+    },
     crypto::token::StoredTokenFile,
     http::slack::{run_socket_mode, SlackWebhookState},
     p2p::{auth::PeerAllowlist, handler::P2pControlNode},
+    web::{
+        auth::{
+            devices::{default_devices_path, DeviceRegistry},
+            WebAuthState,
+        },
+        pty::{local::LocalSpawner, manager::PtyManager},
+        WebState,
+    },
 };
 // `tools` is only needed from agent_builder for per-task agent construction.
 use crate::tools::MAX_DELEGATION_DEPTH;
@@ -176,8 +187,109 @@ pub async fn run(
     )
     .await?;
 
+    // ── Token (loaded before web state so local_token_opt is available) ─────────
+    let token_path = config
+        .http
+        .token_file
+        .clone()
+        .unwrap_or_else(default_token_path);
+    let token_hash = if token_path.exists() {
+        info!(
+            token_file = %token_path.display(),
+            "HTTP bearer token loaded (use SVEN_GATEWAY_TOKEN or --token to connect)",
+        );
+        StoredTokenFile::load(&token_path)?.token_hash
+    } else {
+        let raw = StoredTokenFile::generate_and_save(&token_path)?;
+        info!("=======================================================");
+        info!("HTTP bearer token (shown once — save it now!):");
+        info!("  {}", raw.as_str());
+        info!("  export SVEN_GATEWAY_TOKEN={}", raw.as_str());
+        info!("=======================================================");
+        StoredTokenFile::load(&token_path)?.token_hash
+    };
+
+    // Local plaintext companion token for PTY session injection (loopback-only).
+    // Created alongside the hash on first run; absent on pre-feature nodes.
+    let local_token_opt = StoredTokenFile::load_local_token(&token_path);
+
+    // ── Web terminal state (initialized early so device registry is available) ─
+    // Must happen before ControlService::spawn() so we can wire the registry.
+    let web_state_opt: Option<WebState> = if let Some(ref web_cfg) = config.web {
+        let devices_path = web_cfg
+            .devices_file
+            .clone()
+            .unwrap_or_else(default_devices_path);
+        let devices = DeviceRegistry::load(&devices_path)?;
+
+        let web_auth = WebAuthState::new(
+            &web_cfg.rp_id,
+            &web_cfg.rp_origin,
+            &web_cfg.rp_name,
+            devices,
+            web_cfg.session_ttl_secs,
+        )?;
+
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+
+        // Build environment variables injected into every PTY session.
+        // SVEN_GATEWAY_TOKEN lets the in-terminal sven process authenticate
+        // to this node without any user setup.
+        // SVEN_GATEWAY_URL points at the loopback so connections stay local.
+        // SVEN_GATEWAY_INSECURE=1 skips TLS cert verification on loopback
+        // (MITM on 127.0.0.1 is not a realistic threat).
+        let mut pty_session_env = std::collections::HashMap::new();
+        let gateway_scheme = if config.http.insecure_dev_mode {
+            "ws"
+        } else {
+            "wss"
+        };
+        // Extract port from bind address; fall back to 18790 if unparseable.
+        let gateway_port = config
+            .http
+            .bind
+            .rsplit(':')
+            .next()
+            .unwrap_or("18790")
+            .to_string();
+        let gateway_url = format!("{gateway_scheme}://127.0.0.1:{gateway_port}/ws");
+        pty_session_env.insert("SVEN_GATEWAY_URL".into(), gateway_url.clone());
+        pty_session_env.insert("SVEN_GATEWAY_INSECURE".into(), "1".into());
+        if let Some(ref tok) = local_token_opt {
+            pty_session_env.insert("SVEN_GATEWAY_TOKEN".into(), tok.clone());
+        }
+
+        let pty_manager = PtyManager::new(
+            std::sync::Arc::new(LocalSpawner),
+            web_cfg.pty_command.clone(),
+            working_dir,
+            pty_session_env,
+        );
+
+        info!(
+            rp_id = %web_cfg.rp_id,
+            rp_origin = %web_cfg.rp_origin,
+            "web terminal enabled — available at /web"
+        );
+        Some(WebState {
+            auth: web_auth,
+            pty_manager,
+        })
+    } else {
+        info!("web terminal disabled (no `web` section in config)");
+        None
+    };
+
     // ── ControlService ────────────────────────────────────────────────────────
-    let (service, agent_handle) = ControlService::new(agent);
+    let (mut service, agent_handle) = ControlService::new(agent);
+
+    // Wire the web device registry into the service so that
+    // `sven node web-devices approve/revoke/list` can be handled at runtime
+    // without restarting the node.
+    if let Some(ref ws) = web_state_opt {
+        service.set_web_devices(ws.auth.devices.clone(), ws.auth.approval_tx.clone());
+    }
+
     tokio::spawn(service.run());
 
     // ── Inbound task executor loop ────────────────────────────────────────────
@@ -202,28 +314,6 @@ pub async fn run(
         }
     });
     info!(rooms = ?rooms, "agent P2P node started (mDNS discovery active)");
-
-    // ── Token ─────────────────────────────────────────────────────────────────
-    let token_path = config
-        .http
-        .token_file
-        .clone()
-        .unwrap_or_else(default_token_path);
-    let token_hash = if token_path.exists() {
-        info!(
-            token_file = %token_path.display(),
-            "HTTP bearer token loaded (use SVEN_GATEWAY_TOKEN or --token to connect)",
-        );
-        StoredTokenFile::load(&token_path)?.token_hash
-    } else {
-        let raw = StoredTokenFile::generate_and_save(&token_path)?;
-        info!("=======================================================");
-        info!("HTTP bearer token (shown once — save it now!):");
-        info!("  {}", raw.as_str());
-        info!("  export SVEN_GATEWAY_TOKEN={}", raw.as_str());
-        info!("=======================================================");
-        StoredTokenFile::load(&token_path)?.token_hash
-    };
 
     // ── P2P operator control node (optional) ─────────────────────────────────
     if let Some(ref ctrl) = config.control {
@@ -294,7 +384,15 @@ pub async fn run(
         "starting HTTP gateway",
     );
 
-    crate::http::serve(&config.http, agent_handle, token_hash, slack_http_states).await?;
+    crate::http::serve(
+        &config.http,
+        agent_handle,
+        token_hash,
+        local_token_opt,
+        slack_http_states,
+        web_state_opt,
+    )
+    .await?;
 
     Ok(())
 }
@@ -952,6 +1050,223 @@ fn generate_ws_key() -> String {
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+// ── Web device management CLI helpers ─────────────────────────────────────────
+//
+// These connect to a running node over WebSocket (bearer token auth) and
+// send the appropriate `ControlCommand::WebDevice*` command, then print
+// the resulting event to stdout.
+
+/// List registered browser devices.
+pub async fn web_devices_list(
+    config: &GatewayConfig,
+    url: &str,
+    token: &str,
+    filter: &str,
+    insecure: bool,
+) -> anyhow::Result<()> {
+    use crate::control::protocol::WebDeviceFilter;
+
+    let filter = match filter {
+        "pending" => WebDeviceFilter::Pending,
+        "approved" => WebDeviceFilter::Approved,
+        "revoked" => WebDeviceFilter::Revoked,
+        _ => WebDeviceFilter::All,
+    };
+
+    let event = send_web_device_command(
+        config,
+        url,
+        token,
+        ControlCommand::WebDeviceList { filter },
+        insecure,
+    )
+    .await?;
+
+    match event {
+        ControlEvent::WebDeviceList { devices } => {
+            if devices.is_empty() {
+                println!("No web devices registered.");
+                println!();
+                println!(
+                    "Browser devices register automatically when they visit https://<node>/web"
+                );
+                println!("and complete the passkey registration ceremony.");
+                return Ok(());
+            }
+            println!("{} web device(s):\n", devices.len());
+            for d in &devices {
+                let id_short = d.id.to_string();
+                let id_short = &id_short[..8];
+                println!("  {}  [{:^8}]  {}", d.id, d.status, d.display_name);
+                println!("    created: {}", d.created_at);
+                if let Some(ref t) = d.approved_at {
+                    println!("    approved: {t}");
+                }
+                if let Some(ref t) = d.last_seen {
+                    println!("    last seen: {t}");
+                }
+                if d.status == "pending" {
+                    println!("    → approve with: sven node web-devices approve {id_short}");
+                }
+                println!();
+            }
+        }
+        ControlEvent::WebDeviceError { message } => {
+            anyhow::bail!("web device error: {message}");
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Approve a pending browser device.
+pub async fn web_devices_approve(
+    config: &GatewayConfig,
+    url: &str,
+    token: &str,
+    device_id: &str,
+    insecure: bool,
+) -> anyhow::Result<()> {
+    let device_id: uuid::Uuid = device_id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid device ID: {device_id:?} — use the full UUID"))?;
+
+    let event = send_web_device_command(
+        config,
+        url,
+        token,
+        ControlCommand::WebDeviceApprove { device_id },
+        insecure,
+    )
+    .await?;
+
+    match event {
+        ControlEvent::WebDeviceUpdated { device_id, status } => {
+            println!("Device {device_id}: {status}");
+        }
+        ControlEvent::WebDeviceError { message } => {
+            anyhow::bail!("web device error: {message}");
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Revoke an approved browser device.
+pub async fn web_devices_revoke(
+    config: &GatewayConfig,
+    url: &str,
+    token: &str,
+    device_id: &str,
+    insecure: bool,
+) -> anyhow::Result<()> {
+    let device_id: uuid::Uuid = device_id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid device ID: {device_id:?} — use the full UUID"))?;
+
+    let event = send_web_device_command(
+        config,
+        url,
+        token,
+        ControlCommand::WebDeviceRevoke { device_id },
+        insecure,
+    )
+    .await?;
+
+    match event {
+        ControlEvent::WebDeviceUpdated { device_id, status } => {
+            println!("Device {device_id}: {status}");
+        }
+        ControlEvent::WebDeviceError { message } => {
+            anyhow::bail!("web device error: {message}");
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Send a single web-device command to the running node and return the first
+/// `WebDevice*` response event.
+async fn send_web_device_command(
+    config: &GatewayConfig,
+    url: &str,
+    token: &str,
+    cmd: ControlCommand,
+    insecure: bool,
+) -> anyhow::Result<ControlEvent> {
+    use futures::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::{connect_async_tls_with_config, Connector};
+    use tungstenite::http::Request;
+
+    let connector = {
+        let mut builder = native_tls::TlsConnector::builder();
+        if insecure {
+            builder.danger_accept_invalid_certs(true);
+        } else {
+            let cert_dir = config
+                .http
+                .tls_cert_dir
+                .clone()
+                .unwrap_or_else(crate::http::tls::default_cert_dir);
+            let cert_path = cert_dir.join("gateway-cert.pem");
+            if let Ok(pem) = std::fs::read(&cert_path) {
+                if let Ok(cert) = native_tls::Certificate::from_pem(&pem) {
+                    builder
+                        .disable_built_in_roots(true)
+                        .add_root_certificate(cert)
+                        .danger_accept_invalid_hostnames(true);
+                }
+            }
+        }
+        Connector::NativeTls(builder.build()?)
+    };
+
+    let request = Request::builder()
+        .uri(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Host", "127.0.0.1")
+        .header("Upgrade", "websocket")
+        .header("Connection", "Upgrade")
+        .header("Sec-WebSocket-Key", generate_ws_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())?;
+
+    let (mut ws, _) = connect_async_tls_with_config(request, None, false, Some(connector))
+        .await
+        .map_err(|e| anyhow::anyhow!("could not connect to node at {url}: {e}"))?;
+
+    ws.send(tungstenite::Message::Text(serde_json::to_string(&cmd)?))
+        .await?;
+
+    // Wait for the first WebDevice* response event.
+    let timeout = tokio::time::Duration::from_secs(10);
+    let result = tokio::time::timeout(timeout, async {
+        while let Some(msg) = ws.next().await {
+            let msg = msg?;
+            let text = match msg {
+                tungstenite::Message::Text(t) => t,
+                tungstenite::Message::Close(_) => anyhow::bail!("node closed connection"),
+                _ => continue,
+            };
+            let event: ControlEvent = match serde_json::from_str(&text) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            match &event {
+                ControlEvent::WebDeviceList { .. }
+                | ControlEvent::WebDeviceUpdated { .. }
+                | ControlEvent::WebDeviceError { .. } => return Ok(event),
+                _ => {}
+            }
+        }
+        anyhow::bail!("node closed without sending a response")
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for response from node"))??;
+
+    Ok(result)
 }
 
 // ── Default paths ─────────────────────────────────────────────────────────────

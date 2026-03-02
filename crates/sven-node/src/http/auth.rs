@@ -36,6 +36,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
+use subtle::ConstantTimeEq;
 use tracing::warn;
 
 use crate::crypto::token::StoredToken;
@@ -44,6 +45,13 @@ use crate::crypto::token::StoredToken;
 #[derive(Clone)]
 pub struct AuthState {
     token_hash: Arc<StoredToken>,
+    /// Optional plaintext token accepted **only from loopback** connections.
+    ///
+    /// Used to allow PTY sessions spawned on the same machine to authenticate
+    /// without exposing the main bearer token as plaintext.  The loopback
+    /// restriction means a remote attacker who reads the env of a PTY process
+    /// still cannot authenticate from a remote IP.
+    local_token: Option<Arc<String>>,
     limiter: Arc<IpLimiter>,
 }
 
@@ -62,6 +70,7 @@ impl AuthState {
 
         Self {
             token_hash: Arc::new(token_hash),
+            local_token: None,
             limiter: Arc::new(RateLimiter::keyed(quota)),
         }
     }
@@ -69,6 +78,15 @@ impl AuthState {
     /// Default configuration: 5 attempts per minute, burst of 2.
     pub fn with_defaults(token_hash: StoredToken) -> Self {
         Self::new(token_hash, 5, 2)
+    }
+
+    /// Attach a local-only plaintext token accepted only from loopback IPs.
+    ///
+    /// This is used so PTY sessions running on the same machine can connect
+    /// to the node without having the main (hash-protected) bearer token.
+    pub fn with_local_token(mut self, raw: String) -> Self {
+        self.local_token = Some(Arc::new(raw));
+        self
     }
 }
 
@@ -112,26 +130,39 @@ impl AsAuthState for AuthState {
 /// throttled by their own traffic.
 pub async fn verify_bearer(auth: &AuthState, ip: IpAddr, req: Request, next: Next) -> Response {
     let provided = extract_bearer(req.headers());
-    match provided {
-        Some(token) if auth.token_hash.verify(token) => {
-            // Successful auth: do NOT consume a rate-limit token.
-            next.run(req).await
+
+    let authed = match provided {
+        Some(token) if auth.token_hash.verify(token) => true,
+        // Local token is accepted only from loopback to prevent a token
+        // leaked from a PTY environment being usable remotely.
+        Some(token)
+            if is_loopback(ip)
+                && auth
+                    .local_token
+                    .as_ref()
+                    .is_some_and(|lt| lt.as_bytes().ct_eq(token.as_bytes()).into()) =>
+        {
+            true
         }
-        _ => {
-            // Failed auth: consume a rate-limit token for this IP.
-            // Loopback is exempt so local dev tools are never locked out.
-            if !is_loopback(ip) && auth.limiter.check_key(&ip).is_err() {
-                warn!(%ip, "rate limit exceeded after repeated auth failures");
-                return (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    [(axum::http::header::RETRY_AFTER, "60")],
-                    "Too Many Requests",
-                )
-                    .into_response();
-            }
-            warn!(%ip, "authentication failed");
-            (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+        _ => false,
+    };
+
+    if authed {
+        next.run(req).await
+    } else {
+        // Loopback is exempt from rate limiting so local dev tools are never
+        // locked out.
+        if !is_loopback(ip) && auth.limiter.check_key(&ip).is_err() {
+            warn!(%ip, "rate limit exceeded after repeated auth failures");
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "60")],
+                "Too Many Requests",
+            )
+                .into_response();
         }
+        warn!(%ip, "authentication failed");
+        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
     }
 }
 

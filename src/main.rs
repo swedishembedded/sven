@@ -12,7 +12,7 @@ use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
-use cli::{Cli, Commands, McpCommands, NodeCommands, OutputFormatArg};
+use cli::{Cli, Commands, McpCommands, NodeCommands, OutputFormatArg, WebDevicesCommands};
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
@@ -150,6 +150,43 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;
             sven_node::exec_task(&node_config, url, token, task, *insecure).await
+        }
+
+        NodeCommands::WebDevices { command } => run_web_devices_command(command).await,
+    }
+}
+
+async fn run_web_devices_command(cmd: &WebDevicesCommands) -> anyhow::Result<()> {
+    match cmd {
+        WebDevicesCommands::List {
+            filter,
+            token,
+            url,
+            config: config_path,
+            insecure,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::web_devices_list(&node_config, url, token, filter, *insecure).await
+        }
+        WebDevicesCommands::Approve {
+            device_id,
+            token,
+            url,
+            config: config_path,
+            insecure,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::web_devices_approve(&node_config, url, token, device_id, *insecure).await
+        }
+        WebDevicesCommands::Revoke {
+            device_id,
+            token,
+            url,
+            config: config_path,
+            insecure,
+        } => {
+            let node_config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::web_devices_revoke(&node_config, url, token, device_id, *insecure).await
         }
     }
 }

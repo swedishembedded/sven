@@ -1,0 +1,190 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: #0d0d0d;
+  color: #e8e8e8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* ── Auth screens ─────────────────────────────────────────────────────────── */
+#auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%; height: 100%;
+}
+
+.auth-card {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 40px 48px;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+.auth-card .logo {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #e8e8e8;
+  margin-bottom: 8px;
+}
+
+.auth-card .logo span { color: #5b8dee; }
+
+.auth-card .tagline {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 32px;
+}
+
+.auth-card h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.auth-card p {
+  font-size: 0.875rem;
+  color: #888;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.device-id-box {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.875rem;
+  color: #5b8dee;
+  word-break: break-all;
+  margin-bottom: 24px;
+  text-align: left;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: #5b8dee;
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) { background: #4a7de0; }
+
+.btn-secondary {
+  background: #1e1e1e;
+  color: #e8e8e8;
+  border: 1px solid #2a2a2a;
+  margin-top: 10px;
+}
+.btn-secondary:hover:not(:disabled) { background: #242424; }
+
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 2s ease-in-out infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.error-msg {
+  color: #f87171;
+  font-size: 0.8rem;
+  margin-top: 12px;
+  min-height: 18px;
+}
+
+/* ── Terminal screen ──────────────────────────────────────────────────────── */
+/*
+ * Flex-column layout so the status bar is a real document element below the
+ * terminal rather than a fixed overlay on top of it.  Without this, the bar
+ * covers the last row of the xterm viewport (exactly where tmux renders its
+ * tab/status line).
+ */
+#terminal-screen {
+  display: none;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+#terminal {
+  flex: 1;
+  /* min-height: 0 is required for a flex child to shrink below its content
+     size.  Without it the terminal overflows past the status bar. */
+  min-height: 0;
+  width: 100%;
+}
+
+/* xterm.js overrides
+ *
+ * .xterm must fill the flex container so FitAddon measures the right size.
+ * DO NOT set height on .xterm-screen — xterm.js manages that element's
+ * pixel height itself (rows × line-height px).  Overriding it breaks the
+ * canvas geometry and causes scroll traces and mis-sized lines.
+ */
+.xterm             { height: 100%; }
+.xterm-viewport    { overflow-y: hidden !important; }
+
+/* ── Connection status bar ────────────────────────────────────────────────── */
+/*
+ * NOT position:fixed — the bar is a flex sibling of #terminal so it never
+ * overlaps it.  We keep it collapsed (max-height: 0) while connected so it
+ * doesn't steal a row from the terminal; it expands only when reconnecting or
+ * disconnected.
+ */
+#status-bar {
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
+  height: 22px;
+  background: #1a1a1a;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  color: #666;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
+}
+/* Show the bar only when not cleanly connected */
+#status-bar.reconnecting,
+#status-bar.disconnected {
+  max-height: 22px;
+  opacity: 1;
+}
+#status-bar .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: #4ade80;
+}
+#status-bar.reconnecting .dot { background: #f59e0b; animation: pulse 1s ease-in-out infinite; }
+#status-bar.disconnected  .dot { background: #f87171; }

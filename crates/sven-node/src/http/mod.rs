@@ -45,7 +45,11 @@ use axum_server::tls_rustls::RustlsConfig;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{info, warn};
 
-use crate::{config::HttpConfig, control::service::AgentHandle};
+use crate::{
+    config::HttpConfig,
+    control::service::AgentHandle,
+    web::{web_router, WebState},
+};
 use auth::{AsAuthState, AuthState};
 use security::{csrf_guard, security_headers};
 
@@ -69,16 +73,22 @@ pub async fn serve(
     config: &HttpConfig,
     agent: AgentHandle,
     token_hash: crate::crypto::token::StoredToken,
+    local_token: Option<String>,
     slack_states: Vec<slack::SlackWebhookState>,
+    web_state: Option<WebState>,
 ) -> anyhow::Result<()> {
     let addr: SocketAddr = config
         .bind
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid bind address {:?}: {e}", config.bind))?;
 
+    let mut auth = AuthState::with_defaults(token_hash);
+    if let Some(tok) = local_token {
+        auth = auth.with_local_token(tok);
+    }
     let app_state = AppState {
         agent: agent.clone(),
-        auth: AuthState::with_defaults(token_hash),
+        auth,
     };
 
     // Build Slack webhook routes (one per configured HTTP account).
@@ -99,6 +109,12 @@ pub async fn serve(
             auth::bearer_auth_mw::<AppState>,
         ));
 
+    // Web terminal routes (auth-exempt from CSRF — uses WebAuthn nonces).
+    // These routes carry their own state (WebState) and are merged before
+    // the final .with_state() call so they remain stateless from the AppState
+    // perspective. The web router uses its own state via .with_state() inside.
+    let web: Router = web_state.map(web_router).unwrap_or_default();
+
     let app = Router::new()
         .route("/healthz", get(health_handler))
         .merge(slack_router)
@@ -106,7 +122,9 @@ pub async fn serve(
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn(csrf_guard))
         .layer(RequestBodyLimitLayer::new(config.max_body_bytes))
-        .with_state(app_state);
+        .with_state(app_state)
+        // Merge web routes AFTER with_state — they have independent state.
+        .merge(web);
 
     // Graceful shutdown on Ctrl+C / SIGTERM.
     let handle = axum_server::Handle::new();

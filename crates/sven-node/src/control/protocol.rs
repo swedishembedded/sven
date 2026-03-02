@@ -106,6 +106,22 @@ pub enum ControlCommand {
         name: String,
         args: serde_json::Value,
     },
+
+    // ── Web device management ─────────────────────────────────────────────────
+    /// Approve a pending web browser device.
+    ///
+    /// The device transitions from `Pending` → `Approved`, the waiting SSE
+    /// stream in the browser fires, and the node starts a PTY session.
+    WebDeviceApprove { device_id: Uuid },
+
+    /// Revoke an approved web browser device.
+    ///
+    /// The device transitions to `Revoked`, any open PTY session is killed,
+    /// and the session cookie is effectively invalidated.
+    WebDeviceRevoke { device_id: Uuid },
+
+    /// List registered web browser devices.
+    WebDeviceList { filter: WebDeviceFilter },
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -182,6 +198,20 @@ pub enum ControlEvent {
         output: String,
         is_error: bool,
     },
+
+    // ── Web device management events ──────────────────────────────────────────
+    /// Response to [`ControlCommand::WebDeviceList`].
+    WebDeviceList { devices: Vec<WebDeviceSummary> },
+
+    /// Confirmation that a device was approved or revoked.
+    WebDeviceUpdated {
+        device_id: Uuid,
+        /// New status string (`"approved"` or `"revoked"`).
+        status: String,
+    },
+
+    /// Error response for a web device management command.
+    WebDeviceError { message: String },
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -220,6 +250,34 @@ pub struct SessionInfo {
     pub working_dir: Option<String>,
     /// ISO-8601 timestamp when the session was created.
     pub created_at: String,
+}
+
+// ── Web device types ──────────────────────────────────────────────────────────
+
+/// Filter for `WebDeviceList`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WebDeviceFilter {
+    /// All devices regardless of status.
+    #[default]
+    All,
+    /// Only devices awaiting approval.
+    Pending,
+    /// Only approved devices.
+    Approved,
+    /// Only revoked devices.
+    Revoked,
+}
+
+/// Compact device summary returned by `WebDeviceList`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebDeviceSummary {
+    pub id: Uuid,
+    pub display_name: String,
+    pub status: String,
+    pub created_at: String,
+    pub approved_at: Option<String>,
+    pub last_seen: Option<String>,
 }
 
 // ── CBOR codec helpers ────────────────────────────────────────────────────────

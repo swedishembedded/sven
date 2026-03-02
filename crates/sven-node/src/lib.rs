@@ -154,8 +154,12 @@ pub mod http;
 pub mod node;
 pub mod p2p;
 pub mod tools;
+pub mod web;
 
-pub use config::{ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig};
+pub use config::{ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig, WebConfig};
 pub use control::service::AgentHandle;
 pub use error::GatewayError;
-pub use node::{build_agent_card, exec_task, list_peers, run};
+pub use node::{
+    build_agent_card, exec_task, list_peers, run, web_devices_approve, web_devices_list,
+    web_devices_revoke,
+};

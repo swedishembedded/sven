@@ -173,6 +173,88 @@ pub enum NodeCommands {
         #[arg(long)]
         insecure: bool,
     },
+
+    /// Manage browser devices registered for the web terminal.
+    ///
+    /// New browser devices start in `pending` state and must be approved
+    /// before they can open a terminal session.  This command connects to
+    /// the running node (via the bearer token) to approve/revoke devices
+    /// without restarting.
+    ///
+    /// Example workflow:
+    ///   1. Mobile browser visits https://node-ip:18790/web and registers a passkey.
+    ///   2. The device ID is shown on screen ("awaiting approval").
+    ///   3. Admin runs: sven node web-devices approve <device-id>
+    ///   4. Browser immediately transitions to the terminal.
+    WebDevices {
+        #[command(subcommand)]
+        command: WebDevicesCommands,
+    },
+}
+
+/// `sven node web-devices` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum WebDevicesCommands {
+    /// List registered browser devices.
+    List {
+        /// Filter by status: pending, approved, revoked, or all (default).
+        #[arg(long, default_value = "all")]
+        filter: String,
+        /// Bearer token (or set SVEN_NODE_TOKEN).
+        #[arg(long, env = "SVEN_NODE_TOKEN")]
+        token: String,
+        /// Node WebSocket URL.
+        #[arg(long, default_value = "wss://127.0.0.1:18790/ws")]
+        url: String,
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+        /// Skip TLS certificate verification (unsafe — for dev only).
+        #[arg(long)]
+        insecure: bool,
+    },
+
+    /// Approve a pending browser device.
+    ///
+    /// The device UUID (or a unique prefix) is shown in the browser's
+    /// "awaiting approval" screen.  This command sends the approval to the
+    /// running node immediately — no restart required.
+    Approve {
+        /// Full device UUID or unique prefix (e.g. "abc1234" matches "abc1234ef-...").
+        device_id: String,
+        /// Bearer token (or set SVEN_NODE_TOKEN).
+        #[arg(long, env = "SVEN_NODE_TOKEN")]
+        token: String,
+        /// Node WebSocket URL.
+        #[arg(long, default_value = "wss://127.0.0.1:18790/ws")]
+        url: String,
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+        /// Skip TLS certificate verification (unsafe — for dev only).
+        #[arg(long)]
+        insecure: bool,
+    },
+
+    /// Revoke an approved browser device.
+    ///
+    /// The device is immediately blocked; any open PTY session is terminated.
+    Revoke {
+        /// Full device UUID or unique prefix.
+        device_id: String,
+        /// Bearer token (or set SVEN_NODE_TOKEN).
+        #[arg(long, env = "SVEN_NODE_TOKEN")]
+        token: String,
+        /// Node WebSocket URL.
+        #[arg(long, default_value = "wss://127.0.0.1:18790/ws")]
+        url: String,
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+        /// Skip TLS certificate verification (unsafe — for dev only).
+        #[arg(long)]
+        insecure: bool,
+    },
 }
 
 /// Output format for headless / CI runs.

@@ -128,6 +128,13 @@ pub struct StoredTokenFile {
 impl StoredTokenFile {
     /// Generate a new token, write the hash to `path`, and return the raw
     /// token so the caller can display it once.
+    ///
+    /// Also writes a companion `<path>.local` file (mode 0o600) containing
+    /// the plaintext token.  This companion is used **only** to inject the
+    /// token into PTY sessions that run on the same machine (loopback-only
+    /// connections).  The security posture is unchanged: the file is
+    /// owner-read-only, and anyone with OS-level read access to it already
+    /// has full access to the machine.
     pub fn generate_and_save(path: &Path) -> anyhow::Result<RawToken> {
         // Keep the raw string before consuming via into_stored.
         let raw = RawToken::generate();
@@ -141,11 +148,12 @@ impl StoredTokenFile {
 
         let file = StoredTokenFile { token_hash: stored };
         let yaml = serde_yaml::to_string(&file).context("serializing token file")?;
-
         write_secret_file(path, yaml.as_bytes())?;
 
-        // Return a RawToken wrapping the original string so the caller can
-        // display it exactly once.
+        // Companion plaintext file for local PTY session injection.
+        let local_path = local_token_path(path);
+        write_secret_file(&local_path, raw_str.as_bytes())?;
+
         Ok(RawToken(raw_str))
     }
 
@@ -155,6 +163,23 @@ impl StoredTokenFile {
         serde_yaml::from_str(&text)
             .with_context(|| format!("parsing token file {}", path.display()))
     }
+
+    /// Load the plaintext token from the companion `.local` file, if it
+    /// exists.  Returns `None` when the file is absent (e.g. on nodes
+    /// created before this feature was introduced).
+    pub fn load_local_token(path: &Path) -> Option<String> {
+        let local_path = local_token_path(path);
+        std::fs::read_to_string(&local_path)
+            .ok()
+            .map(|s| s.trim().to_owned())
+    }
+}
+
+/// Path of the companion plaintext token file alongside `token_yaml_path`.
+fn local_token_path(token_yaml_path: &Path) -> std::path::PathBuf {
+    let mut p = token_yaml_path.to_path_buf();
+    p.set_extension("local");
+    p
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

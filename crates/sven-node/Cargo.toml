@@ -9,8 +9,19 @@ description = "Secure remote-control gateway for sven agents"
 # axum 0.7 + axum-server 0.7 is the stable, tested pairing for TLS.
 axum          = { version = "0.7", features = ["ws", "macros"] }
 axum-server   = { version = "0.7", features = ["tls-rustls"] }
+axum-extra    = { version = "0.9", features = ["cookie", "cookie-signed"] }
 tower         = { version = "0.4" }
 tower-http    = { version = "0.5", features = ["set-header", "limit", "cors", "request-id"] }
+
+# ── Web terminal: passkey auth, PTY sessions, embedded static assets ──────────
+webauthn-rs      = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+webauthn-rs-proto = "0.5"
+portable-pty     = "0.8"
+jsonwebtoken     = "9"
+rust-embed       = { version = "8", features = ["compression"] }
+dashmap          = "6"
+url              = "2"
+async-stream     = "0.3"
 
 # ── TLS — pure Rust, no OpenSSL ───────────────────────────────────────────────
 rustls-pemfile = "2"
