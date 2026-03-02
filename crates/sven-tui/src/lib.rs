@@ -15,7 +15,7 @@ mod overlay;
 mod pager;
 mod state;
 mod submit;
-mod widgets;
+mod ui;
 
 pub use app::{App, AppOptions, ModelDirective, QueuedMessage};
 pub use chat::segment::ChatSegment;

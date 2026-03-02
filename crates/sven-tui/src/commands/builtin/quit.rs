@@ -4,7 +4,7 @@
 //! `/quit` command — exit the TUI.
 
 use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
+    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 
 pub struct QuitCommand;
@@ -16,10 +16,6 @@ impl SlashCommand for QuitCommand {
 
     fn description(&self) -> &str {
         "Exit sven"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![]
     }
 
     fn complete(

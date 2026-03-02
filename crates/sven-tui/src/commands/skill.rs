@@ -24,9 +24,7 @@ use std::path::PathBuf;
 
 use sven_runtime::{AgentInfo, SkillInfo};
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 const MAX_DESCRIPTION_LEN: usize = 100;
 
@@ -70,13 +68,6 @@ impl SlashCommand for SkillCommand {
 
     fn description(&self) -> &str {
         &self.description
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::optional(
-            "task",
-            "Optional task to perform using this skill",
-        )]
     }
 
     fn complete(
@@ -207,13 +198,6 @@ impl SlashCommand for AgentCommand {
 
     fn description(&self) -> &str {
         &self.description
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::optional(
-            "task",
-            "Optional task for this subagent",
-        )]
     }
 
     fn complete(

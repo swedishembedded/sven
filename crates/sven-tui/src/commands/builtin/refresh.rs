@@ -4,7 +4,7 @@
 //! `/refresh` command — re-scan skill directories and rebuild slash commands.
 
 use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
+    CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 
 pub struct RefreshCommand;
@@ -16,10 +16,6 @@ impl SlashCommand for RefreshCommand {
 
     fn description(&self) -> &str {
         "Re-scan skill directories and update slash commands"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![]
     }
 
     fn complete(

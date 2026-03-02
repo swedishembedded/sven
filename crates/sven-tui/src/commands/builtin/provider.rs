@@ -9,9 +9,7 @@
 
 use sven_model::registry;
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ProviderCommand;
 
@@ -22,13 +20,6 @@ impl SlashCommand for ProviderCommand {
 
     fn description(&self) -> &str {
         "Switch provider for the next message (keeps current model name)"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::required(
-            "provider",
-            "Provider id (e.g. openai, anthropic, ollama) or named provider from config",
-        )]
     }
 
     fn complete(

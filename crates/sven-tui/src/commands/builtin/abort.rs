@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/abort` — abort the current model run.
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 /// Abort the current model run.
 ///
@@ -28,10 +26,6 @@ impl SlashCommand for AbortCommand {
 
     fn description(&self) -> &str {
         "Abort the current model run (preserves partial output; queued messages stay queued)"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![]
     }
 
     fn complete(

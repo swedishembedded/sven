@@ -23,32 +23,32 @@ impl App {
     pub(crate) async fn handle_term_event(&mut self, event: Event) -> bool {
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => {
-                if self.show_help {
-                    self.show_help = false;
+                if self.ui.show_help {
+                    self.ui.show_help = false;
                     return false;
                 }
-                if self.question_modal.is_some() {
+                if self.ui.question_modal.is_some() {
                     return self.handle_modal_key(k);
                 }
-                if self.confirm_modal.is_some() {
+                if self.ui.confirm_modal.is_some() {
                     return self.handle_confirm_modal_key(k).await;
                 }
-                if self.pager.is_some() {
+                if self.ui.pager.is_some() {
                     return self.handle_pager_key(k).await;
                 }
 
-                let in_search = self.search.active;
-                let in_input = self.focus == FocusPane::Input;
-                let in_queue = self.focus == FocusPane::Queue;
+                let in_search = self.ui.search.active;
+                let in_input = self.ui.focus == FocusPane::Input;
+                let in_queue = self.ui.focus == FocusPane::Queue;
 
-                if self.focus == FocusPane::Chat
+                if self.ui.focus == FocusPane::Chat
                     && !in_search
-                    && !self.pending_nav
-                    && self.nvim_bridge.is_some()
+                    && !self.ui.pending_nav
+                    && self.nvim.bridge.is_some()
                     && !is_reserved_key(&k)
                 {
                     if let Some(nvim_key) = to_nvim_notation(&k) {
-                        if let Some(nvim_bridge) = &self.nvim_bridge {
+                        if let Some(nvim_bridge) = &self.nvim.bridge {
                             let mut bridge = nvim_bridge.lock().await;
                             if let Err(e) = bridge.send_input(&nvim_key).await {
                                 tracing::error!("Failed to send key to Neovim: {}", e);
@@ -61,8 +61,7 @@ impl App {
                 // When the completion overlay is visible and the input pane
                 // has focus, intercept navigation and accept/dismiss keys
                 // before they reach the normal input handlers.
-                if self.completion_overlay.is_some() && in_input && !in_search && !self.pending_nav
-                {
+                if self.ui.completion.is_some() && in_input && !in_search && !self.ui.pending_nav {
                     use crossterm::event::KeyCode;
                     let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
                     let ctrl = k
@@ -71,8 +70,7 @@ impl App {
                     let alt = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                     let overlay_action = match k.code {
                         // Plain Enter accepts the highlighted completion.
-                        // Shift/Ctrl/Alt+Enter inserts a newline instead of accepting — let
-                        // the action fall through to the regular key handler below.
+                        // Shift/Ctrl/Alt+Enter inserts a newline instead of accepting.
                         KeyCode::Enter if !shift && !ctrl && !alt => Some(Action::CompletionSelect),
                         KeyCode::Esc => Some(Action::CompletionCancel),
                         KeyCode::Down => Some(Action::CompletionNext),
@@ -82,50 +80,50 @@ impl App {
                         _ => None,
                     };
                     if let Some(action) = overlay_action {
-                        self.pending_nav = false;
+                        self.ui.pending_nav = false;
                         return self.dispatch(action).await;
                     }
                 }
 
                 let in_edit_mode =
-                    self.editing_message_index.is_some() || self.editing_queue_index.is_some();
+                    self.edit.message_index.is_some() || self.edit.queue_index.is_some();
                 if let Some(action) = map_key(
                     k,
                     in_search,
                     in_input,
-                    self.pending_nav,
+                    self.ui.pending_nav,
                     in_edit_mode,
                     in_queue,
                 ) {
                     if action == Action::NavPrefix {
-                        self.pending_nav = true;
+                        self.ui.pending_nav = true;
                         return false;
                     }
-                    self.pending_nav = false;
+                    self.ui.pending_nav = false;
                     return self.dispatch(action).await;
                 }
-                self.pending_nav = false;
+                self.ui.pending_nav = false;
                 false
             }
 
             Event::Mouse(mouse) => {
-                if self.pager.is_none() {
-                    let over_input = mouse.row >= self.last_input_pane.y
-                        && mouse.row < self.last_input_pane.y + self.last_input_pane.height;
-                    let over_queue = self.last_queue_pane.height > 0
-                        && mouse.row >= self.last_queue_pane.y
-                        && mouse.row < self.last_queue_pane.y + self.last_queue_pane.height;
+                if self.ui.pager.is_none() {
+                    let over_input = mouse.row >= self.layout.input_pane.y
+                        && mouse.row < self.layout.input_pane.y + self.layout.input_pane.height;
+                    let over_queue = self.layout.queue_pane.height > 0
+                        && mouse.row >= self.layout.queue_pane.y
+                        && mouse.row < self.layout.queue_pane.y + self.layout.queue_pane.height;
                     let in_edit =
-                        self.editing_message_index.is_some() || self.editing_queue_index.is_some();
+                        self.edit.message_index.is_some() || self.edit.queue_index.is_some();
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if over_input {
-                                let w = self.last_input_inner_width as usize;
+                                let w = self.layout.input_inner_width as usize;
                                 if w > 0 {
                                     let (buf, cursor) = if in_edit {
-                                        (self.edit_buffer.clone(), self.edit_cursor)
+                                        (self.edit.buffer.clone(), self.edit.cursor)
                                     } else {
-                                        (self.input_buffer.clone(), self.input_cursor)
+                                        (self.input.buffer.clone(), self.input.cursor)
                                     };
                                     let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
                                     let new_row = wrap.cursor_row.saturating_sub(1);
@@ -136,13 +134,13 @@ impl App {
                                         wrap.cursor_col,
                                     );
                                     if in_edit {
-                                        self.edit_cursor = new_cursor;
+                                        self.edit.cursor = new_cursor;
                                     } else {
-                                        self.input_cursor = new_cursor;
+                                        self.input.cursor = new_cursor;
                                     }
                                 }
-                            } else if self.nvim_bridge.is_some() {
-                                if let Some(nvim_bridge) = &self.nvim_bridge {
+                            } else if self.nvim.bridge.is_some() {
+                                if let Some(nvim_bridge) = &self.nvim.bridge {
                                     let mut bridge = nvim_bridge.lock().await;
                                     let _ = bridge.send_input("<C-y>").await;
                                 }
@@ -152,12 +150,12 @@ impl App {
                         }
                         MouseEventKind::ScrollDown => {
                             if over_input {
-                                let w = self.last_input_inner_width as usize;
+                                let w = self.layout.input_inner_width as usize;
                                 if w > 0 {
                                     let (buf, cursor) = if in_edit {
-                                        (self.edit_buffer.clone(), self.edit_cursor)
+                                        (self.edit.buffer.clone(), self.edit.cursor)
                                     } else {
-                                        (self.input_buffer.clone(), self.input_cursor)
+                                        (self.input.buffer.clone(), self.input.cursor)
                                     };
                                     let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
                                     let max_row = wrap.lines.len().saturating_sub(1);
@@ -169,13 +167,13 @@ impl App {
                                         wrap.cursor_col,
                                     );
                                     if in_edit {
-                                        self.edit_cursor = new_cursor;
+                                        self.edit.cursor = new_cursor;
                                     } else {
-                                        self.input_cursor = new_cursor;
+                                        self.input.cursor = new_cursor;
                                     }
                                 }
-                            } else if self.nvim_bridge.is_some() {
-                                if let Some(nvim_bridge) = &self.nvim_bridge {
+                            } else if self.nvim.bridge.is_some() {
+                                if let Some(nvim_bridge) = &self.nvim.bridge {
                                     let mut bridge = nvim_bridge.lock().await;
                                     let _ = bridge.send_input("<C-e>").await;
                                 }
@@ -184,41 +182,37 @@ impl App {
                             }
                         }
                         MouseEventKind::Down(crossterm::event::MouseButton::Left)
-                            if self.no_nvim =>
+                            if self.nvim.disabled =>
                         {
                             // ── Click on queue panel ──────────────────────────────
-                            if over_queue && !self.queued.is_empty() {
-                                let inner_y = self.last_queue_pane.y + 1; // skip border
+                            if over_queue && !self.queue.messages.is_empty() {
+                                let inner_y = self.layout.queue_pane.y + 1; // skip border
                                 if mouse.row >= inner_y {
                                     let item_idx = (mouse.row - inner_y) as usize;
-                                    if item_idx < self.queued.len() {
-                                        self.queue_selected = Some(item_idx);
-                                        self.focus = FocusPane::Queue;
-                                        if let Some(qm) = self.queued.get(item_idx) {
+                                    if item_idx < self.queue.messages.len() {
+                                        self.queue.selected = Some(item_idx);
+                                        self.ui.focus = FocusPane::Queue;
+                                        if let Some(qm) = self.queue.messages.get(item_idx) {
                                             let text = qm.content.clone();
-                                            self.editing_queue_index = Some(item_idx);
-                                            self.edit_cursor = text.len();
-                                            self.edit_original_text = Some(text.clone());
-                                            self.edit_buffer = text;
-                                            self.focus = FocusPane::Input;
+                                            self.edit.queue_index = Some(item_idx);
+                                            self.edit.cursor = text.len();
+                                            self.edit.original_text = Some(text.clone());
+                                            self.edit.buffer = text;
+                                            self.ui.focus = FocusPane::Input;
                                         }
                                     }
                                 }
                             }
 
-                            // ── Click on chat pane ───────────────────────────────
-                            // The chat pane inner area starts at row 1 (border)
-                            // and column last_chat_pane.x + 1 (border).
-                            let chat_inner_x = self.last_chat_pane.x + 1;
-                            let chat_inner_w = self.last_chat_pane.width.saturating_sub(2);
-                            let chat_inner_h = self.last_chat_pane.height.saturating_sub(2);
-                            let content_start_row = self.last_chat_pane.y + 1;
+                            // ── Click on chat pane ────────────────────────────────
+                            let chat_inner_x = self.layout.chat_pane.x + 1;
+                            let chat_inner_w = self.layout.chat_pane.width.saturating_sub(2);
+                            let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
+                            let content_start_row = self.layout.chat_pane.y + 1;
 
-                            // ── Scrollbar click ──────────────────────────────────
-                            // The scrollbar occupies the rightmost column of the
-                            // inner chat area.  Clicking it scrolls proportionally.
+                            // ── Scrollbar click ───────────────────────────────────
                             let scrollbar_col = chat_inner_x + chat_inner_w.saturating_sub(1);
-                            let total_chat_lines = self.chat_lines.len() as u16;
+                            let total_chat_lines = self.chat.lines.len() as u16;
                             let over_chat = mouse.row >= content_start_row
                                 && mouse.row < content_start_row + chat_inner_h
                                 && !over_queue
@@ -233,13 +227,12 @@ impl App {
                                     * (total_chat_lines - chat_inner_h) as u32
                                     / chat_inner_h.saturating_sub(1).max(1) as u32)
                                     as u16;
-                                self.scroll_offset =
+                                self.chat.scroll_offset =
                                     new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
-                                self.auto_scroll = false;
+                                self.chat.auto_scroll = false;
                                 self.recompute_focused_segment();
                             }
 
-                            // Skip segment-click logic when the click landed on the scrollbar.
                             let clicked_scrollbar =
                                 mouse.column == scrollbar_col && total_chat_lines > chat_inner_h;
                             if mouse.row >= content_start_row
@@ -248,25 +241,24 @@ impl App {
                                 && !clicked_scrollbar
                             {
                                 let click_line = (mouse.row - content_start_row) as usize
-                                    + self.scroll_offset as usize;
+                                    + self.chat.scroll_offset as usize;
                                 if let Some(seg_idx) =
-                                    segment_at_line(&self.segment_line_ranges, click_line)
+                                    segment_at_line(&self.chat.segment_line_ranges, click_line)
                                 {
                                     let _is_editable =
-                                        segment_editable_text(&self.chat_segments, seg_idx)
+                                        segment_editable_text(&self.chat.segments, seg_idx)
                                             .is_some();
 
-                                    // Detect clicks on the right-aligned action icons.
-                                    // Layout (6 cols from inner right edge, 1-col margin at w-1):
-                                    //   ↻ rerun  — col w-6  (zone [w-6, w-5])
-                                    //   ✎ edit   — col w-4  (zone [w-5, w-4])
-                                    //   ✕ delete — col w-2  (zone [w-3, w-2])
+                                    // Detect clicks on right-aligned action icons.
+                                    // Layout (7 cols from inner right edge, scrollbar at w-1):
+                                    //   ↻ rerun  — col w-7, absorber w-6  (zone [w-7, w-5])
+                                    //   ✎ edit   — col w-5, absorber w-4  (zone [w-5, w-3])
+                                    //   ✕ delete — col w-3, absorber w-2  (zone [w-3, w-1])
                                     let is_header_line =
-                                        self.remove_label_line_indices.contains(&click_line);
+                                        self.chat.remove_labels.contains(&click_line);
 
-                                    // Zone boundaries (cols, right-edge relative, non-overlapping)
                                     let label_area_start =
-                                        chat_inner_x + chat_inner_w.saturating_sub(6);
+                                        chat_inner_x + chat_inner_w.saturating_sub(7);
                                     let edit_zone_start =
                                         chat_inner_x + chat_inner_w.saturating_sub(5);
                                     let delete_zone_start =
@@ -277,55 +269,54 @@ impl App {
                                         && mouse.column
                                             < chat_inner_x + chat_inner_w.saturating_sub(1);
                                     let clicked_edit = is_header_line
-                                        && self.edit_label_line_indices.contains(&click_line)
+                                        && self.chat.edit_labels.contains(&click_line)
                                         && mouse.column >= edit_zone_start
                                         && mouse.column < delete_zone_start;
                                     let clicked_rerun = is_header_line
-                                        && self.rerun_label_line_indices.contains(&click_line)
+                                        && self.chat.rerun_labels.contains(&click_line)
                                         && mouse.column >= label_area_start
                                         && mouse.column < edit_zone_start;
-                                    // Any click outside the label area cancels a pending delete.
                                     let outside_labels = mouse.column < label_area_start;
 
                                     if clicked_delete {
-                                        // Open the confirmation modal.
                                         use crate::overlay::confirm::{
                                             ConfirmModal, ConfirmedAction,
                                         };
                                         let preview =
-                                            segment_short_preview(self.chat_segments.get(seg_idx));
-                                        self.confirm_modal = Some(ConfirmModal::new(
+                                            segment_short_preview(self.chat.segments.get(seg_idx));
+                                        self.ui.confirm_modal = Some(ConfirmModal::new(
                                             "Delete message",
-                                            format!("Remove this message from the conversation?\n{preview}"),
+                                            format!(
+                                                "Remove this message from the conversation?\n{preview}"
+                                            ),
                                             ConfirmedAction::RemoveSegment(seg_idx),
                                         ));
                                     } else if clicked_edit {
-                                        // Load segment into the edit buffer.
                                         if let Some(text) =
-                                            segment_editable_text(&self.chat_segments, seg_idx)
+                                            segment_editable_text(&self.chat.segments, seg_idx)
                                         {
-                                            self.editing_message_index = Some(seg_idx);
-                                            self.edit_cursor = text.len();
-                                            self.edit_original_text = Some(text.clone());
-                                            self.edit_buffer = text;
-                                            self.focus = FocusPane::Input;
+                                            self.edit.message_index = Some(seg_idx);
+                                            self.edit.cursor = text.len();
+                                            self.edit.original_text = Some(text.clone());
+                                            self.edit.buffer = text;
+                                            self.ui.focus = FocusPane::Input;
                                             self.update_editing_segment_live();
                                             self.rerender_chat().await;
                                         }
                                     } else if clicked_rerun {
-                                        self.confirm_modal = None;
-                                        let saved = self.focused_chat_segment;
-                                        self.focused_chat_segment = Some(seg_idx);
+                                        self.ui.confirm_modal = None;
+                                        let saved = self.chat.focused_segment;
+                                        self.chat.focused_segment = Some(seg_idx);
                                         self.dispatch(Action::RerunFromSegment).await;
-                                        if self.focused_chat_segment.is_some() {
-                                            self.focused_chat_segment = saved;
+                                        if self.chat.focused_segment.is_some() {
+                                            self.chat.focused_segment = saved;
                                         }
                                     } else {
                                         if outside_labels {
-                                            self.confirm_modal = None;
+                                            self.ui.confirm_modal = None;
                                         }
-                                        // All other clicks on any segment: toggle collapse.
-                                        let is_collapsible = match self.chat_segments.get(seg_idx) {
+                                        // All other clicks: toggle collapse.
+                                        let is_collapsible = match self.chat.segments.get(seg_idx) {
                                             Some(ChatSegment::Message(m)) => matches!(
                                                 (&m.role, &m.content),
                                                 (Role::User, MessageContent::Text(_))
@@ -343,26 +334,22 @@ impl App {
                                             _ => false,
                                         };
                                         if is_collapsible {
-                                            if self.collapsed_segments.contains(&seg_idx) {
-                                                self.collapsed_segments.remove(&seg_idx);
+                                            if self.chat.collapsed.contains(&seg_idx) {
+                                                self.chat.collapsed.remove(&seg_idx);
                                             } else {
-                                                self.collapsed_segments.insert(seg_idx);
+                                                self.chat.collapsed.insert(seg_idx);
                                             }
                                             self.build_display_from_segments();
-                                            self.search.update_matches(&self.chat_lines);
-                                            // Clamp scroll so collapsing content never leaves a
-                                            // blank viewport, then ensure the toggled segment
-                                            // remains visible.
-                                            let max_offset = (self.chat_lines.len() as u16)
-                                                .saturating_sub(self.chat_height);
-                                            self.scroll_offset = self.scroll_offset.min(max_offset);
-                                            // If the collapsed segment now starts below the
-                                            // viewport, scroll up to bring it into view.
+                                            self.ui.search.update_matches(&self.chat.lines);
+                                            let max_offset = (self.chat.lines.len() as u16)
+                                                .saturating_sub(self.layout.chat_height);
+                                            self.chat.scroll_offset =
+                                                self.chat.scroll_offset.min(max_offset);
                                             if let Some(&(seg_start, _)) =
-                                                self.segment_line_ranges.get(seg_idx)
+                                                self.chat.segment_line_ranges.get(seg_idx)
                                             {
-                                                if (seg_start as u16) < self.scroll_offset {
-                                                    self.scroll_offset = seg_start as u16;
+                                                if (seg_start as u16) < self.chat.scroll_offset {
+                                                    self.chat.scroll_offset = seg_start as u16;
                                                 }
                                             }
                                             self.recompute_focused_segment();
@@ -378,12 +365,19 @@ impl App {
             }
 
             Event::Resize(width, height) => {
-                if let Some(nvim_bridge) = &self.nvim_bridge {
-                    let layout = AppLayout::compute(
-                        Rect::new(0, 0, width, height),
-                        self.search.active,
-                        self.queued.len(),
-                    );
+                let layout = AppLayout::compute(
+                    Rect::new(0, 0, width, height),
+                    self.ui.search.active,
+                    self.queue.messages.len(),
+                );
+                self.layout.chat_inner_width = layout.chat_pane.width.saturating_sub(2).max(20);
+                self.layout.chat_height = layout.chat_inner_height().max(1);
+                self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
+                self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
+                self.layout.chat_pane = layout.chat_pane;
+                self.layout.input_pane = layout.input_pane;
+                self.layout.queue_pane = layout.queue_pane;
+                if let Some(nvim_bridge) = &self.nvim.bridge {
                     let chat_width = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();
                     let mut bridge = nvim_bridge.lock().await;
@@ -392,8 +386,8 @@ impl App {
                     }
                 }
                 self.rerender_chat().await;
-                if let Some(pager) = &mut self.pager {
-                    pager.set_lines(self.chat_lines.clone());
+                if let Some(pager) = &mut self.ui.pager {
+                    pager.set_lines(self.chat.lines.clone());
                 }
                 false
             }
@@ -407,30 +401,20 @@ impl App {
     pub(crate) fn handle_modal_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::KeyCode;
 
-        let modal = match &mut self.question_modal {
+        let modal = match &mut self.ui.question_modal {
             Some(m) => m,
             None => return false,
         };
 
         match k.code {
-            // ── Cancel ────────────────────────────────────────────────────────
-            // Esc outside text mode: cancel the whole modal.
             KeyCode::Esc if !modal.other_selected => {
-                let modal = self.question_modal.take().unwrap();
+                let modal = self.ui.question_modal.take().unwrap();
                 modal.cancel();
             }
-            // Esc inside Other text mode: cancel the edit and restore the
-            // snapshot (text typed before this edit session is kept).
             KeyCode::Esc if modal.other_selected => {
                 modal.cancel_other_edit();
             }
 
-            // ── Submit / advance / activate text mode ─────────────────────────
-            // Enter outside text mode:
-            //   • Other row focused, no text yet   → enter text-edit mode
-            //   • Other row focused, has text       → submit
-            //   • Regular row, nothing selected yet → auto-select it, then submit
-            //   • Regular row, something selected   → submit as-is
             KeyCode::Enter if !modal.other_selected => {
                 let n_opts = modal
                     .questions
@@ -438,30 +422,22 @@ impl App {
                     .map(|q| q.options.len())
                     .unwrap_or(0);
                 if modal.focused_option == n_opts && !modal.other_has_text() {
-                    // Other row focused but empty: enter text-edit mode.
                     modal.activate_other();
                 } else {
-                    // For regular options: if nothing is selected yet, select the
-                    // focused option so Enter without a prior Space still works.
                     if modal.focused_option < n_opts && modal.selected_options.is_empty() {
                         modal.toggle_option(modal.focused_option);
                     }
                     let done = modal.submit();
                     if done {
-                        let modal = self.question_modal.take().unwrap();
+                        let modal = self.ui.question_modal.take().unwrap();
                         modal.finish();
                     }
                 }
             }
-            // Enter inside text mode: accept the typed text and exit text mode.
-            // The user then presses Enter again to submit the whole answer.
             KeyCode::Enter if modal.other_selected => {
                 modal.deactivate_other();
             }
 
-            // ── Arrow-key navigation ─────────────────────────────────────────
-            // Up: move focus to the previous row; at the first row go back to
-            // the previous question (replaces Shift+Tab).
             KeyCode::Up if !modal.other_selected => {
                 if modal.focused_option == 0 {
                     modal.go_back();
@@ -473,17 +449,14 @@ impl App {
                 modal.focus_next();
             }
 
-            // ── Space: select/toggle focused row ──────────────────────────────
             KeyCode::Char(' ') if !modal.other_selected => {
                 modal.select_focused();
             }
-            // Space inside text mode: insert a literal space.
             KeyCode::Char(' ') if modal.other_selected => {
                 modal.other_input.insert(modal.other_cursor, ' ');
                 modal.other_cursor += 1;
             }
 
-            // ── Number shortcut: 1-9 toggles the corresponding option ─────────
             KeyCode::Char(c @ '1'..='9') if !modal.other_selected => {
                 if let Some(idx) = c.to_digit(10) {
                     let option_idx = idx as usize - 1;
@@ -498,8 +471,6 @@ impl App {
                 }
             }
 
-            // ── Text input for the "Other" free-text field ────────────────────
-            // All printable characters (including Shift+letter = uppercase).
             KeyCode::Char(c) if modal.other_selected => {
                 modal.other_input.insert(modal.other_cursor, c);
                 modal.other_cursor += c.len_utf8();
@@ -544,39 +515,32 @@ impl App {
 
     // ── Confirm-modal key handling ────────────────────────────────────────────
 
-    /// Handle keyboard events when the confirmation modal is open.
-    ///
-    /// - `←` / `→` / `Tab`: toggle focus between Confirm and Cancel buttons
-    /// - `Enter`: activate the focused button (confirm or cancel)
-    /// - `Esc`: cancel (same as activating Cancel)
     pub(crate) async fn handle_confirm_modal_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
         use crate::overlay::confirm::ConfirmedAction;
         use crossterm::event::KeyCode;
 
         match k.code {
             KeyCode::Esc => {
-                self.confirm_modal = None;
+                self.ui.confirm_modal = None;
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
-                if let Some(modal) = &mut self.confirm_modal {
+                if let Some(modal) = &mut self.ui.confirm_modal {
                     modal.focus_next();
                 }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                if let Some(modal) = self.confirm_modal.take() {
-                    // Focused on Cancel or info-only dialog → just dismiss.
+                if let Some(modal) = self.ui.confirm_modal.take() {
                     if modal.focused_button != 0 || !modal.has_action() {
                         return false;
                     }
-                    // Focused on Confirm → execute the stored action.
                     if let Some(action) = modal.action {
                         match action {
                             ConfirmedAction::RemoveSegment(seg_idx) => {
-                                let saved = self.focused_chat_segment;
-                                self.focused_chat_segment = Some(seg_idx);
+                                let saved = self.chat.focused_segment;
+                                self.chat.focused_segment = Some(seg_idx);
                                 self.dispatch(Action::RemoveChatSegment).await;
-                                if self.focused_chat_segment.is_some() {
-                                    self.focused_chat_segment = saved;
+                                if self.chat.focused_segment.is_some() {
+                                    self.chat.focused_segment = saved;
                                 }
                             }
                         }
@@ -594,47 +558,49 @@ impl App {
         use crate::keys::map_search_key;
         use crate::pager::PagerAction;
 
-        if self.search.active {
+        if self.ui.search.active {
             if let Some(action) = map_search_key(k) {
                 return self.dispatch(action).await;
             }
             return false;
         }
 
-        let pager = match &mut self.pager {
+        let pager = match &mut self.ui.pager {
             Some(p) => p,
             None => return false,
         };
 
         match pager.handle_key(k) {
             PagerAction::Close => {
-                self.pager = None;
+                self.ui.pager = None;
             }
             PagerAction::OpenSearch => {
-                self.search.query.clear();
-                self.search.current = 0;
-                self.search.update_matches(&self.chat_lines);
-                self.search.active = true;
+                self.ui.search.query.clear();
+                self.ui.search.current = 0;
+                self.ui.search.update_matches(&self.chat.lines);
+                self.ui.search.active = true;
             }
             PagerAction::SearchNext => {
-                if !self.search.matches.is_empty() {
-                    self.search.current = (self.search.current + 1) % self.search.matches.len();
-                    if let Some(line) = self.search.current_line() {
-                        if let Some(pager) = &mut self.pager {
+                if !self.ui.search.matches.is_empty() {
+                    self.ui.search.current =
+                        (self.ui.search.current + 1) % self.ui.search.matches.len();
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(pager) = &mut self.ui.pager {
                             pager.scroll_to_line(line);
                         }
                     }
                 }
             }
             PagerAction::SearchPrev => {
-                if !self.search.matches.is_empty() {
-                    self.search.current = self
+                if !self.ui.search.matches.is_empty() {
+                    self.ui.search.current = self
+                        .ui
                         .search
                         .current
                         .checked_sub(1)
-                        .unwrap_or(self.search.matches.len() - 1);
-                    if let Some(line) = self.search.current_line() {
-                        if let Some(pager) = &mut self.pager {
+                        .unwrap_or(self.ui.search.matches.len() - 1);
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(pager) = &mut self.ui.pager {
                             pager.scroll_to_line(line);
                         }
                     }

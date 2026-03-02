@@ -25,8 +25,8 @@ use crate::{
 impl App {
     // ── Chat display ──────────────────────────────────────────────────────────
 
-    /// Rebuild `chat_lines` and `segment_line_ranges` from `chat_segments` plus
-    /// the streaming buffer.
+    /// Rebuild `chat.lines` and `chat.segment_line_ranges` from `chat.segments`
+    /// plus the streaming buffer.
     pub(crate) fn build_display_from_segments(&mut self) {
         let mut all_lines = Vec::new();
         let mut ranges = Vec::new();
@@ -36,15 +36,11 @@ impl App {
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let bar_char = if ascii { "| " } else { "▌ " };
-
-        let bar_cols: u16 = 2;
-        // In no-nvim mode the rightmost 6 cols of the inner area are reserved
-        // for action labels (↻ ✎ ✕ + 1-col right margin).  Reducing
-        // effective_width here keeps those columns blank so the label overlay
-        // never covers content.
-        let label_reserve: u16 = if self.no_nvim { 6 } else { 0 };
+        let bar_cols: u16 = unicode_width::UnicodeWidthStr::width_cjk(bar_char) as u16;
+        let label_reserve: u16 = if self.nvim.disabled { 7 } else { 0 };
         let effective_width = self
-            .last_chat_inner_width
+            .layout
+            .chat_inner_width
             .saturating_sub(bar_cols + label_reserve)
             .max(20);
         let render_width = if self.config.tui.wrap_width == 0 {
@@ -53,22 +49,20 @@ impl App {
             self.config.tui.wrap_width.min(effective_width)
         };
 
-        for (i, seg) in self.chat_segments.iter().enumerate() {
-            let collapsed = self.no_nvim && self.collapsed_segments.contains(&i);
+        for (i, seg) in self.chat.segments.iter().enumerate() {
+            let collapsed = self.nvim.disabled && self.chat.collapsed.contains(&i);
             let s = if collapsed {
-                collapsed_preview(seg, &self.tool_args_cache)
+                collapsed_preview(seg, &self.chat.tool_args)
             } else {
-                segment_to_markdown(seg, &self.tool_args_cache)
+                segment_to_markdown(seg, &self.chat.tool_args)
             };
             let lines = render_markdown(&s, render_width, ascii);
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
             let n = styled.len();
 
-            // In no-nvim mode mark the first line of each segment with the
-            // labels that apply to it, so draw_chat can overlay them.
-            if self.no_nvim {
-                if segment_editable_text(&self.chat_segments, i).is_some() {
+            if self.nvim.disabled {
+                if segment_editable_text(&self.chat.segments, i).is_some() {
                     edit_labels.insert(line_start);
                 }
                 if segment_is_removable(seg) {
@@ -83,25 +77,26 @@ impl App {
             ranges.push((line_start, line_start + n));
             line_start += n;
         }
-        if !self.streaming_assistant_buffer.is_empty() {
-            let (s, bar_color) = if self.streaming_is_thinking {
-                let prefix = if self.chat_segments.is_empty() {
+
+        if !self.chat.streaming_buffer.is_empty() {
+            let (s, bar_color) = if self.chat.streaming_is_thinking {
+                let prefix = if self.chat.segments.is_empty() {
                     "💭 **Thinking…**\n"
                 } else {
                     "\n💭 **Thinking…**\n"
                 };
                 (
-                    format!("{}{}", prefix, self.streaming_assistant_buffer),
+                    format!("{}{}", prefix, self.chat.streaming_buffer),
                     Some(Style::default().fg(Color::Magenta)),
                 )
             } else {
-                let prefix = if self.chat_segments.is_empty() {
+                let prefix = if self.chat.segments.is_empty() {
                     "**Agent:** "
                 } else {
                     "\n**Agent:** "
                 };
                 (
-                    format!("{}{}", prefix, self.streaming_assistant_buffer),
+                    format!("{}{}", prefix, self.chat.streaming_buffer),
                     Some(Style::default().fg(Color::Blue)),
                 )
             };
@@ -109,31 +104,31 @@ impl App {
             let styled = apply_bar_and_dim(lines, bar_color, false, bar_char);
             all_lines.extend(styled);
         }
-        self.chat_lines = all_lines;
-        self.segment_line_ranges = ranges;
-        self.edit_label_line_indices = edit_labels;
-        self.remove_label_line_indices = remove_labels;
-        self.rerun_label_line_indices = rerun_labels;
+
+        self.chat.lines = all_lines;
+        self.chat.segment_line_ranges = ranges;
+        self.chat.edit_labels = edit_labels;
+        self.chat.remove_labels = remove_labels;
+        self.chat.rerun_labels = rerun_labels;
         self.recompute_focused_segment();
     }
 
     /// Recompute the keyboard-focused segment based on the current scroll
-    /// offset and chat height.  The focused segment is the editable segment
-    /// whose line range contains the vertical centre of the chat viewport.
+    /// offset and chat height.
     pub(crate) fn recompute_focused_segment(&mut self) {
-        let center = self.scroll_offset as usize + self.chat_height as usize / 2;
-        self.focused_chat_segment = segment_at_line(&self.segment_line_ranges, center)
-            .filter(|&idx| segment_editable_text(&self.chat_segments, idx).is_some());
+        let center = self.chat.scroll_offset as usize + self.layout.chat_height as usize / 2;
+        self.chat.focused_segment = segment_at_line(&self.chat.segment_line_ranges, center)
+            .filter(|&idx| segment_editable_text(&self.chat.segments, idx).is_some());
     }
 
     /// Re-render the chat pane: update the Neovim buffer (if active) and
     /// rebuild the ratatui display lines.
     pub(crate) async fn rerender_chat(&mut self) {
-        if let Some(nvim_bridge) = &self.nvim_bridge {
+        if let Some(nvim_bridge) = &self.nvim.bridge {
             let content = format_conversation(
-                &self.chat_segments,
-                &self.streaming_assistant_buffer,
-                &self.tool_args_cache,
+                &self.chat.segments,
+                &self.chat.streaming_buffer,
+                &self.chat.tool_args,
             );
             let mut bridge = nvim_bridge.lock().await;
             if let Err(e) = bridge.set_modifiable(true).await {
@@ -142,14 +137,14 @@ impl App {
             if let Err(e) = bridge.set_buffer_content(&content).await {
                 tracing::error!("Failed to update Neovim buffer: {}", e);
             }
-            if self.agent_busy {
+            if self.agent.busy {
                 if let Err(e) = bridge.set_modifiable(false).await {
                     tracing::error!("Failed to set buffer non-modifiable: {}", e);
                 }
             }
         }
         self.build_display_from_segments();
-        self.search.update_matches(&self.chat_lines);
+        self.ui.search.update_matches(&self.chat.lines);
     }
 
     pub(crate) fn ascii(&self) -> bool {
@@ -162,57 +157,76 @@ impl App {
     // ── Scroll helpers ────────────────────────────────────────────────────────
 
     pub(crate) fn scroll_up(&mut self, n: u16) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(n);
-        self.auto_scroll = false;
+        self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(n);
+        self.chat.auto_scroll = false;
         self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_down(&mut self, n: u16) {
-        let max = (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
-        self.scroll_offset = (self.scroll_offset + n).min(max);
-        if self.scroll_offset >= max {
-            self.auto_scroll = true;
+        let max = (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
+        self.chat.scroll_offset = (self.chat.scroll_offset + n).min(max);
+        if self.chat.scroll_offset >= max {
+            self.chat.auto_scroll = true;
         }
         self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_to_bottom(&mut self) {
-        if self.nvim_bridge.is_none() && self.auto_scroll {
-            self.scroll_offset = (self.chat_lines.len() as u16).saturating_sub(self.chat_height);
+        if self.nvim.bridge.is_none() && self.chat.auto_scroll {
+            self.chat.scroll_offset =
+                (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
         }
         self.recompute_focused_segment();
     }
 
-    /// Adjust `input_scroll_offset` so the cursor row is within the visible
+    /// Adjust `input.scroll_offset` so the cursor row is within the visible
     /// window of the input pane.
     pub(crate) fn adjust_input_scroll(&mut self) {
-        let w = self.last_input_inner_width as usize;
-        let h = self.last_input_inner_height as usize;
+        let w = self.layout.input_inner_width as usize;
+        let h = self.layout.input_inner_height as usize;
         if w == 0 || h == 0 {
             return;
         }
-        let wrap = crate::input_wrap::wrap_content(&self.input_buffer, w, self.input_cursor);
-        crate::input_wrap::adjust_scroll(wrap.cursor_row, h, &mut self.input_scroll_offset);
+        let wrap = crate::input_wrap::wrap_content(&self.input.buffer, w, self.input.cursor);
+        let effective_wrap = if wrap.lines.len() > h && w > 1 {
+            crate::input_wrap::wrap_content(&self.input.buffer, w - 1, self.input.cursor)
+        } else {
+            wrap
+        };
+        crate::input_wrap::adjust_scroll(
+            effective_wrap.cursor_row,
+            h,
+            &mut self.input.scroll_offset,
+        );
     }
 
-    /// Adjust `edit_scroll_offset` so the cursor row is within the visible
+    /// Adjust `edit.scroll_offset` so the cursor row is within the visible
     /// window when in inline edit mode.
     pub(crate) fn adjust_edit_scroll(&mut self) {
-        let w = self.last_input_inner_width as usize;
-        let h = self.last_input_inner_height as usize;
+        let w = self.layout.input_inner_width as usize;
+        let h = self.layout.input_inner_height as usize;
         if w == 0 || h == 0 {
             return;
         }
-        let wrap = crate::input_wrap::wrap_content(&self.edit_buffer, w, self.edit_cursor);
-        crate::input_wrap::adjust_scroll(wrap.cursor_row, h, &mut self.edit_scroll_offset);
+        let wrap = crate::input_wrap::wrap_content(&self.edit.buffer, w, self.edit.cursor);
+        let effective_wrap = if wrap.lines.len() > h && w > 1 {
+            crate::input_wrap::wrap_content(&self.edit.buffer, w - 1, self.edit.cursor)
+        } else {
+            wrap
+        };
+        crate::input_wrap::adjust_scroll(
+            effective_wrap.cursor_row,
+            h,
+            &mut self.edit.scroll_offset,
+        );
     }
 
     // ── History persistence ───────────────────────────────────────────────────
 
-    /// Persist the conversation to disk asynchronously.
     pub(crate) fn save_history_async(&mut self) {
         let records: Vec<sven_input::ConversationRecord> = self
-            .chat_segments
+            .chat
+            .segments
             .iter()
             .filter_map(|seg| match seg {
                 ChatSegment::Message(m) => Some(sven_input::ConversationRecord::Message(m.clone())),
@@ -285,10 +299,8 @@ impl App {
 
     // ── Neovim sync ───────────────────────────────────────────────────────────
 
-    /// Read the Neovim buffer and update `chat_segments` from its current
-    /// content.  Called before submitting so in-buffer edits are preserved.
     pub(crate) async fn sync_nvim_buffer_to_segments(&mut self) {
-        let content = if let Some(nvim_bridge) = &self.nvim_bridge {
+        let content = if let Some(nvim_bridge) = &self.nvim.bridge {
             let bridge = nvim_bridge.lock().await;
             bridge.get_buffer_content().await.ok()
         } else {
@@ -297,18 +309,19 @@ impl App {
         if let Some(content) = content {
             match parse_markdown_to_messages(&content) {
                 Ok(messages) if !messages.is_empty() => {
-                    self.chat_segments = messages
+                    self.chat.segments = messages
                         .iter()
                         .map(|m| ChatSegment::Message(m.clone()))
                         .collect();
-                    self.tool_args_cache.clear();
+                    self.chat.tool_args.clear();
                     for m in &messages {
                         if let MessageContent::ToolCall {
                             tool_call_id,
                             function,
                         } = &m.content
                         {
-                            self.tool_args_cache
+                            self.chat
+                                .tool_args
                                 .insert(tool_call_id.clone(), function.name.clone());
                         }
                     }
@@ -322,7 +335,7 @@ impl App {
     }
 
     pub(crate) async fn nvim_scroll_to_bottom(&self) {
-        if let Some(nvim_bridge) = &self.nvim_bridge {
+        if let Some(nvim_bridge) = &self.nvim.bridge {
             let mut bridge = nvim_bridge.lock().await;
             let _ = bridge.send_input("G").await;
         }

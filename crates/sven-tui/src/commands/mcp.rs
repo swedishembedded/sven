@@ -12,9 +12,7 @@
 //! - Register each prompt as a `/prompt-name [args]` slash command
 //! - Argument completions driven by the MCP prompt argument schema
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 /// A slash command backed by an MCP prompt.
 pub struct McpPromptCommand {
@@ -30,11 +28,6 @@ impl SlashCommand for McpPromptCommand {
 
     fn description(&self) -> &str {
         "MCP prompt command"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        // Future: derive from MCP prompt argument schema
-        vec![]
     }
 
     fn complete(

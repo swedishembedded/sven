@@ -220,7 +220,7 @@ pub async fn run(
             .devices_file
             .clone()
             .unwrap_or_else(default_devices_path);
-        let devices = DeviceRegistry::load(&devices_path)?;
+        let devices = DeviceRegistry::load(&devices_path, &web_cfg.rp_id)?;
 
         let web_auth = WebAuthState::new(
             &web_cfg.rp_id,

@@ -29,7 +29,6 @@ use sven_config::{AgentMode, Config};
 /// Provides read-only access to configuration and current session state.
 /// Does not include mutable app state — commands return effects via
 /// [`CommandResult`] rather than mutating state directly.
-#[allow(dead_code)]
 pub struct CommandContext {
     pub config: Arc<Config>,
     /// Provider of the currently active model (e.g. `"openai"`).
@@ -89,15 +88,6 @@ pub trait SlashCommand: Send + Sync {
 
     /// One-line description shown in completion list and help.
     fn description(&self) -> &str;
-
-    /// Metadata about expected arguments.
-    ///
-    /// Used for help text generation and future shell-completion export.
-    /// Not called by the completion engine itself.
-    #[allow(dead_code)]
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![]
-    }
 
     /// Generate completions for the argument at `arg_index` given `partial`
     /// text typed so far.
@@ -178,39 +168,6 @@ pub fn try_dispatch(input: &str, registry: &CommandRegistry) -> Option<(String, 
 
 /// Describes one argument expected by a slash command.
 ///
-/// Returned by [`SlashCommand::arguments`] and used for help text generation,
-/// argument count validation, and future shell-completion export.
-/// Not all fields are used yet; they are part of the extension-ready API.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct CommandArgument {
-    /// Short name shown in usage hint (e.g. `"model"`).
-    pub name: &'static str,
-    /// Brief description.
-    pub description: &'static str,
-    /// Whether the command requires this argument to be present.
-    pub required: bool,
-}
-
-impl CommandArgument {
-    #[allow(dead_code)]
-    pub const fn required(name: &'static str, description: &'static str) -> Self {
-        Self {
-            name,
-            description,
-            required: true,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub const fn optional(name: &'static str, description: &'static str) -> Self {
-        Self {
-            name,
-            description,
-            required: false,
-        }
-    }
-}
 
 // ── Dispatch integration tests ────────────────────────────────────────────────
 //

@@ -5,9 +5,7 @@
 
 use sven_config::AgentMode;
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ModeCommand;
 
@@ -31,13 +29,6 @@ impl SlashCommand for ModeCommand {
 
     fn description(&self) -> &str {
         "Switch agent mode for the next message (research / plan / agent)"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::required(
-            "mode",
-            "Agent mode: research, plan, or agent",
-        )]
     }
 
     fn complete(

@@ -122,16 +122,18 @@ html, body {
 
 /* ── Terminal screen ──────────────────────────────────────────────────────── */
 /*
- * Flex-column layout so the status bar is a real document element below the
- * terminal rather than a fixed overlay on top of it.  Without this, the bar
- * covers the last row of the xterm viewport (exactly where tmux renders its
- * tab/status line).
+ * position:fixed + inset: 0 gives us a stable anchor that JS can shrink when
+ * the mobile virtual keyboard appears.  The visualViewport API (see app.js)
+ * updates the `height` and `top` CSS properties in real-time so the terminal
+ * is never hidden behind the keyboard.
+ *
+ * display:none is the initial value; startTerminal() switches to flex.
  */
 #terminal-screen {
   display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
   flex-direction: column;
-  width: 100%;
-  height: 100%;
 }
 
 #terminal {
@@ -140,6 +142,11 @@ html, body {
      size.  Without it the terminal overflows past the status bar. */
   min-height: 0;
   width: 100%;
+  /* Disable browser touch-scroll and tap highlight so our JS handlers in
+     app.js get first crack at every touch event without competing with the
+     browser's built-in scroll/zoom behaviour. */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* xterm.js overrides

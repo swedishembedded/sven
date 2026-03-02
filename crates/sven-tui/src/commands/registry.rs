@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn register_replaces_existing_command() {
-        use super::super::{CommandArgument, CommandContext, CommandResult};
+        use super::super::{CommandContext, CommandResult};
 
         struct DummyCmd;
         impl SlashCommand for DummyCmd {
@@ -150,9 +150,6 @@ mod tests {
             }
             fn description(&self) -> &str {
                 "dummy"
-            }
-            fn arguments(&self) -> Vec<CommandArgument> {
-                vec![]
             }
             fn complete(
                 &self,

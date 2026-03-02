@@ -5,7 +5,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::widgets::{md_blockquote, md_bullet, md_rule_char};
+use crate::ui::theme::{md_blockquote, md_bullet, md_rule_char};
 
 /// A styled line ready for Ratatui rendering.
 pub type StyledLines = Vec<Line<'static>>;
@@ -226,7 +226,11 @@ impl MarkdownRenderer {
                     let mut col = current_col(&self.current_spans);
                     let mut buf = String::new();
                     for word in t.split_inclusive(' ') {
-                        let word_w = unicode_width::UnicodeWidthStr::width(word);
+                        // Use CJK (conservative) widths: ambiguous characters such
+                        // as box-drawing and block elements are treated as 2 wide.
+                        // This ensures that lines never exceed the allocated terminal
+                        // columns even on terminals that render these chars as 2-wide.
+                        let word_w = unicode_width::UnicodeWidthStr::width_cjk(word);
                         if col + word_w > width && !buf.is_empty() {
                             self.current_spans.push(Span::styled(buf.clone(), style));
                             buf.clear();
@@ -259,8 +263,16 @@ impl MarkdownRenderer {
                 // ── Horizontal rule ───────────────────────────────────────────
                 Event::Rule => {
                     self.push_line();
+                    let rc = md_rule_char(self.ascii);
+                    // Divide by the CJK display width of the rule character so the
+                    // rule never exceeds wrap_width terminal columns.  '─' (U+2500)
+                    // is Ambiguous-width and renders as 2 columns on many terminals.
+                    let rc_w = unicode_width::UnicodeWidthChar::width_cjk(rc)
+                        .unwrap_or(1)
+                        .max(1);
+                    let count = self.width / rc_w;
                     self.lines.push(Line::from(Span::styled(
-                        md_rule_char(self.ascii).to_string().repeat(self.width),
+                        rc.to_string().repeat(count),
                         Style::default().fg(Color::DarkGray),
                     )));
                     self.lines.push(Line::default());
@@ -305,9 +317,11 @@ fn heading_style(level: HeadingLevel) -> Style {
 }
 
 fn current_col(spans: &[Span<'_>]) -> usize {
+    // Use CJK widths to stay consistent with the word-wrap measurement above:
+    // ambiguous chars count as 2 here too so the column tracking is accurate.
     spans
         .iter()
-        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+        .map(|s| unicode_width::UnicodeWidthStr::width_cjk(s.content.as_ref()))
         .sum()
 }
 
@@ -336,7 +350,9 @@ fn plain_code_lines(code: &str, max_width: usize) -> Vec<Line<'static>> {
             let mut col = 0usize;
             let mut byte_end = remaining.len();
             for (i, ch) in remaining.char_indices() {
-                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                // CJK-conservative width: ambiguous chars count as 2 so the
+                // hard-wrapped code line never overflows the terminal column limit.
+                let cw = unicode_width::UnicodeWidthChar::width_cjk(ch).unwrap_or(0);
                 if col + cw > max_width {
                     byte_end = i;
                     break;

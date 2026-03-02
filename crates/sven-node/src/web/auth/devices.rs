@@ -87,6 +87,25 @@ impl DeviceRecord {
     }
 }
 
+// ── On-disk format ────────────────────────────────────────────────────────────
+
+/// YAML envelope written to the devices file.
+///
+/// Stores the `rp_id` that was active when the credentials were registered so
+/// that a config change can be detected at startup and stale credentials can
+/// be purged automatically instead of producing opaque `NotAllowedError`s in
+/// the browser.
+///
+/// Old files (flat `Vec<DeviceRecord>`) are detected and migrated on first
+/// load.
+#[derive(Debug, Serialize, Deserialize)]
+struct RegistryFile {
+    /// WebAuthn RP ID in effect when these credentials were registered.
+    rp_id: String,
+    /// The device records.
+    devices: Vec<DeviceRecord>,
+}
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 /// Thread-safe, persistently-backed device registry.
@@ -100,29 +119,69 @@ pub struct DeviceRegistry {
 struct RegistryInner {
     devices: Vec<DeviceRecord>,
     path: PathBuf,
+    rp_id: String,
 }
 
 impl DeviceRegistry {
-    /// Load from disk, creating an empty registry if the file does not exist.
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let devices = if path.exists() {
+    /// Load from disk and verify that the stored RP ID matches `current_rp_id`.
+    ///
+    /// If the file is absent an empty registry is created.  If the RP ID has
+    /// changed since the last run, all existing credentials are purged and a
+    /// clear warning is logged — this prevents the silent `NotAllowedError`
+    /// that browsers return when a passkey is presented for the wrong RP ID.
+    ///
+    /// Old files written as a plain `Vec<DeviceRecord>` (without the RP ID
+    /// envelope) are migrated transparently: they are treated as if the RP ID
+    /// was `localhost` (the historical default).
+    pub fn load(path: &Path, current_rp_id: &str) -> anyhow::Result<Self> {
+        let (mut devices, stored_rp_id) = if path.exists() {
             let text = std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            serde_yaml::from_str::<Vec<DeviceRecord>>(&text)
-                .with_context(|| format!("parsing {}", path.display()))?
+
+            // Try new envelope format first, fall back to legacy flat list.
+            if let Ok(file) = serde_yaml::from_str::<RegistryFile>(&text) {
+                (file.devices, file.rp_id)
+            } else {
+                let list = serde_yaml::from_str::<Vec<DeviceRecord>>(&text)
+                    .with_context(|| format!("parsing {}", path.display()))?;
+                // Legacy files had no RP ID stored — treat as localhost.
+                (list, "localhost".to_string())
+            }
         } else {
-            Vec::new()
+            (Vec::new(), current_rp_id.to_string())
         };
+
+        // Detect RP ID change and purge stale credentials.
+        if stored_rp_id != current_rp_id {
+            let count = devices.len();
+            devices.clear();
+            warn!(
+                old_rp_id = %stored_rp_id,
+                new_rp_id = %current_rp_id,
+                purged    = count,
+                "web.rp_id changed — purging {} stale credential(s). \
+                 All browsers must re-register at https://{}",
+                count, current_rp_id,
+            );
+        }
+
         info!(
-            path = %path.display(),
+            path  = %path.display(),
+            rp_id = %current_rp_id,
             count = devices.len(),
             "web device registry loaded"
         );
+
+        let inner = RegistryInner {
+            devices,
+            path: path.to_path_buf(),
+            rp_id: current_rp_id.to_string(),
+        };
+        // Persist immediately so the new rp_id (and any purge) is written.
+        inner.persist()?;
+
         Ok(Self {
-            inner: Arc::new(RwLock::new(RegistryInner {
-                devices,
-                path: path.to_path_buf(),
-            })),
+            inner: Arc::new(RwLock::new(inner)),
         })
     }
 
@@ -226,7 +285,11 @@ impl RegistryInner {
                 .with_context(|| format!("creating dir {}", parent.display()))?;
         }
 
-        let yaml = serde_yaml::to_string(&self.devices).context("serializing device registry")?;
+        let file = RegistryFile {
+            rp_id: self.rp_id.clone(),
+            devices: self.devices.clone(),
+        };
+        let yaml = serde_yaml::to_string(&file).context("serializing device registry")?;
 
         let tmp = self.path.with_extension("yaml.tmp");
         std::fs::write(&tmp, &yaml)

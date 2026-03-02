@@ -13,9 +13,7 @@
 
 use sven_model::catalog;
 
-use crate::commands::{
-    CommandArgument, CommandContext, CommandResult, CompletionItem, SlashCommand,
-};
+use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
 pub struct ModelCommand;
 
@@ -26,13 +24,6 @@ impl SlashCommand for ModelCommand {
 
     fn description(&self) -> &str {
         "Switch model permanently (e.g. /model anthropic/claude-opus-4-6)"
-    }
-
-    fn arguments(&self) -> Vec<CommandArgument> {
-        vec![CommandArgument::required(
-            "model",
-            "Model specifier: provider/name, named provider, or bare model name from catalog",
-        )]
     }
 
     fn complete(
