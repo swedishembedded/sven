@@ -91,6 +91,20 @@ use crate::{
 // `tools` is only needed from agent_builder for per-task agent construction.
 use crate::tools::MAX_DELEGATION_DEPTH;
 
+/// Maximum number of automatic session-message reply hops between two gateway
+/// nodes before the chain is silently dropped.
+///
+/// Each time an agent's session executor auto-responds to an inbound session
+/// message — or an agent explicitly calls `send_message` inside a session
+/// handler — the outgoing message carries `depth + 1`.  The receiving executor
+/// refuses to auto-respond once `depth >= MAX_SESSION_DEPTH`, breaking any
+/// A↔B echo loop at a well-defined horizon.
+///
+/// A value of 4 allows genuine multi-hop clarification exchanges (human →
+/// A → B → A → B) while capping runaway loops long before they become
+/// noticeable to operators.
+const MAX_SESSION_DEPTH: u32 = 4;
+
 /// Maximum number of P2P tasks that may execute concurrently on this node.
 ///
 /// Tasks beyond this limit are rejected with a `TaskStatus::Failed` response
@@ -526,6 +540,26 @@ async fn run_session_executor(
                     continue;
                 }
 
+                // Hard session-depth guard — primary defence against A↔B echo loops.
+                //
+                // Every auto-response and every explicit `send_message` tool call
+                // increments the depth counter carried in the wire message.  When the
+                // counter reaches MAX_SESSION_DEPTH we store the message in history
+                // (so operators can inspect it) but refuse to spawn an agent or send
+                // any reply.  This breaks the loop at a well-defined horizon regardless
+                // of how many agents are in the chain or what their LLMs decide.
+                if message.depth >= MAX_SESSION_DEPTH {
+                    tracing::warn!(
+                        %from,
+                        seq = message.seq,
+                        depth = message.depth,
+                        max = MAX_SESSION_DEPTH,
+                        "Dropping session message: auto-response depth limit reached — \
+                         possible echo loop between gateway nodes"
+                    );
+                    continue;
+                }
+
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
@@ -538,6 +572,7 @@ async fn run_session_executor(
                         // a further auto-response on the receiving gateway).
                         let p2p_c = p2p.clone();
                         let seq = message.seq + 1;
+                        let msg_depth = message.depth;
                         tokio::spawn(async move {
                             let reply = SessionMessageWire {
                                 message_id: uuid::Uuid::new_v4(),
@@ -547,6 +582,7 @@ async fn run_session_executor(
                                 content: vec![sven_p2p::ContentBlock::text(
                                     "Node is at maximum concurrency; please retry later.",
                                 )],
+                                depth: msg_depth.saturating_add(1),
                             };
                             let _ = p2p_c.send_session_message(from, reply).await;
                         });
@@ -604,6 +640,19 @@ async fn execute_inbound_session_message(
         return;
     }
 
+    // Defense-in-depth depth guard — the executor loop checks this too, but
+    // guard again here so callers that bypass the loop (tests, future code)
+    // are also protected.
+    if message.depth >= MAX_SESSION_DEPTH {
+        tracing::warn!(
+            %from,
+            seq = message.seq,
+            depth = message.depth,
+            "execute_inbound_session_message: depth limit exceeded, not responding"
+        );
+        return;
+    }
+
     let incoming_text: String = message
         .content
         .iter()
@@ -627,6 +676,7 @@ async fn execute_inbound_session_message(
         from,
         p2p.store().clone(),
         chars_budget,
+        message.depth,
     )
     .await
     {
@@ -684,6 +734,9 @@ async fn execute_inbound_session_message(
         timestamp: chrono::Utc::now(),
         role: sven_p2p::SessionRole::Assistant,
         content: vec![sven_p2p::ContentBlock::text(&response_text)],
+        // Carry depth + 1 so the remote executor's guard can track how many
+        // auto-response hops this chain has accumulated.
+        depth: message.depth + 1,
     };
 
     if let Err(e) = p2p.send_session_message(from, reply).await {
@@ -704,6 +757,10 @@ async fn build_session_agent(
     peer: libp2p::PeerId,
     store: sven_p2p::ConversationStoreHandle,
     chars_budget: usize,
+    // session_depth: depth of the inbound SessionMessageWire that triggered
+    // this agent. Propagated to SendMessageTool so explicit send_message calls
+    // carry session_depth + 1 on the wire, enabling the remote MAX_SESSION_DEPTH guard.
+    session_depth: u32,
 ) -> anyhow::Result<sven_core::Agent> {
     use sven_core::AgentRuntimeContext;
     use sven_model::Message;
@@ -773,6 +830,7 @@ async fn build_session_agent(
         vec![],
         0,
         vec![],
+        session_depth,
         runtime,
     )
     .await

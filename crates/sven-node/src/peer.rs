@@ -219,6 +219,7 @@ pub async fn chat(config: &GatewayConfig, peer_target: &str) -> anyhow::Result<(
             timestamp: Utc::now(),
             role: SessionRole::User,
             content: vec![ContentBlock::text(&text)],
+            depth: 0, // human-originated CLI message — start of a fresh session chain
         };
 
         if let Err(e) = handle.send_session_message(peer_id, msg).await {

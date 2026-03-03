@@ -4,7 +4,7 @@
 //! subscribe to events while the node event-loop runs inside a spawned task.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -466,6 +466,7 @@ impl P2pNode {
             subscribed_rooms: self.config.rooms.iter().cloned().collect(),
             // Deduplicate gossipsub re-deliveries.
             seen_gossip_ids: HashSet::new(),
+            seen_gossip_ids_order: VecDeque::new(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -537,7 +538,16 @@ struct NodeState {
     #[allow(dead_code)]
     subscribed_rooms: HashSet<String>,
     /// Gossipsub message IDs seen recently — used to deduplicate re-deliveries.
+    ///
+    /// The companion `seen_gossip_ids_order` VecDeque maintains insertion order
+    /// for FIFO eviction: when the set exceeds `GOSSIP_DEDUP_CAPACITY`, the
+    /// oldest entries are removed rather than clearing the whole set.  A full
+    /// clear would temporarily forget all prior message IDs and allow any
+    /// in-flight or re-delivered gossipsub message to be processed again,
+    /// potentially re-triggering reactive agents into a flood loop.
     seen_gossip_ids: HashSet<gossipsub::MessageId>,
+    /// Insertion-order queue for FIFO eviction of `seen_gossip_ids`.
+    seen_gossip_ids_order: VecDeque<gossipsub::MessageId>,
 }
 
 impl NodeState {
@@ -1663,15 +1673,25 @@ impl NodeState {
             }
         });
 
-        // Wake any waiter registered for this peer.
+        // Exclusive delivery: fire the explicit waiter OR broadcast to the
+        // session executor — never both.
+        //
+        // When a task agent has called `wait_for_message` for this peer, the
+        // incoming message is routed exclusively to that waiter.  Broadcasting
+        // it to the session executor at the same time would cause the executor
+        // to auto-respond with an unsolicited reply, creating a second,
+        // unintended message to the remote peer while the task agent is still
+        // processing the first one.  In the worst case this produces two
+        // interleaved response chains from the same local node.
         if let Some(tx) = self.peer_waiters.remove(&peer) {
             let _ = tx.send(Ok(record.clone()));
+            // Message consumed by the explicit waiter — do not also broadcast.
+        } else {
+            self.emit(P2pEvent::SessionMessage {
+                from: peer,
+                message: msg,
+            });
         }
-
-        self.emit(P2pEvent::SessionMessage {
-            from: peer,
-            message: msg,
-        });
     }
 
     // ── Gossipsub (room broadcast) handler ────────────────────────────────────
@@ -1685,9 +1705,27 @@ impl NodeState {
         if !self.seen_gossip_ids.insert(message_id.clone()) {
             return;
         }
-        // Keep the dedup set bounded.
-        if self.seen_gossip_ids.len() > 4096 {
-            self.seen_gossip_ids.clear();
+        self.seen_gossip_ids_order.push_back(message_id.clone());
+
+        // FIFO eviction: remove the oldest entries once the set exceeds the
+        // capacity threshold.  Evicting 512 at a time amortises the cost while
+        // keeping the retained window large enough that legitimate re-deliveries
+        // from mesh reconnections are still caught.
+        //
+        // A full `.clear()` was previously used here, but that would atomically
+        // forget all 4096 known IDs at once — any gossipsub message delivered
+        // just before the clear and re-delivered just after would be treated as
+        // a fresh new message, re-triggering reactive agents.
+        const GOSSIP_DEDUP_CAPACITY: usize = 4096;
+        const GOSSIP_EVICT_BATCH: usize = 512;
+        if self.seen_gossip_ids.len() > GOSSIP_DEDUP_CAPACITY {
+            for _ in 0..GOSSIP_EVICT_BATCH {
+                if let Some(old_id) = self.seen_gossip_ids_order.pop_front() {
+                    self.seen_gossip_ids.remove(&old_id);
+                } else {
+                    break;
+                }
+            }
         }
 
         let post: RoomPost = match crate::protocol::codec::cbor_decode(&message.data) {

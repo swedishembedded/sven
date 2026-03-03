@@ -60,6 +60,7 @@ pub async fn build_gateway_agent(
         agent_card,
         rooms,
         delegation_context,
+        0, // session_depth: gateway agent is not inside a session reply chain
         AgentRuntimeContext::default(),
     )
     .await
@@ -114,6 +115,7 @@ pub async fn build_task_agent(
         agent_card,
         rooms,
         delegation_context,
+        0, // session_depth: task agents are not inside a session reply chain
         runtime,
     )
     .await
@@ -123,6 +125,13 @@ pub async fn build_task_agent(
 ///
 /// Used by the session executor so it can inject `prior_messages` and a
 /// session-specific system prompt while still reusing the standard tool set.
+///
+/// `session_depth` is the depth of the inbound `SessionMessageWire` that
+/// triggered this agent.  It is forwarded to [`SendMessageTool`] so any
+/// explicit `send_message` calls made during execution carry
+/// `session_depth + 1` on the wire, enabling the remote executor's
+/// `MAX_SESSION_DEPTH` guard to break echo loops.  Pass `0` for task agents
+/// and gateway interactive sessions.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_task_agent_with_runtime(
     config: &Arc<Config>,
@@ -132,6 +141,7 @@ pub async fn build_task_agent_with_runtime(
     rooms: Vec<String>,
     task_depth: u32,
     task_chain: Vec<String>,
+    session_depth: u32,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
     let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
@@ -148,6 +158,7 @@ pub async fn build_task_agent_with_runtime(
         agent_card,
         rooms,
         delegation_context,
+        session_depth,
         runtime,
     )
     .await
@@ -164,6 +175,7 @@ async fn build_agent_with(
     agent_card: AgentCard,
     rooms: Vec<String>,
     delegation_context: DelegationContextHandle,
+    session_depth: u32,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
     let mode = Arc::new(Mutex::new(config.agent.default_mode));
@@ -208,6 +220,7 @@ async fn build_agent_with(
     let store = p2p_handle.store().clone();
     registry.register(SendMessageTool {
         p2p: p2p_handle.clone(),
+        session_depth,
     });
     registry.register(WaitForMessageTool {
         p2p: p2p_handle.clone(),

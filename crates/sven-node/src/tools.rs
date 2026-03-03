@@ -456,8 +456,21 @@ impl Tool for ListPeersTool {
 /// There is one implicit conversation per peer pair — no session IDs needed.
 /// Messages are logged to the local conversation store on both sides.
 /// After sending, use `wait_for_message` to receive the reply.
+///
+/// # Depth propagation
+///
+/// `session_depth` records the depth of the inbound session message that
+/// triggered the current agent (0 for task agents or gateway-initiated sends).
+/// Every message sent by this tool carries `session_depth + 1` on the wire, so
+/// the receiving gateway's session executor can enforce `MAX_SESSION_DEPTH` and
+/// break A↔B echo loops at a well-defined horizon.
 pub struct SendMessageTool {
     pub p2p: P2pHandle,
+    /// Depth of the session context in which this tool is running.
+    /// Set to the `depth` of the inbound `SessionMessageWire` that triggered
+    /// the current agent execution, or `0` for non-session contexts (tasks,
+    /// gateway interactive sessions).
+    pub session_depth: u32,
 }
 
 #[async_trait]
@@ -525,6 +538,11 @@ impl Tool for SendMessageTool {
             timestamp: Utc::now(),
             role: SessionRole::User,
             content: vec![ContentBlock::text(&text)],
+            // Propagate the session-chain depth so the remote executor can
+            // enforce MAX_SESSION_DEPTH.  For session agents this is
+            // `incoming_depth + 1`; for task agents and gateway sessions it
+            // starts at 1 (one hop from the originating task context).
+            depth: self.session_depth.saturating_add(1),
         };
 
         match self.p2p.send_session_message(peer_id, msg).await {
@@ -990,7 +1008,7 @@ mod tests {
     use std::sync::Arc;
 
     use sven_p2p::store::ConversationStore;
-    use sven_tools::{ToolCall, ToolOutput};
+    use sven_tools::ToolCall;
     use tempfile::TempDir;
 
     use super::*;

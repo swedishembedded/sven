@@ -109,6 +109,23 @@ pub struct SessionMessageWire {
     pub role: SessionRole,
     /// Multimodal message content.
     pub content: Vec<ContentBlock>,
+    /// Number of auto-response hops this message has traversed.
+    ///
+    /// `0` = originated by a human operator or an agent acting on explicit
+    /// intent (e.g. `send_message` from a task with no prior session chain).
+    /// Each time an agent's session executor auto-responds to an incoming
+    /// session message, the outgoing reply carries `depth + 1`.
+    ///
+    /// The receiving session executor **rejects** messages whose depth has
+    /// reached `MAX_SESSION_DEPTH` — it stores the message in history but
+    /// does not spawn a new agent or send a reply.  This hard limit is the
+    /// primary defence against A↔B echo loops when both agents use
+    /// `send_message` inside their session handlers.
+    ///
+    /// Old nodes that do not set this field will deserialise it as `0`
+    /// (the `serde(default)` attribute), so the guard is backwards-compatible.
+    #[serde(default)]
+    pub depth: u32,
 }
 
 /// A post broadcast to all current subscribers of a named room.

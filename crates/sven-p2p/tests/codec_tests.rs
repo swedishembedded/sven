@@ -325,6 +325,7 @@ fn session_message_wire_roundtrip() {
         timestamp: Utc::now(),
         role: SessionRole::User,
         content: vec![ContentBlock::text("Hello, peer!")],
+        depth: 0,
     };
     let req = P2pRequest::SessionMessage(msg.clone());
     match roundtrip(&req) {
@@ -332,6 +333,10 @@ fn session_message_wire_roundtrip() {
             assert_eq!(decoded.message_id, msg.message_id);
             assert_eq!(decoded.seq, msg.seq);
             assert_eq!(decoded.role, msg.role);
+            assert_eq!(
+                decoded.depth, msg.depth,
+                "depth must survive codec roundtrip"
+            );
             match &decoded.content[0] {
                 ContentBlock::Text { text } => assert_eq!(text, "Hello, peer!"),
                 _ => panic!("expected Text block"),
@@ -355,6 +360,7 @@ fn session_message_wire_assistant_role_roundtrip() {
             ContentBlock::text("Task complete."),
             ContentBlock::json(serde_json::json!({"status": "done"})),
         ],
+        depth: 1,
     };
     let req = P2pRequest::SessionMessage(msg.clone());
     match roundtrip(&req) {
