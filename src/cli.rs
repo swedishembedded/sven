@@ -57,8 +57,9 @@ pub enum McpCommands {
         /// Required when `--node-url` is set.  This is the raw token printed by
         /// `sven node start` on first launch (not the hash stored on disk).
         ///
-        /// May also be provided via the SVEN_GATEWAY_TOKEN environment variable.
-        #[arg(long, env = "SVEN_GATEWAY_TOKEN", value_name = "TOKEN")]
+        /// May also be provided via the SVEN_NODE_TOKEN environment variable.
+        /// The legacy name SVEN_GATEWAY_TOKEN is also accepted.
+        #[arg(long, env = "SVEN_NODE_TOKEN", value_name = "TOKEN")]
         token: Option<String>,
     },
 }
@@ -80,6 +81,26 @@ pub enum NodeCommands {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
+
+        /// Model to use for the node's orchestrator agent.
+        ///
+        /// Overrides the `model.name` field from the config file.
+        /// Accepts a bare model name ("claude-sonnet-4-6") or a
+        /// "provider/model" pair ("anthropic/claude-sonnet-4-6").
+        /// May also be set via the SVEN_MODEL environment variable.
+        #[arg(long, short = 'M', env = "SVEN_MODEL", value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Provider to use for the node's orchestrator agent.
+        ///
+        /// Overrides the `model.provider` field from the config file without
+        /// changing the model name.  Use this when the model name alone is
+        /// unambiguous but you want to select a different backend
+        /// (e.g. "--provider openai" vs "--provider azure").
+        /// When `--model` already contains a "provider/model" pair this flag
+        /// is redundant.
+        #[arg(long, short = 'P', value_name = "PROVIDER")]
+        provider: Option<String>,
     },
 
     /// Authorize a mobile/native operator device to control this node via P2P.
@@ -152,7 +173,7 @@ pub enum NodeCommands {
     /// if you were using the web UI.  The response is streamed to stdout.
     ///
     /// The bearer token must be provided via the SVEN_NODE_TOKEN
-    /// environment variable or the --token flag.
+    /// environment variable (or the legacy SVEN_GATEWAY_TOKEN) or --token.
     ///
     /// Example:
     ///   export SVEN_NODE_TOKEN=<token shown at first startup>
@@ -160,7 +181,7 @@ pub enum NodeCommands {
     Exec {
         /// The task to send to the agent.
         task: String,
-        /// Bearer token (or set SVEN_NODE_TOKEN).
+        /// Bearer token (or set SVEN_NODE_TOKEN / SVEN_GATEWAY_TOKEN).
         #[arg(long, env = "SVEN_NODE_TOKEN")]
         token: String,
         /// Node WebSocket URL.
@@ -301,7 +322,7 @@ pub enum WebDevicesCommands {
         /// Filter by status: pending, approved, revoked, or all (default).
         #[arg(long, default_value = "all")]
         filter: String,
-        /// Bearer token (or set SVEN_NODE_TOKEN).
+        /// Bearer token (or set SVEN_NODE_TOKEN / SVEN_GATEWAY_TOKEN).
         #[arg(long, env = "SVEN_NODE_TOKEN")]
         token: String,
         /// Node WebSocket URL.
@@ -323,7 +344,7 @@ pub enum WebDevicesCommands {
     Approve {
         /// Full device UUID or unique prefix (e.g. "abc1234" matches "abc1234ef-...").
         device_id: String,
-        /// Bearer token (or set SVEN_NODE_TOKEN).
+        /// Bearer token (or set SVEN_NODE_TOKEN / SVEN_GATEWAY_TOKEN).
         #[arg(long, env = "SVEN_NODE_TOKEN")]
         token: String,
         /// Node WebSocket URL.
@@ -343,7 +364,7 @@ pub enum WebDevicesCommands {
     Revoke {
         /// Full device UUID or unique prefix.
         device_id: String,
-        /// Bearer token (or set SVEN_NODE_TOKEN).
+        /// Bearer token (or set SVEN_NODE_TOKEN / SVEN_GATEWAY_TOKEN).
         #[arg(long, env = "SVEN_NODE_TOKEN")]
         token: String,
         /// Node WebSocket URL.

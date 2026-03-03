@@ -58,9 +58,9 @@ hex           = { workspace = true }
 tokio              = { workspace = true }
 tokio-stream       = { workspace = true }
 futures            = { workspace = true }
-tokio-tungstenite  = { version = "0.24", features = ["native-tls"] }
-tungstenite        = { version = "0.24", features = ["native-tls"] }
-native-tls         = "0.2"
+tokio-tungstenite  = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tungstenite        = { version = "0.24", features = ["rustls-tls-native-roots"] }
+rustls             = { workspace = true }
 reqwest            = { workspace = true }
 async-trait        = { workspace = true }
 tokio-util         = { version = "0.7" }

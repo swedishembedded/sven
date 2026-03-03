@@ -37,6 +37,35 @@ use sven_config::ModelConfig;
 /// resolved from the static catalog.  If the model is not found there a safe
 /// default of 4096 is used.
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+    // Early check: if this provider requires an API key and none is available,
+    // bail with a clear, actionable message instead of letting the first HTTP
+    // request fail with an opaque authentication error.
+    if cfg.api_key.is_none() && cfg.api_key_env.is_none() {
+        if let Some(meta) = registry::get_driver(&cfg.provider) {
+            if let Some(env_var) = meta.default_api_key_env {
+                if std::env::var(env_var).is_err() {
+                    bail!(
+                        "No API key found for provider '{}' (model '{}').\n\
+                         Please set the {env_var} environment variable:\n\
+                         \n\
+                         export {env_var}=<your-api-key>\n\
+                         \n\
+                         Alternatively, add it to your config file (~/.config/sven/config.yaml):\n\
+                         \n\
+                         model:\n\
+                           provider: {}\n\
+                           name: {}\n\
+                           api_key: <your-api-key>",
+                        cfg.provider,
+                        cfg.name,
+                        cfg.provider,
+                        cfg.name,
+                    );
+                }
+            }
+        }
+    }
+
     // key() returns a fresh Option<String> on each call so that each match arm
     // can take ownership without cross-arm borrow issues.
     let key = || resolve_api_key(cfg);
@@ -706,7 +735,15 @@ mod tests {
     #[test]
     fn from_config_google_succeeds() {
         let cfg = minimal_config("google", "gemini-2.0-flash-exp");
-        assert!(from_config(&cfg).is_ok());
+        // Either succeeds (if GEMINI_API_KEY is set in env) or fails with a
+        // missing-key error — the provider must always be recognised.
+        match from_config(&cfg) {
+            Ok(_) => {}
+            Err(e) => assert!(
+                e.to_string().contains("API key"),
+                "unexpected error (provider should be recognized): {e}"
+            ),
+        }
     }
 
     #[test]
@@ -718,7 +755,13 @@ mod tests {
     #[test]
     fn from_config_groq_succeeds() {
         let cfg = minimal_config("groq", "llama-3.3-70b-versatile");
-        assert!(from_config(&cfg).is_ok());
+        match from_config(&cfg) {
+            Ok(_) => {}
+            Err(e) => assert!(
+                e.to_string().contains("API key"),
+                "unexpected error (provider should be recognized): {e}"
+            ),
+        }
     }
 
     #[test]
@@ -730,7 +773,13 @@ mod tests {
     #[test]
     fn from_config_deepseek_succeeds() {
         let cfg = minimal_config("deepseek", "deepseek-chat");
-        assert!(from_config(&cfg).is_ok());
+        match from_config(&cfg) {
+            Ok(_) => {}
+            Err(e) => assert!(
+                e.to_string().contains("API key"),
+                "unexpected error (provider should be recognized): {e}"
+            ),
+        }
     }
 
     #[test]

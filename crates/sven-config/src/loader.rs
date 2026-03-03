@@ -63,13 +63,36 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
         merge_yaml(&mut merged, layer);
     }
 
+    // Track whether the merged config contains an explicit model section before
+    // deserialisation so we can skip auto-detection for users who have
+    // configured their model explicitly.
+    let has_model_config = merged.get("model").is_some();
+
     // Deserialize the merged YAML value into Config, falling back to defaults
     // when the merged value is empty (no config files found).
-    let config: Config = if matches!(merged, serde_yaml::Value::Mapping(ref m) if m.is_empty()) {
+    let mut config: Config = if matches!(merged, serde_yaml::Value::Mapping(ref m) if m.is_empty())
+    {
         Config::default()
     } else {
         serde_yaml::from_value(merged).unwrap_or_default()
     };
+
+    // When no model has been explicitly configured, auto-select the best
+    // available provider based on the API keys present in the environment.
+    // Priority: Anthropic > OpenAI (both are excellent; Anthropic is ranked
+    // first because claude-sonnet-4-6 is the recommended default).
+    if !has_model_config {
+        if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            config.model.provider = "anthropic".into();
+            config.model.name = "claude-sonnet-4-6".into();
+        } else if std::env::var("OPENAI_API_KEY").is_ok() {
+            config.model.provider = "openai".into();
+            config.model.name = "gpt-5.2".into();
+        }
+        // If neither key is available the defaults remain, and from_config()
+        // will produce a clear error when the provider is actually invoked.
+    }
+
     Ok(config)
 }
 
@@ -131,9 +154,13 @@ mod tests {
     }
 
     #[test]
-    fn load_with_no_extra_path_returns_defaults() {
+    fn load_with_no_extra_path_returns_valid_config() {
+        // The provider may be auto-detected from env-vars (ANTHROPIC_API_KEY
+        // or OPENAI_API_KEY), so we only assert that the result is a non-empty
+        // provider string rather than a fixed value.
         let cfg = load(None).unwrap();
-        assert_eq!(cfg.model.provider, "openai");
+        assert!(!cfg.model.provider.is_empty());
+        assert!(!cfg.model.name.is_empty());
     }
 
     #[test]

@@ -13,8 +13,8 @@ serde_json           = { workspace = true }
 tokio                = { workspace = true }
 tracing              = { workspace = true }
 uuid                 = { workspace = true }
-tokio-tungstenite    = { version = "0.24", features = ["native-tls"] }
-native-tls           = { version = "0.2" }
+tokio-tungstenite    = { version = "0.24", features = ["rustls-tls-native-roots"] }
+rustls               = { workspace = true }
 futures-util         = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rmcp = { version = "0.15", default-features = false, features = [
     "server",

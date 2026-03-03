@@ -254,6 +254,8 @@ pub async fn run(
             .unwrap_or("18790")
             .to_string();
         let gateway_url = format!("{gateway_scheme}://127.0.0.1:{gateway_port}/ws");
+        pty_session_env.insert("SVEN_NODE_URL".into(), gateway_url.clone());
+        // Keep the legacy name so existing scripts still work.
         pty_session_env.insert("SVEN_GATEWAY_URL".into(), gateway_url.clone());
         pty_session_env.insert("SVEN_GATEWAY_INSECURE".into(), "1".into());
         if let Some(ref tok) = local_token_opt {
@@ -978,7 +980,7 @@ async fn execute_inbound_task(
             fail_reply("task timed out after 15 minutes".to_string(), duration_ms).await;
         }
         Ok((Err(agent_err), _)) => {
-            fail_reply(format!("agent error: {agent_err}"), duration_ms).await;
+            fail_reply(format!("agent error: {agent_err:#}"), duration_ms).await;
         }
         Ok((Ok(()), Err(collect_err))) => {
             fail_reply(collect_err, duration_ms).await;
@@ -1170,14 +1172,15 @@ pub fn build_agent_card(config: &GatewayConfig) -> AgentCard {
     }
 }
 
-// ── Gateway exec (send task to a running gateway) ─────────────────────────────
+// ── Node exec (send task to a running node) ────────────────────────────────────
 
-/// Send a single task to a running gateway, stream the response to stdout.
+/// Send a single task to a running node, stream the response to stdout.
 ///
-/// Loads the gateway's self-signed TLS cert from the cert dir and trusts it
-/// explicitly — no system roots needed, no danger flags.  Pass `insecure =
-/// true` to skip cert verification entirely (useful when `insecure_dev_mode`
-/// is enabled or the cert dir is unavailable).
+/// Loads the node's TLS certificate from the cert dir and pins it so no
+/// system CA roots are needed.  Pass `insecure = true` to skip cert
+/// verification entirely (useful when `insecure_dev_mode` is enabled or the
+/// cert dir is unavailable).  Connections to localhost are automatically
+/// treated as insecure since the bearer token provides authentication.
 pub async fn exec_task(
     config: &GatewayConfig,
     url: &str,
@@ -1186,53 +1189,22 @@ pub async fn exec_task(
     insecure: bool,
 ) -> anyhow::Result<()> {
     use futures::{SinkExt, StreamExt};
-    use tokio_tungstenite::{connect_async_tls_with_config, Connector};
+    use tokio_tungstenite::connect_async_tls_with_config;
     use tungstenite::http::Request;
 
     use crate::control::protocol::{ControlCommand, ControlEvent, SessionState};
     use sven_config::AgentMode;
 
-    // Build the TLS connector — trust only the gateway's own cert.
-    let connector = {
-        let mut builder = native_tls::TlsConnector::builder();
-        if insecure {
-            builder.danger_accept_invalid_certs(true);
-        } else {
-            let cert_dir = config
-                .http
-                .tls_cert_dir
-                .clone()
-                .unwrap_or_else(crate::http::tls::default_cert_dir);
-            let cert_path = cert_dir.join("gateway-cert.pem");
-            match std::fs::read(&cert_path) {
-                Ok(pem) => match native_tls::Certificate::from_pem(&pem) {
-                    Ok(cert) => {
-                        builder
-                            .disable_built_in_roots(true)
-                            .add_root_certificate(cert)
-                            // The cert CN is "sven-node", not "127.0.0.1".
-                            // We still verify the cert itself — just not the hostname.
-                            .danger_accept_invalid_hostnames(true);
-                    }
-                    Err(e) => {
-                        anyhow::bail!(
-                            "could not parse TLS cert from {}: {e}\n\
-                             Hint: run with --insecure for dev gateways.",
-                            cert_path.display()
-                        );
-                    }
-                },
-                Err(_) => {
-                    anyhow::bail!(
-                        "TLS cert not found at {}.\n\
-                         Either start the gateway first, or use --insecure.",
-                        cert_path.display()
-                    );
-                }
-            }
-        }
-        Connector::NativeTls(builder.build()?)
-    };
+    let cert_dir = config
+        .http
+        .tls_cert_dir
+        .clone()
+        .unwrap_or_else(crate::http::tls::default_cert_dir);
+    // Localhost connections are auto-insecure: the bearer token is the auth
+    // mechanism; cert pinning on loopback adds no security benefit and breaks
+    // the zero-config local workflow.
+    let insecure = insecure || is_localhost_url(url);
+    let connector = build_ws_tls_connector(insecure, &cert_dir)?;
 
     // Build the WebSocket request with the bearer token.
     let request = Request::builder()
@@ -1247,7 +1219,7 @@ pub async fn exec_task(
 
     let (mut ws, _) = connect_async_tls_with_config(request, None, false, Some(connector))
         .await
-        .map_err(|e| anyhow::anyhow!("could not connect to gateway at {url}: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("could not connect to node at {url}: {e}"))?;
 
     // Open a session and send the task.
     let session_id = uuid::Uuid::new_v4();
@@ -1311,10 +1283,10 @@ pub async fn exec_task(
             } => break,
             ControlEvent::SessionState { .. } => {}
             ControlEvent::GatewayError { message, .. } => {
-                anyhow::bail!("gateway error: {message}");
+                anyhow::bail!("node error: {message}");
             }
             ControlEvent::AgentError { message, .. } => {
-                eprintln!("agent error: {message}");
+                anyhow::bail!("agent error: {message}");
             }
             _ => {}
         }
@@ -1329,6 +1301,122 @@ fn generate_ws_key() -> String {
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Returns true when `url` targets the local machine.
+///
+/// Local connections are auto-insecure: the bearer token provides
+/// authentication, so cert pinning on loopback adds no real security
+/// while breaking the zero-config local workflow.
+fn is_localhost_url(url: &str) -> bool {
+    url.contains("://127.0.0.1:") || url.contains("://localhost:") || url.contains("://[::1]:")
+}
+
+// ── WebSocket TLS connector (pure rustls, no OpenSSL) ─────────────────────────
+
+/// Build a `Connector::Rustls` for outbound WebSocket connections to a node.
+///
+/// - **insecure = true**: accepts any certificate (used with `--insecure` or
+///   for dev nodes without TLS).  The bearer token still provides authentication.
+/// - **insecure = false**: pins the node's certificate.  Prefers `ca-cert.pem`
+///   (local-CA setup) so the full chain is validated; falls back to
+///   `gateway-cert.pem` (self-signed setup).  Both files include `127.0.0.1`
+///   as an IP SAN so standard hostname validation passes without any
+///   `danger_accept_invalid_hostnames` flag.
+fn build_ws_tls_connector(
+    insecure: bool,
+    cert_dir: &std::path::Path,
+) -> anyhow::Result<tokio_tungstenite::Connector> {
+    use std::sync::Arc;
+
+    use rustls::{
+        client::{
+            danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+            WebPkiServerVerifier,
+        },
+        pki_types::{CertificateDer, ServerName, UnixTime},
+        ClientConfig, RootCertStore,
+    };
+    use tokio_tungstenite::Connector;
+
+    if insecure {
+        #[derive(Debug)]
+        struct AcceptAnyCert;
+
+        impl ServerCertVerifier for AcceptAnyCert {
+            fn verify_server_cert(
+                &self,
+                _: &CertificateDer<'_>,
+                _: &[CertificateDer<'_>],
+                _: &ServerName<'_>,
+                _: &[u8],
+                _: UnixTime,
+            ) -> Result<ServerCertVerified, rustls::Error> {
+                Ok(ServerCertVerified::assertion())
+            }
+
+            fn verify_tls12_signature(
+                &self,
+                _: &[u8],
+                _: &CertificateDer<'_>,
+                _: &rustls::DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+
+            fn verify_tls13_signature(
+                &self,
+                _: &[u8],
+                _: &CertificateDer<'_>,
+                _: &rustls::DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                rustls::crypto::ring::default_provider()
+                    .signature_verification_algorithms
+                    .supported_schemes()
+            }
+        }
+
+        let config = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
+            .with_no_client_auth();
+        return Ok(Connector::Rustls(Arc::new(config)));
+    }
+
+    // Normal mode: pin the node's certificate.
+    // Prefer ca-cert.pem (local-CA setup) for full chain validation;
+    // fall back to gateway-cert.pem (self-signed setup).
+    let ca_path = cert_dir.join("ca-cert.pem");
+    let gw_path = cert_dir.join("gateway-cert.pem");
+    let root_path = if ca_path.exists() { &ca_path } else { &gw_path };
+
+    let pem = std::fs::read(root_path).map_err(|_| {
+        anyhow::anyhow!(
+            "TLS cert not found at {}.\n\
+             Either start the node first, or use --insecure.",
+            root_path.display()
+        )
+    })?;
+
+    let mut roots = RootCertStore::empty();
+    let mut reader = std::io::Cursor::new(&pem);
+    for cert in rustls_pemfile::certs(&mut reader) {
+        roots
+            .add(cert.map_err(|e| anyhow::anyhow!("invalid cert in {}: {e}", root_path.display()))?)
+            .map_err(|e| anyhow::anyhow!("could not add cert to root store: {e}"))?;
+    }
+
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots))
+        .build()
+        .map_err(|e| anyhow::anyhow!("could not build TLS verifier: {e}"))?;
+    let config = ClientConfig::builder()
+        .with_webpki_verifier(verifier)
+        .with_no_client_auth();
+    Ok(Connector::Rustls(Arc::new(config)))
 }
 
 // ── Web device management CLI helpers ─────────────────────────────────────────
@@ -1476,31 +1564,16 @@ async fn send_web_device_command(
     insecure: bool,
 ) -> anyhow::Result<ControlEvent> {
     use futures::{SinkExt as _, StreamExt as _};
-    use tokio_tungstenite::{connect_async_tls_with_config, Connector};
+    use tokio_tungstenite::connect_async_tls_with_config;
     use tungstenite::http::Request;
 
-    let connector = {
-        let mut builder = native_tls::TlsConnector::builder();
-        if insecure {
-            builder.danger_accept_invalid_certs(true);
-        } else {
-            let cert_dir = config
-                .http
-                .tls_cert_dir
-                .clone()
-                .unwrap_or_else(crate::http::tls::default_cert_dir);
-            let cert_path = cert_dir.join("gateway-cert.pem");
-            if let Ok(pem) = std::fs::read(&cert_path) {
-                if let Ok(cert) = native_tls::Certificate::from_pem(&pem) {
-                    builder
-                        .disable_built_in_roots(true)
-                        .add_root_certificate(cert)
-                        .danger_accept_invalid_hostnames(true);
-                }
-            }
-        }
-        Connector::NativeTls(builder.build()?)
-    };
+    let cert_dir = config
+        .http
+        .tls_cert_dir
+        .clone()
+        .unwrap_or_else(crate::http::tls::default_cert_dir);
+    let insecure = insecure || is_localhost_url(url);
+    let connector = build_ws_tls_connector(insecure, &cert_dir)?;
 
     let request = Request::builder()
         .uri(url)

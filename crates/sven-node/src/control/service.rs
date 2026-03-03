@@ -520,8 +520,12 @@ impl ControlService {
             let text = text.clone();
             async move {
                 let mut agent = agent.lock().await;
+                // Keep a sender clone to forward errors as AgentEvent::Error so
+                // the WebSocket client (exec_task) receives a descriptive message.
+                let err_tx = event_tx.clone();
                 if let Err(e) = agent.submit_with_cancel(&text, event_tx, cancel_rx).await {
-                    error!("agent error: {e}");
+                    error!("agent error: {e:#}");
+                    let _ = err_tx.send(AgentEvent::Error(format!("{e:#}"))).await;
                 }
             }
         });

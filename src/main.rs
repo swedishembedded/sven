@@ -28,6 +28,14 @@ async fn main() -> anyhow::Result<()> {
     // and without an explicit process-level provider rustls panics.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    // Backward-compat: SVEN_GATEWAY_TOKEN was the old name for SVEN_NODE_TOKEN.
+    // If only the old name is set, copy it so clap env-binding picks it up.
+    if std::env::var("SVEN_NODE_TOKEN").is_err() {
+        if let Ok(tok) = std::env::var("SVEN_GATEWAY_TOKEN") {
+            unsafe { std::env::set_var("SVEN_NODE_TOKEN", tok) };
+        }
+    }
+
     let cli = Cli::parse();
 
     // In TUI mode writing to stderr corrupts the ratatui display.
@@ -35,11 +43,11 @@ async fn main() -> anyhow::Result<()> {
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
     // (writes to stderr — only useful with headless / CI mode).
     let is_tui = !cli.is_headless() && cli.command.is_none();
-    let is_gateway = matches!(
+    let is_node = matches!(
         &cli.command,
         Some(Commands::Node { .. }) | Some(Commands::Mcp { .. }) | Some(Commands::Peer { .. })
     );
-    init_logging(cli.verbose, is_tui, is_gateway);
+    init_logging(cli.verbose, is_tui, is_node);
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
@@ -98,9 +106,23 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
     match cmd {
         NodeCommands::Start {
             config: config_path,
+            model: model_override,
+            provider: provider_override,
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;
-            let sven_config = Arc::new(sven_config::load(None)?);
+            let mut sven_config = sven_config::load(None)?;
+
+            // Apply CLI model/provider overrides on top of whatever was loaded
+            // from the config file.  Precedence: CLI flag > env var (SVEN_MODEL
+            // is already wired through clap) > config file > auto-detected.
+            if let Some(ref name) = model_override {
+                sven_config.model = sven_model::resolve_model_from_config(&sven_config, name);
+            }
+            if let Some(ref prov) = provider_override {
+                sven_config.model.provider = prov.clone();
+            }
+
+            let sven_config = Arc::new(sven_config);
             if let Err(e) = sven_node::node::run(node_config, sven_config).await {
                 tracing::error!("{e:#}");
                 std::process::exit(1);
@@ -291,7 +313,7 @@ async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             if let Some(url) = node_url {
                 let tok = token.clone().ok_or_else(|| {
                     anyhow::anyhow!(
-                        "--token (or SVEN_GATEWAY_TOKEN) is required when --node-url is set"
+                        "--token (or SVEN_NODE_TOKEN) is required when --node-url is set"
                     )
                 })?;
                 sven_mcp::serve_stdio_node_proxy(url.clone(), tok).await
@@ -1018,7 +1040,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     result
 }
 
-fn init_logging(verbosity: u8, is_tui: bool, is_gateway: bool) {
+fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
     // In TUI mode tracing output written to stderr corrupts the ratatui
     // display.  We suppress all logging unless the caller opts in:
     //   • Set SVEN_LOG_FILE=/path/to/file  → logs go to that file (any mode)
@@ -1055,7 +1077,7 @@ fn init_logging(verbosity: u8, is_tui: bool, is_gateway: bool) {
     }
 
     let level = match verbosity {
-        0 if is_gateway => "info",
+        0 if is_node => "info",
         0 => "warn",
         1 => "debug",
         _ => "trace",

@@ -30,7 +30,6 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use native_tls::TlsConnector;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
@@ -92,6 +91,48 @@ struct WsToolSchemaInfo {
 
 // ── NodeProxyServer ───────────────────────────────────────────────────────────
 
+// ── TLS: accept any certificate (token provides auth) ────────────────────────
+
+#[derive(Debug)]
+struct AcceptAnyCert;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 /// MCP `ServerHandler` that proxies every tool call to a live `sven node`.
 ///
 /// Construct via [`NodeProxyServer::new`] and start the MCP stdio server with
@@ -134,11 +175,12 @@ impl NodeProxyServer {
         );
 
         // Accept self-signed certs — the token is the auth mechanism.
-        let tls = TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .context("TLS connector")?;
-        let connector = Connector::NativeTls(tls);
+        let connector = Connector::Rustls(Arc::new(
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
+                .with_no_client_auth(),
+        ));
 
         let (stream, response) =
             connect_async_tls_with_config(request, None, false, Some(connector))
