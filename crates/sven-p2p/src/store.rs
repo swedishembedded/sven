@@ -95,6 +95,16 @@ pub struct RoomRecord {
     pub sender_name: String,
     pub timestamp: DateTime<Utc>,
     pub content: Vec<ContentBlock>,
+    /// Reactive-response hop depth carried from the corresponding [`RoomPost`].
+    ///
+    /// Exposed by `ReadRoomHistoryTool` so that the LLM can pass it as
+    /// `in_reply_to_depth` when calling `PostToRoomTool`, propagating the reply
+    /// chain depth correctly and preventing proactive reply loops.
+    ///
+    /// Defaults to `0` for records persisted before this field was added
+    /// (`#[serde(default)]` ensures backward-compatible deserialization).
+    #[serde(default)]
+    pub depth: u32,
 }
 
 /// Direction of a message relative to the local node.
@@ -693,6 +703,7 @@ mod tests {
             sender_name: "alice".to_string(),
             timestamp: Utc::now(),
             content: vec![ContentBlock::text("build passed")],
+            depth: 0,
         };
         store.append_room_post(&post).unwrap();
         let history = store
@@ -711,6 +722,7 @@ mod tests {
             sender_name: "a".to_string(),
             timestamp: Utc::now(),
             content: vec![ContentBlock::text(text)],
+            depth: 0,
         };
         store.append_room_post(&make("build passed")).unwrap();
         store.append_room_post(&make("tests failed")).unwrap();

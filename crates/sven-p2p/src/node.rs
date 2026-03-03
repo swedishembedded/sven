@@ -1524,6 +1524,7 @@ impl NodeState {
                     sender_name: post.sender_name,
                     timestamp: post.timestamp,
                     content,
+                    depth: post.depth,
                 };
                 let store = Arc::clone(&self.store);
                 tokio::task::spawn_blocking(move || {
@@ -1779,6 +1780,7 @@ impl NodeState {
             sender_name: post.sender_name.clone(),
             timestamp: post.timestamp,
             content: post.content.clone(),
+            depth: post.depth,
         };
         let store = Arc::clone(&self.store);
         tokio::task::spawn_blocking(move || {

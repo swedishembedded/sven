@@ -33,10 +33,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -119,14 +116,54 @@ pub struct SessionDepthTracker {
 
 pub type SessionDepthHandle = Arc<Mutex<SessionDepthTracker>>;
 
-/// Room-post reactive depth counter.
+/// Per-room reactive-post depth tracker shared between [`PostToRoomTool`]
+/// instances within a single agent session.
 ///
-/// Set to `0` for all tool-initiated posts.  A future reactive room handler
-/// that processes an inbound [`RoomPost`] at depth `D` must set this to `D`
-/// before running the agent — `PostToRoomTool` then stamps the outgoing post
-/// with `D + 1`, and `on_gossipsub_message` rejects posts at depth ≥
-/// `MAX_ROOM_POST_DEPTH`.
-pub type RoomDepthHandle = Arc<AtomicU32>;
+/// # Depth semantics
+///
+/// Three sources contribute to the outgoing depth of a room post, in priority
+/// order (highest active value wins):
+///
+/// 1. **`in_reply_to_depth`** (tool parameter) — the LLM explicitly declares
+///    which post it is replying to.  Use `ReadRoomHistoryTool` to obtain the
+///    `depth` of the post being answered, then pass it here.  Required for
+///    proactive reply chains to propagate depth correctly and prevent loops.
+///
+/// 2. **`per_room` high-water mark** — the highest depth already sent to this
+///    room in the current agent session.  Ensures that multiple replies in the
+///    same session continue the chain monotonically rather than restarting from
+///    `default_depth` on each call.
+///
+/// 3. **`default_depth`** — set to the inbound `RoomPost.depth` by the
+///    reactive room executor before building the agent, so the very first
+///    response from a reactive handler carries `inbound_depth + 1`.  Always
+///    `0` for proactive (non-reactive) agents such as the gateway agent and
+///    task agents.
+///
+/// # Proactive vs. reactive posts
+///
+/// * **Proactive** agents (`default_depth == 0`, no `in_reply_to_depth`): the
+///   post is treated as a new, independent topic; outgoing depth = 1.  The
+///   `per_room` map is *not* updated, so independent posts never accumulate
+///   depth across calls — the gateway can post status updates all day.
+///
+/// * **Reply** posts (`in_reply_to_depth` provided): outgoing depth =
+///   `in_reply_to_depth + 1`; `per_room` updated for subsequent replies.
+///
+/// * **Reactive** agents (`default_depth > 0`): any post to this room uses
+///   `per_room.get(room).unwrap_or(default_depth) + 1`; `per_room` updated.
+#[derive(Debug, Default)]
+pub struct RoomDepthTracker {
+    /// Baseline depth for any room not yet in `per_room`.
+    /// `0` for proactive agents; set to the inbound post's depth for reactive
+    /// handlers so the first outgoing post carries `inbound_depth + 1`.
+    pub default_depth: u32,
+    /// Per-room outgoing-depth high-water mark; updated on each reply or
+    /// reactive post.  Independent proactive posts never modify this map.
+    pub per_room: HashMap<String, u32>,
+}
+
+pub type RoomDepthHandle = Arc<tokio::sync::Mutex<RoomDepthTracker>>;
 
 // ── DelegateTool ─────────────────────────────────────────────────────────────
 
@@ -696,14 +733,21 @@ impl Tool for WaitForMessageTool {
 
         match self.p2p.wait_for_message(peer_id, timeout).await {
             Ok(record) => {
-                // Record the received depth against this specific peer so the
-                // next send_message to the same peer sends depth + 1.  Storing
-                // per-peer (not into a global counter) means an unrelated
-                // conversation with a different peer starts at default_depth,
-                // not at the depth left over from a previous exchange.
+                // Update the per-peer depth tracker **monotonically** — only
+                // advance to the received depth if it is higher than what we
+                // already have.  This guards against a race where a session
+                // executor's auto-response (typically at a lower depth than an
+                // explicit task-agent reply) fires the waiter first and would
+                // otherwise reset the tracker downward, allowing a subsequent
+                // send_message to carry a depth lower than the chain has already
+                // reached.  The invariant is: per_peer[peer] only goes up.
                 {
                     let mut tracker = self.session_depth.lock().await;
-                    tracker.per_peer.insert(peer_id.to_base58(), record.depth);
+                    tracker
+                        .per_peer
+                        .entry(peer_id.to_base58())
+                        .and_modify(|d| *d = (*d).max(record.depth))
+                        .or_insert(record.depth);
                 }
 
                 let text = record
@@ -905,15 +949,23 @@ impl Tool for ListConversationsTool {
 /// Rooms are like Slack channels — presence-based: only peers that are
 /// currently connected and subscribed will receive the post.  The message
 /// is appended to the local room history file.
+///
+/// # Reply-chain depth
+///
+/// To prevent infinite reply loops between agents, every room post carries a
+/// hop-depth counter.  When replying to a specific post you MUST pass its
+/// `depth` as `in_reply_to_depth` — obtain the value from `read_room_history`
+/// output.  The tool then sends at `in_reply_to_depth + 1`.  Posts whose
+/// depth reaches `MAX_HOP_DEPTH` are silently dropped by all receivers.
 pub struct PostToRoomTool {
     pub p2p: P2pHandle,
-    /// Reactive-hop depth to stamp on the outgoing post.
+    /// Per-room depth tracker for this agent session.
     ///
-    /// `0` for all tool-initiated (non-reactive) posts.  A future reactive
-    /// room handler that processes an inbound post at depth `D` must set this
-    /// handle to `D` before running the agent; `PostToRoomTool` then sends at
-    /// `D + 1` and the receiver's depth guard drops posts at depth ≥
-    /// `MAX_HOP_DEPTH`, breaking reactive flood loops.
+    /// Initialized by the agent builder:
+    /// * `default_depth = 0` for proactive agents (gateway, task agents).
+    /// * `default_depth = inbound_post.depth` for reactive room handlers
+    ///   spawned by [`run_room_executor`], so the first outgoing reply carries
+    ///   `inbound_depth + 1` without requiring an explicit `in_reply_to_depth`.
     pub room_depth: RoomDepthHandle,
 }
 
@@ -927,7 +979,11 @@ impl Tool for PostToRoomTool {
         "Broadcast a message to all agents currently in a room (like a Slack channel). \
          Only agents subscribed to the room at the time of posting will receive it — \
          there is no persistent server-side buffer. The post is logged to the local \
-         room history file for later search."
+         room history file for later search. \
+         IMPORTANT: when replying to a specific room post, you MUST pass its depth \
+         value (from read_room_history) as `in_reply_to_depth` to propagate the \
+         reply-chain depth correctly and prevent infinite reply loops between agents. \
+         Omit `in_reply_to_depth` only for brand-new, independent topic posts."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -942,6 +998,13 @@ impl Tool for PostToRoomTool {
                 "text": {
                     "type": "string",
                     "description": "Text content to broadcast"
+                },
+                "in_reply_to_depth": {
+                    "type": "integer",
+                    "description": "Depth of the room post you are replying to. \
+                                    Obtain this from read_room_history output (the 'depth=N' field). \
+                                    REQUIRED when replying to a specific post — omit only for \
+                                    brand-new, independent topic posts."
                 }
             }
         })
@@ -961,28 +1024,85 @@ impl Tool for PostToRoomTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: text"),
         };
 
-        // Compute the depth for this outgoing post.  For non-reactive agents
-        // room_depth is 0 and the post is sent at depth 0.  A reactive handler
-        // sets room_depth to the incoming post's depth; we send at depth + 1,
-        // and on_gossipsub_message rejects posts at depth >= MAX_HOP_DEPTH.
-        let incoming_depth = self.room_depth.load(Ordering::Relaxed);
-        let outgoing_depth = incoming_depth.saturating_add(1);
-        if outgoing_depth >= MAX_HOP_DEPTH {
-            return ToolOutput::err(
-                &call.id,
-                format!(
-                    "Cannot post to room '{room}': reactive-depth limit ({MAX_HOP_DEPTH}) reached. \
-                     This chain has already traversed the maximum number of reactive hops."
-                ),
-            );
-        }
+        // ── Compute outgoing depth ────────────────────────────────────────────
+        //
+        // Priority (highest applicable source wins):
+        //
+        //  1. `in_reply_to_depth` (explicit) — the LLM declares the depth of
+        //     the post it is replying to.  Required for proactive reply chains.
+        //
+        //  2. `per_room` high-water mark — ensures multiple replies to the same
+        //     room within one agent session advance the counter monotonically.
+        //
+        //  3. `default_depth` — set to the inbound post's depth by the reactive
+        //     executor; first outgoing reply carries `inbound_depth + 1`.
+        //
+        // Proactive vs. reactive distinction:
+        //  * Proactive agents (default_depth == 0) without `in_reply_to_depth`
+        //    always post at depth 1 and do NOT update `per_room`.  This lets the
+        //    long-lived gateway agent send unlimited independent status updates
+        //    without ever exhausting the hop budget.
+        //  * Reply posts or reactive agents DO update `per_room` so subsequent
+        //    posts to the same room continue the chain rather than resetting.
+        let outgoing_depth = {
+            let mut tracker = self.room_depth.lock().await;
+
+            let reply_depth: Option<u32> = call.args["in_reply_to_depth"]
+                .as_u64()
+                .map(|d| d.min(u64::from(MAX_HOP_DEPTH)) as u32);
+
+            let current = match reply_depth {
+                // Explicit in_reply_to_depth: use it directly as the chain base.
+                Some(d) => d,
+                None => {
+                    if tracker.default_depth > 0 {
+                        // Reactive handler: start from per_room or default_depth.
+                        tracker
+                            .per_room
+                            .get(&room)
+                            .copied()
+                            .unwrap_or(tracker.default_depth)
+                    } else {
+                        // Proactive, independent post (no reply context): always depth 0
+                        // so the outgoing post carries depth 1 and per_room is not touched.
+                        0
+                    }
+                }
+            };
+
+            let next = current.saturating_add(1);
+            if next >= MAX_HOP_DEPTH {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Cannot post to room '{room}': unified hop-depth limit \
+                         ({MAX_HOP_DEPTH}) reached. The reply chain has traversed the \
+                         maximum number of hops. Do not attempt further replies in this chain."
+                    ),
+                );
+            }
+
+            // Update the per-room high-water mark only for reply chains or reactive
+            // agents.  Independent proactive posts (default_depth==0, no in_reply_to_depth)
+            // never increment the counter, so the gateway can post freely.
+            if reply_depth.is_some() || tracker.default_depth > 0 {
+                tracker
+                    .per_room
+                    .entry(room.clone())
+                    .and_modify(|d| *d = (*d).max(next))
+                    .or_insert(next);
+            }
+
+            next
+        };
 
         let content = vec![ContentBlock::text(&text)];
         match self.p2p.post_to_room(&room, content, outgoing_depth).await {
             Ok(()) => ToolOutput::ok(
                 &call.id,
                 format!(
-                    "Posted to room '{room}'. All currently subscribed peers will receive this."
+                    "Posted to room '{room}' (chain depth={outgoing_depth}). \
+                     All currently subscribed peers will receive this."
                 ),
             ),
             Err(e) => ToolOutput::err(&call.id, format!("Failed to post to room '{room}': {e}")),
@@ -1065,10 +1185,13 @@ impl Tool for ReadRoomHistoryTool {
             Ok(Ok(posts)) => {
                 let mut lines = vec![format!("{} post(s) from room '{room}':\n", posts.len())];
                 for p in &posts {
+                    // Include message_id (for deduplication) and depth (for in_reply_to_depth).
                     lines.push(format!(
-                        "**{}** @ {}",
+                        "**{}** @ {} [id={}, depth={}]",
                         p.sender_name,
                         p.timestamp.format("%Y-%m-%d %H:%M UTC"),
+                        p.message_id,
+                        p.depth,
                     ));
                     for block in &p.content {
                         if let ContentBlock::Text { text } = block {

@@ -13,7 +13,7 @@
 //!   inbound tasks.
 
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicU32, Arc};
+use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
@@ -28,8 +28,8 @@ use sven_tools::{
 
 use crate::tools::{
     DelegateTool, DelegationContext, DelegationContextHandle, ListConversationsTool, ListPeersTool,
-    PostToRoomTool, ReadRoomHistoryTool, RoomDepthHandle, SearchConversationTool, SendMessageTool,
-    SessionDepthHandle, SessionDepthTracker, WaitForMessageTool,
+    PostToRoomTool, ReadRoomHistoryTool, RoomDepthHandle, RoomDepthTracker, SearchConversationTool,
+    SendMessageTool, SessionDepthHandle, SessionDepthTracker, WaitForMessageTool,
 };
 
 /// Build the shared, long-lived gateway `Agent`.
@@ -62,8 +62,12 @@ pub async fn build_gateway_agent(
     }));
 
     // Room depth starts at 0 — the gateway never executes inside a reactive
-    // room handler.
-    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
+    // room handler.  default_depth=0 means PostToRoomTool treats all posts as
+    // independent topic posts (depth=1) unless the LLM provides in_reply_to_depth.
+    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+        default_depth: 0,
+        per_room: HashMap::new(),
+    }));
 
     build_agent_with(
         config,
@@ -131,7 +135,12 @@ pub async fn build_task_agent(
     }));
 
     // Room depth: task agents can post to rooms but are never reactive handlers.
-    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
+    // default_depth=0 so independent room posts carry depth=1 and the per_room
+    // map is only populated when the LLM explicitly uses in_reply_to_depth.
+    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+        default_depth: 0,
+        per_room: HashMap::new(),
+    }));
 
     build_agent_with(
         config,
@@ -187,7 +196,68 @@ pub async fn build_task_agent_with_runtime(
         default_depth: initial_session_depth,
         per_peer: HashMap::new(),
     }));
-    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
+    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+        default_depth: 0,
+        per_room: HashMap::new(),
+    }));
+    build_agent_with(
+        config,
+        model,
+        max_ctx,
+        p2p_handle,
+        agent_card,
+        rooms,
+        delegation_context,
+        session_depth,
+        room_depth,
+        runtime,
+    )
+    .await
+}
+
+/// Build a fresh agent for the reactive room post executor.
+///
+/// Seeds `room_depth.default_depth` with `inbound_post_depth` so that any
+/// call to `PostToRoomTool` inside the spawned agent automatically carries
+/// `inbound_post_depth + 1` as the outgoing depth, correctly propagating the
+/// reactive reply chain without requiring the LLM to specify `in_reply_to_depth`
+/// for its first response.
+///
+/// Also seeds `task_depth = inbound_post_depth` and
+/// `initial_session_depth = inbound_post_depth` so that any task delegation
+/// or session message sent by the reactive agent contributes to the same
+/// unified hop budget.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_room_reactive_agent(
+    config: &Arc<Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    p2p_handle: P2pHandle,
+    agent_card: AgentCard,
+    rooms: Vec<String>,
+    inbound_post_depth: u32,
+    runtime: AgentRuntimeContext,
+) -> anyhow::Result<Agent> {
+    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+
+    let delegation_context: DelegationContextHandle =
+        Arc::new(tokio::sync::Mutex::new(Some(DelegationContext {
+            depth: inbound_post_depth,
+            chain: vec![],
+        })));
+
+    let session_depth: SessionDepthHandle =
+        Arc::new(tokio::sync::Mutex::new(SessionDepthTracker {
+            default_depth: inbound_post_depth,
+            per_peer: HashMap::new(),
+        }));
+
+    // Seed default_depth from the inbound post so PostToRoomTool computes
+    // outgoing = inbound_post_depth + 1 for the reactive agent's first post.
+    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+        default_depth: inbound_post_depth,
+        per_room: HashMap::new(),
+    }));
+
     build_agent_with(
         config,
         model,

@@ -71,7 +71,7 @@ use sven_p2p::{
 
 use crate::tools::MAX_HOP_DEPTH;
 use crate::{
-    agent_builder::{build_gateway_agent, build_task_agent},
+    agent_builder::{build_gateway_agent, build_room_reactive_agent, build_task_agent},
     config::{GatewayConfig, SlackMode},
     control::{
         protocol::{ControlCommand, ControlEvent},
@@ -321,6 +321,18 @@ pub async fn run(
         Arc::clone(&task_semaphore),
     ));
 
+    // ── Reactive room-post executor loop ──────────────────────────────────────
+    let room_event_rx = p2p_handle.subscribe_events();
+    tokio::spawn(run_room_executor(
+        room_event_rx,
+        p2p_handle.clone(),
+        agent_card.clone(),
+        sven_config.clone(),
+        Arc::clone(&model),
+        config.swarm.rooms.clone(),
+        Arc::clone(&task_semaphore),
+    ));
+
     // ── Spawn the P2pNode swarm ───────────────────────────────────────────────
     let rooms = config.swarm.rooms.clone();
     tokio::spawn(async move {
@@ -499,6 +511,15 @@ async fn run_task_executor(
 /// from the session file and uses them as `prior_messages` in the agent context.
 /// The agent's response is sent back as a new `SessionMessage` in the same
 /// session.
+///
+/// # Per-peer concurrency dedup
+///
+/// At most one session agent may be active for any given remote peer at a time.
+/// If a second message from the same peer arrives while the first is still being
+/// processed, it is dropped with a warning.  Without this guard, rapid message
+/// bursts from a single peer spawn multiple concurrent agents that all respond
+/// independently, creating interleaved double-responses and accelerating the
+/// depth counter faster than the MAX_HOP_DEPTH limit was designed to handle.
 #[allow(clippy::too_many_arguments)]
 async fn run_session_executor(
     mut event_rx: tokio::sync::broadcast::Receiver<P2pEvent>,
@@ -509,6 +530,12 @@ async fn run_session_executor(
     rooms: Vec<String>,
     semaphore: Arc<Semaphore>,
 ) {
+    // Per-peer active-session set: prevents spawning a second agent for the
+    // same peer while the first is still running.  Stored as a HashSet keyed
+    // by PeerId; the spawned task removes its entry on completion.
+    let active_peers: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<PeerId>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
     loop {
         match event_rx.recv().await {
             Ok(P2pEvent::SessionMessage { from, message }) => {
@@ -545,9 +572,30 @@ async fn run_session_executor(
                     continue;
                 }
 
+                // Per-peer dedup: drop the message if a session agent for this peer
+                // is already running.  A second concurrent agent for the same peer
+                // would produce interleaved responses and consume depth budget twice
+                // as fast.
+                {
+                    let mut active = active_peers.lock().await;
+                    if active.contains(&from) {
+                        tracing::warn!(
+                            %from,
+                            seq = message.seq,
+                            depth = message.depth,
+                            "Dropping inbound session message: a session agent for this peer \
+                             is already active — double-response prevention"
+                        );
+                        continue;
+                    }
+                    active.insert(from);
+                }
+
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
+                        // Release the per-peer slot since we will not process this message.
+                        active_peers.lock().await.remove(&from);
                         tracing::warn!(
                             %from,
                             seq = message.seq,
@@ -580,9 +628,13 @@ async fn run_session_executor(
                 let cfg = Arc::clone(&config);
                 let mdl = Arc::clone(&model);
                 let rms = rooms.clone();
+                let active_peers_clone = std::sync::Arc::clone(&active_peers);
                 tokio::spawn(async move {
                     let _permit = permit;
                     execute_inbound_session_message(from, message, p2p, card, cfg, mdl, rms).await;
+                    // Release the per-peer slot so the next message from this peer
+                    // can be processed once the current session completes.
+                    active_peers_clone.lock().await.remove(&from);
                 });
             }
             Ok(_) => {}
@@ -727,6 +779,213 @@ async fn execute_inbound_session_message(
     if let Err(e) = p2p.send_session_message(from, reply).await {
         tracing::warn!(%from, "Failed to send session reply: {e}");
     }
+}
+
+// ── Reactive room-post executor ───────────────────────────────────────────────
+
+/// Listens for `P2pEvent::RoomPost` events and runs a reactive agent for each
+/// post that did not originate from the local node.
+///
+/// # Loop prevention
+///
+/// Every received [`RoomPost`] carries a `depth` counter.  The reactive agent
+/// is built with [`build_room_reactive_agent`], which sets
+/// `RoomDepthTracker.default_depth = post.depth`.  This means `PostToRoomTool`
+/// inside the reactive agent computes `outgoing = post.depth + 1`, propagating
+/// the chain depth correctly.  The gossipsub receiver drops any post at
+/// `depth >= MAX_ROOM_POST_DEPTH`, terminating the chain.
+///
+/// # Per-room concurrency dedup
+///
+/// At most one reactive agent is active per room at a time.  A new post
+/// arriving while a reactive agent is running for the same room is skipped
+/// rather than spawning a second concurrent agent, preventing interleaved
+/// double-responses.
+///
+/// # Self-post suppression
+///
+/// Posts whose `sender_peer_id` matches the local node's peer ID are silently
+/// ignored to prevent self-triggered loops.
+#[allow(clippy::too_many_arguments)]
+async fn run_room_executor(
+    mut event_rx: tokio::sync::broadcast::Receiver<P2pEvent>,
+    p2p: P2pHandle,
+    our_card: AgentCard,
+    config: Arc<sven_config::Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    rooms: Vec<String>,
+    semaphore: Arc<Semaphore>,
+) {
+    let active_rooms: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
+    loop {
+        match event_rx.recv().await {
+            Ok(P2pEvent::RoomPost { post }) => {
+                // Suppress our own posts — reacting to them would be a self-loop.
+                let our_id = p2p.local_peer_id_string();
+                if !our_id.is_empty() && post.sender_peer_id == our_id {
+                    continue;
+                }
+
+                // Defense-in-depth depth guard (primary check is in on_gossipsub_message;
+                // guard again here so this code path is safe if called from tests directly).
+                if post.depth >= MAX_HOP_DEPTH {
+                    tracing::warn!(
+                        room = %post.room,
+                        depth = post.depth,
+                        max = MAX_HOP_DEPTH,
+                        "Dropping room post in executor: hop-depth limit reached"
+                    );
+                    continue;
+                }
+
+                // Per-room dedup: skip if a reactive agent for this room is already active.
+                {
+                    let mut active = active_rooms.lock().await;
+                    if active.contains(&post.room) {
+                        tracing::debug!(
+                            room = %post.room,
+                            depth = post.depth,
+                            sender = %post.sender_name,
+                            "Skipping room post: reactive agent for this room is already active"
+                        );
+                        continue;
+                    }
+                    active.insert(post.room.clone());
+                }
+
+                let permit = match semaphore.clone().try_acquire_owned() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        active_rooms.lock().await.remove(&post.room);
+                        tracing::warn!(room = %post.room, "Skipping room post: concurrency limit reached");
+                        continue;
+                    }
+                };
+
+                let p2p = p2p.clone();
+                let card = our_card.clone();
+                let cfg = Arc::clone(&config);
+                let mdl = Arc::clone(&model);
+                let rms = rooms.clone();
+                let active_rooms_clone = std::sync::Arc::clone(&active_rooms);
+                let room_name = post.room.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    execute_inbound_room_post(post, p2p, card, cfg, mdl, rms).await;
+                    active_rooms_clone.lock().await.remove(&room_name);
+                });
+            }
+            Ok(_) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!(
+                    "Room executor lagged {n} events — some posts may not have been reacted to"
+                );
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+/// Execute a reactive response to an inbound room post through a fresh agent.
+///
+/// The agent is built with `room_depth.default_depth = post.depth` so that
+/// `PostToRoomTool` automatically stamps any reply at `post.depth + 1`,
+/// propagating the reactive chain depth without requiring the LLM to supply
+/// `in_reply_to_depth` explicitly for its first response.
+///
+/// The agent decides whether to reply at all — it may legitimately complete
+/// without calling `post_to_room` if the post is not relevant to its
+/// responsibilities.
+#[allow(clippy::too_many_arguments)]
+async fn execute_inbound_room_post(
+    post: sven_p2p::protocol::types::RoomPost,
+    p2p: P2pHandle,
+    our_card: AgentCard,
+    config: Arc<sven_config::Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    rooms: Vec<String>,
+) {
+    use std::time::Instant;
+    use sven_core::AgentEvent;
+
+    let start = Instant::now();
+    let inbound_depth = post.depth;
+
+    tracing::info!(
+        room = %post.room,
+        sender = %post.sender_name,
+        depth = inbound_depth,
+        "executing reactive room post handler"
+    );
+
+    let incoming_text: String = post
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            sven_p2p::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    if incoming_text.trim().is_empty() {
+        tracing::debug!(room = %post.room, "Empty room post — skipping reactive handler");
+        return;
+    }
+
+    let runtime = sven_core::AgentRuntimeContext {
+        append_system_prompt: Some(format!(
+            "A message was posted to room '{}' by agent '{}' (chain depth={inbound_depth}). \
+             React ONLY if the post is directly relevant to your specific capabilities. \
+             If you decide to respond, use post_to_room with room='{}' and \
+             in_reply_to_depth={inbound_depth} to propagate the reply-chain depth correctly. \
+             Do NOT respond to posts from yourself, and do NOT respond if you have \
+             nothing meaningful to contribute.",
+            post.room, post.sender_name, post.room,
+        )),
+        ..sven_core::AgentRuntimeContext::default()
+    };
+
+    let mut agent = match build_room_reactive_agent(
+        &config,
+        Arc::clone(&model),
+        p2p,
+        our_card,
+        rooms,
+        inbound_depth,
+        runtime,
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(room = %post.room, "Failed to build room reactive agent: {e}");
+            return;
+        }
+    };
+
+    // Sanitise the incoming text to prevent tag-injection that could break out
+    // of the <room_post> delimiter in the prompt.
+    let safe_text = incoming_text.replace("</room_post>", "</ room_post>");
+    let prompt = format!(
+        "The following message was posted to room '{}' by '{}':\n\n\
+         <room_post>\n{}\n</room_post>\n\n\
+         Decide whether to respond based on your responsibilities.",
+        post.room, post.sender_name, safe_text,
+    );
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
+    let agent_fut = async move { agent.submit(&prompt, event_tx).await };
+    let collect_fut = async { while let Some(_event) = event_rx.recv().await {} };
+
+    let task_timeout = tokio::time::Duration::from_secs(300);
+    let _ =
+        tokio::time::timeout(task_timeout, async { tokio::join!(agent_fut, collect_fut) }).await;
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+    tracing::info!(room = %post.room, duration_ms, "Reactive room post handler completed");
 }
 
 /// Build a session agent with prior messages loaded from the store.
