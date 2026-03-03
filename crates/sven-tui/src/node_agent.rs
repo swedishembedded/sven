@@ -200,78 +200,85 @@ pub async fn node_agent_task(
             None => break, // TUI dropped the channel
         };
 
-        match req {
-            AgentRequest::Submit { content, .. } => {
-                let sid = Uuid::new_v4();
+        // Extract user text; both Submit and Resubmit are forwarded as a fresh
+        // session — the node owns conversation history, so local history is ignored.
+        let content = match req {
+            AgentRequest::Submit { content, .. } => content,
+            AgentRequest::Resubmit {
+                new_user_content: content,
+                ..
+            } => content,
+            AgentRequest::LoadHistory(_) => {
+                debug!("node_agent_task: ignoring LoadHistory (node manages history)");
+                continue;
+            }
+        };
 
-                let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
-                *cancel_handle.lock().await = Some(cancel_tx);
+        let sid = Uuid::new_v4();
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        *cancel_handle.lock().await = Some(cancel_tx);
 
-                // Create session on the node.
-                if send_cmd(
-                    &ws_out_tx,
-                    &Cmd::NewSession {
-                        id: sid,
-                        mode: "agent".to_string(),
-                        working_dir: None,
-                    },
-                )
-                .is_err()
-                {
-                    let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
-                    break;
-                }
+        if send_cmd(
+            &ws_out_tx,
+            &Cmd::NewSession {
+                id: sid,
+                mode: "agent".to_string(),
+                working_dir: None,
+            },
+        )
+        .is_err()
+        {
+            let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
+            break;
+        }
 
-                if send_cmd(
-                    &ws_out_tx,
-                    &Cmd::SendInput {
-                        session_id: sid,
-                        text: content,
-                    },
-                )
-                .is_err()
-                {
-                    let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
-                    break;
-                }
+        if send_cmd(
+            &ws_out_tx,
+            &Cmd::SendInput {
+                session_id: sid,
+                text: content,
+            },
+        )
+        .is_err()
+        {
+            let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
+            break;
+        }
 
-                // Drain events until session completes or is cancelled.
-                loop {
-                    tokio::select! {
-                        msg = ws_stream.next() => {
-                            let msg = match msg {
-                                Some(Ok(m)) => m,
-                                Some(Err(e)) => {
-                                    let _ = tx.send(AgentEvent::Error(format!("WS recv: {e}"))).await;
-                                    break;
-                                }
-                                None => break,
-                            };
-                            let text = match msg {
-                                tungstenite::Message::Text(t) => t,
-                                tungstenite::Message::Close(_) => break,
-                                _ => continue,
-                            };
-                            let evt: Evt = match serde_json::from_str(&text) {
-                                Ok(e) => e,
-                                Err(_) => continue,
-                            };
-                            let done = handle_event(evt, &tx, &ws_out_tx, sid).await;
-                            if done { break; }
-                        }
-                        Ok(()) = &mut cancel_rx => {
-                            let _ = send_cmd(&ws_out_tx, &Cmd::CancelSession { session_id: sid });
-                            let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+        // Drain events until session completes or is cancelled.
+        loop {
+            tokio::select! {
+                msg = ws_stream.next() => {
+                    let msg = match msg {
+                        Some(Ok(m)) => m,
+                        Some(Err(e)) => {
+                            let _ = tx.send(AgentEvent::Error(format!("WS recv: {e}"))).await;
                             break;
                         }
+                        None => break,
+                    };
+                    let text = match msg {
+                        tungstenite::Message::Text(t) => t,
+                        tungstenite::Message::Close(_) => break,
+                        _ => continue,
+                    };
+                    let evt: Evt = match serde_json::from_str(&text) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let done = handle_event(evt, &tx, &ws_out_tx, sid).await;
+                    if done {
+                        break;
                     }
                 }
-                cancel_handle.lock().await.take();
-            }
-            AgentRequest::LoadHistory(_) | AgentRequest::Resubmit { .. } => {
-                debug!("node_agent_task: ignoring LoadHistory/Resubmit (node manages state)");
+                Ok(()) = &mut cancel_rx => {
+                    let _ = send_cmd(&ws_out_tx, &Cmd::CancelSession { session_id: sid });
+                    let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+                    break;
+                }
             }
         }
+        cancel_handle.lock().await.take();
     }
 }
 
