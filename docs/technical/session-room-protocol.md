@@ -561,14 +561,34 @@ two additional structural guards:
 Both `depth` and `chain` are required fields; old nodes that omit them are
 rejected by CBOR deserialisation.
 
-### 5. Waiter conflict guard
+### 5. Waiter conflict guard and stale-slot cleanup
 
 Each `PeerId` has exactly one waiter slot in `NodeState::peer_waiters`.
-A second `wait_for_message` call for the same peer while one is already
-pending is immediately resolved with `P2pError::WaiterConflict` rather than
-silently overwriting the existing waiter.  Without this guard, two concurrent
-task agents targeting the same remote peer would steal each other's reply in a
-livelock.
+A second `wait_for_message` call for the same peer while a **live** waiter is
+already pending is immediately resolved with `P2pError::WaiterConflict` rather
+than silently overwriting the existing waiter.  Without this guard, two
+concurrent task agents targeting the same remote peer would steal each other's
+reply in a livelock.
+
+**Stale-slot cleanup** handles the case where a waiter's `reply_rx` was dropped
+(because `wait_for_message` timed out on the tool side, or the agent was
+cancelled) before the next `WaitPeerMessage` command arrives.  The P2P event
+loop calls `oneshot::Sender::is_closed()` on the stored sender before deciding
+whether to declare `WaiterConflict`:
+
+```
+if existing_tx.is_closed() → evict stale entry → register new waiter
+```
+
+Without this check the stale entry stays in `peer_waiters` indefinitely —
+causing every subsequent `wait_for_message` for that peer to return
+`WaiterConflict` until the peer coincidentally sends another message.
+
+**Fall-through on dead delivery**: When an inbound message arrives and fires a
+waiter whose `reply_rx` was already dropped (the eviction raced with delivery),
+`tx.send()` fails.  In this case the message is **not** silently discarded —
+delivery falls through to the session executor (`P2pEvent::SessionMessage`) so
+the peer's reply still gets an auto-response rather than disappearing.
 
 ### 6. Gossipsub message deduplication
 
@@ -594,7 +614,7 @@ reactive room handler must use it to enforce a hop limit (see point above).
 | Task delegation cycle (A→B→A) | Chain-based cycle detection (`TaskRequest.chain`) | Delegation depth counter (`depth >= MAX_HOP_DEPTH` → reject) |
 | Task delegation storm (depth without cycle) | Delegation depth counter (`MAX_HOP_DEPTH = 4`) | Chain signature integrity (Ed25519) |
 | Gossipsub re-delivery | `seen_gossip_ids` dedup | FIFO eviction preserves recent IDs |
-| Concurrent waiters for same peer | `WaiterConflict` error | — |
+| Concurrent waiters for same peer | `WaiterConflict` error (live waiter) | Stale-slot eviction via `is_closed()` |
 | Future reactive room handler flood | `RoomPost.depth` field (reserved, `MAX_ROOM_POST_DEPTH = 4`) | No current reactive handler exists |
 
 ---

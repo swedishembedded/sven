@@ -1516,11 +1516,25 @@ impl NodeState {
                 false
             }
             P2pCommand::WaitPeerMessage { peer, reply_tx } => {
-                // Reject the registration if a waiter is already pending for
-                // this peer.  Overwriting it silently would drop the first
-                // caller's receiver, causing it to get a RecvError and retry —
-                // which could steal the slot again in a livelock.
+                // Evict any stale waiter whose receiver was already dropped
+                // (timeout fired on the tool side, or the agent was cancelled).
+                // Without this check the slot stays occupied until the peer
+                // coincidentally sends another message, causing every subsequent
+                // wait_for_message call for this peer to return WaiterConflict.
+                if let Some(existing) = self.peer_waiters.get(&peer) {
+                    if existing.is_closed() {
+                        tracing::debug!(
+                            %peer,
+                            "evicting stale peer waiter (receiver dropped by timeout/cancel)"
+                        );
+                        self.peer_waiters.remove(&peer);
+                    }
+                }
                 if self.peer_waiters.contains_key(&peer) {
+                    // A live waiter is already registered — reject rather than
+                    // overwrite.  Overwriting would drop the first caller's
+                    // receiver, causing it to get a RecvError and retry in a
+                    // livelock.
                     let _ = reply_tx.send(Err(P2pError::WaiterConflict));
                 } else {
                     self.peer_waiters.insert(peer, reply_tx);
@@ -1727,19 +1741,35 @@ impl NodeState {
         });
 
         // Exclusive delivery: fire the explicit waiter OR broadcast to the
-        // session executor — never both.
+        // session executor — never both (when the waiter is live).
         //
         // When a task agent has called `wait_for_message` for this peer, the
         // incoming message is routed exclusively to that waiter.  Broadcasting
         // it to the session executor at the same time would cause the executor
         // to auto-respond with an unsolicited reply, creating a second,
         // unintended message to the remote peer while the task agent is still
-        // processing the first one.  In the worst case this produces two
-        // interleaved response chains from the same local node.
-        if let Some(tx) = self.peer_waiters.remove(&peer) {
-            let _ = tx.send(Ok(record.clone()));
-            // Message consumed by the explicit waiter — do not also broadcast.
+        // processing the first one.
+        //
+        // Exception: if the waiter's receiver was already dropped (the tool
+        // timed out or the agent was cancelled) before the is_closed() eviction
+        // ran, tx.send() fails here.  In that case we fall through to the
+        // session executor so the message is not silently discarded — the peer
+        // sent a real reply and it deserves a response.
+        let broadcast_to_executor = if let Some(tx) = self.peer_waiters.remove(&peer) {
+            if tx.send(Ok(record.clone())).is_err() {
+                tracing::debug!(
+                    %peer,
+                    seq = record.seq,
+                    "peer waiter receiver dropped before delivery; routing to session executor"
+                );
+                true
+            } else {
+                false
+            }
         } else {
+            true
+        };
+        if broadcast_to_executor {
             self.emit(P2pEvent::SessionMessage {
                 from: peer,
                 message: msg,

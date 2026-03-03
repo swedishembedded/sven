@@ -715,8 +715,12 @@ impl Tool for WaitForMessageTool {
 
     fn description(&self) -> &str {
         "Wait for the next message from a specific peer agent. \
-         Blocks until the remote agent sends a reply or the timeout elapses. \
-         Always specify the same peer you sent to with `send_message`."
+         Blocks until the remote peer sends a reply or the timeout elapses. \
+         Always specify the same peer you sent to with `send_message`. \
+         On timeout the tool returns an error — call it again to keep waiting \
+         (the peer waiter slot is released automatically so retrying is safe). \
+         Use short timeouts (30–60 s) for interactive use; the node cannot \
+         accept new input on this session while the tool is waiting."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -730,8 +734,10 @@ impl Tool for WaitForMessageTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Maximum seconds to wait (default: 300, max: 900)",
-                    "default": 300
+                    "description": "Maximum seconds to wait before returning a timeout error \
+                                    (default: 60, max: 300). Prefer short values; call again \
+                                    to extend the wait.",
+                    "default": 60
                 }
             }
         })
@@ -750,7 +756,7 @@ impl Tool for WaitForMessageTool {
             Ok(pid) => pid,
             Err(msg) => return ToolOutput::err(&call.id, msg),
         };
-        let timeout_secs = call.args["timeout_secs"].as_u64().unwrap_or(300).min(900);
+        let timeout_secs = call.args["timeout_secs"].as_u64().unwrap_or(60).min(300);
         let timeout = tokio::time::Duration::from_secs(timeout_secs);
 
         match self.p2p.wait_for_message(peer_id, timeout).await {
@@ -791,13 +797,17 @@ impl Tool for WaitForMessageTool {
             }
             Err(sven_p2p::P2pError::Timeout) => ToolOutput::err(
                 &call.id,
-                format!("No reply from {peer_str} within {timeout_secs}s."),
+                format!(
+                    "No reply from {peer_str} within {timeout_secs}s. \
+                     Call wait_for_message again to keep waiting, or move on."
+                ),
             ),
             Err(sven_p2p::P2pError::WaiterConflict) => ToolOutput::err(
                 &call.id,
                 format!(
-                    "Cannot wait for {peer_str}: another wait_for_message call is already \
-                     pending for this peer. Only one concurrent wait per peer is allowed."
+                    "Cannot wait for {peer_str}: another wait_for_message is already active \
+                     for this peer in a different agent. Wait for that agent to finish, or \
+                     use a different peer."
                 ),
             ),
             Err(e) => ToolOutput::err(&call.id, format!("Wait failed: {e}")),
