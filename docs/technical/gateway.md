@@ -153,6 +153,68 @@ refresh.
 
 ---
 
+## Task delegation loop prevention
+
+Unrestricted task forwarding between agents would allow infinite delegation
+chains (A → B → A → …) and delegation storms (a single task spawning an
+exponentially growing tree of sub-tasks).  Three independent guards prevent
+these patterns.
+
+### Depth counter
+
+`TaskRequest.depth` starts at `0` for tasks that originate locally and is
+incremented by `1` each time a peer forwards the request via `delegate_task`.
+The receiver rejects the request before the LLM runs if
+`depth >= MAX_DELEGATION_DEPTH` (= 3).
+
+`DelegateTool::execute` also checks the depth before sending, so the LLM
+receives a tool error rather than waiting for a remote rejection.
+
+`depth` is a **required** wire field — no `#[serde(default)]`.  Nodes that
+omit it are incompatible and their requests are rejected at deserialisation.
+
+### Chain-based cycle detection
+
+`TaskRequest.chain` is an ordered list of peer IDs that have already handled
+the request, starting from the originator.  Each forwarding peer appends its
+own ID before sending.  The receiver checks whether its own peer ID is already
+present and rejects the request if so.
+
+This catches all cycle patterns regardless of length:
+
+```
+A → B → A        rejected at A (A in chain)
+A → B → C → A   rejected at A (A in chain)
+A → B → C → B   rejected at B (B in chain)
+```
+
+`chain` is a **required** wire field — no `#[serde(default)]`.  Nodes that
+omit it are rejected at deserialisation.
+
+### Hop signature integrity
+
+A forwarded request carries the Ed25519 public key and signature of the
+forwarding peer over the canonical encoding of `(id, depth, chain)`.  The
+receiver verifies that:
+
+1. The public key's derived `PeerId` matches the Noise-authenticated sender.
+2. The signature over the canonical bytes is valid.
+
+This prevents a MITM from silently zeroing `depth` or truncating `chain` to
+bypass the guards above.  A failed verification results in the sender being
+added to `permanently_rejected` and the connection being closed.
+
+### Interaction with session depth
+
+Task agents are not inside a session reply chain at creation time, so their
+`SessionDepthHandle` starts at `0`.  If a task agent calls `send_message` to
+coordinate with a peer, the session-chain depth guards (see
+[technical/session-room-protocol.md](session-room-protocol.md)) apply
+independently of the delegation depth.  The two depth counters track separate
+message dimensions and do not interact.
+
+---
+
 ## Wire encoding
 
 Both P2P protocols use CBOR (Concise Binary Object Representation) with a

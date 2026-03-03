@@ -88,11 +88,16 @@ pub struct SessionMessageWire {
     pub timestamp: DateTime<Utc>,
     pub role: SessionRole,     // User | Assistant
     pub content: Vec<ContentBlock>,
+    pub depth: u32,            // hop counter — see Loop prevention below
 }
 ```
 
 There is no `session_id`.  The implicit conversation is identified by the
 transport-level peer ID, which is cryptographically authenticated by Noise.
+
+`depth` is a **required** field on the wire — messages that omit it fail CBOR
+deserialisation and are rejected.  See [Loop prevention](#loop-prevention) for
+details on how it is used.
 
 ### `P2pResponse::SessionAck`
 
@@ -115,11 +120,19 @@ pub struct RoomPost {
     pub sender_name: String,
     pub timestamp: DateTime<Utc>,
     pub content: Vec<ContentBlock>,
+    pub depth: u32,            // always 0 for tool-initiated posts
 }
 ```
 
 Topic: `sven/room/<room-name>`.  Gossipsub re-deliveries are suppressed by a
-bounded dedup set (max 4 096 entries, cleared on overflow).
+bounded dedup set (max 4 096 entries, FIFO eviction of 512 oldest entries when
+the limit is reached).
+
+`depth` is reserved for future reactive room handlers.  Any handler that
+auto-responds to a `RoomPost` **must** check `depth < MAX_ROOM_DEPTH` and
+increment it on the outgoing post, otherwise two reactive agents in the same
+room will produce an unbounded gossip flood.  Tool-initiated posts always carry
+`depth: 0`.
 
 ### Message flow
 
@@ -167,12 +180,19 @@ object.  Nothing is ever modified or deleted.
   "direction": "outbound",
   "peer_id": "12D3KooWAbc…",
   "role": "user",
-  "content": [{"type": "text", "text": "check the build"}]
+  "content": [{"type": "text", "text": "check the build"}],
+  "depth": 1
 }
 ```
 
 `direction` is from the perspective of the *local* node: `outbound` = sent
 by us, `inbound` = received from the peer.
+
+`depth` mirrors the wire `depth` field at the time the record was stored.
+It is read by `WaitForMessageTool` to update the shared `SessionDepthHandle`
+counter so the agent's next `send_message` call carries `depth + 1` rather
+than resetting to `1`.  Old records on disk that predate this field default to
+`0` via `#[serde(default)]`.
 
 ### `RoomRecord` schema
 
@@ -282,17 +302,26 @@ sequenceDiagram
 
     Tool->>Handle: wait_for_message(peer, timeout)
     Handle->>Loop: P2pCommand::WaitPeerMessage { peer, reply_tx }
-    Loop->>Loop: peer_waiters[peer] = reply_tx
 
-    Note over Loop: later — inbound SessionMessage from peer arrives
+    alt slot already occupied
+        Loop->>Handle: reply_tx.send(Err(WaiterConflict))
+        Handle->>Tool: Err(P2pError::WaiterConflict)
+    else slot free
+        Loop->>Loop: peer_waiters[peer] = reply_tx
 
-    Loop->>Loop: remove peer_waiters[peer]
-    Loop->>Handle: reply_tx.send(Ok(record))
-    Handle->>Tool: Ok(ConversationRecord)
+        Note over Loop: later — inbound SessionMessage from peer arrives
+
+        Loop->>Loop: remove peer_waiters[peer]
+        Loop->>Handle: reply_tx.send(Ok(record))
+        Handle->>Tool: Ok(ConversationRecord)
+    end
 ```
 
-Only one waiter slot per peer.  If `wait_for_message` is called twice for the
-same peer before a reply arrives, the second call replaces the first.
+Only one waiter slot per peer.  If `wait_for_message` is called while another
+call for the same peer is already pending, the new call is immediately resolved
+with `P2pError::WaiterConflict`.  The tool surfaces this as a tool error to the
+LLM.  This prevents the silent slot-overwrite livelock where two concurrent task
+agents steal each other's reply indefinitely.
 
 ---
 
@@ -398,19 +427,143 @@ struct NodeState {
 
 ---
 
+## Loop prevention
+
+The sven P2P network can contain cycles: agents A and B can both be session
+executors that auto-respond to incoming messages; a task agent can call
+`send_message` and receive a reply in a loop; three agents can form a ring.
+Without explicit circuit-breakers, any of these topologies produces an infinite
+message chain.  The following mechanisms work in concert to break every known
+loop pattern.
+
+### 1. Role filter (primary session echo-loop guard)
+
+The session executor only processes messages whose `role == User`.  Every
+auto-reply it sends carries `role: Assistant`.  Because the remote executor
+ignores `Assistant` messages, a simple A → B auto-response never bounces back.
+
+```
+A sends User(depth=0) → B executor auto-responds with Assistant(depth=1) → A ignores
+```
+
+This is the primary guard.  Depth counting is a secondary hard backstop.
+
+### 2. Session-chain depth counter
+
+Every `SessionMessageWire` carries a `depth: u32` field that is **required**
+on the wire (no `#[serde(default)]`).  Missing it causes a CBOR
+deserialisation failure; messages from nodes that do not set it are rejected.
+
+The depth is incremented on every hop:
+
+| Sender | Outgoing depth |
+|---|---|
+| Human or first tool call | `0` |
+| `send_message` tool | `session_depth_handle.load() + 1` |
+| Session executor auto-reply | `incoming_depth + 1` |
+
+When the session executor receives a message whose `depth >= MAX_SESSION_DEPTH`
+(= 4) it drops the message and sends no reply, breaking the chain regardless
+of what the LLM would have done.
+
+There is a defence-in-depth duplicate check both in the executor loop and
+inside `execute_inbound_session_message` so the guard cannot be bypassed by
+calling the function directly.
+
+### 3. Shared `SessionDepthHandle` — task-agent ping-pong fix
+
+Task agents are constructed with `session_depth = 0` because they are not
+inside a session chain at creation time.  Without additional tracking, a task
+agent that calls `send_message` always sends `depth = 1`, another task agent
+receiving the reply always sends `depth = 1` back, and the counter never
+reaches `MAX_SESSION_DEPTH`.
+
+The fix: `SendMessageTool` and `WaitForMessageTool` share an
+`Arc<AtomicU32>` called `SessionDepthHandle`.
+
+```mermaid
+sequenceDiagram
+    participant SA as Task Agent A
+    participant SB as Task Agent B
+
+    SA->>SB: send_message → depth = 0+1 = 1
+    SB->>SA: reply (depth=2 on wire)
+    Note over SA: WaitForMessageTool stores depth=2<br/>into shared AtomicU32
+    SA->>SB: send_message → depth = 2+1 = 3
+    SB->>SA: reply (depth=4)
+    Note over SA: WaitForMessageTool stores depth=4
+    SA->>SB: send_message → outgoing=5 >= MAX_SESSION_DEPTH(4)<br/>→ tool error — send blocked
+```
+
+`SendMessageTool::execute` checks `outgoing_depth >= MAX_SESSION_DEPTH`
+**before** sending.  If the limit is reached the tool returns an error to the
+LLM rather than transmitting the message, stopping the loop at the source.
+
+### 4. Task delegation depth counter and chain
+
+Task delegation uses a separate set of guards:
+
+| Guard | Mechanism |
+|---|---|
+| Depth limit | `TaskRequest.depth` is required on the wire; checked at `execute_inbound_task` and in `DelegateTool::execute` before any LLM call; rejected when `depth >= MAX_DELEGATION_DEPTH` (= 3) |
+| Cycle detection | `TaskRequest.chain` (required on the wire) lists every peer ID that has handled the request; the receiver rejects the request if its own peer ID is already present, breaking A→B→A and ring cycles |
+| Hop signature | Forwarded requests are Ed25519-signed over `(id, depth, chain)` by the forwarding peer; the receiver verifies the signature against the Noise-authenticated sender identity — a MITM cannot silently zero the depth or truncate the chain |
+
+Both `depth` and `chain` are required fields; old nodes that omit them are
+rejected by CBOR deserialisation.
+
+### 5. Waiter conflict guard
+
+Each `PeerId` has exactly one waiter slot in `NodeState::peer_waiters`.
+A second `wait_for_message` call for the same peer while one is already
+pending is immediately resolved with `P2pError::WaiterConflict` rather than
+silently overwriting the existing waiter.  Without this guard, two concurrent
+task agents targeting the same remote peer would steal each other's reply in a
+livelock.
+
+### 6. Gossipsub message deduplication
+
+Room posts are identified by a UUID `message_id`.  The `seen_gossip_ids`
+`HashSet` in `NodeState` prevents the same gossipsub message from being
+processed more than once.  When the set exceeds 4 096 entries, the 512 oldest
+IDs are evicted (FIFO order) to bound memory.  This prevents re-delivery of
+the same post from triggering duplicate reactive behaviour.
+
+Note: deduplication only prevents the same `message_id` from being processed
+twice.  A *new* post generated in reaction to an old one gets a fresh UUID and
+passes dedup.  This is why the `RoomPost.depth` field exists: any future
+reactive room handler must use it to enforce a hop limit (see point above).
+
+### Summary table
+
+| Loop pattern | Primary guard | Secondary guard |
+|---|---|---|
+| A↔B auto-reply echo | Role filter (`Assistant` ignored) | Session depth counter (`depth >= 4` → drop) |
+| Task-agent ping-pong via `send_message` | `SessionDepthHandle` propagation in `WaitForMessageTool` | Send-side depth guard in `SendMessageTool` |
+| Task delegation cycle (A→B→A) | Chain-based cycle detection | Delegation depth counter (`depth >= 3` → reject) |
+| Task delegation storm (depth without cycle) | Delegation depth counter | Chain signature integrity (Ed25519) |
+| Gossipsub re-delivery | `seen_gossip_ids` dedup | FIFO eviction preserves recent IDs |
+| Concurrent waiters for same peer | `WaiterConflict` error | — |
+| Future reactive room handler flood | `RoomPost.depth` field (reserved) | No current handler exists |
+
+---
+
 ## Crate changes summary
 
 | Crate | File | Change |
 |---|---|---|
+| `sven-p2p` | `protocol/types.rs` | `SessionMessageWire.depth: u32` (required, no default); `TaskRequest.depth` and `.chain` required (no default); `RoomPost.depth: u32` |
 | `sven-p2p` | `protocol/types.rs` | Remove `session_id` from `SessionMessageWire`; remove `SessionOpen`/`SessionClose` variants |
-| `sven-p2p` | `store.rs` | Per-peer file layout; `load_context_after_break`; regex `search` |
-| `sven-p2p` | `node.rs` | `peer_waiters` map; simplified `on_session_message` handler |
+| `sven-p2p` | `error.rs` | Add `P2pError::WaiterConflict` |
+| `sven-p2p` | `store.rs` | Per-peer file layout; `load_context_after_break`; regex `search`; `ConversationRecord.depth` |
+| `sven-p2p` | `node.rs` | `peer_waiters` map; `WaiterConflict` on slot conflict; `depth` propagated through `ConversationRecord` |
 | `sven-p2p` | `behaviour.rs` | Add `gossipsub::Behaviour` |
 | `sven-core` | `runtime_context.rs` | Add `prior_messages: Vec<Message>` |
 | `sven-core` | `agent.rs` | Pre-populate session from `prior_messages` in `Agent::new` |
+| `sven-node` | `tools.rs` | `SessionDepthHandle` (`Arc<AtomicU32>`) shared by `SendMessageTool` and `WaitForMessageTool`; send-side depth guard; `MAX_SESSION_DEPTH` as public const; stale delegation-context comment corrected |
 | `sven-node` | `tools.rs` | 6 tools: `send_message`, `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` |
-| `sven-node` | `node.rs` | `run_session_executor`; `build_session_agent` with break-aware context |
-| `sven-node` | `agent_builder.rs` | Register 6 new tools; `build_task_agent_with_runtime` |
+| `sven-node` | `node.rs` | `run_session_executor`; `build_session_agent` with break-aware context; import `MAX_SESSION_DEPTH` from `tools.rs` |
+| `sven-node` | `agent_builder.rs` | Register 6 new tools; `build_task_agent_with_runtime`; fresh `SessionDepthHandle` per agent |
 
 ---
 
