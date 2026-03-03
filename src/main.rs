@@ -108,6 +108,7 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
             config: config_path,
             model: model_override,
             provider: provider_override,
+            pty_insecure,
         } => {
             let node_config = sven_node::config::load(config_path.as_deref())?;
             let mut sven_config = sven_config::load(None)?;
@@ -123,7 +124,7 @@ async fn run_node_command(cmd: &NodeCommands) -> anyhow::Result<()> {
             }
 
             let sven_config = Arc::new(sven_config);
-            if let Err(e) = sven_node::node::run(node_config, sven_config).await {
+            if let Err(e) = sven_node::node::run(node_config, sven_config, *pty_insecure).await {
                 tracing::error!("{e:#}");
                 std::process::exit(1);
             }
@@ -1029,7 +1030,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         let token = std::env::var("SVEN_NODE_TOKEN")
             .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
             .ok();
-        let insecure = std::env::var("SVEN_GATEWAY_INSECURE")
+        let insecure = std::env::var("SVEN_NODE_INSECURE")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_INSECURE"))
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         match (url, token) {

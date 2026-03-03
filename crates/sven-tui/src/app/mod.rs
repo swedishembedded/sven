@@ -129,6 +129,10 @@ pub struct App {
     pub(crate) config: Arc<Config>,
     /// Node-proxy backend, consumed once in `run()`.
     pub(crate) node_backend: Option<NodeBackend>,
+    /// True when the TUI is connected to a running sven node over WebSocket.
+    /// In this mode the node owns model/mode selection; the TUI is a dumb
+    /// terminal that only forwards text and renders streamed responses.
+    pub(crate) is_node_proxy: bool,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,
@@ -241,9 +245,11 @@ impl App {
         let mut chat = ChatState::new();
         chat.segments = initial_segments;
 
+        let is_node_proxy = opts.node_backend.is_some();
         let mut app = Self {
             config,
             node_backend: opts.node_backend,
+            is_node_proxy,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,
@@ -332,20 +338,32 @@ impl App {
         let layout = AppLayout::new(frame, self.ui.search.active, self.queue.messages.len());
 
         // ── Status bar ────────────────────────────────────────────────────────
+        // In node-proxy mode the node owns model/mode; show "node" as the
+        // model label and suppress any staged-override hints.
+        let (status_model_name, status_pending_model, status_pending_mode) = if self.is_node_proxy {
+            ("node", None, None)
+        } else {
+            let pending = self.session.staged_model_label().as_deref().map(|s| {
+                // SAFETY: model_display lives in session which lives in self
+                // which outlives this frame closure.
+                unsafe { std::mem::transmute::<&str, &str>(s) }
+            });
+            (
+                &self.session.model_display as &str,
+                pending,
+                self.session.staged_mode,
+            )
+        };
         frame.render_widget(
             StatusBar {
-                model_name: &self.session.model_display,
+                model_name: status_model_name,
                 mode: self.session.mode,
                 context_pct: self.agent.context_pct,
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
                 current_tool: self.agent.current_tool.as_deref(),
-                pending_model: self.session.staged_model_label().as_deref().map(|s| {
-                    // SAFETY: model_display lives in session which lives in self
-                    // which outlives this frame closure.
-                    unsafe { std::mem::transmute::<&str, &str>(s) }
-                }),
-                pending_mode: self.session.staged_mode,
+                pending_model: status_pending_model,
+                pending_mode: status_pending_mode,
                 ascii,
             },
             layout.status_bar,

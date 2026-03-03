@@ -133,6 +133,12 @@ pub async fn node_agent_task(
     use tokio_tungstenite::connect_async_tls_with_config;
     use tungstenite::http::Request;
 
+    // Loopback connections are auto-insecure: the bearer token is the
+    // authentication mechanism; cert pinning on 127.0.0.1/localhost adds no
+    // security benefit and breaks the zero-config local workflow where the
+    // node uses a local-CA cert that is not in the system trust store.
+    // This matches the behaviour of `sven node exec`.
+    let insecure = insecure || is_localhost_url(&node_url);
     let connector = build_tls_connector(insecure);
 
     let request = match Request::builder()
@@ -362,6 +368,10 @@ fn generate_ws_key() -> String {
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn is_localhost_url(url: &str) -> bool {
+    url.contains("://127.0.0.1:") || url.contains("://localhost:") || url.contains("://[::1]:")
 }
 
 /// Return the TLS connector to use for the WebSocket connection.

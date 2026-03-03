@@ -110,7 +110,11 @@ const MAX_TASK_PAYLOAD_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 ///
 /// This is the single entry point for `sven gateway start`.  It owns the full
 /// lifecycle: agent construction, P2P node, HTTP server, Slack tasks.
-pub async fn run(config: NodeConfig, sven_config: Arc<sven_config::Config>) -> anyhow::Result<()> {
+pub async fn run(
+    config: NodeConfig,
+    sven_config: Arc<sven_config::Config>,
+    pty_insecure: bool,
+) -> anyhow::Result<()> {
     // ── Agent card ────────────────────────────────────────────────────────────
     let agent_card = build_agent_card(&config);
     info!(
@@ -251,12 +255,14 @@ pub async fn run(config: NodeConfig, sven_config: Arc<sven_config::Config>) -> a
             .to_string();
         let node_url = format!("{node_scheme}://127.0.0.1:{node_port}/ws");
         pty_session_env.insert("SVEN_NODE_URL".into(), node_url.clone());
-        // Keep the legacy name so existing scripts still work.
-        pty_session_env.insert("SVEN_GATEWAY_URL".into(), node_url.clone());
-        // Only propagate insecure mode when the node itself is running without
-        // TLS — never default to skipping certificate verification.
-        if config.http.insecure_dev_mode {
-            pty_session_env.insert("SVEN_GATEWAY_INSECURE".into(), "1".into());
+        // Inject SVEN_NODE_INSECURE into PTY sessions when either:
+        // • The node is running without TLS (insecure_dev_mode) — automatic.
+        // • The operator explicitly passed --pty-insecure at startup.
+        //   This is for local-CA TLS mode when the CA cert is not installed
+        //   in the system trust store and the user accepts the risk.
+        //   Never injected automatically when TLS is active.
+        if config.http.insecure_dev_mode || pty_insecure {
+            pty_session_env.insert("SVEN_NODE_INSECURE".into(), "1".into());
         }
         if let Some(ref tok) = local_token_opt {
             pty_session_env.insert("SVEN_NODE_TOKEN".into(), tok.clone());

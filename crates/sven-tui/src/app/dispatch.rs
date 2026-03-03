@@ -727,7 +727,9 @@ impl App {
             }
 
             Action::CycleMode => {
-                self.session.cycle_mode();
+                if !self.is_node_proxy {
+                    self.session.cycle_mode();
+                }
             }
 
             Action::Help => {

@@ -73,16 +73,20 @@ impl App {
                         return false;
                     }
 
-                    if let Some(model_str) = result.model_override {
-                        let resolved =
-                            sven_model::resolve_model_from_config(&self.config, &model_str);
-                        self.session.stage_model(resolved);
-                    }
+                    // In node-proxy mode the node owns model/mode selection;
+                    // silently ignore /model and /mode commands.
+                    if !self.is_node_proxy {
+                        if let Some(model_str) = result.model_override {
+                            let resolved =
+                                sven_model::resolve_model_from_config(&self.config, &model_str);
+                            self.session.stage_model(resolved);
+                        }
 
-                    if let Some(mode) = result.mode_override {
-                        self.session.stage_mode(mode);
-                        if !self.agent.busy {
-                            self.session.mode = mode;
+                        if let Some(mode) = result.mode_override {
+                            self.session.stage_mode(mode);
+                            if !self.agent.busy {
+                                self.session.mode = mode;
+                            }
                         }
                     }
 
@@ -137,12 +141,14 @@ impl App {
             if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
                 return true;
             }
-            if let Some(model_str) = result.model_override {
-                let resolved = sven_model::resolve_model_from_config(&self.config, &model_str);
-                self.session.apply_model(resolved);
-            }
-            if let Some(mode) = result.mode_override {
-                self.session.apply_mode(mode);
+            if !self.is_node_proxy {
+                if let Some(model_str) = result.model_override {
+                    let resolved = sven_model::resolve_model_from_config(&self.config, &model_str);
+                    self.session.apply_model(resolved);
+                }
+                if let Some(mode) = result.mode_override {
+                    self.session.apply_mode(mode);
+                }
             }
         }
         false
@@ -150,11 +156,20 @@ impl App {
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {
         if let Some(tx) = &self.agent.tx {
+            // In node-proxy mode the node owns model/mode; never forward overrides.
+            let (model_override, mode_override) = if self.is_node_proxy {
+                (None, None)
+            } else {
+                (
+                    qm.model_transition.map(ModelDirective::into_model_config),
+                    qm.mode_transition,
+                )
+            };
             let _ = tx
                 .send(AgentRequest::Submit {
                     content: qm.content,
-                    model_override: qm.model_transition.map(ModelDirective::into_model_config),
-                    mode_override: qm.mode_transition,
+                    model_override,
+                    mode_override,
                 })
                 .await;
             self.agent.busy = true;
@@ -167,12 +182,20 @@ impl App {
         qm: QueuedMessage,
     ) {
         if let Some(tx) = &self.agent.tx {
+            let (model_override, mode_override) = if self.is_node_proxy {
+                (None, None)
+            } else {
+                (
+                    qm.model_transition.map(ModelDirective::into_model_config),
+                    qm.mode_transition,
+                )
+            };
             let _ = tx
                 .send(AgentRequest::Resubmit {
                     messages,
                     new_user_content: qm.content,
-                    model_override: qm.model_transition.map(ModelDirective::into_model_config),
-                    mode_override: qm.mode_transition,
+                    model_override,
+                    mode_override,
                 })
                 .await;
             self.agent.busy = true;

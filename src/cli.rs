@@ -101,6 +101,22 @@ pub enum NodeCommands {
         /// is redundant.
         #[arg(long, short = 'P', value_name = "PROVIDER")]
         provider: Option<String>,
+
+        /// Skip TLS certificate verification in web-terminal PTY sessions.
+        ///
+        /// When set, the node injects `SVEN_NODE_INSECURE=1` into the
+        /// environment of every sven subprocess it spawns for browser web-
+        /// terminal sessions.  This lets the spawned sven process connect
+        /// back to the node over `wss://` without trusting the node's local-CA
+        /// certificate.
+        ///
+        /// Use this when the node is running with its default local-CA TLS
+        /// mode (not `insecure_dev_mode`) and you have not installed the CA
+        /// cert into the system trust store.  Must be explicitly requested —
+        /// the node never injects this flag automatically unless TLS is fully
+        /// disabled via `insecure_dev_mode`.
+        #[arg(long, default_value_t = false)]
+        pty_insecure: bool,
     },
 
     /// Authorize a mobile/native operator device to control this node via P2P.
