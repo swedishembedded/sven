@@ -295,10 +295,19 @@ impl Tool for DelegateTool {
 
             // Build the chain for the outgoing request: append our real libp2p
             // peer ID so the receiver knows we have already processed this task.
-            // We get the ID from P2pHandle (set when the swarm starts) rather
-            // than from AgentCard.peer_id, which is empty at construction time.
+            // Guard against the narrow startup window where the OnceLock has not
+            // been set yet — an empty string in the chain would corrupt cycle
+            // detection on every downstream receiver.
+            let our_id = self.p2p.local_peer_id_string();
+            if our_id.is_empty() {
+                return ToolOutput::err(
+                    &call.id,
+                    "Cannot delegate: P2P node identity not yet initialised. \
+                     Retry in a moment or execute the task locally.",
+                );
+            }
             let mut new_chain = current_chain;
-            new_chain.push(self.p2p.local_peer_id_string());
+            new_chain.push(our_id);
             (current_depth + 1, new_chain)
         };
 

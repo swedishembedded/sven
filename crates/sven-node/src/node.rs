@@ -63,7 +63,9 @@ use uuid::Uuid;
 use libp2p::{Multiaddr, PeerId};
 use sven_core::AgentEvent;
 use sven_p2p::{
-    protocol::types::{AgentCard, ContentBlock, P2pResponse, SessionMessageWire, TaskStatus},
+    protocol::types::{
+        AgentCard, ContentBlock, P2pResponse, SessionMessageWire, SessionRole, TaskStatus,
+    },
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
@@ -511,6 +513,19 @@ async fn run_session_executor(
     loop {
         match event_rx.recv().await {
             Ok(P2pEvent::SessionMessage { from, message }) => {
+                // Invariant: only auto-respond to User messages.
+                // Responding to Assistant messages creates infinite echo loops between
+                // two connected gateway nodes. Assistant messages are final responses
+                // and require no further reply.
+                if message.role != SessionRole::User {
+                    tracing::debug!(
+                        %from,
+                        seq = message.seq,
+                        "Ignoring inbound session message with non-User role — not responding"
+                    );
+                    continue;
+                }
+
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
                     Err(_) => {
@@ -519,7 +534,8 @@ async fn run_session_executor(
                             seq = message.seq,
                             "Rejecting inbound session message: concurrency limit reached"
                         );
-                        // Send an error reply.
+                        // Send an error reply (role: Assistant so it does not trigger
+                        // a further auto-response on the receiving gateway).
                         let p2p_c = p2p.clone();
                         let seq = message.seq + 1;
                         tokio::spawn(async move {
@@ -527,7 +543,7 @@ async fn run_session_executor(
                                 message_id: uuid::Uuid::new_v4(),
                                 seq,
                                 timestamp: chrono::Utc::now(),
-                                role: sven_p2p::SessionRole::Assistant,
+                                role: SessionRole::Assistant,
                                 content: vec![sven_p2p::ContentBlock::text(
                                     "Node is at maximum concurrency; please retry later.",
                                 )],
@@ -579,6 +595,14 @@ async fn execute_inbound_session_message(
     let chars_budget = (max_ctx / 2) * 4;
 
     tracing::info!(%from, seq = message.seq, "executing inbound session message");
+
+    // Invariant: only respond to User messages (defense-in-depth; the executor
+    // loop already filters, but guard here too so this function is safe to call
+    // directly in tests or future callers).
+    if message.role != sven_p2p::SessionRole::User {
+        tracing::debug!(%from, seq = message.seq, "execute_inbound_session_message: ignoring non-User role");
+        return;
+    }
 
     let incoming_text: String = message
         .content
@@ -858,8 +882,19 @@ async fn execute_inbound_task(
     }
 
     // ── Hard cycle guard ─────────────────────────────────────────────────────
+    // Reject the task if the P2P node has not yet published its peer ID.
+    // Skipping the cycle check with an empty ID would corrupt the delegation
+    // chain and allow A→B→A loops to slip through during startup.
     let our_peer_id_str = p2p.local_peer_id_string();
-    if !our_peer_id_str.is_empty() && request.chain.contains(&our_peer_id_str) {
+    if our_peer_id_str.is_empty() {
+        let reason = "Task rejected: P2P node identity not yet initialised — cannot safely verify \
+             delegation chain. Retry in a moment."
+            .to_string();
+        tracing::warn!(task_id = %task_id, %from, "{reason}");
+        fail_reply(reason, start.elapsed().as_millis() as u64).await;
+        return;
+    }
+    if request.chain.contains(&our_peer_id_str) {
         let reason = format!(
             "Task rejected: circular delegation — this node ({our_peer_id_str}) is already in \
              the chain: [{}]",
