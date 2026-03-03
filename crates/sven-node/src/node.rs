@@ -69,7 +69,7 @@ use sven_p2p::{
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
-use crate::tools::{MAX_DELEGATION_DEPTH, MAX_SESSION_DEPTH};
+use crate::tools::MAX_HOP_DEPTH;
 use crate::{
     agent_builder::{build_gateway_agent, build_task_agent},
     config::{GatewayConfig, SlackMode},
@@ -529,17 +529,17 @@ async fn run_session_executor(
                 //
                 // Every auto-response and every explicit `send_message` tool call
                 // increments the depth counter carried in the wire message.  When the
-                // counter reaches MAX_SESSION_DEPTH we store the message in history
+                // counter reaches MAX_HOP_DEPTH we store the message in history
                 // (so operators can inspect it) but refuse to spawn an agent or send
                 // any reply.  This breaks the loop at a well-defined horizon regardless
                 // of how many agents are in the chain or what their LLMs decide.
-                if message.depth >= MAX_SESSION_DEPTH {
+                if message.depth >= MAX_HOP_DEPTH {
                     tracing::warn!(
                         %from,
                         seq = message.seq,
                         depth = message.depth,
-                        max = MAX_SESSION_DEPTH,
-                        "Dropping session message: auto-response depth limit reached — \
+                        max = MAX_HOP_DEPTH,
+                        "Dropping session message: unified hop-depth limit reached — \
                          possible echo loop between gateway nodes"
                     );
                     continue;
@@ -628,12 +628,12 @@ async fn execute_inbound_session_message(
     // Defense-in-depth depth guard — the executor loop checks this too, but
     // guard again here so callers that bypass the loop (tests, future code)
     // are also protected.
-    if message.depth >= MAX_SESSION_DEPTH {
+    if message.depth >= MAX_HOP_DEPTH {
         tracing::warn!(
             %from,
             seq = message.seq,
             depth = message.depth,
-            "execute_inbound_session_message: depth limit exceeded, not responding"
+            "execute_inbound_session_message: unified hop-depth limit exceeded, not responding"
         );
         return;
     }
@@ -743,8 +743,9 @@ async fn build_session_agent(
     store: sven_p2p::ConversationStoreHandle,
     chars_budget: usize,
     // session_depth: depth of the inbound SessionMessageWire that triggered
-    // this agent. Propagated to SendMessageTool so explicit send_message calls
-    // carry session_depth + 1 on the wire, enabling the remote MAX_SESSION_DEPTH guard.
+    // this agent.  Used as both the session tracker's default_depth AND as
+    // the task_depth for DelegationContext, so any protocol switch (session →
+    // task delegation) continues the same unified hop budget.
     session_depth: u32,
 ) -> anyhow::Result<sven_core::Agent> {
     use sven_core::AgentRuntimeContext;
@@ -807,13 +808,18 @@ async fn build_session_agent(
         ..AgentRuntimeContext::default()
     };
 
+    // task_depth is set to session_depth so that if this session agent calls
+    // delegate_task, the outgoing TaskRequest carries the accumulated session
+    // depth rather than restarting from 0.  This enforces the unified
+    // MAX_HOP_DEPTH budget across both channels: a session already at depth 3
+    // cannot initiate a full 3-hop task delegation chain on top of that.
     crate::agent_builder::build_task_agent_with_runtime(
         config,
         model,
         p2p,
         our_card,
         vec![],
-        0,
+        session_depth,
         vec![],
         session_depth,
         runtime,
@@ -832,7 +838,7 @@ async fn build_session_agent(
 ///
 /// # Hard guards (run before the LLM)
 ///
-/// 1. **Depth limit** — rejected if `request.depth >= MAX_DELEGATION_DEPTH`.
+/// 1. **Depth limit** — rejected if `request.depth >= MAX_HOP_DEPTH`.
 /// 2. **Cycle check** — rejected if our own peer ID is already in
 ///    `request.chain`, meaning the task has looped back to us.
 ///
@@ -913,9 +919,9 @@ async fn execute_inbound_task(
     }
 
     // ── Hard depth guard ─────────────────────────────────────────────────────
-    if request.depth >= MAX_DELEGATION_DEPTH {
+    if request.depth >= MAX_HOP_DEPTH {
         let reason = format!(
-            "Task rejected: maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached. \
+            "Task rejected: unified hop-depth limit ({MAX_HOP_DEPTH}) reached. \
              Chain: [{}]",
             request.chain.join(" → ")
         );

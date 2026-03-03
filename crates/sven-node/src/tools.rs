@@ -32,6 +32,7 @@
 //!   "task": "Run the database migration and report any errors." }
 //! ```
 
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
@@ -50,23 +51,25 @@ use sven_p2p::{
 };
 use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
-/// Maximum number of delegation hops before a task is rejected.
+/// Unified maximum hop depth shared across **all** message channels: task
+/// delegation, session messages, and room-post reactive handlers.
 ///
-/// With `MAX_DELEGATION_DEPTH = 3` the longest possible chain is:
-/// human → A → B → C → D where D only executes locally.
-/// Any further forwarding attempt is refused before the LLM runs.
-pub const MAX_DELEGATION_DEPTH: u32 = 3;
-
-/// Maximum session-chain depth before auto-responses and explicit
-/// `send_message` calls are refused.
+/// All three channels use this single budget.  When an agent switches between
+/// channels — e.g. a session agent that calls `delegate_task`, or a task agent
+/// that calls `send_message` — the accumulated depth is carried forward rather
+/// than reset, so the combined chain across all protocol transitions cannot
+/// exceed this limit.
 ///
-/// The depth counter is carried on every [`SessionMessageWire`] and
-/// incremented on each hop.  When an outgoing message would carry a depth
-/// equal to or exceeding this limit, `SendMessageTool` returns an error to the
-/// LLM instead of sending — breaking A↔B ping-pong chains regardless of
-/// whether the remote end is a session executor or another task agent using
-/// `wait_for_message`.
-pub const MAX_SESSION_DEPTH: u32 = 4;
+/// With `MAX_HOP_DEPTH = 4`:
+/// - Pure task chain: gateway → A (depth 1) → B (depth 2) → C (depth 3)
+///   → D receives depth 4, rejected before the LLM runs.
+/// - Pure session chain: depths 1–3 accepted; sending at depth 4 blocked by
+///   `SendMessageTool` before any network traffic.
+/// - Cross-protocol: a session at depth 3 seeds task agents at depth 3, so
+///   they are blocked from delegating on the very first attempt.
+///
+/// Must equal `MAX_ROOM_POST_DEPTH` in `sven-p2p` (both are 4).
+pub const MAX_HOP_DEPTH: u32 = 4;
 
 /// Shared state describing the delegation chain of the task currently
 /// being executed by the local agent.
@@ -88,16 +91,42 @@ pub struct DelegationContext {
 /// Always created fresh per task in [`crate::agent_builder::build_task_agent`].
 pub type DelegationContextHandle = Arc<Mutex<Option<DelegationContext>>>;
 
-/// Shared, mutable session-chain depth counter.
+/// Per-peer session-chain depth tracker shared between [`SendMessageTool`] and
+/// [`WaitForMessageTool`].
 ///
-/// A single `Arc<AtomicU32>` is handed to both [`SendMessageTool`] and
-/// [`WaitForMessageTool`] when an agent is constructed.  When
-/// `WaitForMessageTool` delivers a message it records the wire `depth` into
-/// this counter.  `SendMessageTool` then reads the counter and sends
-/// `depth + 1`, ensuring that task-agent → task-agent ping-pong chains
-/// correctly increment the depth on every round trip and hit
-/// `MAX_SESSION_DEPTH` just like session-executor chains do.
-pub type SessionDepthHandle = Arc<AtomicU32>;
+/// Tracking depth per-peer rather than globally solves two problems:
+///
+/// 1. **Gateway persistence bug**: a long-lived gateway agent that converses
+///    with peer B and reaches depth 3 would permanently block any subsequent
+///    `send_message` to an unrelated peer C if a single global counter were
+///    used.  With per-peer tracking, C's chain always starts at
+///    `default_depth`.
+///
+/// 2. **Cross-protocol depth sharing**: `default_depth` is set to the
+///    task-delegation depth at which this agent is executing (0 for the
+///    interactive gateway, `task_depth` for per-task agents).  This means any
+///    session conversation started by a deep task agent continues the unified
+///    hop budget instead of restarting from zero.
+#[derive(Debug, Default)]
+pub struct SessionDepthTracker {
+    /// Baseline depth for any peer not yet present in `per_peer`.
+    /// `0` for the interactive gateway; equals `task_depth` for task agents.
+    pub default_depth: u32,
+    /// Per-peer depth counters; updated by `WaitForMessageTool` after each
+    /// received message.
+    pub per_peer: HashMap<String, u32>,
+}
+
+pub type SessionDepthHandle = Arc<Mutex<SessionDepthTracker>>;
+
+/// Room-post reactive depth counter.
+///
+/// Set to `0` for all tool-initiated posts.  A future reactive room handler
+/// that processes an inbound [`RoomPost`] at depth `D` must set this to `D`
+/// before running the agent — `PostToRoomTool` then stamps the outgoing post
+/// with `D + 1`, and `on_gossipsub_message` rejects posts at depth ≥
+/// `MAX_ROOM_POST_DEPTH`.
+pub type RoomDepthHandle = Arc<AtomicU32>;
 
 // ── DelegateTool ─────────────────────────────────────────────────────────────
 
@@ -123,7 +152,7 @@ pub type SessionDepthHandle = Arc<AtomicU32>;
 /// (not by the LLM):
 ///
 /// 1. **Depth limit** — rejects if the current delegation depth is already
-///    at [`MAX_DELEGATION_DEPTH`].
+///    at [`MAX_HOP_DEPTH`].
 /// 2. **Cycle detection** — rejects if the target peer is already in the
 ///    delegation chain for this task.
 ///
@@ -289,12 +318,12 @@ impl Tool for DelegateTool {
                 .map(|c| (c.depth, c.chain.clone()))
                 .unwrap_or((0, vec![]));
 
-            if current_depth >= MAX_DELEGATION_DEPTH {
+            if current_depth >= MAX_HOP_DEPTH {
                 return ToolOutput::err(
                     &call.id,
                     format!(
-                        "Cannot delegate: maximum delegation depth ({MAX_DELEGATION_DEPTH}) \
-                         reached. Execute this sub-task locally instead."
+                        "Cannot delegate: maximum hop depth ({MAX_HOP_DEPTH}) reached. \
+                         Execute this sub-task locally instead."
                     ),
                 );
             }
@@ -550,23 +579,35 @@ impl Tool for SendMessageTool {
         };
 
         // Determine next sequence number from the store.
+        let peer_id_str = peer_id.to_base58();
         let seq = {
             let store = self.p2p.store().clone();
-            let pid = peer_id.to_base58();
+            let pid = peer_id_str.clone();
             tokio::task::spawn_blocking(move || store.message_count(&pid).unwrap_or(0))
                 .await
                 .unwrap_or(0)
         };
 
-        let current_depth = self.session_depth.load(Ordering::Relaxed);
+        // Look up this peer's current depth from the per-peer tracker.
+        // Falls back to `default_depth` for peers we haven't talked to yet —
+        // for task agents that is the task-delegation depth, ensuring the
+        // cross-protocol hop budget is shared rather than restarted from zero.
+        let current_depth = {
+            let tracker = self.session_depth.lock().await;
+            tracker
+                .per_peer
+                .get(&peer_id_str)
+                .copied()
+                .unwrap_or(tracker.default_depth)
+        };
         let outgoing_depth = current_depth.saturating_add(1);
-        if outgoing_depth >= MAX_SESSION_DEPTH {
+        if outgoing_depth >= MAX_HOP_DEPTH {
             return ToolOutput::err(
                 &call.id,
                 format!(
-                    "Cannot send message: session-chain depth limit ({MAX_SESSION_DEPTH}) reached. \
-                     This conversation has already traversed the maximum number of hops — \
-                     complete the task with the information already available."
+                    "Cannot send message: unified hop-depth limit ({MAX_HOP_DEPTH}) reached. \
+                     This conversation chain has already traversed the maximum number of hops \
+                     across all protocols — complete the task with the information already available."
                 ),
             );
         }
@@ -655,12 +696,15 @@ impl Tool for WaitForMessageTool {
 
         match self.p2p.wait_for_message(peer_id, timeout).await {
             Ok(record) => {
-                // Update the shared depth counter so the next send_message
-                // call from this agent sends depth + 1 rather than restarting
-                // from zero.  This is the key fix for task-agent ↔ task-agent
-                // infinite ping-pong: without this, both sides always send
-                // depth=1 and the MAX_SESSION_DEPTH guard is never reached.
-                self.session_depth.store(record.depth, Ordering::Relaxed);
+                // Record the received depth against this specific peer so the
+                // next send_message to the same peer sends depth + 1.  Storing
+                // per-peer (not into a global counter) means an unrelated
+                // conversation with a different peer starts at default_depth,
+                // not at the depth left over from a previous exchange.
+                {
+                    let mut tracker = self.session_depth.lock().await;
+                    tracker.per_peer.insert(peer_id.to_base58(), record.depth);
+                }
 
                 let text = record
                     .content
@@ -863,6 +907,14 @@ impl Tool for ListConversationsTool {
 /// is appended to the local room history file.
 pub struct PostToRoomTool {
     pub p2p: P2pHandle,
+    /// Reactive-hop depth to stamp on the outgoing post.
+    ///
+    /// `0` for all tool-initiated (non-reactive) posts.  A future reactive
+    /// room handler that processes an inbound post at depth `D` must set this
+    /// handle to `D` before running the agent; `PostToRoomTool` then sends at
+    /// `D + 1` and the receiver's depth guard drops posts at depth ≥
+    /// `MAX_HOP_DEPTH`, breaking reactive flood loops.
+    pub room_depth: RoomDepthHandle,
 }
 
 #[async_trait]
@@ -909,8 +961,24 @@ impl Tool for PostToRoomTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: text"),
         };
 
+        // Compute the depth for this outgoing post.  For non-reactive agents
+        // room_depth is 0 and the post is sent at depth 0.  A reactive handler
+        // sets room_depth to the incoming post's depth; we send at depth + 1,
+        // and on_gossipsub_message rejects posts at depth >= MAX_HOP_DEPTH.
+        let incoming_depth = self.room_depth.load(Ordering::Relaxed);
+        let outgoing_depth = incoming_depth.saturating_add(1);
+        if outgoing_depth >= MAX_HOP_DEPTH {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "Cannot post to room '{room}': reactive-depth limit ({MAX_HOP_DEPTH}) reached. \
+                     This chain has already traversed the maximum number of reactive hops."
+                ),
+            );
+        }
+
         let content = vec![ContentBlock::text(&text)];
-        match self.p2p.post_to_room(&room, content).await {
+        match self.p2p.post_to_room(&room, content, outgoing_depth).await {
             Ok(()) => ToolOutput::ok(
                 &call.id,
                 format!(

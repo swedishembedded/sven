@@ -127,6 +127,14 @@ pub struct SessionMessageWire {
     pub depth: u32,
 }
 
+/// Maximum reactive-hop depth for room posts.
+///
+/// `on_gossipsub_message` rejects any post whose `depth >= MAX_ROOM_POST_DEPTH`
+/// before it is stored or emitted, breaking gossip flood loops between reactive
+/// agents.  Must equal `MAX_HOP_DEPTH` in `sven-node` so the two checks stay
+/// in sync.
+pub const MAX_ROOM_POST_DEPTH: u32 = 4;
+
 /// A post broadcast to all current subscribers of a named room.
 ///
 /// Room posts are fire-and-forget: there is no ACK.  Each receiving peer logs

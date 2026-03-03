@@ -38,7 +38,7 @@ use crate::{
         codec::cbor_encode,
         types::{
             canonical_hop_bytes, AgentCard, ContentBlock, LogEntry, P2pRequest, P2pResponse,
-            RoomPost, SessionMessageWire, TaskRequest, TaskResponse,
+            RoomPost, SessionMessageWire, TaskRequest, TaskResponse, MAX_ROOM_POST_DEPTH,
         },
     },
     store::{
@@ -146,6 +146,10 @@ pub(crate) enum P2pCommand {
         room: String,
         content: Vec<ContentBlock>,
         sender_card: AgentCard,
+        /// Reactive-hop depth to stamp on the outgoing [`RoomPost`].
+        /// `0` for tool-initiated posts; reactive handlers pass their
+        /// incoming post's `depth + 1`.
+        depth: u32,
     },
     Announce,
     Shutdown,
@@ -326,6 +330,7 @@ impl P2pHandle {
         &self,
         room: &str,
         content: Vec<ContentBlock>,
+        depth: u32,
     ) -> Result<(), P2pError> {
         let sender_card = self.agent_card.get().cloned().unwrap_or_default();
         self.cmd_tx
@@ -333,6 +338,7 @@ impl P2pHandle {
                 room: room.to_string(),
                 content,
                 sender_card,
+                depth,
             })
             .await
             .map_err(|_| P2pError::Shutdown)
@@ -1489,6 +1495,7 @@ impl NodeState {
                 room,
                 content,
                 sender_card,
+                depth,
             } => {
                 let post = RoomPost {
                     message_id: Uuid::new_v4(),
@@ -1497,7 +1504,7 @@ impl NodeState {
                     sender_name: sender_card.name.clone(),
                     timestamp: Utc::now(),
                     content: content.clone(),
-                    depth: 0,
+                    depth,
                 };
                 // Publish to gossipsub.
                 match cbor_encode(&post) {
@@ -1744,6 +1751,23 @@ impl NodeState {
                 return;
             }
         };
+
+        // Hard reactive-depth guard — drop posts whose depth has reached the
+        // limit before storing or emitting them.  This is the enforcement point
+        // for the `RoomPost::depth` field: a reactive agent that responds to
+        // a post increments depth by 1 and sends at that value; when depth
+        // reaches MAX_ROOM_POST_DEPTH the post is silently discarded, breaking
+        // any reactive flood loop at a well-defined horizon.
+        if post.depth >= MAX_ROOM_POST_DEPTH {
+            tracing::warn!(
+                room = %post.room,
+                depth = post.depth,
+                max = MAX_ROOM_POST_DEPTH,
+                sender = %post.sender_peer_id,
+                "dropping room post: reactive-depth limit reached — possible flood loop"
+            );
+            return;
+        }
 
         tracing::debug!(room = %post.room, sender = %post.sender_name, "room post received");
 

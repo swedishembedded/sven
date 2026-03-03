@@ -12,6 +12,7 @@
 //!   independent agent; there is no shared mutable state between concurrent
 //!   inbound tasks.
 
+use std::collections::HashMap;
 use std::sync::{atomic::AtomicU32, Arc};
 
 use tokio::sync::{mpsc, Mutex};
@@ -27,8 +28,8 @@ use sven_tools::{
 
 use crate::tools::{
     DelegateTool, DelegationContext, DelegationContextHandle, ListConversationsTool, ListPeersTool,
-    PostToRoomTool, ReadRoomHistoryTool, SearchConversationTool, SendMessageTool,
-    SessionDepthHandle, WaitForMessageTool,
+    PostToRoomTool, ReadRoomHistoryTool, RoomDepthHandle, SearchConversationTool, SendMessageTool,
+    SessionDepthHandle, SessionDepthTracker, WaitForMessageTool,
 };
 
 /// Build the shared, long-lived gateway `Agent`.
@@ -51,7 +52,18 @@ pub async fn build_gateway_agent(
     // Empty delegation context — the interactive agent is never itself
     // executing inside a delegated task.
     let delegation_context: DelegationContextHandle = Arc::new(Mutex::new(None));
-    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(0));
+
+    // Per-peer session depth tracker; default_depth=0 so every new peer
+    // conversation starts at depth 0.  The per-peer map ensures that a prior
+    // deep conversation with peer B does not pollute a fresh exchange with C.
+    let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
+        default_depth: 0,
+        per_peer: HashMap::new(),
+    }));
+
+    // Room depth starts at 0 — the gateway never executes inside a reactive
+    // room handler.
+    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
 
     build_agent_with(
         config,
@@ -62,6 +74,7 @@ pub async fn build_gateway_agent(
         rooms,
         delegation_context,
         session_depth,
+        room_depth,
         AgentRuntimeContext::default(),
     )
     .await
@@ -108,7 +121,17 @@ pub async fn build_task_agent(
         ..AgentRuntimeContext::default()
     };
 
-    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(0));
+    // Seed session depth from task_depth so that any session conversation
+    // started by this task agent continues the unified hop budget.  Without
+    // this, a task at depth 2 would start session chains at depth 1, allowing
+    // combined traversals far beyond MAX_HOP_DEPTH.
+    let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
+        default_depth: task_depth,
+        per_peer: HashMap::new(),
+    }));
+
+    // Room depth: task agents can post to rooms but are never reactive handlers.
+    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
 
     build_agent_with(
         config,
@@ -119,6 +142,7 @@ pub async fn build_task_agent(
         rooms,
         delegation_context,
         session_depth,
+        room_depth,
         runtime,
     )
     .await
@@ -154,7 +178,16 @@ pub async fn build_task_agent_with_runtime(
             depth: task_depth,
             chain: task_chain,
         })));
-    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(initial_session_depth));
+    // `initial_session_depth` is the depth of the inbound message that spawned
+    // this agent (session message depth for session agents; 0 for others).
+    // Using it as `default_depth` propagates the cross-protocol hop budget:
+    // a session agent at depth 3 that starts fresh peer conversations continues
+    // from depth 3, not from 0.
+    let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
+        default_depth: initial_session_depth,
+        per_peer: HashMap::new(),
+    }));
+    let room_depth: RoomDepthHandle = Arc::new(AtomicU32::new(0));
     build_agent_with(
         config,
         model,
@@ -164,6 +197,7 @@ pub async fn build_task_agent_with_runtime(
         rooms,
         delegation_context,
         session_depth,
+        room_depth,
         runtime,
     )
     .await
@@ -181,6 +215,7 @@ async fn build_agent_with(
     rooms: Vec<String>,
     delegation_context: DelegationContextHandle,
     session_depth_handle: SessionDepthHandle,
+    room_depth_handle: RoomDepthHandle,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
     let mode = Arc::new(Mutex::new(config.agent.default_mode));
@@ -239,6 +274,7 @@ async fn build_agent_with(
     });
     registry.register(PostToRoomTool {
         p2p: p2p_handle.clone(),
+        room_depth: room_depth_handle,
     });
     registry.register(ReadRoomHistoryTool {
         store: Arc::clone(&store),

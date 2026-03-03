@@ -355,9 +355,14 @@ pub fn p2p_task_guidelines() -> &'static str {
        available on a different peer AND you have already attempted local \
        execution and confirmed it is impossible.\n\
      - **Never delegate back to the peer that sent you this task.**  Doing so \
-       creates a deadlock and the request will be rejected.\n\
+       creates a circular chain; the request will be rejected with a cycle error.\n\
      - **Never use `delegate_task` as your first tool call.**  Always try at \
        least one local approach first.\n\
+     - **Be aware of the unified hop budget.**  The system enforces a single \
+       maximum depth across all message channels (task delegation, session \
+       messages, and room posts).  If you receive an error stating the hop-depth \
+       limit is reached, you MUST complete the task with locally available \
+       information — further routing is impossible.\n\
      - If you genuinely cannot complete the task with any local approach, \
        respond with a clear failure message explaining what is missing."
 }
