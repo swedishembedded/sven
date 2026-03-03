@@ -16,8 +16,8 @@
 //!
 //! # Usage
 //!
-//! Both tools are registered in [`crate::agent_builder::build_gateway_agent`]
-//! automatically whenever the gateway starts.  The LLM will see them in its
+//! Both tools are registered in [`crate::agent_builder::build_node_agent`]
+//! automatically whenever the node starts.  The LLM will see them in its
 //! tool list and can invoke them during any agent turn.
 //!
 //! Example LLM tool calls:
@@ -58,7 +58,7 @@ use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 /// exceed this limit.
 ///
 /// With `MAX_HOP_DEPTH = 4`:
-/// - Pure task chain: gateway → A (depth 1) → B (depth 2) → C (depth 3)
+/// - Pure task chain: node → A (depth 1) → B (depth 2) → C (depth 3)
 ///   → D receives depth 4, rejected before the LLM runs.
 /// - Pure session chain: depths 1–3 accepted; sending at depth 4 blocked by
 ///   `SendMessageTool` before any network traffic.
@@ -93,7 +93,7 @@ pub type DelegationContextHandle = Arc<Mutex<Option<DelegationContext>>>;
 ///
 /// Tracking depth per-peer rather than globally solves two problems:
 ///
-/// 1. **Gateway persistence bug**: a long-lived gateway agent that converses
+/// 1. **Concurrent peer conversations**: a long-lived node agent that converses
 ///    with peer B and reaches depth 3 would permanently block any subsequent
 ///    `send_message` to an unrelated peer C if a single global counter were
 ///    used.  With per-peer tracking, C's chain always starts at
@@ -101,17 +101,39 @@ pub type DelegationContextHandle = Arc<Mutex<Option<DelegationContext>>>;
 ///
 /// 2. **Cross-protocol depth sharing**: `default_depth` is set to the
 ///    task-delegation depth at which this agent is executing (0 for the
-///    interactive gateway, `task_depth` for per-task agents).  This means any
+///    interactive node, `task_depth` for per-task agents).  This means any
 ///    session conversation started by a deep task agent continues the unified
 ///    hop budget instead of restarting from zero.
+///
+/// For the **interactive node agent** the tracker must be reset at the start
+/// of each new user turn by calling [`SessionDepthTracker::reset_per_turn`].
+/// Without the reset, every round-trip with a peer advances the per-peer
+/// counter permanently so the depth limit is hit after just two exchanges,
+/// blocking legitimate follow-up conversations initiated by the user.
+/// Task agents never need this reset because they are created fresh for each
+/// inbound task and discarded when the task completes.
 #[derive(Debug, Default)]
 pub struct SessionDepthTracker {
     /// Baseline depth for any peer not yet present in `per_peer`.
-    /// `0` for the interactive gateway; equals `task_depth` for task agents.
+    /// `0` for the interactive node; equals `task_depth` for task agents.
     pub default_depth: u32,
     /// Per-peer depth counters; updated by `WaitForMessageTool` after each
     /// received message.
     pub per_peer: HashMap<String, u32>,
+}
+
+impl SessionDepthTracker {
+    /// Clear the per-peer depth map at the start of a new interactive user
+    /// turn.
+    ///
+    /// Preserves `default_depth` (which is always 0 for the interactive node)
+    /// so that the cross-protocol budget is not affected.  Only the per-peer
+    /// high-water marks are cleared — they accumulate within a single turn to
+    /// prevent automated ping-pong within that turn, but must not carry over
+    /// to the next independent user request.
+    pub fn reset_per_turn(&mut self) {
+        self.per_peer.clear();
+    }
 }
 
 pub type SessionDepthHandle = Arc<Mutex<SessionDepthTracker>>;
@@ -137,7 +159,7 @@ pub type SessionDepthHandle = Arc<Mutex<SessionDepthTracker>>;
 /// 3. **`default_depth`** — set to the inbound `RoomPost.depth` by the
 ///    reactive room executor before building the agent, so the very first
 ///    response from a reactive handler carries `inbound_depth + 1`.  Always
-///    `0` for proactive (non-reactive) agents such as the gateway agent and
+///    `0` for proactive agents such as the node agent and
 ///    task agents.
 ///
 /// # Proactive vs. reactive posts
@@ -145,7 +167,7 @@ pub type SessionDepthHandle = Arc<Mutex<SessionDepthTracker>>;
 /// * **Proactive** agents (`default_depth == 0`, no `in_reply_to_depth`): the
 ///   post is treated as a new, independent topic; outgoing depth = 1.  The
 ///   `per_room` map is *not* updated, so independent posts never accumulate
-///   depth across calls — the gateway can post status updates all day.
+///   depth across calls — the node can post status updates all day.
 ///
 /// * **Reply** posts (`in_reply_to_depth` provided): outgoing depth =
 ///   `in_reply_to_depth + 1`; `per_room` updated for subsequent replies.
@@ -509,7 +531,7 @@ impl Tool for ListPeersTool {
                 "No agent peers currently connected.\n\
                  Peers are discovered automatically via mDNS on the local network, \
                  or via relay for remote peers.\n\
-                 Make sure other agents are running with `sven gateway start` \
+                 Make sure other agents are running with `sven node start` \
                  and are in the same network or using the same relay.",
             );
         }
@@ -962,7 +984,7 @@ pub struct PostToRoomTool {
     /// Per-room depth tracker for this agent session.
     ///
     /// Initialized by the agent builder:
-    /// * `default_depth = 0` for proactive agents (gateway, task agents).
+    /// * `default_depth = 0` for proactive agents (node, task agents).
     /// * `default_depth = inbound_post.depth` for reactive room handlers
     ///   spawned by [`run_room_executor`], so the first outgoing reply carries
     ///   `inbound_depth + 1` without requiring an explicit `in_reply_to_depth`.
@@ -1040,7 +1062,7 @@ impl Tool for PostToRoomTool {
         // Proactive vs. reactive distinction:
         //  * Proactive agents (default_depth == 0) without `in_reply_to_depth`
         //    always post at depth 1 and do NOT update `per_room`.  This lets the
-        //    long-lived gateway agent send unlimited independent status updates
+        //    long-lived node agent send unlimited independent status updates
         //    without ever exhausting the hop budget.
         //  * Reply posts or reactive agents DO update `per_room` so subsequent
         //    posts to the same room continue the chain rather than resetting.
@@ -1084,7 +1106,7 @@ impl Tool for PostToRoomTool {
 
             // Update the per-room high-water mark only for reply chains or reactive
             // agents.  Independent proactive posts (default_depth==0, no in_reply_to_depth)
-            // never increment the counter, so the gateway can post freely.
+            // never increment the counter, so the node can post freely.
             if reply_depth.is_some() || tracker.default_depth > 0 {
                 tracker
                     .per_room

@@ -27,7 +27,7 @@ use sven_p2p::{
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
-use crate::{config::GatewayConfig, node::build_agent_card};
+use crate::{config::NodeConfig, node::build_agent_card};
 
 // ── Ephemeral P2P node ────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ use crate::{config::GatewayConfig, node::build_agent_card};
 ///
 /// The node runs in a background task.  Drop the returned `JoinHandle` to let
 /// it run forever, or `abort()` it to stop the swarm.
-pub async fn connect(config: &GatewayConfig) -> anyhow::Result<(P2pHandle, JoinHandle<()>)> {
+pub async fn connect(config: &NodeConfig) -> anyhow::Result<(P2pHandle, JoinHandle<()>)> {
     let agent_card = build_agent_card(config);
 
     let listen: libp2p::Multiaddr = config
@@ -97,7 +97,7 @@ pub async fn connect(config: &GatewayConfig) -> anyhow::Result<(P2pHandle, JoinH
 ///
 /// Starts an ephemeral P2P node, waits `timeout_secs` for mDNS discovery and
 /// peer connections, then prints the roster.
-pub async fn list_agent_peers(config: &GatewayConfig, timeout_secs: u64) -> anyhow::Result<()> {
+pub async fn list_agent_peers(config: &NodeConfig, timeout_secs: u64) -> anyhow::Result<()> {
     let (handle, _node) = connect(config).await?;
 
     let local_id = wait_for_local_id(&handle).await;
@@ -111,7 +111,7 @@ pub async fn list_agent_peers(config: &GatewayConfig, timeout_secs: u64) -> anyh
         println!("No agent peers found.");
         println!();
         println!("Make sure other agents are running and that their peer IDs are");
-        println!("listed in your swarm.peers config (~/.config/sven/gateway.yaml).");
+        println!("listed in your swarm.peers config (~/.config/sven/node.yaml).");
         println!();
         println!("Your peer ID: {local_id}");
         println!("(Give this to peers so they can add you to their allowlists.)");
@@ -151,7 +151,7 @@ pub async fn list_agent_peers(config: &GatewayConfig, timeout_secs: u64) -> anyh
 ///
 /// Messages are stored in the local conversation store alongside those from
 /// `sven node start` sessions — everything is in one place.
-pub async fn chat(config: &GatewayConfig, peer_target: &str) -> anyhow::Result<()> {
+pub async fn chat(config: &NodeConfig, peer_target: &str) -> anyhow::Result<()> {
     let (handle, _node) = connect(config).await?;
 
     eprintln!("Connecting…");
@@ -307,7 +307,7 @@ pub fn search(peer: Option<&str>, pattern: &str, limit: usize) -> anyhow::Result
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn default_keypair_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".config/sven/gateway/agent-keypair"))
+    dirs::home_dir().map(|h| h.join(".config/sven/node/agent-keypair"))
 }
 
 /// Wait until `P2pHandle::local_peer_id_string()` is populated (set after the

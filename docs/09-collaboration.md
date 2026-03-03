@@ -27,18 +27,18 @@ sven node start
 ```
 
 **Add each machine's peer ID to the other's config** (see
-[Remote Gateway](08-gateway.md#build-a-team-of-agents) for the full config
+[Remote Node](08-node.md#build-a-team-of-agents) for the full config
 reference):
 
 ```yaml
-# Machine A — gateway.yaml
+# Machine A — node.yaml
 swarm:
   peers:
     "12D3KooWXyZ…": "backend-agent"
 ```
 
 ```yaml
-# Machine B — gateway.yaml
+# Machine B — node.yaml
 swarm:
   peers:
     "12D3KooWQwZg…": "you"

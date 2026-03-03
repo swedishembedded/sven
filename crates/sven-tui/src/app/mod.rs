@@ -35,6 +35,7 @@ use crate::{
     keys::Action,
     layout::AppLayout,
     markdown::StyledLines,
+    node_agent::node_agent_task,
     nvim::NvimBridge,
     ui::{
         input_cursor_screen_pos, nvim_cursor_screen_pos, ChatLabels, ChatPane, CompletionMenu,
@@ -89,6 +90,22 @@ impl QueuedMessage {
     }
 }
 
+/// Node-proxy backend configuration for the TUI.
+///
+/// When set, the TUI forwards all agent interactions to a running sven node
+/// over WebSocket instead of running a local agent.  The node's agent
+/// has a live `P2pHandle`, so peer tools (`list_peers`, `delegate_task`, …)
+/// are available.
+#[derive(Debug, Clone)]
+pub struct NodeBackend {
+    /// WebSocket URL of the running node (e.g. `wss://127.0.0.1:18790/ws`).
+    pub url: String,
+    /// Bearer token for the node's HTTP API.
+    pub token: String,
+    /// Skip TLS certificate verification (safe on loopback).
+    pub insecure: bool,
+}
+
 /// Options passed when constructing the TUI app.
 pub struct AppOptions {
     pub mode: AgentMode,
@@ -99,6 +116,9 @@ pub struct AppOptions {
     pub jsonl_path: Option<PathBuf>,
     pub jsonl_load_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
+    /// When `Some`, connect the TUI to a running node instead of running a
+    /// local agent.  Gives the TUI full access to the node's P2P tools.
+    pub node_backend: Option<NodeBackend>,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -107,6 +127,8 @@ pub struct AppOptions {
 pub struct App {
     // ── Persistent configuration ──────────────────────────────────────────────
     pub(crate) config: Arc<Config>,
+    /// Node-proxy backend, consumed once in `run()`.
+    pub(crate) node_backend: Option<NodeBackend>,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,
@@ -221,6 +243,7 @@ impl App {
 
         let mut app = Self {
             config,
+            node_backend: opts.node_backend,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,
@@ -536,26 +559,44 @@ impl App {
         self.agent.tx = Some(submit_tx.clone());
         self.agent.event_rx = Some(event_rx);
 
-        let cfg = self.config.clone();
-        let mode = self.session.mode;
-        let startup_model_cfg = self.session.model_cfg.clone();
-        let cancel_handle_task = self.agent.cancel.clone();
-        let shared_skills_task = self.shared_skills.clone();
-        let shared_agents_task = self.shared_agents.clone();
-        tokio::spawn(async move {
-            agent_task(
-                cfg,
-                startup_model_cfg,
-                mode,
-                submit_rx,
-                event_tx,
-                question_tx,
-                cancel_handle_task,
-                shared_skills_task,
-                shared_agents_task,
-            )
-            .await;
-        });
+        if let Some(nb) = self.node_backend.take() {
+            // Node-proxy mode: forward all agent interactions to the running
+            // node over WebSocket.  The node's agent has a live
+            // P2pHandle, so peer tools are available.
+            let cancel_handle_task = self.agent.cancel.clone();
+            tokio::spawn(async move {
+                node_agent_task(
+                    nb.url,
+                    nb.token,
+                    nb.insecure,
+                    submit_rx,
+                    event_tx,
+                    cancel_handle_task,
+                )
+                .await;
+            });
+        } else {
+            let cfg = self.config.clone();
+            let mode = self.session.mode;
+            let startup_model_cfg = self.session.model_cfg.clone();
+            let cancel_handle_task = self.agent.cancel.clone();
+            let shared_skills_task = self.shared_skills.clone();
+            let shared_agents_task = self.shared_agents.clone();
+            tokio::spawn(async move {
+                agent_task(
+                    cfg,
+                    startup_model_cfg,
+                    mode,
+                    submit_rx,
+                    event_tx,
+                    question_tx,
+                    cancel_handle_task,
+                    shared_skills_task,
+                    shared_agents_task,
+                )
+                .await;
+            });
+        }
 
         if !self.chat.segments.is_empty() {
             let messages: Vec<Message> = self
@@ -755,6 +796,7 @@ impl App {
             jsonl_path: None,
             jsonl_load_path: None,
             initial_queue: Vec::new(),
+            node_backend: None,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);

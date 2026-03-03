@@ -75,13 +75,13 @@ use crate::{
 
 const CONTROL_PROTO: StreamProtocol = StreamProtocol::new("/sven/control/1.0.0");
 
-/// A request from an operator to the gateway.
+/// A request from an operator to the node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlP2pRequest {
     pub command: ControlCommand,
 }
 
-/// A response from the gateway to an operator.
+/// A response from the node to an operator.
 ///
 /// Carries buffered events that have accumulated since the last poll.
 #[derive(Debug, Clone, Serialize, Deserialize)]

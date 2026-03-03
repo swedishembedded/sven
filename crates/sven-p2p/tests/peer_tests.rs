@@ -306,6 +306,101 @@ fn task_request_response_codec_roundtrip() {
     }
 }
 
+// ── Test: SessionMessage codec round-trip ────────────────────────────────────
+
+#[tokio::test]
+async fn session_message_codec_roundtrip() {
+    use chrono::Utc;
+    use libp2p::request_response::Codec;
+    use sven_p2p::protocol::{
+        codec::{cbor_decode, cbor_encode, P2pCodec, TASK_PROTO},
+        types::{ContentBlock, P2pRequest, P2pResponse, SessionMessageWire, SessionRole},
+    };
+    use uuid::Uuid;
+
+    let msg = SessionMessageWire {
+        message_id: Uuid::new_v4(),
+        seq: 42,
+        timestamp: Utc::now(),
+        role: SessionRole::User,
+        content: vec![ContentBlock::text("Tell Oreo what my name is Martin")],
+        depth: 1,
+    };
+
+    // Test raw CBOR encode/decode.
+    let req = P2pRequest::SessionMessage(msg.clone());
+    let bytes = cbor_encode(&req).unwrap();
+    let decoded: P2pRequest = cbor_decode(&bytes).unwrap();
+    match decoded {
+        P2pRequest::SessionMessage(m) => {
+            assert_eq!(m.message_id, msg.message_id);
+            assert_eq!(m.seq, 42);
+            assert_eq!(m.depth, 1);
+            assert!(matches!(m.role, SessionRole::User));
+            assert_eq!(m.content.len(), 1);
+            match &m.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "Tell Oreo what my name is Martin"),
+                _ => panic!("wrong content block variant"),
+            }
+        }
+        _ => panic!("wrong P2pRequest variant after cbor encode/decode"),
+    }
+
+    // Test the full framed codec path (write_request → read_request).
+    let mut codec = P2pCodec;
+    let req2 = P2pRequest::SessionMessage(msg.clone());
+    let mut buf: Vec<u8> = Vec::new();
+    codec
+        .write_request(&TASK_PROTO, &mut buf, req2)
+        .await
+        .unwrap();
+
+    // The write_request calls close() on the Vec writer which is a no-op,
+    // so buf now contains the framed bytes. Read them back.
+    let mut cursor = futures::io::Cursor::new(buf);
+    let decoded2 = codec.read_request(&TASK_PROTO, &mut cursor).await.unwrap();
+    match decoded2 {
+        P2pRequest::SessionMessage(m) => {
+            assert_eq!(m.message_id, msg.message_id);
+            assert_eq!(m.depth, 1);
+        }
+        _ => panic!("wrong P2pRequest variant after framed codec round-trip"),
+    }
+
+    // Test SessionAck response round-trip.
+    let ack = P2pResponse::SessionAck {
+        message_id: msg.message_id,
+    };
+    let ack_bytes = cbor_encode(&ack).unwrap();
+    let decoded_ack: P2pResponse = cbor_decode(&ack_bytes).unwrap();
+    match decoded_ack {
+        P2pResponse::SessionAck { message_id } => assert_eq!(message_id, msg.message_id),
+        _ => panic!("wrong P2pResponse variant"),
+    }
+
+    // Also test the write_response → read_response path.
+    let mut buf2: Vec<u8> = Vec::new();
+    codec
+        .write_response(
+            &TASK_PROTO,
+            &mut buf2,
+            P2pResponse::SessionAck {
+                message_id: msg.message_id,
+            },
+        )
+        .await
+        .unwrap();
+    let mut cursor2 = futures::io::Cursor::new(buf2);
+    let decoded_ack2 = codec
+        .read_response(&TASK_PROTO, &mut cursor2)
+        .await
+        .unwrap();
+    match decoded_ack2 {
+        P2pResponse::SessionAck { message_id } => assert_eq!(message_id, msg.message_id),
+        _ => panic!("wrong P2pResponse variant after framed response round-trip"),
+    }
+}
+
 // ── Test: keypair persistence ─────────────────────────────────────────────────
 
 #[test]

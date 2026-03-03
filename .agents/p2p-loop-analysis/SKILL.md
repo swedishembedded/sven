@@ -133,7 +133,7 @@ Check every code path in `on_gossipsub_message`:
 When an agent is constructed, verify that the depth handles are seeded correctly:
 
 ```text
-[ ] build_gateway_agent:           session_depth.default_depth = 0
+[ ] build_node_agent:           session_depth.default_depth = 0
 [ ] build_task_agent:              session_depth.default_depth = task_depth
 [ ] build_task_agent_with_runtime: session_depth.default_depth = initial_session_depth
 [ ] build_session_agent (node.rs): calls build_task_agent_with_runtime(

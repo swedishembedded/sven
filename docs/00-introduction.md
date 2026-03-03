@@ -81,7 +81,7 @@ sven node exec "Ask backend-agent to explain the auth module, wait for its reply
 sven peer chat backend-agent
 ```
 
-See [Remote Gateway](08-gateway.md) and
+See [Sven Node](08-node.md) and
 [Agent Collaboration](09-collaboration.md) for the full setup guide.
 
 ---
@@ -109,5 +109,5 @@ to standard output.
 - **[Configuration](05-configuration.md)** — customise model, tools, and appearance
 - **[Examples](06-examples.md)** — real-world use cases
 - **[Troubleshooting](07-troubleshooting.md)** — common issues and fixes
-- **[Remote Gateway](08-gateway.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents
+- **[Sven Node](08-node.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents
 - **[Agent Collaboration](09-collaboration.md)** — persistent peer conversations, rooms, and the `sven peer chat` command

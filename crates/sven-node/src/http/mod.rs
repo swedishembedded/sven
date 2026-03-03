@@ -137,17 +137,17 @@ pub async fn serve(
 
     if config.insecure_dev_mode {
         warn!(
-            "⚠  HTTP gateway running WITHOUT TLS (insecure_dev_mode: true). \
+            "⚠  HTTP node running WITHOUT TLS (insecure_dev_mode: true). \
              Never use this in production."
         );
-        info!(%addr, "HTTP gateway listening (no TLS)");
+        info!(%addr, "HTTP node listening (no TLS)");
         axum_server::bind(addr)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .with_context(|| {
                 format!(
-                    "HTTP gateway failed to bind to {addr} — \
+                    "HTTP node failed to bind to {addr} — \
                      make sure that address is assigned to a local interface \
                      (use 0.0.0.0 to listen on all interfaces)"
                 )
@@ -180,7 +180,7 @@ pub async fn serve(
             %addr,
             fingerprint = %tls_runtime.fingerprint_sha256,
             mode = %mode_label,
-            "HTTPS gateway listening (TLS 1.3, ECDSA P-256)",
+            "HTTPS node listening (TLS 1.3, ECDSA P-256)",
         );
         info!(
             "Pin this fingerprint in your mobile app to prevent MITM: {}",
@@ -193,7 +193,7 @@ pub async fn serve(
             .await
             .with_context(|| {
                 format!(
-                    "HTTPS gateway failed to bind to {addr} — \
+                    "HTTPS node failed to bind to {addr} — \
                      make sure that address is assigned to a local interface \
                      (use 0.0.0.0 to listen on all interfaces)"
                 )

@@ -53,10 +53,15 @@ jobs:
 
   # ── Linux aarch64 ────────────────────────────────────────────────────────────
   # Cross-compiles via `cross` (Docker-based), reuses completions from x86 job.
+  # OPENSSL_VENDORED=1 is required because the cross Docker image ships
+  # OpenSSL 1.0.2 which is rejected by webauthn-attestation-ca (needs ≥ 3.0).
+  # The vendored build compiles OpenSSL 3.x from source inside the container.
   build-linux-aarch64:
     name: Linux aarch64
     runs-on: ubuntu-latest
     needs: build-linux-x86_64
+    env:
+      OPENSSL_VENDORED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -98,10 +103,8 @@ jobs:
           path: dist/
 
   # ── macOS universal binary ────────────────────────────────────────────────────
-  # TODO: openssl-sys cross-compilation from aarch64 → x86_64 runner is broken.
-  # The job is kept here so we don't lose the workflow structure, but it does not
-  # block the release (continue-on-error: true) and its artifact is not uploaded
-  # to the GitHub Release until the OpenSSL issue is resolved.
+  # OPENSSL_VENDORED=1 builds OpenSSL from source; needed because the macOS
+  # runners do not ship a system OpenSSL that satisfies webauthn-attestation-ca.
   build-macos:
     name: macOS (universal) [experimental]
     runs-on: macos-latest

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! Wire protocol between remote operators and the gateway.
+//! Wire protocol between remote operators and the node.
 //!
 //! All types derive `Serialize`/`Deserialize` and are encoded as:
 //! - **CBOR** over P2P (via `ciborium`) — compact binary, no schema needed.
@@ -55,7 +55,7 @@ use uuid::Uuid;
 pub enum ControlCommand {
     /// Create (or resume) an agent session.
     NewSession {
-        /// Caller-supplied session UUID. The gateway echoes it back in events.
+        /// Caller-supplied session UUID. The node echoes it back in events.
         id: Uuid,
         mode: AgentMode,
         /// Working directory for the agent (absolute path or relative to the
@@ -81,7 +81,7 @@ pub enum ControlCommand {
 
     /// Subscribe to live events for a session.
     ///
-    /// The gateway will push `ControlEvent`s on the established stream until
+    /// The node will push `ControlEvent`s on the established stream until
     /// the operator unsubscribes or the connection closes.
     Subscribe { session_id: Uuid },
 
@@ -93,7 +93,7 @@ pub enum ControlCommand {
 
     /// Request the schemas of all tools registered on the node.
     ///
-    /// The gateway responds with a [`ControlEvent::ToolList`] broadcast.
+    /// The node responds with a [`ControlEvent::ToolList`] broadcast.
     ListTools,
 
     /// Execute a single tool directly on the node's tool registry.
@@ -186,8 +186,8 @@ pub enum ControlEvent {
         message: String,
     },
 
-    /// Gateway-level error (not session-specific).
-    GatewayError { code: u32, message: String },
+    /// Node-level error (not session-specific).
+    NodeError { code: u32, message: String },
 
     /// Response to a [`ControlCommand::ListTools`] request.
     ToolList { tools: Vec<ToolSchemaInfo> },

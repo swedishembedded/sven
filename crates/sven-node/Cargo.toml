@@ -2,7 +2,7 @@
 name    = "sven-node"
 version = "1.0.0"
 edition = "2021"
-description = "Secure remote-control gateway for sven agents"
+description = "HTTP/P2P node for sven agents"
 
 [dependencies]
 # ── HTTP server ───────────────────────────────────────────────────────────────

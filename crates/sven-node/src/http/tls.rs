@@ -20,7 +20,7 @@
 //! ca-key.pem ──► ca-cert.pem   (10yr, stored in tls_cert_dir)
 //!                    │
 //!                    ▼ signs
-//!              gateway-cert.pem (90d, contains all SANs)
+//!              node-cert.pem (90d, contains all SANs)
 //! ```
 //!
 //! Users install `ca-cert.pem` once via `sven node install-ca`. Every
@@ -112,8 +112,8 @@ pub fn provision(
         TlsMode::LocalCa => local_ca_provision(cert_dir, bind_addr, san_extra),
         TlsMode::SelfSigned => self_signed_provision(cert_dir, bind_addr, san_extra),
         TlsMode::Files => {
-            let cert_path = cert_dir.join("gateway-cert.pem");
-            let key_path = cert_dir.join("gateway-key.pem");
+            let cert_path = cert_dir.join("node-cert.pem");
+            let key_path = cert_dir.join("node-key.pem");
             load_from_files(&cert_path, &key_path, TlsModeUsed::Files)
         }
     }
@@ -200,8 +200,8 @@ fn local_ca_provision(
 
     let ca_cert_path = cert_dir.join("ca-cert.pem");
     let ca_key_path = cert_dir.join("ca-key.pem");
-    let server_cert_path = cert_dir.join("gateway-cert.pem");
-    let server_key_path = cert_dir.join("gateway-key.pem");
+    let server_cert_path = cert_dir.join("node-cert.pem");
+    let server_key_path = cert_dir.join("node-key.pem");
 
     let first_run = !ca_cert_path.exists() || !ca_key_path.exists();
 
@@ -349,8 +349,8 @@ fn self_signed_provision(
     std::fs::create_dir_all(cert_dir)
         .with_context(|| format!("creating TLS cert dir {}", cert_dir.display()))?;
 
-    let cert_path = cert_dir.join("gateway-cert.pem");
-    let key_path = cert_dir.join("gateway-key.pem");
+    let cert_path = cert_dir.join("node-cert.pem");
+    let key_path = cert_dir.join("node-key.pem");
 
     let needs_generate =
         !cert_path.exists() || !key_path.exists() || cert_is_expiring_soon(&cert_path);
@@ -615,7 +615,7 @@ fn restrict_file_permissions(path: &Path) -> anyhow::Result<()> {
 pub fn default_cert_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config/sven/gateway/tls")
+        .join(".config/sven/node/tls")
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -638,8 +638,8 @@ mod tests {
     fn self_signed_cert_files_are_created() {
         let dir = tempfile::tempdir().unwrap();
         provision(&TlsMode::SelfSigned, dir.path(), "0.0.0.0:18790", &[]).unwrap();
-        assert!(dir.path().join("gateway-cert.pem").exists());
-        assert!(dir.path().join("gateway-key.pem").exists());
+        assert!(dir.path().join("node-cert.pem").exists());
+        assert!(dir.path().join("node-key.pem").exists());
     }
 
     #[test]
@@ -656,8 +656,8 @@ mod tests {
         let rt = provision(&TlsMode::LocalCa, dir.path(), "0.0.0.0:18790", &[]).unwrap();
         assert!(dir.path().join("ca-cert.pem").exists());
         assert!(dir.path().join("ca-key.pem").exists());
-        assert!(dir.path().join("gateway-cert.pem").exists());
-        assert!(dir.path().join("gateway-key.pem").exists());
+        assert!(dir.path().join("node-cert.pem").exists());
+        assert!(dir.path().join("node-key.pem").exists());
         assert_eq!(rt.mode_used, TlsModeUsed::LocalCa);
     }
 
@@ -683,7 +683,7 @@ mod tests {
         )
         .unwrap();
         // Verify the cert was created (content verification would need x509 parser).
-        assert!(dir.path().join("gateway-cert.pem").exists());
+        assert!(dir.path().join("node-cert.pem").exists());
     }
 
     #[test]
@@ -706,7 +706,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         provision(&TlsMode::SelfSigned, dir.path(), "127.0.0.1:18790", &[]).unwrap();
-        let meta = std::fs::metadata(dir.path().join("gateway-key.pem")).unwrap();
+        let meta = std::fs::metadata(dir.path().join("node-key.pem")).unwrap();
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "key must be 0600, got {mode:03o}");
     }

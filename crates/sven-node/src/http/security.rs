@@ -15,7 +15,7 @@
 //! | `Permissions-Policy`           | camera/mic/geolocation disabled   |
 //! | `Content-Security-Policy`      | strict, no inline scripts         |
 //!
-//! HSTS is set even though the gateway defaults to loopback-only. If the
+//! HSTS is set even though the node defaults to loopback-only. If the
 //! operator exposes it over LAN or Tailscale the header will already be there.
 //!
 //! # CSRF protection

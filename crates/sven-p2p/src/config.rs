@@ -34,7 +34,7 @@ pub struct P2pConfig {
     /// P2pNode starting peer_id=12D3KooW…
     /// ```
     ///
-    /// This enforces the "deny-all" security default documented in the gateway.
+    /// This enforces the "deny-all" security default.
     /// Inbound Announce requests from unlisted peers are rejected with a warning.
     pub agent_peers: HashSet<PeerId>,
 

@@ -71,8 +71,8 @@ use sven_p2p::{
 
 use crate::tools::MAX_HOP_DEPTH;
 use crate::{
-    agent_builder::{build_gateway_agent, build_room_reactive_agent, build_task_agent},
-    config::{GatewayConfig, SlackMode},
+    agent_builder::{build_node_agent, build_room_reactive_agent, build_task_agent},
+    config::{NodeConfig, SlackMode},
     control::{
         protocol::{ControlCommand, ControlEvent},
         service::ControlService,
@@ -110,10 +110,7 @@ const MAX_TASK_PAYLOAD_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 ///
 /// This is the single entry point for `sven gateway start`.  It owns the full
 /// lifecycle: agent construction, P2P node, HTTP server, Slack tasks.
-pub async fn run(
-    config: GatewayConfig,
-    sven_config: Arc<sven_config::Config>,
-) -> anyhow::Result<()> {
+pub async fn run(config: NodeConfig, sven_config: Arc<sven_config::Config>) -> anyhow::Result<()> {
     // ── Agent card ────────────────────────────────────────────────────────────
     let agent_card = build_agent_card(&config);
     info!(
@@ -180,7 +177,7 @@ pub async fn run(
     let model: Arc<dyn sven_model::ModelProvider> =
         Arc::from(sven_model::from_config(&sven_config.model)?);
 
-    let agent = build_gateway_agent(
+    let (agent, node_session_depth) = build_node_agent(
         &sven_config,
         Arc::clone(&model),
         p2p_handle.clone(),
@@ -235,32 +232,34 @@ pub async fn run(
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
 
         // Build environment variables injected into every PTY session.
-        // SVEN_GATEWAY_TOKEN lets the in-terminal sven process authenticate
+        // SVEN_NODE_TOKEN lets the in-terminal sven process authenticate
         // to this node without any user setup.
-        // SVEN_GATEWAY_URL points at the loopback so connections stay local.
-        // SVEN_GATEWAY_INSECURE=1 skips TLS cert verification on loopback
-        // (MITM on 127.0.0.1 is not a realistic threat).
+        // SVEN_NODE_URL points at the loopback so connections stay local.
         let mut pty_session_env = std::collections::HashMap::new();
-        let gateway_scheme = if config.http.insecure_dev_mode {
+        let node_scheme = if config.http.insecure_dev_mode {
             "ws"
         } else {
             "wss"
         };
         // Extract port from bind address; fall back to 18790 if unparseable.
-        let gateway_port = config
+        let node_port = config
             .http
             .bind
             .rsplit(':')
             .next()
             .unwrap_or("18790")
             .to_string();
-        let gateway_url = format!("{gateway_scheme}://127.0.0.1:{gateway_port}/ws");
-        pty_session_env.insert("SVEN_NODE_URL".into(), gateway_url.clone());
+        let node_url = format!("{node_scheme}://127.0.0.1:{node_port}/ws");
+        pty_session_env.insert("SVEN_NODE_URL".into(), node_url.clone());
         // Keep the legacy name so existing scripts still work.
-        pty_session_env.insert("SVEN_GATEWAY_URL".into(), gateway_url.clone());
-        pty_session_env.insert("SVEN_GATEWAY_INSECURE".into(), "1".into());
+        pty_session_env.insert("SVEN_GATEWAY_URL".into(), node_url.clone());
+        // Only propagate insecure mode when the node itself is running without
+        // TLS — never default to skipping certificate verification.
+        if config.http.insecure_dev_mode {
+            pty_session_env.insert("SVEN_GATEWAY_INSECURE".into(), "1".into());
+        }
         if let Some(ref tok) = local_token_opt {
-            pty_session_env.insert("SVEN_GATEWAY_TOKEN".into(), tok.clone());
+            pty_session_env.insert("SVEN_NODE_TOKEN".into(), tok.clone());
         }
 
         let pty_manager = PtyManager::new(
@@ -285,7 +284,7 @@ pub async fn run(
     };
 
     // ── ControlService ────────────────────────────────────────────────────────
-    let (mut service, agent_handle) = ControlService::new(agent);
+    let (mut service, agent_handle) = ControlService::new(agent, node_session_depth);
 
     // Wire the web device registry into the service so that
     // `sven node web-devices approve/revoke/list` can be handled at runtime
@@ -1352,7 +1351,7 @@ async fn execute_inbound_task(
 ///
 /// Called by `sven gateway pair <uri>`.
 pub async fn pair_peer(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     uri: &str,
     label: Option<String>,
 ) -> anyhow::Result<()> {
@@ -1404,7 +1403,7 @@ pub async fn pair_peer(
 }
 
 /// Revoke an authorized peer by PeerId string.
-pub async fn revoke_peer(config: &GatewayConfig, peer_id_str: &str) -> anyhow::Result<()> {
+pub async fn revoke_peer(config: &NodeConfig, peer_id_str: &str) -> anyhow::Result<()> {
     let peer_id: PeerId = peer_id_str
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid PeerId: {e}"))?;
@@ -1432,7 +1431,7 @@ pub async fn revoke_peer(config: &GatewayConfig, peer_id_str: &str) -> anyhow::R
 }
 
 /// Regenerate the HTTP bearer token, printing the new raw token once.
-pub fn regenerate_token(config: &GatewayConfig) -> anyhow::Result<()> {
+pub fn regenerate_token(config: &NodeConfig) -> anyhow::Result<()> {
     let token_path = config
         .http
         .token_file
@@ -1451,7 +1450,7 @@ pub fn regenerate_token(config: &GatewayConfig) -> anyhow::Result<()> {
 /// These are human operator devices (phones, laptops) paired with
 /// `sven node pair`. This is NOT the same as the agent `list_peers` tool,
 /// which shows other sven nodes available for task delegation.
-pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
+pub fn list_peers(config: &NodeConfig) -> anyhow::Result<()> {
     let ctrl = config.control.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "operator control node is not configured — add a `control` section to your gateway config"
@@ -1491,7 +1490,7 @@ pub fn list_peers(config: &GatewayConfig) -> anyhow::Result<()> {
 
 /// Build an `AgentCard` from the gateway config, filling in defaults from the
 /// system hostname if no explicit identity is configured.
-pub fn build_agent_card(config: &GatewayConfig) -> AgentCard {
+pub fn build_agent_card(config: &NodeConfig) -> AgentCard {
     let default_name = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
@@ -1525,7 +1524,7 @@ pub fn build_agent_card(config: &GatewayConfig) -> AgentCard {
 /// cert dir is unavailable).  Connections to localhost are automatically
 /// treated as insecure since the bearer token provides authentication.
 pub async fn exec_task(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     url: &str,
     token: &str,
     task: &str,
@@ -1625,7 +1624,7 @@ pub async fn exec_task(
                 ..
             } => break,
             ControlEvent::SessionState { .. } => {}
-            ControlEvent::GatewayError { message, .. } => {
+            ControlEvent::NodeError { message, .. } => {
                 anyhow::bail!("node error: {message}");
             }
             ControlEvent::AgentError { message, .. } => {
@@ -1770,7 +1769,7 @@ fn build_ws_tls_connector(
 
 /// List registered browser devices.
 pub async fn web_devices_list(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     url: &str,
     token: &str,
     filter: &str,
@@ -1833,7 +1832,7 @@ pub async fn web_devices_list(
 
 /// Approve a pending browser device.
 pub async fn web_devices_approve(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     url: &str,
     token: &str,
     device_id: &str,
@@ -1866,7 +1865,7 @@ pub async fn web_devices_approve(
 
 /// Revoke an approved browser device.
 pub async fn web_devices_revoke(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     url: &str,
     token: &str,
     device_id: &str,
@@ -1900,7 +1899,7 @@ pub async fn web_devices_revoke(
 /// Send a single web-device command to the running node and return the first
 /// `WebDevice*` response event.
 async fn send_web_device_command(
-    config: &GatewayConfig,
+    config: &NodeConfig,
     url: &str,
     token: &str,
     cmd: ControlCommand,

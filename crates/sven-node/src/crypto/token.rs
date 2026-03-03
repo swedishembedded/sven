@@ -114,7 +114,7 @@ impl StoredToken {
 
 /// On-disk YAML format for the token file.
 ///
-/// Example `~/.config/sven/gateway/token.yaml`:
+/// Example `~/.config/sven/node/token.yaml`:
 /// ```yaml
 /// # SHA-256 hash of the bearer token. The raw token was shown once at generation.
 /// token_hash: "a3f2...b7"

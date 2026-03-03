@@ -117,7 +117,7 @@ online, then:
 sven handles the rest — calling `list_peers`, picking the right peers, calling
 `delegate_task` for each, and assembling the results.
 
-See [docs/08-gateway.md](docs/08-gateway.md) for setup, security, and configuration.
+See [docs/08-node.md](docs/08-node.md) for setup, security, and configuration.
 
 ---
 
@@ -264,7 +264,7 @@ See [docs/providers.md](docs/providers.md) for configuration details.
 | [Configuration](docs/05-configuration.md) | All config options explained |
 | [Examples](docs/06-examples.md) | Real-world use cases |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
-| [Node / P2P](docs/08-gateway.md) | Remote access, device pairing, agent networking |
+| [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
 
 Build the full user guide locally:
 
@@ -388,7 +388,7 @@ sven/
     ├── sven-ci/            # headless runner and output formatting
     ├── sven-tui/           # Ratatui TUI: layout, widgets, key bindings
     ├── sven-p2p/           # libp2p node: Noise, mDNS, relay, task routing
-    ├── sven-node/          # node: HTTP/WS gateway + P2P + Slack + agent wiring
+    ├── sven-node/          # node: HTTP/WS node + P2P + Slack + agent wiring
     ├── sven-runtime/       # shared runtime utilities
     └── sven-bootstrap/     # first-run setup helpers
 ```

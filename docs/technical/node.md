@@ -1,16 +1,16 @@
-# Gateway — Architecture
+# Node — Architecture
 
-This document explains the design concepts behind `sven-gateway` and `sven-p2p`:
+This document explains the design concepts behind `sven-node` and `sven-p2p`:
 why components are structured the way they are, and what trade-offs drove the
 key decisions.
 
-For configuration, commands, and usage see [../08-gateway.md](../08-gateway.md).
+For configuration, commands, and usage see [../08-node.md](../08-node.md).
 
 ---
 
 ## Two separate P2P channels
 
-The gateway runs two independent libp2p swarms with different protocols,
+The node runs two independent libp2p swarms with different protocols,
 different keypairs, and different trust models:
 
 **Operator control channel** — connects human operators (mobile apps, CLI
@@ -46,7 +46,7 @@ send/subscribe interface — the agent itself does not change.
 
 ## Inbound task execution
 
-When a remote agent sends a task, the gateway runs it through the local agent
+When a remote agent sends a task, the node runs it through the local agent
 the same way a human operator would: it creates a session, submits the task
 text as input, waits for the session to complete, and sends back the final
 response.
@@ -165,7 +165,7 @@ these patterns.
 `TaskRequest.depth` starts at `0` for tasks that originate locally and is
 incremented by `1` each time a peer forwards the request via `delegate_task`.
 The receiver rejects the request before the LLM runs if
-`depth >= MAX_DELEGATION_DEPTH` (= 3).
+`depth >= MAX_HOP_DEPTH` (= 4).
 
 `DelegateTool::execute` also checks the depth before sending, so the LLM
 receives a tool error rather than waiting for a remote rejection.
@@ -206,12 +206,21 @@ added to `permanently_rejected` and the connection being closed.
 
 ### Interaction with session depth
 
-Task agents are not inside a session reply chain at creation time, so their
-`SessionDepthHandle` starts at `0`.  If a task agent calls `send_message` to
-coordinate with a peer, the session-chain depth guards (see
-[technical/session-room-protocol.md](session-room-protocol.md)) apply
-independently of the delegation depth.  The two depth counters track separate
-message dimensions and do not interact.
+All message channels — task delegation, session messages, and room posts —
+share a **single unified budget**: `MAX_HOP_DEPTH = 4`.  The two counters
+are not independent; they draw from the same limit.
+
+When a task agent calls `send_message` to coordinate with a peer, its
+`SessionDepthTracker` is seeded with `default_depth = task_depth` (the
+delegation depth at which the task is already executing).  This means a task
+that was delegated to depth 2 can only exchange one more session round-trip
+before the unified limit is reached — the session budget is
+`MAX_HOP_DEPTH - task_depth`, not a fresh `MAX_HOP_DEPTH`.
+
+This cross-protocol seeding ensures that a malicious or confused peer cannot
+bypass depth limits by switching from task delegation to session messages
+mid-chain.  See [session-room-protocol.md](session-room-protocol.md) §3 for
+details on `SessionDepthTracker.default_depth`.
 
 ---
 

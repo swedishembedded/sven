@@ -192,7 +192,7 @@ pub struct TaskRequest {
     ///
     /// `0` = request originated directly from a human operator or the local
     /// agent.  Each time an agent forwards the task to a peer via
-    /// `delegate_task` this counter is incremented.  The receiving gateway
+    /// `delegate_task` this counter is incremented.  The receiving node
     /// **rejects** requests that reach [`MAX_DELEGATION_DEPTH`] before running
     /// the LLM, preventing runaway delegation storms.
     ///

@@ -226,7 +226,7 @@ impl P2pHandle {
     }
 
     /// Reply to an inbound task request.  Called by the task executor in the
-    /// gateway once the agent has finished processing the task.
+    /// node once the agent has finished processing the task.
     pub async fn reply_to_task(
         &self,
         id: uuid::Uuid,
@@ -464,6 +464,7 @@ impl P2pNode {
             relay_connection_ids: HashMap::new(),
             pending_inbound: HashMap::new(),
             pending_outbound: HashMap::new(),
+            pending_session_acks: HashMap::new(),
             agent_peers: self.config.agent_peers.clone(),
             pending_heartbeats: HashSet::new(),
             store: Arc::clone(&self.store),
@@ -529,6 +530,18 @@ struct NodeState {
     /// OutboundRequestId → oneshot sender.
     /// Populated in `on_command(SendTask)`; fired when the response arrives.
     pending_outbound: HashMap<request_response::OutboundRequestId, TaskReplySender>,
+    /// Outbound `SessionMessage` requests awaiting a `SessionAck` from the
+    /// remote peer: OutboundRequestId → oneshot reply sender.
+    ///
+    /// Unlike task requests, session messages are fire-and-forget from the
+    /// application's perspective, but we still track the request ID so that:
+    /// 1. `OutboundFailure` events are handled correctly (not misrouted to the
+    ///    announce-failure path) and the error is propagated to the caller.
+    /// 2. The `SessionAck` response is consumed properly instead of being
+    ///    silently dropped, which would otherwise leave the request_response
+    ///    behaviour in a confused state on some implementations.
+    pending_session_acks:
+        HashMap<request_response::OutboundRequestId, oneshot::Sender<Result<(), P2pError>>>,
     /// Allowlist of peer IDs permitted to join the agent mesh.
     /// An empty set means deny-all (secure default).
     agent_peers: HashSet<PeerId>,
@@ -991,6 +1004,14 @@ impl NodeState {
                     tracing::debug!(%peer, "heartbeat ack received");
                     return;
                 }
+                // SessionAck from a send_session_message call — unblock the caller.
+                if let P2pResponse::SessionAck { message_id } = &response {
+                    if let Some(reply_tx) = self.pending_session_acks.remove(&request_id) {
+                        tracing::debug!(%peer, %message_id, "session message ack received");
+                        let _ = reply_tx.send(Ok(()));
+                        return;
+                    }
+                }
                 if let P2pResponse::TaskResult(resp) = response {
                     // Fire the waiting oneshot for the caller of send_task().
                     if let Some(reply_tx) = self.pending_outbound.remove(&request_id) {
@@ -1121,6 +1142,17 @@ impl NodeState {
             return; // Task failure — nothing else to do here.
         }
 
+        // If this was a SessionMessage, propagate the delivery failure to the
+        // caller (send_session_message).  This lets the tool surface the error
+        // to the LLM instead of silently reporting success while the message
+        // was never delivered.
+        if let Some(reply_tx) = self.pending_session_acks.remove(&request_id) {
+            let _ = reply_tx.send(Err(P2pError::Transport(format!(
+                "session message delivery failed to {peer}: {error}"
+            ))));
+            return;
+        }
+
         // If it was an Announce and the failure was transient, allow it to be
         // re-sent on the next connection attempt.  Do NOT immediately retry
         // while still connected — that creates a retry storm for persistent
@@ -1197,7 +1229,7 @@ impl NodeState {
 
         let id = req.id;
         // Store the response channel keyed by task ID.  The task executor
-        // (running in the gateway) will call P2pHandle::reply_to_task(id, ...)
+        // (running in the node) will call P2pHandle::reply_to_task(id, ...)
         // which sends P2pCommand::TaskReply back to this event loop, where we
         // look up the channel and call send_response.  This keeps the
         // ResponseChannel inside the swarm event loop (the only place allowed
@@ -1472,11 +1504,15 @@ impl NodeState {
                         tracing::warn!("store append_message (outbound) failed: {e}");
                     }
                 });
-                swarm
+                let req_id = swarm
                     .behaviour_mut()
                     .task
                     .send_request(&peer, P2pRequest::SessionMessage(message));
-                let _ = reply_tx.send(Ok(()));
+                // Track the request ID so that:
+                // • The SessionAck response fires reply_tx with Ok(()).
+                // • An OutboundFailure fires reply_tx with Err(...) instead of
+                //   being misrouted to the announce-failure path.
+                self.pending_session_acks.insert(req_id, reply_tx);
                 false
             }
             P2pCommand::WaitPeerMessage { peer, reply_tx } => {

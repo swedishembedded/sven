@@ -377,7 +377,7 @@ function startTerminal() {
     fontSize:     11,
     lineHeight:   1.2,
     // Allow the Meta key (Alt on Linux/Windows, Option on macOS) to pass
-    // through as an escape prefix — required for many tmux/vim bindings.
+    // through as an escape prefix — required for many terminal key bindings.
     macOptionIsMeta: true,
     allowProposedApi: true,
     theme: {
@@ -412,16 +412,14 @@ function startTerminal() {
   // ── Keyboard interception ─────────────────────────────────────────────────
   //
   // Browsers intercept many Ctrl+key combinations (bold, reload, new tab, …)
-  // before xterm.js sees them.  tmux uses Ctrl+B as its prefix key, making
-  // pane splits and window switching impossible without interception.
+  // before xterm.js sees them.
   //
   // Strategy: let xterm handle ALL key events except:
-  //   Ctrl+Shift+C — browser clipboard copy  (does not conflict with tmux)
-  //   Ctrl+Shift+V — browser clipboard paste (does not conflict with tmux)
+  //   Ctrl+Shift+C — browser clipboard copy
+  //   Ctrl+Shift+V — browser clipboard paste
   //
   // Note: Ctrl+W (close tab), Ctrl+T (new tab), Ctrl+N (new window) are
   // intercepted at the browser chrome level and CANNOT be overridden.
-  // Use tmux bindings that don't conflict with those if needed.
   term.attachCustomKeyEventHandler(e => {
     // Allow Ctrl+Shift+C/V so the user can still copy/paste via the browser.
     if (e.ctrlKey && e.shiftKey) {
@@ -445,8 +443,7 @@ function startTerminal() {
 
     ws.onopen = () => {
       reconnectDelay = 1000;
-      // Hide the status bar when cleanly connected — frees the bottom row
-      // for tmux's own status line.
+      ptyExited = false;
       statusBar.className = '';
       // Re-fit and report size so the PTY is in sync with the current
       // viewport.  The double-rAF ensures the status bar has collapsed
@@ -458,16 +455,45 @@ function startTerminal() {
       }));
     };
 
+    // Track whether the server sent a PTY-exited notification (0x02 frame)
+    // before closing.  When true we show a restart button instead of
+    // auto-reconnecting, since the process ended cleanly.
+    let ptyExited = false;
+
     ws.onmessage = evt => {
       const data = new Uint8Array(evt.data);
       if (data.length === 0) return;
       if (data[0] === 0x00) {
         term.write(data.slice(1));
+      } else if (data[0] === 0x02) {
+        // PTY process exited — note it so onclose can show the restart button.
+        ptyExited = true;
       }
       // 0x01 control frames from server → reserved for future use.
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      // WS close code 4001 = PTY process exited cleanly.  The 0x02 frame
+      // should have been received already (ptyExited === true) but guard on
+      // the close code as well for robustness.
+      if (ptyExited || ev.code === 4001) {
+        statusBar.className = 'disconnected';
+        statusText.innerHTML =
+          'session ended — ' +
+          '<button id="btn-restart-session" style="' +
+            'background:none;border:1px solid #5b8dee;color:#5b8dee;' +
+            'padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.85rem;"' +
+          '>restart session</button>';
+        const btn = document.getElementById('btn-restart-session');
+        if (btn) btn.addEventListener('click', () => {
+          ptyExited = false;
+          reconnectDelay = 1000;
+          statusText.textContent = 'reconnecting…';
+          connect();
+        });
+        return;
+      }
+
       statusBar.className = 'reconnecting';
       const secs = Math.round(reconnectDelay / 1000);
       statusText.textContent = `connection lost — reconnecting in ${secs}s…`;
@@ -484,6 +510,7 @@ function startTerminal() {
             return;
           }
         } catch (_) { /* network error — attempt reconnect anyway */ }
+        ptyExited = false;
         statusText.textContent = 'reconnecting…';
         connect();
       }, reconnectDelay);
@@ -578,8 +605,8 @@ function startTerminal() {
   //           After the finger lifts, kinetic momentum scrolling decays the
   //           velocity so a quick flick continues scrolling naturally.
   //
-  //   Horizontal-dominant swipes are ignored so tmux pane / window navigation
-  //   (Ctrl+B arrow, next-window) is not accidentally converted to scroll.
+  //   Horizontal-dominant swipes are ignored so horizontal key sequences
+  //   are not accidentally converted to scroll events.
   //
   //   touchstart is non-passive so that touchmove can call preventDefault(),
   //   which is required to stop the browser from performing its own panning

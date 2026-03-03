@@ -38,7 +38,7 @@
 //! # use uuid::Uuid;
 //! # async fn example(agent: Agent) {
 //! // Construct the service and get a cheap clone-able handle.
-//! let (service, handle) = ControlService::new(agent);
+//! let (service, handle) = ControlService::new(agent, None);
 //!
 //! // Spawn the service loop.
 //! tokio::spawn(service.run());
@@ -166,6 +166,16 @@ pub struct ControlService {
     web_devices: Option<DeviceRegistry>,
     /// Approval broadcast channel — notifies pending SSE streams.
     web_approval_tx: Option<tokio::sync::broadcast::Sender<Uuid>>,
+    /// Session-chain depth handle for the interactive node agent.
+    ///
+    /// Reset at the start of each new user turn so that independent user
+    /// requests each start from depth 0.  Without the reset, every
+    /// `send_message` → `wait_for_message` round-trip would permanently
+    /// advance the per-peer counter, causing the depth limit to be hit
+    /// after just two exchanges with the same peer.
+    ///
+    /// `None` for the test stub (which uses a mock agent with no P2P tools).
+    node_session_depth: Option<crate::tools::SessionDepthHandle>,
 }
 
 impl ControlService {
@@ -197,14 +207,22 @@ impl ControlService {
             tool_rx,
             8192,
         );
-        Self::new(agent)
+        Self::new(agent, None)
     }
 
     /// Construct the service and return a cheap [`AgentHandle`] to it.
     ///
+    /// `node_session_depth` should be the [`SessionDepthHandle`] returned by
+    /// [`crate::agent_builder::build_node_agent`].  Pass `None` in tests.
+    /// The handle is used to reset the per-peer depth map at the start of each
+    /// user turn so that independent exchanges each start from depth 0.
+    ///
     /// The handle must be cloned and distributed to transport handlers
     /// **before** calling [`ControlService::run`].
-    pub fn new(agent: Agent) -> (Self, AgentHandle) {
+    pub fn new(
+        agent: Agent,
+        node_session_depth: impl Into<Option<crate::tools::SessionDepthHandle>>,
+    ) -> (Self, AgentHandle) {
         // Channel capacity: deep enough to absorb bursts without blocking.
         let (cmd_tx, cmd_rx) = mpsc::channel(256);
         // Broadcast capacity: events are small; 1024 is generous.
@@ -226,6 +244,7 @@ impl ControlService {
             sessions: HashMap::new(),
             web_devices: None,
             web_approval_tx: None,
+            node_session_depth: node_session_depth.into(),
         };
 
         (svc, handle)
@@ -458,7 +477,7 @@ impl ControlService {
 
     async fn handle_new_session(&mut self, id: Uuid, mode: AgentMode, working_dir: Option<String>) {
         if self.sessions.contains_key(&id) {
-            self.broadcast(ControlEvent::GatewayError {
+            self.broadcast(ControlEvent::NodeError {
                 code: 409,
                 message: format!("session {id} already exists"),
             });
@@ -480,7 +499,7 @@ impl ControlService {
         let session = match self.sessions.get_mut(&session_id) {
             Some(s) => s,
             None => {
-                self.broadcast(ControlEvent::GatewayError {
+                self.broadcast(ControlEvent::NodeError {
                     code: 404,
                     message: format!("session {session_id} not found"),
                 });
@@ -489,7 +508,7 @@ impl ControlService {
         };
 
         if session.state == SessionState::Running {
-            self.broadcast(ControlEvent::GatewayError {
+            self.broadcast(ControlEvent::NodeError {
                 code: 409,
                 message: format!("session {session_id} is already running"),
             });
@@ -507,6 +526,14 @@ impl ControlService {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         if let Some(s) = self.sessions.get_mut(&session_id) {
             s.cancel_tx = Some(cancel_tx);
+        }
+
+        // Reset per-peer session depth so this user turn starts from depth 0.
+        // Without this, every round-trip with a peer permanently advances the
+        // per-peer counter, causing the depth limit to be hit after just two
+        // exchanges with the same peer across independent user sessions.
+        if let Some(ref depth_handle) = self.node_session_depth {
+            depth_handle.lock().await.reset_per_turn();
         }
 
         // Stream agent events through a bounded channel.
@@ -673,7 +700,7 @@ mod tests {
         // Drain the Idle event.
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
 
-        // Second NewSession with same id — must return GatewayError(409).
+        // Second NewSession with same id — must return NodeError(409).
         handle
             .send(ControlCommand::NewSession {
                 id: session_id,
@@ -688,7 +715,7 @@ mod tests {
             .expect("no event received")
             .unwrap();
 
-        assert!(matches!(ev, ControlEvent::GatewayError { code: 409, .. }));
+        assert!(matches!(ev, ControlEvent::NodeError { code: 409, .. }));
     }
 
     #[tokio::test]
@@ -765,7 +792,7 @@ mod tests {
             .expect("no event received")
             .unwrap();
 
-        assert!(matches!(ev, ControlEvent::GatewayError { code: 404, .. }));
+        assert!(matches!(ev, ControlEvent::NodeError { code: 404, .. }));
     }
 
     #[tokio::test]

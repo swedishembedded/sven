@@ -69,11 +69,19 @@ fn spawn_local(config: SessionConfig) -> anyhow::Result<PtySession> {
     // Obtain reader (cloned from master — does not consume the master).
     let reader = pair.master.try_clone_reader().context("clone PTY reader")?;
 
-    // Obtain writer from master.
-    let stdin = pair.master.take_writer().context("take PTY writer")?;
+    // Obtain writer from master and wrap in Arc<Mutex> for session persistence.
+    let stdin = Arc::new(Mutex::new(
+        pair.master
+            .take_writer()
+            .context("take PTY writer")
+            .map(|w| -> Box<dyn std::io::Write + Send> { w })?,
+    ));
 
-    // Wrap the master in Arc<Mutex> so resize can share it safely.
+    // Wrap the master in Arc<Mutex> so resize and reader-clone can share it.
     let master = Arc::new(Mutex::new(pair.master));
+
+    // Wrap child in Arc<Mutex> for exit detection across reconnects.
+    let child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>> = Arc::new(Mutex::new(child));
 
     Ok(PtySession {
         id: uuid::Uuid::nil(), // filled in by manager

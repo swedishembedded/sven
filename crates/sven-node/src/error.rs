@@ -4,7 +4,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum GatewayError {
+pub enum NodeError {
     #[error("TLS error: {0}")]
     Tls(String),
 

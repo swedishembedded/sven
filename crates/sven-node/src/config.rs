@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! Gateway configuration loaded from YAML.
+//! Node configuration loaded from YAML.
 //!
 //! Configuration is YAML (never TOML).  Layers are **deep-merged** — you can
 //! override only the fields you care about in each file.
 //!
 //! Search order (later overrides earlier):
-//! 1. `/etc/sven/gateway.yaml`
-//! 2. `~/.config/sven/gateway.yaml`
-//! 3. `.sven/gateway.yaml` (workspace-local)
+//! 1. `/etc/sven/node.yaml`
+//! 2. `~/.config/sven/node.yaml`
+//! 3. `.sven/node.yaml` (workspace-local)
 //! 4. Path given to [`load`] explicitly.
 //!
 //! **All defaults are production-safe.** Running `load(None)` with no config
@@ -19,7 +19,7 @@
 //! # Loading
 //!
 //! ```rust
-//! use sven_node::config::{GatewayConfig, load};
+//! use sven_node::config::{NodeConfig, load};
 //!
 //! // Load from the default search paths (no explicit file).
 //! let config = load(None).unwrap();
@@ -37,17 +37,17 @@
 //!   bind: "127.0.0.1:18790"
 //!   # TLS is on by default. Set insecure_dev_mode: true ONLY for local development.
 //!   insecure_dev_mode: false
-//!   token_file: "~/.config/sven/gateway-token.yaml"
+//!   token_file: "~/.config/sven/node/token.yaml"
 //!
 //! swarm:
 //!   listen: "/ip4/0.0.0.0/tcp/4010"   # fixed port for agent mesh; open in firewall
-//!   keypair_path: "~/.config/sven/gateway/agent-keypair"
+//!   keypair_path: "~/.config/sven/node/agent-keypair"
 //!
 //! # Operator control node — omit to disable native/mobile access entirely
 //! # control:
 //! #   listen: "/ip4/0.0.0.0/tcp/4009"
-//! #   keypair_path: "~/.config/sven/gateway/control-keypair"
-//! #   authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
+//! #   keypair_path: "~/.config/sven/node/control-keypair"
+//! #   authorized_peers_file: "~/.config/sven/node/authorized_peers.yaml"
 //!
 //! slack:
 //!   accounts:
@@ -95,9 +95,9 @@ fn default_http_bind() -> String {
     "127.0.0.1:18790".to_string()
 }
 
-/// Top-level gateway configuration.
+/// Top-level node configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct GatewayConfig {
+pub struct NodeConfig {
     #[serde(default)]
     pub http: HttpConfig,
 
@@ -150,7 +150,7 @@ pub struct GatewayConfig {
 /// always warn unless the cert is manually added as a trusted exception.
 ///
 /// # `files`
-/// Read `gateway-cert.pem` / `gateway-key.pem` from `tls_cert_dir` as-is.
+/// Read `node-cert.pem` / `node-key.pem` from `tls_cert_dir` as-is.
 /// Bring your own certificates (e.g. from an external ACME client).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -189,7 +189,7 @@ pub struct HttpConfig {
     pub tls_mode: TlsMode,
 
     /// Directory where TLS certificates are stored / generated.
-    /// Defaults to `~/.config/sven/gateway/tls/`.
+    /// Defaults to `~/.config/sven/node/tls/`.
     #[serde(default, deserialize_with = "de_opt_path")]
     pub tls_cert_dir: Option<PathBuf>,
 
@@ -206,7 +206,7 @@ pub struct HttpConfig {
 
     /// Path to the YAML file that stores the SHA-256 hashed HTTP bearer token.
     /// If `None`, the token file is auto-located at
-    /// `~/.config/sven/gateway/token.yaml`.
+    /// `~/.config/sven/node/token.yaml`.
     #[serde(default, deserialize_with = "de_opt_path")]
     pub token_file: Option<PathBuf>,
 
@@ -255,7 +255,7 @@ pub struct SwarmConfig {
     /// When absent a new keypair is generated on every restart (ephemeral
     /// identity — peer nodes would need to re-add this node to their `peers`
     /// list after each restart).  Defaults to
-    /// `~/.config/sven/gateway/agent-keypair`.
+    /// `~/.config/sven/node/agent-keypair`.
     #[serde(default, deserialize_with = "de_opt_path")]
     pub keypair_path: Option<PathBuf>,
 
@@ -315,7 +315,7 @@ pub struct ControlConfig {
 
     /// YAML file listing authorized operator peer IDs and their roles.
     ///
-    /// Default: `~/.config/sven/gateway/authorized_peers.yaml`
+    /// Default: `~/.config/sven/node/authorized_peers.yaml`
     ///
     /// See [`crate::p2p::auth::PeerAllowlist`] for the file format.
     #[serde(default, deserialize_with = "de_opt_path")]
@@ -396,7 +396,7 @@ pub struct WebConfig {
     pub rp_name: String,
 
     /// Path to the YAML file storing registered web devices.
-    /// Default: `~/.config/sven/gateway/web_devices.yaml`.
+    /// Default: `~/.config/sven/node/web_devices.yaml`.
     #[serde(default, deserialize_with = "de_opt_path")]
     pub devices_file: Option<PathBuf>,
 
@@ -406,14 +406,13 @@ pub struct WebConfig {
 
     /// Command to run inside the PTY session.
     ///
-    /// `{id}` is replaced with the first 8 chars of the device UUID, giving
-    /// each device its own persistent tmux session named `sven-<short_id>`.
+    /// When spawned by a running node, `SVEN_NODE_URL` and
+    /// `SVEN_NODE_TOKEN` are injected into the environment automatically,
+    /// so the sven TUI detects the node and connects to it for full P2P
+    /// access.  Sessions persist across browser reconnects: the process keeps
+    /// running while the WebSocket is temporarily closed.
     ///
-    /// Default starts a sven TUI inside tmux so the terminal is immediately
-    /// usable as an orchestrator session.  Override with a plain shell or
-    /// custom command if you prefer a different default experience.
-    ///
-    /// Default: `["tmux", "new-session", "-A", "-s", "sven-{id}", "sven"]`.
+    /// Default: `["sven"]` — runs the sven TUI directly (no tmux wrapper).
     #[serde(default = "default_pty_command")]
     pub pty_command: Vec<String>,
 }
@@ -431,17 +430,10 @@ fn default_session_ttl() -> u64 {
     86_400
 }
 fn default_pty_command() -> Vec<String> {
-    vec![
-        "tmux".to_string(),
-        "new-session".to_string(),
-        "-A".to_string(),
-        "-s".to_string(),
-        "sven-{id}".to_string(),
-        // Launch sven TUI as the default session program so the terminal is
-        // immediately useful as an orchestrator.  SVEN_GATEWAY_TOKEN and
-        // SVEN_GATEWAY_URL are injected into the PTY environment automatically.
-        "sven".to_string(),
-    ]
+    // Run sven directly.  The node injects SVEN_NODE_URL and
+    // SVEN_NODE_TOKEN so the TUI auto-connects to this node for full
+    // P2P peer access.
+    vec!["sven".to_string()]
 }
 
 impl Default for WebConfig {
@@ -507,20 +499,20 @@ pub enum SlackMode {
 
 fn config_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    paths.push(PathBuf::from("/etc/sven/gateway.yaml"));
+    paths.push(PathBuf::from("/etc/sven/node.yaml"));
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".config/sven/gateway.yaml"));
+        paths.push(home.join(".config/sven/node.yaml"));
     }
-    paths.push(PathBuf::from(".sven/gateway.yaml"));
+    paths.push(PathBuf::from(".sven/node.yaml"));
     paths
 }
 
-pub fn load(extra: Option<&Path>) -> anyhow::Result<GatewayConfig> {
+pub fn load(extra: Option<&Path>) -> anyhow::Result<NodeConfig> {
     let mut merged = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
 
     for path in config_search_paths() {
         if path.is_file() {
-            debug!(path = %path.display(), "loading gateway config layer");
+            debug!(path = %path.display(), "loading node config layer");
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
             let layer: serde_yaml::Value = serde_yaml::from_str(&text)
@@ -530,7 +522,7 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<GatewayConfig> {
     }
 
     if let Some(p) = extra {
-        debug!(path = %p.display(), "loading explicit gateway config");
+        debug!(path = %p.display(), "loading explicit node config");
         let text =
             std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
         let layer: serde_yaml::Value =
@@ -538,9 +530,8 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<GatewayConfig> {
         merge_yaml(&mut merged, layer);
     }
 
-    let config: GatewayConfig = if matches!(&merged, serde_yaml::Value::Mapping(m) if m.is_empty())
-    {
-        GatewayConfig::default()
+    let config: NodeConfig = if matches!(&merged, serde_yaml::Value::Mapping(m) if m.is_empty()) {
+        NodeConfig::default()
     } else {
         serde_yaml::from_value(merged).unwrap_or_default()
     };
@@ -569,7 +560,7 @@ mod tests {
 
     #[test]
     fn default_http_bind_is_loopback() {
-        let c = GatewayConfig::default();
+        let c = NodeConfig::default();
         assert!(
             c.http.bind.starts_with("127.0.0.1"),
             "default must be loopback-only"
@@ -578,13 +569,13 @@ mod tests {
 
     #[test]
     fn default_tls_is_enabled() {
-        let c = GatewayConfig::default();
+        let c = NodeConfig::default();
         assert!(!c.http.insecure_dev_mode, "TLS must be on by default");
     }
 
     #[test]
     fn default_control_node_is_disabled() {
-        let c = GatewayConfig::default();
+        let c = NodeConfig::default();
         assert!(
             c.control.is_none(),
             "control node must be disabled by default"
@@ -593,14 +584,14 @@ mod tests {
 
     #[test]
     fn default_swarm_peers_deny_all() {
-        let c = GatewayConfig::default();
+        let c = NodeConfig::default();
         assert!(c.swarm.peers.is_empty(), "swarm must deny-all by default");
     }
 
     #[test]
     fn control_config_listen_defaults_to_loopback() {
         let yaml = "control:\n  keypair_path: null\n";
-        let c: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        let c: NodeConfig = serde_yaml::from_str(yaml).unwrap();
         let ctrl = c.control.expect("control section present");
         assert!(
             ctrl.listen.contains("127.0.0.1"),
@@ -623,9 +614,9 @@ mod tests {
 
     #[test]
     fn config_yaml_round_trip() {
-        let c = GatewayConfig::default();
+        let c = NodeConfig::default();
         let yaml = serde_yaml::to_string(&c).unwrap();
-        let back: GatewayConfig = serde_yaml::from_str(&yaml).unwrap();
+        let back: NodeConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.http.bind, c.http.bind);
         assert_eq!(back.http.insecure_dev_mode, c.http.insecure_dev_mode);
     }
@@ -633,7 +624,7 @@ mod tests {
     #[test]
     fn config_insecure_dev_mode_can_be_set() {
         let yaml = "http:\n  insecure_dev_mode: true\n";
-        let c: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        let c: NodeConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(c.http.insecure_dev_mode);
     }
 

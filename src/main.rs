@@ -19,7 +19,7 @@ use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
-use sven_tui::{App, AppOptions, ModelDirective, QueuedMessage};
+use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -1019,6 +1019,29 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     let jsonl_load_path = cli.effective_load_jsonl().cloned();
     let jsonl_save_path = cli.effective_output_jsonl().cloned();
 
+    // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN
+    // are present (injected by the node into web PTY sessions), connect the
+    // TUI to the running node so the agent has full P2P peer access.
+    let node_backend = {
+        let url = std::env::var("SVEN_NODE_URL")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_URL"))
+            .ok();
+        let token = std::env::var("SVEN_NODE_TOKEN")
+            .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
+            .ok();
+        let insecure = std::env::var("SVEN_GATEWAY_INSECURE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        match (url, token) {
+            (Some(url), Some(token)) => Some(NodeBackend {
+                url,
+                token,
+                insecure,
+            }),
+            _ => None,
+        }
+    };
+
     let opts = AppOptions {
         mode: cli.mode,
         initial_prompt: cli.prompt,
@@ -1028,6 +1051,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         jsonl_path: jsonl_save_path,
         jsonl_load_path,
         initial_queue,
+        node_backend,
     };
 
     let app = App::new(config, opts);

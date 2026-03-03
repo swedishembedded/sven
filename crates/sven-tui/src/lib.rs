@@ -10,6 +10,7 @@ mod input_wrap;
 mod keys;
 mod layout;
 mod markdown;
+pub mod node_agent;
 mod nvim;
 mod overlay;
 mod pager;
@@ -17,5 +18,5 @@ mod state;
 mod submit;
 mod ui;
 
-pub use app::{App, AppOptions, ModelDirective, QueuedMessage};
+pub use app::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 pub use chat::segment::ChatSegment;

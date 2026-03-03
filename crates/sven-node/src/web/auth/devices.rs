@@ -10,7 +10,7 @@
 //!
 //! # Persistence
 //!
-//! The registry is stored as YAML at `~/.config/sven/gateway/web_devices.yaml`
+//! The registry is stored as YAML at `~/.config/sven/node/web_devices.yaml`
 //! (configurable).  Writes are atomic: data is written to a temp file in the
 //! same directory, then renamed into place.  File permissions are `0o600`.
 
@@ -314,7 +314,7 @@ impl RegistryInner {
 pub fn default_devices_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config/sven/gateway/web_devices.yaml")
+        .join(".config/sven/node/web_devices.yaml")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

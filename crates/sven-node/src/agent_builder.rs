@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! Constructs `sven_core::Agent` instances used by the gateway.
+//! Constructs `sven_core::Agent` instances used by the node.
 //!
 //! Two entry points:
-//! - [`build_gateway_agent`] — the long-lived interactive agent that powers
+//! - [`build_node_agent`] — the long-lived interactive agent that powers
 //!   the HTTP, WebSocket and CLI control surfaces.
 //! - [`build_task_agent`] — a fresh, per-task agent used exclusively for
 //!   executing inbound P2P delegated tasks.  Each call produces a completely
@@ -32,7 +32,7 @@ use crate::tools::{
     SendMessageTool, SessionDepthHandle, SessionDepthTracker, WaitForMessageTool,
 };
 
-/// Build the shared, long-lived gateway `Agent`.
+/// Build the shared, long-lived node `Agent`.
 ///
 /// `model` must be the pre-constructed model provider.  Passing a shared
 /// `Arc` avoids creating a second HTTP client / API connection when
@@ -40,13 +40,20 @@ use crate::tools::{
 ///
 /// The delegation context slot starts empty (`None`); the interactive agent
 /// never runs inside a delegated task so it never needs delegation guards.
-pub async fn build_gateway_agent(
+/// Returns both the built `Agent` and the `SessionDepthHandle` so the caller
+/// can reset the per-peer depth map at the start of each new user turn.
+///
+/// Task agents never need this: they are created fresh per task and discarded
+/// when the task completes.  The interactive node agent, however, is
+/// long-lived, so each new user session must call
+/// `depth.lock().await.reset_per_turn()` before the agent runs.
+pub async fn build_node_agent(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     p2p_handle: P2pHandle,
     agent_card: AgentCard,
     rooms: Vec<String>,
-) -> anyhow::Result<Agent> {
+) -> anyhow::Result<(Agent, SessionDepthHandle)> {
     let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
 
     // Empty delegation context — the interactive agent is never itself
@@ -56,12 +63,13 @@ pub async fn build_gateway_agent(
     // Per-peer session depth tracker; default_depth=0 so every new peer
     // conversation starts at depth 0.  The per-peer map ensures that a prior
     // deep conversation with peer B does not pollute a fresh exchange with C.
+    // The handle is returned so the caller can reset per_peer at each turn.
     let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
         default_depth: 0,
         per_peer: HashMap::new(),
     }));
 
-    // Room depth starts at 0 — the gateway never executes inside a reactive
+    // Room depth starts at 0 — the node never executes inside a reactive
     // room handler.  default_depth=0 means PostToRoomTool treats all posts as
     // independent topic posts (depth=1) unless the LLM provides in_reply_to_depth.
     let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
@@ -69,7 +77,7 @@ pub async fn build_gateway_agent(
         per_room: HashMap::new(),
     }));
 
-    build_agent_with(
+    let agent = build_agent_with(
         config,
         model,
         max_ctx,
@@ -77,11 +85,13 @@ pub async fn build_gateway_agent(
         agent_card,
         rooms,
         delegation_context,
-        session_depth,
+        Arc::clone(&session_depth),
         room_depth,
         AgentRuntimeContext::default(),
     )
-    .await
+    .await?;
+
+    Ok((agent, session_depth))
 }
 
 /// Build a fresh, **per-task** agent for executing an inbound P2P task.
@@ -167,7 +177,7 @@ pub async fn build_task_agent(
 /// shared between `SendMessageTool` and `WaitForMessageTool`, so that the
 /// first explicit `send_message` call carries `initial_session_depth + 1` on
 /// the wire and subsequent calls continue incrementing from wherever
-/// `wait_for_message` last left off.  Pass `0` for task agents and gateway
+/// `wait_for_message` last left off.  Pass `0` for task agents and node
 /// interactive sessions.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_task_agent_with_runtime(
@@ -273,7 +283,7 @@ pub async fn build_room_reactive_agent(
     .await
 }
 
-/// Shared internal builder used by both [`build_gateway_agent`] and
+/// Shared internal builder used by both [`build_node_agent`] and
 /// [`build_task_agent`].
 #[allow(clippy::too_many_arguments)]
 async fn build_agent_with(

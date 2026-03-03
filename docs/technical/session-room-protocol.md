@@ -454,15 +454,20 @@ Every `SessionMessageWire` carries a `depth: u32` field that is **required**
 on the wire (no `#[serde(default)]`).  Missing it causes a CBOR
 deserialisation failure; messages from nodes that do not set it are rejected.
 
+All message channels — session messages, task delegation, and room posts —
+share the **unified** constant `MAX_HOP_DEPTH = 4`.  There is no separate
+`MAX_SESSION_DEPTH` or `MAX_DELEGATION_DEPTH`; the single budget applies
+across all protocol transitions (see cross-protocol seeding in section 3).
+
 The depth is incremented on every hop:
 
 | Sender | Outgoing depth |
 |---|---|
-| Human or first tool call | `0` |
-| `send_message` tool | `session_depth_handle.load() + 1` |
+| Human or first tool call (initial state) | starting counter = `0` |
+| `send_message` tool | `current_peer_depth + 1` (see section 3) |
 | Session executor auto-reply | `incoming_depth + 1` |
 
-When the session executor receives a message whose `depth >= MAX_SESSION_DEPTH`
+When the session executor receives a message whose `depth >= MAX_HOP_DEPTH`
 (= 4) it drops the message and sends no reply, breaking the chain regardless
 of what the LLM would have done.
 
@@ -470,42 +475,86 @@ There is a defence-in-depth duplicate check both in the executor loop and
 inside `execute_inbound_session_message` so the guard cannot be bypassed by
 calling the function directly.
 
-### 3. Shared `SessionDepthHandle` — task-agent ping-pong fix
+### 3. `SessionDepthTracker` — per-peer counters and cross-protocol seeding
 
-Task agents are constructed with `session_depth = 0` because they are not
-inside a session chain at creation time.  Without additional tracking, a task
-agent that calls `send_message` always sends `depth = 1`, another task agent
-receiving the reply always sends `depth = 1` back, and the counter never
-reaches `MAX_SESSION_DEPTH`.
+`SendMessageTool` and `WaitForMessageTool` share an
+`Arc<Mutex<SessionDepthTracker>>` called `SessionDepthHandle`.
 
-The fix: `SendMessageTool` and `WaitForMessageTool` share an
-`Arc<AtomicU32>` called `SessionDepthHandle`.
+```rust
+pub struct SessionDepthTracker {
+    /// Baseline depth for any peer not yet seen in `per_peer`.
+    /// 0 for the interactive node; equals task_depth for per-task agents.
+    pub default_depth: u32,
+    /// Per-peer depth counters updated by WaitForMessageTool after each reply.
+    pub per_peer: HashMap<String, u32>,
+}
+```
+
+**Why per-peer, not a single counter?**  A long-lived node agent talking to
+peer B at depth 3 would permanently block messages to an unrelated peer C if
+a global counter were used.  Per-peer tracking gives each peer relationship an
+independent depth budget while still enforcing the unified `MAX_HOP_DEPTH` cap.
+
+**Cross-protocol depth seeding.**  `default_depth` is set to the
+task-delegation depth at which the current agent is executing (`0` for the
+interactive node, `task_depth` for per-task agents).  This means any
+session conversation initiated from inside a deep task agent continues the
+unified hop budget rather than restarting from zero.
 
 ```mermaid
 sequenceDiagram
-    participant SA as Task Agent A
+    participant SA as Task Agent A (default_depth=0)
     participant SB as Task Agent B
 
-    SA->>SB: send_message → depth = 0+1 = 1
-    SB->>SA: reply (depth=2 on wire)
-    Note over SA: WaitForMessageTool stores depth=2<br/>into shared AtomicU32
-    SA->>SB: send_message → depth = 2+1 = 3
-    SB->>SA: reply (depth=4)
-    Note over SA: WaitForMessageTool stores depth=4
-    SA->>SB: send_message → outgoing=5 >= MAX_SESSION_DEPTH(4)<br/>→ tool error — send blocked
+    SA->>SB: send_message → outgoing = 0+1 = 1
+    SB->>SA: reply (wire depth=2)
+    Note over SA: WaitForMessageTool stores per_peer[B]=2
+    SA->>SB: send_message → outgoing = 2+1 = 3
+    SB->>SA: reply (wire depth=4)
+    Note over SA: WaitForMessageTool stores per_peer[B]=4
+    SA->>SB: send_message → outgoing = 4+1 = 5 ≥ MAX_HOP_DEPTH(4)<br/>→ tool error, send blocked at source
 ```
 
-`SendMessageTool::execute` checks `outgoing_depth >= MAX_SESSION_DEPTH`
+`SendMessageTool::execute` checks `outgoing_depth >= MAX_HOP_DEPTH`
 **before** sending.  If the limit is reached the tool returns an error to the
 LLM rather than transmitting the message, stopping the loop at the source.
 
+### 3a. Per-turn reset for the interactive node
+
+Per-task agents are created fresh for each inbound task and discarded when
+the task completes, so their `SessionDepthTracker` is always brand-new.
+
+The **interactive node agent** is long-lived.  Without intervention, its
+`per_peer` map accumulates across every user session: after two round-trips
+with peer B the depth would stand at 4 permanently, blocking all further
+conversations with B even though each new user turn is a completely
+independent request.
+
+Fix: `SessionDepthTracker::reset_per_turn()` clears the `per_peer` map.
+`ControlService::handle_send_input` calls it before handing the input to the
+agent:
+
+```rust
+// In ControlService::handle_send_input
+if let Some(ref depth_handle) = self.node_session_depth {
+    depth_handle.lock().await.reset_per_turn();
+}
+```
+
+`default_depth` (always `0` for the interactive node) is left untouched —
+only the per-peer high-water marks accumulated during the previous user turn
+are cleared.  Within a single user turn the tracker still prevents automated
+ping-pong: a depth that reaches `MAX_HOP_DEPTH` during that turn blocks
+further sends for the rest of that turn.
+
 ### 4. Task delegation depth counter and chain
 
-Task delegation uses a separate set of guards:
+Task delegation uses the same unified `MAX_HOP_DEPTH = 4` budget plus
+two additional structural guards:
 
 | Guard | Mechanism |
 |---|---|
-| Depth limit | `TaskRequest.depth` is required on the wire; checked at `execute_inbound_task` and in `DelegateTool::execute` before any LLM call; rejected when `depth >= MAX_DELEGATION_DEPTH` (= 3) |
+| Depth limit | `TaskRequest.depth` is required on the wire; checked at `execute_inbound_task` and in `DelegateTool::execute` before any LLM call; rejected when `depth >= MAX_HOP_DEPTH` (= 4) |
 | Cycle detection | `TaskRequest.chain` (required on the wire) lists every peer ID that has handled the request; the receiver rejects the request if its own peer ID is already present, breaking A→B→A and ring cycles |
 | Hop signature | Forwarded requests are Ed25519-signed over `(id, depth, chain)` by the forwarding peer; the receiver verifies the signature against the Noise-authenticated sender identity — a MITM cannot silently zero the depth or truncate the chain |
 
@@ -538,13 +587,15 @@ reactive room handler must use it to enforce a hop limit (see point above).
 
 | Loop pattern | Primary guard | Secondary guard |
 |---|---|---|
-| A↔B auto-reply echo | Role filter (`Assistant` ignored) | Session depth counter (`depth >= 4` → drop) |
-| Task-agent ping-pong via `send_message` | `SessionDepthHandle` propagation in `WaitForMessageTool` | Send-side depth guard in `SendMessageTool` |
-| Task delegation cycle (A→B→A) | Chain-based cycle detection | Delegation depth counter (`depth >= 3` → reject) |
-| Task delegation storm (depth without cycle) | Delegation depth counter | Chain signature integrity (Ed25519) |
+| A↔B auto-reply echo | Role filter (`Assistant` ignored) | Session depth counter (`depth >= MAX_HOP_DEPTH` → drop) |
+| Interactive node: depth accumulating across user turns | Per-turn reset (`reset_per_turn()` in `handle_send_input`) | Per-peer `SessionDepthTracker` resets to 0 each turn |
+| Task-agent ping-pong via `send_message` | Per-peer `SessionDepthHandle` propagation in `WaitForMessageTool` | Send-side guard in `SendMessageTool` (`outgoing >= MAX_HOP_DEPTH` → tool error) |
+| Cross-protocol loop (session → task → session) | Unified `MAX_HOP_DEPTH` budget seeded via `default_depth` | Send-side check fires before any network traffic |
+| Task delegation cycle (A→B→A) | Chain-based cycle detection (`TaskRequest.chain`) | Delegation depth counter (`depth >= MAX_HOP_DEPTH` → reject) |
+| Task delegation storm (depth without cycle) | Delegation depth counter (`MAX_HOP_DEPTH = 4`) | Chain signature integrity (Ed25519) |
 | Gossipsub re-delivery | `seen_gossip_ids` dedup | FIFO eviction preserves recent IDs |
 | Concurrent waiters for same peer | `WaiterConflict` error | — |
-| Future reactive room handler flood | `RoomPost.depth` field (reserved) | No current handler exists |
+| Future reactive room handler flood | `RoomPost.depth` field (reserved, `MAX_ROOM_POST_DEPTH = 4`) | No current reactive handler exists |
 
 ---
 
@@ -560,10 +611,11 @@ reactive room handler must use it to enforce a hop limit (see point above).
 | `sven-p2p` | `behaviour.rs` | Add `gossipsub::Behaviour` |
 | `sven-core` | `runtime_context.rs` | Add `prior_messages: Vec<Message>` |
 | `sven-core` | `agent.rs` | Pre-populate session from `prior_messages` in `Agent::new` |
-| `sven-node` | `tools.rs` | `SessionDepthHandle` (`Arc<AtomicU32>`) shared by `SendMessageTool` and `WaitForMessageTool`; send-side depth guard; `MAX_SESSION_DEPTH` as public const; stale delegation-context comment corrected |
+| `sven-node` | `tools.rs` | `SessionDepthTracker` (`default_depth` + `per_peer: HashMap`) wrapped in `Arc<Mutex<…>>` as `SessionDepthHandle`; `reset_per_turn()` clears per-peer map; unified `MAX_HOP_DEPTH = 4` constant; send-side depth guard in `SendMessageTool`; depth propagation in `WaitForMessageTool` |
 | `sven-node` | `tools.rs` | 6 tools: `send_message`, `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` |
-| `sven-node` | `node.rs` | `run_session_executor`; `build_session_agent` with break-aware context; import `MAX_SESSION_DEPTH` from `tools.rs` |
-| `sven-node` | `agent_builder.rs` | Register 6 new tools; `build_task_agent_with_runtime`; fresh `SessionDepthHandle` per agent |
+| `sven-node` | `node.rs` | `run_session_executor`; `build_session_agent` with break-aware context; import `MAX_HOP_DEPTH` from `tools.rs` |
+| `sven-node` | `agent_builder.rs` | Register 6 new tools; `build_task_agent_with_runtime`; fresh `SessionDepthHandle` per agent with `default_depth` set to task's delegation depth |
+| `sven-node` | `control/service.rs` | `node_session_depth: Option<SessionDepthHandle>` field; `reset_per_turn()` called at start of every `handle_send_input` for the interactive node agent |
 
 ---
 

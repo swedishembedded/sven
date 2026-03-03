@@ -218,7 +218,7 @@ impl NodeProxyServer {
             };
 
             if let WsEvent::GatewayError { code, ref message } = event {
-                bail!("gateway error {code}: {message}");
+                bail!("node error {code}: {message}");
             }
 
             if matcher(&event) {

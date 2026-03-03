@@ -13,7 +13,7 @@
 //! peer in our allowlist?
 //!
 //! **Default: deny all.** The allowlist starts empty. Peers must be explicitly
-//! authorized via `sven gateway pair` or by editing the YAML file.
+//! authorized via `sven node pair` or by editing the YAML file.
 //!
 //! # Usage
 //!
@@ -30,11 +30,11 @@
 //! # use sven_node::p2p::auth::PeerAllowlist;
 //! # use std::path::Path;
 //! // Load from disk; missing file → empty (secure) default.
-//! let mut list = PeerAllowlist::load(Path::new("~/.config/sven/gateway/authorized_peers.yaml"))
+//! let mut list = PeerAllowlist::load(Path::new("~/.config/sven/node/authorized_peers.yaml"))
 //!     .unwrap_or_default();
 //! ```
 //!
-//! # File format (`~/.config/sven/gateway/authorized_peers.yaml`)
+//! # File format (`~/.config/sven/node/authorized_peers.yaml`)
 //!
 //! ```yaml
 //! operators:

@@ -73,7 +73,7 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle, peer: Sock
                             }
                             Err(e) => {
                                 warn!(%peer, "invalid command JSON: {e}");
-                                let err = ControlEvent::GatewayError {
+                                let err = ControlEvent::NodeError {
                                     code: 400,
                                     message: format!("invalid JSON command: {e}"),
                                 };
@@ -102,7 +102,7 @@ pub async fn handle_socket(mut socket: WebSocket, agent: AgentHandle, peer: Sock
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!(%peer, "WebSocket operator lagged by {n} events");
-                        let err = ControlEvent::GatewayError {
+                        let err = ControlEvent::NodeError {
                             code: 503,
                             message: format!("event stream lagged by {n} events"),
                         };

@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! `sven-node` — secure remote-control gateway for sven agents.
+//! `sven-node` — HTTP/P2P node for sven agents.
 //!
-//! The gateway exposes a running [`sven_core::Agent`] to remote operators
+//! The node exposes a running [`sven_core::Agent`] to remote operators
 //! over two transport paths:
 //!
 //! - **Native clients** (mobile apps, remote CLI): libp2p with Noise
@@ -61,14 +61,14 @@
 //!
 //! # Configuration
 //!
-//! Configuration is YAML (never TOML). The gateway merges layers from:
+//! Configuration is YAML (never TOML). The node merges layers from:
 //!
-//! 1. `/etc/sven/gateway.yaml`
-//! 2. `~/.config/sven/gateway.yaml`
-//! 3. `.sven/gateway.yaml` (workspace-local override)
+//! 1. `/etc/sven/node.yaml`
+//! 2. `~/.config/sven/node.yaml`
+//! 3. `.sven/node.yaml` (workspace-local override)
 //! 4. Path given via `--config` flag
 //!
-//! Minimal example (`~/.config/sven/gateway.yaml`):
+//! Minimal example (`~/.config/sven/node.yaml`):
 //!
 //! ```yaml
 //! http:
@@ -77,12 +77,12 @@
 //!
 //! swarm:
 //!   listen: "/ip4/0.0.0.0/tcp/4010"   # fixed port for agent mesh (open in firewall)
-//!   keypair_path: "~/.config/sven/gateway/agent-keypair"
+//!   keypair_path: "~/.config/sven/node/agent-keypair"
 //!
 //! # Operator control node — omit entirely to disable native/mobile access
 //! # control:
 //! #   listen: "/ip4/0.0.0.0/tcp/4009"
-//! #   keypair_path: "~/.config/sven/gateway/control-keypair"
+//! #   keypair_path: "~/.config/sven/node/control-keypair"
 //!
 //! slack:
 //!   accounts:
@@ -158,10 +158,10 @@ pub mod tools;
 pub mod web;
 
 pub use config::{
-    ControlConfig, GatewayConfig, HttpConfig, SlackConfig, SwarmConfig, TlsMode, WebConfig,
+    ControlConfig, HttpConfig, NodeConfig, SlackConfig, SwarmConfig, TlsMode, WebConfig,
 };
 pub use control::service::AgentHandle;
-pub use error::GatewayError;
+pub use error::NodeError;
 pub use http::tls::{
     default_cert_dir as tls_default_cert_dir, export_ca_cert, print_install_instructions,
 };

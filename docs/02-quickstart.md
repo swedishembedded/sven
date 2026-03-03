@@ -299,7 +299,7 @@ Or delegate a task to a peer from your terminal:
 sven node exec "Ask backend-agent to review the latest commit and summarise the changes."
 ```
 
-See [Remote Gateway](08-gateway.md) for the full setup guide and
+See [Sven Node](08-node.md) for the full setup guide and
 [Agent Collaboration](09-collaboration.md) for peer conversations and rooms.
 
 ---
@@ -313,5 +313,5 @@ See [Remote Gateway](08-gateway.md) for the full setup guide and
   artifacts, and CI integration guides
 - [Configuration](05-configuration.md) — change the model, set defaults, and
   tune behaviour
-- [Remote Gateway](08-gateway.md) — connect to other agents over P2P
+- [Sven Node](08-node.md) — connect to other agents over P2P
 - [Agent Collaboration](09-collaboration.md) — peer conversations, rooms, and search

@@ -1,9 +1,9 @@
-# Remote Gateway
+# Sven Node
 
 `sven node start` starts the agent together with everything it needs to be
 reachable remotely and to work alongside other agents.
 
-**The gateway is the agent.** It runs the language model, all tools, and a P2P
+**The node is the agent.** It runs the language model, all tools, and a P2P
 stack in a single process.  There is no separate "agent" to start.
 
 It gives you two things at once:
@@ -88,12 +88,12 @@ asks `[y/N]` before writing to the allowlist.
 >
 > A device in `list-operators` cannot receive delegated tasks.
 
-The allowlist is saved to `~/.config/sven/gateway/authorized_peers.yaml`.  You
+The allowlist is saved to `~/.config/sven/node/authorized_peers.yaml`.  You
 can also edit it by hand — useful for pre-provisioning or revoking access
 without running the CLI:
 
 ```yaml
-# ~/.config/sven/gateway/authorized_peers.yaml
+# ~/.config/sven/node/authorized_peers.yaml
 
 operators:
   # peer_id (base58): human-readable label
@@ -127,14 +127,14 @@ P2pNode starting peer_id=12D3KooWQwZgQPdd4TZeputvRdmaoq2whU358qYULJMiNGvJcB98
 **Step 2 — Add each node's peer ID to the other's config.**
 
 ```yaml
-# machine A — .gateway.yaml
+# machine A — .node.yaml
 swarm:
   peers:
     "12D3KooW<machine-B-agent-peer-id>": "machine-b"
 ```
 
 ```yaml
-# machine B — .gateway.yaml
+# machine B — .node.yaml
 swarm:
   peers:
     "12D3KooW<machine-A-agent-peer-id>": "machine-a"
@@ -147,14 +147,14 @@ Authorization is not automatic — both sides must list each other.
 To give each agent a distinct identity, also set their names in the config:
 
 ```yaml
-# machine A — .gateway.yaml
+# machine A — .node.yaml
 swarm:
   agent:
     name: "backend-agent"
     description: "Rust and PostgreSQL specialist"
     capabilities: ["rust", "postgres"]
 
-# machine B — .gateway.yaml
+# machine B — .node.yaml
 swarm:
   agent:
     name: "frontend-agent"
@@ -236,7 +236,7 @@ the conversation in real time.
 
 ## Agent-to-agent task routing
 
-When two gateways are connected, each agent gets two new tools it can use
+When two nodes are connected, each agent gets two new tools it can use
 autonomously during any session.
 
 ### `list_peers` — discover connected agents
@@ -289,7 +289,7 @@ Let's Encrypt certificate for your `<machine>.ts.net` hostname.  The certificate
 is issued by Let's Encrypt and trusted by every browser with no additional steps.
 
 ```
-INFO  HTTPS gateway listening mode="Tailscale (mybox.example.ts.net)"
+INFO  HTTPS node listening mode="Tailscale (mybox.example.ts.net)"
 ```
 
 Access the node at `https://mybox.example.ts.net:18790`.
@@ -301,7 +301,7 @@ end-to-end encrypted access from anywhere, and the certs just work.
 
 When Tailscale is not available, sven generates a local ECDSA P-256 Certificate
 Authority (10-year validity) and signs a 90-day server certificate with it.
-The CA cert lives at `~/.config/sven/gateway/tls/ca-cert.pem`.
+The CA cert lives at `~/.config/sven/node/tls/ca-cert.pem`.
 
 Install the CA on each device that will access the node:
 
@@ -312,7 +312,7 @@ sven node install-ca          # prints platform-specific commands
 For example, on Linux:
 
 ```sh
-sudo cp ~/.config/sven/gateway/tls/ca-cert.pem \
+sudo cp ~/.config/sven/node/tls/ca-cert.pem \
         /usr/local/share/ca-certificates/sven-ca.crt
 sudo update-ca-certificates
 ```
@@ -346,7 +346,7 @@ http:
 ```yaml
 http:
   tls_mode: files
-  tls_cert_dir: "/etc/sven/tls"    # must contain gateway-cert.pem + gateway-key.pem
+  tls_cert_dir: "/etc/sven/tls"    # must contain node-cert.pem + node-key.pem
 ```
 
 Bring your own certs from any ACME client, internal PKI, or Let's Encrypt
@@ -391,7 +391,7 @@ be weakened by accident:
 | Secret file permissions | `0o600` on Unix |
 | Task timeout | 15 minutes per inbound delegated task |
 
-To expose the gateway beyond loopback, set `http.bind: "0.0.0.0:18790"` in
+To expose the node beyond loopback, set `http.bind: "0.0.0.0:18790"` in
 your config.  `bind` must be an address actually assigned to a local interface
 — binding to an IP the machine does not own causes an immediate startup error
 with a clear message explaining the fix.
@@ -400,11 +400,11 @@ with a clear message explaining the fix.
 
 ## Configuration
 
-The gateway config is YAML, merged in order from:
+The node config is YAML, merged in order from:
 
-1. `/etc/sven/gateway.yaml`
-2. `~/.config/sven/gateway.yaml`
-3. `.sven/gateway.yaml`
+1. `/etc/sven/node.yaml`
+2. `~/.config/sven/node.yaml`
+3. `.sven/node.yaml`
 4. Path given with `--config`
 
 ### Minimal example
@@ -414,7 +414,7 @@ http:
   bind: "127.0.0.1:18790"
 
 swarm:
-  keypair_path: "~/.config/sven/gateway/agent-keypair"
+  keypair_path: "~/.config/sven/node/agent-keypair"
 ```
 
 ### LAN / mobile access example
@@ -431,7 +431,7 @@ web:                            # browser web terminal (optional)
   rp_origin: "https://192.168.1.42:18790"
 
 swarm:
-  keypair_path: "~/.config/sven/gateway/agent-keypair"
+  keypair_path: "~/.config/sven/node/agent-keypair"
 ```
 
 ### Full example
@@ -442,13 +442,13 @@ http:
   insecure_dev_mode: false  # only set true for local development
   tls_mode: auto            # tailscale → local-ca → (or set tailscale/local-ca/self-signed/files)
   tls_san_extra: []         # extra IPs/hostnames to include in generated cert SANs
-  tls_cert_dir: "~/.config/sven/gateway/tls"
-  token_file: "~/.config/sven/gateway/token.yaml"
+  tls_cert_dir: "~/.config/sven/node/tls"
+  token_file: "~/.config/sven/node/token.yaml"
 
 # Agent-to-agent mesh
 swarm:
   listen: "/ip4/0.0.0.0/tcp/4010"  # fixed port — open this in your firewall
-  keypair_path: "~/.config/sven/gateway/agent-keypair"
+  keypair_path: "~/.config/sven/node/agent-keypair"
 
   # Identity this agent shows to other agents
   agent:
@@ -468,8 +468,8 @@ swarm:
 # Operator control node — omit this entire section to disable native/mobile access
 # control:
 #   listen: "/ip4/0.0.0.0/tcp/4009"  # open in firewall only if needed
-#   keypair_path: "~/.config/sven/gateway/control-keypair"
-#   authorized_peers_file: "~/.config/sven/gateway/authorized_peers.yaml"
+#   keypair_path: "~/.config/sven/node/control-keypair"
+#   authorized_peers_file: "~/.config/sven/node/authorized_peers.yaml"
 
 slack:
   accounts:
@@ -488,8 +488,8 @@ slack:
 | `insecure_dev_mode` | `false` | Disable TLS entirely — for local development only |
 | `tls_mode` | `auto` | TLS provisioning: `auto`, `tailscale`, `local-ca`, `self-signed`, or `files` |
 | `tls_san_extra` | `[]` | Extra hostnames or IPs to add to generated cert SANs (e.g. your LAN IP) |
-| `tls_cert_dir` | `~/.config/sven/gateway/tls` | Where to store / load certificates |
-| `token_file` | `~/.config/sven/gateway/token.yaml` | Hashed bearer token storage |
+| `tls_cert_dir` | `~/.config/sven/node/tls` | Where to store / load certificates |
+| `token_file` | `~/.config/sven/node/token.yaml` | Hashed bearer token storage |
 | `max_body_bytes` | `4194304` | Max request body size (4 MiB) |
 
 #### `web` *(optional — disabled by default)*
@@ -507,7 +507,7 @@ registration and login will be rejected by the browser.
 | `rp_id` | `localhost` | WebAuthn relying party ID — the hostname/IP in the browser bar |
 | `rp_origin` | `https://localhost:18790` | Full origin shown in the browser address bar |
 | `rp_name` | `Sven Node` | Human-readable name shown during passkey ceremony |
-| `devices_file` | `~/.config/sven/gateway/web_devices.yaml` | Registered device registry |
+| `devices_file` | `~/.config/sven/node/web_devices.yaml` | Registered device registry |
 | `session_ttl_secs` | `86400` | Session JWT lifetime (24 h) |
 | `pty_command` | `["tmux", "new-session", "-A", "-s", "sven-{id}"]` | Command run in the PTY.  `{id}` is replaced with the first 8 chars of the device UUID. |
 
@@ -518,7 +518,7 @@ The agent-to-agent mesh.  Handles task delegation between sven nodes.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `listen` | `/ip4/0.0.0.0/tcp/0` (random) | Listen address for the agent mesh — **set a fixed port and open it in your firewall for cross-machine use** |
-| `keypair_path` | `~/.config/sven/gateway/agent-keypair` | Persist the agent mesh keypair; ephemeral if unset |
+| `keypair_path` | `~/.config/sven/node/agent-keypair` | Persist the agent mesh keypair; ephemeral if unset |
 | `agent.name` | system hostname | Name shown to peer agents |
 | `agent.description` | `"General-purpose sven agent"` | Free-form description |
 | `agent.capabilities` | `[]` | Tags other agents use to choose this agent |
@@ -537,7 +537,7 @@ has nothing to do with agent-to-agent task delegation.
 |-----|---------|-------------|
 | `listen` | `/ip4/127.0.0.1/tcp/0` | Listen address — defaults to loopback only. Set to `/ip4/0.0.0.0/tcp/4009` (and open the port) to allow mobile/native clients |
 | `keypair_path` | — (ephemeral) | Persist the operator control keypair; ephemeral if unset means operators must re-pair after restart |
-| `authorized_peers_file` | `~/.config/sven/gateway/authorized_peers.yaml` | YAML file of authorized operator peer IDs |
+| `authorized_peers_file` | `~/.config/sven/node/authorized_peers.yaml` | YAML file of authorized operator peer IDs |
 
 #### `slack`
 
@@ -627,12 +627,12 @@ can be reattached from any approved device.
 
 ### `sven node exec` in detail
 
-`exec` is the primary way to interact with a running gateway from the command
-line.  It connects to the local gateway over WebSocket, submits the task, and
+`exec` is the primary way to interact with a running node from the command
+line.  It connects to the local node over WebSocket, submits the task, and
 streams the agent's response to stdout.
 
 ```sh
-# Set the token once (it was shown the first time the gateway started)
+# Set the token once (it was shown the first time the node started)
 export SVEN_NODE_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGc...
 
 # Ask the agent a question
@@ -642,13 +642,13 @@ sven node exec "What files are in the current directory?"
 sven node exec "Use list_peers to find connected agents, then delegate \
   a hello-world task to whichever one is available"
 
-# Use a different gateway URL or config
+# Use a different node URL or config
 sven node exec "summarise recent changes" \
   --url wss://192.168.1.10:18790/ws \
-  --config /etc/sven/gateway.yaml
+  --config /etc/sven/node.yaml
 ```
 
-The token is the one printed **once** when the gateway first started.  If you
+The token is the one printed **once** when the node first started.  If you
 lost it, rotate it with `sven node regenerate-token`.
 
 ---
@@ -667,7 +667,7 @@ cargo run --bin sven-relay -- \
 
 The relay publishes its address to the git repository so other agents can
 discover it.  Copy the printed multiaddr (including `/p2p/<peer-id>`) into
-your gateway config:
+your node config:
 
 ```yaml
 swarm:
@@ -763,8 +763,8 @@ https://localhost:18790/web
 Delete the certs and restart; they will be regenerated:
 
 ```sh
-rm ~/.config/sven/gateway/tls/gateway-cert.pem \
-   ~/.config/sven/gateway/tls/gateway-key.pem
+rm ~/.config/sven/node/tls/node-cert.pem \
+   ~/.config/sven/node/tls/node-key.pem
 sven node start
 ```
 
@@ -787,14 +787,14 @@ will be rejected by the browser before sven is even involved.
 
 ### No log output from `sven node start`
 
-The gateway logs to `stderr` at `info` level.  Try `sven -v node start` for
+The node logs to `stderr` at `info` level.  Try `sven -v node start` for
 debug-level output.
 
 ---
 
 For implementation details — wire protocols, internal architecture, the P2P
 task flow, and the WebSocket API spec — see
-[technical/gateway.md](technical/gateway.md).
+[technical/node.md](technical/node.md).
 
 For agent-to-agent collaboration — sessions (DMs), rooms (broadcast channels),
 and the collaboration tools — see [09-collaboration.md](09-collaboration.md).
