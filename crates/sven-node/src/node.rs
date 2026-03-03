@@ -69,6 +69,7 @@ use sven_p2p::{
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
+use crate::tools::{MAX_DELEGATION_DEPTH, MAX_SESSION_DEPTH};
 use crate::{
     agent_builder::{build_gateway_agent, build_task_agent},
     config::{GatewayConfig, SlackMode},
@@ -88,22 +89,6 @@ use crate::{
         WebState,
     },
 };
-// `tools` is only needed from agent_builder for per-task agent construction.
-use crate::tools::MAX_DELEGATION_DEPTH;
-
-/// Maximum number of automatic session-message reply hops between two gateway
-/// nodes before the chain is silently dropped.
-///
-/// Each time an agent's session executor auto-responds to an inbound session
-/// message — or an agent explicitly calls `send_message` inside a session
-/// handler — the outgoing message carries `depth + 1`.  The receiving executor
-/// refuses to auto-respond once `depth >= MAX_SESSION_DEPTH`, breaking any
-/// A↔B echo loop at a well-defined horizon.
-///
-/// A value of 4 allows genuine multi-hop clarification exchanges (human →
-/// A → B → A → B) while capping runaway loops long before they become
-/// noticeable to operators.
-const MAX_SESSION_DEPTH: u32 = 4;
 
 /// Maximum number of P2P tasks that may execute concurrently on this node.
 ///

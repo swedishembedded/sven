@@ -32,7 +32,10 @@
 //!   "task": "Run the database migration and report any errors." }
 //! ```
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -54,21 +57,23 @@ use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 /// Any further forwarding attempt is refused before the LLM runs.
 pub const MAX_DELEGATION_DEPTH: u32 = 3;
 
+/// Maximum session-chain depth before auto-responses and explicit
+/// `send_message` calls are refused.
+///
+/// The depth counter is carried on every [`SessionMessageWire`] and
+/// incremented on each hop.  When an outgoing message would carry a depth
+/// equal to or exceeding this limit, `SendMessageTool` returns an error to the
+/// LLM instead of sending — breaking A↔B ping-pong chains regardless of
+/// whether the remote end is a session executor or another task agent using
+/// `wait_for_message`.
+pub const MAX_SESSION_DEPTH: u32 = 4;
+
 /// Shared state describing the delegation chain of the task currently
 /// being executed by the local agent.
 ///
-/// Set by [`crate::node::execute_inbound_task`] just before the agent
-/// session starts, and cleared after it finishes.  The [`DelegateTool`]
-/// reads it to enforce cycle and depth limits on any outbound delegation.
-///
-/// # Concurrency note
-///
-/// This is a single shared slot.  If two inbound tasks are executing
-/// concurrently the slot holds whichever context was set last, which may
-/// be stale for the other task.  The **hard depth check in
-/// `execute_inbound_task`** (which fires *before* the LLM) provides the
-/// correctness guarantee in all cases; the context here adds an early
-/// cycle-detection path that is best-effort under high concurrency.
+/// Each inbound task gets its own fresh `Arc` — there is no shared mutable
+/// state between concurrent tasks.  The `DelegateTool` reads this context to
+/// enforce cycle and depth limits on any outbound delegation attempt.
 #[derive(Debug, Clone, Default)]
 pub struct DelegationContext {
     /// Depth at which the current task is executing (0 = local, 1 = once
@@ -78,8 +83,21 @@ pub struct DelegationContext {
     pub chain: Vec<String>,
 }
 
-/// Thread-safe handle to the shared delegation context.
+/// Thread-safe handle to the per-task delegation context.
+///
+/// Always created fresh per task in [`crate::agent_builder::build_task_agent`].
 pub type DelegationContextHandle = Arc<Mutex<Option<DelegationContext>>>;
+
+/// Shared, mutable session-chain depth counter.
+///
+/// A single `Arc<AtomicU32>` is handed to both [`SendMessageTool`] and
+/// [`WaitForMessageTool`] when an agent is constructed.  When
+/// `WaitForMessageTool` delivers a message it records the wire `depth` into
+/// this counter.  `SendMessageTool` then reads the counter and sends
+/// `depth + 1`, ensuring that task-agent → task-agent ping-pong chains
+/// correctly increment the depth on every round trip and hit
+/// `MAX_SESSION_DEPTH` just like session-executor chains do.
+pub type SessionDepthHandle = Arc<AtomicU32>;
 
 // ── DelegateTool ─────────────────────────────────────────────────────────────
 
@@ -459,18 +477,26 @@ impl Tool for ListPeersTool {
 ///
 /// # Depth propagation
 ///
-/// `session_depth` records the depth of the inbound session message that
-/// triggered the current agent (0 for task agents or gateway-initiated sends).
-/// Every message sent by this tool carries `session_depth + 1` on the wire, so
-/// the receiving gateway's session executor can enforce `MAX_SESSION_DEPTH` and
-/// break A↔B echo loops at a well-defined horizon.
+/// `session_depth` is a shared counter initialised to `0` for task agents and
+/// to the inbound `SessionMessageWire.depth` for session agents.
+/// Every message sent by this tool carries `session_depth.load() + 1` on the
+/// wire.  When the paired `WaitForMessageTool` delivers a reply it atomically
+/// updates `session_depth` to the received message's depth, so the next
+/// `send_message` call continues incrementing from the correct depth.
+///
+/// This ensures task-agent ↔ task-agent ping-pong chains increment the counter
+/// on every round trip and hit `MAX_SESSION_DEPTH` just like session-executor
+/// auto-response chains, preventing infinite loops regardless of whether the
+/// remote end is a session executor or another task agent.
+///
+/// If sending would produce a depth >= `MAX_SESSION_DEPTH` this tool returns
+/// an error to the LLM rather than sending, breaking the chain at the source.
 pub struct SendMessageTool {
     pub p2p: P2pHandle,
-    /// Depth of the session context in which this tool is running.
-    /// Set to the `depth` of the inbound `SessionMessageWire` that triggered
-    /// the current agent execution, or `0` for non-session contexts (tasks,
-    /// gateway interactive sessions).
-    pub session_depth: u32,
+    /// Shared session-chain depth counter.  Updated by `WaitForMessageTool`
+    /// on each received message.  Never shared between concurrent agents —
+    /// each agent construction creates its own `Arc<AtomicU32>`.
+    pub session_depth: SessionDepthHandle,
 }
 
 #[async_trait]
@@ -532,17 +558,26 @@ impl Tool for SendMessageTool {
                 .unwrap_or(0)
         };
 
+        let current_depth = self.session_depth.load(Ordering::Relaxed);
+        let outgoing_depth = current_depth.saturating_add(1);
+        if outgoing_depth >= MAX_SESSION_DEPTH {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "Cannot send message: session-chain depth limit ({MAX_SESSION_DEPTH}) reached. \
+                     This conversation has already traversed the maximum number of hops — \
+                     complete the task with the information already available."
+                ),
+            );
+        }
+
         let msg = SessionMessageWire {
             message_id: Uuid::new_v4(),
             seq,
             timestamp: Utc::now(),
             role: SessionRole::User,
             content: vec![ContentBlock::text(&text)],
-            // Propagate the session-chain depth so the remote executor can
-            // enforce MAX_SESSION_DEPTH.  For session agents this is
-            // `incoming_depth + 1`; for task agents and gateway sessions it
-            // starts at 1 (one hop from the originating task context).
-            depth: self.session_depth.saturating_add(1),
+            depth: outgoing_depth,
         };
 
         match self.p2p.send_session_message(peer_id, msg).await {
@@ -561,8 +596,15 @@ impl Tool for SendMessageTool {
 // ── WaitForMessageTool ───────────────────────────────────────────────────────
 
 /// Wait for the next reply from a specific peer.
+///
+/// When a message arrives, the wire `depth` is written back into the shared
+/// `session_depth` counter so that the next `send_message` call from the same
+/// agent correctly continues the depth chain rather than restarting from zero.
 pub struct WaitForMessageTool {
     pub p2p: P2pHandle,
+    /// Shared with `SendMessageTool` — updated with the received message's
+    /// depth so subsequent sends increment from the correct baseline.
+    pub session_depth: SessionDepthHandle,
 }
 
 #[async_trait]
@@ -613,6 +655,13 @@ impl Tool for WaitForMessageTool {
 
         match self.p2p.wait_for_message(peer_id, timeout).await {
             Ok(record) => {
+                // Update the shared depth counter so the next send_message
+                // call from this agent sends depth + 1 rather than restarting
+                // from zero.  This is the key fix for task-agent ↔ task-agent
+                // infinite ping-pong: without this, both sides always send
+                // depth=1 and the MAX_SESSION_DEPTH guard is never reached.
+                self.session_depth.store(record.depth, Ordering::Relaxed);
+
                 let text = record
                     .content
                     .iter()
@@ -633,6 +682,13 @@ impl Tool for WaitForMessageTool {
             Err(sven_p2p::P2pError::Timeout) => ToolOutput::err(
                 &call.id,
                 format!("No reply from {peer_str} within {timeout_secs}s."),
+            ),
+            Err(sven_p2p::P2pError::WaiterConflict) => ToolOutput::err(
+                &call.id,
+                format!(
+                    "Cannot wait for {peer_str}: another wait_for_message call is already \
+                     pending for this peer. Only one concurrent wait per peer is allowed."
+                ),
             ),
             Err(e) => ToolOutput::err(&call.id, format!("Wait failed: {e}")),
         }

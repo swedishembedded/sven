@@ -12,7 +12,7 @@
 //!   independent agent; there is no shared mutable state between concurrent
 //!   inbound tasks.
 
-use std::sync::Arc;
+use std::sync::{atomic::AtomicU32, Arc};
 
 use tokio::sync::{mpsc, Mutex};
 
@@ -28,7 +28,7 @@ use sven_tools::{
 use crate::tools::{
     DelegateTool, DelegationContext, DelegationContextHandle, ListConversationsTool, ListPeersTool,
     PostToRoomTool, ReadRoomHistoryTool, SearchConversationTool, SendMessageTool,
-    WaitForMessageTool,
+    SessionDepthHandle, WaitForMessageTool,
 };
 
 /// Build the shared, long-lived gateway `Agent`.
@@ -51,6 +51,7 @@ pub async fn build_gateway_agent(
     // Empty delegation context — the interactive agent is never itself
     // executing inside a delegated task.
     let delegation_context: DelegationContextHandle = Arc::new(Mutex::new(None));
+    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(0));
 
     build_agent_with(
         config,
@@ -60,7 +61,7 @@ pub async fn build_gateway_agent(
         agent_card,
         rooms,
         delegation_context,
-        0, // session_depth: gateway agent is not inside a session reply chain
+        session_depth,
         AgentRuntimeContext::default(),
     )
     .await
@@ -107,6 +108,8 @@ pub async fn build_task_agent(
         ..AgentRuntimeContext::default()
     };
 
+    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(0));
+
     build_agent_with(
         config,
         model,
@@ -115,7 +118,7 @@ pub async fn build_task_agent(
         agent_card,
         rooms,
         delegation_context,
-        0, // session_depth: task agents are not inside a session reply chain
+        session_depth,
         runtime,
     )
     .await
@@ -126,12 +129,13 @@ pub async fn build_task_agent(
 /// Used by the session executor so it can inject `prior_messages` and a
 /// session-specific system prompt while still reusing the standard tool set.
 ///
-/// `session_depth` is the depth of the inbound `SessionMessageWire` that
-/// triggered this agent.  It is forwarded to [`SendMessageTool`] so any
-/// explicit `send_message` calls made during execution carry
-/// `session_depth + 1` on the wire, enabling the remote executor's
-/// `MAX_SESSION_DEPTH` guard to break echo loops.  Pass `0` for task agents
-/// and gateway interactive sessions.
+/// `initial_session_depth` is the depth of the inbound `SessionMessageWire`
+/// that triggered this agent.  It is used to seed the `SessionDepthHandle`
+/// shared between `SendMessageTool` and `WaitForMessageTool`, so that the
+/// first explicit `send_message` call carries `initial_session_depth + 1` on
+/// the wire and subsequent calls continue incrementing from wherever
+/// `wait_for_message` last left off.  Pass `0` for task agents and gateway
+/// interactive sessions.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_task_agent_with_runtime(
     config: &Arc<Config>,
@@ -141,7 +145,7 @@ pub async fn build_task_agent_with_runtime(
     rooms: Vec<String>,
     task_depth: u32,
     task_chain: Vec<String>,
-    session_depth: u32,
+    initial_session_depth: u32,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
     let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
@@ -150,6 +154,7 @@ pub async fn build_task_agent_with_runtime(
             depth: task_depth,
             chain: task_chain,
         })));
+    let session_depth: SessionDepthHandle = Arc::new(AtomicU32::new(initial_session_depth));
     build_agent_with(
         config,
         model,
@@ -175,7 +180,7 @@ async fn build_agent_with(
     agent_card: AgentCard,
     rooms: Vec<String>,
     delegation_context: DelegationContextHandle,
-    session_depth: u32,
+    session_depth_handle: SessionDepthHandle,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
     let mode = Arc::new(Mutex::new(config.agent.default_mode));
@@ -220,10 +225,11 @@ async fn build_agent_with(
     let store = p2p_handle.store().clone();
     registry.register(SendMessageTool {
         p2p: p2p_handle.clone(),
-        session_depth,
+        session_depth: Arc::clone(&session_depth_handle),
     });
     registry.register(WaitForMessageTool {
         p2p: p2p_handle.clone(),
+        session_depth: Arc::clone(&session_depth_handle),
     });
     registry.register(SearchConversationTool {
         store: Arc::clone(&store),

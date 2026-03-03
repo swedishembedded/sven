@@ -1458,6 +1458,7 @@ impl NodeState {
                     peer_id: peer.to_base58(),
                     role: message.role.clone(),
                     content: message.content.clone(),
+                    depth: message.depth,
                 };
                 let store = Arc::clone(&self.store);
                 tokio::task::spawn_blocking(move || {
@@ -1473,9 +1474,15 @@ impl NodeState {
                 false
             }
             P2pCommand::WaitPeerMessage { peer, reply_tx } => {
-                // Register the oneshot; fires when the next inbound message
-                // from this peer arrives.
-                self.peer_waiters.insert(peer, reply_tx);
+                // Reject the registration if a waiter is already pending for
+                // this peer.  Overwriting it silently would drop the first
+                // caller's receiver, causing it to get a RecvError and retry —
+                // which could steal the slot again in a livelock.
+                if self.peer_waiters.contains_key(&peer) {
+                    let _ = reply_tx.send(Err(P2pError::WaiterConflict));
+                } else {
+                    self.peer_waiters.insert(peer, reply_tx);
+                }
                 false
             }
             P2pCommand::PostToRoom {
@@ -1490,6 +1497,7 @@ impl NodeState {
                     sender_name: sender_card.name.clone(),
                     timestamp: Utc::now(),
                     content: content.clone(),
+                    depth: 0,
                 };
                 // Publish to gossipsub.
                 match cbor_encode(&post) {
@@ -1664,6 +1672,7 @@ impl NodeState {
             peer_id: peer.to_base58(),
             role: msg.role.clone(),
             content: msg.content.clone(),
+            depth: msg.depth,
         };
         let store = Arc::clone(&self.store);
         let record_for_store = record.clone();

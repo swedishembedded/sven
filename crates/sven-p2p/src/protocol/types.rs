@@ -122,9 +122,8 @@ pub struct SessionMessageWire {
     /// primary defence against A↔B echo loops when both agents use
     /// `send_message` inside their session handlers.
     ///
-    /// Old nodes that do not set this field will deserialise it as `0`
-    /// (the `serde(default)` attribute), so the guard is backwards-compatible.
-    #[serde(default)]
+    /// This field is **required** — messages missing it are rejected.
+    /// Nodes that do not set this field are incompatible with this version.
     pub depth: u32,
 }
 
@@ -150,6 +149,14 @@ pub struct RoomPost {
     pub timestamp: DateTime<Utc>,
     /// Multimodal content of the post.
     pub content: Vec<ContentBlock>,
+    /// Reactive-response hop counter.
+    ///
+    /// `0` for all posts originating from a tool call.  If a future reactive
+    /// room handler auto-responds to a post (e.g. "mention bot"), it must
+    /// increment this counter and the handler must refuse to process posts
+    /// whose depth has reached the configured limit, breaking gossip floods
+    /// between reactive agents.
+    pub depth: u32,
 }
 
 impl RoomPost {
@@ -180,7 +187,8 @@ pub struct TaskRequest {
     /// `delegate_task` this counter is incremented.  The receiving gateway
     /// **rejects** requests that reach [`MAX_DELEGATION_DEPTH`] before running
     /// the LLM, preventing runaway delegation storms.
-    #[serde(default)]
+    ///
+    /// This field is **required** — requests missing it are rejected.
     pub depth: u32,
 
     /// Ordered list of peer IDs that have already handled this task request,
@@ -190,7 +198,8 @@ pub struct TaskRequest {
     /// receiver checks whether its own peer ID already appears in this list
     /// and **rejects** the request if so, breaking A→B→A and A→B→C→A cycles
     /// before the LLM ever runs.
-    #[serde(default)]
+    ///
+    /// This field is **required** — requests missing it are rejected.
     pub chain: Vec<String>,
 
     /// Protobuf-encoded Ed25519 public key of the forwarding peer.

@@ -37,6 +37,9 @@ pub enum P2pError {
 
     #[error("wait timed out")]
     Timeout,
+
+    #[error("a wait_for_message is already registered for this peer")]
+    WaiterConflict,
 }
 
 impl From<std::io::Error> for P2pError {

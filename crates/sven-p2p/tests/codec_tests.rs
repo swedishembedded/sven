@@ -408,6 +408,7 @@ fn room_post_roundtrip() {
         sender_name: "alice".into(),
         timestamp: Utc::now(),
         content: vec![ContentBlock::text("Build passed on main.")],
+        depth: 0,
     };
     let decoded: RoomPost = sven_p2p::protocol::codec::cbor_decode(
         &sven_p2p::protocol::codec::cbor_encode(&post).unwrap(),

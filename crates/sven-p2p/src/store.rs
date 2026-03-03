@@ -74,6 +74,16 @@ pub struct ConversationRecord {
     pub role: SessionRole,
     /// Multimodal content.
     pub content: Vec<ContentBlock>,
+    /// Session-chain hop depth from the wire message.
+    ///
+    /// Used by `WaitForMessageTool` to propagate the received depth back into
+    /// the task agent's `SendMessageTool` so that subsequent sends continue
+    /// incrementing from the correct depth rather than restarting from zero.
+    ///
+    /// Defaults to `0` when loading old records from disk that predate this
+    /// field (local storage compat — no network implication).
+    #[serde(default)]
+    pub depth: u32,
 }
 
 /// One post in a room history log.
@@ -454,6 +464,7 @@ mod tests {
             peer_id: peer.to_string(),
             role: SessionRole::User,
             content: vec![ContentBlock::text(text)],
+            depth: 0,
         }
     }
 
