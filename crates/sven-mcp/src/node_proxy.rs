@@ -286,43 +286,41 @@ impl ServerHandler for NodeProxyServer {
         }
     }
 
-    fn list_tools(
+    async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        async move {
-            let schemas = self.fetch_tool_list().await.map_err(|e| {
-                tracing::error!(url = %self.ws_url, "list_tools proxy failed: {e:#}");
-                McpError {
-                    code: rmcp::model::ErrorCode::INTERNAL_ERROR,
-                    message: e.to_string().into(),
-                    data: None,
-                }
-            })?;
+    ) -> Result<ListToolsResult, McpError> {
+        let schemas = self.fetch_tool_list().await.map_err(|e| {
+            tracing::error!(url = %self.ws_url, "list_tools proxy failed: {e:#}");
+            McpError {
+                code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+                message: e.to_string().into(),
+                data: None,
+            }
+        })?;
 
-            let tools: Vec<McpTool> = schemas
-                .into_iter()
-                .map(|s| {
-                    let input_schema: rmcp::model::JsonObject =
-                        match serde_json::from_value(s.parameters) {
-                            Ok(obj) => obj,
-                            Err(_) => serde_json::Map::new(),
-                        };
-                    McpTool::new(
-                        std::borrow::Cow::Owned(s.name),
-                        std::borrow::Cow::Owned(s.description),
-                        Arc::new(input_schema),
-                    )
-                })
-                .collect();
-
-            Ok(ListToolsResult {
-                tools,
-                next_cursor: None,
-                meta: None,
+        let tools: Vec<McpTool> = schemas
+            .into_iter()
+            .map(|s| {
+                let input_schema: rmcp::model::JsonObject =
+                    match serde_json::from_value(s.parameters) {
+                        Ok(obj) => obj,
+                        Err(_) => serde_json::Map::new(),
+                    };
+                McpTool::new(
+                    std::borrow::Cow::Owned(s.name),
+                    std::borrow::Cow::Owned(s.description),
+                    Arc::new(input_schema),
+                )
             })
-        }
+            .collect();
+
+        Ok(ListToolsResult {
+            tools,
+            next_cursor: None,
+            meta: None,
+        })
     }
 
     async fn call_tool(

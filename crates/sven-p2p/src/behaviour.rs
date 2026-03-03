@@ -26,7 +26,7 @@ const APP_PROTO: &str = "/sven-p2p/1.0.0";
 /// - `ping`          — to keep idle connections alive
 /// - `mdns`          — zero-config LAN peer discovery (multicast DNS)
 /// - `task`          — CBOR request/response for `AgentCard` announcements, task exchange,
-///                     and session messaging
+///   and session messaging
 /// - `gossipsub`     — pub/sub for room broadcast messages (one topic per room)
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "P2pBehaviourEvent")]
