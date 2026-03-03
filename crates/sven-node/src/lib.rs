@@ -153,6 +153,7 @@ pub mod error;
 pub mod http;
 pub mod node;
 pub mod p2p;
+pub mod peer;
 pub mod tools;
 pub mod web;
 
@@ -167,4 +168,7 @@ pub use http::tls::{
 pub use node::{
     build_agent_card, exec_task, list_peers, run, web_devices_approve, web_devices_list,
     web_devices_revoke,
+};
+pub use peer::{
+    chat as peer_chat, connect as peer_connect, list_agent_peers, search as peer_search,
 };

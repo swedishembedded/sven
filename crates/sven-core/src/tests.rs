@@ -71,6 +71,87 @@ mod agent_tests {
 
     // ── Basic text turn ───────────────────────────────────────────────────────
 
+    fn agent_with_prior(model: ScriptedMockProvider, prior: Vec<sven_model::Message>) -> Agent {
+        use sven_config::AgentMode;
+        use sven_tools::{events::ToolEvent, ToolRegistry};
+        use tokio::sync::{mpsc, Mutex};
+        let mode_lock = Arc::new(Mutex::new(AgentMode::Agent));
+        let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
+        Agent::new(
+            Arc::new(model),
+            Arc::new(ToolRegistry::default()),
+            Arc::new(AgentConfig::default()),
+            AgentRuntimeContext {
+                prior_messages: prior,
+                ..AgentRuntimeContext::default()
+            },
+            mode_lock,
+            tool_event_rx,
+            128_000,
+        )
+    }
+
+    // ── prior_messages pre-population ────────────────────────────────────────
+
+    #[test]
+    fn prior_messages_are_pre_loaded_into_session() {
+        use sven_model::Message;
+
+        let model = ScriptedMockProvider::always_text("ok");
+        let prior = vec![
+            Message::user("prior user message"),
+            Message::assistant("prior assistant reply"),
+        ];
+        let agent = agent_with_prior(model, prior.clone());
+
+        let msgs = &agent.session().messages;
+        let has_prior_user = msgs
+            .iter()
+            .any(|m| m.as_text() == Some("prior user message"));
+        let has_prior_asst = msgs
+            .iter()
+            .any(|m| m.as_text() == Some("prior assistant reply"));
+        assert!(
+            has_prior_user,
+            "prior user message must appear in session before first turn"
+        );
+        assert!(
+            has_prior_asst,
+            "prior assistant message must appear in session before first turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn prior_messages_appear_before_new_turn_history() {
+        use sven_model::Message;
+
+        let model = ScriptedMockProvider::always_text("new reply");
+        let prior = vec![
+            Message::user("old question"),
+            Message::assistant("old answer"),
+        ];
+        let mut agent = agent_with_prior(model, prior);
+
+        let (tx, rx) = mpsc::channel(64);
+        agent.submit("new question", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        let msgs = &agent.session().messages;
+        // Find indices of prior message and new user message.
+        let prior_idx = msgs
+            .iter()
+            .position(|m| m.as_text() == Some("old question"))
+            .expect("old question must be in session");
+        let new_idx = msgs
+            .iter()
+            .position(|m| m.as_text() == Some("new question"))
+            .expect("new question must be in session");
+        assert!(
+            prior_idx < new_idx,
+            "prior messages must precede the new turn (prior_idx={prior_idx}, new_idx={new_idx})"
+        );
+    }
+
     #[tokio::test]
     async fn single_text_turn_emits_text_delta_and_complete() {
         let model = ScriptedMockProvider::always_text("hello from agent");

@@ -43,7 +43,7 @@ subtle        = "2.6"
 libp2p        = { version = "0.56", features = [
     "tokio", "tcp", "noise", "yamux", "identify", "ping",
     "relay", "dcutr", "autonat", "request-response", "macros",
-    "mdns",
+    "mdns", "gossipsub",
 ] }
 
 # ── Serialization ─────────────────────────────────────────────────────────────

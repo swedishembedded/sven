@@ -12,7 +12,9 @@ use anyhow::Context;
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
-use cli::{Cli, Commands, McpCommands, NodeCommands, OutputFormatArg, WebDevicesCommands};
+use cli::{
+    Cli, Commands, McpCommands, NodeCommands, OutputFormatArg, PeerCommands, WebDevicesCommands,
+};
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
@@ -35,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     let is_tui = !cli.is_headless() && cli.command.is_none();
     let is_gateway = matches!(
         &cli.command,
-        Some(Commands::Node { .. }) | Some(Commands::Mcp { .. })
+        Some(Commands::Node { .. }) | Some(Commands::Mcp { .. }) | Some(Commands::Peer { .. })
     );
     init_logging(cli.verbose, is_tui, is_gateway);
 
@@ -47,6 +49,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Node { command } => {
                 return run_node_command(command).await;
+            }
+            Commands::Peer { command } => {
+                return run_peer_command(command).await;
             }
             Commands::Completions { shell } => {
                 cli::print_completions(*shell);
@@ -242,6 +247,34 @@ async fn run_web_devices_command(cmd: &WebDevicesCommands) -> anyhow::Result<()>
             let node_config = sven_node::config::load(config_path.as_deref())?;
             sven_node::web_devices_revoke(&node_config, url, token, device_id, *insecure).await
         }
+    }
+}
+
+// ── Peer command handler ──────────────────────────────────────────────────────
+
+async fn run_peer_command(cmd: &PeerCommands) -> anyhow::Result<()> {
+    match cmd {
+        PeerCommands::List {
+            config: config_path,
+            timeout,
+        } => {
+            let config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::list_agent_peers(&config, *timeout).await
+        }
+
+        PeerCommands::Chat {
+            peer,
+            config: config_path,
+        } => {
+            let config = sven_node::config::load(config_path.as_deref())?;
+            sven_node::peer_chat(&config, peer).await
+        }
+
+        PeerCommands::Search {
+            peer,
+            pattern,
+            limit,
+        } => sven_node::peer_search(peer.as_deref(), pattern, *limit),
     }
 }
 

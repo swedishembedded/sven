@@ -58,6 +58,11 @@ impl Agent {
         let max_output_tokens = model.catalog_max_output_tokens().unwrap_or(0) as usize;
         let mut session = Session::new(max_context_tokens);
         session.max_output_tokens = max_output_tokens;
+        // Pre-populate with prior messages if provided (used by session executor
+        // to restore conversation context from the local conversation store).
+        if !runtime.prior_messages.is_empty() {
+            session.push_many(runtime.prior_messages.iter().cloned());
+        }
         Self {
             session,
             tools,

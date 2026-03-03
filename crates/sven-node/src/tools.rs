@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! Gateway-specific agent tools: `delegate_task` and `list_peers`.
+//! Gateway-specific agent tools: `delegate_task`, `list_peers`, and the
+//! session/room collaboration tools.
 //!
 //! These tools give the agent the ability to discover other connected agents
 //! and route work to them over the libp2p task protocol.
@@ -34,12 +35,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use sven_p2p::{
-    protocol::types::{AgentCard, ContentBlock, TaskRequest, TaskStatus},
-    P2pHandle,
+    protocol::types::{AgentCard, ContentBlock, SessionRole, TaskRequest, TaskStatus},
+    store::MessageDirection,
+    ConversationStoreHandle, P2pHandle, SessionMessageWire,
 };
 use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
@@ -433,5 +437,728 @@ impl Tool for ListPeersTool {
         }
 
         ToolOutput::ok(&call.id, lines.join("\n"))
+    }
+}
+
+// ── SendMessageTool ──────────────────────────────────────────────────────────
+
+/// Send a message to a peer agent.
+///
+/// There is one implicit conversation per peer pair — no session IDs needed.
+/// Messages are logged to the local conversation store on both sides.
+/// After sending, use `wait_for_message` to receive the reply.
+pub struct SendMessageTool {
+    pub p2p: P2pHandle,
+}
+
+#[async_trait]
+impl Tool for SendMessageTool {
+    fn name(&self) -> &str {
+        "send_message"
+    }
+
+    fn description(&self) -> &str {
+        "Send a text message to a peer agent. There is one persistent conversation \
+         per peer — like a WhatsApp chat. History is stored locally and can be \
+         searched later with `search_conversation`. After sending, call \
+         `wait_for_message` with the same peer to receive the reply. \
+         Use the base58 peer ID from `list_peers` or a unique agent name."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["peer", "text"],
+            "properties": {
+                "peer": {
+                    "type": "string",
+                    "description": "Base58 peer ID or unique agent name of the recipient"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text content of the message"
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let peer_str = match call.args["peer"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: peer"),
+        };
+        let text = match call.args["text"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: text"),
+        };
+
+        let peer_id = match resolve_peer_id(&self.p2p, &peer_str) {
+            Ok(pid) => pid,
+            Err(msg) => return ToolOutput::err(&call.id, msg),
+        };
+
+        // Determine next sequence number from the store.
+        let seq = {
+            let store = self.p2p.store().clone();
+            let pid = peer_id.to_base58();
+            tokio::task::spawn_blocking(move || store.message_count(&pid).unwrap_or(0))
+                .await
+                .unwrap_or(0)
+        };
+
+        let msg = SessionMessageWire {
+            message_id: Uuid::new_v4(),
+            seq,
+            timestamp: Utc::now(),
+            role: SessionRole::User,
+            content: vec![ContentBlock::text(&text)],
+        };
+
+        match self.p2p.send_session_message(peer_id, msg).await {
+            Ok(()) => ToolOutput::ok(
+                &call.id,
+                format!(
+                    "Message sent to {peer_str} (seq={seq}).\n\
+                     Use `wait_for_message {{\"peer\": \"{peer_str}\"}}` to receive the reply."
+                ),
+            ),
+            Err(e) => ToolOutput::err(&call.id, format!("Failed to send message: {e}")),
+        }
+    }
+}
+
+// ── WaitForMessageTool ───────────────────────────────────────────────────────
+
+/// Wait for the next reply from a specific peer.
+pub struct WaitForMessageTool {
+    pub p2p: P2pHandle,
+}
+
+#[async_trait]
+impl Tool for WaitForMessageTool {
+    fn name(&self) -> &str {
+        "wait_for_message"
+    }
+
+    fn description(&self) -> &str {
+        "Wait for the next message from a specific peer agent. \
+         Blocks until the remote agent sends a reply or the timeout elapses. \
+         Always specify the same peer you sent to with `send_message`."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["peer"],
+            "properties": {
+                "peer": {
+                    "type": "string",
+                    "description": "Base58 peer ID or agent name to wait for a message from"
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Maximum seconds to wait (default: 300, max: 900)",
+                    "default": 300
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let peer_str = match call.args["peer"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: peer"),
+        };
+        let peer_id = match resolve_peer_id(&self.p2p, &peer_str) {
+            Ok(pid) => pid,
+            Err(msg) => return ToolOutput::err(&call.id, msg),
+        };
+        let timeout_secs = call.args["timeout_secs"].as_u64().unwrap_or(300).min(900);
+        let timeout = tokio::time::Duration::from_secs(timeout_secs);
+
+        match self.p2p.wait_for_message(peer_id, timeout).await {
+            Ok(record) => {
+                let text = record
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                ToolOutput::ok(
+                    &call.id,
+                    format!(
+                        "**Reply from {peer_str}** (seq={}, {:?})\n\n{}",
+                        record.seq, record.role, text
+                    ),
+                )
+            }
+            Err(sven_p2p::P2pError::Timeout) => ToolOutput::err(
+                &call.id,
+                format!("No reply from {peer_str} within {timeout_secs}s."),
+            ),
+            Err(e) => ToolOutput::err(&call.id, format!("Wait failed: {e}")),
+        }
+    }
+}
+
+// ── SearchConversationTool ───────────────────────────────────────────────────
+
+/// Grep-style regex search over local conversation history.
+pub struct SearchConversationTool {
+    pub store: ConversationStoreHandle,
+}
+
+#[async_trait]
+impl Tool for SearchConversationTool {
+    fn name(&self) -> &str {
+        "search_conversation"
+    }
+
+    fn description(&self) -> &str {
+        "Grep-style regex search over the local conversation history with peer agents. \
+         One conversation per peer is stored locally as JSONL. \
+         Use this to find specific information discussed in past exchanges — \
+         including messages before the current context break. \
+         Supports full Rust regex syntax: anchors, character classes, alternation, etc. \
+         Use `(?i)` prefix for case-insensitive matching."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["pattern"],
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern (grep-style). Use (?i) for case-insensitive. \
+                                    Examples: 'auth', '^ERROR', '(?i)boot\\s+fail(ure)?'"
+                },
+                "peer": {
+                    "type": "string",
+                    "description": "Optional base58 peer ID or agent name to limit search to one peer"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 20)",
+                    "default": 20
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let pattern = match call.args["pattern"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: pattern"),
+        };
+        // Resolve optional peer name to peer ID string.
+        let peer_id_str = call.args["peer"].as_str().map(|s| s.to_string());
+        let limit = call.args["limit"].as_u64().unwrap_or(20) as usize;
+
+        let store = Arc::clone(&self.store);
+        let pattern_c = pattern.clone();
+        let peer_c = peer_id_str.clone();
+        let results =
+            tokio::task::spawn_blocking(move || store.search(peer_c.as_deref(), &pattern_c, limit))
+                .await;
+
+        match results {
+            Ok(Ok(records)) if records.is_empty() => {
+                ToolOutput::ok(&call.id, format!("No matches for pattern `{pattern}`."))
+            }
+            Ok(Ok(records)) => {
+                let mut lines = vec![format!("{} match(es) for `{pattern}`:\n", records.len())];
+                for r in &records {
+                    lines.push(format!(
+                        "{} {} [{}] seq={}",
+                        r.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
+                        if r.direction == MessageDirection::Outbound {
+                            "→"
+                        } else {
+                            "←"
+                        },
+                        r.peer_id,
+                        r.seq,
+                    ));
+                    for block in &r.content {
+                        if let ContentBlock::Text { text } = block {
+                            let preview: String = text.chars().take(400).collect();
+                            for line in preview.lines().take(5) {
+                                lines.push(format!("  {line}"));
+                            }
+                        }
+                    }
+                    lines.push(String::new());
+                }
+                ToolOutput::ok(&call.id, lines.join("\n"))
+            }
+            Ok(Err(e)) => ToolOutput::err(&call.id, format!("Search failed: {e}")),
+            Err(e) => ToolOutput::err(&call.id, format!("Search task panicked: {e}")),
+        }
+    }
+}
+
+// ── ListConversationsTool ─────────────────────────────────────────────────────
+
+/// List peers that have conversation history stored locally.
+pub struct ListConversationsTool {
+    pub store: ConversationStoreHandle,
+}
+
+#[async_trait]
+impl Tool for ListConversationsTool {
+    fn name(&self) -> &str {
+        "list_conversations"
+    }
+
+    fn description(&self) -> &str {
+        "List all peer agents that have conversation history stored locally. \
+         Returns peer IDs, message counts, and first/last timestamps. \
+         Use this to discover who you've talked to before calling \
+         `search_conversation` or `send_message`."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let store = Arc::clone(&self.store);
+        let summaries = tokio::task::spawn_blocking(move || store.list_peers_with_history()).await;
+
+        match summaries {
+            Ok(Ok(list)) if list.is_empty() => {
+                ToolOutput::ok(&call.id, "No conversation history recorded yet.")
+            }
+            Ok(Ok(list)) => {
+                let mut lines = vec![format!("{} peer(s) with history:\n", list.len())];
+                for s in &list {
+                    lines.push(format!("peer: {}", s.peer_id));
+                    lines.push(format!("  messages: {}", s.message_count));
+                    if let (Some(f), Some(l)) = (s.first_timestamp, s.last_timestamp) {
+                        lines.push(format!(
+                            "  from {} to {}",
+                            f.format("%Y-%m-%d %H:%M UTC"),
+                            l.format("%Y-%m-%d %H:%M UTC"),
+                        ));
+                    }
+                    lines.push(String::new());
+                }
+                ToolOutput::ok(&call.id, lines.join("\n"))
+            }
+            Ok(Err(e)) => ToolOutput::err(&call.id, format!("list_conversations failed: {e}")),
+            Err(e) => ToolOutput::err(&call.id, format!("list_conversations panicked: {e}")),
+        }
+    }
+}
+
+// ── PostToRoomTool ───────────────────────────────────────────────────────────
+
+/// Broadcast a message to all peers currently subscribed to a room.
+///
+/// Rooms are like Slack channels — presence-based: only peers that are
+/// currently connected and subscribed will receive the post.  The message
+/// is appended to the local room history file.
+pub struct PostToRoomTool {
+    pub p2p: P2pHandle,
+}
+
+#[async_trait]
+impl Tool for PostToRoomTool {
+    fn name(&self) -> &str {
+        "post_to_room"
+    }
+
+    fn description(&self) -> &str {
+        "Broadcast a message to all agents currently in a room (like a Slack channel). \
+         Only agents subscribed to the room at the time of posting will receive it — \
+         there is no persistent server-side buffer. The post is logged to the local \
+         room history file for later search."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["room", "text"],
+            "properties": {
+                "room": {
+                    "type": "string",
+                    "description": "Name of the room to post to (e.g. 'firmware-team', 'general')"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text content to broadcast"
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let room = match call.args["room"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: room"),
+        };
+        let text = match call.args["text"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: text"),
+        };
+
+        let content = vec![ContentBlock::text(&text)];
+        match self.p2p.post_to_room(&room, content).await {
+            Ok(()) => ToolOutput::ok(
+                &call.id,
+                format!(
+                    "Posted to room '{room}'. All currently subscribed peers will receive this."
+                ),
+            ),
+            Err(e) => ToolOutput::err(&call.id, format!("Failed to post to room '{room}': {e}")),
+        }
+    }
+}
+
+// ── ReadRoomHistoryTool ──────────────────────────────────────────────────────
+
+/// Read the local room history — posts the node witnessed while subscribed.
+pub struct ReadRoomHistoryTool {
+    pub store: ConversationStoreHandle,
+}
+
+#[async_trait]
+impl Tool for ReadRoomHistoryTool {
+    fn name(&self) -> &str {
+        "read_room_history"
+    }
+
+    fn description(&self) -> &str {
+        "Read the local history of a room — posts this node received while it was \
+         subscribed. Like scrolling up in a Slack channel: you only see what was \
+         posted while you were present. Supports full-text search and time filtering."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["room"],
+            "properties": {
+                "room": {
+                    "type": "string",
+                    "description": "Room name to read history from"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional text filter (case-insensitive)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of posts to return (default: 50)",
+                    "default": 50
+                },
+                "since_hours": {
+                    "type": "integer",
+                    "description": "Only return posts from the last N hours"
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let room = match call.args["room"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: room"),
+        };
+        let query = call.args["query"].as_str().map(|s| s.to_string());
+        let limit = call.args["limit"].as_u64().unwrap_or(50) as usize;
+        let since = call.args["since_hours"]
+            .as_u64()
+            .map(|h| Utc::now() - chrono::Duration::hours(h as i64));
+
+        let store = Arc::clone(&self.store);
+        let room_c = room.clone();
+        let query_c = query.clone();
+        let results = tokio::task::spawn_blocking(move || {
+            store.read_room_history(&room_c, since, limit, query_c.as_deref())
+        })
+        .await;
+
+        match results {
+            Ok(Ok(posts)) if posts.is_empty() => {
+                ToolOutput::ok(&call.id, format!("No room history found for '{room}'."))
+            }
+            Ok(Ok(posts)) => {
+                let mut lines = vec![format!("{} post(s) from room '{room}':\n", posts.len())];
+                for p in &posts {
+                    lines.push(format!(
+                        "**{}** @ {}",
+                        p.sender_name,
+                        p.timestamp.format("%Y-%m-%d %H:%M UTC"),
+                    ));
+                    for block in &p.content {
+                        if let ContentBlock::Text { text } = block {
+                            lines.push(format!("  {text}"));
+                        }
+                    }
+                    lines.push(String::new());
+                }
+                ToolOutput::ok(&call.id, lines.join("\n"))
+            }
+            Ok(Err(e)) => ToolOutput::err(&call.id, format!("read_room_history failed: {e}")),
+            Err(e) => ToolOutput::err(&call.id, format!("read_room_history task panicked: {e}")),
+        }
+    }
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+fn resolve_peer_id(p2p: &P2pHandle, peer_str: &str) -> Result<libp2p::PeerId, String> {
+    let all = p2p.all_peers();
+
+    // Pass 1: exact base58 peer ID match.
+    for (pid, _) in &all {
+        if pid.to_base58() == peer_str {
+            return Ok(*pid);
+        }
+    }
+
+    // Pass 2: unique name match.
+    let name_matches: Vec<libp2p::PeerId> = all
+        .iter()
+        .filter(|(_, card)| card.name == peer_str)
+        .map(|(pid, _)| *pid)
+        .collect();
+
+    match name_matches.len() {
+        0 => Err(format!(
+            "Peer '{peer_str}' not found. Known peers: {}",
+            all.iter()
+                .map(|(pid, card)| format!("{} ({})", card.name, pid.to_base58()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        1 => Ok(name_matches[0]),
+        _ => Err(format!(
+            "Ambiguous name '{peer_str}': multiple peers share this name. Use the peer ID. \
+             Matches: {}",
+            name_matches
+                .iter()
+                .map(|p| p.to_base58())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use sven_p2p::store::ConversationStore;
+    use sven_tools::{ToolCall, ToolOutput};
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn make_store() -> (TempDir, ConversationStoreHandle) {
+        let dir = TempDir::new().unwrap();
+        let store = Arc::new(ConversationStore::new(dir.path().to_path_buf()));
+        (dir, store)
+    }
+
+    // ── SearchConversationTool ────────────────────────────────────────────────
+
+    #[test]
+    fn search_conversation_tool_name() {
+        let (_dir, store) = make_store();
+        let tool = SearchConversationTool { store };
+        assert_eq!(tool.name(), "search_conversation");
+    }
+
+    #[test]
+    fn search_conversation_tool_schema_has_pattern_field() {
+        let (_dir, store) = make_store();
+        let tool = SearchConversationTool { store };
+        let schema = tool.parameters_schema();
+        let props = schema["properties"]
+            .as_object()
+            .expect("schema must have properties");
+        assert!(
+            props.contains_key("pattern"),
+            "schema must expose 'pattern' property for regex search"
+        );
+        let required = schema["required"]
+            .as_array()
+            .expect("schema must have required array");
+        let required_names: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            required_names.contains(&"pattern"),
+            "pattern must be required; got: {required_names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_conversation_tool_missing_pattern_returns_error() {
+        let (_dir, store) = make_store();
+        let tool = SearchConversationTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "search_conversation".into(),
+            args: serde_json::json!({}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(
+            out.is_error,
+            "missing 'pattern' must produce an error output"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_conversation_tool_invalid_regex_returns_error() {
+        let (_dir, store) = make_store();
+        let tool = SearchConversationTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "search_conversation".into(),
+            args: serde_json::json!({"pattern": "[invalid"}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(out.is_error, "invalid regex must produce an error output");
+    }
+
+    #[tokio::test]
+    async fn search_conversation_tool_empty_store_returns_no_matches() {
+        let (_dir, store) = make_store();
+        let tool = SearchConversationTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "search_conversation".into(),
+            args: serde_json::json!({"pattern": "anything"}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(!out.is_error, "no matches on empty store should not error");
+        assert!(
+            out.content.contains("No matches"),
+            "empty result should say 'No matches'; got: {:?}",
+            out.content
+        );
+    }
+
+    // ── ListConversationsTool ─────────────────────────────────────────────────
+
+    #[test]
+    fn list_conversations_tool_name() {
+        let (_dir, store) = make_store();
+        let tool = ListConversationsTool { store };
+        assert_eq!(tool.name(), "list_conversations");
+    }
+
+    #[test]
+    fn list_conversations_tool_schema_is_object() {
+        let (_dir, store) = make_store();
+        let tool = ListConversationsTool { store };
+        let schema = tool.parameters_schema();
+        assert_eq!(
+            schema["type"].as_str(),
+            Some("object"),
+            "parameters_schema must have type=object"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_conversations_tool_empty_store() {
+        let (_dir, store) = make_store();
+        let tool = ListConversationsTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "list_conversations".into(),
+            args: serde_json::json!({}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(!out.is_error, "empty store must not error");
+        assert!(
+            out.content.contains("No conversation") || out.content.contains("0"),
+            "empty store result should say no conversations; got: {:?}",
+            out.content
+        );
+    }
+
+    // ── ReadRoomHistoryTool ───────────────────────────────────────────────────
+
+    #[test]
+    fn read_room_history_tool_name() {
+        let (_dir, store) = make_store();
+        let tool = ReadRoomHistoryTool { store };
+        assert_eq!(tool.name(), "read_room_history");
+    }
+
+    #[test]
+    fn read_room_history_tool_schema_has_required_room() {
+        let (_dir, store) = make_store();
+        let tool = ReadRoomHistoryTool { store };
+        let schema = tool.parameters_schema();
+        let required = schema["required"].as_array().expect("must have required");
+        let names: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            names.contains(&"room"),
+            "'room' must be required; got: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_room_history_tool_missing_room_returns_error() {
+        let (_dir, store) = make_store();
+        let tool = ReadRoomHistoryTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "read_room_history".into(),
+            args: serde_json::json!({}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(out.is_error, "missing 'room' must produce an error");
+    }
+
+    #[tokio::test]
+    async fn read_room_history_tool_empty_room_returns_no_history() {
+        let (_dir, store) = make_store();
+        let tool = ReadRoomHistoryTool { store };
+        let call = ToolCall {
+            id: "tc1".into(),
+            name: "read_room_history".into(),
+            args: serde_json::json!({"room": "empty-room"}),
+        };
+        let out = tool.execute(&call).await;
+        assert!(!out.is_error, "empty room must not error");
+        assert!(
+            out.content.contains("No room history"),
+            "empty room should say 'No room history'; got: {:?}",
+            out.content
+        );
     }
 }

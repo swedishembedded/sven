@@ -8,12 +8,13 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
+use chrono::Utc;
 use libp2p::identity::Keypair;
 
 use futures::{future, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade, ConnectedPoint},
-    dcutr, identify, mdns,
+    dcutr, gossipsub, identify, mdns,
     multiaddr::Protocol,
     noise, relay, request_response,
     swarm::{
@@ -33,9 +34,16 @@ use crate::{
     config::P2pConfig,
     discovery::{DiscoveryProvider, PeerInfo},
     error::P2pError,
-    protocol::types::{
-        canonical_hop_bytes, AgentCard, LogEntry, P2pRequest, P2pResponse, TaskRequest,
-        TaskResponse,
+    protocol::{
+        codec::cbor_encode,
+        types::{
+            canonical_hop_bytes, AgentCard, ContentBlock, LogEntry, P2pRequest, P2pResponse,
+            RoomPost, SessionMessageWire, TaskRequest, TaskResponse,
+        },
+    },
+    store::{
+        ConversationRecord, ConversationStore, ConversationStoreHandle, MessageDirection,
+        RoomRecord,
     },
     transport::{default_swarm_config, load_or_create_keypair},
 };
@@ -94,6 +102,17 @@ pub enum P2pEvent {
         from: PeerId,
         response: TaskResponse,
     },
+    // ── Session events ────────────────────────────────────────────────────────
+    /// A message arrived from a peer in the implicit per-peer conversation.
+    SessionMessage {
+        from: PeerId,
+        message: SessionMessageWire,
+    },
+    // ── Room events ───────────────────────────────────────────────────────────
+    /// A gossipsub room post was received.
+    RoomPost {
+        post: RoomPost,
+    },
     Error(P2pError),
 }
 
@@ -110,6 +129,23 @@ pub(crate) enum P2pCommand {
     TaskReply {
         id: uuid::Uuid,
         response: P2pResponse,
+    },
+    /// Send a message to a peer in the implicit per-peer conversation.
+    SessionSend {
+        peer: PeerId,
+        message: SessionMessageWire,
+        reply_tx: oneshot::Sender<Result<(), P2pError>>,
+    },
+    /// Register a waiter for the next inbound message from a specific peer.
+    WaitPeerMessage {
+        peer: PeerId,
+        reply_tx: oneshot::Sender<Result<ConversationRecord, P2pError>>,
+    },
+    /// Publish a post to a gossipsub room topic.
+    PostToRoom {
+        room: String,
+        content: Vec<ContentBlock>,
+        sender_card: AgentCard,
     },
     Announce,
     Shutdown,
@@ -138,6 +174,10 @@ pub struct P2pHandle {
     /// Available to callers that need the local identity (e.g. for building
     /// delegation chains) without having to wait for a full connection.
     local_peer_id: Arc<OnceLock<PeerId>>,
+    /// Local conversation + room store shared with the node event loop.
+    store: ConversationStoreHandle,
+    /// This node's agent card (used when opening sessions or posting to rooms).
+    agent_card: Arc<OnceLock<AgentCard>>,
 }
 
 impl P2pHandle {
@@ -232,6 +272,71 @@ impl P2pHandle {
             .map(|p| p.to_base58())
             .unwrap_or_default()
     }
+
+    /// Access the local conversation store.
+    pub fn store(&self) -> &ConversationStoreHandle {
+        &self.store
+    }
+
+    // ── Session API ───────────────────────────────────────────────────────────
+
+    /// Send a message to `peer` in the implicit per-peer conversation.
+    pub async fn send_session_message(
+        &self,
+        peer: PeerId,
+        message: SessionMessageWire,
+    ) -> Result<(), P2pError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(P2pCommand::SessionSend {
+                peer,
+                message,
+                reply_tx,
+            })
+            .await
+            .map_err(|_| P2pError::Shutdown)?;
+        reply_rx.await.map_err(|_| P2pError::Shutdown)?
+    }
+
+    /// Wait for the next inbound message from `peer`, with a timeout.
+    ///
+    /// Returns `P2pError::Timeout` if `timeout` elapses with no message.
+    pub async fn wait_for_message(
+        &self,
+        peer: PeerId,
+        timeout: Duration,
+    ) -> Result<ConversationRecord, P2pError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(P2pCommand::WaitPeerMessage { peer, reply_tx })
+            .await
+            .map_err(|_| P2pError::Shutdown)?;
+        tokio::time::timeout(timeout, reply_rx)
+            .await
+            .map_err(|_| P2pError::Timeout)?
+            .map_err(|_| P2pError::Shutdown)?
+    }
+
+    // ── Room API ──────────────────────────────────────────────────────────────
+
+    /// Publish a post to the gossipsub topic for `room`.
+    ///
+    /// All peers currently subscribed to this room will receive the post.
+    pub async fn post_to_room(
+        &self,
+        room: &str,
+        content: Vec<ContentBlock>,
+    ) -> Result<(), P2pError> {
+        let sender_card = self.agent_card.get().cloned().unwrap_or_default();
+        self.cmd_tx
+            .send(P2pCommand::PostToRoom {
+                room: room.to_string(),
+                content,
+                sender_card,
+            })
+            .await
+            .map_err(|_| P2pError::Shutdown)
+    }
 }
 
 // ── P2pNode ───────────────────────────────────────────────────────────────────
@@ -244,6 +349,8 @@ pub struct P2pNode {
     cmd_rx: mpsc::Receiver<P2pCommand>,
     roster: Arc<Mutex<HashMap<String, RoomState>>>,
     local_peer_id: Arc<OnceLock<PeerId>>,
+    store: ConversationStoreHandle,
+    agent_card: Arc<OnceLock<AgentCard>>,
 }
 
 impl P2pNode {
@@ -264,6 +371,11 @@ impl P2pNode {
             }
             m
         }));
+        let store_path = config
+            .store_path
+            .clone()
+            .unwrap_or_else(ConversationStore::default_dir);
+        let store = Arc::new(ConversationStore::new(store_path));
         Self {
             config,
             event_tx,
@@ -272,6 +384,8 @@ impl P2pNode {
             cmd_rx,
             roster,
             local_peer_id: Arc::new(OnceLock::new()),
+            store,
+            agent_card: Arc::new(OnceLock::new()),
         }
     }
 
@@ -282,6 +396,8 @@ impl P2pNode {
             log_tx: self.log_tx.clone(),
             roster: Arc::clone(&self.roster),
             local_peer_id: Arc::clone(&self.local_peer_id),
+            store: Arc::clone(&self.store),
+            agent_card: Arc::clone(&self.agent_card),
         }
     }
 
@@ -299,9 +415,22 @@ impl P2pNode {
         let _ = self.local_peer_id.set(local_peer_id);
         let mut agent_card = self.config.agent_card.clone();
         agent_card.peer_id = local_peer_id.to_string();
+        // Store the final agent card so P2pHandle::open_session / post_to_room can use it.
+        let _ = self.agent_card.set(agent_card.clone());
         tracing::info!("P2pNode starting peer_id={local_peer_id}");
 
         let mut swarm = build_node_swarm(&key, local_peer_id)?;
+
+        // Subscribe to all configured rooms on the gossipsub mesh.
+        for room in &self.config.rooms {
+            let topic = gossipsub::IdentTopic::new(RoomPost::topic_for(room));
+            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                tracing::warn!(room = %room, error = %e, "gossipsub subscribe failed");
+            } else {
+                tracing::info!(room = %room, "subscribed to gossipsub room topic");
+            }
+        }
+
         swarm
             .listen_on(self.config.listen_addr.clone())
             .map_err(|e| P2pError::Transport(e.to_string()))?;
@@ -331,6 +460,12 @@ impl P2pNode {
             pending_outbound: HashMap::new(),
             agent_peers: self.config.agent_peers.clone(),
             pending_heartbeats: HashSet::new(),
+            store: Arc::clone(&self.store),
+            peer_waiters: HashMap::new(),
+            // Track gossipsub topic subscriptions.
+            subscribed_rooms: self.config.rooms.iter().cloned().collect(),
+            // Deduplicate gossipsub re-deliveries.
+            seen_gossip_ids: HashSet::new(),
         };
 
         state.event_loop(swarm, self.cmd_rx).await
@@ -393,6 +528,16 @@ struct NodeState {
     /// Outstanding heartbeat request IDs.  Used to distinguish heartbeat
     /// `OutboundFailure` events from announce/task failures.
     pending_heartbeats: HashSet<request_response::OutboundRequestId>,
+    /// Local conversation and room store.
+    store: ConversationStoreHandle,
+    /// Per-peer waiters: peer_id → oneshot sender that fires when the next
+    /// inbound message from that peer arrives.  One waiter slot per peer.
+    peer_waiters: HashMap<PeerId, oneshot::Sender<Result<ConversationRecord, P2pError>>>,
+    /// Rooms this node is subscribed to on the gossipsub mesh (for future join/leave support).
+    #[allow(dead_code)]
+    subscribed_rooms: HashSet<String>,
+    /// Gossipsub message IDs seen recently — used to deduplicate re-deliveries.
+    seen_gossip_ids: HashSet<gossipsub::MessageId>,
 }
 
 impl NodeState {
@@ -522,6 +667,27 @@ impl NodeState {
 
             SwarmEvent::Behaviour(P2pBehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
                 self.on_mdns_expired(peers);
+            }
+
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                message,
+                message_id,
+                ..
+            })) => {
+                self.on_gossipsub_message(message_id, message);
+            }
+
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Gossipsub(gossipsub::Event::Subscribed {
+                peer_id,
+                topic,
+            })) => {
+                tracing::debug!(%peer_id, topic = %topic, "gossipsub peer subscribed");
+            }
+
+            SwarmEvent::Behaviour(P2pBehaviourEvent::Gossipsub(
+                gossipsub::Event::Unsubscribed { peer_id, topic },
+            )) => {
+                tracing::debug!(%peer_id, topic = %topic, "gossipsub peer unsubscribed");
             }
 
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
@@ -794,6 +960,9 @@ impl NodeState {
                         .behaviour_mut()
                         .task
                         .send_response(channel, P2pResponse::Ack);
+                }
+                P2pRequest::SessionMessage(msg) => {
+                    self.on_session_message(swarm, peer, msg, channel);
                 }
             },
             request_response::Message::Response {
@@ -1265,6 +1434,80 @@ impl NodeState {
                 }
                 false
             }
+            P2pCommand::SessionSend {
+                peer,
+                message,
+                reply_tx,
+            } => {
+                // Log outbound message to store.
+                let record = ConversationRecord {
+                    message_id: message.message_id,
+                    seq: message.seq,
+                    timestamp: message.timestamp,
+                    direction: MessageDirection::Outbound,
+                    peer_id: peer.to_base58(),
+                    role: message.role.clone(),
+                    content: message.content.clone(),
+                };
+                let store = Arc::clone(&self.store);
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = store.append_message(&record) {
+                        tracing::warn!("store append_message (outbound) failed: {e}");
+                    }
+                });
+                swarm
+                    .behaviour_mut()
+                    .task
+                    .send_request(&peer, P2pRequest::SessionMessage(message));
+                let _ = reply_tx.send(Ok(()));
+                false
+            }
+            P2pCommand::WaitPeerMessage { peer, reply_tx } => {
+                // Register the oneshot; fires when the next inbound message
+                // from this peer arrives.
+                self.peer_waiters.insert(peer, reply_tx);
+                false
+            }
+            P2pCommand::PostToRoom {
+                room,
+                content,
+                sender_card,
+            } => {
+                let post = RoomPost {
+                    message_id: Uuid::new_v4(),
+                    room: room.clone(),
+                    sender_peer_id: self.local_peer_id.to_base58(),
+                    sender_name: sender_card.name.clone(),
+                    timestamp: Utc::now(),
+                    content: content.clone(),
+                };
+                // Publish to gossipsub.
+                match cbor_encode(&post) {
+                    Ok(data) => {
+                        let topic = gossipsub::IdentTopic::new(RoomPost::topic_for(&room));
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic, data) {
+                            tracing::warn!(room = %room, "gossipsub publish failed: {e}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("cbor_encode RoomPost failed: {e}"),
+                }
+                // Also log to local store.
+                let record = RoomRecord {
+                    message_id: post.message_id,
+                    room,
+                    sender_peer_id: post.sender_peer_id,
+                    sender_name: post.sender_name,
+                    timestamp: post.timestamp,
+                    content,
+                };
+                let store = Arc::clone(&self.store);
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = store.append_room_post(&record) {
+                        tracing::warn!("store append_room_post failed: {e}");
+                    }
+                });
+                false
+            }
             P2pCommand::Announce => {
                 // Force a re-announce to every connected application peer.
                 // Clear announced_to first so we can re-use the dedup guard —
@@ -1381,6 +1624,99 @@ impl NodeState {
                 }
             }
         });
+    }
+
+    // ── Session handler ───────────────────────────────────────────────────────
+
+    fn on_session_message(
+        &mut self,
+        swarm: &mut NodeSwarm,
+        peer: PeerId,
+        msg: SessionMessageWire,
+        channel: request_response::ResponseChannel<P2pResponse>,
+    ) {
+        tracing::debug!(%peer, seq = msg.seq, "session message received");
+
+        // Acknowledge delivery.
+        let _ = swarm.behaviour_mut().task.send_response(
+            channel,
+            P2pResponse::SessionAck {
+                message_id: msg.message_id,
+            },
+        );
+
+        // Build and store the inbound record.
+        let record = ConversationRecord {
+            message_id: msg.message_id,
+            seq: msg.seq,
+            timestamp: msg.timestamp,
+            direction: MessageDirection::Inbound,
+            peer_id: peer.to_base58(),
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+        };
+        let store = Arc::clone(&self.store);
+        let record_for_store = record.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.append_message(&record_for_store) {
+                tracing::warn!("store append_message (inbound) failed: {e}");
+            }
+        });
+
+        // Wake any waiter registered for this peer.
+        if let Some(tx) = self.peer_waiters.remove(&peer) {
+            let _ = tx.send(Ok(record.clone()));
+        }
+
+        self.emit(P2pEvent::SessionMessage {
+            from: peer,
+            message: msg,
+        });
+    }
+
+    // ── Gossipsub (room broadcast) handler ────────────────────────────────────
+
+    fn on_gossipsub_message(
+        &mut self,
+        message_id: gossipsub::MessageId,
+        message: gossipsub::Message,
+    ) {
+        // Deduplicate re-deliveries.
+        if !self.seen_gossip_ids.insert(message_id.clone()) {
+            return;
+        }
+        // Keep the dedup set bounded.
+        if self.seen_gossip_ids.len() > 4096 {
+            self.seen_gossip_ids.clear();
+        }
+
+        let post: RoomPost = match crate::protocol::codec::cbor_decode(&message.data) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("failed to decode RoomPost from gossipsub: {e}");
+                return;
+            }
+        };
+
+        tracing::debug!(room = %post.room, sender = %post.sender_name, "room post received");
+
+        // Log to local room store.
+        let record = RoomRecord {
+            message_id: post.message_id,
+            room: post.room.clone(),
+            sender_peer_id: post.sender_peer_id.clone(),
+            sender_name: post.sender_name.clone(),
+            timestamp: post.timestamp,
+            content: post.content.clone(),
+        };
+        let store = Arc::clone(&self.store);
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.append_room_post(&record) {
+                tracing::warn!("store append_room_post (inbound) failed: {e}");
+            }
+        });
+
+        self.emit(P2pEvent::RoomPost { post });
     }
 
     // ── Shutdown ─────────────────────────────────────────────────────────────

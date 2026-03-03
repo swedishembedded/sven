@@ -219,6 +219,7 @@ async fn main() -> anyhow::Result<()> {
         keypair_path: args.keypair.clone(),
         discovery_poll_interval: Duration::from_secs(5),
         agent_peers: std::collections::HashSet::new(),
+        store_path: None,
     };
 
     let node = P2pNode::new(config);

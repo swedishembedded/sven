@@ -524,6 +524,22 @@ pub fn extract_session(auth: &WebAuthState, jar: &CookieJar) -> Option<Uuid> {
     auth.verify_jwt(token)
 }
 
+// ── Session check ─────────────────────────────────────────────────────────────
+
+/// GET /web/auth/check
+///
+/// Lightweight liveness probe for the browser's session cookie.
+/// Returns `200 OK` if the session JWT is present and valid, `401 Unauthorized`
+/// if it is absent or expired.  The frontend calls this before attempting a
+/// WebSocket reconnect so it can redirect to login instead of looping forever
+/// when the session has expired.
+pub async fn session_check(State(auth): State<WebAuthState>, jar: CookieJar) -> Response {
+    match extract_session(&auth, &jar) {
+        Some(_) => StatusCode::OK.into_response(),
+        None => (StatusCode::UNAUTHORIZED, "session required").into_response(),
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn generate_jwt_secret() -> Vec<u8> {

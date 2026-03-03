@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use sven_model::Message;
 use sven_runtime::{SharedAgents, SharedKnowledge, SharedSkills};
 
 /// Environment-detected context injected into an agent at construction time.
@@ -49,4 +50,11 @@ pub struct AgentRuntimeContext {
     /// start.  Injected into the system prompt so the agent is immediately
     /// aware of subsystems whose documentation may be stale.
     pub knowledge_drift_note: Option<String>,
+    /// Prior conversation messages to pre-load into the session history.
+    ///
+    /// Used by the session executor when resuming a P2P conversation session:
+    /// the tail of the local conversation store is loaded and injected here so
+    /// the agent has context from previous turns without requiring the remote
+    /// peer to retransmit history.
+    pub prior_messages: Vec<Message>,
 }

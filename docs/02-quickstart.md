@@ -275,6 +275,35 @@ sven list-models
 
 ---
 
+---
+
+## Running as a peer-connected node
+
+`sven` without arguments is a local, standalone session.  To let sven discover
+other agents on your network and hold persistent conversations with them, start
+it as a node:
+
+```sh
+sven node start
+```
+
+Once the node is running you can chat with a connected peer directly:
+
+```sh
+sven peer chat backend-agent
+```
+
+Or delegate a task to a peer from your terminal:
+
+```sh
+sven node exec "Ask backend-agent to review the latest commit and summarise the changes."
+```
+
+See [Remote Gateway](08-gateway.md) for the full setup guide and
+[Agent Collaboration](09-collaboration.md) for peer conversations and rooms.
+
+---
+
 ## What next?
 
 - [User Guide](03-user-guide.md) — full details on the TUI, modes, tools, and
@@ -284,3 +313,5 @@ sven list-models
   artifacts, and CI integration guides
 - [Configuration](05-configuration.md) — change the model, set defaults, and
   tune behaviour
+- [Remote Gateway](08-gateway.md) — connect to other agents over P2P
+- [Agent Collaboration](09-collaboration.md) — peer conversations, rooms, and search

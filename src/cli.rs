@@ -221,6 +221,78 @@ pub enum NodeCommands {
     },
 }
 
+// ── Peer subcommand ───────────────────────────────────────────────────────────
+
+/// `sven peer` subcommands.
+///
+/// All commands start an ephemeral P2P node using the same persistent keypair
+/// as `sven node start` — no separate daemon is needed.
+#[derive(Subcommand, Debug)]
+pub enum PeerCommands {
+    /// List all agent peers discovered on the network.
+    ///
+    /// Starts an ephemeral P2P node, waits for mDNS and relay discovery, then
+    /// prints every peer that is connected and has announced itself.
+    ///
+    /// Example:
+    ///   sven peer list
+    ///   sven peer list --timeout 5
+    List {
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+        /// Seconds to wait for peer discovery (default: 3).
+        #[arg(long, default_value = "3")]
+        timeout: u64,
+    },
+
+    /// Open an interactive chat session with a peer agent.
+    ///
+    /// Starts an ephemeral P2P node, connects to the named peer, and opens an
+    /// interactive line-by-line conversation. Every message you type is sent as
+    /// a session message; the peer's reply is shown when it arrives.
+    ///
+    /// Recent conversation history (since the last 1-hour break) is shown at
+    /// the start of the session.
+    ///
+    /// Examples:
+    ///   sven peer chat backend-agent
+    ///   sven peer chat 12D3KooWAbCdEfGh…
+    Chat {
+        /// Peer agent name or base58 peer ID (prefix also works).
+        peer: String,
+        /// Path to the node config file.
+        #[arg(long, short = 'c')]
+        config: Option<PathBuf>,
+    },
+
+    /// Grep-style regex search over local conversation history.
+    ///
+    /// Searches the JSONL conversation store in
+    /// `~/.config/sven/conversations/peers/`.  No network connection needed.
+    ///
+    /// Pattern syntax: full Rust regex (same as ripgrep).
+    ///   (?i)     — case-insensitive
+    ///   ^ERROR   — lines starting with ERROR
+    ///   \d{4}    — four consecutive digits
+    ///
+    /// Examples:
+    ///   sven peer search "auth" --peer backend-agent
+    ///   sven peer search "(?i)out.of.memory" --peer backend-agent
+    ///   sven peer search "^ERROR"              (searches all peers)
+    Search {
+        /// Regex pattern (grep-style).
+        pattern: String,
+        /// Scope search to this peer agent name or peer ID.
+        /// Omit to search across all peers.
+        #[arg(long, short = 'p')]
+        peer: Option<String>,
+        /// Maximum number of results to show (default: 40).
+        #[arg(long, default_value = "40")]
+        limit: usize,
+    },
+}
+
 /// `sven node web-devices` subcommands.
 #[derive(Subcommand, Debug)]
 pub enum WebDevicesCommands {
@@ -452,6 +524,19 @@ pub enum Commands {
     Node {
         #[command(subcommand)]
         command: NodeCommands,
+    },
+
+    /// Peer: list agents, chat, and search conversation history.
+    ///
+    /// Starts an ephemeral P2P connection — no running node required.
+    ///
+    ///   sven peer list                              — discover connected peers
+    ///   sven peer chat backend-agent                — interactive chat session
+    ///   sven peer search backend-agent "auth"       — grep conversation history
+    ///   sven peer search --all "(?i)out.of.memory"  — search across all peers
+    Peer {
+        #[command(subcommand)]
+        command: PeerCommands,
     },
 
     /// Generate shell completion script

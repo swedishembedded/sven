@@ -148,9 +148,43 @@ async function doRegister() {
     transition('PENDING', device_id);
 
   } catch (e) {
-    setError(e.message);
     btn.disabled = false;
     btn.textContent = 'Register with passkey';
+
+    if (e.name === 'NotAllowedError') {
+      // Re-check the canonical origin in case the redirect in INIT was missed
+      // (e.g. /web/auth/info was temporarily unreachable on page load).
+      // If we're on the wrong origin, redirect now rather than leaving the user
+      // stuck with a cryptic "not allowed" message.
+      try {
+        const infoRes = await fetch('/web/auth/info');
+        if (infoRes.ok) {
+          const { rp_origin } = await infoRes.json();
+          const serverOrigin = rp_origin.replace(/\/$/, '');
+          const myOrigin     = window.location.origin.replace(/\/$/, '');
+          if (serverOrigin && serverOrigin !== myOrigin) {
+            const dest = serverOrigin + window.location.pathname + window.location.search;
+            setError(
+              `Passkey creation failed because this page must be accessed via ` +
+              `${serverOrigin}. Redirecting…`
+            );
+            setTimeout(() => window.location.replace(dest), 2000);
+            return;
+          }
+        }
+      } catch (_) { /* ignore — fall through to generic hint */ }
+
+      setError(
+        'Passkey creation was blocked by the browser. ' +
+        'This usually means the server\'s TLS certificate is not trusted by ' +
+        'your device\'s platform authenticator, or the configured passkey ' +
+        'domain does not match the URL you are using. ' +
+        'If you are accessing via a custom hostname or Tailscale address, ' +
+        'ensure the certificate is trusted at the OS level (not just the browser).'
+      );
+    } else {
+      setError(e.message);
+    }
   }
 }
 
@@ -283,17 +317,21 @@ async function doLogin() {
     //
     // Offer a re-registration escape hatch so the user never needs to
     // manually delete the device registry.
+    //
+    // Use appendChild instead of innerHTML+= to avoid destroying the existing
+    // DOM elements and their event listeners.
     if (e.name === 'NotAllowedError') {
-      cardBody().innerHTML += `
-        <div class="reregister-hint">
-          <p style="font-size:0.8rem;color:#888;margin-top:16px;">
-            Passkey not recognised — the server address or configuration may
-            have changed since this device was registered.
-          </p>
-          <button class="btn btn-secondary" id="btn-reregister-hint">
-            Register this device again
-          </button>
-        </div>`;
+      const hint = document.createElement('div');
+      hint.className = 'reregister-hint';
+      hint.innerHTML = `
+        <p style="font-size:0.8rem;color:#888;margin-top:16px;">
+          Passkey not recognised — the server address or configuration may
+          have changed since this device was registered.
+        </p>
+        <button class="btn btn-secondary" id="btn-reregister-hint">
+          Register this device again
+        </button>`;
+      cardBody().appendChild(hint);
       $('btn-reregister-hint').addEventListener('click', () => {
         localStorage.removeItem(STORAGE_DEVICE_ID);
         transition('REGISTER');
@@ -433,7 +471,19 @@ function startTerminal() {
       statusBar.className = 'reconnecting';
       const secs = Math.round(reconnectDelay / 1000);
       statusText.textContent = `connection lost — reconnecting in ${secs}s…`;
-      setTimeout(() => {
+      setTimeout(async () => {
+        // Before reconnecting, verify the session is still valid.  When the
+        // 24-hour JWT expires the WebSocket upgrade returns 401, which the
+        // browser surfaces as a plain close event with no status code.
+        // Detecting it here prevents an infinite reconnect loop and sends the
+        // user back to the login screen instead.
+        try {
+          const res = await fetch('/web/auth/check');
+          if (res.status === 401) {
+            transition('LOGIN');
+            return;
+          }
+        } catch (_) { /* network error — attempt reconnect anyway */ }
         statusText.textContent = 'reconnecting…';
         connect();
       }, reconnectDelay);

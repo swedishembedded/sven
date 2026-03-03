@@ -4,7 +4,7 @@
 //! `RelayBehaviour` — used by the relay server.
 
 use libp2p::{
-    autonat, dcutr, identify, identity, mdns, ping, relay, request_response,
+    autonat, dcutr, gossipsub, identify, identity, mdns, ping, relay, request_response,
     swarm::NetworkBehaviour, PeerId,
 };
 use rand::rngs::OsRng;
@@ -25,7 +25,9 @@ const APP_PROTO: &str = "/sven-p2p/1.0.0";
 /// - `autonat`       — to probe NAT type
 /// - `ping`          — to keep idle connections alive
 /// - `mdns`          — zero-config LAN peer discovery (multicast DNS)
-/// - `task`          — CBOR request/response for `AgentCard` announcements and task exchange
+/// - `task`          — CBOR request/response for `AgentCard` announcements, task exchange,
+///                     and session messaging
+/// - `gossipsub`     — pub/sub for room broadcast messages (one topic per room)
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "P2pBehaviourEvent")]
 pub struct P2pBehaviour {
@@ -36,6 +38,9 @@ pub struct P2pBehaviour {
     pub ping: ping::Behaviour,
     pub mdns: mdns::tokio::Behaviour,
     pub task: request_response::Behaviour<P2pCodec>,
+    /// Pub/sub for room broadcasts.  Each room subscribes to topic
+    /// `sven/room/<room-name>`.
+    pub gossipsub: gossipsub::Behaviour,
 }
 
 /// Unified event type produced by `P2pBehaviour`.
@@ -54,6 +59,7 @@ pub enum P2pBehaviourEvent {
             crate::protocol::types::P2pResponse,
         >,
     ),
+    Gossipsub(gossipsub::Event),
 }
 
 impl From<relay::client::Event> for P2pBehaviourEvent {
@@ -104,11 +110,30 @@ impl
     }
 }
 
+impl From<gossipsub::Event> for P2pBehaviourEvent {
+    fn from(e: gossipsub::Event) -> Self {
+        P2pBehaviourEvent::Gossipsub(e)
+    }
+}
+
 impl P2pBehaviour {
     pub fn new(key: &identity::Keypair, relay_client: relay::client::Behaviour) -> Self {
         let local_peer_id = PeerId::from(key.public());
         let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)
             .expect("mDNS init failed");
+
+        // Build gossipsub with message authentication disabled — Noise already
+        // authenticates the transport layer, so application-level message
+        // signing would be redundant overhead.
+        let gossipsub_config = gossipsub::ConfigBuilder::default()
+            .heartbeat_interval(Duration::from_secs(10))
+            .validation_mode(gossipsub::ValidationMode::None)
+            .build()
+            .expect("gossipsub config is valid");
+        let gossipsub =
+            gossipsub::Behaviour::new(gossipsub::MessageAuthenticity::Anonymous, gossipsub_config)
+                .expect("gossipsub init failed");
+
         Self {
             relay_client,
             dcutr: dcutr::Behaviour::new(local_peer_id),
@@ -124,6 +149,7 @@ impl P2pBehaviour {
                 [(TASK_PROTO, request_response::ProtocolSupport::Full)],
                 request_response::Config::default().with_request_timeout(Duration::from_secs(900)),
             ),
+            gossipsub,
         }
     }
 }

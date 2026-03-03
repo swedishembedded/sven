@@ -11,6 +11,8 @@
 //! | GET    | `/web`                           | Redirect → `/web/`           | None       |
 //! | GET    | `/web/`                          | `index.html`                 | None       |
 //! | GET    | `/web/assets/*`                  | Embedded static files        | None       |
+//! | GET    | `/web/auth/info`                 | Auth info (rp_origin)        | None       |
+//! | GET    | `/web/auth/check`                | Session validity probe       | None       |
 //! | POST   | `/web/auth/register/challenge`   | WebAuthn registration start  | None       |
 //! | POST   | `/web/auth/register/complete`    | WebAuthn registration finish | None       |
 //! | POST   | `/web/auth/login/challenge`      | WebAuthn login start         | None       |
@@ -43,7 +45,7 @@ use assets::WebAssets;
 use auth::devices::DeviceStatus;
 use auth::{
     auth_info, device_status_sse, extract_session, login_challenge, login_complete,
-    register_challenge, register_complete, WebAuthState,
+    register_challenge, register_complete, session_check, WebAuthState,
 };
 use pty::manager::PtyManager;
 
@@ -74,6 +76,7 @@ pub fn web_router(state: WebState) -> Router {
     // Auth routes — no CSRF (WebAuthn provides its own protection).
     let auth_routes = Router::new()
         .route("/web/auth/info", get(auth_info))
+        .route("/web/auth/check", get(session_check))
         .route("/web/auth/register/challenge", post(register_challenge))
         .route("/web/auth/register/complete", post(register_complete))
         .route("/web/auth/login/challenge", post(login_challenge))

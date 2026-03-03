@@ -34,6 +34,9 @@ pub enum P2pError {
 
     #[error("signature verification failed: {0}")]
     InvalidSignature(String),
+
+    #[error("wait timed out")]
+    Timeout,
 }
 
 impl From<std::io::Error> for P2pError {

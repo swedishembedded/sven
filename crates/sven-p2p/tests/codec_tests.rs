@@ -311,6 +311,122 @@ fn log_entry_roundtrip() {
     assert_eq!(decoded.message, entry.message);
 }
 
+// ── SessionMessageWire (simplified — no session_id) ──────────────────────────
+
+#[test]
+fn session_message_wire_roundtrip() {
+    use chrono::Utc;
+    use sven_p2p::protocol::types::{ContentBlock, P2pRequest, SessionMessageWire, SessionRole};
+    use uuid::Uuid;
+
+    let msg = SessionMessageWire {
+        message_id: Uuid::new_v4(),
+        seq: 42,
+        timestamp: Utc::now(),
+        role: SessionRole::User,
+        content: vec![ContentBlock::text("Hello, peer!")],
+    };
+    let req = P2pRequest::SessionMessage(msg.clone());
+    match roundtrip(&req) {
+        P2pRequest::SessionMessage(decoded) => {
+            assert_eq!(decoded.message_id, msg.message_id);
+            assert_eq!(decoded.seq, msg.seq);
+            assert_eq!(decoded.role, msg.role);
+            match &decoded.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "Hello, peer!"),
+                _ => panic!("expected Text block"),
+            }
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn session_message_wire_assistant_role_roundtrip() {
+    use chrono::Utc;
+    use sven_p2p::protocol::types::{ContentBlock, P2pRequest, SessionMessageWire, SessionRole};
+
+    let msg = SessionMessageWire {
+        message_id: uuid::Uuid::new_v4(),
+        seq: 0,
+        timestamp: Utc::now(),
+        role: SessionRole::Assistant,
+        content: vec![
+            ContentBlock::text("Task complete."),
+            ContentBlock::json(serde_json::json!({"status": "done"})),
+        ],
+    };
+    let req = P2pRequest::SessionMessage(msg.clone());
+    match roundtrip(&req) {
+        P2pRequest::SessionMessage(decoded) => {
+            assert_eq!(decoded.role, SessionRole::Assistant);
+            assert_eq!(decoded.content.len(), 2);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn p2p_response_session_ack_roundtrip() {
+    use sven_p2p::protocol::types::P2pResponse;
+    use uuid::Uuid;
+
+    let id = Uuid::new_v4();
+    let resp = P2pResponse::SessionAck { message_id: id };
+    match roundtrip(&resp) {
+        P2pResponse::SessionAck { message_id } => assert_eq!(message_id, id),
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn p2p_request_heartbeat_roundtrip() {
+    use sven_p2p::protocol::types::P2pRequest;
+
+    let req = P2pRequest::Heartbeat;
+    assert!(matches!(roundtrip(&req), P2pRequest::Heartbeat));
+}
+
+// ── RoomPost ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn room_post_roundtrip() {
+    use chrono::Utc;
+    use sven_p2p::protocol::types::{ContentBlock, RoomPost};
+    use uuid::Uuid;
+
+    let post = RoomPost {
+        message_id: Uuid::new_v4(),
+        room: "firmware-team".into(),
+        sender_peer_id: "12D3KooWAlice".into(),
+        sender_name: "alice".into(),
+        timestamp: Utc::now(),
+        content: vec![ContentBlock::text("Build passed on main.")],
+    };
+    let decoded: RoomPost = sven_p2p::protocol::codec::cbor_decode(
+        &sven_p2p::protocol::codec::cbor_encode(&post).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(decoded.message_id, post.message_id);
+    assert_eq!(decoded.room, post.room);
+    assert_eq!(decoded.sender_name, post.sender_name);
+    match &decoded.content[0] {
+        ContentBlock::Text { text } => assert_eq!(text, "Build passed on main."),
+        _ => panic!("expected Text block"),
+    }
+}
+
+#[test]
+fn room_post_topic_for() {
+    use sven_p2p::protocol::types::RoomPost;
+
+    assert_eq!(RoomPost::topic_for("general"), "sven/room/general");
+    assert_eq!(
+        RoomPost::topic_for("firmware-team"),
+        "sven/room/firmware-team"
+    );
+}
+
 // ── Encode determinism ────────────────────────────────────────────────────────
 
 #[test]

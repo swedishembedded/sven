@@ -61,6 +61,31 @@ the TUI with `F4`.
 
 ---
 
+## Running as a node — talking to other agents
+
+`sven` by itself is a local session: one agent, one conversation.
+
+`sven node start` is the peer-enabled form: the same agent runs a P2P stack
+alongside its normal session, discovers other sven nodes on the network (or via
+a relay), and gains a set of collaboration tools — `send_message`,
+`wait_for_message`, `search_conversation`, `post_to_room`, and more.
+
+```sh
+# Start the node (runs until Ctrl-C)
+sven node start
+
+# From another terminal — ask the node's agent to talk to a peer
+sven node exec "Ask backend-agent to explain the auth module, wait for its reply."
+
+# Or open an interactive TUI session directly with a remote peer
+sven peer chat backend-agent
+```
+
+See [Remote Gateway](08-gateway.md) and
+[Agent Collaboration](09-collaboration.md) for the full setup guide.
+
+---
+
 ## How sven works
 
 When you send a message, sven forwards it to a large language model (OpenAI
@@ -85,3 +110,4 @@ to standard output.
 - **[Examples](06-examples.md)** — real-world use cases
 - **[Troubleshooting](07-troubleshooting.md)** — common issues and fixes
 - **[Remote Gateway](08-gateway.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents
+- **[Agent Collaboration](09-collaboration.md)** — persistent peer conversations, rooms, and the `sven peer chat` command

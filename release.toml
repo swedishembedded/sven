@@ -15,6 +15,10 @@ publish      = false          # sven is a binary tool, not a crates.io library
 sign-tag     = false
 sign-commit  = false
 
+# Required for {{version}} etc. to be expanded in pre-release-commit-message
+# (see cargo-release docs: placeholders only applied "if not consolidated")
+consolidate-commits = false
+
 pre-release-commit-message = "chore: release v{{version}}"
 
 tag-name    = "v{{version}}"

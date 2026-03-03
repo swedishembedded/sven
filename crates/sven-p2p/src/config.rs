@@ -37,6 +37,11 @@ pub struct P2pConfig {
     /// This enforces the "deny-all" security default documented in the gateway.
     /// Inbound Announce requests from unlisted peers are rejected with a warning.
     pub agent_peers: HashSet<PeerId>,
+
+    /// Directory for the local conversation store (session JSONL files + room JSONL files).
+    ///
+    /// Defaults to `~/.config/sven/conversations/` when `None`.
+    pub store_path: Option<PathBuf>,
 }
 
 impl P2pConfig {
@@ -54,6 +59,7 @@ impl P2pConfig {
             keypair_path: None,
             discovery_poll_interval: Duration::from_secs(5),
             agent_peers: HashSet::new(),
+            store_path: None,
         }
     }
 }

@@ -25,7 +25,11 @@ use sven_tools::{
     UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
 };
 
-use crate::tools::{DelegateTool, DelegationContext, DelegationContextHandle, ListPeersTool};
+use crate::tools::{
+    DelegateTool, DelegationContext, DelegationContextHandle, ListConversationsTool, ListPeersTool,
+    PostToRoomTool, ReadRoomHistoryTool, SearchConversationTool, SendMessageTool,
+    WaitForMessageTool,
+};
 
 /// Build the shared, long-lived gateway `Agent`.
 ///
@@ -115,6 +119,40 @@ pub async fn build_task_agent(
     .await
 }
 
+/// Build a fresh per-task agent with a fully custom [`AgentRuntimeContext`].
+///
+/// Used by the session executor so it can inject `prior_messages` and a
+/// session-specific system prompt while still reusing the standard tool set.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_task_agent_with_runtime(
+    config: &Arc<Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    p2p_handle: P2pHandle,
+    agent_card: AgentCard,
+    rooms: Vec<String>,
+    task_depth: u32,
+    task_chain: Vec<String>,
+    runtime: AgentRuntimeContext,
+) -> anyhow::Result<Agent> {
+    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let delegation_context: DelegationContextHandle =
+        Arc::new(Mutex::new(Some(DelegationContext {
+            depth: task_depth,
+            chain: task_chain,
+        })));
+    build_agent_with(
+        config,
+        model,
+        max_ctx,
+        p2p_handle,
+        agent_card,
+        rooms,
+        delegation_context,
+        runtime,
+    )
+    .await
+}
+
 /// Shared internal builder used by both [`build_gateway_agent`] and
 /// [`build_task_agent`].
 #[allow(clippy::too_many_arguments)]
@@ -160,10 +198,31 @@ async fn build_agent_with(
         rooms: rooms.clone(),
     });
     registry.register(DelegateTool {
-        p2p: p2p_handle,
+        p2p: p2p_handle.clone(),
         rooms,
         our_card: agent_card,
         delegation_context,
+    });
+
+    // Session and room collaboration tools.
+    let store = p2p_handle.store().clone();
+    registry.register(SendMessageTool {
+        p2p: p2p_handle.clone(),
+    });
+    registry.register(WaitForMessageTool {
+        p2p: p2p_handle.clone(),
+    });
+    registry.register(SearchConversationTool {
+        store: Arc::clone(&store),
+    });
+    registry.register(ListConversationsTool {
+        store: Arc::clone(&store),
+    });
+    registry.register(PostToRoomTool {
+        p2p: p2p_handle.clone(),
+    });
+    registry.register(ReadRoomHistoryTool {
+        store: Arc::clone(&store),
     });
 
     Ok(Agent::new(

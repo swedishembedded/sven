@@ -164,6 +164,76 @@ swarm:
 
 ---
 
+## Talking to peers
+
+There are two ways to interact with peer agents: **interactive peer chat** (a
+direct back-and-forth conversation with one remote peer) and **orchestrated
+delegation** (your local agent manages the collaboration on your behalf).
+
+### Interactive peer chat
+
+`sven peer chat` opens the TUI connected to a specific remote peer.  Every
+message you type is sent as a conversation message over P2P, and the remote
+agent's replies stream back into the chat pane — exactly like a WhatsApp
+conversation, except the other party is a sven agent.
+
+```sh
+# By agent name (must be unique among connected peers)
+sven peer chat backend-agent
+
+# By peer ID (unambiguous, always works)
+sven peer chat 12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz
+```
+
+The conversation is stored locally in
+`~/.config/sven/conversations/peers/<peer-id>.jsonl` so you can search it
+later:
+
+```sh
+# Grep through everything you've discussed with this peer
+sven peer search "authentication" --peer backend-agent
+sven peer search "^ERROR" --peer backend-agent
+sven peer search "(?i)out.of.memory" --peer backend-agent
+
+# Search across all peer conversations
+sven peer search "^ERROR"
+```
+
+The remote agent automatically loads the conversation history up to the most
+recent 1-hour break as context.  Older history stays on disk and is accessible
+via the `search_conversation` tool on both sides.
+
+Both nodes must list each other in their `swarm.peers` config (see *Build a
+team of agents* above).
+
+### Asking the node to handle peer collaboration
+
+When you want the local agent to manage a multi-agent workflow on your behalf —
+including the back-and-forth with one or more peers — use `sven node exec`:
+
+```sh
+sven node exec "Chat with backend-agent about the DB migration plan.
+Ask whether the foreign-key constraints should be deferred.
+Wait for its answer, then ask for the migration SQL.
+Summarise what it said."
+```
+
+The node's agent uses `send_message` and `wait_for_message` autonomously.  You
+get the final summary when it is done.  This is the right approach when you
+want the agent to coordinate multiple peers or when you do not need to steer
+the conversation in real time.
+
+### Which to use?
+
+| Situation | Recommended approach |
+|---|---|
+| You want to type messages and see replies in real time | `sven peer chat <peer>` |
+| You want the agent to coordinate a workflow across peers | `sven node exec "…"` |
+| You want to recall what was discussed with a peer | `sven peer search "<pattern>" --peer <peer>` |
+| You want to broadcast a status update to the whole team | `sven node exec "post to room firmware-team: …"` |
+
+---
+
 ## Agent-to-agent task routing
 
 When two gateways are connected, each agent gets two new tools it can use
@@ -725,3 +795,6 @@ debug-level output.
 For implementation details — wire protocols, internal architecture, the P2P
 task flow, and the WebSocket API spec — see
 [technical/gateway.md](technical/gateway.md).
+
+For agent-to-agent collaboration — sessions (DMs), rooms (broadcast channels),
+and the collaboration tools — see [09-collaboration.md](09-collaboration.md).

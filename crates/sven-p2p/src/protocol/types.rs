@@ -4,6 +4,7 @@
 //! They are deliberately independent of `sven-model` so that the relay binary
 //! stays lightweight. The main sven binary provides thin conversion adapters.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,6 +25,18 @@ pub struct AgentCard {
     pub capabilities: Vec<String>,
     /// Crate version string for compatibility checks.
     pub version: String,
+}
+
+impl Default for AgentCard {
+    fn default() -> Self {
+        Self {
+            peer_id: String::new(),
+            name: "unknown".to_string(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
 }
 
 // ── Multimodal content ────────────────────────────────────────────────────────
@@ -55,6 +68,77 @@ impl ContentBlock {
 
     pub fn json(v: serde_json::Value) -> Self {
         ContentBlock::Json { value: v }
+    }
+}
+
+// ── Session messaging ─────────────────────────────────────────────────────────
+
+/// The role of the author of a session message.
+///
+/// Mirrors LLM message roles so that session history can be replayed directly
+/// into an agent context window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRole {
+    /// Message sent by an agent acting as the "user" side of the conversation.
+    User,
+    /// Message sent by an agent acting as the "assistant" side.
+    Assistant,
+}
+
+/// A single message sent between two peer agents.
+///
+/// There is exactly **one** implicit conversation per peer pair — no session
+/// IDs are needed.  History is stored locally in a single append-only JSONL
+/// file keyed by the remote peer ID.  Breaks in the conversation (gaps longer
+/// than a configurable threshold, default 1 hour) divide the log into
+/// context windows: the receiving agent loads only messages after the most
+/// recent break.  To look before the break, the agent uses the
+/// `search_conversation` tool.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionMessageWire {
+    /// Unique message ID — used for deduplication and ACK correlation.
+    pub message_id: Uuid,
+    /// Monotonically increasing per-peer sequence number.
+    ///
+    /// Used to detect dropped or reordered messages.
+    pub seq: u64,
+    /// When this message was created by the sender.
+    pub timestamp: DateTime<Utc>,
+    /// Conversational role of the sender in this exchange.
+    pub role: SessionRole,
+    /// Multimodal message content.
+    pub content: Vec<ContentBlock>,
+}
+
+/// A post broadcast to all current subscribers of a named room.
+///
+/// Room posts are fire-and-forget: there is no ACK.  Each receiving peer logs
+/// only what it actually receives while subscribed — exactly the "presence =
+/// history" principle of Slack channels.
+///
+/// Room posts travel over the gossipsub topic `sven/room/<room-name>` so they
+/// reach all peers subscribed to that topic at the time of publication.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RoomPost {
+    /// Unique message ID — used to deduplicate gossipsub re-deliveries.
+    pub message_id: Uuid,
+    /// Room name — must match the gossipsub topic this message was published to.
+    pub room: String,
+    /// Sender's libp2p `PeerId` as a base-58 string.
+    pub sender_peer_id: String,
+    /// Human-readable name of the sender (from `AgentCard`).
+    pub sender_name: String,
+    /// When this post was created.
+    pub timestamp: DateTime<Utc>,
+    /// Multimodal content of the post.
+    pub content: Vec<ContentBlock>,
+}
+
+impl RoomPost {
+    /// Build the gossipsub topic string for a given room name.
+    pub fn topic_for(room: &str) -> String {
+        format!("sven/room/{room}")
     }
 }
 
@@ -210,16 +294,25 @@ pub enum P2pRequest {
     /// resets the swarm's idle-connection timer, preventing the connection from
     /// being closed between tasks.
     Heartbeat,
+    /// Send a message to a peer.  There is one implicit conversation per peer
+    /// pair — no session IDs needed.  The receiver appends it to the local
+    /// conversation log keyed by the sender's peer ID and responds with
+    /// [`P2pResponse::SessionAck`].  Any reply arrives as a subsequent inbound
+    /// `SessionMessage` from the remote peer.
+    SessionMessage(SessionMessageWire),
 }
 
 /// Top-level response sent back in reply to a `P2pRequest`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum P2pResponse {
-    /// Generic acknowledgement (for `Announce`).
+    /// Generic acknowledgement (for `Announce` and `Heartbeat`).
     Ack,
     /// Result of a task execution (for `Task`).
     TaskResult(TaskResponse),
+    /// Delivery acknowledgement for a `SessionMessage`.
+    /// Echoes `message_id` so the sender can confirm delivery.
+    SessionAck { message_id: Uuid },
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────────
