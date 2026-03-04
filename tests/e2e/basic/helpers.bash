@@ -10,7 +10,7 @@
 # ── Binary path ──────────────────────────────────────────────────────────────
 
 # Support both debug and release builds; prefer release if present.
-_REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+_REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/../../.." && pwd)"
 
 # Prefer the newest binary so tests always run against the most recently built
 # code.  In CI the release build is preferred; in development the debug build

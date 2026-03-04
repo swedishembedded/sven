@@ -53,24 +53,24 @@ load helpers
     [ "${status}" -eq 0 ]
 }
 
-@test "01.09 show-config outputs valid TOML with [model] section" {
+@test "01.09 show-config outputs valid YAML with model section" {
     run "${BIN}" show-config
-    assert_output_contains "[model]"
+    assert_output_contains "model:"
 }
 
-@test "01.10 show-config outputs [agent] section" {
+@test "01.10 show-config outputs agent section" {
     run "${BIN}" show-config
-    assert_output_contains "[agent]"
+    assert_output_contains "agent:"
 }
 
-@test "01.11 show-config outputs [tools] section" {
+@test "01.11 show-config outputs tools section" {
     run "${BIN}" show-config
-    assert_output_contains "[tools]"
+    assert_output_contains "tools:"
 }
 
-@test "01.12 show-config outputs [tui] section" {
+@test "01.12 show-config outputs tui section" {
     run "${BIN}" show-config
-    assert_output_contains "[tui]"
+    assert_output_contains "tui:"
 }
 
 # ── completions subcommand ────────────────────────────────────────────────────

@@ -33,6 +33,28 @@ jobs:
       - name: Tests
         run: cargo test --all
 
+  # End-to-end basic tests: CLI, CI mode, mock responses, pipeline.
+  e2e-basic:
+    name: E2E basic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bats
+
+      - name: Build debug binary
+        run: cargo build
+
+      - name: Run basic e2e tests
+        run: make tests/e2e/basic
+
   # Quick smoke-test: make sure we can actually build a release binary.
   # This catches linker / feature-flag issues before a real release.
   build-smoke:

@@ -41,7 +41,7 @@ load helpers
 
 @test "08.05 [sven:tool:call] includes name= field" {
     run_split_output bash -c 'echo "write a file for me" | "$BIN" --headless --model mock'
-    [[ "${STDERR_OUT}" == *'name="write"'* ]]
+    [[ "${STDERR_OUT}" == *'name="write_file"'* ]]
 }
 
 @test "08.06 [sven:tool:result] is emitted (not [sven:tool:ok])" {
@@ -194,9 +194,8 @@ load helpers
 }
 
 @test "08.25 [sven:tool:result] reports success=false for error results" {
-    run_split_output bash -c 'echo "write a file for me" | "$BIN" --headless --model mock'
-    # The write tool fails (wrong param name), so success=false should appear in
-    # the tool:result line (note: step:complete also uses success= so we filter).
+    # read_file on a non-existent path produces a guaranteed tool error.
+    run_split_output bash -c 'echo "read nonexistent file" | "$BIN" --headless --model mock'
     local tool_result_line
     tool_result_line=$(echo "${STDERR_OUT}" | grep '\[sven:tool:result\]' | head -1)
     [[ "${tool_result_line}" == *"success=false"* ]]

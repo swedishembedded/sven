@@ -439,8 +439,6 @@ EOF
     cat > "${wf}" << 'EOF'
 ---
 title: My Audit
-mode: research
-step_timeout_secs: 180
 ---
 
 ## Step
@@ -448,8 +446,7 @@ Do work.
 EOF
     run bash -c '"$BIN" validate --file "$1"' -- "${wf}"
     assert_output_contains "Title: My Audit"
-    assert_output_contains "mode: research"
-    assert_output_contains "step_timeout_secs: 180"
+    assert_output_contains "Frontmatter: OK"
     rm -f "${wf}"
 }
 

@@ -23,7 +23,7 @@ load helpers
 
 @test "file input mode processes markdown steps" {
     run "$BIN" --headless --model mock \
-        --file "${BATS_TEST_DIRNAME}/../fixtures/plan.md" 2>/dev/null
+        --file "${FIXTURES}/plan.md" 2>/dev/null
     [ "$status" -eq 0 ]
 }
 

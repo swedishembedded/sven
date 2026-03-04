@@ -13,10 +13,10 @@
 #           verifies device-specific workflows (AT32F435RMT7, STM32H562VI).
 #
 # Run all tiers (hardware connected):
-#   SVEN_TEST_JLINK=1 JLINK_DEVICE=AT32F435RMT7 bats tests/bats/07_gdb_workflows.bats
+#   SVEN_TEST_JLINK=1 JLINK_DEVICE=AT32F435RMT7 bats tests/e2e/basic/07_gdb_workflows.bats
 #
 # Run only tier 1 (default):
-#   bats tests/bats/07_gdb_workflows.bats
+#   bats tests/e2e/basic/07_gdb_workflows.bats
 
 load helpers
 
@@ -223,8 +223,8 @@ setup() {
     grep -q 'makefile_to_server_command' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/discovery.rs"
 }
 
-@test "07.25 glob_file_search normalises star-star pattern" {
-    grep -q 'normalise_glob_for_find' "${_REPO_ROOT}/crates/sven-tools/src/builtin/glob_file_search.rs"
+@test "07.25 find_file decomposes star-star pattern" {
+    grep -q 'decompose_pattern' "${_REPO_ROOT}/crates/sven-tools/src/builtin/find_file.rs"
 }
 
 @test "07.26 find_firmware_elf function is exported" {

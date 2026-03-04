@@ -122,10 +122,10 @@ load helpers
 
 # ── Registry / schema: verify new tools are registered ───────────────────────
 
-@test "05.15 show-config includes [tools] section with new config fields" {
+@test "05.15 show-config includes tools section with new config fields" {
     run "${BIN}" show-config
     [ "${status}" -eq 0 ]
-    assert_output_contains "[tools]"
+    assert_output_contains "tools:"
     assert_output_contains "timeout_secs"
 }
 

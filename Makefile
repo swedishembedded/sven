@@ -18,7 +18,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build release test bats bats-fast deb clean help fmt check docs docs-pdf \
+.PHONY: all build release test tests/e2e tests/e2e/basic deb clean help fmt check docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -38,19 +38,13 @@ release:
 test:
 	$(CARGO) test $(CARGO_FLAGS)
 
-## bats      – run end-to-end bats tests (requires bats-core)
-bats: build
-	bats tests/bats/01_cli.bats \
-	     tests/bats/02_ci_mode.bats \
-	     tests/bats/03_mock_responses.bats \
-	     tests/bats/04_pipeline.bats
+## tests/e2e/basic – run all basic end-to-end tests (requires bats-core)
+## All tests use the mock model; hardware-gated tests in 07 self-skip without SVEN_TEST_JLINK=1.
+tests/e2e/basic: build
+	bats tests/e2e/basic/
 
-## bats-fast – run bats tests without rebuilding
-bats-fast:
-	bats tests/bats/01_cli.bats \
-	     tests/bats/02_ci_mode.bats \
-	     tests/bats/03_mock_responses.bats \
-	     tests/bats/04_pipeline.bats
+## tests/e2e – run all end-to-end test suites (requires bats-core)
+tests/e2e: tests/e2e/basic
 
 ## deb       – build a Debian package (output in target/debian/)
 deb: release
@@ -199,15 +193,15 @@ release/publish:
 	@echo "Release: https://github.com/$(REPO)/releases/tag/$(TAG)"
 
 ## release/patch   – bump patch version (0.1.x→0.1.x+1), tag, push → triggers CI
-release/patch: _require-cargo-release
+release/patch: _require-cargo-release tests/e2e/basic
 	@cargo release patch -p sven --execute
 
 ## release/minor   – bump minor version (0.x.0→0.x+1.0), tag, push → triggers CI
-release/minor: _require-cargo-release
+release/minor: _require-cargo-release tests/e2e/basic
 	@cargo release minor -p sven --execute
 
 ## release/major   – bump major version (x.0.0→x+1.0.0), tag, push → triggers CI
-release/major: _require-cargo-release
+release/major: _require-cargo-release tests/e2e/basic
 	@cargo release major -p sven --execute
 
 # Install cargo-release if not already present.

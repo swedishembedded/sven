@@ -13,6 +13,28 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # ── E2E basic tests (gate before any release artifacts are published) ─────────
+  e2e-basic:
+    name: E2E basic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bats
+
+      - name: Build debug binary
+        run: cargo build
+
+      - name: Run basic e2e tests
+        run: make tests/e2e/basic
+
   # ── Linux x86_64 ─────────────────────────────────────────────────────────────
   build-linux-x86_64:
     name: Linux x86_64
@@ -143,7 +165,8 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     # macOS is excluded from needs so a macOS build failure does not block the release.
-    needs: [build-linux-x86_64, build-linux-aarch64]
+    # e2e-basic must pass — if any basic test fails the release is aborted.
+    needs: [e2e-basic, build-linux-x86_64, build-linux-aarch64]
     steps:
       - uses: actions/checkout@v4
 

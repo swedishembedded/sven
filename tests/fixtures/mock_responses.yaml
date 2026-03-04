@@ -99,10 +99,11 @@ responses:
     pattern: "write a file"
     tool_calls:
       - id: tc-write
-        tool: write
+        tool: write_file
         args:
-          file_path: /tmp/sven_e2e_test.txt
-          content: "written by sven mock agent"
+          path: /tmp/sven_e2e_test.txt
+          text: "written by sven mock agent"
+          append: false
     after_tool_reply: "I have written the content to /tmp/sven_e2e_test.txt"
 
   - match_type: contains
@@ -111,8 +112,17 @@ responses:
       - id: tc-read
         tool: read_file
         args:
-          file_path: /tmp/sven_e2e_test.txt
+          path: /tmp/sven_e2e_test.txt
     after_tool_reply: "File read successfully. Contents match expectations."
+
+  - match_type: contains
+    pattern: "read nonexistent file"
+    tool_calls:
+      - id: tc-read-missing
+        tool: read_file
+        args:
+          path: /tmp/sven_e2e_nonexistent_file_xyz.txt
+    after_tool_reply: "I tried to read the file but it does not exist."
 
   - match_type: contains
     pattern: "list files"
@@ -227,9 +237,8 @@ responses:
       - id: tc-ef
         tool: edit_file
         args:
-          file_path: /tmp/sven_e2e_test.txt
-          old_str: "written by sven mock agent"
-          new_str: "edited by sven mock agent"
+          path: /tmp/sven_e2e_test.txt
+          diff: "@@ -1 +1 @@\n-written by sven mock agent\n+edited by sven mock agent\n"
     after_tool_reply: "File edited successfully."
 
   - match_type: contains

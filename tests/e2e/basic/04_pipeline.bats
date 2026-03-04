@@ -91,9 +91,9 @@ EOF'
     [ -n "${first_output}" ]
 }
 
-@test "04.11 stdout of first stage feeds cleanly to second stage" {
+@test "04.11 compact output of first stage embeds cleanly into second stage prompt" {
     run bash -c \
-        'first_out=$(echo "make a plan" | "$BIN" --headless --model mock 2>/dev/null)
+        'first_out=$(echo "make a plan" | "$BIN" --headless --model mock --output-format compact 2>/dev/null)
          echo "summarize the above: $first_out" | "$BIN" --headless --model mock 2>/dev/null'
     [ "${status}" -eq 0 ]
     [ -n "${output}" ]
