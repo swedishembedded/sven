@@ -52,16 +52,34 @@ impl SlashCommand for ModelCommand {
         provider_names.sort_unstable();
         for name in provider_names {
             let cfg = &ctx.config.providers[name];
-            let value = format!("{}/{}", cfg.provider, cfg.name);
-            if value == current_value {
-                continue;
+            // For display, list each model registered under this provider.
+            // The user selects "provider_alias/model_name".
+            let mut model_keys: Vec<&str> = cfg.models.keys().map(|s| s.as_str()).collect();
+            model_keys.sort_unstable();
+            if model_keys.is_empty() {
+                let value = name.to_string();
+                if value != current_value {
+                    let display = format!("{} (driver: {})", name, cfg.name);
+                    candidates.push(CompletionItem::with_desc(
+                        name,
+                        display,
+                        "custom provider from config",
+                    ));
+                }
+            } else {
+                for model_name in model_keys {
+                    let value = format!("{}/{}", name, model_name);
+                    if value == current_value {
+                        continue;
+                    }
+                    let display = format!("{}/{} (driver: {})", name, model_name, cfg.name);
+                    candidates.push(CompletionItem::with_desc(
+                        &value,
+                        display,
+                        "custom provider from config",
+                    ));
+                }
             }
-            let display = format!("{} (custom: {}  {})", name, cfg.provider, cfg.name);
-            candidates.push(CompletionItem::with_desc(
-                name,
-                display,
-                "custom provider from config",
-            ));
         }
 
         // 2. All models from static catalog in provider/id form.

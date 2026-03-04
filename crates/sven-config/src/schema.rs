@@ -24,22 +24,231 @@ pub struct Config {
     pub tui: TuiConfig,
     /// Named provider configurations.
     ///
-    /// Define custom endpoints, local models, or additional accounts here and
-    /// reference them by name with `--model <key>` or `--model <key>/<model>`.
+    /// Each entry defines a provider endpoint (a server or service) with its
+    /// driver backend, base URL, credentials, and a catalog of the models
+    /// available on that endpoint.  Reference a provider by name in
+    /// `model.provider`, and reference one of its models in `model.name`.
+    ///
+    /// **Environment variable expansion** — any string value in the config file
+    /// may contain `${VAR}` or `${VAR:-default}` placeholders that are expanded
+    /// at load time using the process environment.  Use this to keep API keys
+    /// out of version-controlled config files:
     ///
     /// ```yaml
     /// providers:
     ///   my_ollama:
-    ///     provider: openai        # uses the OpenAI-compatible wire format
-    ///     base_url: http://localhost:11434/v1
-    ///     name: llama3.2          # default model for this provider
+    ///     name: openai             # driver to use (openai-compatible API)
+    ///     base_url: http://localhost:8000/v1
+    ///     models:
+    ///       llama3.2:
+    ///         max_tokens: 40960
+    ///       codellama:
+    ///         max_tokens: 40960
+    ///         driver_options:
+    ///           parse_tool_calls: false
+    ///   openrouter:
+    ///     name: openrouter
+    ///     api_key: ${OPENROUTER_API_KEY}   # expanded from env at load time
+    ///     models:
+    ///       google/gemini-2.5-pro-preview:
+    ///         max_tokens: 8192
     ///   work_anthropic:
-    ///     provider: anthropic
-    ///     api_key_env: WORK_ANTHROPIC_KEY
-    ///     name: claude-opus-4-5
+    ///     name: anthropic
+    ///     api_key: ${WORK_ANTHROPIC_KEY:-}  # optional, falls back to empty
+    ///     models:
+    ///       claude-opus-4-5:
+    ///         max_tokens: 8192
+    /// ```
+    ///
+    /// Select the active model via:
+    /// ```yaml
+    /// model:
+    ///   provider: my_ollama
+    ///   name: llama3.2
     /// ```
     #[serde(default)]
-    pub providers: std::collections::HashMap<String, ModelConfig>,
+    pub providers: std::collections::HashMap<String, ProviderEntry>,
+}
+
+/// Per-model parameter overrides nested under a [`ProviderEntry`].
+///
+/// All fields are optional; absent fields inherit from the provider-level
+/// defaults defined in [`ProviderEntry`], which in turn fall back to the
+/// [`ModelConfig`] defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelParams {
+    /// Maximum tokens to request in a single completion
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature (0.0–2.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// Free-form provider-specific options forwarded as-is to the driver.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub driver_options: serde_json::Value,
+    /// Override cache_system_prompt for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_system_prompt: Option<bool>,
+    /// Override extended_cache_time for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extended_cache_time: Option<bool>,
+    /// Override cache_tools for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tools: Option<bool>,
+    /// Override cache_conversation for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_conversation: Option<bool>,
+    /// Override cache_images for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_images: Option<bool>,
+    /// Override cache_tool_results for this model only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tool_results: Option<bool>,
+    /// Path to YAML mock-responses file (used when driver = "mock")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mock_responses_file: Option<String>,
+}
+
+/// A named provider entry in the `providers` config section.
+///
+/// Represents a single API endpoint (e.g. a local LLM server, a cloud
+/// provider account) together with all the models available on that endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderEntry {
+    /// Driver identifier that speaks this endpoint's protocol.
+    /// Run `sven list-providers` for the full list.
+    /// Examples: "openai" | "anthropic" | "google" | "ollama" | "vllm"
+    pub name: String,
+
+    /// Base URL override for this endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    /// Environment variable that holds the API key for this endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+
+    /// Explicit API key; prefer `api_key_env` to keep secrets out of
+    /// version-controlled config files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    /// Models available on this endpoint.
+    /// Keys are model names; values hold per-model parameter overrides that
+    /// take precedence over the provider-level defaults below.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub models: std::collections::HashMap<String, ModelParams>,
+
+    // ── Provider-level defaults (inherited by all models unless overridden) ──
+    /// Default max_tokens for all models on this provider (can be overridden per-model)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// Default temperature for all models on this provider
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// Default driver options for all models on this provider
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub driver_options: serde_json::Value,
+
+    // ── Azure OpenAI ─────────────────────────────────────────────────────────
+    /// Azure resource name (the subdomain of `.openai.azure.com`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_resource: Option<String>,
+    /// Azure deployment name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_deployment: Option<String>,
+    /// Azure REST API version string, e.g. `"2024-02-01"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_api_version: Option<String>,
+
+    // ── AWS Bedrock ───────────────────────────────────────────────────────────
+    /// AWS region override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws_region: Option<String>,
+
+    // ── Mock provider ─────────────────────────────────────────────────────────
+    /// Path to YAML mock-responses file (used when name = "mock").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mock_responses_file: Option<String>,
+}
+
+impl Default for ProviderEntry {
+    fn default() -> Self {
+        Self {
+            name: "openai".into(),
+            base_url: None,
+            api_key_env: None,
+            api_key: None,
+            models: std::collections::HashMap::new(),
+            max_tokens: None,
+            temperature: None,
+            driver_options: serde_json::Value::Null,
+            azure_resource: None,
+            azure_deployment: None,
+            azure_api_version: None,
+            aws_region: None,
+            mock_responses_file: None,
+        }
+    }
+}
+
+impl ProviderEntry {
+    /// Build a [`ModelConfig`] for the given `model_name` by merging:
+    /// provider-level defaults → per-model overrides.
+    pub fn to_model_config(&self, model_name: &str) -> ModelConfig {
+        let mut cfg = ModelConfig {
+            provider: self.name.clone(),
+            name: model_name.to_string(),
+            base_url: self.base_url.clone(),
+            api_key_env: self.api_key_env.clone(),
+            api_key: self.api_key.clone(),
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            driver_options: self.driver_options.clone(),
+            azure_resource: self.azure_resource.clone(),
+            azure_deployment: self.azure_deployment.clone(),
+            azure_api_version: self.azure_api_version.clone(),
+            aws_region: self.aws_region.clone(),
+            mock_responses_file: self.mock_responses_file.clone(),
+            ..ModelConfig::default()
+        };
+
+        // Per-model overrides take precedence over provider-level defaults.
+        if let Some(params) = self.models.get(model_name) {
+            if let Some(v) = params.max_tokens {
+                cfg.max_tokens = Some(v);
+            }
+            if let Some(v) = params.temperature {
+                cfg.temperature = Some(v);
+            }
+            if !params.driver_options.is_null() {
+                cfg.driver_options = params.driver_options.clone();
+            }
+            if let Some(v) = params.cache_system_prompt {
+                cfg.cache_system_prompt = v;
+            }
+            if let Some(v) = params.extended_cache_time {
+                cfg.extended_cache_time = v;
+            }
+            if let Some(v) = params.cache_tools {
+                cfg.cache_tools = v;
+            }
+            if let Some(v) = params.cache_conversation {
+                cfg.cache_conversation = v;
+            }
+            if let Some(v) = params.cache_images {
+                cfg.cache_images = v;
+            }
+            if let Some(v) = params.cache_tool_results {
+                cfg.cache_tool_results = v;
+            }
+            if let Some(ref f) = params.mock_responses_file {
+                cfg.mock_responses_file = Some(f.clone());
+            }
+        }
+
+        cfg
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -794,16 +1003,19 @@ mod tests {
         let yaml = r#"
 providers:
   my_ollama:
-    provider: openai
+    name: openai
     base_url: http://localhost:11434/v1
-    name: llama3.2
+    models:
+      llama3.2:
+        max_tokens: 4096
 "#;
         let c: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(c.providers.len(), 1);
         let p = c.providers.get("my_ollama").unwrap();
-        assert_eq!(p.provider, "openai");
+        assert_eq!(p.name, "openai");
         assert_eq!(p.base_url.as_deref(), Some("http://localhost:11434/v1"));
-        assert_eq!(p.name, "llama3.2");
+        assert!(p.models.contains_key("llama3.2"));
+        assert_eq!(p.models["llama3.2"].max_tokens, Some(4096));
     }
 
     #[test]
@@ -811,16 +1023,19 @@ providers:
         let yaml = r#"
 providers:
   local:
-    provider: openai
+    name: openai
     base_url: http://127.0.0.1:8080/v1
-    name: phi-3
+    models:
+      phi-3:
+        max_tokens: 2048
 "#;
         let c: Config = serde_yaml::from_str(yaml).unwrap();
         let serialised = serde_yaml::to_string(&c).unwrap();
         let back: Config = serde_yaml::from_str(&serialised).unwrap();
         let p = back.providers.get("local").unwrap();
-        assert_eq!(p.name, "phi-3");
+        assert_eq!(p.name, "openai");
         assert_eq!(p.base_url.as_deref(), Some("http://127.0.0.1:8080/v1"));
+        assert_eq!(p.models["phi-3"].max_tokens, Some(2048));
     }
 
     #[test]
@@ -828,5 +1043,57 @@ providers:
         let yaml = "model:\n  provider: openai\n  name: gpt-4o\n";
         let c: Config = serde_yaml::from_str(yaml).unwrap();
         assert!(c.providers.is_empty());
+    }
+
+    #[test]
+    fn provider_entry_to_model_config_applies_provider_defaults() {
+        let mut entry = ProviderEntry {
+            name: "openai".into(),
+            base_url: Some("http://local:8000/v1".into()),
+            max_tokens: Some(8192),
+            ..ProviderEntry::default()
+        };
+        entry.models.insert(
+            "my-model".into(),
+            ModelParams {
+                max_tokens: Some(4096),
+                ..ModelParams::default()
+            },
+        );
+        let cfg = entry.to_model_config("my-model");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "my-model");
+        assert_eq!(cfg.base_url.as_deref(), Some("http://local:8000/v1"));
+        // per-model max_tokens overrides provider-level
+        assert_eq!(cfg.max_tokens, Some(4096));
+    }
+
+    #[test]
+    fn provider_entry_to_model_config_uses_provider_defaults_when_no_model_override() {
+        let entry = ProviderEntry {
+            name: "openai".into(),
+            max_tokens: Some(8192),
+            ..ProviderEntry::default()
+        };
+        let cfg = entry.to_model_config("unknown-model");
+        assert_eq!(cfg.max_tokens, Some(8192));
+    }
+
+    #[test]
+    fn provider_entry_to_model_config_driver_options_override() {
+        let mut entry = ProviderEntry {
+            name: "openai".into(),
+            ..ProviderEntry::default()
+        };
+        let driver_opts = serde_json::json!({"parse_tool_calls": false});
+        entry.models.insert(
+            "local-model".into(),
+            ModelParams {
+                driver_options: driver_opts.clone(),
+                ..ModelParams::default()
+            },
+        );
+        let cfg = entry.to_model_config("local-model");
+        assert_eq!(cfg.driver_options, driver_opts);
     }
 }

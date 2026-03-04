@@ -1,10 +1,11 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::Config;
 
@@ -46,8 +47,9 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
     for path in config_search_paths() {
         if path.is_file() {
             debug!(path = %path.display(), "loading config layer");
-            let text = std::fs::read_to_string(&path)
+            let raw = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
+            let text = expand_env_vars(&raw, &path.display().to_string());
             let layer: serde_yaml::Value = serde_yaml::from_str(&text)
                 .with_context(|| format!("parsing {}", path.display()))?;
             merge_yaml(&mut merged, layer);
@@ -56,8 +58,8 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
 
     if let Some(p) = extra {
         debug!(path = %p.display(), "loading explicit config");
-        let text =
-            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let raw = std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let text = expand_env_vars(&raw, &p.display().to_string());
         let layer: serde_yaml::Value =
             serde_yaml::from_str(&text).with_context(|| format!("parsing {}", p.display()))?;
         merge_yaml(&mut merged, layer);
@@ -67,6 +69,10 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
     // deserialisation so we can skip auto-detection for users who have
     // configured their model explicitly.
     let has_model_config = merged.get("model").is_some();
+
+    // Warn about any YAML keys that are not recognised by the schema before
+    // deserialisation consumes (and silently discards) them.
+    validate_unknown_fields(&merged, "");
 
     // Deserialize the merged YAML value into Config, falling back to defaults
     // when the merged value is empty (no config files found).
@@ -93,7 +99,280 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
         // will produce a clear error when the provider is actually invoked.
     }
 
+    // If model.provider references a named provider, expand it into a full
+    // ModelConfig by merging the provider entry settings with the per-model
+    // overrides.  This is the main mechanism that makes the new
+    // provider-first config structure work.
+    resolve_named_model_provider(&mut config);
+
     Ok(config)
+}
+
+/// If `config.model.provider` matches a key in `config.providers`, expand it
+/// into a full [`ModelConfig`] by applying provider-level defaults and any
+/// per-model overrides registered for `config.model.name`.
+fn resolve_named_model_provider(config: &mut Config) {
+    let provider_key = config.model.provider.clone();
+    let model_name = config.model.name.clone();
+
+    if let Some(entry) = config.providers.get(&provider_key) {
+        debug!(
+            provider = %provider_key,
+            model = %model_name,
+            driver = %entry.name,
+            "expanding named provider config"
+        );
+        config.model = entry.to_model_config(&model_name);
+    }
+}
+
+// ── Environment variable expansion ───────────────────────────────────────────
+
+/// Expand `${VAR}` and `${VAR:-default}` placeholders in config file text.
+///
+/// Uses [`shellexpand`] so the full bash-style variable syntax is supported:
+///
+/// | Syntax              | Behaviour                                              |
+/// |---------------------|--------------------------------------------------------|
+/// | `${VAR}`            | Replaced with `$VAR`; empty string + WARN if not set  |
+/// | `${VAR:-default}`   | Replaced with `$VAR`; falls back to `default` silently |
+/// | `$$`                | Literal `$` (escape sequence)                          |
+///
+/// `source_desc` is a human-readable label used in warning messages (typically
+/// the config file path).
+fn expand_env_vars(text: &str, source_desc: &str) -> String {
+    // First pass: expand all set variables and handle `${VAR:-default}` for
+    // unset ones.  Unset variables *without* a default remain as `${VAR}`.
+    let first: Cow<str> =
+        shellexpand::env_with_context_no_errors(text, |name| -> Option<Cow<str>> {
+            std::env::var(name).ok().map(Cow::Owned)
+        });
+
+    // Second pass: any `${VAR}` placeholders that survived the first pass are
+    // unset variables with no default.  Warn and substitute an empty string so
+    // the YAML remains valid.
+    let second: Cow<str> =
+        shellexpand::env_with_context_no_errors(&*first, |name| -> Option<Cow<str>> {
+            warn!(
+                var = name,
+                source = source_desc,
+                "config env var is not set; substituting empty string"
+            );
+            Some(Cow::Borrowed(""))
+        });
+
+    second.into_owned()
+}
+
+// ── Unknown-field validation ──────────────────────────────────────────────────
+
+/// Known top-level keys in [`Config`].
+const CONFIG_KEYS: &[&str] = &["model", "agent", "tools", "tui", "providers"];
+
+/// Known keys in [`crate::ModelConfig`].
+const MODEL_CONFIG_KEYS: &[&str] = &[
+    "provider",
+    "name",
+    "api_key_env",
+    "api_key",
+    "base_url",
+    "max_tokens",
+    "temperature",
+    "azure_resource",
+    "azure_deployment",
+    "azure_api_version",
+    "aws_region",
+    "cache_system_prompt",
+    "extended_cache_time",
+    "cache_tools",
+    "cache_conversation",
+    "cache_images",
+    "cache_tool_results",
+    "driver_options",
+    "mock_responses_file",
+];
+
+/// Known keys in [`crate::ProviderEntry`].
+const PROVIDER_ENTRY_KEYS: &[&str] = &[
+    "name",
+    "base_url",
+    "api_key_env",
+    "api_key",
+    "models",
+    "max_tokens",
+    "temperature",
+    "driver_options",
+    "azure_resource",
+    "azure_deployment",
+    "azure_api_version",
+    "aws_region",
+    "mock_responses_file",
+];
+
+/// Known keys in [`crate::ModelParams`].
+const MODEL_PARAMS_KEYS: &[&str] = &[
+    "max_tokens",
+    "temperature",
+    "driver_options",
+    "cache_system_prompt",
+    "extended_cache_time",
+    "cache_tools",
+    "cache_conversation",
+    "cache_images",
+    "cache_tool_results",
+    "mock_responses_file",
+];
+
+/// Known keys in [`crate::AgentConfig`].
+const AGENT_CONFIG_KEYS: &[&str] = &[
+    "default_mode",
+    "max_tool_rounds",
+    "compaction_threshold",
+    "compaction_keep_recent",
+    "compaction_strategy",
+    "tool_result_token_cap",
+    "compaction_overhead_reserve",
+    "system_prompt",
+    "max_step_timeout_secs",
+    "max_run_timeout_secs",
+];
+
+/// Known keys in [`crate::ToolsConfig`].
+const TOOLS_CONFIG_KEYS: &[&str] = &[
+    "auto_approve_patterns",
+    "deny_patterns",
+    "timeout_secs",
+    "use_docker",
+    "docker_image",
+    "web",
+    "memory",
+    "lints",
+    "gdb",
+];
+
+/// Known keys in [`crate::TuiConfig`].
+const TUI_CONFIG_KEYS: &[&str] = &["theme", "code_line_numbers", "wrap_width", "ascii_borders"];
+
+/// Known keys in [`crate::WebConfig`].
+const WEB_CONFIG_KEYS: &[&str] = &["search", "fetch_max_chars"];
+
+/// Known keys in [`crate::WebSearchConfig`].
+const WEB_SEARCH_CONFIG_KEYS: &[&str] = &["api_key"];
+
+/// Known keys in [`crate::MemoryConfig`].
+const MEMORY_CONFIG_KEYS: &[&str] = &["memory_file"];
+
+/// Known keys in [`crate::LintsConfig`].
+const LINTS_CONFIG_KEYS: &[&str] = &["rust_command", "typescript_command", "python_command"];
+
+/// Known keys in [`crate::GdbConfig`].
+const GDB_CONFIG_KEYS: &[&str] = &[
+    "gdb_path",
+    "command_timeout_secs",
+    "connect_timeout_secs",
+    "server_startup_wait_ms",
+];
+
+/// Recursively walk `value` and emit a `warn!` for any mapping key that is
+/// not listed in the expected set for that schema level.
+///
+/// `path` is the dot-separated JSON path used in the warning message
+/// (e.g. `"model"`, `"providers.my_ollama"`).
+fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
+    let serde_yaml::Value::Mapping(map) = value else {
+        return;
+    };
+
+    let (known, label): (&[&str], &str) = if path.is_empty() {
+        (CONFIG_KEYS, "config")
+    } else if path == "model" {
+        (MODEL_CONFIG_KEYS, "model")
+    } else if path == "agent" {
+        (AGENT_CONFIG_KEYS, "agent")
+    } else if path == "tools" {
+        (TOOLS_CONFIG_KEYS, "tools")
+    } else if path == "tools.web" {
+        (WEB_CONFIG_KEYS, "tools.web")
+    } else if path == "tools.web.search" {
+        (WEB_SEARCH_CONFIG_KEYS, "tools.web.search")
+    } else if path == "tools.memory" {
+        (MEMORY_CONFIG_KEYS, "tools.memory")
+    } else if path == "tools.lints" {
+        (LINTS_CONFIG_KEYS, "tools.lints")
+    } else if path == "tools.gdb" {
+        (GDB_CONFIG_KEYS, "tools.gdb")
+    } else if path == "tui" {
+        (TUI_CONFIG_KEYS, "tui")
+    } else if path == "providers" {
+        // The providers map has arbitrary provider names as keys — all are valid.
+        // We descend into each named entry to validate its fields.
+        for (key, val) in map {
+            let key_str = match key {
+                serde_yaml::Value::String(s) => s.as_str(),
+                _ => continue,
+            };
+            let child_path = format!("providers.{key_str}");
+            validate_unknown_fields(val, &child_path);
+        }
+        return;
+    } else if path.starts_with("providers.") {
+        let rest = &path["providers.".len()..];
+        if rest.contains('.') {
+            // providers.<name>.models.<model_name> — per-model params
+            (MODEL_PARAMS_KEYS, "model params")
+        } else {
+            // providers.<name> — provider entry
+            (PROVIDER_ENTRY_KEYS, "provider entry")
+        }
+    } else {
+        // Unknown path — skip validation to avoid false positives.
+        return;
+    };
+
+    for (key, val) in map {
+        let key_str = match key {
+            serde_yaml::Value::String(s) => s.as_str(),
+            _ => continue,
+        };
+        if !known.contains(&key_str) {
+            warn!(
+                "Unrecognised config field `{}.{}` — check spelling or update sven",
+                path, key_str
+            );
+        } else {
+            // Recurse into known nested sections.
+            let child_path = if path.is_empty() {
+                key_str.to_string()
+            } else {
+                format!("{path}.{key_str}")
+            };
+            match (label, key_str) {
+                ("config", "model")
+                | ("config", "agent")
+                | ("config", "tools")
+                | ("config", "tui")
+                | ("config", "providers") => validate_unknown_fields(val, &child_path),
+                ("tools", "web") | ("tools", "memory") | ("tools", "lints") | ("tools", "gdb") => {
+                    validate_unknown_fields(val, &child_path)
+                }
+                ("tools.web", "search") => validate_unknown_fields(val, &child_path),
+                ("provider entry", "models") => {
+                    // Each key is a model name; validate its params.
+                    if let serde_yaml::Value::Mapping(models_map) = val {
+                        for (model_key, model_val) in models_map {
+                            let model_name = match model_key {
+                                serde_yaml::Value::String(s) => s.as_str(),
+                                _ => continue,
+                            };
+                            let model_path = format!("{child_path}.{model_name}");
+                            validate_unknown_fields(model_val, &model_path);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Deep-merge `src` into `dst`; src wins on scalar conflicts.
@@ -171,5 +450,119 @@ mod tests {
         let cfg = load(Some(f.path())).unwrap();
         assert_eq!(cfg.model.provider, "anthropic");
         assert_eq!(cfg.model.name, "test-model");
+    }
+
+    #[test]
+    fn load_resolves_named_provider_to_model_config() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+providers:
+  my_ollama:
+    name: openai
+    base_url: http://localhost:8000/v1
+    models:
+      my-model:
+        max_tokens: 54272
+        driver_options:
+          parse_tool_calls: false
+model:
+  provider: my_ollama
+  name: my-model
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        // After resolution, provider must be the actual driver ("openai"), not "my_ollama".
+        assert_eq!(cfg.model.provider, "openai");
+        assert_eq!(cfg.model.name, "my-model");
+        assert_eq!(
+            cfg.model.base_url.as_deref(),
+            Some("http://localhost:8000/v1")
+        );
+        assert_eq!(cfg.model.max_tokens, Some(54272));
+    }
+
+    #[test]
+    fn load_does_not_resolve_when_provider_is_builtin() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "model:\n  provider: anthropic\n  name: claude-opus-4-5").unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert_eq!(cfg.model.provider, "anthropic");
+        assert_eq!(cfg.model.name, "claude-opus-4-5");
+    }
+
+    // ── expand_env_vars ───────────────────────────────────────────────────────
+
+    #[test]
+    fn expand_env_vars_substitutes_set_variable() {
+        std::env::set_var("SVEN_TEST_EXPAND_VAR", "hello");
+        let result = expand_env_vars("key: ${SVEN_TEST_EXPAND_VAR}", "test");
+        assert_eq!(result, "key: hello");
+        std::env::remove_var("SVEN_TEST_EXPAND_VAR");
+    }
+
+    #[test]
+    fn expand_env_vars_uses_default_for_unset_variable() {
+        std::env::remove_var("SVEN_TEST_MISSING_VAR");
+        let result = expand_env_vars("key: ${SVEN_TEST_MISSING_VAR:-fallback}", "test");
+        assert_eq!(result, "key: fallback");
+    }
+
+    #[test]
+    fn expand_env_vars_replaces_unset_required_var_with_empty() {
+        std::env::remove_var("SVEN_TEST_REQUIRED_VAR");
+        let result = expand_env_vars("key: ${SVEN_TEST_REQUIRED_VAR}", "test");
+        assert_eq!(result, "key: ");
+    }
+
+    #[test]
+    fn expand_env_vars_leaves_plain_text_unchanged() {
+        let text = "model:\n  provider: openai\n  name: gpt-4o\n";
+        assert_eq!(expand_env_vars(text, "test"), text);
+    }
+
+    #[test]
+    fn load_expands_env_vars_in_config_file() {
+        use std::io::Write;
+        std::env::set_var("SVEN_TEST_PROVIDER", "anthropic");
+        std::env::set_var("SVEN_TEST_MODEL", "claude-opus-4-5");
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "model:\n  provider: ${{SVEN_TEST_PROVIDER}}\n  name: ${{SVEN_TEST_MODEL}}"
+        )
+        .unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert_eq!(cfg.model.provider, "anthropic");
+        assert_eq!(cfg.model.name, "claude-opus-4-5");
+        std::env::remove_var("SVEN_TEST_PROVIDER");
+        std::env::remove_var("SVEN_TEST_MODEL");
+    }
+
+    #[test]
+    fn validate_unknown_fields_warns_for_unknown_top_level_key() {
+        // This test just verifies the function does not panic for an unknown key.
+        let yaml = val("model:\n  provider: openai\n  name: gpt-4o\nunknown_key: value\n");
+        // validate_unknown_fields should not panic; tracing output is suppressed
+        // in tests so we just check it doesn't crash.
+        validate_unknown_fields(&yaml, "");
+    }
+
+    #[test]
+    fn validate_unknown_fields_warns_for_unknown_model_key() {
+        let yaml = val("model:\n  provider: openai\n  name: gpt-4o\n  nonexistent_field: value\n");
+        validate_unknown_fields(&yaml, "");
+    }
+
+    #[test]
+    fn validate_unknown_fields_accepts_all_known_top_level_keys() {
+        let yaml =
+            val("model:\n  provider: openai\n  name: gpt-4o\nagent:\n  max_tool_rounds: 100\n");
+        // Should not produce any warnings — just verifying no panic.
+        validate_unknown_fields(&yaml, "");
     }
 }

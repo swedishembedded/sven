@@ -588,12 +588,12 @@ impl<'a> ModelResolver<'a> {
         provider_key: &str,
         model_suffix: Option<&str>,
     ) -> Option<ModelConfig> {
-        let named = self.config.providers.get(provider_key)?;
-        let mut cfg = named.clone();
-        if let Some(model) = model_suffix {
-            cfg.name = model.to_string();
-        }
-        Some(cfg)
+        let entry = self.config.providers.get(provider_key)?;
+        // When no model suffix is given, keep the current model name from the
+        // active config so that `--model my_ollama` switches the provider endpoint
+        // without changing the model name.
+        let model_name = model_suffix.unwrap_or(&self.config.model.name);
+        Some(entry.to_model_config(model_name))
     }
 
     /// Step 2: catalog lookup by `provider/name` when the provider is a
@@ -901,17 +901,22 @@ mod tests {
     fn config_with_named_provider() -> sven_config::Config {
         use std::collections::HashMap;
         let mut providers = HashMap::new();
-        providers.insert(
-            "my_ollama".into(),
-            ModelConfig {
+        let mut entry = sven_config::ProviderEntry {
+            name: "openai".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            api_key: Some("ollama".into()),
+            ..sven_config::ProviderEntry::default()
+        };
+        entry
+            .models
+            .insert("llama3.2".into(), sven_config::ModelParams::default());
+        providers.insert("my_ollama".into(), entry);
+        sven_config::Config {
+            model: ModelConfig {
                 provider: "openai".into(),
-                base_url: Some("http://localhost:11434/v1".into()),
                 name: "llama3.2".into(),
-                api_key: Some("ollama".into()),
                 ..ModelConfig::default()
             },
-        );
-        sven_config::Config {
             providers,
             ..sven_config::Config::default()
         }
@@ -922,6 +927,7 @@ mod tests {
         let config = config_with_named_provider();
         let cfg = resolve_model_from_config(&config, "my_ollama");
         assert_eq!(cfg.provider, "openai");
+        // No model suffix → uses config.model.name as fallback
         assert_eq!(cfg.name, "llama3.2");
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
     }
@@ -1061,10 +1067,10 @@ mod tests {
         base_provider: &str,
         base_model: &str,
         alias: &str,
-        named: ModelConfig,
+        entry: sven_config::ProviderEntry,
     ) -> sven_config::Config {
         let mut config = make_config(base_provider, base_model);
-        config.providers.insert(alias.into(), named);
+        config.providers.insert(alias.into(), entry);
         config
     }
 
@@ -1073,29 +1079,28 @@ mod tests {
     /// Step 1: a named provider alias resolves to its stored config.
     #[test]
     fn step1_named_provider_used_as_base() {
-        let named = ModelConfig {
-            provider: "openai".into(),
-            name: "llama3.2".into(),
+        let entry = sven_config::ProviderEntry {
+            name: "openai".into(),
             base_url: Some("http://localhost:11434/v1".into()),
-            ..ModelConfig::default()
+            ..sven_config::ProviderEntry::default()
         };
-        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", named);
+        // Base config model name is "gpt-4o"; no suffix → fallback to that.
+        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", entry);
         let cfg = ModelResolver::new(&config, "my_ollama").resolve();
         assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.name, "llama3.2");
+        assert_eq!(cfg.name, "gpt-4o"); // falls back to config.model.name
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
     }
 
     /// Step 1: `alias/model` form overrides the model name inside the named config.
     #[test]
     fn step1_named_provider_with_model_suffix() {
-        let named = ModelConfig {
-            provider: "openai".into(),
-            name: "llama3.2".into(),
+        let entry = sven_config::ProviderEntry {
+            name: "openai".into(),
             base_url: Some("http://localhost:11434/v1".into()),
-            ..ModelConfig::default()
+            ..sven_config::ProviderEntry::default()
         };
-        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", named);
+        let config = make_config_with_named("openai", "gpt-4o", "my_ollama", entry);
         let cfg = ModelResolver::new(&config, "my_ollama/codellama").resolve();
         assert_eq!(cfg.name, "codellama");
         assert_eq!(

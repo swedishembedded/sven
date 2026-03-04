@@ -40,7 +40,8 @@ impl SlashCommand for ProviderCommand {
         provider_names.sort_unstable();
         for name in provider_names {
             let cfg = &ctx.config.providers[name];
-            let display = format!("{} (custom: {}  {})", name, cfg.provider, cfg.name);
+            let model_count = cfg.models.len();
+            let display = format!("{} (driver: {}  models: {})", name, cfg.name, model_count,);
             items.push(CompletionItem::with_desc(
                 name,
                 display,
