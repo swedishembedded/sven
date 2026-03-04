@@ -669,7 +669,10 @@ async fn execute_inbound_session_message(
     use sven_core::AgentEvent;
 
     let start = Instant::now();
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
     let chars_budget = (max_ctx / 2) * 4;
 
     tracing::info!(%from, seq = message.seq, "executing inbound session message");

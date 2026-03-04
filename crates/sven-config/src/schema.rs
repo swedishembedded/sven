@@ -51,13 +51,15 @@ pub struct Config {
     ///     api_key: ${OPENROUTER_API_KEY}   # expanded from env at load time
     ///     models:
     ///       google/gemini-2.5-pro-preview:
-    ///         max_tokens: 8192
+    ///         max_tokens: 205000          # total context window (input + output)
+    ///         max_output_tokens: 8192     # cap sent to API; total must be >= this
     ///   work_anthropic:
     ///     name: anthropic
     ///     api_key: ${WORK_ANTHROPIC_KEY:-}  # optional, falls back to empty
     ///     models:
     ///       claude-opus-4-5:
-    ///         max_tokens: 8192
+    ///         max_tokens: 200000
+    ///         max_output_tokens: 8192
     /// ```
     ///
     /// Select the active model via:
@@ -77,9 +79,27 @@ pub struct Config {
 /// [`ModelConfig`] defaults.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelParams {
-    /// Maximum tokens to request in a single completion
+    /// Total context window in tokens (input + output combined).
+    ///
+    /// When set, this value is used for session compaction decisions.
+    /// If `max_output_tokens` is not set, this also caps the per-request
+    /// output token limit (backward-compatible behaviour).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Maximum output tokens per completion request.
+    ///
+    /// Sent to the provider API as the output token limit.
+    /// When set alongside `max_tokens`, the constraint
+    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    /// Maximum input tokens allowed before compaction is forced.
+    ///
+    /// Optional cap on the input side of the context window.
+    /// When set alongside `max_tokens`, the constraint
+    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<u32>,
     /// Sampling temperature (0.0–2.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -203,6 +223,8 @@ impl ProviderEntry {
             api_key_env: self.api_key_env.clone(),
             api_key: self.api_key.clone(),
             max_tokens: self.max_tokens,
+            max_output_tokens: None,
+            max_input_tokens: None,
             temperature: self.temperature,
             driver_options: self.driver_options.clone(),
             azure_resource: self.azure_resource.clone(),
@@ -217,6 +239,12 @@ impl ProviderEntry {
         if let Some(params) = self.models.get(model_name) {
             if let Some(v) = params.max_tokens {
                 cfg.max_tokens = Some(v);
+            }
+            if let Some(v) = params.max_output_tokens {
+                cfg.max_output_tokens = Some(v);
+            }
+            if let Some(v) = params.max_input_tokens {
+                cfg.max_input_tokens = Some(v);
             }
             if let Some(v) = params.temperature {
                 cfg.temperature = Some(v);
@@ -267,8 +295,25 @@ pub struct ModelConfig {
     /// Base URL override.  Useful for local proxies, LiteLLM, or Cloudflare.
     /// For most hosted providers the correct default is auto-selected.
     pub base_url: Option<String>,
-    /// Maximum tokens to request in a single completion
+    /// Total context window in tokens (input + output combined).
+    ///
+    /// When set, this value is used for session compaction decisions.
+    /// If `max_output_tokens` is not set, this also acts as the per-request
+    /// output token limit for backward compatibility with older configs.
     pub max_tokens: Option<u32>,
+    /// Maximum output tokens per completion request.
+    ///
+    /// Sent to the provider API as the output token limit (`max_tokens` or
+    /// `max_completion_tokens` depending on the provider).  When set together
+    /// with `max_tokens`, the constraint
+    /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
+    pub max_output_tokens: Option<u32>,
+    /// Maximum input tokens before compaction is forced.
+    ///
+    /// Optional cap on the input side of the context window used by the
+    /// compaction budget logic.  When set together with `max_tokens`, the
+    /// constraint `max_tokens >= max_input_tokens + max_output_tokens` must hold.
+    pub max_input_tokens: Option<u32>,
     /// Sampling temperature (0.0–2.0)
     pub temperature: Option<f32>,
 
@@ -391,7 +436,9 @@ impl Default for ModelConfig {
             api_key_env: None,
             api_key: None,
             base_url: None,
-            max_tokens: Some(4096),
+            max_tokens: None,
+            max_output_tokens: None,
+            max_input_tokens: None,
             temperature: Some(0.2),
             azure_resource: None,
             azure_deployment: None,

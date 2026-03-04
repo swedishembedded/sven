@@ -109,7 +109,10 @@ impl AgentBuilder {
         // hosted providers that don't expose such an endpoint.
         let context_window = match model.probe_context_window().await {
             Some(n) if n > 0 => n as usize,
-            _ => model.catalog_context_window().unwrap_or(128_000) as usize,
+            _ => model
+                .config_context_window()
+                .or_else(|| model.catalog_context_window())
+                .unwrap_or(128_000) as usize,
         };
 
         Agent::new(

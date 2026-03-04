@@ -55,7 +55,10 @@ impl Agent {
         tool_event_rx: mpsc::Receiver<ToolEvent>,
         max_context_tokens: usize,
     ) -> Self {
-        let max_output_tokens = model.catalog_max_output_tokens().unwrap_or(0) as usize;
+        let max_output_tokens = model
+            .config_max_output_tokens()
+            .or_else(|| model.catalog_max_output_tokens())
+            .unwrap_or(0) as usize;
         let mut session = Session::new(max_context_tokens);
         session.max_output_tokens = max_output_tokens;
         // Pre-populate with prior messages if provided (used by session executor
@@ -86,11 +89,18 @@ impl Agent {
     /// Used by the CI runner to switch models mid-workflow (per-step model
     /// overrides).  The session history is preserved.
     pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {
-        // Update context window and output token limit from the new model's catalog.
-        if let Some(cw) = model.catalog_context_window() {
+        // Update context window: prefer config-specified total, then catalog.
+        if let Some(cw) = model
+            .config_context_window()
+            .or_else(|| model.catalog_context_window())
+        {
             self.session.max_tokens = cw as usize;
         }
-        if let Some(mot) = model.catalog_max_output_tokens() {
+        // Update output token limit: prefer config-specified, then catalog.
+        if let Some(mot) = model
+            .config_max_output_tokens()
+            .or_else(|| model.catalog_max_output_tokens())
+        {
             self.session.max_output_tokens = mot as usize;
         }
         self.model = model;

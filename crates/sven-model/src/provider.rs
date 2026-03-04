@@ -51,6 +51,29 @@ pub trait ModelProvider: Send + Sync {
         crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.context_window)
     }
 
+    /// Config-specified total context window (overrides catalog when set).
+    ///
+    /// Returns the `max_tokens` value from the user's config, which represents
+    /// the total context window (input + output) for this model.  Used for
+    /// compaction budget decisions.  Returns `None` when the user did not
+    /// explicitly configure a context window; callers should then fall back to
+    /// [`catalog_context_window`] or a conservative default.
+    fn config_context_window(&self) -> Option<u32> {
+        None
+    }
+
+    /// Config-specified output token limit (overrides catalog when set).
+    ///
+    /// Returns the resolved output token cap derived from the user's config:
+    /// - `max_output_tokens` if explicitly set, else
+    /// - `max_tokens` (total) used as backward-compatible output cap.
+    ///
+    /// Returns `None` when neither is configured; callers should then fall back
+    /// to [`catalog_max_output_tokens`] or a conservative default.
+    fn config_max_output_tokens(&self) -> Option<u32> {
+        None
+    }
+
     /// Query the live API for the actual context window in use.
     ///
     /// Default implementation returns `None` (no live probe available).

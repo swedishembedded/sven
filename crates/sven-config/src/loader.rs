@@ -105,7 +105,82 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
     // provider-first config structure work.
     resolve_named_model_provider(&mut config);
 
+    validate_token_limits(&config.model, "model");
+    for (alias, entry) in &config.providers {
+        for (model_name, params) in &entry.models {
+            let effective_max_tokens = params.max_tokens.or(entry.max_tokens);
+            validate_model_params_token_limits(
+                effective_max_tokens,
+                params.max_input_tokens,
+                params.max_output_tokens,
+                &format!("providers.{alias}.models.{model_name}"),
+            );
+        }
+    }
+
     Ok(config)
+}
+
+/// Warn when `max_tokens` (total context) is less than the sum of the
+/// optional `max_input_tokens` and `max_output_tokens` limits.
+///
+/// The constraint is:
+///   `max_tokens >= max_input_tokens + max_output_tokens`
+fn validate_token_limits(cfg: &crate::ModelConfig, path: &str) {
+    validate_model_params_token_limits(
+        cfg.max_tokens,
+        cfg.max_input_tokens,
+        cfg.max_output_tokens,
+        path,
+    );
+}
+
+fn validate_model_params_token_limits(
+    max_tokens: Option<u32>,
+    max_input_tokens: Option<u32>,
+    max_output_tokens: Option<u32>,
+    path: &str,
+) {
+    if let (Some(total), Some(input), Some(output)) =
+        (max_tokens, max_input_tokens, max_output_tokens)
+    {
+        let sum = input.saturating_add(output);
+        if total < sum {
+            warn!(
+                path,
+                max_tokens = total,
+                max_input_tokens = input,
+                max_output_tokens = output,
+                sum_of_parts = sum,
+                "max_tokens ({total}) is less than max_input_tokens + max_output_tokens \
+                 ({input} + {output} = {sum}); total must be >= sum of its parts"
+            );
+        }
+    } else if let (Some(total), None, Some(output)) =
+        (max_tokens, max_input_tokens, max_output_tokens)
+    {
+        if total < output {
+            warn!(
+                path,
+                max_tokens = total,
+                max_output_tokens = output,
+                "max_tokens ({total}) is less than max_output_tokens ({output}); \
+                 total context must be >= output limit"
+            );
+        }
+    } else if let (Some(total), Some(input), None) =
+        (max_tokens, max_input_tokens, max_output_tokens)
+    {
+        if total < input {
+            warn!(
+                path,
+                max_tokens = total,
+                max_input_tokens = input,
+                "max_tokens ({total}) is less than max_input_tokens ({input}); \
+                 total context must be >= input limit"
+            );
+        }
+    }
 }
 
 /// If `config.model.provider` matches a key in `config.providers`, expand it
@@ -177,6 +252,8 @@ const MODEL_CONFIG_KEYS: &[&str] = &[
     "api_key",
     "base_url",
     "max_tokens",
+    "max_output_tokens",
+    "max_input_tokens",
     "temperature",
     "azure_resource",
     "azure_deployment",
@@ -200,6 +277,8 @@ const PROVIDER_ENTRY_KEYS: &[&str] = &[
     "api_key",
     "models",
     "max_tokens",
+    "max_output_tokens",
+    "max_input_tokens",
     "temperature",
     "driver_options",
     "azure_resource",
@@ -212,6 +291,8 @@ const PROVIDER_ENTRY_KEYS: &[&str] = &[
 /// Known keys in [`crate::ModelParams`].
 const MODEL_PARAMS_KEYS: &[&str] = &[
     "max_tokens",
+    "max_output_tokens",
+    "max_input_tokens",
     "temperature",
     "driver_options",
     "cache_system_prompt",

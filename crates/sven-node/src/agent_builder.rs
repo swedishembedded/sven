@@ -54,7 +54,10 @@ pub async fn build_node_agent(
     agent_card: AgentCard,
     rooms: Vec<String>,
 ) -> anyhow::Result<(Agent, SessionDepthHandle)> {
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
 
     // Empty delegation context — the interactive agent is never itself
     // executing inside a delegated task.
@@ -118,7 +121,10 @@ pub async fn build_task_agent(
     task_depth: u32,
     task_chain: Vec<String>,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
 
     // Pre-populate the delegation context with this task's depth and chain.
     // No other task will ever touch this Arc — it is created fresh here.
@@ -191,7 +197,10 @@ pub async fn build_task_agent_with_runtime(
     initial_session_depth: u32,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
             depth: task_depth,
@@ -247,7 +256,10 @@ pub async fn build_room_reactive_agent(
     inbound_post_depth: u32,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model.catalog_context_window().unwrap_or(128_000) as usize;
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
 
     let delegation_context: DelegationContextHandle =
         Arc::new(tokio::sync::Mutex::new(Some(DelegationContext {
