@@ -34,7 +34,7 @@ export default function Hero() {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-status-green animate-pulse-dot" />
               Open source · Apache 2.0
-              <span className="text-accent-blue ml-1">v1.2.3</span>
+              <span className="text-accent-blue ml-1">{__LATEST_VERSION__}</span>
             </motion.div>
 
             <motion.h1
