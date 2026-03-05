@@ -405,9 +405,26 @@ impl Agent {
 
             let mut outputs = Vec::with_capacity(tool_calls.len());
             for (i, task) in tasks.into_iter().enumerate() {
-                let output = match task.await {
-                    Ok(o) => o,
-                    Err(e) => ToolOutput::err(&tool_calls[i].id, format!("tool panicked: {e}")),
+                // Poll the task while draining progress events in real-time so
+                // the UI spinner updates during long-running tools (e.g. context_query).
+                let output = {
+                    tokio::pin!(task);
+                    loop {
+                        tokio::select! {
+                            result = &mut task => {
+                                break match result {
+                                    Ok(o) => o,
+                                    Err(e) => ToolOutput::err(
+                                        &tool_calls[i].id,
+                                        format!("tool panicked: {e}"),
+                                    ),
+                                };
+                            }
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                                self.drain_tool_events(&tx).await;
+                            }
+                        }
+                    }
                 };
                 self.drain_tool_events(&tx).await;
                 let _ = tx
@@ -555,21 +572,31 @@ impl Agent {
             }
 
             // Await all tasks in order, preserving result indices for correct
-            // conversation history serialization.
+            // conversation history serialization.  While waiting, drain tool
+            // events every 100 ms so progress updates reach the UI in real time.
             let mut outputs = Vec::with_capacity(tool_calls.len());
             for (i, task) in tasks.into_iter().enumerate() {
-                let output = match task.await {
-                    Ok(output) => output,
-                    Err(e) => {
-                        // Task panicked — treat as tool error
-                        ToolOutput::err(
-                            &tool_calls[i].id,
-                            format!("tool execution panicked: {}", e),
-                        )
+                let output = {
+                    tokio::pin!(task);
+                    loop {
+                        tokio::select! {
+                            result = &mut task => {
+                                break match result {
+                                    Ok(o) => o,
+                                    Err(e) => ToolOutput::err(
+                                        &tool_calls[i].id,
+                                        format!("tool execution panicked: {}", e),
+                                    ),
+                                };
+                            }
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                                self.drain_tool_events(&tx).await;
+                            }
+                        }
                     }
                 };
 
-                // Drain tool events (may arrive from any task via shared channel)
+                // Final drain after task completes.
                 self.drain_tool_events(&tx).await;
 
                 let _ = tx
@@ -632,6 +659,9 @@ impl Agent {
                 ToolEvent::ModeChanged(new_mode) => {
                     *self.current_mode.lock().await = new_mode;
                     let _ = tx.send(AgentEvent::ModeChanged(new_mode)).await;
+                }
+                ToolEvent::Progress { call_id, message } => {
+                    let _ = tx.send(AgentEvent::ToolProgress { call_id, message }).await;
                 }
             }
         }

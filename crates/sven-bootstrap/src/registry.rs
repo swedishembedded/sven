@@ -83,7 +83,7 @@ pub fn build_tool_registry(
                 reg.register(AskQuestionTool::new_tui(tx));
             }
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx));
+            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
             reg.register(WriteTool);
             reg.register(EditFileTool);
             reg.register(DeleteFileTool);
@@ -112,7 +112,8 @@ pub fn build_tool_registry(
             reg.register(ContextOpenTool::new(context_store.clone()));
             reg.register(ContextReadTool::new(context_store.clone()));
             reg.register(ContextGrepTool::new(context_store.clone()));
-            let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg);
+            let (ctx_query, ctx_reduce) =
+                build_context_query_tools(context_store, model, cfg, Some(tool_event_tx.clone()));
             reg.register(ctx_query);
             reg.register(ctx_reduce);
 
@@ -158,7 +159,7 @@ pub fn build_tool_registry(
             // and have no UI channel to display the modal.  The model won't
             // attempt to call a tool that isn't in the registry.
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx));
+            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
             reg.register(WriteTool);
             reg.register(EditFileTool);
             reg.register(DeleteFileTool);
@@ -185,7 +186,8 @@ pub fn build_tool_registry(
             reg.register(ContextOpenTool::new(context_store.clone()));
             reg.register(ContextReadTool::new(context_store.clone()));
             reg.register(ContextGrepTool::new(context_store.clone()));
-            let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg);
+            let (ctx_query, ctx_reduce) =
+                build_context_query_tools(context_store, model, cfg, Some(tool_event_tx.clone()));
             reg.register(ctx_query);
             reg.register(ctx_reduce);
 

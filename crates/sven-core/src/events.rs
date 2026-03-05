@@ -91,6 +91,14 @@ pub enum AgentEvent {
     Aborted { partial_text: String },
     /// A recoverable error occurred
     Error(String),
+    /// A long-running tool is reporting incremental progress.
+    /// The UI should update the spinner / status bar without adding a chat segment.
+    ToolProgress {
+        /// The tool-call ID this update belongs to (matches `ToolCallStarted`).
+        call_id: String,
+        /// Short human-readable status, e.g. "context_query: chunk 12/200".
+        message: String,
+    },
     /// The todo list was updated
     TodoUpdate(Vec<TodoItem>),
     /// The agent mode was changed

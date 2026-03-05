@@ -1360,6 +1360,9 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 output_format,
             );
         }
+        AgentEvent::ToolProgress { message, .. } => {
+            write_stderr(&format!("[sven:progress] {message}"));
+        }
         AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {

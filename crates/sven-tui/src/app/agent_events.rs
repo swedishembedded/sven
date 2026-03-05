@@ -225,6 +225,12 @@ impl App {
                     }
                 }
             }
+            AgentEvent::ToolProgress { message, .. } => {
+                // Update the spinner label so the user can see what the tool
+                // is doing without adding a chat segment.
+                self.agent.current_tool = Some(message);
+                self.rerender_chat().await;
+            }
             AgentEvent::Error(msg) => {
                 self.chat.segments.push(ChatSegment::Error(msg.clone()));
                 self.save_history_async();

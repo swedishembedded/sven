@@ -673,6 +673,10 @@ pub struct ContextConfig {
     /// Maximum characters sent to each sub-query call.
     /// Sub-queries are simple completions without tools; this caps their input.
     pub sub_query_max_chars: usize,
+    /// Timeout in seconds for each individual sub-query API call.
+    /// If a sub-query does not complete within this time it is cancelled and
+    /// an error result is recorded for that chunk.  0 means no timeout.
+    pub sub_query_timeout_secs: u64,
 }
 
 impl Default for ContextConfig {
@@ -681,6 +685,7 @@ impl Default for ContextConfig {
             max_parallel: 4,
             default_chunk_lines: 500,
             sub_query_max_chars: 120_000,
+            sub_query_timeout_secs: 120,
         }
     }
 }

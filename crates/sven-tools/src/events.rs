@@ -18,4 +18,12 @@ pub struct TodoItem {
 pub enum ToolEvent {
     TodoUpdate(Vec<TodoItem>),
     ModeChanged(AgentMode),
+    /// Real-time progress update from a long-running tool.
+    /// Forwarded immediately to the UI so the spinner reflects current activity.
+    Progress {
+        /// The tool-call ID this progress belongs to (matches `ToolCall::id`).
+        call_id: String,
+        /// Short human-readable status message, e.g. "chunk 12/200".
+        message: String,
+    },
 }

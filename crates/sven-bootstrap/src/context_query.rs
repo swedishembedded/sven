@@ -20,16 +20,18 @@
 //! `llm_query()` helper.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, info, warn};
 
 use sven_config::{AgentMode, Config};
 use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 use sven_tools::{
+    events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{OutputCategory, Tool, ToolCall, ToolOutput},
     ContextStore, SubQueryRunner,
@@ -47,20 +49,25 @@ pub struct ModelSubQueryRunner {
     /// Soft cap on the prompt sent to each sub-query.  When the caller's
     /// prompt exceeds this limit it is truncated with a notice.
     max_chars: usize,
+    /// Per-call timeout.  Zero means no timeout.
+    timeout: Option<Duration>,
 }
 
 impl ModelSubQueryRunner {
-    pub fn new(provider: Arc<dyn ModelProvider>, max_chars: usize) -> Self {
+    pub fn new(provider: Arc<dyn ModelProvider>, max_chars: usize, timeout_secs: u64) -> Self {
+        let timeout = if timeout_secs > 0 {
+            Some(Duration::from_secs(timeout_secs))
+        } else {
+            None
+        };
         Self {
             provider,
             max_chars,
+            timeout,
         }
     }
-}
 
-#[async_trait]
-impl SubQueryRunner for ModelSubQueryRunner {
-    async fn query(&self, system: &str, prompt: &str) -> Result<String, String> {
+    async fn query_inner(&self, system: &str, prompt: &str) -> Result<String, String> {
         // Cap the prompt to avoid exceeding the sub-query context window.
         let prompt_str = if prompt.len() > self.max_chars {
             format!(
@@ -92,6 +99,9 @@ impl SubQueryRunner for ModelSubQueryRunner {
         while let Some(event) = stream.next().await {
             match event {
                 Ok(ResponseEvent::TextDelta(delta)) => text.push_str(&delta),
+                // Break on Done or Usage — both signal the end of the response.
+                // Usage often arrives last on OpenAI-compatible providers that
+                // omit an explicit Done frame.
                 Ok(ResponseEvent::Done) | Ok(ResponseEvent::Usage { .. }) => break,
                 Ok(ResponseEvent::Error(e)) => return Err(format!("sub-query stream error: {e}")),
                 Ok(_) => {}
@@ -103,6 +113,18 @@ impl SubQueryRunner for ModelSubQueryRunner {
     }
 }
 
+#[async_trait]
+impl SubQueryRunner for ModelSubQueryRunner {
+    async fn query(&self, system: &str, prompt: &str) -> Result<String, String> {
+        match self.timeout {
+            Some(dur) => tokio::time::timeout(dur, self.query_inner(system, prompt))
+                .await
+                .unwrap_or_else(|_| Err(format!("sub-query timed out after {} s", dur.as_secs()))),
+            None => self.query_inner(system, prompt).await,
+        }
+    }
+}
+
 // ─── ContextQueryTool ─────────────────────────────────────────────────────────
 
 /// Dispatches analysis to sub-agents over chunks of a context handle.
@@ -111,6 +133,8 @@ pub struct ContextQueryTool {
     runner: Arc<dyn SubQueryRunner>,
     default_chunk_lines: usize,
     max_parallel: usize,
+    /// Optional channel for emitting real-time progress events to the UI.
+    progress_tx: Option<mpsc::Sender<ToolEvent>>,
 }
 
 impl ContextQueryTool {
@@ -119,12 +143,23 @@ impl ContextQueryTool {
         runner: Arc<dyn SubQueryRunner>,
         default_chunk_lines: usize,
         max_parallel: usize,
+        progress_tx: Option<mpsc::Sender<ToolEvent>>,
     ) -> Self {
         Self {
             store,
             runner,
             default_chunk_lines,
             max_parallel,
+            progress_tx,
+        }
+    }
+
+    fn emit_progress(&self, call_id: &str, message: String) {
+        if let Some(tx) = &self.progress_tx {
+            let _ = tx.try_send(ToolEvent::Progress {
+                call_id: call_id.to_string(),
+                message,
+            });
         }
     }
 }
@@ -231,6 +266,10 @@ impl Tool for ContextQueryTool {
             .unwrap_or(self.max_parallel);
 
         debug!(handle = %handle, "context_query tool");
+        self.emit_progress(
+            &call.id,
+            format!("context_query: preparing chunks for {handle}"),
+        );
 
         // ── Build list of (chunk_index, total, label, content) tuples ─────────
         let chunks: Vec<(usize, usize, String, String)> = {
@@ -291,10 +330,16 @@ impl Tool for ContextQueryTool {
         }
 
         let total_chunks = chunks.len();
+        info!(total_chunks, handle = %handle, "context_query: starting sub-queries");
+        self.emit_progress(
+            &call.id,
+            format!("context_query: {total_chunks} chunks, {max_parallel} parallel — starting"),
+        );
 
         // ── Dispatch sub-queries in batches of max_parallel ──────────────────
         let runner = self.runner.clone();
         let mut results: Vec<(usize, String)> = Vec::with_capacity(total_chunks);
+        let mut completed = 0usize;
 
         const SUB_QUERY_SYSTEM: &str =
             "You are a focused analysis sub-agent. Answer the question or perform the analysis \
@@ -330,6 +375,12 @@ impl Tool for ContextQueryTool {
                         warn!(error = %e, "sub-query task panicked");
                     }
                 }
+                completed += 1;
+                info!(completed, total_chunks, "context_query: chunk processed");
+                self.emit_progress(
+                    &call.id,
+                    format!("context_query: chunk {completed}/{total_chunks}"),
+                );
             }
         }
 
@@ -382,7 +433,7 @@ impl Tool for ContextQueryTool {
                  Use context_grep(handle=\"{}\", pattern=\"...\") to search results.\n\
                  Use context_reduce(handle=\"{}\", prompt=\"...\") to synthesize a final answer.",
                 total_chunks,
-                (total_chunks + max_parallel - 1) / max_parallel,
+                total_chunks.div_ceil(max_parallel),
                 meta.handle_id,
                 meta.total_bytes,
                 total_chunks,
@@ -637,15 +688,21 @@ fn uuid_hex() -> String {
 
 /// Build both context tools from configuration and a shared provider.
 ///
+/// `progress_tx` is the tool-event channel used to emit real-time chunk progress
+/// to the agent loop and then to the UI spinner.  Pass `None` in headless/test
+/// contexts where no UI is attached.
+///
 /// Returns `(ContextQueryTool, ContextReduceTool)`.
 pub fn build_context_query_tools(
     store: Arc<Mutex<ContextStore>>,
     provider: Arc<dyn ModelProvider>,
     cfg: &Config,
+    progress_tx: Option<mpsc::Sender<ToolEvent>>,
 ) -> (ContextQueryTool, ContextReduceTool) {
     let runner: Arc<dyn SubQueryRunner> = Arc::new(ModelSubQueryRunner::new(
         provider,
         cfg.tools.context.sub_query_max_chars,
+        cfg.tools.context.sub_query_timeout_secs,
     ));
 
     let query_tool = ContextQueryTool::new(
@@ -653,6 +710,7 @@ pub fn build_context_query_tools(
         runner.clone(),
         cfg.tools.context.default_chunk_lines,
         cfg.tools.context.max_parallel,
+        progress_tx,
     );
 
     let reduce_tool = ContextReduceTool::new(

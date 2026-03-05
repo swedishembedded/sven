@@ -151,8 +151,9 @@ mod query_tests {
         let tool = ContextQueryTool::new(
             store.clone(),
             Arc::new(runner.clone()),
-            10, // default_chunk_lines
-            4,  // max_parallel
+            10,   // default_chunk_lines
+            4,    // max_parallel
+            None, // progress_tx
         );
 
         let out = tool
@@ -181,7 +182,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = RecordingRunner::new("ok");
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 20, 2);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 20, 2, None);
 
         let out = tool
             .execute(&tool_call(
@@ -213,7 +214,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = IndexEchoRunner;
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 10, 4);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 10, 4, None);
 
         let out = tool
             .execute(&tool_call(
@@ -278,7 +279,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = RecordingRunner::new("processed");
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 10, 5);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 10, 5, None);
 
         let out = tool
             .execute(&tool_call(
@@ -304,7 +305,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = RecordingRunner::new("done");
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 10, 4);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 10, 4, None);
 
         let out = tool
             .execute(&tool_call(
@@ -325,7 +326,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = RecordingRunner::new("range result: {prompt}");
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 500, 4);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 500, 4, None);
 
         let out = tool
             .execute(&tool_call(
@@ -378,7 +379,7 @@ mod query_tests {
 
         let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let runner = CaptureRunner(captured.clone());
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 100, 1);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 100, 1, None);
 
         tool.execute(&tool_call(
             "context_query",
@@ -413,7 +414,7 @@ mod query_tests {
         let store = make_store();
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(FailingRunner), 100, 4);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(FailingRunner), 100, 4, None);
 
         let out = tool
             .execute(&tool_call(
@@ -454,7 +455,7 @@ mod query_tests {
     async fn query_unknown_handle_is_error() {
         let store = make_store();
         let runner = RecordingRunner::new("ok");
-        let tool = ContextQueryTool::new(store, Arc::new(runner), 100, 4);
+        let tool = ContextQueryTool::new(store, Arc::new(runner), 100, 4, None);
         let out = tool
             .execute(&tool_call(
                 "context_query",
@@ -472,7 +473,7 @@ mod query_tests {
         let handle = open_file(&store, tmp.path().to_str().unwrap()).await;
 
         let runner = RecordingRunner::new("ok");
-        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 100, 4);
+        let tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 100, 4, None);
 
         let out = tool
             .execute(&tool_call(
@@ -678,7 +679,7 @@ mod e2e_pipeline_tests {
         // 3. Query: process the file in 200-line chunks, ask runner for
         //    "public API surface".
         let runner = IndexEchoRunner;
-        let query_tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 200, 4);
+        let query_tool = ContextQueryTool::new(store.clone(), Arc::new(runner), 200, 4, None);
         let query_out = query_tool
             .execute(&tool_call(
                 "context_query",
@@ -764,7 +765,8 @@ mod e2e_pipeline_tests {
 
         // The directory has >1000 total lines; with chunk_lines=300 we get ≥4 chunks.
         let runner = RecordingRunner::new("ok");
-        let query_tool = ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 300, 4);
+        let query_tool =
+            ContextQueryTool::new(store.clone(), Arc::new(runner.clone()), 300, 4, None);
         let out = query_tool
             .execute(&tool_call(
                 "context_query",
@@ -791,7 +793,8 @@ mod e2e_pipeline_tests {
         let handle = open_file(&store, STORE_RS).await;
 
         // IndexEchoRunner writes "analysis for chunk N" for each chunk.
-        let query_tool = ContextQueryTool::new(store.clone(), Arc::new(IndexEchoRunner), 200, 4);
+        let query_tool =
+            ContextQueryTool::new(store.clone(), Arc::new(IndexEchoRunner), 200, 4, None);
         let query_out = query_tool
             .execute(&tool_call(
                 "context_query",
