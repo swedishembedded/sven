@@ -381,6 +381,78 @@ responses:
       Then I will formulate an answer.
     reply: "After careful reasoning, the answer is: forty-two."
 
+  # ── Context tools ────────────────────────────────────────────────────────────
+
+  - match_type: contains
+    pattern: "open context file"
+    tool_calls:
+      - id: tc-ctx-open
+        tool: context_open
+        args:
+          path: /data/agents/sven/crates/sven-tools/src/builtin/context/store.rs
+    after_tool_reply: "Context file opened successfully. I have a handle for store.rs."
+
+  - match_type: contains
+    pattern: "open context directory"
+    tool_calls:
+      - id: tc-ctx-open-dir
+        tool: context_open
+        args:
+          path: /data/agents/sven/crates/sven-tools/src/builtin/context
+          include_pattern: "*.rs"
+          recursive: false
+    after_tool_reply: "Directory context opened. I have a handle for the context module source files."
+
+  - match_type: contains
+    pattern: "open context missing path"
+    tool_calls:
+      - id: tc-ctx-open-missing
+        tool: context_open
+        args:
+          path: /tmp/sven_no_such_context_path_xyz_99
+    after_tool_reply: "Attempted to open a missing path. The tool reported an error as expected."
+
+  - match_type: contains
+    pattern: "grep context bad handle"
+    tool_calls:
+      - id: tc-ctx-grep-bad
+        tool: context_grep
+        args:
+          handle: ctx_bad_handle_test_xyz
+          pattern: "pub fn"
+    after_tool_reply: "Attempted grep with an invalid context handle. Error handled gracefully."
+
+  - match_type: contains
+    pattern: "read context bad handle"
+    tool_calls:
+      - id: tc-ctx-read-bad
+        tool: context_read
+        args:
+          handle: ctx_bad_handle_test_xyz
+          start_line: 1
+          end_line: 10
+    after_tool_reply: "Attempted read with an invalid context handle. Error handled gracefully."
+
+  - match_type: contains
+    pattern: "query context bad handle"
+    tool_calls:
+      - id: tc-ctx-query-bad
+        tool: context_query
+        args:
+          handle: ctx_bad_handle_test_xyz
+          prompt: "Summarise this content: {chunk}"
+    after_tool_reply: "Attempted context_query with an invalid handle. Error handled gracefully."
+
+  - match_type: contains
+    pattern: "reduce context bad handle"
+    tool_calls:
+      - id: tc-ctx-reduce-bad
+        tool: context_reduce
+        args:
+          handle: ctx_bad_handle_test_xyz
+          prompt: "Synthesise the results above."
+    after_tool_reply: "Attempted context_reduce with an invalid handle. Error handled gracefully."
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default
