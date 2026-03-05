@@ -42,7 +42,6 @@ export default function StatsBar() {
           ))}
         </div>
 
-        {/* License / Apache badge row */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={inView ? { opacity: 1 } : {}}
@@ -65,7 +64,6 @@ export default function StatsBar() {
 }
 
 const BADGES = [
-  { label: 'Apache 2.0 License', icon: '⚖', color: '#5b8dee' },
   { label: 'Linux x86_64', icon: '🐧', color: '#e6b428' },
   { label: 'Linux aarch64', icon: '🐧', color: '#e6b428' },
   { label: 'macOS Universal', icon: '🍎', color: '#888' },
