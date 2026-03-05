@@ -1,6 +1,6 @@
 IMAGE   := swedishembedded/sven-site
 PORT    := 3000
-DOCKER  ?= docker
+DOCKER  ?= sudo docker
 
 .PHONY: build serve publish install copy-install
 

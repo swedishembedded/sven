@@ -1,20 +1,20 @@
 const CHIP_LOGO = [
   '    ╷    ╷    ╷    ╷   ',
   ' ╔══╧════╧════╧════╧══╗',
-  ' ║  ╔════╗  ╔════╗    ║',
-  '─╢  ║    ║  ║    ║    ╟─',
-  '─╢  ╚════╝  ╚════╝    ╟─',
+  ' ║   ╔════╗  ╔════╗   ║',
+  '─╢   ║    ║  ║    ║   ╟─',
+  '─╢   ╚════╝  ╚════╝   ╟─',
   '─╢                    ╟─',
-  '─╢  ╔════╗  ╔════╗    ╟─',
-  '─╢  ║    ║  ║    ║    ╟─',
-  ' ║  ╚════╝  ╚════╝    ║',
+  '─╢   ╔════╗  ╔════╗   ╟─',
+  '─╢   ║    ║  ║    ║   ╟─',
+  ' ║   ╚════╝  ╚════╝   ║',
   ' ╚══╤════╤════╤════╤══╝',
   '    ╵    ╵    ╵    ╵   ',
 ]
 
 const CONVERSATION = [
   { role: 'user', text: '❯ sven' },
-  { role: 'info', text: ' ⬡ sven  ·  Swedish Embedded AB' },
+  { role: 'info', text: ' ⬡ sven ' },
   { role: 'space', text: '' },
   { role: 'user', text: '❯ Analyze the auth module and suggest improvements' },
   { role: 'space', text: '' },
@@ -110,7 +110,7 @@ export default function TerminalMockup() {
           className="flex flex-col items-center justify-center px-6 py-6 border-b md:border-b-0 md:border-r border-bg-border flex-shrink-0"
           style={{ minWidth: '240px', background: '#0a0a0f' }}
         >
-          <div className="font-mono text-xs leading-5 select-none">
+          <div className="font-mono text-xs leading-5 select-none whitespace-pre">
             {CHIP_LOGO.map((line, i) => (
               <div key={i}>
                 <ChipLine line={line} />
@@ -118,7 +118,7 @@ export default function TerminalMockup() {
             ))}
           </div>
           <div className="mt-3 font-mono text-xs" style={{ color: '#555568' }}>
-            sven&nbsp;&nbsp;·&nbsp;&nbsp;Swedish Embedded AB
+            sven
           </div>
           <div className="mt-4 flex flex-col gap-1 w-full">
             <div className="flex items-center gap-2 text-xs font-mono" style={{ color: '#555568' }}>
