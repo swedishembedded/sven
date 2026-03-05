@@ -58,6 +58,7 @@ impl CompletionOverlay {
     }
 
     /// The visible slice of items.
+    #[allow(dead_code)]
     pub fn visible_items(&self) -> &[CompletionItem] {
         let end = (self.scroll_offset + self.max_visible).min(self.items.len());
         &self.items[self.scroll_offset..end]

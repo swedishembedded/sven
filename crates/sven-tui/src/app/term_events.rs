@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use sven_model::{MessageContent, Role};
 
 use crate::{
+    app::input_state::{is_image_path, InputAttachment},
     app::{App, FocusPane},
     chat::segment::{segment_at_line, segment_editable_text, segment_short_preview, ChatSegment},
     input::{is_reserved_key, to_nvim_notation},
@@ -369,9 +370,12 @@ impl App {
                     Rect::new(0, 0, width, height),
                     self.ui.search.active,
                     self.queue.messages.len(),
+                    self.layout.input_height_pref,
                 );
-                self.layout.chat_inner_width = layout.chat_pane.width.saturating_sub(2).max(20);
+                // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
+                self.layout.chat_inner_width = layout.chat_pane.width.max(20);
                 self.layout.chat_height = layout.chat_inner_height().max(1);
+                // Input pane: no left/right borders; reserve 2 cols for `> ` prompt.
                 self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
                 self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
                 self.layout.chat_pane = layout.chat_pane;
@@ -392,8 +396,102 @@ impl App {
                 false
             }
 
+            // ── Bracketed paste ───────────────────────────────────────────────
+            Event::Paste(text) => {
+                // Trim only for path detection; preserve internal whitespace for
+                // insertion.  The trimmed version is used solely to check if the
+                // entire paste looks like a file or image path.
+                let candidate = text.trim();
+
+                // ── Path / image attachment detection ─────────────────────────
+                // Normalise common path presentations before probing the filesystem.
+                let resolved = Self::resolve_paste_path(candidate);
+                if let Some(path_buf) = resolved {
+                    if is_image_path(&path_buf) {
+                        self.input
+                            .attachments
+                            .push(InputAttachment::Image(path_buf));
+                    } else {
+                        self.input.attachments.push(InputAttachment::File(path_buf));
+                    }
+                    return false;
+                }
+
+                // ── Normal text paste ──────────────────────────────────────────
+                // Normalise line endings: \r\n → \n, lone \r → \n.
+                // Without this, terminals that send \r\n in paste produce a stray
+                // carriage-return character that appears as a spurious column in
+                // the rendered input and breaks wrap_content's line-split logic.
+                let normalised: String = text.replace("\r\n", "\n").replace('\r', "\n");
+                for ch in normalised.chars() {
+                    self.input.buffer.insert(self.input.cursor, ch);
+                    self.input.cursor += ch.len_utf8();
+                }
+                if self.should_show_completion() {
+                    self.update_completion_overlay();
+                }
+                false
+            }
+
             _ => false,
         }
+    }
+
+    // ── Paste path resolution ─────────────────────────────────────────────────
+
+    /// Try to resolve a paste candidate to an existing filesystem path.
+    ///
+    /// Handles the following forms (all are tried in order):
+    /// - `file:///absolute/path`  (e.g. from file managers)
+    /// - `"quoted/path"` or `'quoted/path'`
+    /// - `~/relative`
+    /// - `./relative`
+    /// - absolute paths
+    /// - bare filenames / relative paths (resolved against cwd)
+    ///
+    /// Returns `Some(PathBuf)` only when the resolved path actually **exists**
+    /// on the filesystem.
+    fn resolve_paste_path(candidate: &str) -> Option<std::path::PathBuf> {
+        // Strip file:// URI prefix.
+        let s = if let Some(rest) = candidate.strip_prefix("file://") {
+            rest
+        } else {
+            candidate
+        };
+
+        // Strip surrounding quotes (single or double).
+        let s = s
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(s);
+
+        // Expand leading `~/` → $HOME/.
+        let path_buf: std::path::PathBuf = if let Some(rest) = s.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                std::path::PathBuf::from(format!("{home}/{rest}"))
+            } else {
+                std::path::PathBuf::from(s)
+            }
+        } else {
+            std::path::PathBuf::from(s)
+        };
+
+        if path_buf.exists() {
+            return Some(path_buf);
+        }
+
+        // Try resolving a relative path against the current working directory.
+        if path_buf.is_relative() {
+            if let Ok(cwd) = std::env::current_dir() {
+                let abs = cwd.join(&path_buf);
+                if abs.exists() {
+                    return Some(abs);
+                }
+            }
+        }
+
+        None
     }
 
     // ── Question modal key handling ───────────────────────────────────────────

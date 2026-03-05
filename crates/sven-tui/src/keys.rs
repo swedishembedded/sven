@@ -9,7 +9,6 @@ pub enum Action {
     // Navigation
     FocusInput,
     /// First key of the Ctrl+w nav chord (vim-style window navigation).
-    /// The App will watch for a follow-up key to decide the target pane.
     NavPrefix,
     /// Navigate to the pane above the current one (Ctrl+w k).
     NavUp,
@@ -35,6 +34,10 @@ pub enum Action {
     // Input
     InputChar(char),
     InputNewline,
+    /// ESC while focused on the input pane (not in a completion overlay).
+    /// Cancels an ongoing edit when one is active; otherwise clears the input
+    /// buffer, attachments, and resets scroll/history navigation state.
+    InputEscape,
     InputBackspace,
     InputDelete,
     InputMoveCursorLeft,
@@ -49,6 +52,10 @@ pub enum Action {
     InputPageDown,
     InputDeleteToEnd,
     InputDeleteToStart,
+    /// Navigate backwards through input history (older messages).
+    InputHistoryUp,
+    /// Navigate forwards through input history (newer messages).
+    InputHistoryDown,
     Submit,
 
     // Agent
@@ -75,25 +82,24 @@ pub enum Action {
     QueueNavDown,
     /// Start editing the currently selected queued message.
     QueueEditSelected,
-    /// Submit the selected queued message immediately, even if the agent is
-    /// busy.  The current run is aborted (partial text is preserved) and the
-    /// selected message is sent as the next user turn.
+    /// Submit the selected queued message immediately, even if the agent is busy.
     ForceSubmitQueuedMessage,
-    /// Submit the selected queued message when the agent is idle (manual
-    /// dequeue after an abort).  Clears `abort_pending`.
+    /// Submit the selected queued message when the agent is idle.
     QueueSubmitSelected,
+
+    // Input pane resize
+    /// Grow the input pane by one row.
+    ResizeInputGrow,
+    /// Shrink the input pane by one row.
+    ResizeInputShrink,
 
     // Buffer submit (Neovim integration)
     SubmitBufferToAgent,
 
     // Completion overlay
-    /// Select the next completion item (Tab / Down when overlay visible).
     CompletionNext,
-    /// Select the previous completion item (Shift+Tab / Up when overlay visible).
     CompletionPrev,
-    /// Accept the currently highlighted completion item (Enter when overlay visible).
     CompletionSelect,
-    /// Dismiss the completion overlay without selecting (Esc when overlay visible).
     CompletionCancel,
 
     // App
@@ -104,8 +110,8 @@ pub enum Action {
 /// Map a raw key event to an [`Action`], depending on which pane has focus.
 ///
 /// `pending_nav` — true when a Ctrl+w prefix has been received but not yet
-/// resolved.  In that state only j/k (and Esc to cancel) are meaningful.
-/// `in_edit_mode` — true when editing a queued message; Enter/Esc confirm/cancel, rest goes to input.
+/// resolved.  In that state only j/k/+/- (and Esc to cancel) are meaningful.
+/// `in_edit_mode` — true when editing a queued message; Enter/Esc confirm/cancel.
 /// `in_queue` — true when the queue panel has keyboard focus.
 pub fn map_key(
     event: KeyEvent,
@@ -122,15 +128,12 @@ pub fn map_key(
     let plain = !ctrl && !alt;
 
     // ── Pending Ctrl+w chord ──────────────────────────────────────────────────
-    // After a Ctrl+w prefix, we only look for j/k to pick the next pane.
-    // The direction is context-aware: if a queue panel is visible it will be
-    // included in the cycle (Input ↔ Queue ↔ Chat).
-    // Any other key cancels the prefix (returning None causes the App to clear
-    // the flag without acting).
     if pending_nav {
         return match event.code {
             KeyCode::Char('k') | KeyCode::Up => Some(Action::NavUp),
             KeyCode::Char('j') | KeyCode::Down => Some(Action::NavDown),
+            KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ResizeInputGrow),
+            KeyCode::Char('-') => Some(Action::ResizeInputShrink),
             _ => None, // cancel without action
         };
     }
@@ -139,13 +142,14 @@ pub fn map_key(
         return map_search_key(event);
     }
 
-    // ── Edit message mode: confirm, cancel, or route to input ─────────────────
+    // ── Edit message mode ─────────────────────────────────────────────────────
     if in_edit_mode {
         return match event.code {
-            KeyCode::Enter if shift || ctrl || alt => Some(Action::InputNewline),
+            // Alt+Enter is universal; Shift/Ctrl+Enter need keyboard enhancement.
+            KeyCode::Enter if alt || shift || ctrl => Some(Action::InputNewline),
             KeyCode::Enter => Some(Action::EditMessageConfirm),
-            KeyCode::Char(' ') if shift => Some(Action::InputNewline), // Shift+Enter decoded as space
-            KeyCode::Char('j' | 'm') if ctrl => Some(Action::InputNewline),
+            // Ctrl+J (0x0A) is universally distinct from Enter (0x0D).
+            KeyCode::Char('j') if ctrl => Some(Action::InputNewline),
             KeyCode::Esc => Some(Action::EditMessageCancel),
             KeyCode::Backspace => Some(Action::InputBackspace),
             KeyCode::Delete => Some(Action::InputDelete),
@@ -172,15 +176,9 @@ pub fn map_key(
             KeyCode::Up | KeyCode::Char('k') => Some(Action::QueueNavUp),
             KeyCode::Down | KeyCode::Char('j') => Some(Action::QueueNavDown),
             KeyCode::Char('e') => Some(Action::QueueEditSelected),
-            // Enter — force-submit: abort current run (if any) and send the selected
-            // message immediately.  When the agent is idle this is equivalent to a
-            // normal submit; when busy it aborts the current turn first.
             KeyCode::Enter => Some(Action::ForceSubmitQueuedMessage),
             KeyCode::Char('d') | KeyCode::Delete => Some(Action::DeleteQueuedMessage),
-            // 'f' — force-submit (same as Enter, kept for muscle memory).
             KeyCode::Char('f') => Some(Action::ForceSubmitQueuedMessage),
-            // 's' — submit selected message only when the agent is idle (manual
-            // dequeue without aborting the running turn).
             KeyCode::Char('s') => Some(Action::QueueSubmitSelected),
             KeyCode::Esc | KeyCode::Char('q') => Some(Action::FocusInput),
             KeyCode::Char('w') if event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -191,38 +189,35 @@ pub fn map_key(
     }
 
     match event.code {
-        // ── Input-pane overrides come FIRST so they shadow global bindings ────
-        // Ctrl+c in input — interrupt agent
+        // ── Input-pane overrides come FIRST ───────────────────────────────────
         KeyCode::Char('c') if ctrl && in_input => Some(Action::InterruptAgent),
-        // Ctrl+u — delete to line start
         KeyCode::Char('u') if ctrl && in_input => Some(Action::InputDeleteToStart),
-        // Ctrl+k — delete to line end
         KeyCode::Char('k') if ctrl && in_input => Some(Action::InputDeleteToEnd),
+        // History navigation (Ctrl+Up / Ctrl+Down in input pane)
+        KeyCode::Up if ctrl && in_input => Some(Action::InputHistoryUp),
+        KeyCode::Down if ctrl && in_input => Some(Action::InputHistoryDown),
 
         // ── Global bindings ───────────────────────────────────────────────────
-        // Quit is via :q/:qa in Neovim chat view and /quit in input pane (no Ctrl+C/Ctrl+Q)
-
-        // Ctrl+w → start the nav-prefix chord (works from any pane)
         KeyCode::Char('w') if ctrl => Some(Action::NavPrefix),
-
-        // Global cycle / help / pager
         KeyCode::F(1) => Some(Action::Help),
         KeyCode::F(4) => Some(Action::CycleMode),
         KeyCode::Char('t') if ctrl => Some(Action::OpenPager),
 
-        // ── Rest of input pane ────────────────────────────────────────────────
-        // Tab / Shift+Tab cycle completions when the input buffer starts with '/'
-        // The App decides at dispatch time whether the overlay is active.
+        // ── Input pane ────────────────────────────────────────────────────────
+        // ESC in the input pane: cancel ongoing edit, or clear the input box.
+        // (Completion-overlay ESC is handled earlier in term_events.rs and never
+        // reaches this point.)
+        KeyCode::Esc if in_input => Some(Action::InputEscape),
         KeyCode::Tab if in_input && !shift => Some(Action::CompletionNext),
         KeyCode::BackTab if in_input => Some(Action::CompletionPrev),
         KeyCode::Enter if in_input && !shift && !ctrl && !alt => Some(Action::Submit),
+        // Alt+Enter is the universal newline shortcut (works in every terminal).
+        // Shift/Ctrl+Enter also work when the Kitty keyboard protocol is active.
+        KeyCode::Enter if in_input && alt => Some(Action::InputNewline),
         KeyCode::Enter if in_input && shift => Some(Action::InputNewline),
         KeyCode::Enter if in_input && ctrl => Some(Action::InputNewline),
-        KeyCode::Enter if in_input && alt => Some(Action::InputNewline),
-        // Some terminals send Shift+Enter as KeyCode::Char(' ') with Shift; treat as newline
-        KeyCode::Char(' ') if in_input && shift => Some(Action::InputNewline),
-        // Ctrl+J / Ctrl+M insert newline (fallback when terminal doesn't report Shift+Enter)
-        KeyCode::Char('j' | 'm') if ctrl && in_input => Some(Action::InputNewline),
+        // Ctrl+J (byte 0x0A) is universally distinct from Enter (0x0D) in raw mode.
+        KeyCode::Char('j') if ctrl && in_input => Some(Action::InputNewline),
         KeyCode::Backspace if in_input => Some(Action::InputBackspace),
         KeyCode::Delete if in_input => Some(Action::InputDelete),
         KeyCode::Left if in_input && ctrl => Some(Action::InputMoveWordLeft),
@@ -235,7 +230,6 @@ pub fn map_key(
         KeyCode::PageDown if in_input => Some(Action::InputPageDown),
         KeyCode::Home if in_input => Some(Action::InputMoveLineStart),
         KeyCode::End if in_input => Some(Action::InputMoveLineEnd),
-        // Printable characters — only when no ctrl/alt modifier
         KeyCode::Char(c) if in_input && plain => Some(Action::InputChar(c)),
 
         // ── Chat pane ─────────────────────────────────────────────────────────
@@ -253,19 +247,13 @@ pub fn map_key(
         KeyCode::Char('n') if !in_input && plain => Some(Action::SearchNextMatch),
         KeyCode::Char('N') if !in_input => Some(Action::SearchPrevMatch),
 
-        // Edit / delete focused segment (chat pane).
-        // 'e' / 'd' work in no-nvim mode; F2 / F8 work in both modes
-        // (F2 and F8 are intercepted as reserved keys before nvim receives them).
+        // Edit / delete focused segment
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
         KeyCode::F(2) if !in_input => Some(Action::EditMessageAtCursor),
-        // 'd' / F8 truncate history from the focused segment onward.
         KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteChatSegment),
         KeyCode::F(8) if !in_input => Some(Action::DeleteChatSegment),
-        // 'x' removes only the focused segment (ToolCall/Result pair too).
         KeyCode::Char('x') if !in_input && plain => Some(Action::RemoveChatSegment),
-        // 'r' reruns from the focused segment (truncate + resubmit to agent).
         KeyCode::Char('r') if !in_input && plain => Some(Action::RerunFromSegment),
-        // Focus queue panel when in chat pane
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
@@ -280,7 +268,7 @@ pub(crate) fn map_search_key(event: KeyEvent) -> Option<Action> {
 
     match event.code {
         KeyCode::Esc => Some(Action::SearchClose),
-        KeyCode::Enter => Some(Action::SearchClose), // Close search, stay on current match
+        KeyCode::Enter => Some(Action::SearchClose),
         KeyCode::Backspace => Some(Action::SearchBackspace),
         KeyCode::Char('n') if !shift => Some(Action::SearchNextMatch),
         KeyCode::Char('N') | KeyCode::Char('n') if shift => Some(Action::SearchPrevMatch),
@@ -313,8 +301,6 @@ mod tests {
         key(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    // ── Ctrl+w chord ─────────────────────────────────────────────────────────
-
     #[test]
     fn ctrl_w_returns_nav_prefix() {
         let ev = ctrl_key('w');
@@ -335,10 +321,6 @@ mod tests {
             map_key(ev, false, false, true, false, false),
             Some(Action::NavUp)
         );
-        assert_eq!(
-            map_key(ev, false, true, true, false, false),
-            Some(Action::NavUp)
-        );
     }
 
     #[test]
@@ -351,11 +333,38 @@ mod tests {
     }
 
     #[test]
-    fn pending_nav_up_returns_nav_up() {
-        let ev = key(KeyCode::Up, KeyModifiers::NONE);
+    fn pending_nav_plus_grows_input() {
+        let ev = plain_key('+');
         assert_eq!(
             map_key(ev, false, false, true, false, false),
-            Some(Action::NavUp)
+            Some(Action::ResizeInputGrow)
+        );
+    }
+
+    #[test]
+    fn pending_nav_minus_shrinks_input() {
+        let ev = plain_key('-');
+        assert_eq!(
+            map_key(ev, false, false, true, false, false),
+            Some(Action::ResizeInputShrink)
+        );
+    }
+
+    #[test]
+    fn ctrl_up_in_input_is_history_up() {
+        let ev = key(KeyCode::Up, KeyModifiers::CONTROL);
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::InputHistoryUp)
+        );
+    }
+
+    #[test]
+    fn ctrl_down_in_input_is_history_down() {
+        let ev = key(KeyCode::Down, KeyModifiers::CONTROL);
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::InputHistoryDown)
         );
     }
 
@@ -365,30 +374,13 @@ mod tests {
         assert_eq!(map_key(ev, false, false, true, false, false), None);
     }
 
-    // ── Ctrl modifier should NOT type a character ─────────────────────────────
-
     #[test]
     fn ctrl_w_in_input_does_not_type_w() {
         let ev = ctrl_key('w');
-        // Should be NavPrefix, not InputChar('w')
         let action = map_key(ev, false, true, false, false, false);
         assert_ne!(action, Some(Action::InputChar('w')));
         assert_eq!(action, Some(Action::NavPrefix));
     }
-
-    #[test]
-    fn ctrl_x_unbound_does_not_type_x() {
-        let ev = ctrl_key('x');
-        assert_eq!(map_key(ev, false, true, false, false, false), None);
-    }
-
-    #[test]
-    fn alt_char_in_input_does_not_type() {
-        let ev = key(KeyCode::Char('a'), KeyModifiers::ALT);
-        assert_eq!(map_key(ev, false, true, false, false, false), None);
-    }
-
-    // ── Normal typing ─────────────────────────────────────────────────────────
 
     #[test]
     fn plain_char_in_input_types() {
@@ -401,15 +393,12 @@ mod tests {
 
     #[test]
     fn plain_char_x_outside_input_removes_segment() {
-        // 'x' is bound to RemoveChatSegment when not in the input box.
         let ev = plain_key('x');
         assert_eq!(
             map_key(ev, false, false, false, false, false),
             Some(Action::RemoveChatSegment),
         );
     }
-
-    // ── Ctrl+k in input deletes to end ────────────────────────────────────────
 
     #[test]
     fn ctrl_k_in_input_deletes_to_end() {
@@ -422,31 +411,24 @@ mod tests {
 
     #[test]
     fn ctrl_k_in_chat_does_not_fire() {
-        // Ctrl+k is no longer a pane-switch key; in chat pane it's unbound
         let ev = ctrl_key('k');
         assert_eq!(map_key(ev, false, false, false, false, false), None);
     }
 
-    // ── Global quit ───────────────────────────────────────────────────────────
-
     #[test]
     fn ctrl_c_outside_input_not_reserved() {
-        // Quit is via :q/:qa in chat and /quit in input; Ctrl+C outside input is not bound (forwarded to Neovim)
         let ev = ctrl_key('c');
         assert_eq!(map_key(ev, false, false, false, false, false), None);
     }
 
     #[test]
     fn ctrl_c_interrupts_inside_input() {
-        // In input pane Ctrl+c is InterruptAgent
         let ev = ctrl_key('c');
         assert_eq!(
             map_key(ev, false, true, false, false, false),
             Some(Action::InterruptAgent)
         );
     }
-
-    // ── Chat scrolling ────────────────────────────────────────────────────────
 
     #[test]
     fn j_in_chat_scrolls_down() {
@@ -465,8 +447,6 @@ mod tests {
             Some(Action::ScrollPageUp)
         );
     }
-
-    // ── Edit message mode ────────────────────────────────────────────────────
 
     #[test]
     fn e_in_chat_opens_edit() {

@@ -20,6 +20,10 @@ pub(crate) struct AgentConn {
     pub context_pct: u8,
     /// Cache-hit rate for the last turn (0–100 %).
     pub cache_hit_pct: u8,
+    /// Total tokens streamed in the current turn (reset on TurnComplete / Aborted).
+    pub streaming_tokens: u32,
+    /// Spinner frame index (0–9), incremented on each TextDelta event.
+    pub spinner_frame: u8,
     /// Shared cancel handle: sending on this oneshot cancels the running turn.
     pub cancel: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Channel to send requests to the agent background task.
@@ -35,6 +39,8 @@ impl AgentConn {
             current_tool: None,
             context_pct: 0,
             cache_hit_pct: 0,
+            streaming_tokens: 0,
+            spinner_frame: 0,
             cancel: Arc::new(tokio::sync::Mutex::new(None)),
             tx: None,
             event_rx: None,

@@ -38,9 +38,9 @@ use crate::{
     node_agent::node_agent_task,
     nvim::NvimBridge,
     ui::{
-        input_cursor_screen_pos, nvim_cursor_screen_pos, ChatLabels, ChatPane, CompletionMenu,
-        ConfirmModalView, HelpOverlay, InputEditMode, InputPane, QuestionModalView, QueueItem,
-        QueuePanel, SearchBar, StatusBar,
+        input_cursor_screen_pos, nvim_cursor_screen_pos, open_pane_block, ChatLabels, ChatPane,
+        CompletionMenu, ConfirmModalView, HelpOverlay, InputEditMode, InputPane, QuestionModalView,
+        QueueItem, QueuePanel, SearchBar, StatusBar, ToastStack, WhichKeyOverlay,
     },
 };
 
@@ -335,7 +335,14 @@ impl App {
             return;
         }
 
-        let layout = AppLayout::new(frame, self.ui.search.active, self.queue.messages.len());
+        let layout = AppLayout::new(
+            frame,
+            self.ui.search.active,
+            self.queue.messages.len(),
+            self.layout.input_height_pref,
+        );
+        // Clean up expired toasts every frame.
+        self.ui.prune_toasts();
 
         // ── Status bar ────────────────────────────────────────────────────────
         // In node-proxy mode the node owns model/mode; show "node" as the
@@ -354,6 +361,7 @@ impl App {
                 self.session.staged_mode,
             )
         };
+        let in_edit = self.edit.active();
         frame.render_widget(
             StatusBar {
                 model_name: status_model_name,
@@ -365,6 +373,11 @@ impl App {
                 pending_model: status_pending_model,
                 pending_mode: status_pending_mode,
                 ascii,
+                focus: self.ui.focus,
+                spinner_frame: self.agent.spinner_frame,
+                streaming_tokens: self.agent.streaming_tokens,
+                in_edit,
+                in_search: self.ui.search.active,
             },
             layout.status_bar,
         );
@@ -381,6 +394,7 @@ impl App {
             .and_then(|idx| self.chat.segment_line_ranges.get(idx))
             .copied();
 
+        let auto_scroll_paused = !self.chat.auto_scroll && !self.chat.lines.is_empty();
         frame.render_widget(
             ChatPane {
                 lines: lines_to_draw,
@@ -399,6 +413,8 @@ impl App {
                     pending_delete_line: None,
                 },
                 no_nvim: self.nvim.disabled,
+                segment_count: self.chat.segments.len(),
+                auto_scroll_paused,
             },
             layout.chat_pane,
         );
@@ -406,7 +422,7 @@ impl App {
         // Neovim cursor (placed after chat widget renders).
         if let Some(cursor) = nvim_cursor {
             let block_inner = {
-                let block = crate::ui::pane_block("Chat", self.ui.focus == FocusPane::Chat, ascii);
+                let block = open_pane_block("Chat", self.ui.focus == FocusPane::Chat, ascii);
                 block.inner(layout.chat_pane)
             };
             if let Some(pos) = nvim_cursor_screen_pos(
@@ -455,6 +471,7 @@ impl App {
                 focused: self.ui.focus == FocusPane::Input || in_edit,
                 ascii,
                 edit_mode,
+                attachments: &self.input.attachments,
             },
             layout.input_pane,
         );
@@ -468,6 +485,7 @@ impl App {
                 true,
                 ascii,
                 edit_mode,
+                self.input.attachments.len(),
             ) {
                 frame.set_cursor_position(pos);
             }
@@ -564,6 +582,22 @@ impl App {
                 frame.area(),
             );
         }
+
+        // ── Which-key popup (Ctrl+w chord hint) ──────────────────────────────
+        if self.ui.pending_nav {
+            frame.render_widget(WhichKeyOverlay { ascii }, frame.area());
+        }
+
+        // ── Toast notifications ───────────────────────────────────────────────
+        if !self.ui.toasts.is_empty() {
+            frame.render_widget(
+                ToastStack {
+                    toasts: &self.ui.toasts,
+                    ascii,
+                },
+                frame.area(),
+            );
+        }
     }
 
     // ── Run loop ──────────────────────────────────────────────────────────────
@@ -638,6 +672,7 @@ impl App {
                     Rect::new(0, 0, size.width, size.height),
                     false,
                     self.queue.messages.len(),
+                    self.layout.input_height_pref,
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
@@ -646,7 +681,12 @@ impl App {
 
         if !self.nvim.disabled {
             let (nvim_width, nvim_height) = if let Ok(size) = terminal.size() {
-                let layout = AppLayout::compute(Rect::new(0, 0, size.width, size.height), false, 0);
+                let layout = AppLayout::compute(
+                    Rect::new(0, 0, size.width, size.height),
+                    false,
+                    0,
+                    self.layout.input_height_pref,
+                );
                 (
                     layout.chat_pane.width.saturating_sub(2),
                     layout.chat_inner_height().max(1),
@@ -686,6 +726,33 @@ impl App {
 
         let mut crossterm_events = EventStream::new();
 
+        // Enable bracketed paste and push keyboard enhancement flags to stdout.
+        //
+        // We also push the flags in main.rs (via stderr, before stderr is
+        // redirected to /dev/null), but some terminals tie keyboard state to
+        // the specific fd / alternate-screen session.  Sending them again to
+        // stdout here guarantees they are active regardless.
+        //
+        // REPORT_ALL_KEYS_AS_ESCAPE_CODES makes even plain Enter arrive as
+        // `\x1b[13u`, ensuring every Enter variant carries its modifiers
+        // (plain Enter = no modifiers, Shift+Enter = modifier 2, etc.) and
+        // is parsed by crossterm as a distinct event.
+        {
+            use crossterm::event::{
+                EnableBracketedPaste, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            };
+            let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                )
+            );
+        }
+
         loop {
             // ── Layout cache update ───────────────────────────────────────────
             if let Ok(size) = terminal.size() {
@@ -693,6 +760,7 @@ impl App {
                     Rect::new(0, 0, size.width, size.height),
                     self.ui.search.active,
                     self.queue.messages.len(),
+                    self.layout.input_height_pref,
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 let max_scroll =
@@ -701,7 +769,9 @@ impl App {
                     self.chat.scroll_offset = max_scroll;
                 }
                 self.layout.chat_pane = layout.chat_pane;
-                self.layout.chat_inner_width = layout.chat_pane.width.saturating_sub(2).max(20);
+                // Open-border chat: no left/right `│`, full width available.
+                self.layout.chat_inner_width = layout.chat_pane.width.max(20);
+                // Input: no left/right borders, but 2 cols reserved for `>` prompt.
                 self.layout.input_inner_width = layout.input_pane.width.saturating_sub(2);
                 self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
                 self.layout.input_pane = layout.input_pane;
@@ -736,6 +806,7 @@ impl App {
                         KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                             | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
                             | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                            | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
                     )
                 );
             }

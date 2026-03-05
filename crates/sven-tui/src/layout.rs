@@ -20,14 +20,12 @@ pub struct AppLayout {
 impl AppLayout {
     /// Calculate layout regions from a `Rect` (terminal area).
     ///
-    /// `queue_len` controls whether a queue panel is shown between the chat and
-    /// input panes.  When zero the `queue_pane` rect is empty (height 0).
-    pub fn compute(area: Rect, search_visible: bool, queue_len: usize) -> Self {
+    /// `queue_len`        — controls whether a queue panel is shown.
+    /// `input_height`     — user-preferred input pane height (clamped 3–20).
+    pub fn compute(area: Rect, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
         let status_height = 1u16;
-        let input_height = 5u16;
+        let input_height = input_height.clamp(3, 20);
         let search_height = if search_visible { 1u16 } else { 0u16 };
-        // Queue pane: 1 border row + 1 row per queued message (capped at 4), + 1 border row.
-        // Hidden (height 0) when there are no queued messages.
         let queue_height: u16 = if queue_len > 0 {
             (queue_len as u16 + 2).min(6)
         } else {
@@ -55,12 +53,12 @@ impl AppLayout {
     }
 
     /// Convenience wrapper — derive the area from the current frame.
-    pub fn new(frame: &Frame, search_visible: bool, queue_len: usize) -> Self {
-        Self::compute(frame.area(), search_visible, queue_len)
+    pub fn new(frame: &Frame, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
+        Self::compute(frame.area(), search_visible, queue_len, input_height)
     }
 
     /// The number of text rows visible inside the chat pane's border.
-    /// (pane height minus the two border rows)
+    /// With TOP|BOTTOM-only borders this is height minus 2 (one row each side).
     pub fn chat_inner_height(&self) -> u16 {
         self.chat_pane.height.saturating_sub(2)
     }

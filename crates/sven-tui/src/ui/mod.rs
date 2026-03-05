@@ -16,6 +16,8 @@ pub(crate) mod queue_panel;
 pub(crate) mod search_bar;
 pub(crate) mod status_bar;
 pub(crate) mod theme;
+pub(crate) mod toast;
+pub(crate) mod which_key;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
@@ -27,4 +29,8 @@ pub(crate) use modals::{ConfirmModalView, QuestionModalView};
 pub(crate) use queue_panel::{QueueItem, QueuePanel};
 pub(crate) use search_bar::SearchBar;
 pub(crate) use status_bar::StatusBar;
+pub(crate) use theme::open_pane_block;
+#[allow(unused)]
 pub(crate) use theme::pane_block;
+pub(crate) use toast::ToastStack;
+pub(crate) use which_key::WhichKeyOverlay;

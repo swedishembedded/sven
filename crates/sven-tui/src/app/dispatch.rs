@@ -328,6 +328,59 @@ impl App {
                 }
             }
 
+            // ESC in the normal input pane (not triggered from completion overlay
+            // which is handled earlier in term_events.rs).
+            //
+            // Priority:
+            //   1. An inline edit is in progress → cancel it (restore original).
+            //   2. Input box has content / attachments → clear it.
+            //   3. Already empty → do nothing.
+            Action::InputEscape => {
+                if self.edit.active() {
+                    // Cancel an in-progress inline edit (same logic as EditMessageCancel).
+                    if self.edit.queue_index.is_some() {
+                        if let (Some(q_idx), Some(original)) =
+                            (self.edit.queue_index, self.edit.original_text.clone())
+                        {
+                            if let Some(entry) = self.queue.messages.get_mut(q_idx) {
+                                entry.content = original;
+                            }
+                        }
+                        self.edit.clear();
+                        self.ui.focus = if self.queue.messages.is_empty() {
+                            FocusPane::Input
+                        } else {
+                            FocusPane::Queue
+                        };
+                        self.try_dequeue_next().await;
+                        return false;
+                    }
+                    if let Some(idx) = self.edit.message_index {
+                        if let Some(original) = self.edit.original_text.clone() {
+                            if let Some(ChatSegment::Message(m)) = self.chat.segments.get_mut(idx) {
+                                match (&m.role, &mut m.content) {
+                                    (Role::User, MessageContent::Text(t)) => *t = original,
+                                    (Role::Assistant, MessageContent::Text(t)) => *t = original,
+                                    _ => {}
+                                }
+                            }
+                            self.build_display_from_segments();
+                            self.ui.search.update_matches(&self.chat.lines);
+                        }
+                    }
+                    self.edit.clear();
+                    return false;
+                }
+                // No active edit: clear the input box completely.
+                self.input.buffer.clear();
+                self.input.cursor = 0;
+                self.input.scroll_offset = 0;
+                self.input.attachments.clear();
+                self.input.history_idx = None;
+                self.input.history_draft = None;
+                self.ui.completion = None;
+            }
+
             Action::EditMessageCancel => {
                 // Cancel queue-item edit — restore original text if available.
                 if self.edit.queue_index.is_some() {
@@ -651,15 +704,68 @@ impl App {
                 self.input.cursor = 0;
             }
 
+            Action::InputHistoryUp => {
+                if let Some(entry) = self.input.history_up() {
+                    let text = entry.to_string();
+                    self.input.cursor = text.len();
+                    self.input.buffer = text;
+                    self.input.scroll_offset = 0;
+                }
+                return false;
+            }
+
+            Action::InputHistoryDown => {
+                if let Some(entry) = self.input.history_down() {
+                    let text = entry.to_string();
+                    self.input.cursor = text.len();
+                    self.input.buffer = text;
+                    self.input.scroll_offset = 0;
+                }
+                return false;
+            }
+
+            Action::ResizeInputGrow => {
+                self.layout.input_height_pref = (self.layout.input_height_pref + 1).min(20);
+            }
+
+            Action::ResizeInputShrink => {
+                self.layout.input_height_pref = (self.layout.input_height_pref - 1).max(3);
+            }
+
             Action::Submit => {
                 self.ui.completion = None;
                 let text = std::mem::take(&mut self.input.buffer).trim().to_string();
                 self.input.cursor = 0;
                 self.input.scroll_offset = 0;
-                if text.is_empty() {
+                if text.is_empty() && self.input.attachments.is_empty() {
                     return false;
                 }
-                return self.submit_user_input(&text).await;
+                // Prepend attachment paths to the submitted text.
+                let full_text = if self.input.attachments.is_empty() {
+                    text.clone()
+                } else {
+                    let att_text: String = self
+                        .input
+                        .attachments
+                        .iter()
+                        .map(|a| a.to_message_text())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if text.is_empty() {
+                        att_text
+                    } else {
+                        format!("{att_text}\n{text}")
+                    }
+                };
+                self.input.attachments.clear();
+                // Save to history (only the user-typed text, not the attachment metadata).
+                if !text.is_empty() {
+                    self.input.push_history(&text);
+                }
+                if full_text.is_empty() {
+                    return false;
+                }
+                return self.submit_user_input(&full_text).await;
             }
 
             Action::CompletionNext => {
@@ -760,7 +866,7 @@ impl App {
         )
     }
 
-    fn should_show_completion(&self) -> bool {
+    pub(crate) fn should_show_completion(&self) -> bool {
         let (_, line) = self.command_line_at_cursor();
         line.starts_with('/') || self.input.buffer.starts_with('/')
     }

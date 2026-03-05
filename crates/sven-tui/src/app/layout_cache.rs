@@ -26,6 +26,9 @@ pub(crate) struct LayoutCache {
     pub input_pane: Rect,
     /// Last known bounding rect of the queue panel.
     pub queue_pane: Rect,
+    /// User-controlled input pane height preference (rows, including borders).
+    /// Clamped to [3, 20] by the layout computation.
+    pub input_height_pref: u16,
 }
 
 impl LayoutCache {
@@ -38,6 +41,7 @@ impl LayoutCache {
             chat_pane: Rect::default(),
             input_pane: Rect::default(),
             queue_pane: Rect::default(),
+            input_height_pref: 5,
         }
     }
 }

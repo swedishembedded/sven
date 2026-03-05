@@ -23,6 +23,13 @@ impl App {
         match event {
             AgentEvent::TextDelta(delta) => {
                 self.chat.streaming_is_thinking = false;
+                // Approximate token count: ~4 chars per token.
+                self.agent.streaming_tokens = self
+                    .agent
+                    .streaming_tokens
+                    .saturating_add((delta.len() as u32 + 3) / 4);
+                // Advance spinner frame.
+                self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -139,6 +146,8 @@ impl App {
             AgentEvent::TurnComplete => {
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.agent.streaming_tokens = 0;
+                self.agent.spinner_frame = 0;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
                     if let Err(e) = bridge.set_modifiable(true).await {
@@ -179,6 +188,8 @@ impl App {
                 }
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.agent.streaming_tokens = 0;
+                self.agent.spinner_frame = 0;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
                     let _ = bridge.set_modifiable(true).await;
