@@ -12,8 +12,12 @@ use ratatui::{
 };
 
 use super::theme::{
-    BAR_AGENT, BAR_TOOL, BORDER_DIM, SEPARATOR, SE_BLUE, SE_YELLOW, TEXT, TEXT_DIM,
+    BAR_AGENT, BAR_TOOL, BORDER_DIM, BORDER_FOCUS, SEPARATOR, SE_BLUE, TEXT, TEXT_DIM,
 };
+
+/// Outer chip body — lighter blue so it reads as a distinct "shell" around the
+/// darker inner squares, giving the logo depth without the yellow/blue clash.
+const LOGO_OUTER: ratatui::style::Color = BORDER_FOCUS;
 
 /// Welcome screen rendered when chat is empty and agent is idle.
 pub struct WelcomeScreen<'a> {
@@ -60,7 +64,7 @@ impl Widget for WelcomeScreen<'_> {
                 )]),
                 "yellow" => Line::from(vec![Span::styled(
                     text.to_string(),
-                    Style::default().fg(SE_YELLOW),
+                    Style::default().fg(LOGO_OUTER),
                 )]),
                 "yellow_blue" => render_yellow_blue_line(text),
                 "pin_yellow" => render_pin_yellow_line(text),
@@ -77,7 +81,10 @@ impl Widget for WelcomeScreen<'_> {
                 "sven",
                 Style::default().fg(BAR_AGENT).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  ·  Swedish Embedded AB", Style::default().fg(TEXT_DIM)),
+            Span::styled(
+                "  ·  github.com/swedishembedded/sven",
+                Style::default().fg(TEXT_DIM),
+            ),
         ]));
 
         // ── Model / mode ──────────────────────────────────────────────────────
@@ -128,27 +135,24 @@ impl Widget for WelcomeScreen<'_> {
 // ── Logo rendering helpers ────────────────────────────────────────────────────
 
 fn render_yellow_blue_line(text: &str) -> Line<'static> {
-    // Yellow outer body, blue inner squares
-    // Pattern: ║ is yellow, ╔══╗ ╚══╝ inner frames are blue, spaces inside blue
+    // Outer body in LOGO_OUTER (light blue), inner squares in SE_BLUE (dark blue).
     let mut spans = Vec::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
-    let mut in_blue = false;
+    let mut in_inner = false;
 
     while i < chars.len() {
         let ch = chars[i];
-        // Toggle blue region at inner box corners
         if ch == '╔' || ch == '╚' {
-            in_blue = true;
+            in_inner = true;
         }
         if ch == '╗' || ch == '╝' {
             spans.push(Span::styled(ch.to_string(), Style::default().fg(SE_BLUE)));
-            in_blue = false;
+            in_inner = false;
             i += 1;
             continue;
         }
-        // Spaces between boxes are yellow body
-        let color = if in_blue { SE_BLUE } else { SE_YELLOW };
+        let color = if in_inner { SE_BLUE } else { LOGO_OUTER };
         spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
         i += 1;
     }
@@ -156,13 +160,13 @@ fn render_yellow_blue_line(text: &str) -> Line<'static> {
 }
 
 fn render_pin_yellow_line(text: &str) -> Line<'static> {
-    // Pin chars (─╢╟) are dim, body (║ and spaces) is yellow
+    // Pin chars (─╢╟) are dim, body (║ and spaces) is LOGO_OUTER (light blue).
     let spans: Vec<Span<'static>> = text
         .chars()
         .map(|ch| {
             let color = match ch {
                 '─' | '╢' | '╟' => BORDER_DIM,
-                _ => SE_YELLOW,
+                _ => LOGO_OUTER,
             };
             Span::styled(ch.to_string(), Style::default().fg(color))
         })
@@ -171,23 +175,24 @@ fn render_pin_yellow_line(text: &str) -> Line<'static> {
 }
 
 fn render_pin_yellow_blue_line(text: &str) -> Line<'static> {
+    // Pins (─╢╟) are dim; inside inner boxes is SE_BLUE; outer body is LOGO_OUTER.
     let chars: Vec<char> = text.chars().collect();
     let mut spans = Vec::new();
-    let mut in_blue = false;
+    let mut in_inner = false;
 
     for ch in &chars {
         let ch = *ch;
         if ch == '╔' || ch == '╚' {
-            in_blue = true;
+            in_inner = true;
         }
         let color = match ch {
             '─' | '╢' | '╟' => BORDER_DIM,
-            c if in_blue && c != '╗' && c != '╝' => SE_BLUE,
-            _ => SE_YELLOW,
+            c if in_inner && c != '╗' && c != '╝' => SE_BLUE,
+            _ => LOGO_OUTER,
         };
         spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
         if ch == '╗' || ch == '╝' {
-            in_blue = false;
+            in_inner = false;
         }
     }
     Line::from(spans)
