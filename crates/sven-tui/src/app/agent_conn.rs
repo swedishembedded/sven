@@ -32,6 +32,11 @@ pub(crate) struct AgentConn {
     pub event_rx: Option<mpsc::Receiver<AgentEvent>>,
     /// Wall-clock start time for each in-progress tool call, keyed by call_id.
     pub tool_start_times: HashMap<String, Instant>,
+    /// Clock-driven animation frame counter, incremented every ~80 ms by the
+    /// main event loop tick when the agent is busy.  Unlike `spinner_frame`
+    /// (which is event-driven and reflects streaming speed), `anim_frame`
+    /// advances at a steady rate regardless of how fast events arrive.
+    pub anim_frame: u8,
 }
 
 impl AgentConn {
@@ -47,6 +52,7 @@ impl AgentConn {
             tx: None,
             event_rx: None,
             tool_start_times: HashMap::new(),
+            anim_frame: 0,
         }
     }
 }

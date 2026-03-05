@@ -3,8 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Chat display rendering, scroll management, and segment synchronisation helpers.
 
+use std::collections::HashMap;
+use std::time::Instant;
+
 use ratatui::style::Style;
-use sven_model::MessageContent;
+use sven_model::{MessageContent, Role};
 use tracing::debug;
 
 use crate::{
@@ -57,6 +60,8 @@ impl App {
         };
 
         let tool_durations = self.chat.tool_durations.clone();
+        let tool_start_times = self.agent.tool_start_times.clone();
+        let anim_frame = self.agent.anim_frame;
         let segs_len = self.chat.segments.len();
 
         for i in 0..segs_len {
@@ -77,12 +82,16 @@ impl App {
 
             let s = if let Some(result_idx) = paired_result_idx {
                 // Both the tool call (i) and result (result_idx) are tier-0:
-                // render as a single grouped line. The result segment will be
-                // skipped below.
+                // render as a single grouped line.  The result segment will be
+                // skipped below.  Still show an animated in-progress indicator
+                // if the tool is still running.
                 let result_seg = &self.chat.segments[result_idx];
                 make_grouped_preview(seg, result_seg, &self.chat.tool_args, &tool_durations)
             } else if expand == 0 {
-                collapsed_preview(seg, &self.chat.tool_args, &tool_durations)
+                // In-progress tool call: animate with scanning dot.
+                animated_tool_preview(seg, &tool_start_times, anim_frame, ascii).unwrap_or_else(
+                    || collapsed_preview(seg, &self.chat.tool_args, &tool_durations),
+                )
             } else if expand == 1 {
                 partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
             } else {
@@ -135,24 +144,26 @@ impl App {
 
         if !self.chat.streaming_buffer.is_empty() {
             let (s, bar_color) = if self.chat.streaming_is_thinking {
-                let spinner = crate::ui::theme::spinner_char(self.agent.spinner_frame, ascii);
+                // Oscilloscope wave shifts every anim_frame tick (clock-driven).
+                let wave = crate::ui::theme::thinking_wave(anim_frame, ascii);
                 let preview = first_words(&self.chat.streaming_buffer, 8);
-                let prefix = if self.chat.segments.is_empty() {
-                    format!("{SYM_THINK} **Seasoning…** {spinner}  `{preview}`")
+                let sep = if self.chat.segments.is_empty() {
+                    ""
                 } else {
-                    format!("\n{SYM_THINK} **Seasoning…** {spinner}  `{preview}`")
+                    "\n"
                 };
-                (prefix, Some(Style::default().fg(BAR_THINKING)))
+                let text = format!("{sep}{SYM_THINK} **Seasoning**  {wave}  `{preview}`");
+                (text, Some(Style::default().fg(BAR_THINKING)))
             } else {
-                let prefix = if self.chat.segments.is_empty() {
-                    "**Agent:** "
+                // Blinking ▌ cursor shows the stream is live.
+                let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
+                let sep = if self.chat.segments.is_empty() {
+                    ""
                 } else {
-                    "\n**Agent:** "
+                    "\n"
                 };
-                (
-                    format!("{}{}", prefix, self.chat.streaming_buffer),
-                    Some(Style::default().fg(BAR_AGENT)),
-                )
+                let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
+                (text, Some(Style::default().fg(BAR_AGENT)))
             };
             let lines = render_markdown(&s, render_width, ascii);
             let styled = apply_bar_and_dim(lines, bar_color, false, bar_char);
@@ -419,6 +430,40 @@ impl App {
         osc52_copy(&text);
         true
     }
+}
+
+// ── In-progress animation helper ─────────────────────────────────────────────
+
+/// If `seg` is a ToolCall whose `call_id` is still tracked in
+/// `tool_start_times` (i.e. the tool hasn't finished yet), return an animated
+/// single-line markdown preview using the scanning-dot animation and a live
+/// elapsed-time counter.  Otherwise returns `None`.
+fn animated_tool_preview(
+    seg: &ChatSegment,
+    tool_start_times: &HashMap<String, Instant>,
+    anim_frame: u8,
+    ascii: bool,
+) -> Option<String> {
+    let (call_id, name) = match seg {
+        ChatSegment::Message(m) => match (&m.role, &m.content) {
+            (
+                Role::Assistant,
+                MessageContent::ToolCall {
+                    tool_call_id,
+                    function,
+                },
+            ) => (tool_call_id.as_str(), function.name.as_str()),
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    let start = tool_start_times.get(call_id)?;
+    let elapsed = start.elapsed().as_secs_f32();
+    let scan = crate::ui::theme::tool_scan(anim_frame, ascii);
+    Some(format!(
+        "\n**Agent:tool_call:{call_id}**\n{SYM_TOOL} **{name}**  {scan}  {elapsed:.1}s\n"
+    ))
 }
 
 // ── Tool-call pair helpers ────────────────────────────────────────────────────

@@ -46,12 +46,44 @@ pub const SE_YELLOW: Color = Color::Rgb(230, 180, 40);
 /// Swedish Embedded blue (chip core color).
 pub const SE_BLUE: Color = Color::Rgb(60, 120, 220);
 
-// ── Spinner ───────────────────────────────────────────────────────────────────
+// ── Animation sequences ───────────────────────────────────────────────────────
 
-/// Braille spinner frame sequence (10 frames).
+/// Braille spinner frame sequence (10 frames).  Event-driven: advances on each
+/// streaming delta — speed reflects how fast the model is generating tokens.
 pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Return the current spinner character for `frame` (wraps around automatically).
+/// 8-frame oscilloscope signal-wave for the thinking (Seasoning) animation.
+/// A Gaussian pulse travels across 8 columns, evoking an embedded-systems
+/// oscilloscope trace.  Clock-driven at ~80 ms/frame → smooth 12 fps.
+pub(crate) const THINKING_WAVE: [&str; 8] = [
+    "▁▁▁▃▅▇▅▃",
+    "▁▁▃▅▇▅▃▁",
+    "▁▃▅▇▅▃▁▁",
+    "▃▅▇▅▃▁▁▁",
+    "▅▇▅▃▁▁▁▃",
+    "▇▅▃▁▁▁▃▅",
+    "▅▃▁▁▁▃▅▇",
+    "▃▁▁▁▃▅▇▅",
+];
+
+/// 12-frame scanning dot for in-progress tool calls.
+/// Mirrors the classic "scanning light" on embedded test equipment.
+pub(crate) const TOOL_SCAN: [&str; 12] = [
+    "●·········",
+    "·●········",
+    "··●·······",
+    "···●······",
+    "····●·····",
+    "·····●····",
+    "······●···",
+    "·······●··",
+    "········●·",
+    "·········●",
+    "········●·",
+    "·······●··",
+];
+
+/// Return the braille spinner character for `frame` (event-driven, status bar).
 pub(crate) fn spinner_char(frame: u8, ascii: bool) -> &'static str {
     if ascii {
         return match frame % 4 {
@@ -62,6 +94,46 @@ pub(crate) fn spinner_char(frame: u8, ascii: bool) -> &'static str {
         };
     }
     SPINNER_FRAMES[(frame % 10) as usize]
+}
+
+/// Return the oscilloscope wave frame for clock-driven thinking animation.
+pub(crate) fn thinking_wave(frame: u8, ascii: bool) -> &'static str {
+    if ascii {
+        return match frame % 4 {
+            0 => "~~~~",
+            1 => "-/--",
+            2 => "-^--",
+            _ => "-\\--",
+        };
+    }
+    THINKING_WAVE[(frame % 8) as usize]
+}
+
+/// Return the scanning dot frame for in-progress tool calls.
+pub(crate) fn tool_scan(frame: u8, ascii: bool) -> &'static str {
+    if ascii {
+        return match frame % 4 {
+            0 => "[.   ]",
+            1 => "[ .  ]",
+            2 => "[  . ]",
+            _ => "[   .]",
+        };
+    }
+    TOOL_SCAN[(frame % 12) as usize]
+}
+
+/// Blinking block cursor appended to the end of streaming text.
+/// Alternates between `▌` and a space on each anim frame (6 Hz at 80ms).
+pub(crate) fn stream_cursor(frame: u8, ascii: bool) -> &'static str {
+    if frame % 2 == 0 {
+        if ascii {
+            "_"
+        } else {
+            "▌"
+        }
+    } else {
+        " "
+    }
 }
 
 // ── Character-set helpers ─────────────────────────────────────────────────────

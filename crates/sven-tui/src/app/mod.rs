@@ -747,6 +747,11 @@ impl App {
 
         let mut crossterm_events = EventStream::new();
 
+        // Animation tick: fires every 80 ms while the agent is busy, giving
+        // smooth 12-fps animations without spinning when the agent is idle.
+        let mut anim_tick = tokio::time::interval(tokio::time::Duration::from_millis(80));
+        anim_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Enable bracketed paste and push keyboard enhancement flags to stdout.
         //
         // We also push the flags in main.rs (via stderr, before stderr is
@@ -861,6 +866,13 @@ impl App {
                 }
                 Some(req) = question_rx.recv() => {
                     self.handle_question_request(req);
+                }
+                _ = anim_tick.tick(), if self.agent.busy => {
+                    // Advance the clock-driven animation frame and rebuild the
+                    // display so animated indicators update at a steady 80ms rate.
+                    self.agent.anim_frame = self.agent.anim_frame.wrapping_add(1);
+                    self.build_display_from_segments();
+                    self.ui.search.update_matches(&self.chat.lines);
                 }
                 _ = Self::nvim_notify_future(flush_notify_clone.as_deref()) => {}
                 _ = Self::nvim_notify_future(submit_notify_clone.as_deref()) => {
