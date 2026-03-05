@@ -14,7 +14,7 @@ use ratatui::{
     prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
 
 use crate::markdown::StyledLines;
@@ -71,6 +71,9 @@ impl Widget for ChatPane<'_> {
 
         let block = open_pane_block(&title, self.focused, self.ascii);
         let inner = block.inner(area);
+        // Clear inner area before rendering to prevent stale cells from
+        // persisting when content shrinks or the scroll offset changes.
+        Clear.render(inner, buf);
         block.render(area, buf);
 
         let match_set: HashSet<usize> = self.search_matches.iter().copied().collect();

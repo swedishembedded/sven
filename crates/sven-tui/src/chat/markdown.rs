@@ -258,7 +258,18 @@ pub(crate) fn message_to_markdown(
     tool_args_cache: &HashMap<String, String>,
 ) -> String {
     match (&m.role, &m.content) {
-        (Role::User, MessageContent::Text(t)) => format!("---\n\n**You:** {}\n", t),
+        (Role::User, MessageContent::Text(t)) => {
+            // Convert single newlines to Markdown hard line breaks (`  \n`) so
+            // they render as visual line breaks in the TUI chat pane.  Double
+            // newlines (paragraph separators) are kept intact: split on `\n\n`,
+            // apply hard-break conversion within each paragraph, then rejoin.
+            let display = t
+                .split("\n\n")
+                .map(|para| para.replace('\n', "  \n"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            format!("---\n\n**You:** {display}\n")
+        }
         (Role::Assistant, MessageContent::Text(t)) => format!("\n**Agent:** {}\n", t),
         (
             Role::Assistant,

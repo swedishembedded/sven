@@ -22,15 +22,18 @@ fn command_icon(value: &str, ascii: bool) -> &'static str {
     if ascii {
         return "/ ";
     }
-    if value.starts_with("/model") {
+    // Strip any leading '/' so that matching works whether the value is stored
+    // as "model" or "/model" (get_completions uses the bare name).
+    let v = value.trim_start_matches('/');
+    if v.starts_with("model") {
         "🤖 "
-    } else if value.starts_with("/mode") {
+    } else if v.starts_with("mode") {
         "⚡ "
-    } else if value.starts_with("/abort") || value.starts_with("/quit") {
+    } else if v.starts_with("abort") || v.starts_with("quit") {
         "⛔ "
-    } else if value.starts_with("/clear") {
+    } else if v.starts_with("clear") {
         "🗑  "
-    } else if value.starts_with("/help") {
+    } else if v.starts_with("help") {
         "❓ "
     } else {
         "/ "
@@ -109,11 +112,14 @@ impl Widget for CompletionMenu<'_> {
             let selected = abs_idx == self.overlay.selected;
 
             let icon = command_icon(&item.value, self.ascii);
-            let label = if item.display.is_empty() {
-                item.value.clone()
+            // Strip a leading '/' from the label — the icon already carries the
+            // slash (or an emoji), so "/ /model" becomes "/ model".
+            let raw_label = if item.display.is_empty() {
+                item.value.as_str()
             } else {
-                item.display.clone()
+                item.display.as_str()
             };
+            let label = raw_label.trim_start_matches('/');
             let avail = (inner.width as usize).saturating_sub(icon.len() + 1);
             let label: String = label.chars().take(avail).collect();
 
