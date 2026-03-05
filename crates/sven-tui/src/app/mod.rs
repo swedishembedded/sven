@@ -435,6 +435,7 @@ impl App {
                     no_nvim: self.nvim.disabled,
                     segment_count: self.chat.segments.len(),
                     auto_scroll_paused,
+                    selection: self.chat.normalized_selection(),
                 },
                 layout.chat_pane,
             );

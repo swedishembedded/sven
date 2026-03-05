@@ -604,6 +604,69 @@ fn extract_segment_text(
     }
 }
 
+// ── Mouse selection clipboard copy ───────────────────────────────────────────
+
+impl App {
+    /// Copy the currently selected text (from a mouse drag selection) to the
+    /// terminal clipboard via OSC 52.  Shows a toast on success.
+    pub(crate) fn copy_selection_to_clipboard(&mut self) {
+        let Some((s_line, s_col, e_line, e_col)) = self.chat.normalized_selection() else {
+            return;
+        };
+        let text = extract_selection_text(&self.chat.lines, s_line, s_col, e_line, e_col);
+        if !text.is_empty() {
+            osc52_copy(&text);
+            self.ui
+                .push_toast(crate::app::ui_state::Toast::info("Selection copied"));
+        }
+    }
+}
+
+/// Extract visible text from a range of rendered chat lines, respecting column
+/// boundaries for the first and last line of the selection.
+fn extract_selection_text(
+    lines: &crate::markdown::StyledLines,
+    start_line: usize,
+    start_col: u16,
+    end_line: usize,
+    end_col: u16,
+) -> String {
+    let line_count = lines.len();
+    if line_count == 0 {
+        return String::new();
+    }
+    let e_line = end_line.min(line_count - 1);
+    let mut result = String::new();
+    for abs_line in start_line..=e_line {
+        let line = &lines[abs_line];
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let char_count = line_text.chars().count();
+        let from_col = if abs_line == start_line {
+            start_col as usize
+        } else {
+            0
+        };
+        let to_col = if abs_line == end_line {
+            (end_col as usize).min(char_count)
+        } else {
+            char_count
+        };
+        let extracted: String = line_text
+            .chars()
+            .enumerate()
+            .filter(|(i, _)| *i >= from_col && *i < to_col)
+            .map(|(_, c)| c)
+            .collect();
+        if abs_line > start_line {
+            result.push('\n');
+        }
+        result.push_str(&extracted);
+    }
+    // Trim trailing whitespace per line, then overall trailing newlines.
+    let trimmed: Vec<String> = result.lines().map(|l| l.trim_end().to_string()).collect();
+    trimmed.join("\n").trim_end().to_string()
+}
+
 // ── Streaming helpers ─────────────────────────────────────────────────────────
 
 /// Extract the first N whitespace-separated words from text.

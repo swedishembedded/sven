@@ -52,6 +52,9 @@ pub struct ChatPane<'a> {
     pub segment_count: usize,
     /// True when the user has scrolled up and auto-scroll is paused.
     pub auto_scroll_paused: bool,
+    /// Active mouse drag selection: `(start_abs_line, start_col, end_abs_line, end_col)`.
+    /// Columns are relative to the inner area left edge.  `None` = no selection.
+    pub selection: Option<(usize, u16, usize, u16)>,
 }
 
 impl Widget for ChatPane<'_> {
@@ -123,6 +126,33 @@ impl Widget for ChatPane<'_> {
                     let y = inner.y + vis_row as u16;
                     for x in inner.x..inner.x + inner.width {
                         buf[(x, y)].set_bg(Color::Rgb(0, 45, 65));
+                    }
+                }
+            }
+        }
+
+        // ── Mouse drag selection highlight ────────────────────────────────────
+        if let Some((s_line, s_col, e_line, e_col)) = self.selection {
+            for vis_row in 0..content_height as usize {
+                let abs_line = vis_row + self.scroll_offset as usize;
+                if abs_line >= s_line && abs_line <= e_line {
+                    let y = inner.y + vis_row as u16;
+                    let from_x = if abs_line == s_line {
+                        (inner.x + s_col).min(inner.x + inner.width)
+                    } else {
+                        inner.x
+                    };
+                    let to_x = if abs_line == e_line {
+                        (inner.x + e_col).min(inner.x + inner.width)
+                    } else {
+                        inner.x + inner.width
+                    };
+                    for x in from_x..to_x {
+                        buf[(x, y)].set_bg(Color::Rgb(50, 80, 135));
+                        // Ensure text remains legible over the selection background.
+                        if buf[(x, y)].fg == Color::Reset {
+                            buf[(x, y)].set_fg(Color::Rgb(220, 220, 230));
+                        }
                     }
                 }
             }

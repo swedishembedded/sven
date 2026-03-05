@@ -291,6 +291,9 @@ impl App {
                 self.scroll_to_bottom();
                 self.nvim_scroll_to_bottom().await;
             }
+            AgentEvent::ModeChanged(mode) => {
+                self.session.mode = mode;
+            }
             _ => {}
         }
         false

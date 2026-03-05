@@ -48,6 +48,14 @@ pub(crate) struct ChatState {
     pub tool_args: HashMap<String, String>,
     /// `call_id → elapsed_secs` for completed tool calls.
     pub tool_durations: HashMap<String, f32>,
+
+    // ── Mouse text selection ──────────────────────────────────────────────────
+    /// Drag-selection anchor: `(abs_line, col_from_inner_x)` set on mouse-down.
+    pub selection_anchor: Option<(usize, u16)>,
+    /// Drag-selection current end: `(abs_line, col_from_inner_x)` updated on drag.
+    pub selection_end: Option<(usize, u16)>,
+    /// True while or after a drag selection is active (cleared on next mouse-down).
+    pub is_selecting: bool,
 }
 
 impl ChatState {
@@ -68,6 +76,21 @@ impl ChatState {
             focused_segment: None,
             tool_args: HashMap::new(),
             tool_durations: HashMap::new(),
+            selection_anchor: None,
+            selection_end: None,
+            is_selecting: false,
+        }
+    }
+
+    /// Return the selection as a normalized `(start_abs_line, start_col, end_abs_line, end_col)`
+    /// tuple where start ≤ end.  Returns `None` if no complete selection exists.
+    pub fn normalized_selection(&self) -> Option<(usize, u16, usize, u16)> {
+        let (a_line, a_col) = self.selection_anchor?;
+        let (e_line, e_col) = self.selection_end?;
+        if a_line < e_line || (a_line == e_line && a_col <= e_col) {
+            Some((a_line, a_col, e_line, e_col))
+        } else {
+            Some((e_line, e_col, a_line, a_col))
         }
     }
 

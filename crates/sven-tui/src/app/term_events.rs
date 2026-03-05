@@ -116,6 +116,13 @@ impl App {
                         && mouse.row < self.layout.queue_pane.y + self.layout.queue_pane.height;
                     let in_edit =
                         self.edit.message_index.is_some() || self.edit.queue_index.is_some();
+
+                    // ── Chat content geometry (used by selection handlers) ─────────
+                    let chat_content_x = self.layout.chat_pane.x;
+                    let chat_content_top = self.layout.chat_pane.y + 1;
+                    let chat_content_h = self.layout.chat_pane.height.saturating_sub(2);
+                    let chat_content_bottom = chat_content_top + chat_content_h;
+
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if over_input {
@@ -185,6 +192,29 @@ impl App {
                         MouseEventKind::Down(crossterm::event::MouseButton::Left)
                             if self.nvim.disabled =>
                         {
+                            // ── Selection anchor ──────────────────────────────────
+                            // Record the anchor for a potential drag selection.
+                            // Any previous completed selection is cleared.
+                            let over_chat_for_sel = mouse.row >= chat_content_top
+                                && mouse.row < chat_content_bottom
+                                && !over_queue
+                                && !over_input;
+                            if over_chat_for_sel {
+                                let abs_line = (mouse.row - chat_content_top) as usize
+                                    + self.chat.scroll_offset as usize;
+                                let inner_col = mouse
+                                    .column
+                                    .saturating_sub(chat_content_x)
+                                    .min(self.layout.chat_pane.width.saturating_sub(1));
+                                self.chat.selection_anchor = Some((abs_line, inner_col));
+                                self.chat.selection_end = None;
+                                self.chat.is_selecting = false;
+                            } else {
+                                self.chat.selection_anchor = None;
+                                self.chat.selection_end = None;
+                                self.chat.is_selecting = false;
+                            }
+
                             // ── Click on queue panel ──────────────────────────────
                             if over_queue && !self.queue.messages.is_empty() {
                                 let inner_y = self.layout.queue_pane.y + 1; // skip border
@@ -361,6 +391,49 @@ impl App {
                                 }
                             }
                         }
+                        // ── Drag: extend drag selection ───────────────────────────
+                        MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+                            if self.nvim.disabled =>
+                        {
+                            if self.chat.selection_anchor.is_some() && !over_input && !over_queue {
+                                // Clamp the drag row to the visible chat area.
+                                let clamped_row = mouse
+                                    .row
+                                    .clamp(chat_content_top, chat_content_bottom.saturating_sub(1));
+                                let abs_line = (clamped_row - chat_content_top) as usize
+                                    + self.chat.scroll_offset as usize;
+                                let abs_line =
+                                    abs_line.min(self.chat.lines.len().saturating_sub(1));
+                                let inner_col = mouse
+                                    .column
+                                    .saturating_sub(chat_content_x)
+                                    .min(self.layout.chat_pane.width.saturating_sub(1));
+                                self.chat.selection_end = Some((abs_line, inner_col));
+                                self.chat.is_selecting = true;
+
+                                // Auto-scroll when dragging near the top / bottom edge.
+                                const SCROLL_ZONE: u16 = 2;
+                                if mouse.row < chat_content_top + SCROLL_ZONE {
+                                    self.scroll_up(1);
+                                } else if mouse.row
+                                    >= chat_content_bottom.saturating_sub(SCROLL_ZONE)
+                                {
+                                    self.scroll_down(1);
+                                }
+                            }
+                        }
+
+                        // ── Up: finalise selection and copy ───────────────────────
+                        MouseEventKind::Up(crossterm::event::MouseButton::Left)
+                            if self.nvim.disabled =>
+                        {
+                            if self.chat.is_selecting {
+                                self.copy_selection_to_clipboard();
+                                // Keep anchor + end so the selection stays highlighted;
+                                // it will be cleared on the next mouse-down.
+                            }
+                        }
+
                         _ => {}
                     }
                 }

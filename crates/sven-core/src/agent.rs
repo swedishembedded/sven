@@ -658,6 +658,18 @@ impl Agent {
                 }
                 ToolEvent::ModeChanged(new_mode) => {
                     *self.current_mode.lock().await = new_mode;
+                    // Patch the system message in-place so every subsequent
+                    // model call within the same turn sees the new mode
+                    // instructions and consistent tool set.  This still busts
+                    // the provider's prompt cache (the prefix changed), but
+                    // avoids sending a contradictory "Operating Mode: plan"
+                    // header while the agent-mode tool set is active.
+                    let new_sys = self.system_message(new_mode);
+                    if let Some(first) = self.session.messages.first_mut() {
+                        if first.role == sven_model::Role::System {
+                            *first = new_sys;
+                        }
+                    }
                     let _ = tx.send(AgentEvent::ModeChanged(new_mode)).await;
                 }
                 ToolEvent::Progress { call_id, message } => {
