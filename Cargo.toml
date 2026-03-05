@@ -97,8 +97,15 @@ libc        = { workspace = true }
 ratatui     = { workspace = true }
 
 [dev-dependencies]
-serde_json  = { workspace = true }
-uuid        = { workspace = true }
+serde_json       = { workspace = true }
+uuid             = { workspace = true }
+sven-bootstrap   = { path = "crates/sven-bootstrap" }
+sven-tools       = { path = "crates/sven-tools" }
+sven-config      = { path = "crates/sven-config" }
+sven-model       = { path = "crates/sven-model" }
+async-trait      = { workspace = true }
+tokio            = { workspace = true }
+tempfile         = { workspace = true }
 
 # ── Debian package metadata ──────────────────────────────────────────────────
 # Used by `cargo deb` (cargo-deb crate) and mirrored by scripts/build-deb.sh.

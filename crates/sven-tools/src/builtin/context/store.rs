@@ -615,6 +615,9 @@ pub struct GrepMatch {
 /// always starts at byte 0.  The index length equals the number of lines.
 pub fn build_line_index(mmap: &Mmap) -> Vec<usize> {
     let data = &mmap[..];
+    if data.is_empty() {
+        return vec![];
+    }
     let mut idx = vec![0usize];
     for (i, &b) in data.iter().enumerate() {
         if b == b'\n' && i + 1 < data.len() {
