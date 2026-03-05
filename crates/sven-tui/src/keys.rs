@@ -46,15 +46,17 @@ pub enum Action {
     InputMoveWordRight,
     InputMoveLineStart,
     InputMoveLineEnd,
+    /// Move cursor up one visual row; when already on the first row, cycle to older history.
     InputMoveLineUp,
+    /// Move cursor down one visual row; when already on the last row, cycle to newer history.
     InputMoveLineDown,
     InputPageUp,
     InputPageDown,
     InputDeleteToEnd,
     InputDeleteToStart,
-    /// Navigate backwards through input history (older messages).
+    /// Navigate backwards through input history (older messages). Ctrl+Up always jumps.
     InputHistoryUp,
-    /// Navigate forwards through input history (newer messages).
+    /// Navigate forwards through input history (newer messages). Ctrl+Down always jumps.
     InputHistoryDown,
     Submit,
 
@@ -193,7 +195,9 @@ pub fn map_key(
         KeyCode::Char('c') if ctrl && in_input => Some(Action::InterruptAgent),
         KeyCode::Char('u') if ctrl && in_input => Some(Action::InputDeleteToStart),
         KeyCode::Char('k') if ctrl && in_input => Some(Action::InputDeleteToEnd),
-        // History navigation (Ctrl+Up / Ctrl+Down in input pane)
+        // Ctrl+Up/Down: explicit history navigation (always jumps, regardless of cursor row).
+        // Plain Up/Down also trigger history when the cursor is already on the first/last row
+        // (shell-style), which is handled inside the InputMoveLineUp/Down dispatch handlers.
         KeyCode::Up if ctrl && in_input => Some(Action::InputHistoryUp),
         KeyCode::Down if ctrl && in_input => Some(Action::InputHistoryDown),
 
@@ -365,6 +369,27 @@ mod tests {
         assert_eq!(
             map_key(ev, false, true, false, false, false),
             Some(Action::InputHistoryDown)
+        );
+    }
+
+    // Plain Up/Down in the input pane produce InputMoveLineUp/Down; the dispatch
+    // handler internally falls through to history navigation when the cursor is
+    // already on the first/last visual row (shell-style behaviour).
+    #[test]
+    fn plain_up_in_input_is_move_line_up() {
+        let ev = key(KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::InputMoveLineUp)
+        );
+    }
+
+    #[test]
+    fn plain_down_in_input_is_move_line_down() {
+        let ev = key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::InputMoveLineDown)
         );
     }
 

@@ -647,12 +647,21 @@ impl App {
                     let ws =
                         crate::input_wrap::wrap_content(&self.input.buffer, w, self.input.cursor);
                     if ws.cursor_row > 0 {
+                        // Move cursor up within the multi-line text.
                         self.input.cursor = crate::input_wrap::byte_offset_at_row_col(
                             &self.input.buffer,
                             w,
                             ws.cursor_row - 1,
                             ws.cursor_col,
                         );
+                    } else {
+                        // Already on the first visual row — cycle to the older history entry.
+                        if let Some(entry) = self.input.history_up() {
+                            let text = entry.to_string();
+                            self.input.cursor = text.len();
+                            self.input.buffer = text;
+                            self.input.scroll_offset = 0;
+                        }
                     }
                 }
             }
@@ -662,12 +671,21 @@ impl App {
                     let ws =
                         crate::input_wrap::wrap_content(&self.input.buffer, w, self.input.cursor);
                     if ws.cursor_row + 1 < ws.lines.len() {
+                        // Move cursor down within the multi-line text.
                         self.input.cursor = crate::input_wrap::byte_offset_at_row_col(
                             &self.input.buffer,
                             w,
                             ws.cursor_row + 1,
                             ws.cursor_col,
                         );
+                    } else {
+                        // Already on the last visual row — cycle to the newer history entry.
+                        if let Some(entry) = self.input.history_down() {
+                            let text = entry.to_string();
+                            self.input.cursor = text.len();
+                            self.input.buffer = text;
+                            self.input.scroll_offset = 0;
+                        }
                     }
                 }
             }
