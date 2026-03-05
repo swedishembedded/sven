@@ -521,6 +521,30 @@ more than half a second to open its TCP port before sven reports it as ready.
 
 ---
 
+### `tools.context`
+
+Controls the memory-mapped context tools used when analysing content that is
+too large to fit in the model's context window.  See
+[Working with Large Content](10-large-content.md) for a user guide.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `max_parallel` | `4` | Maximum concurrent sub-agent queries in a `context_query` call |
+| `default_chunk_lines` | `500` | Lines per chunk when `chunk_lines` is not specified |
+| `sub_query_max_chars` | `120000` | Character cap on the prompt sent to each sub-query (≈ 30 000 tokens) |
+
+**Example:**
+
+```yaml
+tools:
+  context:
+    max_parallel: 8          # faster on high-core machines with generous rate limits
+    default_chunk_lines: 300 # smaller chunks for dense files (e.g. generated C)
+    sub_query_max_chars: 80000
+```
+
+---
+
 ### `tui`
 
 | Key | Default | Description |

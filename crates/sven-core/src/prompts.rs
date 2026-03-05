@@ -124,6 +124,22 @@ mod guidelines {
          - Batch `read_file` calls in parallel — read all potentially relevant files in one turn."
     }
 
+    pub fn large_content() -> &'static str {
+        "- For files over ~500 lines, build logs, large codebases, or any content that would \
+         exceed your context window: use `context_open` to get a memory-mapped handle, then \
+         `context_read` / `context_grep` / `context_query` to analyze it without loading it \
+         into your context.\n\
+         - Never attempt to `read_file` on content larger than 500 lines when deeper analysis \
+         is required — the context tools are more effective and keep your context window clean.\n\
+         - Workflow: `context_open` → `context_grep` (locate sections) → `context_read` \
+         (inspect specific lines) → `context_query` (semantic analysis across chunks) → \
+         `context_reduce` (synthesize a final answer from chunk results).\n\
+         - `context_query` dispatches independent sub-agents over chunks in parallel; each \
+         receives ONLY the chunk plus your prompt. Design prompts to be self-contained.\n\
+         - `context_reduce` applies tree reduction automatically when results exceed the \
+         sub-agent context window."
+    }
+
     pub fn code_quality() -> &'static str {
         "- Make sure all the code you generate is production quality and follows good separation of concerns and clean code principles.\n\
          - NEVER create new files proactively unless explicitly requested. Do not create 'summary' md files unless requested.\n\
@@ -450,6 +466,8 @@ fn build_guidelines_section() -> String {
          {}\n\n\
          ### Tool Usage Patterns\n\
          {}\n\n\
+         ### Large Content Analysis\n\
+         {}\n\n\
          ### Code Quality\n\
          {}\n\n\
          ### Workflow Efficiency\n\
@@ -460,6 +478,7 @@ fn build_guidelines_section() -> String {
          {}",
         guidelines::general(),
         guidelines::tool_usage(),
+        guidelines::large_content(),
         guidelines::code_quality(),
         guidelines::workflow_efficiency(),
         guidelines::error_handling(),

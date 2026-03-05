@@ -14,17 +14,19 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_tools::{
-    events::ToolEvent, AskQuestionTool, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool,
-    GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
-    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool,
-    ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool,
-    SearchKnowledgeTool, ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool,
-    WebFetchTool, WebSearchTool, WriteTool,
+    events::ToolEvent, AskQuestionTool, ContextGrepTool, ContextOpenTool, ContextReadTool,
+    ContextStore, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool, GdbConnectTool,
+    GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool, GdbStopTool,
+    GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool, ReadFileTool,
+    ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, SearchKnowledgeTool,
+    ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool,
+    WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
 
 use crate::context::ToolSetProfile;
+use crate::context_query::build_context_query_tools;
 use crate::task_tool::TaskTool;
 
 /// Build a [`ToolRegistry`] populated according to the given `profile`.
@@ -92,7 +94,7 @@ pub fn build_tool_registry(
                 timeout_secs: cfg.tools.timeout_secs,
             });
             reg.register(TaskTool::new(
-                model,
+                model.clone(),
                 Arc::new(cfg.clone()),
                 task_depth,
                 sub_agent_runtime.clone(),
@@ -104,6 +106,15 @@ pub fn build_tool_registry(
             reg.register(SearchKnowledgeTool {
                 knowledge: sub_agent_runtime.knowledge.clone(),
             });
+
+            // Context (RLM memory-mapped) tools — shared store per session.
+            let context_store = Arc::new(Mutex::new(ContextStore::new()));
+            reg.register(ContextOpenTool::new(context_store.clone()));
+            reg.register(ContextReadTool::new(context_store.clone()));
+            reg.register(ContextGrepTool::new(context_store.clone()));
+            let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg);
+            reg.register(ctx_query);
+            reg.register(ctx_reduce);
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(
@@ -165,6 +176,18 @@ pub fn build_tool_registry(
             reg.register(SearchKnowledgeTool {
                 knowledge: sub_agent_runtime.knowledge.clone(),
             });
+
+            // Context (RLM memory-mapped) tools — sub-agents also get
+            // context_open/read/grep so they can handle large content.
+            // context_query is included; context_reduce is omitted from
+            // sub-agents to avoid recursive query chains.
+            let context_store = Arc::new(Mutex::new(ContextStore::new()));
+            reg.register(ContextOpenTool::new(context_store.clone()));
+            reg.register(ContextReadTool::new(context_store.clone()));
+            reg.register(ContextGrepTool::new(context_store.clone()));
+            let (ctx_query, ctx_reduce) = build_context_query_tools(context_store, model, cfg);
+            reg.register(ctx_query);
+            reg.register(ctx_reduce);
 
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(GdbStartServerTool::new(

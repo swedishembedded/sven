@@ -630,6 +630,9 @@ pub struct ToolsConfig {
     /// GDB debugging configuration
     #[serde(default)]
     pub gdb: GdbConfig,
+    /// Memory-mapped context tools configuration (RLM pattern)
+    #[serde(default)]
+    pub context: ContextConfig,
 }
 
 impl Default for ToolsConfig {
@@ -650,6 +653,34 @@ impl Default for ToolsConfig {
             memory: MemoryConfig::default(),
             lints: LintsConfig::default(),
             gdb: GdbConfig::default(),
+            context: ContextConfig::default(),
+        }
+    }
+}
+
+/// Configuration for memory-mapped context tools that implement the RLM pattern.
+///
+/// These tools allow the agent to process files and directories far beyond the
+/// LLM context window by keeping content memory-mapped and providing the model
+/// with symbolic handles and structured access operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextConfig {
+    /// Maximum number of concurrent sub-agent queries for `context_query`.
+    pub max_parallel: usize,
+    /// Default number of lines per chunk when `chunk_lines` is not specified
+    /// in a `context_query` call.
+    pub default_chunk_lines: usize,
+    /// Maximum characters sent to each sub-query call.
+    /// Sub-queries are simple completions without tools; this caps their input.
+    pub sub_query_max_chars: usize,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel: 4,
+            default_chunk_lines: 500,
+            sub_query_max_chars: 120_000,
         }
     }
 }

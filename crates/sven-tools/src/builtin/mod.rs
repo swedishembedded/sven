@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod ask_question;
+pub mod context;
 pub mod delete_file;
 pub mod edit_file;
 pub mod find_file;

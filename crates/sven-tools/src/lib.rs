@@ -46,3 +46,8 @@ pub use builtin::list_knowledge::ListKnowledgeTool;
 pub use builtin::search_knowledge::SearchKnowledgeTool;
 
 pub use builtin::shell::ShellTool;
+
+// Context (RLM memory-mapped) tools
+pub use builtin::context::{
+    ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
+};

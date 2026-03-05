@@ -14,10 +14,14 @@
 
 pub mod agent;
 pub mod context;
+pub mod context_query;
 pub mod registry;
 pub mod task_tool;
 
 pub use agent::AgentBuilder;
 pub use context::{RuntimeContext, ToolSetProfile};
+pub use context_query::{
+    build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
+};
 pub use registry::build_tool_registry;
 pub use task_tool::TaskTool;

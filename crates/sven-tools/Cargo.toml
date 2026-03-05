@@ -24,6 +24,7 @@ dirs        = { workspace = true }
 libc        = { workspace = true }
 gdbmi       = "0.0.2"
 similar     = { workspace = true }
+memmap2     = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
