@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-bg-base text-text-primary font-sans;
+    background-color: #0a0a0f;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::selection {
+    background-color: rgba(91, 141, 238, 0.3);
+    color: #e8e8e8;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-accent-blue text-white font-semibold text-sm
+           transition-all duration-150 hover:bg-accent-blue-hover active:scale-95 focus:outline-none
+           focus:ring-2 focus:ring-accent-blue focus:ring-offset-2 focus:ring-offset-bg-base;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-transparent text-text-primary font-semibold text-sm
+           border border-bg-border transition-all duration-150 hover:bg-bg-elevated hover:border-accent-blue/40
+           active:scale-95 focus:outline-none focus:ring-2 focus:ring-accent-blue focus:ring-offset-2
+           focus:ring-offset-bg-base;
+  }
+
+  .section-heading {
+    @apply text-3xl sm:text-4xl font-bold text-text-primary leading-tight tracking-tight;
+  }
+
+  .section-subheading {
+    @apply text-lg text-text-secondary leading-relaxed;
+  }
+
+  .card {
+    @apply bg-bg-card border border-bg-border rounded-xl p-6 shadow-card;
+  }
+
+  .code-inline {
+    @apply font-mono text-text-code bg-bg-elevated px-1.5 py-0.5 rounded text-sm;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e2e;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2a40;
+}
+
+/* Terminal cursor blink */
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: #5b8dee;
+  animation: blink 1.2s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+/* Gradient borders */
+.gradient-border {
+  position: relative;
+  background: #12121a;
+  border-radius: 12px;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(91, 141, 238, 0.4), rgba(30, 30, 46, 0.2), rgba(230, 180, 40, 0.2));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}

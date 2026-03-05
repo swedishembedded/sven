@@ -22,7 +22,8 @@ REPO    := swedishembedded/sven
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
-        _require-cargo-release
+        _require-cargo-release \
+        site/build site/publish site/serve
 
 all: build
 
@@ -145,6 +146,9 @@ clean:
 ## help      – show this message
 help:
 	@grep -E '^##' Makefile | sed 's/^## /  /'
+	@echo ""
+	@echo "  Site targets:"
+	@grep -E '^##' site/Makefile 2>/dev/null | sed 's/^## /    /' || true
 
 # ── Release targets ───────────────────────────────────────────────────────────
 ## release/build   – build release artifacts for current platform into dist/
@@ -203,6 +207,19 @@ release/minor: _require-cargo-release tests/e2e/basic
 ## release/major   – bump major version (x.0.0→x+1.0.0), tag, push → triggers CI
 release/major: _require-cargo-release tests/e2e/basic
 	@cargo release major -p sven --execute
+
+# ── Site targets ─────────────────────────────────────────────────────────────
+## site/build   – build the sven-site Docker image
+site/build:
+	$(MAKE) -C site build
+
+## site/publish – upload the Docker image to swedishembedded.com via SSH
+site/publish:
+	$(MAKE) -C site publish
+
+## site/serve   – serve the site locally on http://localhost:3000
+site/serve:
+	$(MAKE) -C site serve
 
 # Install cargo-release if not already present.
 .PHONY: _require-cargo-release

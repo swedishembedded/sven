@@ -1,0 +1,60 @@
+<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d0d14"/>
+      <stop offset="100%" stop-color="#0a0a0f"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" fill="url(#bgGrad)"/>
+
+  <!-- Window chrome -->
+  <rect width="800" height="32" fill="#111116"/>
+  <circle cx="16" cy="16" r="5" fill="#f87171" opacity="0.8"/>
+  <circle cx="32" cy="16" r="5" fill="#f59e0b" opacity="0.8"/>
+  <circle cx="48" cy="16" r="5" fill="#4ade80" opacity="0.8"/>
+  <text x="400" y="21" text-anchor="middle" font-family="monospace" font-size="11" fill="#555568">sven  agent mode  embedded debug session</text>
+
+  <!-- Accent bar -->
+  <rect x="0" y="32" width="4" height="436" fill="#e6b428" opacity="0.6"/>
+
+  <!-- GDB conversation -->
+  <text x="24" y="65" font-family="monospace" font-size="10" fill="#4ade80">o My STM32 is hanging on boot. Can you debug it?</text>
+
+  <text x="24" y="89" font-family="monospace" font-size="10" fill="#c8c8d8">Ï  I'll start a debug session. Let me check your config first.</text>
+
+  <text x="24" y="113" font-family="monospace" font-size="10" fill="#c8a03c">™  read_file  .vscode/launch.json</text>
+  <text x="24" y="127" font-family="monospace" font-size="10" fill="#c8c8d8">   Found: OpenOCD config for STM32F4, target stm32f4x.cfg</text>
+
+  <text x="24" y="151" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_start_server  openocd -f interface/jlink.cfg -f target/stm32f4x.cfg</text>
+  <text x="24" y="165" font-family="monospace" font-size="10" fill="#4ade80">   OpenOCD started on :3333</text>
+
+  <text x="24" y="189" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_connect  localhost:3333</text>
+  <text x="24" y="203" font-family="monospace" font-size="10" fill="#4ade80">   Connected to STM32F407VGT6 (Cortex-M4)</text>
+
+  <text x="24" y="227" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_command  break main</text>
+  <text x="24" y="241" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_command  continue</text>
+  <text x="24" y="255" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_wait_stopped</text>
+  <text x="24" y="269" font-family="monospace" font-size="10" fill="#4ade80">   Breakpoint 1 hit: main() at src/main.c:42</text>
+
+  <text x="24" y="293" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_command  info registers pc sp lr</text>
+  <text x="24" y="307" font-family="monospace" font-size="10" fill="#c8c8d8">   pc: 0x0800_1a2c  sp: 0x2001_ff80  lr: 0x0800_1a10</text>
+
+  <text x="24" y="331" font-family="monospace" font-size="10" fill="#c8a03c">™  gdb_command  x/8w $sp</text>
+  <text x="24" y="345" font-family="monospace" font-size="10" fill="#c8c8d8">   Stack looks healthy. Stepping into clock_init()...</text>
+
+  <text x="24" y="369" font-family="monospace" font-size="10" fill="#c8c8d8">Ï  Found the issue: HSE oscillator timeout in clock_init().</text>
+  <text x="24" y="383" font-family="monospace" font-size="10" fill="#c8c8d8">   The HSE_STARTUP_TIMEOUT is too short for your 16MHz crystal.</text>
+  <text x="24" y="397" font-family="monospace" font-size="10" fill="#c8c8d8">   Shall I patch stm32f4xx_hal_conf.h with the correct value?</text>
+
+  <!-- Yellow accent: "Industry First" badge -->
+  <rect x="24" y="420" width="160" height="22" rx="4" fill="#e6b42818" stroke="#e6b42830"/>
+  <text x="104" y="435" text-anchor="middle" font-family="monospace" font-size="10" fill="#e6b428">™ Native GDB Integration</text>
+
+  <!-- Status bar -->
+  <rect x="0" y="468" width="800" height="32" fill="#0d0d14"/>
+  <rect x="0" y="468" width="800" height="1" fill="#1e1e2e"/>
+  <text x="14" y="488" font-family="monospace" font-size="10" fill="#e6b428">! sven</text>
+  <text x="70" y="488" font-family="monospace" font-size="10" fill="#555568">·  agent  ·  gdb connected  ·  STM32F407</text>
+  <circle cx="760" cy="484" r="4" fill="#e6b428" opacity="0.9"/>
+  <text x="770" y="488" font-family="monospace" font-size="10" fill="#555568">halted</text>
+</svg>

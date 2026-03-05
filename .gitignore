@@ -42,3 +42,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Site subproject
+/site/node_modules/
+/site/dist/
+/site/package-lock.json
