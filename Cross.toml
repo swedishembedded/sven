@@ -1,12 +1,13 @@
 # Cross.toml — configuration for `cross` (Docker-based cross-compilation).
 #
-# The aarch64 image does not ship OpenSSL headers for the target architecture
-# by default.  The pre-build hook adds the arm64 multiarch package so that
-# openssl-sys (pulled in by git2 and webauthn-rs) can locate them via
-# pkg-config.
+# We use OPENSSL_VENDORED=1 so that openssl-sys compiles OpenSSL 3.x from
+# source inside the cross container (the default cross image ships OpenSSL
+# 1.0.2, which is rejected by webauthn-attestation-ca).  The env passthrough
+# makes the host variable visible inside the Docker container; `perl` is
+# required by OpenSSL's ./Configure script.
 
 [target.aarch64-unknown-linux-gnu]
+env.passthrough = ["OPENSSL_VENDORED"]
 pre-build = [
-    "dpkg --add-architecture arm64",
-    "apt-get update && apt-get install -y --no-install-recommends libssl-dev:arm64",
+    "apt-get update && apt-get install -y --no-install-recommends perl",
 ]
