@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Agent connection state: channels, cancellation handle, and run-time metrics.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use sven_core::AgentEvent;
 use tokio::sync::mpsc;
@@ -30,6 +30,8 @@ pub(crate) struct AgentConn {
     pub tx: Option<mpsc::Sender<AgentRequest>>,
     /// Channel to receive events from the agent background task.
     pub event_rx: Option<mpsc::Receiver<AgentEvent>>,
+    /// Wall-clock start time for each in-progress tool call, keyed by call_id.
+    pub tool_start_times: HashMap<String, Instant>,
 }
 
 impl AgentConn {
@@ -44,6 +46,7 @@ impl AgentConn {
             cancel: Arc::new(tokio::sync::Mutex::new(None)),
             tx: None,
             event_rx: None,
+            tool_start_times: HashMap::new(),
         }
     }
 }

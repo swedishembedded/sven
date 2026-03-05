@@ -17,6 +17,7 @@ pub(crate) mod search_bar;
 pub(crate) mod status_bar;
 pub(crate) mod theme;
 pub(crate) mod toast;
+pub(crate) mod welcome;
 pub(crate) mod which_key;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
@@ -33,4 +34,5 @@ pub(crate) use theme::open_pane_block;
 #[allow(unused)]
 pub(crate) use theme::pane_block;
 pub(crate) use toast::ToastStack;
+pub(crate) use welcome::WelcomeScreen;
 pub(crate) use which_key::WhichKeyOverlay;

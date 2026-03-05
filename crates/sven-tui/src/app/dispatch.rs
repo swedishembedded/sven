@@ -134,7 +134,7 @@ impl App {
                         self.edit.clear();
                     }
                     self.chat.segments.truncate(seg_idx);
-                    self.chat.collapsed.retain(|&i| i < seg_idx);
+                    self.chat.expand_level.retain(|&i, _| i < seg_idx);
                     self.chat.focused_segment = None;
                     self.rerender_chat().await;
                     self.save_history_async();
@@ -177,17 +177,17 @@ impl App {
 
                     let min_removed = *to_remove.last().unwrap_or(&seg_idx);
                     let removed_count = to_remove.len();
-                    self.chat.collapsed = self
+                    self.chat.expand_level = self
                         .chat
-                        .collapsed
+                        .expand_level
                         .iter()
-                        .filter_map(|&i| {
+                        .filter_map(|(&i, &level)| {
                             if to_remove.contains(&i) {
                                 None
                             } else if i > min_removed {
-                                Some(i - removed_count)
+                                Some((i - removed_count, level))
                             } else {
-                                Some(i)
+                                Some((i, level))
                             }
                         })
                         .collect();
@@ -195,6 +195,22 @@ impl App {
                     self.chat.focused_segment = None;
                     self.rerender_chat().await;
                     self.save_history_async();
+                }
+            }
+
+            Action::CopySegment => {
+                if let Some(seg_idx) = self.chat.focused_segment {
+                    if self.copy_segment_to_clipboard(seg_idx) {
+                        self.ui
+                            .push_toast(crate::app::ui_state::Toast::info("Copied to clipboard"));
+                    }
+                }
+            }
+
+            Action::CopyAll => {
+                if self.copy_all_to_clipboard() {
+                    self.ui
+                        .push_toast(crate::app::ui_state::Toast::info("Copied all to clipboard"));
                 }
             }
 
@@ -228,7 +244,7 @@ impl App {
                     if let Some((user_idx, user_text)) = last_user {
                         self.edit.clear();
                         self.chat.segments.truncate(user_idx);
-                        self.chat.collapsed.retain(|&i| i < user_idx);
+                        self.chat.expand_level.retain(|&i, _| i < user_idx);
                         let messages = messages_for_resubmit(&self.chat.segments);
                         self.chat
                             .segments

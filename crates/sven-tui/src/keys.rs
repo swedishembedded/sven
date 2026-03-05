@@ -107,6 +107,12 @@ pub enum Action {
     // App
     Help,
     OpenPager,
+
+    // Clipboard
+    /// Copy the focused segment's text to the system clipboard (y in chat pane).
+    CopySegment,
+    /// Copy all chat content to the system clipboard (Y in chat pane).
+    CopyAll,
 }
 
 /// Map a raw key event to an [`Action`], depending on which pane has focus.
@@ -251,13 +257,15 @@ pub fn map_key(
         KeyCode::Char('n') if !in_input && plain => Some(Action::SearchNextMatch),
         KeyCode::Char('N') if !in_input => Some(Action::SearchPrevMatch),
 
-        // Edit / delete focused segment
+        // Edit / delete / copy focused segment
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
         KeyCode::F(2) if !in_input => Some(Action::EditMessageAtCursor),
         KeyCode::Char('d') if !in_input && plain => Some(Action::DeleteChatSegment),
         KeyCode::F(8) if !in_input => Some(Action::DeleteChatSegment),
         KeyCode::Char('x') if !in_input && plain => Some(Action::RemoveChatSegment),
         KeyCode::Char('r') if !in_input && plain => Some(Action::RerunFromSegment),
+        KeyCode::Char('y') if !in_input && plain => Some(Action::CopySegment),
+        KeyCode::Char('Y') if !in_input => Some(Action::CopyAll),
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)

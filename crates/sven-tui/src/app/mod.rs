@@ -23,7 +23,7 @@ use futures::StreamExt;
 use ratatui::{layout::Rect, DefaultTerminal, Frame};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
-use sven_model::{Message, MessageContent, Role};
+use sven_model::Message;
 use sven_tools::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -40,7 +40,7 @@ use crate::{
     ui::{
         input_cursor_screen_pos, nvim_cursor_screen_pos, open_pane_block, ChatLabels, ChatPane,
         CompletionMenu, ConfirmModalView, HelpOverlay, InputEditMode, InputPane, QuestionModalView,
-        QueueItem, QueuePanel, SearchBar, StatusBar, ToastStack, WhichKeyOverlay,
+        QueueItem, QueuePanel, SearchBar, StatusBar, ToastStack, WelcomeScreen, WhichKeyOverlay,
     },
 };
 
@@ -275,20 +275,19 @@ impl App {
             app.queue.messages.push_back(QueuedMessage::plain(prompt));
         }
 
-        // In ratatui-only mode, pre-collapse tool call/result/thinking segments.
+        // In ratatui-only mode, set default expand levels for loaded segments.
+        // Tool calls, tool results, and thinking default to tier 0 (summary).
+        // User and agent text default to tier 2 (full). Since the HashMap default
+        // is already tier-0 for collapsible types (via default_expand_level), we
+        // only need to set explicit entries for collapsible types that already
+        // exist in the loaded history.
         if app.nvim.disabled {
+            use crate::app::chat_state::default_expand_level;
             for (i, seg) in app.chat.segments.iter().enumerate() {
-                let is_collapsible = match seg {
-                    ChatSegment::Message(m) => matches!(
-                        (&m.role, &m.content),
-                        (Role::Assistant, MessageContent::ToolCall { .. })
-                            | (Role::Tool, MessageContent::ToolResult { .. })
-                    ),
-                    ChatSegment::Thinking { .. } => true,
-                    _ => false,
-                };
-                if is_collapsible {
-                    app.chat.collapsed.insert(i);
+                let level = default_expand_level(seg);
+                // Only insert if the default would be 0 (collapsible types).
+                if level == 0 {
+                    app.chat.expand_level.insert(i, 0);
                 }
             }
         }
@@ -383,6 +382,25 @@ impl App {
         );
 
         // ── Chat pane ─────────────────────────────────────────────────────────
+        // Show the welcome screen when the chat is empty and the agent is idle.
+        let show_welcome = self.chat.segments.is_empty()
+            && self.chat.streaming_buffer.is_empty()
+            && !self.agent.busy
+            && self.nvim.disabled;
+
+        if show_welcome {
+            let mode_label = self.session.mode.to_string();
+            let mode_style = crate::ui::theme::mode_style(self.session.mode);
+            frame.render_widget(
+                WelcomeScreen {
+                    model_name: &self.session.model_display,
+                    mode_label: &mode_label,
+                    mode_style,
+                },
+                layout.chat_pane,
+            );
+        }
+
         let lines_to_draw = if !nvim_lines.is_empty() {
             nvim_lines
         } else {
@@ -395,29 +413,32 @@ impl App {
             .copied();
 
         let auto_scroll_paused = !self.chat.auto_scroll && !self.chat.lines.is_empty();
-        frame.render_widget(
-            ChatPane {
-                lines: lines_to_draw,
-                scroll_offset: nvim_draw_scroll,
-                focused: self.ui.focus == FocusPane::Chat,
-                ascii,
-                search_query: &self.ui.search.query,
-                search_matches: &self.ui.search.matches,
-                search_current: self.ui.search.current,
-                search_regex: self.ui.search.regex.as_ref(),
-                editing_line_range: editing_range,
-                labels: &ChatLabels {
-                    edit_label_lines: self.chat.edit_labels.clone(),
-                    remove_label_lines: self.chat.remove_labels.clone(),
-                    rerun_label_lines: self.chat.rerun_labels.clone(),
-                    pending_delete_line: None,
+        if !show_welcome {
+            frame.render_widget(
+                ChatPane {
+                    lines: lines_to_draw,
+                    scroll_offset: nvim_draw_scroll,
+                    focused: self.ui.focus == FocusPane::Chat,
+                    ascii,
+                    search_query: &self.ui.search.query,
+                    search_matches: &self.ui.search.matches,
+                    search_current: self.ui.search.current,
+                    search_regex: self.ui.search.regex.as_ref(),
+                    editing_line_range: editing_range,
+                    labels: &ChatLabels {
+                        edit_label_lines: self.chat.edit_labels.clone(),
+                        remove_label_lines: self.chat.remove_labels.clone(),
+                        rerun_label_lines: self.chat.rerun_labels.clone(),
+                        copy_label_lines: self.chat.copy_labels.clone(),
+                        pending_delete_line: None,
+                    },
+                    no_nvim: self.nvim.disabled,
+                    segment_count: self.chat.segments.len(),
+                    auto_scroll_paused,
                 },
-                no_nvim: self.nvim.disabled,
-                segment_count: self.chat.segments.len(),
-                auto_scroll_paused,
-            },
-            layout.chat_pane,
-        );
+                layout.chat_pane,
+            );
+        } // end if !show_welcome
 
         // Neovim cursor (placed after chat widget renders).
         if let Some(cursor) = nvim_cursor {

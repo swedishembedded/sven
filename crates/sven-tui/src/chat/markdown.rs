@@ -14,6 +14,20 @@ use sven_tools::TodoItem;
 
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
+use crate::ui::theme::{BAR_AGENT, BAR_COMPACT, BAR_ERROR, BAR_THINKING, BAR_TOOL, BAR_USER};
+
+// ── Symbols ────────────────────────────────────────────────────────────────────
+
+/// Symbol for tool calls.
+pub const SYM_TOOL: &str = "⚙";
+/// Symbol for successful tool results.
+pub const SYM_OK: &str = "✓";
+/// Symbol for failed tool results.
+pub const SYM_ERR: &str = "✗";
+/// Symbol for thinking blocks.
+pub const SYM_THINK: &str = "◆";
+/// Expand indicator.
+pub const SYM_EXPAND: &str = "▶";
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
@@ -32,7 +46,7 @@ pub fn format_todos_markdown(todos: &[TodoItem]) -> String {
     result
 }
 
-/// Format a single `ChatSegment` as markdown for display.
+/// Format a single `ChatSegment` as markdown for display (full content).
 pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
     match seg {
         ChatSegment::Message(m) => message_to_markdown(m, tool_args_cache),
@@ -58,31 +72,63 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {
             format!(
-                "\n**Agent:thinking**\n💭 **Thought**\n```\n{}\n```\n",
+                "\n**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```\n",
                 content
             )
         }
     }
 }
 
+/// Render a partial view — the first `max_lines` of the full content.
+/// Used for expand tier 1 (detail view).
+pub fn partial_content(
+    seg: &ChatSegment,
+    tool_args_cache: &HashMap<String, String>,
+    max_lines: usize,
+) -> String {
+    let full = segment_to_markdown(seg, tool_args_cache);
+    let lines: Vec<&str> = full.lines().collect();
+    if lines.len() <= max_lines {
+        return full;
+    }
+    let truncated = lines[..max_lines].join("\n");
+    format!("{truncated}\n*…{} more lines*\n", lines.len() - max_lines)
+}
+
 /// Render a single-line collapsed preview for a segment (ratatui-only mode).
-pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, String>) -> String {
+///
+/// The preview is a compact, information-dense one-liner:
+/// - Tool call:   `⚙ tool_name  key=val key2=val2  ▶`
+/// - Tool result: `✓ tool_name  first_line_of_output…  ▶`
+/// - Thinking:    `◆ first_sentence_of_thought…  ▶`
+/// - User:        `You  first_line…  ▶`
+/// - Agent:       `first_line…  ▶`
+pub fn collapsed_preview(
+    seg: &ChatSegment,
+    tool_args_cache: &HashMap<String, String>,
+    tool_durations: &HashMap<String, f32>,
+) -> String {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
-            // User / assistant text: first line, up to 80 chars
             (Role::User, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
                 let preview: String = first.chars().take(80).collect();
-                let has_more = first.chars().count() > 80 || t.contains('\n');
-                let ellipsis = if has_more { "…" } else { "" };
-                format!("\n**User:** `{preview}{ellipsis}` ▶ click to expand\n")
+                let ellipsis = if first.chars().count() > 80 || t.contains('\n') {
+                    "…"
+                } else {
+                    ""
+                };
+                format!("\n**You:** `{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
                 let preview: String = first.chars().take(80).collect();
-                let has_more = first.chars().count() > 80 || t.contains('\n');
-                let ellipsis = if has_more { "…" } else { "" };
-                format!("\n**Agent:** `{preview}{ellipsis}` ▶ click to expand\n")
+                let ellipsis = if first.chars().count() > 80 || t.contains('\n') {
+                    "…"
+                } else {
+                    ""
+                };
+                format!("\n**Agent:** `{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (
                 Role::Assistant,
@@ -91,33 +137,14 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
                     function,
                 },
             ) => {
-                let args_preview = serde_json::from_str::<serde_json::Value>(&function.arguments)
-                    .map(|v| {
-                        if let serde_json::Value::Object(map) = &v {
-                            let parts: Vec<String> = map
-                                .iter()
-                                .take(2)
-                                .map(|(k, val)| {
-                                    let s = match val {
-                                        serde_json::Value::String(s) => {
-                                            s.chars().take(40).collect::<String>()
-                                        }
-                                        other => {
-                                            other.to_string().chars().take(40).collect::<String>()
-                                        }
-                                    };
-                                    format!("{}={}", k, s)
-                                })
-                                .collect();
-                            parts.join(" ")
-                        } else {
-                            function.arguments.chars().take(60).collect::<String>()
-                        }
-                    })
-                    .unwrap_or_else(|_| function.arguments.chars().take(60).collect::<String>());
+                let args_summary = compact_args_summary(&function.arguments, 2, 35);
+                let duration = tool_durations
+                    .get(tool_call_id)
+                    .map(|s| format!("  {:.1}s", s))
+                    .unwrap_or_default();
                 format!(
-                    "\n**Agent:tool_call:{}**\n🔧 **Tool Call: {}** `{}` ▶ click to expand\n",
-                    tool_call_id, function.name, args_preview
+                    "\n**Agent:tool_call:{tool_call_id}**\n{SYM_TOOL} **{}**  {args_summary}{duration}  {SYM_EXPAND}\n",
+                    function.name
                 )
             }
             (
@@ -131,43 +158,39 @@ pub fn collapsed_preview(seg: &ChatSegment, tool_args_cache: &HashMap<String, St
                     .get(tool_call_id)
                     .map(|s| s.as_str())
                     .unwrap_or("tool");
+                let is_error = content.to_string().starts_with("error:");
+                let sym = if is_error { SYM_ERR } else { SYM_OK };
                 let content_text = content.to_string();
-                let preview: String = content_text
+                let first_line = content_text
                     .lines()
-                    .next()
+                    .find(|l| !l.trim().is_empty())
                     .unwrap_or("")
-                    .chars()
-                    .take(80)
-                    .collect();
+                    .trim();
+                let preview: String = first_line.chars().take(70).collect();
                 let truncated = if content_text.len() > preview.len() + 1 {
                     "…"
                 } else {
                     ""
                 };
+                let duration = tool_durations
+                    .get(tool_call_id)
+                    .map(|s| format!("  {:.1}s", s))
+                    .unwrap_or_default();
                 format!(
-                    "\n**Tool:{}**\n✅ **Tool Response: {}** `{}{}` ▶ click to expand\n",
-                    tool_call_id, tool_name, preview, truncated
+                    "\n**Tool:{tool_call_id}**\n{sym} **{tool_name}**  `{preview}{truncated}`{duration}  {SYM_EXPAND}\n"
                 )
             }
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
-            let preview: String = content
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(80)
-                .collect();
+            // Take first meaningful sentence (up to first `.`, `!`, `?` or 80 chars).
+            let preview = first_sentence(content, 80);
             let truncated = if content.len() > preview.len() + 1 {
                 "…"
             } else {
                 ""
             };
-            format!(
-                "\n**Agent:thinking**\n💭 **Thought** `{}{}` ▶ click to expand\n",
-                preview, truncated
-            )
+            format!("\n**Agent:thinking**\n{SYM_THINK} **Thought**  `{preview}{truncated}`  {SYM_EXPAND}\n")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }
@@ -201,23 +224,21 @@ pub fn format_conversation(
 pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
-            (Role::User, MessageContent::Text(_)) => {
-                (Some(Style::default().fg(Color::Green)), false)
-            }
+            (Role::User, MessageContent::Text(_)) => (Some(Style::default().fg(BAR_USER)), false),
             (Role::Assistant, MessageContent::Text(_)) => {
-                (Some(Style::default().fg(Color::Blue)), false)
+                (Some(Style::default().fg(BAR_AGENT)), false)
             }
             (Role::Assistant, MessageContent::ToolCall { .. }) => {
-                (Some(Style::default().fg(Color::Yellow)), false)
+                (Some(Style::default().fg(BAR_TOOL)), false)
             }
             (Role::Tool, MessageContent::ToolResult { .. }) => {
-                (Some(Style::default().fg(Color::Yellow)), false)
+                (Some(Style::default().fg(BAR_TOOL)), false)
             }
             _ => (None, false),
         },
-        ChatSegment::Thinking { .. } => (Some(Style::default().fg(Color::Magenta)), false),
-        ChatSegment::Error(_) => (Some(Style::default().fg(Color::Red)), false),
-        _ => (None, false),
+        ChatSegment::Thinking { .. } => (Some(Style::default().fg(BAR_THINKING)), false),
+        ChatSegment::Error(_) => (Some(Style::default().fg(BAR_ERROR)), false),
+        ChatSegment::ContextCompacted { .. } => (Some(Style::default().fg(BAR_COMPACT)), false),
     }
 }
 
@@ -247,6 +268,41 @@ pub fn apply_bar_and_dim(
                 ));
             }
             Line::from(spans)
+        })
+        .collect()
+}
+
+/// Highlight the bar character of a focused segment (make it brighter/bold).
+pub fn apply_focused_bar(lines: StyledLines, bar_char: &str) -> StyledLines {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 {
+                // Only highlight the bar on the first line of the segment.
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                let mut chars = line.spans.iter();
+                if let Some(first) = chars.next() {
+                    if first.content.as_ref() == bar_char {
+                        // Replace the first span (bar) with a bright/bold version.
+                        spans.push(Span::styled(
+                            first.content.to_string(),
+                            first
+                                .style
+                                .add_modifier(Modifier::BOLD)
+                                .patch(Style::default().fg(Color::White)),
+                        ));
+                    } else {
+                        spans.push(first.clone());
+                    }
+                }
+                for s in chars {
+                    spans.push(s.clone());
+                }
+                Line::from(spans)
+            } else {
+                line
+            }
         })
         .collect()
 }
@@ -282,8 +338,8 @@ pub(crate) fn message_to_markdown(
                 .and_then(|v| serde_json::to_string_pretty(&v))
                 .unwrap_or_else(|_| function.arguments.clone());
             format!(
-                "\n**Agent:tool_call:{}**\n🔧 **Tool Call: {}**\n```json\n{}\n```\n",
-                tool_call_id, function.name, pretty_args
+                "\n**Agent:tool_call:{tool_call_id}**\n{SYM_TOOL} **{}**\n```json\n{pretty_args}\n```\n",
+                function.name
             )
         }
         (
@@ -297,14 +353,73 @@ pub(crate) fn message_to_markdown(
                 .get(tool_call_id)
                 .map(|s| s.as_str())
                 .unwrap_or("tool");
-            format!(
-                "\n**Tool:{}**\n✅ **Tool Response: {}**\n```\n{}\n```\n",
-                tool_call_id, tool_name, content
-            )
+            let is_error = content.to_string().starts_with("error:");
+            let sym = if is_error { SYM_ERR } else { SYM_OK };
+            format!("\n**Tool:{tool_call_id}**\n{sym} **{tool_name}**\n```\n{content}\n```\n")
         }
         (Role::System, MessageContent::Text(t)) => format!("**System:** {}\n\n", t),
         _ => String::new(),
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Extract a compact argument summary from JSON arguments.
+/// Shows at most `max_args` key=value pairs, each value truncated to `max_val_chars`.
+/// Public alias used by `chat_ops.rs` for the grouped tool-call preview.
+pub fn compact_args_summary_pub(arguments: &str, max_args: usize, max_val_chars: usize) -> String {
+    compact_args_summary(arguments, max_args, max_val_chars)
+}
+
+/// Extract a compact argument summary from JSON arguments.
+/// Shows at most `max_args` key=value pairs, each value truncated to `max_val_chars`.
+fn compact_args_summary(arguments: &str, max_args: usize, max_val_chars: usize) -> String {
+    let v = match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(v) => v,
+        Err(_) => {
+            let s: String = arguments.chars().take(max_val_chars).collect();
+            return s;
+        }
+    };
+    if let serde_json::Value::Object(map) = v {
+        let parts: Vec<String> = map
+            .iter()
+            .take(max_args)
+            .map(|(k, val)| {
+                let v_str = match val {
+                    serde_json::Value::String(s) => {
+                        // Shorten path-like values to the basename.
+                        let base = s.split('/').last().unwrap_or(s.as_str());
+                        base.chars().take(max_val_chars).collect::<String>()
+                    }
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    other => other.to_string().chars().take(max_val_chars).collect(),
+                };
+                format!("{k}={v_str}")
+            })
+            .collect();
+        if map.len() > max_args {
+            format!("{}  +{}", parts.join("  "), map.len() - max_args)
+        } else {
+            parts.join("  ")
+        }
+    } else {
+        arguments.chars().take(max_val_chars).collect()
+    }
+}
+
+/// Extract the first sentence from text (up to `max_chars`), ending at `.!?` or a newline.
+fn first_sentence(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    let mut end = trimmed.len().min(max_chars);
+    for (i, ch) in trimmed.char_indices().take(max_chars) {
+        if matches!(ch, '.' | '!' | '?' | '\n') {
+            end = i + 1;
+            break;
+        }
+    }
+    trimmed[..end].trim().to_string()
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────
@@ -472,11 +587,19 @@ fn extract_code_block(lines: &[&str], i: &mut usize) -> Result<String, String> {
     Err("Unclosed code block".to_string())
 }
 
-/// Scans backward from `current` to find the `🔧 **Tool Call: name**` display
-/// line.  Bounded by section separators so it never bleeds into a prior segment.
+/// Scans backward from `current` to find the tool name header line.
+/// Bounded by section separators so it never bleeds into a prior segment.
 fn extract_tool_name_from_previous_lines(lines: &[&str], current: usize) -> Result<String, String> {
     for j in (0..current).rev() {
         let line = lines[j].trim();
+        // Match new format: `⚙ **tool_name**`
+        if let Some(rest) = line.strip_prefix(SYM_TOOL) {
+            let rest = rest.trim();
+            if let Some(name) = rest.strip_prefix("**").and_then(|s| s.strip_suffix("**")) {
+                return Ok(name.trim().to_string());
+            }
+        }
+        // Also match legacy format for backward compat: `🔧 **Tool Call: name**`
         if let Some(rest) = line.strip_prefix("🔧 **Tool Call:") {
             if let Some(name) = rest.strip_suffix("**") {
                 return Ok(name.trim().to_string());
@@ -587,7 +710,6 @@ mod tests {
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
-        assert!(md.contains("Tool Call"), "must carry 'Tool Call' heading");
         assert!(md.contains("read_file"), "must include the tool name");
         let name_count = md.matches("read_file").count();
         assert_eq!(
@@ -608,10 +730,6 @@ mod tests {
             },
         };
         let md = message_to_markdown(&msg, &cache);
-        assert!(
-            md.contains("Tool Response"),
-            "must carry 'Tool Response' heading"
-        );
         assert!(
             md.contains("file contents here"),
             "must include the tool output"
@@ -733,7 +851,7 @@ mod tests {
     fn parse_tool_call_extracts_id_name_and_full_args() {
         let md = concat!(
             "**Agent:tool_call:abc123**\n",
-            "🔧 **Tool Call: read_file**\n",
+            "⚙ **read_file**\n",
             "```json\n",
             r#"{"path": "/tmp/test.txt"}"#,
             "\n",
@@ -759,7 +877,7 @@ mod tests {
     fn parse_tool_result_extracts_id_and_full_output() {
         let md = concat!(
             "**Tool:xyz789**\n",
-            "✅ **Tool Response: glob**\n",
+            "✓ **glob**\n",
             "```\n",
             "file1.rs\n",
             "file2.rs\n",
@@ -776,7 +894,7 @@ mod tests {
             assert_eq!(tool_call_id, "xyz789");
             assert_eq!(content.to_string().trim(), "file1.rs\nfile2.rs");
         } else {
-            panic!("expected ToolResult content");
+            panic!("expected ToolResult");
         }
     }
 
@@ -895,8 +1013,6 @@ mod tests {
 
     #[test]
     fn multi_paragraph_user_message_blank_lines_preserved_in_round_trip() {
-        // A user message that contains a blank line (paragraph break) must
-        // survive format → parse without losing the blank line.
         let msg = Message::user("First paragraph\n\nSecond paragraph");
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -915,8 +1031,6 @@ mod tests {
 
     #[test]
     fn parse_continuation_lines_with_bold_markdown_not_truncated() {
-        // A continuation line that starts with ** (bold text) must NOT be
-        // treated as a message header and must be preserved in the parsed text.
         let md = "**You:** first line\n**bold continuation**\nthird line\n";
         let messages = parse_markdown_to_messages(md).unwrap();
         assert_eq!(messages.len(), 1, "should produce exactly one message");

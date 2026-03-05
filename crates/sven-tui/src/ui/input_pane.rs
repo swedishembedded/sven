@@ -17,7 +17,7 @@ use ratatui::{
 use crate::app::input_state::InputAttachment;
 use crate::input_wrap::wrap_content;
 
-use super::theme::open_pane_block;
+use super::theme::{open_pane_block, BAR_AGENT, BG, TEXT_DIM};
 
 // ── InputEditMode ─────────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ impl Widget for InputPane<'_> {
                 .collect();
             Paragraph::new(Line::from(vec![Span::styled(
                 hint_chars,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(TEXT_DIM),
             )]))
             .alignment(Alignment::Right)
             .render(Rect::new(area.x, bottom_y, area.width, 1), buf);
@@ -170,43 +170,70 @@ impl Widget for InputPane<'_> {
             .scroll_offset
             .min(total_lines.saturating_sub(visible_height));
 
-        // Prompt style
-        let prompt_focused = Style::default()
-            .fg(Color::LightGreen)
-            .add_modifier(Modifier::BOLD);
-        let prompt_unfocused = Style::default().fg(Color::DarkGray);
-        let prompt_str = if self.ascii { "> " } else { "> " };
+        // Prompt style — brand-colored `>` prompt.
+        let prompt_focused = Style::default().fg(BAR_AGENT).add_modifier(Modifier::BOLD);
+        let prompt_unfocused = Style::default().fg(TEXT_DIM);
+        let prompt_str = "> ";
         let cont_str = "  "; // continuation lines: indent to align under text
 
         let prompt_x = inner.x;
         let text_x = inner.x + PROMPT_WIDTH;
 
-        for (vis_row, wrapped_line) in wrap
-            .lines
-            .iter()
-            .skip(scroll)
-            .take(visible_height)
-            .enumerate()
-        {
-            let y = text_start_y + vis_row as u16;
-            // Render the `>` prefix for the first visible line; `  ` for rest.
-            let (prefix, prefix_style) = if vis_row == 0 && scroll == 0 {
-                (
+        // Show placeholder text when content is empty.
+        if wrap.lines.is_empty() || (wrap.lines.len() == 1 && wrap.lines[0].is_empty()) {
+            if text_height > 0 {
+                let placeholder = "Ask anything… (Enter to send, / for commands)";
+                let ph_chars: String = placeholder
+                    .chars()
+                    .take(effective_text_width as usize)
+                    .collect();
+                buf.set_string(
+                    prompt_x,
+                    text_start_y,
                     prompt_str,
                     if self.focused {
                         prompt_focused
                     } else {
                         prompt_unfocused
                     },
-                )
-            } else {
-                (cont_str, Style::default())
-            };
-            buf.set_string(prompt_x, y, prefix, prefix_style);
+                );
+                buf.set_string(
+                    text_x,
+                    text_start_y,
+                    &ph_chars,
+                    Style::default().fg(TEXT_DIM).add_modifier(Modifier::DIM),
+                );
+            }
+        } else {
+            for (vis_row, wrapped_line) in wrap
+                .lines
+                .iter()
+                .skip(scroll)
+                .take(visible_height)
+                .enumerate()
+            {
+                let y = text_start_y + vis_row as u16;
+                // Render the `>` prefix for the first visible line; `  ` for rest.
+                let (prefix, prefix_style) = if vis_row == 0 && scroll == 0 {
+                    (
+                        prompt_str,
+                        if self.focused {
+                            prompt_focused
+                        } else {
+                            prompt_unfocused
+                        },
+                    )
+                } else {
+                    (cont_str, Style::default())
+                };
+                buf.set_string(prompt_x, y, prefix, prefix_style);
 
-            // Render the text content.
-            let text_line = Line::from(wrapped_line.clone());
-            Paragraph::new(text_line).render(Rect::new(text_x, y, effective_text_width, 1), buf);
+                // Render the text content.
+                let text_line = Line::from(wrapped_line.clone());
+                Paragraph::new(text_line)
+                    .style(Style::default().bg(BG))
+                    .render(Rect::new(text_x, y, effective_text_width, 1), buf);
+            }
         }
 
         // ── Scrollbar ─────────────────────────────────────────────────────────

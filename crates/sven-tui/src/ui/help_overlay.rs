@@ -6,16 +6,15 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use super::theme::border_type;
+use super::theme::{border_type, BAR_AGENT, BAR_TOOL, BG_ELEVATED, BORDER_FOCUS, TEXT, TEXT_DIM};
 
-/// All key binding entries, grouped into sections.  Each tuple is `(key, description)`.
+/// All key binding entries, grouped into sections.  Each tuple is `(key, description, is_header)`.
 const BINDINGS: &[(&str, &str, bool)] = &[
-    // (key, description, is_section_header)
     ("── Navigation ──", "", true),
     ("^w k / ^w ↑", "Focus chat pane", false),
     ("^w j / ^w ↓", "Focus input pane", false),
@@ -23,19 +22,19 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("── Chat pane ──", "", true),
     ("j / k", "Scroll down/up", false),
     ("^d / ^u", "Page down / page up", false),
-    ("g", "Scroll to top", false),
-    ("G", "Scroll to bottom", false),
+    ("g / G", "Scroll to top / bottom", false),
     ("/ n N", "Search / next / prev match", false),
+    ("click / Enter", "Cycle expand level", false),
     ("e", "Edit message at cursor", false),
+    ("y", "Copy segment to clipboard", false),
+    ("Y", "Copy all to clipboard", false),
     ("x", "Remove segment", false),
     ("d", "Truncate chat from here", false),
     ("r", "Rerun from segment", false),
     ("^t", "Open pager", false),
     ("── Input pane ──", "", true),
     ("Enter", "Send message", false),
-    ("Alt+Enter", "New line (works everywhere)", false),
-    ("S+Enter / C+Enter", "New line (enhanced terminals)", false),
-    ("^j", "New line (Ctrl+J, works everywhere)", false),
+    ("Alt+Enter", "New line", false),
     ("^c", "Interrupt agent", false),
     ("^k / ^u", "Delete to end/start", false),
     ("^Up / ^Dn", "History older/newer", false),
@@ -59,7 +58,7 @@ pub struct HelpOverlay {
 impl Widget for HelpOverlay {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let width = 80u16.min(area.width.saturating_sub(4));
-        let height = 32u16.min(area.height.saturating_sub(2));
+        let height = 34u16.min(area.height.saturating_sub(2));
 
         let x = (area.width.saturating_sub(width)) / 2;
         let y = (area.height.saturating_sub(height)) / 2;
@@ -70,15 +69,13 @@ impl Widget for HelpOverlay {
         let bt = border_type(self.ascii);
         let block = Block::default()
             .title(Span::styled(
-                "  Key bindings  (F1 or any key to close) ",
-                Style::default()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::BOLD),
+                "  Key bindings  (F1 or any key to close)  ",
+                Style::default().fg(BAR_AGENT).add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
             .border_type(bt)
-            .border_style(Style::default().fg(Color::LightBlue))
-            .style(Style::default().bg(Color::Black));
+            .border_style(Style::default().fg(BORDER_FOCUS))
+            .style(Style::default().bg(BG_ELEVATED));
 
         let inner = block.inner(popup_area);
         block.render(popup_area, buf);
@@ -115,10 +112,8 @@ fn render_column(entries: &[(&str, &str, bool)], area: Rect, buf: &mut Buffer) {
         .map(|(key, desc, is_header)| {
             if *is_header {
                 Line::from(vec![Span::styled(
-                    format!("{key}"),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
+                    key.to_string(),
+                    Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
                 )])
             } else {
                 let key_str: String = key.chars().take(key_width).collect();
@@ -127,17 +122,15 @@ fn render_column(entries: &[(&str, &str, bool)], area: Rect, buf: &mut Buffer) {
                 Line::from(vec![
                     Span::styled(
                         format!(" {key_str:<kw$} ", kw = key_width),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(BAR_TOOL).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(desc_str, Style::default().fg(Color::White)),
+                    Span::styled(desc_str, Style::default().fg(TEXT)),
                 ])
             }
         })
         .collect();
 
     Paragraph::new(lines)
-        .style(Style::default().bg(Color::Black))
+        .style(Style::default().bg(BG_ELEVATED))
         .render(area, buf);
 }

@@ -316,7 +316,7 @@ impl App {
                                         if outside_labels {
                                             self.ui.confirm_modal = None;
                                         }
-                                        // All other clicks: toggle collapse.
+                                        // All other clicks: cycle expand level.
                                         let is_collapsible = match self.chat.segments.get(seg_idx) {
                                             Some(ChatSegment::Message(m)) => matches!(
                                                 (&m.role, &m.content),
@@ -335,10 +335,12 @@ impl App {
                                             _ => false,
                                         };
                                         if is_collapsible {
-                                            if self.chat.collapsed.contains(&seg_idx) {
-                                                self.chat.collapsed.remove(&seg_idx);
-                                            } else {
-                                                self.chat.collapsed.insert(seg_idx);
+                                            // Cycle: 0 → 1 → 2 → 0
+                                            if let Some(seg) = self.chat.segments.get(seg_idx) {
+                                                let cur =
+                                                    self.chat.effective_expand_level(seg_idx, seg);
+                                                let next = (cur + 1) % 3;
+                                                self.chat.expand_level.insert(seg_idx, next);
                                             }
                                             self.build_display_from_segments();
                                             self.ui.search.update_matches(&self.chat.lines);

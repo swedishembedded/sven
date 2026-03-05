@@ -7,13 +7,16 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
 use sven_config::AgentMode;
 
-use super::theme::{ctx_bar, ctx_style, mode_style, sep, spinner_char};
+use super::theme::{
+    ctx_bar, ctx_style, mode_style, sep, spinner_char, BAR_AGENT, BAR_THINKING, BAR_TOOL,
+    BG_ELEVATED, BORDER_DIM, SE_YELLOW, TEXT_DIM,
+};
 use crate::app::ui_state::FocusPane;
 
 // ── StatusBar widget ──────────────────────────────────────────────────────────
@@ -45,7 +48,13 @@ impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let separator = sep(self.ascii);
 
-        // ── Left section: busy indicator + model + mode + context ─────────────
+        // ── Brand mark ────────────────────────────────────────────────────────
+        let brand = Span::styled(
+            " ⬡ sven ",
+            Style::default().fg(SE_YELLOW).add_modifier(Modifier::BOLD),
+        );
+
+        // ── Busy / spinner ────────────────────────────────────────────────────
         let busy_indicator = if self.agent_busy {
             spinner_char(self.spinner_frame, self.ascii)
         } else {
@@ -55,98 +64,87 @@ impl Widget for StatusBar<'_> {
         let mode_str = self.mode.to_string();
         let ctx_bar_str = ctx_bar(self.context_pct, self.ascii);
 
-        let tool_icon = if self.ascii { "*" } else { "⚙" };
+        // Tool in progress — only shown when a tool is actually running.
+        let tool_sym = if self.ascii { "*" } else { "⚙" };
         let tool_span: Span<'static> = if let Some(t) = self.current_tool {
+            Span::styled(format!("  {tool_sym} {t}"), Style::default().fg(BAR_TOOL))
+        } else {
+            Span::raw("")
+        };
+
+        // Token counter — only shown while streaming non-tool output.
+        let streaming_span: Span<'static> =
+            if self.agent_busy && self.streaming_tokens > 0 && self.current_tool.is_none() {
+                Span::styled(
+                    format!("  {}t", self.streaming_tokens),
+                    Style::default().fg(TEXT_DIM),
+                )
+            } else {
+                Span::raw("")
+            };
+
+        // Cache hit rate — shown in green when >0.
+        let cache_span: Span<'static> = if self.cache_hit_pct > 0 && !self.agent_busy {
             Span::styled(
-                format!(" {tool_icon} {t} "),
-                Style::default().fg(Color::Yellow),
+                format!("  cache {}%", self.cache_hit_pct),
+                Style::default().fg(Color::Rgb(80, 180, 100)),
             )
         } else {
             Span::raw("")
         };
 
-        let streaming_span: Span<'static> = if self.agent_busy && self.streaming_tokens > 0 {
-            Span::styled(
-                format!(" {}↺ {}t", separator, self.streaming_tokens),
-                Style::default().fg(Color::DarkGray),
-            )
-        } else {
-            Span::raw("")
-        };
-
-        let cache_span: Span<'static> = if self.cache_hit_pct > 0 {
-            Span::styled(
-                format!(" {} cache:{}%", separator, self.cache_hit_pct),
-                Style::default().fg(Color::Green),
-            )
-        } else {
-            Span::raw("")
-        };
-
+        // Staged model/mode override notification.
         let pending_span: Span<'static> = match (self.pending_model, self.pending_mode) {
             (Some(m), Some(pm)) => Span::styled(
-                format!(" {} next: {m} [{pm}]", separator),
-                Style::default().fg(Color::Magenta),
+                format!("  next: {m} [{pm}]"),
+                Style::default().fg(Color::Rgb(180, 100, 220)),
             ),
             (Some(m), None) => Span::styled(
-                format!(" {} next: {m}", separator),
-                Style::default().fg(Color::Magenta),
+                format!("  next: {m}"),
+                Style::default().fg(Color::Rgb(180, 100, 220)),
             ),
             (None, Some(pm)) => Span::styled(
-                format!(" {} next: [{pm}]", separator),
-                Style::default().fg(Color::Magenta),
+                format!("  next: [{pm}]"),
+                Style::default().fg(Color::Rgb(180, 100, 220)),
             ),
             (None, None) => Span::raw(""),
         };
 
-        // ── Focus badge ───────────────────────────────────────────────────────
-        let (focus_label, focus_color) = match self.focus {
-            FocusPane::Chat => ("CHAT", Color::LightBlue),
-            FocusPane::Input => ("INPUT", Color::LightGreen),
-            FocusPane::Queue => ("QUEUE", Color::LightYellow),
-        };
-        let focus_span = Span::styled(
-            format!(" [{focus_label}] "),
-            Style::default().fg(focus_color),
-        );
-
-        // ── Context-sensitive hints ────────────────────────────────────────────
-        let hints: &str = if self.in_search {
-            "n/N:match  Esc:close search"
+        // ── Context-sensitive hint (right side) ───────────────────────────────
+        // Show only the most relevant hint for the current state.
+        let hint: &str = if self.in_search {
+            "n/N match · Esc close"
         } else if self.in_edit {
-            "Enter:confirm  Esc:cancel  Alt+Enter:newline"
+            "Enter confirm · Esc cancel"
         } else {
             match self.focus {
                 FocusPane::Input => {
                     if self.agent_busy {
-                        "^c:interrupt  Alt+Enter:newline  F1:help"
+                        "^c interrupt"
                     } else {
-                        "Enter:send  Alt+Enter:newline  /:cmd  ^↑↓:history  ^w k:chat  F1:help"
+                        "Enter send · / cmd · F1 help"
                     }
                 }
-                FocusPane::Chat => {
-                    "j/k:scroll  e:edit  x:remove  r:rerun  d:truncate  /:search  ^w j:input"
-                }
-                FocusPane::Queue => "↑↓:select  e:edit  d:del  Enter:send  Esc:close",
+                FocusPane::Chat => "j/k scroll · e edit · y copy · x del · / search",
+                FocusPane::Queue => "↑↓ select · Enter send · Esc close",
             }
         };
 
         let left_spans = vec![
+            brand,
+            Span::styled(separator, Style::default().fg(BORDER_DIM)),
             Span::styled(
                 format!(" {busy_indicator} "),
                 Style::default().fg(if self.agent_busy {
-                    Color::Yellow
+                    BAR_THINKING
                 } else {
-                    Color::DarkGray
+                    TEXT_DIM
                 }),
             ),
-            Span::styled(
-                format!("{} ", self.model_name),
-                Style::default().fg(Color::LightCyan),
-            ),
-            Span::styled(separator, Style::default().fg(Color::DarkGray)),
+            Span::styled(self.model_name.to_string(), Style::default().fg(BAR_AGENT)),
+            Span::styled(separator, Style::default().fg(BORDER_DIM)),
             Span::styled(format!(" {mode_str} "), mode_style(self.mode)),
-            Span::styled(separator, Style::default().fg(Color::DarkGray)),
+            Span::styled(separator, Style::default().fg(BORDER_DIM)),
             Span::styled(format!(" {ctx_bar_str} "), ctx_style(self.context_pct)),
             cache_span,
             tool_span,
@@ -154,23 +152,19 @@ impl Widget for StatusBar<'_> {
             pending_span,
         ];
 
-        let right_spans = vec![
-            Span::styled(format!("  {hints}  "), Style::default().fg(Color::White)),
-            focus_span,
-        ];
-
-        // Build both halves and fit them into `area.width`.
-        let left_line = Line::from(left_spans.clone());
-        let right_line = Line::from(right_spans.clone());
+        let right_spans = vec![Span::styled(
+            format!("  {hint}  "),
+            Style::default().fg(TEXT_DIM),
+        )];
 
         // Render left-aligned left section.
-        Paragraph::new(left_line)
-            .style(Style::default().bg(Color::Black))
+        Paragraph::new(Line::from(left_spans))
+            .style(Style::default().bg(BG_ELEVATED))
             .render(area, buf);
 
         // Render right-aligned right section on top.
-        Paragraph::new(right_line)
-            .style(Style::default().bg(Color::Black))
+        Paragraph::new(Line::from(right_spans))
+            .style(Style::default().bg(BG_ELEVATED))
             .alignment(Alignment::Right)
             .render(area, buf);
     }

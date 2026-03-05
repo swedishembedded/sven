@@ -20,7 +20,7 @@ use ratatui::{
 use crate::markdown::StyledLines;
 use crate::pager::{highlight_match_in_line, tint_match_line};
 
-use super::theme::open_pane_block;
+use super::theme::{open_pane_block, BG};
 
 // ── ChatLabels ────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ pub struct ChatLabels {
     pub edit_label_lines: HashSet<usize>,
     pub remove_label_lines: HashSet<usize>,
     pub rerun_label_lines: HashSet<usize>,
+    pub copy_label_lines: HashSet<usize>,
     pub pending_delete_line: Option<usize>,
 }
 
@@ -108,7 +109,7 @@ impl Widget for ChatPane<'_> {
             .collect();
 
         Paragraph::new(visible)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(BG))
             .render(
                 Rect::new(inner.x, inner.y, inner.width, content_height),
                 buf,
@@ -128,23 +129,30 @@ impl Widget for ChatPane<'_> {
         }
 
         // ── Action label overlays (no-nvim mode) ──────────────────────────────
-        if self.no_nvim && inner.width > 7 {
-            let (icon_rerun, icon_edit, icon_delete) = if self.ascii {
-                ("r", "e", "x")
+        // Labels: [y] copy  [r] rerun  [e] edit  [x] delete
+        if self.no_nvim && inner.width > 10 {
+            let (icon_rerun, icon_edit, icon_delete, icon_copy) = if self.ascii {
+                ("r", "e", "x", "y")
             } else {
-                ("↻", "✎", "✕")
+                ("↻", "✎", "✕", "y")
             };
 
-            let unavailable = Style::default().fg(Color::Rgb(50, 50, 50));
-            let edit_active = Style::default().fg(Color::White);
+            let unavailable = Style::default().fg(Color::Rgb(50, 50, 65));
+            let copy_style = Style::default().fg(Color::Rgb(100, 180, 220));
+            let edit_active = Style::default().fg(Color::Rgb(200, 200, 210));
             let rerun_active = Style::default()
-                .fg(Color::Green)
+                .fg(Color::Rgb(80, 180, 120))
                 .add_modifier(Modifier::DIM);
-            let delete_style = Style::default().fg(Color::Red).add_modifier(Modifier::DIM);
+            let delete_style = Style::default()
+                .fg(Color::Rgb(180, 70, 70))
+                .add_modifier(Modifier::DIM);
             let confirm_style = Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Rgb(220, 180, 60))
                 .add_modifier(Modifier::BOLD);
 
+            // Layout: ... [y] [r] [e] [x]  — 2 chars each + 1 separator
+            // Total: 9 chars from the right edge
+            let x_copy = inner.x + inner.width.saturating_sub(9);
             let x_rerun = inner.x + inner.width.saturating_sub(7);
             let x_edit = inner.x + inner.width.saturating_sub(5);
             let x_delete = inner.x + inner.width.saturating_sub(3);
@@ -160,8 +168,13 @@ impl Widget for ChatPane<'_> {
                 let y = inner.y + vis_row as u16;
 
                 if self.labels.pending_delete_line == Some(abs_line) {
-                    buf.set_string(x_rerun, y, "del?", confirm_style);
+                    buf.set_string(x_copy, y, "del?", confirm_style);
                 } else {
+                    let cs = if self.labels.copy_label_lines.contains(&abs_line) {
+                        copy_style
+                    } else {
+                        unavailable
+                    };
                     let rs = if self.labels.rerun_label_lines.contains(&abs_line) {
                         rerun_active
                     } else {
@@ -172,6 +185,8 @@ impl Widget for ChatPane<'_> {
                     } else {
                         unavailable
                     };
+                    buf.set_string(x_copy, y, icon_copy, cs);
+                    buf[(x_copy + 1, y)].set_symbol("");
                     buf.set_string(x_rerun, y, icon_rerun, rs);
                     buf[(x_rerun + 1, y)].set_symbol("");
                     buf.set_string(x_edit, y, icon_edit, es);

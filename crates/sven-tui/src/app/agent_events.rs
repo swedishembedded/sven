@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Agent event and question-request handlers.
 
+use std::time::Instant;
+
 use sven_core::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::QuestionRequest;
@@ -61,6 +63,10 @@ impl App {
             AgentEvent::ToolCallStarted(tc) => {
                 self.chat.tool_args.insert(tc.id.clone(), tc.name.clone());
                 self.agent.current_tool = Some(tc.name.clone());
+                // Record start time for elapsed-time display.
+                self.agent
+                    .tool_start_times
+                    .insert(tc.id.clone(), Instant::now());
                 let seg_idx = self.chat.segments.len();
                 self.chat.segments.push(ChatSegment::Message(Message {
                     role: Role::Assistant,
@@ -73,7 +79,9 @@ impl App {
                     },
                 }));
                 if self.nvim.disabled {
-                    self.chat.collapsed.insert(seg_idx);
+                    // Default expand level for tool calls is 0 (summary).
+                    // The HashMap default is used so no explicit insert needed.
+                    let _ = seg_idx;
                 }
                 self.save_history_async();
                 self.rerender_chat().await;
@@ -84,18 +92,30 @@ impl App {
                 }
             }
             AgentEvent::ToolCallFinished {
-                call_id, output, ..
+                call_id,
+                output,
+                is_error,
+                ..
             } => {
                 self.agent.current_tool = None;
+                // Compute elapsed time from the recorded start.
+                if let Some(start) = self.agent.tool_start_times.remove(&call_id) {
+                    let elapsed = start.elapsed().as_secs_f32();
+                    self.chat.tool_durations.insert(call_id.clone(), elapsed);
+                }
                 let seg_idx = self.chat.segments.len();
+                let output_with_error = if is_error {
+                    format!("error: {output}")
+                } else {
+                    output
+                };
                 self.chat
                     .segments
                     .push(ChatSegment::Message(Message::tool_result(
-                        &call_id, &output,
+                        &call_id,
+                        &output_with_error,
                     )));
-                if self.nvim.disabled {
-                    self.chat.collapsed.insert(seg_idx);
-                }
+                let _ = seg_idx;
                 // Signal the run-loop to check and restore terminal state.
                 self.needs_terminal_recover = true;
                 self.save_history_async();
@@ -148,6 +168,7 @@ impl App {
                 self.agent.current_tool = None;
                 self.agent.streaming_tokens = 0;
                 self.agent.spinner_frame = 0;
+                self.agent.tool_start_times.clear();
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
                     if let Err(e) = bridge.set_modifiable(true).await {
@@ -190,6 +211,7 @@ impl App {
                 self.agent.current_tool = None;
                 self.agent.streaming_tokens = 0;
                 self.agent.spinner_frame = 0;
+                self.agent.tool_start_times.clear();
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
                     let _ = bridge.set_modifiable(true).await;
@@ -254,6 +276,7 @@ impl App {
             }
             AgentEvent::ThinkingDelta(delta) => {
                 self.chat.streaming_is_thinking = true;
+                self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -261,11 +284,8 @@ impl App {
             AgentEvent::ThinkingComplete(content) => {
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
-                let seg_idx = self.chat.segments.len();
                 self.chat.segments.push(ChatSegment::Thinking { content });
-                if self.nvim.disabled {
-                    self.chat.collapsed.insert(seg_idx);
-                }
+                // Default expand level is 0 (summary) — no explicit insert needed.
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
