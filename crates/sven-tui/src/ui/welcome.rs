@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    widgets::{Clear, Paragraph, Widget},
 };
 
 use super::theme::{BAR_AGENT, BAR_TOOL, BORDER_DIM, SEPARATOR, SE_BLUE, TEXT, TEXT_DIM};
@@ -54,6 +54,11 @@ impl Widget for WelcomeScreen<'_> {
         if area.width < 30 || area.height < 8 {
             return;
         }
+
+        // Clear the entire pane area so that stale ChatPane border lines
+        // (top "Chat ────" / bottom "────") never bleed through after a /clear
+        // or on the very first draw when the alternate screen has residual content.
+        Clear.render(area, buf);
 
         // Build all lines to center vertically.
         let mut lines: Vec<Line<'static>> = Vec::new();
