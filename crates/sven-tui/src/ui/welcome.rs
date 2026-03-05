@@ -11,13 +11,11 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use super::theme::{
-    BAR_AGENT, BAR_TOOL, BORDER_DIM, BORDER_FOCUS, SEPARATOR, SE_BLUE, TEXT, TEXT_DIM,
-};
+use super::theme::{BAR_AGENT, BAR_TOOL, BORDER_DIM, SEPARATOR, SE_BLUE, TEXT, TEXT_DIM};
 
-/// Outer chip body — lighter blue so it reads as a distinct "shell" around the
-/// darker inner squares, giving the logo depth without the yellow/blue clash.
-const LOGO_OUTER: ratatui::style::Color = BORDER_FOCUS;
+/// Outer chip body — a noticeably lighter blue than SE_BLUE inner squares,
+/// giving the logo clear two-tone depth: light shell → dark core.
+const LOGO_OUTER: ratatui::style::Color = ratatui::style::Color::Rgb(110, 160, 240);
 
 /// Welcome screen rendered when chat is empty and agent is idle.
 pub struct WelcomeScreen<'a> {
@@ -30,20 +28,25 @@ pub struct WelcomeScreen<'a> {
 }
 
 /// Compact chip logo lines styled with SE colors.
-/// Each entry is (text, yellow_columns_bitmap) where columns with a 1-bit
-/// are rendered in SE_YELLOW, columns with 0 in SE_BLUE or border color.
+///
+/// Every row is exactly 24 columns wide.  The 6 non-pin rows have a single
+/// trailing space to match the pin rows (which have `─` extending one column
+/// beyond the chip body on each side).  Equal widths ensure that
+/// `Alignment::Center` positions every row at the same horizontal offset,
+/// regardless of terminal width parity.
 const LOGO: &[(&str, &str)] = &[
-    ("    ╷    ╷    ╷    ╷   ", "border"),
-    (" ╔══╧════╧════╧════╧══╗", "yellow"),
-    (" ║  ╔════╗  ╔════╗    ║", "yellow_blue"),
-    ("─╢  ║    ║  ║    ║    ╟─", "pin_yellow_blue"),
-    ("─╢  ╚════╝  ╚════╝    ╟─", "pin_yellow_blue"),
-    ("─╢                    ╟─", "pin_yellow"),
-    ("─╢  ╔════╗  ╔════╗    ╟─", "pin_yellow_blue"),
-    ("─╢  ║    ║  ║    ║    ╟─", "pin_yellow_blue"),
-    (" ║  ╚════╝  ╚════╝    ║", "yellow_blue"),
-    (" ╚══╤════╤════╤════╤══╝", "yellow"),
-    ("    ╵    ╵    ╵    ╵   ", "border"),
+    //                         ←24 chars→
+    ("    ╷    ╷    ╷    ╷    ", "border"), // trailing space
+    (" ╔══╧════╧════╧════╧══╗ ", "outer"),  // trailing space
+    (" ║   ╔════╗  ╔════╗   ║ ", "outer_inner"), // trailing space
+    ("─╢   ║    ║  ║    ║   ╟─", "pin_outer_inner"),
+    ("─╢   ╚════╝  ╚════╝   ╟─", "pin_outer_inner"),
+    ("─╢                    ╟─", "pin_outer"),
+    ("─╢   ╔════╗  ╔════╗   ╟─", "pin_outer_inner"),
+    ("─╢   ║    ║  ║    ║   ╟─", "pin_outer_inner"),
+    (" ║   ╚════╝  ╚════╝   ║ ", "outer_inner"), // trailing space
+    (" ╚══╤════╤════╤════╤══╝ ", "outer"),       // trailing space
+    ("    ╵    ╵    ╵    ╵    ", "border"),      // trailing space
 ];
 
 impl Widget for WelcomeScreen<'_> {
@@ -62,13 +65,13 @@ impl Widget for WelcomeScreen<'_> {
                     text.to_string(),
                     Style::default().fg(BORDER_DIM),
                 )]),
-                "yellow" => Line::from(vec![Span::styled(
+                "outer" => Line::from(vec![Span::styled(
                     text.to_string(),
                     Style::default().fg(LOGO_OUTER),
                 )]),
-                "yellow_blue" => render_yellow_blue_line(text),
-                "pin_yellow" => render_pin_yellow_line(text),
-                "pin_yellow_blue" => render_pin_yellow_blue_line(text),
+                "outer_inner" => render_outer_inner_line(text),
+                "pin_outer" => render_pin_outer_line(text),
+                "pin_outer_inner" => render_pin_outer_inner_line(text),
                 _ => Line::from(text.to_string()),
             };
             lines.push(line);
@@ -134,8 +137,9 @@ impl Widget for WelcomeScreen<'_> {
 
 // ── Logo rendering helpers ────────────────────────────────────────────────────
 
-fn render_yellow_blue_line(text: &str) -> Line<'static> {
-    // Outer body in LOGO_OUTER (light blue), inner squares in SE_BLUE (dark blue).
+/// Non-pin row that contains inner boxes: outer body chars → LOGO_OUTER,
+/// inner box chars (╔═╗╚╝ and content) → SE_BLUE.
+fn render_outer_inner_line(text: &str) -> Line<'static> {
     let mut spans = Vec::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
@@ -159,13 +163,14 @@ fn render_yellow_blue_line(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 
-fn render_pin_yellow_line(text: &str) -> Line<'static> {
-    // Pin chars (─╢╟) are dim, body (║ and spaces) is LOGO_OUTER (light blue).
+/// Pin row with no inner boxes: pin wire (─) → dim, connector (╢╟) and
+/// chip body → LOGO_OUTER.
+fn render_pin_outer_line(text: &str) -> Line<'static> {
     let spans: Vec<Span<'static>> = text
         .chars()
         .map(|ch| {
             let color = match ch {
-                '─' | '╢' | '╟' => BORDER_DIM,
+                '─' => BORDER_DIM,
                 _ => LOGO_OUTER,
             };
             Span::styled(ch.to_string(), Style::default().fg(color))
@@ -174,8 +179,9 @@ fn render_pin_yellow_line(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 
-fn render_pin_yellow_blue_line(text: &str) -> Line<'static> {
-    // Pins (─╢╟) are dim; inside inner boxes is SE_BLUE; outer body is LOGO_OUTER.
+/// Pin row that also contains inner boxes: pin wire (─) → dim, inner box
+/// chars → SE_BLUE, everything else (outer body + connectors) → LOGO_OUTER.
+fn render_pin_outer_inner_line(text: &str) -> Line<'static> {
     let chars: Vec<char> = text.chars().collect();
     let mut spans = Vec::new();
     let mut in_inner = false;
@@ -186,7 +192,7 @@ fn render_pin_yellow_blue_line(text: &str) -> Line<'static> {
             in_inner = true;
         }
         let color = match ch {
-            '─' | '╢' | '╟' => BORDER_DIM,
+            '─' => BORDER_DIM,
             c if in_inner && c != '╗' && c != '╝' => SE_BLUE,
             _ => LOGO_OUTER,
         };
