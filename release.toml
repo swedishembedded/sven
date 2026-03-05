@@ -10,7 +10,12 @@
 #   5. git push + git push --tags
 #   → The pushed tag triggers .github/workflows/release.yml
 
-push         = true
+# push is disabled here so cargo-release does not use libgit2/gix for the push.
+# Those libraries have their own SSH stack that bypasses ssh-agent and prompt
+# for the passphrase even when the key is already loaded.  The Makefile targets
+# run "git push" explicitly after cargo-release completes, which uses the system
+# git binary and correctly honours the running ssh-agent.
+push         = false
 publish      = false          # sven is a binary tool, not a crates.io library
 sign-tag     = false
 sign-commit  = false
