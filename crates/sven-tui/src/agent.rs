@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Background agent task and request/event channel types.
 
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
@@ -77,11 +76,9 @@ pub async fn agent_task(
         };
 
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
-    let task_depth = Arc::new(AtomicUsize::new(0));
     let profile = ToolSetProfile::Full {
         question_tx: Some(question_tx),
         todos,
-        task_depth,
     };
 
     // Build a RuntimeContext that uses the caller-provided SharedSkills and

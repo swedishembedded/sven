@@ -195,6 +195,7 @@ impl App {
             AgentEvent::TurnComplete => {
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                self.chat.tool_streaming_content.clear();
                 // Preserve the final context size from this turn before reset.
                 // total_context_tokens tracks the current context window size
                 // (NOT a running sum), so use = not +=.
@@ -294,10 +295,29 @@ impl App {
                     }
                 }
             }
-            AgentEvent::ToolProgress { message, .. } => {
-                // Update the spinner label so the user can see what the tool
-                // is doing without adding a chat segment.
-                self.agent.current_tool = Some(message);
+            AgentEvent::ToolProgress { call_id, message } => {
+                // Messages prefixed "[stream_buf:<handle>]\n" carry live sub-agent
+                // output.  Store the content for the expanded view; update the
+                // spinner label with a short status summary.
+                const STREAM_PREFIX: &str = "[stream_buf:";
+                if message.starts_with(STREAM_PREFIX) {
+                    if let Some(rest) = message.strip_prefix(STREAM_PREFIX) {
+                        // Format: "[stream_buf:<handle>]\nlines:<n>\n<tail>"
+                        let bracket = rest.find(']').unwrap_or(rest.len());
+                        let handle = &rest[..bracket];
+                        let after_bracket = rest.get(bracket + 2..).unwrap_or(""); // skip "]\n"
+                        self.chat
+                            .tool_streaming_content
+                            .insert(call_id.clone(), after_bracket.to_string());
+                        // Status line (first line) for spinner label.
+                        let status_line = after_bracket.lines().next().unwrap_or("running");
+                        self.agent.current_tool =
+                            Some(format!("task [{}] {}", handle, status_line));
+                    }
+                } else {
+                    // Regular progress message — just update the spinner label.
+                    self.agent.current_tool = Some(message);
+                }
                 self.rerender_chat().await;
             }
             AgentEvent::Error(msg) => {

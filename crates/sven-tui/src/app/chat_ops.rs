@@ -64,6 +64,7 @@ impl App {
 
         let tool_durations = self.chat.tool_durations.clone();
         let tool_start_times = self.agent.tool_start_times.clone();
+        let tool_streaming_content = self.chat.tool_streaming_content.clone();
         let anim_frame = self.agent.anim_frame;
         let segs_len = self.chat.segments.len();
 
@@ -101,6 +102,11 @@ impl App {
                 grouped_result_indices.insert(result_idx);
             }
 
+            // Extract streaming content for in-progress sub-agent tool calls.
+            let streaming_preview = extract_call_id(seg)
+                .and_then(|id| tool_streaming_content.get(id))
+                .cloned();
+
             let s = if let Some(result_idx) = paired_result_idx {
                 // Both the tool call (i) and result (result_idx) are tier-0:
                 // render as a single grouped line.
@@ -112,9 +118,20 @@ impl App {
                     || collapsed_preview(seg, &self.chat.tool_args, &tool_durations),
                 )
             } else if expand == 1 {
-                partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
+                // Tier-1: show either live streaming content (for running sub-agents)
+                // or the standard partial content view.
+                if let Some(ref content) = streaming_preview {
+                    format_streaming_preview(seg, &self.chat.tool_args, content, PARTIAL_VIEW_LINES)
+                } else {
+                    partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
+                }
             } else {
-                segment_to_markdown(seg, &self.chat.tool_args)
+                // Tier-2: full content or full streaming output.
+                if let Some(ref content) = streaming_preview {
+                    format_streaming_preview(seg, &self.chat.tool_args, content, usize::MAX)
+                } else {
+                    segment_to_markdown(seg, &self.chat.tool_args)
+                }
             };
 
             let lines = render_markdown(&s, render_width, ascii);
@@ -712,4 +729,72 @@ fn first_words(text: &str, n: usize) -> String {
         .take(n)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Extract the tool-call ID from a segment, if it is an in-progress tool call.
+fn extract_call_id(seg: &ChatSegment) -> Option<&str> {
+    use crate::chat::segment::ChatSegment;
+    use sven_model::{MessageContent, Role};
+    match seg {
+        ChatSegment::Message(m) if m.role == Role::Assistant => {
+            if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
+                Some(tool_call_id.as_str())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Render the tool call args header followed by the streaming output content.
+///
+/// `max_lines` limits how many lines of streaming content to show (for tier-1
+/// partial view).  Pass `usize::MAX` for the full view.
+fn format_streaming_preview(
+    seg: &ChatSegment,
+    tool_args: &std::collections::HashMap<String, String>,
+    content: &str,
+    max_lines: usize,
+) -> String {
+    // Start with the standard segment header (tool name + args).
+    let header = segment_to_markdown(seg, tool_args);
+
+    // Parse "lines:<n>" status line from content if present.
+    let (status_line, output_start) = if let Some(first_line) = content.lines().next() {
+        if first_line.starts_with("lines:") {
+            (first_line, content.lines().skip(1).collect::<Vec<_>>())
+        } else {
+            ("", content.lines().collect::<Vec<_>>())
+        }
+    } else {
+        ("", vec![])
+    };
+
+    let status_suffix = if !status_line.is_empty() {
+        format!(" — {}", status_line)
+    } else {
+        String::new()
+    };
+
+    let tail_lines: Vec<&str> = if max_lines == usize::MAX {
+        output_start.clone()
+    } else {
+        let start = output_start.len().saturating_sub(max_lines);
+        output_start[start..].to_vec()
+    };
+
+    if tail_lines.is_empty() {
+        format!(
+            "{}\n\n**▶ Streaming output{}** *(no output yet)*",
+            header, status_suffix
+        )
+    } else {
+        format!(
+            "{}\n\n**▶ Streaming output{}**\n```\n{}\n```",
+            header,
+            status_suffix,
+            tail_lines.join("\n")
+        )
+    }
 }

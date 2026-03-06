@@ -25,3 +25,6 @@ pub use context_query::{
 };
 pub use registry::{build_cli_tool_registry, build_tool_registry};
 pub use task_tool::TaskTool;
+
+// Re-export OutputBufferStore so frontends can access it via sven-bootstrap.
+pub use sven_tools::OutputBufferStore;

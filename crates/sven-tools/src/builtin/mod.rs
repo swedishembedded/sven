@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 
 // SPDX-License-Identifier: Apache-2.0
+pub mod buffer;
 pub mod context;
 pub mod file;
 pub mod gdb;
@@ -16,6 +17,8 @@ pub mod web;
 pub mod read_image;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
+//
+// buf_read → FileContent, buf_grep → MatchList, buf_status → Generic (default)
 
 // Each builtin tool that overrides `output_category()` is verified here so
 // that renames or copy-paste errors are caught at compile time with a clear
@@ -136,6 +139,29 @@ mod output_category_tests {
     #[test]
     fn find_file_tool_is_generic() {
         let t = super::file::find_file::FindFileTool;
+        assert_eq!(t.output_category(), OutputCategory::Generic);
+    }
+
+    // ── Buffer tools ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn buf_read_is_filecontent() {
+        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
+        let t = super::buffer::read::BufReadTool::new(store);
+        assert_eq!(t.output_category(), OutputCategory::FileContent);
+    }
+
+    #[test]
+    fn buf_grep_is_matchlist() {
+        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
+        let t = super::buffer::grep::BufGrepTool::new(store);
+        assert_eq!(t.output_category(), OutputCategory::MatchList);
+    }
+
+    #[test]
+    fn buf_status_is_generic() {
+        let store = Arc::new(Mutex::new(super::buffer::store::OutputBufferStore::new()));
+        let t = super::buffer::status::BufStatusTool::new(store);
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 

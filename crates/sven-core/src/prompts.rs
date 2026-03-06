@@ -156,6 +156,23 @@ mod guidelines {
          - After significant structural changes to a subsystem, update the `.sven/knowledge/` doc's `updated:` date and relevant sections."
     }
 
+    pub fn task_delegation() -> &'static str {
+        "- Use the `task` tool to spawn focused sub-agents for isolated, well-defined sub-tasks \
+         that benefit from a fresh context window.\n\
+         - Good candidates for `task`: exploring a large unfamiliar codebase area; running a \
+         multi-step investigation (find + read + analyse); implementing a self-contained feature; \
+         running tests and analysing failures.\n\
+         - You can spawn multiple sub-agents in parallel by calling `task` multiple times in the \
+         same turn.  Each sub-agent runs independently in its own process.\n\
+         - `task` returns a buffer handle immediately (e.g. `buf_0001`).  Use `buf_status` to \
+         poll completion, `buf_grep` to search the output, and `buf_read` to inspect specific \
+         line ranges.  You do NOT need to read the entire output — grep for what you need.\n\
+         - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool \
+         calls.  Sub-agents add process-spawn overhead and are overkill for small work.\n\
+         - Sub-agents have access to all standard tools but cannot spawn further sub-agents \
+         (depth limit of 3 is enforced automatically)."
+    }
+
     pub fn error_handling() -> &'static str {
         "- When a tool fails, try a different approach.\n\
          - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
@@ -472,6 +489,8 @@ fn build_guidelines_section() -> String {
          {}\n\n\
          ### Workflow Efficiency\n\
          {}\n\n\
+         ### Task Delegation (Sub-agents)\n\
+         {}\n\n\
          ### Error Handling\n\
          {}\n\n\
          ### Debugging\n\
@@ -481,6 +500,7 @@ fn build_guidelines_section() -> String {
         guidelines::large_content(),
         guidelines::code_quality(),
         guidelines::workflow_efficiency(),
+        guidelines::task_delegation(),
         guidelines::error_handling(),
         guidelines::debugging()
     )

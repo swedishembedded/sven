@@ -10,7 +10,6 @@
 //! shared state needed by stateful tools (todos, mode lock, GDB state).
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
@@ -120,7 +119,6 @@ pub enum ToolSetProfile {
     Full {
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
-        task_depth: Arc<AtomicUsize>,
     },
 
     /// Sub-agent tool set (Full minus TaskTool to prevent unbounded nesting).

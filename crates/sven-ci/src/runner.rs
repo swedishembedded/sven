@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -513,12 +512,10 @@ impl CiRunner {
         // AgentBuilder::build() so that SwitchModeTool and the agent loop
         // share the same instances.  Only caller-owned state lives here.
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-        let task_depth = Arc::new(AtomicUsize::new(0));
 
         let profile = ToolSetProfile::Full {
             question_tx: None,
             todos,
-            task_depth,
         };
 
         let mut agent = AgentBuilder::new(self.config.clone())

@@ -48,6 +48,10 @@ pub(crate) struct ChatState {
     pub tool_args: HashMap<String, String>,
     /// `call_id → elapsed_secs` for completed tool calls.
     pub tool_durations: HashMap<String, f32>,
+    /// `call_id → streaming preview` for in-progress tool calls that send
+    /// incremental output via `ToolEvent::Progress`.  Used by the expanded
+    /// (tier 1/2) view to show live output from sub-agent processes.
+    pub tool_streaming_content: HashMap<String, String>,
 
     // ── Mouse text selection ──────────────────────────────────────────────────
     /// Drag-selection anchor: `(abs_line, col_from_inner_x)` set on mouse-down.
@@ -76,6 +80,7 @@ impl ChatState {
             focused_segment: None,
             tool_args: HashMap::new(),
             tool_durations: HashMap::new(),
+            tool_streaming_content: HashMap::new(),
             selection_anchor: None,
             selection_end: None,
             is_selecting: false,

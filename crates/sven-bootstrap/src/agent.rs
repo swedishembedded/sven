@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, AgentRuntimeContext};
 use sven_model::ModelProvider;
-use sven_tools::events::ToolEvent;
+use sven_tools::{events::ToolEvent, OutputBufferStore};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
@@ -30,6 +30,10 @@ use crate::registry::build_tool_registry;
 pub struct AgentBuilder {
     config: Arc<Config>,
     runtime_ctx: RuntimeContext,
+    /// Shared buffer store for streaming subagent output.  Created by the
+    /// builder and exposed via [`AgentBuilder::buffer_store`] so that callers
+    /// (e.g. the TUI) can hold a reference for live rendering.
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 }
 
 impl AgentBuilder {
@@ -39,6 +43,7 @@ impl AgentBuilder {
         Self {
             config,
             runtime_ctx: RuntimeContext::empty(),
+            buffer_store: Arc::new(Mutex::new(OutputBufferStore::new())),
         }
     }
 
@@ -46,6 +51,14 @@ impl AgentBuilder {
     pub fn with_runtime_context(mut self, ctx: RuntimeContext) -> Self {
         self.runtime_ctx = ctx;
         self
+    }
+
+    /// Return a clone of the shared [`OutputBufferStore`] handle.
+    ///
+    /// Call this **after** `build()` to get a reference that can be polled by
+    /// the TUI for live streaming display.
+    pub fn buffer_store(&self) -> Arc<Mutex<OutputBufferStore>> {
+        Arc::clone(&self.buffer_store)
     }
 
     /// Build the [`Agent`] with the given mode, model, and tool-set profile.
@@ -101,6 +114,7 @@ impl AgentBuilder {
             mode_lock.clone(),
             tool_event_tx,
             runtime.clone(),
+            Arc::clone(&self.buffer_store),
         );
 
         // Resolve context window: prefer live probe (actual n_ctx loaded by the

@@ -16,12 +16,13 @@ use sven_model::ModelProvider;
 use sven_runtime::Shared;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore,
-    DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool, GdbConnectTool, GdbInterruptTool,
-    GdbSessionState, GdbStartServerTool, GdbStatusTool, GdbStopTool, GdbWaitStoppedTool, GrepTool,
-    ListDirTool, ListKnowledgeTool, LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool,
-    RunTerminalCommandTool, SearchCodebaseTool, SearchKnowledgeTool, ShellTool, SwitchModeTool,
-    TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
+    AskQuestionTool, BufGrepTool, BufReadTool, BufStatusTool, ContextGrepTool, ContextOpenTool,
+    ContextReadTool, ContextStore, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool,
+    GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
+    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool,
+    OutputBufferStore, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
+    SearchCodebaseTool, SearchKnowledgeTool, ShellTool, SwitchModeTool, TodoWriteTool,
+    ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -47,6 +48,10 @@ use crate::task_tool::TaskTool;
 /// * `sub_agent_runtime` — inherited by `TaskTool` sub-agents (project root,
 ///   CI/git notes, AGENTS.md).  Only used for the `Full` profile; pass
 ///   `AgentRuntimeContext::default()` otherwise.
+/// * `buffer_store` — shared [`OutputBufferStore`] for `task`, `buf_read`,
+///   `buf_grep`, `buf_status`.  Create once per session with
+///   `Arc::new(Mutex::new(OutputBufferStore::new()))` and pass the same
+///   instance to both this function and any code that needs to inspect buffers.
 pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
@@ -54,13 +59,10 @@ pub fn build_tool_registry(
     mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     sub_agent_runtime: AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> ToolRegistry {
     match profile {
-        ToolSetProfile::Full {
-            question_tx,
-            todos,
-            task_depth,
-        } => {
+        ToolSetProfile::Full { question_tx, todos } => {
             let mut reg = ToolRegistry::new();
 
             reg.register(ReadFileTool);
@@ -95,11 +97,14 @@ pub fn build_tool_registry(
                 timeout_secs: cfg.tools.timeout_secs,
             });
             reg.register(TaskTool::new(
-                model.clone(),
-                Arc::new(cfg.clone()),
-                task_depth,
-                sub_agent_runtime.clone(),
+                Arc::clone(&buffer_store),
+                tool_event_tx.clone(),
+                Some(cfg.model.name.clone()),
             ));
+            // Buffer access tools — same store as TaskTool writes into.
+            reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
+            reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
+            reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
             reg.register(ListKnowledgeTool {
                 knowledge: sub_agent_runtime.knowledge.clone(),
@@ -170,7 +175,11 @@ pub fn build_tool_registry(
             reg.register(ShellTool {
                 timeout_secs: cfg.tools.timeout_secs,
             });
-            // TaskTool intentionally omitted to limit sub-agent nesting
+            // TaskTool intentionally omitted to limit sub-agent nesting.
+            // Buffer tools included so subagents can read parent-created buffers.
+            reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
+            reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
+            reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
             reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
             reg.register(ListKnowledgeTool {
                 knowledge: sub_agent_runtime.knowledge.clone(),

@@ -59,5 +59,10 @@ pub use builtin::context::{
     ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
 };
 
+// Streaming output buffer tools
+pub use builtin::buffer::{
+    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
+};
+
 // Image tool (still at root level)
 pub use builtin::read_image::ReadImageTool;
