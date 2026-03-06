@@ -104,22 +104,17 @@ impl Widget for StatusBar<'_> {
                 } else {
                     String::new()
                 };
-            let label = if out_str.is_empty() {
-                format!("  in: {in_str}")
+            let cache_str = if self.cache_hit_pct > 0 {
+                format!(" cache hit: {}%", self.cache_hit_pct)
             } else {
-                format!("  in: {in_str} out: {out_str}")
+                String::new()
+            };
+            let label = if out_str.is_empty() {
+                format!("  in: {in_str}{cache_str}")
+            } else {
+                format!("  in: {in_str} out: {out_str}{cache_str}")
             };
             Span::styled(label, Style::default().fg(TEXT_DIM))
-        } else {
-            Span::raw("")
-        };
-
-        // Cache hit rate — shown in green when >0.
-        let cache_span: Span<'static> = if self.cache_hit_pct > 0 && !self.agent_busy {
-            Span::styled(
-                format!("  cache hit {}%", self.cache_hit_pct),
-                Style::default().fg(Color::Rgb(80, 180, 100)),
-            )
         } else {
             Span::raw("")
         };
@@ -180,7 +175,6 @@ impl Widget for StatusBar<'_> {
             Span::styled(format!("{ctx_bar_str}"), ctx_style(self.context_pct)),
             Span::styled(ctx_pct_str, ctx_style(self.context_pct)),
             token_span,
-            cache_span,
             tool_span,
             pending_span,
         ];
