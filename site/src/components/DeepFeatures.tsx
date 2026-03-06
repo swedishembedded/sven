@@ -23,7 +23,7 @@ export function TUIFeature() {
         { text: 'Skills system: domain-specific instruction files loaded on demand' },
         { text: 'Persistent memory: durable facts carried across sessions via update_memory' },
       ]}
-      imageSrc="/placeholder-tui.svg"
+      imageSrc="/sven-tui.svg"
       imageAlt="Sven TUI interactive session showing chip logo, conversation, and tool calls"
       imageWidth={800}
       imageHeight={500}
@@ -57,7 +57,7 @@ export function GDBFeature() {
         { text: 'Hardware-in-the-loop testing: Sven can run a test suite against real hardware' },
         { text: 'Understands Zephyr, FreeRTOS, and bare-metal firmware equally well' },
       ]}
-      imageSrc="/placeholder-gdb.svg"
+      imageSrc="/sven-gdb.svg"
       imageAlt="Sven GDB embedded debugging session with hardware breakpoints and memory inspection"
       imageWidth={800}
       imageHeight={500}
@@ -88,7 +88,7 @@ export function P2PFeature() {
         { text: 'WebAuthn passkeys: secure device authorization for the web terminal' },
         { text: 'mTLS transport: every peer connection is mutually authenticated and encrypted' },
       ]}
-      imageSrc="/placeholder-p2p.svg"
+      imageSrc="/sven-p2p.svg"
       imageAlt="Diagram of multiple Sven agent nodes connected in a P2P network"
       imageWidth={800}
       imageHeight={500}
@@ -130,7 +130,7 @@ export function CIFeature() {
         { text: 'GitHub Actions integration: official composite action for one-line CI setup' },
         { text: 'Headless mode: --headless "task" writes to stdout and exits — no TTY needed' },
       ]}
-      imageSrc="/placeholder-ci.svg"
+      imageSrc="/sven-ci.svg"
       imageAlt="Sven workflow file running in a CI pipeline with step-by-step output"
       imageWidth={800}
       imageHeight={500}

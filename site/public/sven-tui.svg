@@ -1,0 +1,127 @@
+<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<rect width="800" height="500" fill="#0f1117"/>
+<rect x="0" y="0" width="800" height="22" fill="#0b1c12"/>
+<rect x="0" y="22" width="800" height="1" fill="#1a3020"/>
+<circle cx="10" cy="11" r="6" fill="#f0c040"/>
+<text x="20" y="15" font-family="monospace" font-size="11" fill="#2dd4bf" font-weight="bold">sven</text>
+<text x="50" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="58" y="15" font-family="monospace" font-size="11" fill="#e8a030">openrouter/deepseek/deepseek-r1</text>
+<text x="266" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="274" y="15" font-family="monospace" font-size="11" fill="#4ade80">agent</text>
+<text x="311" y="15" font-family="monospace" font-size="11" fill="#445566">| ctx [</text>
+<text x="357" y="15" font-family="monospace" font-size="11" fill="#2dd4bf"></text>
+<text x="357" y="15" font-family="monospace" font-size="11" fill="#445566">--------------------------------------------------------------------------------</text>
+<text x="837" y="15" font-family="monospace" font-size="11" fill="#445566">] 0%</text>
+<text x="630" y="15" font-family="monospace" font-size="11" fill="#334455">Enter:send  /cmd  F1:help  F4:mode</text>
+<rect x="241" y="42" width="318" height="97" rx="4" fill="#181830" opacity="0.7"/>
+<rect x="262" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="273" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="284" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="295" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="251" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="251" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="262" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="273" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="284" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="295" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="295" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="251" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="262" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="273" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="284" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="320" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="364" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="320" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="364" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="320" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="364" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="331" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="353" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="331" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="353" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="342" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="342" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="389" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="400" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="411" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="422" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="433" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="389" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="389" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="389" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="400" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="411" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="422" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="389" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="389" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="389" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="400" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="411" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="422" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="433" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="458" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="502" y="52" width="10" height="10" fill="#2dd4bf"/>
+<rect x="458" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="469" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="502" y="63" width="10" height="10" fill="#2dd4bf"/>
+<rect x="458" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="480" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="502" y="74" width="10" height="10" fill="#2dd4bf"/>
+<rect x="458" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="491" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="502" y="85" width="10" height="10" fill="#2dd4bf"/>
+<rect x="458" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="502" y="96" width="10" height="10" fill="#2dd4bf"/>
+<rect x="458" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="502" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="458" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="502" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="527" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="538" y="107" width="10" height="10" fill="#d4a843"/>
+<rect x="527" y="118" width="10" height="10" fill="#f0c040"/>
+<rect x="538" y="118" width="10" height="10" fill="#f0c040"/>
+<text x="400" y="151" text-anchor="middle" font-family="monospace" font-size="10" fill="#445566">github.com/swedishembedded/sven</text>
+<text x="400" y="166" text-anchor="middle" font-family="monospace" font-size="10" fill="#e8a030">openrouter/deepseek/deepseek-r1</text>
+<text x="556" y="166" font-family="monospace" font-size="10" fill="#4ade80">  agent</text>
+<line x1="20" y1="220" x2="780" y2="220" stroke="#1a1a2c" stroke-width="1"/>
+<rect x="20" y="228" width="360" height="190" rx="4" fill="#0f1117" stroke="#0891b2" stroke-width="1"/>
+<text x="28" y="242" font-family="monospace" font-size="10" fill="#0891b2">Commands</text>
+<line x1="20" y1="246" x2="380" y2="246" stroke="#0891b2" stroke-width="0.5"/>
+<rect x="21" y="249" width="358" height="16" rx="2" fill="#0d9488"/>
+<text x="28" y="261" font-family="monospace" font-size="10" fill="#ffffff">/abort</text>
+<text x="28" y="278" font-family="monospace" font-size="10" fill="#9aa5b8">/clear</text>
+<text x="28" y="294" font-family="monospace" font-size="10" fill="#9aa5b8">/mode</text>
+<text x="28" y="310" font-family="monospace" font-size="10" fill="#9aa5b8">/model</text>
+<text x="28" y="326" font-family="monospace" font-size="10" fill="#9aa5b8">/new</text>
+<text x="28" y="342" font-family="monospace" font-size="10" fill="#9aa5b8">/provider</text>
+<text x="28" y="358" font-family="monospace" font-size="10" fill="#9aa5b8">/quit</text>
+<text x="28" y="374" font-family="monospace" font-size="10" fill="#9aa5b8">/refresh</text>
+<line x1="20" y1="396" x2="380" y2="396" stroke="#0891b2" stroke-width="0.5"/>
+<text x="28" y="408" font-family="monospace" font-size="10" fill="#445566">Abort the current model run</text>
+<text x="410" y="262" font-family="monospace" font-size="10" fill="#e2e8f0">Enter a prompt to begin</text>
+<text x="410" y="282" font-family="monospace" font-size="10" fill="#445566">type </text>
+<text x="443" y="282" font-family="monospace" font-size="10" fill="#4ade80">/mode</text>
+<text x="483" y="282" font-family="monospace" font-size="10" fill="#445566"> to switch mode</text>
+<text x="410" y="299" font-family="monospace" font-size="10" fill="#445566">press </text>
+<text x="455" y="299" font-family="monospace" font-size="10" fill="#4ade80">F4</text>
+<text x="473" y="299" font-family="monospace" font-size="10" fill="#445566"> to cycle mode</text>
+<text x="410" y="316" font-family="monospace" font-size="10" fill="#445566">press </text>
+<text x="455" y="316" font-family="monospace" font-size="10" fill="#2dd4bf">r</text>
+<text x="463" y="316" font-family="monospace" font-size="10" fill="#445566"> for key bindings</text>
+<text x="410" y="340" font-family="monospace" font-size="10" fill="#445566">Modes:</text>
+<text x="410" y="357" font-family="monospace" font-size="10" fill="#445566">  research</text>
+<text x="475" y="357" font-family="monospace" font-size="10" fill="#5a7060">  read-only, no tool access</text>
+<text x="410" y="372" font-family="monospace" font-size="10" fill="#445566">  plan</text>
+<text x="445" y="372" font-family="monospace" font-size="10" fill="#5a7060">      read + write files only</text>
+<text x="410" y="387" font-family="monospace" font-size="10" fill="#4ade80">  agent</text>
+<text x="454" y="387" font-family="monospace" font-size="10" fill="#5a7060">     full tool access</text>
+<rect x="0" y="440" width="800" height="1" fill="#1a3020"/>
+<rect x="0" y="441" width="800" height="34" fill="#0a0e14"/>
+<text x="8" y="453" font-family="monospace" font-size="10" fill="#2dd4bf">Input</text>
+<line x1="46" y1="452" x2="792" y2="452" stroke="#1a1a2c" stroke-width="1"/>
+<text x="8" y="468" font-family="monospace" font-size="10" fill="#22d3ee"> &gt; </text>
+<text x="34" y="468" font-family="monospace" font-size="10" fill="#445566">ask anything... (Enter to send, / for commands)</text>
+<rect x="0" y="475" width="800" height="1" fill="#1a1a2c"/>
+<rect x="0" y="476" width="800" height="24" fill="#0a0e14"/>
+<text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#334455">Enter:send  Alt+Enter:newline  ^&#8593;&#8595;:history  ^w k:chat  1c =0t</text>
+</svg>

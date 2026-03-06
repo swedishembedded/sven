@@ -1,0 +1,81 @@
+<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<rect width="800" height="500" fill="#0f1117"/>
+<rect x="0" y="0" width="800" height="22" fill="#0b1c12"/>
+<rect x="0" y="22" width="800" height="1" fill="#1a3020"/>
+<circle cx="10" cy="11" r="6" fill="#f0c040"/>
+<text x="20" y="15" font-family="monospace" font-size="11" fill="#2dd4bf" font-weight="bold">sven</text>
+<text x="50" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="58" y="15" font-family="monospace" font-size="11" fill="#e8a030">openrouter/anthropic/claude-sonnet-4-5</text>
+<text x="312" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="320" y="15" font-family="monospace" font-size="11" fill="#4ade80">agent</text>
+<text x="357" y="15" font-family="monospace" font-size="11" fill="#445566">| ctx [</text>
+<text x="403" y="15" font-family="monospace" font-size="11" fill="#2dd4bf">==</text>
+<text x="415" y="15" font-family="monospace" font-size="11" fill="#445566">------------------------------------------------------------------------------</text>
+<text x="883" y="15" font-family="monospace" font-size="11" fill="#445566">] 3%</text>
+<text x="630" y="15" font-family="monospace" font-size="11" fill="#334455">F1:help  F4:mode  ^c:quit</text>
+<rect x="0" y="23" width="800" height="20" fill="#111118"/>
+<rect x="0" y="43" width="800" height="1" fill="#1a1a2c"/>
+<text x="12" y="37" font-family="monospace" font-size="10" fill="#2dd4bf">Chat</text>
+<text x="38" y="37" font-family="monospace" font-size="10" fill="#445566"> [9 msgs]</text>
+<rect x="0" y="44" width="800" height="396" fill="#0f1117"/>
+<text x="12" y="60" font-family="monospace" font-size="10" fill="#22d3ee">You:</text>
+<text x="56" y="60" font-family="monospace" font-size="10" fill="#d4d8e4">Start the node, list peers on the network, then delegate a code review</text>
+<text x="56" y="75" font-family="monospace" font-size="10" fill="#d4d8e4">task to the backend agent and show me the result.</text>
+<text x="12" y="95" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="95" font-family="monospace" font-size="10" fill="#9aa5b8">Starting the node and scanning for peers on the LAN:</text>
+<text x="12" y="113" font-family="monospace" font-size="10" fill="#5a6878">Agent:thinking</text>
+<text x="115" y="113" font-family="monospace" font-size="10" fill="#f0c040">&#9670;</text>
+<text x="129" y="113" font-family="monospace" font-size="10" fill="#445566">Thought</text>
+<text x="187" y="113" font-family="monospace" font-size="10" fill="#5a7060">&quot;I will use node_start then list peers...&quot;</text>
+<text x="740" y="113" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="131" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_01</text>
+<text x="156" y="131" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;node_start</text>
+<text x="252" y="131" font-family="monospace" font-size="10" fill="#7a8898"> </text>
+<text x="258" y="131" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="326" y="131" font-family="monospace" font-size="10" fill="#5a9878">&quot;Node started. mDNS advertising on LAN&quot;</text>
+<text x="730" y="131" font-family="monospace" font-size="10" fill="#445566">0.8s</text>
+<text x="760" y="131" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="149" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_02</text>
+<text x="156" y="149" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;node_list_peers</text>
+<text x="282" y="149" font-family="monospace" font-size="10" fill="#7a8898"> </text>
+<text x="288" y="149" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="356" y="149" font-family="monospace" font-size="10" fill="#5a9878">&quot;4 peers: backend, frontend, embedded, relay&quot;</text>
+<text x="730" y="149" font-family="monospace" font-size="10" fill="#445566">0.2s</text>
+<text x="760" y="149" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="167" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="167" font-family="monospace" font-size="10" fill="#9aa5b8">4 peers found. Delegating the code review to backend agent:</text>
+<text x="12" y="185" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_03</text>
+<text x="156" y="185" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;node_delegate</text>
+<text x="270" y="185" font-family="monospace" font-size="10" fill="#7a8898"> peer=backend  task="review src/auth/jwt.rs for security issues"</text>
+<text x="654" y="185" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="722" y="185" font-family="monospace" font-size="10" fill="#5a9878">&quot;Task accepted, waiting for result...&quot;</text>
+<text x="730" y="185" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
+<text x="760" y="185" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="203" font-family="monospace" font-size="10" fill="#5a6878">Agent:thinking</text>
+<text x="115" y="203" font-family="monospace" font-size="10" fill="#f0c040">&#9670;</text>
+<text x="129" y="203" font-family="monospace" font-size="10" fill="#445566">Thought</text>
+<text x="187" y="203" font-family="monospace" font-size="10" fill="#5a7060">&quot;Waiting for the backend agent to complete the review...&quot;</text>
+<text x="740" y="203" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="221" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_04</text>
+<text x="156" y="221" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;node_await_result</text>
+<text x="294" y="221" font-family="monospace" font-size="10" fill="#7a8898"> task_id=tk_01</text>
+<text x="378" y="221" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="446" y="221" font-family="monospace" font-size="10" fill="#5a9878">&quot;Result received (3.4s)&quot;</text>
+<text x="730" y="221" font-family="monospace" font-size="10" fill="#445566">3.4s</text>
+<text x="760" y="221" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="239" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="239" font-family="monospace" font-size="10" fill="#9aa5b8">Backend agent completed the review. Summary:</text>
+<text x="12" y="257" font-family="monospace" font-size="10" fill="#9aa5b8">  Security: 8/10  |  No hardcoded secrets  |  JWT expiry enforced</text>
+<text x="12" y="272" font-family="monospace" font-size="10" fill="#5a7060">  Warning: missing rate-limit on /auth/refresh endpoint (medium severity)</text>
+<text x="12" y="294" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="294" font-family="monospace" font-size="10" fill="#9aa5b8">Shall I ask the backend agent to fix the rate-limiting issue?</text>
+<rect x="0" y="440" width="800" height="1" fill="#1a3020"/>
+<rect x="0" y="441" width="800" height="34" fill="#0a0e14"/>
+<text x="8" y="453" font-family="monospace" font-size="10" fill="#2dd4bf">Input</text>
+<line x1="46" y1="452" x2="792" y2="452" stroke="#1a1a2c" stroke-width="1"/>
+<text x="8" y="468" font-family="monospace" font-size="10" fill="#22d3ee"> &gt; </text>
+<text x="34" y="468" font-family="monospace" font-size="10" fill="#445566">ask anything... (Enter to send, / for commands)</text>
+<rect x="0" y="475" width="800" height="1" fill="#1a1a2c"/>
+<rect x="0" y="476" width="800" height="24" fill="#0a0e14"/>
+<text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#334455">Enter:send  Alt+Enter:newline  ^w k:chat</text>
+</svg>

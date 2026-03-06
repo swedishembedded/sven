@@ -1,0 +1,115 @@
+<svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+<rect width="800" height="500" fill="#0f1117"/>
+<rect x="0" y="0" width="800" height="22" fill="#0b1c12"/>
+<rect x="0" y="22" width="800" height="1" fill="#1a3020"/>
+<circle cx="10" cy="11" r="6" fill="#f0c040"/>
+<text x="20" y="15" font-family="monospace" font-size="11" fill="#2dd4bf" font-weight="bold">sven</text>
+<text x="50" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="58" y="15" font-family="monospace" font-size="11" fill="#e8a030">anthropic/claude-haiku-4-5</text>
+<text x="233" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="241" y="15" font-family="monospace" font-size="11" fill="#4ade80">agent</text>
+<text x="278" y="15" font-family="monospace" font-size="11" fill="#445566">| ctx [</text>
+<text x="324" y="15" font-family="monospace" font-size="11" fill="#2dd4bf">=====</text>
+<text x="354" y="15" font-family="monospace" font-size="11" fill="#445566">---------------------------------------------------------------------------</text>
+<text x="804" y="15" font-family="monospace" font-size="11" fill="#445566">] 7%</text>
+<text x="630" y="15" font-family="monospace" font-size="11" fill="#334455">F1:help  F4:mode  ^c:quit</text>
+<rect x="0" y="23" width="800" height="20" fill="#111118"/>
+<rect x="0" y="43" width="800" height="1" fill="#1a1a2c"/>
+<text x="12" y="37" font-family="monospace" font-size="10" fill="#2dd4bf">Chat</text>
+<text x="38" y="37" font-family="monospace" font-size="10" fill="#445566"> [18 msgs]</text>
+<rect x="0" y="44" width="800" height="396" fill="#0f1117"/>
+<text x="12" y="60" font-family="monospace" font-size="10" fill="#22d3ee">You:</text>
+<text x="56" y="60" font-family="monospace" font-size="10" fill="#d4d8e4">Use gdb tools to connect to the target, set a breakpoint on</text>
+<text x="56" y="75" font-family="monospace" font-size="10" fill="#d4d8e4">uart_nrfx_fifo_fill and inspect params. Use zephyr.elf.</text>
+<text x="12" y="95" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="95" font-family="monospace" font-size="10" fill="#9aa5b8">I'll connect to the target. Let me start by checking GDB status.</text>
+<text x="12" y="117" font-family="monospace" font-size="10" fill="#5a6878">Agent:thinking</text>
+<text x="115" y="117" font-family="monospace" font-size="10" fill="#f0c040">&#9670;</text>
+<text x="129" y="117" font-family="monospace" font-size="10" fill="#445566">Thought</text>
+<text x="187" y="117" font-family="monospace" font-size="10" fill="#5a7060">&quot;Let me check if GDB server is already running...&quot;</text>
+<text x="740" y="117" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="135" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_01</text>
+<text x="156" y="135" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_status</text>
+<text x="252" y="135" font-family="monospace" font-size="10" fill="#7a8898"> </text>
+<text x="258" y="135" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="326" y="135" font-family="monospace" font-size="10" fill="#5a9878">&quot;Server: not started&quot;</text>
+<text x="730" y="135" font-family="monospace" font-size="10" fill="#445566">0.0s</text>
+<text x="760" y="135" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="153" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="153" font-family="monospace" font-size="10" fill="#9aa5b8">GDB server not running. Starting it with your OpenOCD config:</text>
+<text x="12" y="171" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_02</text>
+<text x="156" y="171" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_start_server</text>
+<text x="288" y="171" font-family="monospace" font-size="10" fill="#7a8898"> `openocd -f interface/jlink.cfg -f target/nrf52.cfg`</text>
+<text x="606" y="171" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="674" y="171" font-family="monospace" font-size="10" fill="#5a9878">&quot;GDB server started on :2331&quot;</text>
+<text x="730" y="171" font-family="monospace" font-size="10" fill="#445566">1.2s</text>
+<text x="760" y="171" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="189" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="189" font-family="monospace" font-size="10" fill="#9aa5b8">Server is up. Connecting GDB to the target:</text>
+<text x="12" y="207" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_03</text>
+<text x="156" y="207" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_connect</text>
+<text x="258" y="207" font-family="monospace" font-size="10" fill="#7a8898"> executable=zephyr.elf port=2331</text>
+<text x="450" y="207" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="518" y="207" font-family="monospace" font-size="10" fill="#5a9878">&quot;Connected to GDB at localhost:2331&quot;</text>
+<text x="730" y="207" font-family="monospace" font-size="10" fill="#445566">0.3s</text>
+<text x="760" y="207" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="225" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="225" font-family="monospace" font-size="10" fill="#9aa5b8">Connected. Resetting target and setting breakpoint:</text>
+<text x="12" y="243" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_04</text>
+<text x="156" y="243" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="243" font-family="monospace" font-size="10" fill="#7a8898"> `command=monitor reset halt`</text>
+<text x="432" y="243" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="500" y="243" font-family="monospace" font-size="10" fill="#5a9878">&quot;Target halted&quot;</text>
+<text x="730" y="243" font-family="monospace" font-size="10" fill="#445566">0.4s</text>
+<text x="760" y="243" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="261" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_05</text>
+<text x="156" y="261" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="261" font-family="monospace" font-size="10" fill="#7a8898"> `command=break uart_nrfx_fifo_fill`</text>
+<text x="474" y="261" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="542" y="261" font-family="monospace" font-size="10" fill="#5a9878">&quot;Breakpoint 1: 0x0002a4fc&quot;</text>
+<text x="730" y="261" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
+<text x="760" y="261" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="279" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_06</text>
+<text x="156" y="279" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="279" font-family="monospace" font-size="10" fill="#7a8898"> `command=continue`</text>
+<text x="372" y="279" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="440" y="279" font-family="monospace" font-size="10" fill="#5a9878">&quot;Breakpoint 1 hit&quot;</text>
+<text x="730" y="279" font-family="monospace" font-size="10" fill="#445566">2.1s</text>
+<text x="760" y="279" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="297" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="297" font-family="monospace" font-size="10" fill="#9aa5b8">Breakpoint hit. Inspecting uart_nrfx_fifo_fill parameters:</text>
+<text x="12" y="315" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_07</text>
+<text x="156" y="315" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="315" font-family="monospace" font-size="10" fill="#7a8898"> `command=print /x dev`</text>
+<text x="396" y="315" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="464" y="315" font-family="monospace" font-size="10" fill="#5a9878">&quot;$1 = 0x5e27c&quot;</text>
+<text x="730" y="315" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
+<text x="760" y="315" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="333" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_08</text>
+<text x="156" y="333" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="333" font-family="monospace" font-size="10" fill="#7a8898"> `command=print /x tx_data`</text>
+<text x="420" y="333" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="488" y="333" font-family="monospace" font-size="10" fill="#5a9878">&quot;$2 = 0x20000c03&quot;</text>
+<text x="730" y="333" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
+<text x="760" y="333" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="351" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_09</text>
+<text x="156" y="351" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;gdb_command</text>
+<text x="258" y="351" font-family="monospace" font-size="10" fill="#7a8898"> `command=print len`</text>
+<text x="378" y="351" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
+<text x="446" y="351" font-family="monospace" font-size="10" fill="#5a9878">&quot;$3 = 21&quot;</text>
+<text x="730" y="351" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
+<text x="760" y="351" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
+<text x="12" y="369" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
+<text x="62" y="369" font-family="monospace" font-size="10" fill="#9aa5b8">Perfect! Here is what I found:</text>
+<text x="12" y="387" font-family="monospace" font-size="10" fill="#9aa5b8">  dev (struct device*): 0x5e27c  |  tx_data (uint8_t*): 0x20000c03  |  len: 21</text>
+<text x="12" y="405" font-family="monospace" font-size="10" fill="#5a7060">  tx_data buffer contains an AT command: &quot;AT+CREG?&quot; from the Quectel EG25-G modem</text>
+<rect x="0" y="440" width="800" height="1" fill="#1a3020"/>
+<rect x="0" y="441" width="800" height="34" fill="#0a0e14"/>
+<text x="8" y="453" font-family="monospace" font-size="10" fill="#2dd4bf">Input</text>
+<line x1="46" y1="452" x2="792" y2="452" stroke="#1a1a2c" stroke-width="1"/>
+<text x="8" y="468" font-family="monospace" font-size="10" fill="#22d3ee"> &gt; </text>
+<text x="34" y="468" font-family="monospace" font-size="10" fill="#445566">ask anything... (Enter to send, / for commands)</text>
+<rect x="0" y="475" width="800" height="1" fill="#1a1a2c"/>
+<rect x="0" y="476" width="800" height="24" fill="#0a0e14"/>
+<text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#334455">Enter:send  Shift+Enter:newline  ^w k:rchat</text>
+</svg>
