@@ -74,6 +74,8 @@ pub enum ImmediateAction {
     RefreshSkills,
     /// Erase all chat segments and reset the conversation view.
     ClearChat,
+    /// Start a completely new conversation with a fresh JSONL file.
+    NewConversation,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

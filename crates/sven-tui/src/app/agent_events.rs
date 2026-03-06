@@ -180,7 +180,8 @@ impl App {
                         } else {
                             max_tokens
                         } as u32;
-                        self.agent.total_context_pct = (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
+                        self.agent.total_context_pct =
+                            (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
                     }
                 }
                 // Output side: update exact count when provider reports it.
@@ -201,11 +202,14 @@ impl App {
                 // Update cumulative context percentage after accumulation.
                 if self.agent.total_context_tokens > 0 && self.agent.max_tokens > 0 {
                     let input_budget = if self.agent.max_output_tokens > 0 {
-                        self.agent.max_tokens.saturating_sub(self.agent.max_output_tokens)
+                        self.agent
+                            .max_tokens
+                            .saturating_sub(self.agent.max_output_tokens)
                     } else {
                         self.agent.max_tokens
                     } as u32;
-                    self.agent.total_context_pct = (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
+                    self.agent.total_context_pct =
+                        (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
                 }
                 // Reset per-turn counts for the next turn.
                 self.agent.context_tokens = 0;
@@ -259,11 +263,14 @@ impl App {
                 // Update cumulative context percentage after accumulation.
                 if self.agent.total_context_tokens > 0 && self.agent.max_tokens > 0 {
                     let input_budget = if self.agent.max_output_tokens > 0 {
-                        self.agent.max_tokens.saturating_sub(self.agent.max_output_tokens)
+                        self.agent
+                            .max_tokens
+                            .saturating_sub(self.agent.max_output_tokens)
                     } else {
                         self.agent.max_tokens
                     } as u32;
-                    self.agent.total_context_pct = (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
+                    self.agent.total_context_pct =
+                        (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
                 }
                 // Reset per-turn counts.
                 self.agent.streaming_tokens = 0;

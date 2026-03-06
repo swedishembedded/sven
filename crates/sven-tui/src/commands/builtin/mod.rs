@@ -7,6 +7,7 @@ pub mod abort;
 pub mod clear;
 pub mod mode;
 pub mod model;
+pub mod new;
 pub mod provider;
 pub mod quit;
 pub mod refresh;

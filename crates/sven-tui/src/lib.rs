@@ -20,3 +20,6 @@ mod ui;
 
 pub use app::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 pub use chat::segment::ChatSegment;
+pub use sven_input::history::{save as history_save, save_to as history_save_to};
+pub use sven_input::serialize_jsonl_records;
+pub use sven_input::ConversationRecord;

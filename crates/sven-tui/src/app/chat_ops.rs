@@ -23,8 +23,11 @@ use crate::{
             ChatSegment,
         },
     },
+    history_save, history_save_to,
     markdown::render_markdown,
+    serialize_jsonl_records,
     ui::theme::{BAR_AGENT, BAR_THINKING},
+    ConversationRecord,
 };
 
 /// Number of lines to show in tier-1 (partial) view.
@@ -299,23 +302,21 @@ impl App {
     // ── History persistence ───────────────────────────────────────────────────
 
     pub(crate) fn save_history_async(&mut self) {
-        let records: Vec<sven_input::ConversationRecord> = self
+        let records: Vec<ConversationRecord> = self
             .chat
             .segments
             .iter()
             .filter_map(|seg| match seg {
-                ChatSegment::Message(m) => Some(sven_input::ConversationRecord::Message(m.clone())),
-                ChatSegment::Thinking { content } => {
-                    Some(sven_input::ConversationRecord::Thinking {
-                        content: content.clone(),
-                    })
-                }
+                ChatSegment::Message(m) => Some(ConversationRecord::Message(m.clone())),
+                ChatSegment::Thinking { content } => Some(ConversationRecord::Thinking {
+                    content: content.clone(),
+                }),
                 ChatSegment::ContextCompacted {
                     tokens_before,
                     tokens_after,
                     strategy,
                     turn,
-                } => Some(sven_input::ConversationRecord::ContextCompacted {
+                } => Some(ConversationRecord::ContextCompacted {
                     tokens_before: *tokens_before,
                     tokens_after: *tokens_after,
                     strategy: Some(strategy.to_string()),
@@ -332,7 +333,7 @@ impl App {
         let messages: Vec<sven_model::Message> = records
             .iter()
             .filter_map(|r| {
-                if let sven_input::ConversationRecord::Message(m) = r {
+                if let ConversationRecord::Message(m) = r {
                     Some(m.clone())
                 } else {
                     None
@@ -341,7 +342,7 @@ impl App {
             .collect();
 
         if let Some(jsonl_path) = self.jsonl_path.clone() {
-            let serialized = sven_input::serialize_jsonl_records(&records);
+            let serialized = serialize_jsonl_records(&records);
             tokio::spawn(async move {
                 if let Err(e) = std::fs::write(&jsonl_path, &serialized) {
                     tracing::debug!("failed to update JSONL conversation file: {e}");
@@ -355,7 +356,7 @@ impl App {
 
         let path_opt = self.history_path.clone();
         match path_opt {
-            None => match sven_input::history::save(&messages) {
+            None => match history_save(&messages) {
                 Ok(path) => {
                     debug!(path = %path.display(), "conversation saved to history");
                     self.history_path = Some(path);
@@ -364,12 +365,39 @@ impl App {
             },
             Some(path) => {
                 tokio::spawn(async move {
-                    if let Err(e) = sven_input::history::save_to(&path, &messages) {
+                    if let Err(e) = history_save_to(&path, &messages) {
                         debug!("failed to update conversation history: {e}");
                     }
                 });
             }
         }
+    }
+
+    /// Start a completely new conversation with a fresh JSONL file.
+    pub(crate) async fn start_new_conversation(&mut self) {
+        // Clear current chat segments
+        self.chat.segments.clear();
+        self.chat.tool_args.clear();
+
+        // Generate a new JSONL path
+        if let Some(new_path) = sven_runtime::resolve_auto_log_path() {
+            self.jsonl_path = Some(new_path.clone());
+            tracing::info!(path = %new_path.display(), "started new conversation");
+
+            // Save empty state to the new file
+            let records: Vec<ConversationRecord> = vec![];
+            let serialized = serialize_jsonl_records(&records);
+            if let Err(e) = std::fs::write(&new_path, &serialized) {
+                tracing::warn!("failed to create new JSONL file: {e}");
+            }
+        } else {
+            tracing::warn!("could not resolve new log path - keeping current JSONL path");
+        }
+
+        // Also clear history path to start fresh
+        self.history_path = None;
+
+        self.rerender_chat().await;
     }
 
     // ── Neovim sync ───────────────────────────────────────────────────────────

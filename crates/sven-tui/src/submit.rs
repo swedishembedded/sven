@@ -73,6 +73,22 @@ impl App {
                         return false;
                     }
 
+                    if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
+                        self.chat.segments.clear();
+                        self.chat.tool_args.clear();
+                        self.save_history_async();
+                        self.rerender_chat().await;
+                        return false;
+                    }
+
+                    if matches!(
+                        result.immediate_action,
+                        Some(ImmediateAction::NewConversation)
+                    ) {
+                        self.start_new_conversation().await;
+                        return false;
+                    }
+
                     // In node-proxy mode the node owns model/mode selection;
                     // silently ignore /model and /mode commands.
                     if !self.is_node_proxy {

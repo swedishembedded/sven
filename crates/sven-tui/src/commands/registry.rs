@@ -39,6 +39,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::abort::AbortCommand));
         reg.register(Arc::new(builtin::clear::ClearCommand));
         reg.register(Arc::new(builtin::model::ModelCommand));
+        reg.register(Arc::new(builtin::new::NewCommand));
         reg.register(Arc::new(builtin::provider::ProviderCommand));
         reg.register(Arc::new(builtin::mode::ModeCommand));
         reg.register(Arc::new(builtin::quit::QuitCommand));

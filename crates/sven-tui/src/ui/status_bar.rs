@@ -81,7 +81,11 @@ impl Widget for StatusBar<'_> {
 
         let mode_str = self.mode.to_string();
         // Use cumulative context percentage for the bar display.
-        let display_ctx_pct = if self.total_context_tokens > 0 { self.total_context_pct } else { self.context_pct };
+        let display_ctx_pct = if self.total_context_tokens > 0 {
+            self.total_context_pct
+        } else {
+            self.context_pct
+        };
         let ctx_bar_str = ctx_bar(display_ctx_pct, self.ascii);
         let ctx_pct_str = format!(" {}%", display_ctx_pct);
 
