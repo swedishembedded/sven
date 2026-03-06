@@ -18,7 +18,6 @@ const COMMUNITY_LINKS = [
 
 const COMPANY_LINKS = [
   { label: 'Swedish Embedded AB', href: 'https://swedishembedded.com', external: true },
-  { label: 'Apache 2.0 License', href: 'https://github.com/swedishembedded/sven/blob/main/LICENSE', external: true },
 ]
 
 export default function Footer() {
@@ -115,15 +114,7 @@ export default function Footer() {
         {/* Bottom bar */}
         <div className="py-6 border-t border-bg-border flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-text-dim font-mono">
-            Built with Rust.{' '}
-            <a
-              href="https://github.com/swedishembedded/sven/blob/main/LICENSE"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-text-secondary transition-colors"
-            >
-              Apache 2.0 License.
-            </a>
+            Built with Rust.
           </p>
           <p className="text-xs text-text-dim font-mono">
             © {new Date().getFullYear()} Swedish Embedded AB
