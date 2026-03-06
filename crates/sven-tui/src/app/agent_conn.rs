@@ -24,6 +24,16 @@ pub(crate) struct AgentConn {
     pub context_tokens: u32,
     /// Cumulative input tokens across all turns in this session.
     pub total_context_tokens: u32,
+    /// Cumulative context window percentage across all turns in this session.
+    /// This is calculated from total_context_tokens relative to the input budget.
+    /// It shows how full the context window is based on cumulative session tokens.
+    pub total_context_pct: u8,
+    /// The model's maximum context window (tokens), from the last TokenUsage event.
+    /// Used to calculate cumulative context percentage.
+    pub max_tokens: usize,
+    /// The model's maximum output tokens per completion, from the last TokenUsage event.
+    /// Used to calculate the usable input budget (max_tokens - max_output_tokens).
+    pub max_output_tokens: usize,
     /// Exact output token count for the last turn (provider-reported).
     /// Zero until the provider's usage event arrives for this turn.
     pub output_tokens: u32,
@@ -61,6 +71,9 @@ impl AgentConn {
             context_pct: 0,
             context_tokens: 0,
             total_context_tokens: 0,
+            total_context_pct: 0,
+            max_tokens: 0,
+            max_output_tokens: 0,
             output_tokens: 0,
             total_output_tokens: 0,
             cache_hit_pct: 0,

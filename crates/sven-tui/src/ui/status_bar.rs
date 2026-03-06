@@ -26,6 +26,8 @@ pub struct StatusBar<'a> {
     pub model_name: &'a str,
     pub mode: AgentMode,
     pub context_pct: u8,
+    /// Cumulative context percentage based on total_context_tokens.
+    pub total_context_pct: u8,
     /// Cumulative input tokens across all turns in this session.
     pub total_context_tokens: u32,
     /// Cumulative output tokens across all turns in this session.
@@ -78,8 +80,10 @@ impl Widget for StatusBar<'_> {
         };
 
         let mode_str = self.mode.to_string();
-        let ctx_bar_str = ctx_bar(self.context_pct, self.ascii);
-        let ctx_pct_str = format!(" {}%", self.context_pct);
+        // Use cumulative context percentage for the bar display.
+        let display_ctx_pct = if self.total_context_tokens > 0 { self.total_context_pct } else { self.context_pct };
+        let ctx_bar_str = ctx_bar(display_ctx_pct, self.ascii);
+        let ctx_pct_str = format!(" {}%", display_ctx_pct);
 
         // Tool in progress — only shown when a tool is actually running.
         let tool_sym = if self.ascii { "*" } else { "⚙" };
