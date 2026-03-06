@@ -4,6 +4,8 @@ A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works
 as an interactive TUI, a headless CI runner, and a networked node that teams
 up with other sven instances — all from the same binary.
 
+![sven start](docs/sven-landing.png)
+
 ---
 
 ## What sven does
