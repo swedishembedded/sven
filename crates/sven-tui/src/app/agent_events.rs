@@ -143,24 +143,41 @@ impl App {
             }
             AgentEvent::TokenUsage {
                 input,
+                output,
                 cache_read,
                 cache_write,
                 max_tokens,
+                max_output_tokens,
                 ..
             } => {
+                // Input side: update when provider reports prompt token counts.
                 if input > 0 || cache_read > 0 || cache_write > 0 {
                     let total_ctx = input + cache_read + cache_write;
-                    let max = if max_tokens > 0 {
-                        max_tokens as u32
+                    // Use the usable input budget as the denominator so that
+                    // ctx% matches the fraction used for compaction decisions.
+                    // Falls back to max_tokens when max_output_tokens is 0.
+                    let input_budget = if max_output_tokens > 0 {
+                        max_tokens.saturating_sub(max_output_tokens)
+                    } else if max_tokens > 0 {
+                        max_tokens
                     } else {
                         200_000
-                    };
-                    self.agent.context_pct = (total_ctx * 100 / max).min(100) as u8;
+                    } as u32;
+                    self.agent.context_pct = (total_ctx * 100 / input_budget).min(100) as u8;
+                    self.agent.context_tokens = total_ctx;
                     self.agent.cache_hit_pct = if total_ctx > 0 && cache_read > 0 {
                         (cache_read * 100 / total_ctx).min(100) as u8
                     } else {
                         0
                     };
+                }
+                // Output side: update exact count when provider reports it.
+                // For Anthropic this arrives in the message_delta usage event,
+                // which comes near the end of streaming before TurnComplete.
+                if output > 0 {
+                    self.agent.output_tokens = output;
+                    // Discard the streaming estimate once the exact count is in.
+                    self.agent.streaming_tokens = 0;
                 }
             }
             AgentEvent::TurnComplete => {

@@ -389,6 +389,8 @@ impl App {
                 model_name: status_model_name,
                 mode: self.session.mode,
                 context_pct: self.agent.context_pct,
+                context_tokens: self.agent.context_tokens,
+                output_tokens: self.agent.output_tokens,
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
                 current_tool: self.agent.current_tool.as_deref(),

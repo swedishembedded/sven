@@ -26,6 +26,10 @@ pub struct StatusBar<'a> {
     pub model_name: &'a str,
     pub mode: AgentMode,
     pub context_pct: u8,
+    /// Exact input token count reported by the provider (total prompt size).
+    pub context_tokens: u32,
+    /// Exact output token count reported by the provider for the last turn.
+    pub output_tokens: u32,
     pub cache_hit_pct: u8,
     pub agent_busy: bool,
     pub current_tool: Option<&'a str>,
@@ -36,12 +40,24 @@ pub struct StatusBar<'a> {
     pub focus: FocusPane,
     /// Current spinner frame (0–9); incremented on each streaming event.
     pub spinner_frame: u8,
-    /// Tokens streamed in the current turn (shown while busy).
+    /// Live approximate output token count while generating (chars/4).
+    /// Zero once the provider's exact output count has been received.
     pub streaming_tokens: u32,
     /// True when editing a chat segment or queue item.
     pub in_edit: bool,
     /// True when the search bar is active.
     pub in_search: bool,
+}
+
+/// Format a token count compactly: raw below 1000, "Xk" below 1M, "X.XM" above.
+fn fmt_tokens(n: u32) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f32 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{}k", n / 1_000)
+    } else {
+        format!("{n}")
+    }
 }
 
 impl Widget for StatusBar<'_> {
@@ -73,16 +89,30 @@ impl Widget for StatusBar<'_> {
             Span::raw("")
         };
 
-        // Token counter — only shown while streaming non-tool output.
-        let streaming_span: Span<'static> =
-            if self.agent_busy && self.streaming_tokens > 0 && self.current_tool.is_none() {
-                Span::styled(
-                    format!("  {}t", self.streaming_tokens),
-                    Style::default().fg(TEXT_DIM),
-                )
+        // Token counts: "in: 32k out: 1.2k"
+        // Use exact provider-reported values.  While the model is generating and
+        // the provider hasn't yet sent the output count, fall back to the live
+        // streaming approximation (↑Xt).
+        let token_span: Span<'static> = if self.context_tokens > 0 {
+            let in_str = fmt_tokens(self.context_tokens);
+            let out_str =
+                if self.agent_busy && self.current_tool.is_none() && self.streaming_tokens > 0 {
+                    // Exact output count not yet received; show live estimate.
+                    format!("↑{}t", self.streaming_tokens)
+                } else if self.output_tokens > 0 {
+                    fmt_tokens(self.output_tokens)
+                } else {
+                    String::new()
+                };
+            let label = if out_str.is_empty() {
+                format!("  in: {in_str}")
             } else {
-                Span::raw("")
+                format!("  in: {in_str} out: {out_str}")
             };
+            Span::styled(label, Style::default().fg(TEXT_DIM))
+        } else {
+            Span::raw("")
+        };
 
         // Cache hit rate — shown in green when >0.
         let cache_span: Span<'static> = if self.cache_hit_pct > 0 && !self.agent_busy {
@@ -149,9 +179,9 @@ impl Widget for StatusBar<'_> {
             Span::styled(" ctx ", Style::default().fg(TEXT_DIM)),
             Span::styled(format!("{ctx_bar_str}"), ctx_style(self.context_pct)),
             Span::styled(ctx_pct_str, ctx_style(self.context_pct)),
+            token_span,
             cache_span,
             tool_span,
-            streaming_span,
             pending_span,
         ];
 

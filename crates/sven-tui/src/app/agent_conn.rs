@@ -16,11 +16,21 @@ pub(crate) struct AgentConn {
     pub busy: bool,
     /// Name of the tool currently executing (shown in the status bar).
     pub current_tool: Option<String>,
-    /// Context window usage for the last turn (0–100 %).
+    /// Context window usage for the last turn (0–100 %), relative to the
+    /// usable input budget (`max_tokens − max_output_tokens`).
     pub context_pct: u8,
+    /// Exact input token count for the last turn (provider-reported).
+    /// Equals `input_tokens + cache_read_tokens + cache_write_tokens`.
+    pub context_tokens: u32,
+    /// Exact output token count for the last turn (provider-reported).
+    /// Zero until the provider's usage event arrives for this turn.
+    pub output_tokens: u32,
     /// Cache-hit rate for the last turn (0–100 %).
     pub cache_hit_pct: u8,
-    /// Total tokens streamed in the current turn (reset on TurnComplete / Aborted).
+    /// Live approximate output token count for the current turn (chars/4).
+    /// Used only for visual animation while the model is generating and the
+    /// exact output count has not yet been reported by the provider.
+    /// Reset to 0 on TurnComplete / Aborted.
     pub streaming_tokens: u32,
     /// Spinner frame index (0–9), incremented on each TextDelta event.
     pub spinner_frame: u8,
@@ -45,6 +55,8 @@ impl AgentConn {
             busy: false,
             current_tool: None,
             context_pct: 0,
+            context_tokens: 0,
+            output_tokens: 0,
             cache_hit_pct: 0,
             streaming_tokens: 0,
             spinner_frame: 0,

@@ -848,6 +848,7 @@ impl Agent {
                             cache_read_total: self.session.cache_read_total,
                             cache_write_total: self.session.cache_write_total,
                             max_tokens: self.session.max_tokens,
+                            max_output_tokens: self.session.max_output_tokens,
                         })
                         .await;
                 }

@@ -80,6 +80,9 @@ pub enum AgentEvent {
         cache_write_total: u32,
         /// The model's maximum context window (tokens).  Zero means unknown.
         max_tokens: usize,
+        /// The model's maximum output tokens per completion.  Zero means unknown.
+        /// The usable input budget is `max_tokens − max_output_tokens`.
+        max_output_tokens: usize,
     },
     /// The agent has finished processing the current user turn
     TurnComplete,

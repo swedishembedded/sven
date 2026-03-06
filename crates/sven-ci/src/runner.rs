@@ -1312,12 +1312,18 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             cache_read_total,
             cache_write_total,
             max_tokens,
+            max_output_tokens,
         } => {
             *s.session_input_total += input;
             *s.session_output_total += output;
             let total_ctx = input + cache_read + cache_write;
-            let ctx_pct = if max_tokens > 0 {
-                ((total_ctx as u64 * 100) / max_tokens as u64).min(100) as u32
+            let input_budget = if max_output_tokens > 0 {
+                max_tokens.saturating_sub(max_output_tokens)
+            } else {
+                max_tokens
+            };
+            let ctx_pct = if input_budget > 0 {
+                ((total_ctx as u64 * 100) / input_budget as u64).min(100) as u32
             } else {
                 0
             };
@@ -1332,7 +1338,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                     " cache_read={cache_read} cache_write={cache_write}"
                 ));
             }
-            if max_tokens > 0 {
+            if input_budget > 0 {
                 line.push_str(&format!(" ctx_pct={ctx_pct} ctx_cache={ctx_cache}"));
             }
             line.push_str(&format!(
