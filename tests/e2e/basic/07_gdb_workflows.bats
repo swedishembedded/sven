@@ -224,7 +224,7 @@ setup() {
 }
 
 @test "07.25 find_file decomposes star-star pattern" {
-    grep -q 'decompose_pattern' "${_REPO_ROOT}/crates/sven-tools/src/builtin/find_file.rs"
+    grep -q 'decompose_pattern' "${_REPO_ROOT}/crates/sven-tools/src/builtin/file/find_file.rs"
 }
 
 @test "07.26 find_firmware_elf function is exported" {

@@ -137,10 +137,14 @@ mod gdb_integration {
         // This might succeed (sleep keeps running) or fail (sleep exits); either way
         // check state is set or cleaned up properly
         let s = state.lock().await;
-        // If it succeeded the server_addr should contain the port
+        // If it succeeded the server's addr should contain the port
         if !out.is_error {
             assert!(
-                s.server_addr.as_deref().unwrap_or("").contains("2331"),
+                s.server
+                    .as_ref()
+                    .map(|srv| srv.addr.as_str())
+                    .unwrap_or("")
+                    .contains("2331"),
                 "expected addr to contain port 2331"
             );
         }
@@ -639,7 +643,7 @@ mod gdb_integration {
         let s = state.lock().await;
         assert!(!s.has_server(), "server should be cleared");
         assert!(!s.has_client(), "client should be cleared");
-        assert!(s.server_addr.is_none(), "addr should be cleared");
+        assert!(s.server.is_none(), "server should be cleared");
     }
 
     #[tokio::test]
