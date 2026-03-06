@@ -44,7 +44,6 @@ pub(crate) const BAR_COMPACT: Color = Color::Rgb(80, 120, 160);
 /// Swedish Embedded yellow (chip body color).
 pub const SE_YELLOW: Color = Color::Rgb(230, 180, 40);
 /// Swedish Embedded blue (chip core color).
-pub const SE_BLUE: Color = Color::Rgb(60, 120, 220);
 
 // ── Animation sequences ───────────────────────────────────────────────────────
 
