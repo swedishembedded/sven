@@ -22,9 +22,13 @@ pub(crate) struct AgentConn {
     /// Exact input token count for the last turn (provider-reported).
     /// Equals `input_tokens + cache_read_tokens + cache_write_tokens`.
     pub context_tokens: u32,
+    /// Cumulative input tokens across all turns in this session.
+    pub total_context_tokens: u32,
     /// Exact output token count for the last turn (provider-reported).
     /// Zero until the provider's usage event arrives for this turn.
     pub output_tokens: u32,
+    /// Cumulative output tokens across all turns in this session.
+    pub total_output_tokens: u32,
     /// Cache-hit rate for the last turn (0–100 %).
     pub cache_hit_pct: u8,
     /// Live approximate output token count for the current turn (chars/4).
@@ -56,7 +60,9 @@ impl AgentConn {
             current_tool: None,
             context_pct: 0,
             context_tokens: 0,
+            total_context_tokens: 0,
             output_tokens: 0,
+            total_output_tokens: 0,
             cache_hit_pct: 0,
             streaming_tokens: 0,
             spinner_frame: 0,

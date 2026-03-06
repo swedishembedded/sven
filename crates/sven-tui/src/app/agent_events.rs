@@ -183,6 +183,12 @@ impl App {
             AgentEvent::TurnComplete => {
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                // Accumulate session totals for token counts.
+                self.agent.total_context_tokens += self.agent.context_tokens;
+                self.agent.total_output_tokens += self.agent.output_tokens;
+                // Reset per-turn counts for the next turn.
+                self.agent.context_tokens = 0;
+                self.agent.output_tokens = 0;
                 self.agent.streaming_tokens = 0;
                 self.agent.spinner_frame = 0;
                 self.agent.tool_start_times.clear();
@@ -226,6 +232,10 @@ impl App {
                 }
                 self.agent.busy = false;
                 self.agent.current_tool = None;
+                // Accumulate session totals for any partial output.
+                self.agent.total_context_tokens += self.agent.context_tokens;
+                self.agent.total_output_tokens += self.agent.output_tokens;
+                // Reset per-turn counts.
                 self.agent.streaming_tokens = 0;
                 self.agent.spinner_frame = 0;
                 self.agent.tool_start_times.clear();

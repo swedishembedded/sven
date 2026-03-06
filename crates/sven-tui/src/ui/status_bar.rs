@@ -26,10 +26,10 @@ pub struct StatusBar<'a> {
     pub model_name: &'a str,
     pub mode: AgentMode,
     pub context_pct: u8,
-    /// Exact input token count reported by the provider (total prompt size).
-    pub context_tokens: u32,
-    /// Exact output token count reported by the provider for the last turn.
-    pub output_tokens: u32,
+    /// Cumulative input tokens across all turns in this session.
+    pub total_context_tokens: u32,
+    /// Cumulative output tokens across all turns in this session.
+    pub total_output_tokens: u32,
     pub cache_hit_pct: u8,
     pub agent_busy: bool,
     pub current_tool: Option<&'a str>,
@@ -92,18 +92,20 @@ impl Widget for StatusBar<'_> {
         // Token counts: "in: 32k out: 1.2k"
         // Use exact provider-reported values.  While the model is generating and
         // the provider hasn't yet sent the output count, fall back to the live
-        // streaming approximation (↑Xt).
-        let token_span: Span<'static> = if self.context_tokens > 0 {
-            let in_str = fmt_tokens(self.context_tokens);
+        // streaming approximation (↑Xt). Show cumulative session totals.
+        let token_span: Span<'static> = if self.total_context_tokens > 0 {
+            let in_str = fmt_tokens(self.total_context_tokens);
             let out_str =
                 if self.agent_busy && self.current_tool.is_none() && self.streaming_tokens > 0 {
                     // Exact output count not yet received; show live estimate.
                     format!("↑{}t", self.streaming_tokens)
-                } else if self.output_tokens > 0 {
-                    fmt_tokens(self.output_tokens)
+                } else if self.total_output_tokens > 0 {
+                    fmt_tokens(self.total_output_tokens)
                 } else {
                     String::new()
                 };
+            // Cache hit is only relevant for the last turn, not cumulative.
+            // Show it only when we have a value from the last turn.
             let cache_str = if self.cache_hit_pct > 0 {
                 format!(" cache hit: {}%", self.cache_hit_pct)
             } else {
