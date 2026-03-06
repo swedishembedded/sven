@@ -206,19 +206,23 @@ impl crate::ModelProvider for CohereProvider {
         }
 
         let byte_stream = resp.bytes_stream();
+        // Use a raw-byte buffer so that multi-byte UTF-8 sequences split
+        // across chunk boundaries are never corrupted.  '\n' (0x0A) is
+        // never a continuation byte, so splitting on it is safe.
         let event_stream = byte_stream
-            .scan(String::new(), |buf, chunk| {
-                let text = match chunk {
-                    Ok(b) => String::from_utf8_lossy(&b).to_string(),
+            .scan(Vec::<u8>::new(), |buf, chunk| {
+                match chunk {
+                    Ok(b) => buf.extend_from_slice(&b),
                     Err(e) => {
                         return futures::future::ready(Some(vec![Err(anyhow::anyhow!(e))]));
                     }
-                };
-                buf.push_str(&text);
+                }
                 let mut events = Vec::new();
-                while let Some(pos) = buf.find('\n') {
-                    let line = buf[..pos].trim_end_matches('\r').to_string();
-                    buf.drain(..=pos);
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&line_bytes)
+                        .trim_end_matches(|c| c == '\r' || c == '\n')
+                        .to_string();
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
                         if data == "[DONE]" {
@@ -401,5 +405,83 @@ mod tests {
         let v = json!({ "type": "stream-start", "generation_id": "abc" });
         let ev = parse_cohere_event(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
+    }
+
+    // ── SSE Unicode chunk-boundary preservation ───────────────────────────────
+
+    fn drain_sse_bytes(buf: &mut Vec<u8>) -> Vec<ResponseEvent> {
+        let mut events = Vec::new();
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line_bytes)
+                .trim_end_matches(|c| c == '\r' || c == '\n')
+                .to_string();
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Ok(ev) = parse_cohere_event(&v) {
+                        events.push(ev);
+                    }
+                }
+            }
+        }
+        events
+    }
+
+    fn assert_cohere_unicode_survives_split(content: &str, split_pos: usize) {
+        let json_line = format!(
+            r#"data: {{"type":"content-delta","delta":{{"message":{{"content":{{"text":"{content}"}}}}}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        assert!(split_pos < raw.len(), "split_pos out of range");
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&raw[..split_pos]);
+        assert!(
+            drain_sse_bytes(&mut buf).is_empty(),
+            "unexpected early event at split={split_pos}"
+        );
+        buf.extend_from_slice(&raw[split_pos..]);
+        let events = drain_sse_bytes(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], ResponseEvent::TextDelta(t) if t == content),
+            "split at {split_pos}: expected TextDelta({content:?}), got {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn unicode_2byte_split_preserved() {
+        let content = "caf\u{00e9}";
+        let json_line = format!(
+            r#"data: {{"type":"content-delta","delta":{{"message":{{"content":{{"text":"{content}"}}}}}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xC3).expect("é not found");
+        assert_cohere_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn unicode_3byte_split_after_byte1_preserved() {
+        let content = "\u{4e2d}";
+        let json_line = format!(
+            r#"data: {{"type":"content-delta","delta":{{"message":{{"content":{{"text":"{content}"}}}}}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xE4).expect("中 not found");
+        assert_cohere_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn unicode_4byte_emoji_split_preserved() {
+        let content = "\u{1F389}";
+        let json_line = format!(
+            r#"data: {{"type":"content-delta","delta":{{"message":{{"content":{{"text":"{content}"}}}}}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let lead = raw.iter().position(|&b| b == 0xF0).expect("🎉 not found");
+        assert_cohere_unicode_survives_split(content, lead + 1);
+        assert_cohere_unicode_survives_split(content, lead + 2);
+        assert_cohere_unicode_survives_split(content, lead + 3);
     }
 }

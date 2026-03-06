@@ -235,4 +235,21 @@ mod tests {
         let t = WriteTool;
         assert_eq!(t.modes(), &[AgentMode::Agent]);
     }
+
+    #[tokio::test]
+    async fn write_preserves_unicode_content() {
+        let path = tmp_path();
+        let t = WriteTool;
+        let content = "Unicode: café 中文 日本語 한국어 🎉";
+        let out = t
+            .execute(&call(json!({"path": path, "text": content})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            on_disk, content,
+            "multi-byte UTF-8 characters must survive the write/read roundtrip"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 }

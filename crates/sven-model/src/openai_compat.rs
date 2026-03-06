@@ -447,13 +447,18 @@ impl crate::ModelProvider for OpenAICompatProvider {
 
         let byte_stream = resp.bytes_stream();
         // SSE events can be split across multiple TCP packets.  Maintain a
-        // line buffer across chunks; emit events only for complete lines.
+        // raw-byte line buffer across chunks; emit events only for complete
+        // lines.  Using Vec<u8> (rather than String) avoids silently
+        // corrupting multi-byte UTF-8 sequences that span chunk boundaries:
+        // '\n' (0x0A) never appears inside a multi-byte UTF-8 sequence so
+        // splitting on it is always safe, and we only decode to String once
+        // a complete line has been accumulated.
         let event_stream = byte_stream
-            .scan(String::new(), |buf, chunk| {
+            .scan(Vec::<u8>::new(), |buf, chunk| {
                 let events: Vec<anyhow::Result<ResponseEvent>> = match chunk {
                     Ok(b) => {
-                        buf.push_str(&String::from_utf8_lossy(&b));
-                        drain_complete_sse_lines(buf)
+                        buf.extend_from_slice(&b);
+                        drain_complete_sse_lines_bytes(buf)
                     }
                     Err(e) => vec![Err(anyhow::anyhow!(e))],
                 };
@@ -480,22 +485,42 @@ fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseEvent>> {
     Some(parse_sse_chunk(&v))
 }
 
+/// Drain all complete `\n`-terminated SSE lines from a raw-byte buffer.
+///
+/// Any trailing incomplete line is left in `buf`.  Because `\n` (0x0A) never
+/// appears inside a multi-byte UTF-8 continuation byte, every slice ending at
+/// a `\n` position is guaranteed to be complete UTF-8.  This is the canonical
+/// implementation; `drain_complete_sse_lines` (the `&mut String` variant below)
+/// delegates here so that tests can continue to use the simpler `String` API.
+pub(crate) fn drain_complete_sse_lines_bytes(
+    buf: &mut Vec<u8>,
+) -> Vec<anyhow::Result<ResponseEvent>> {
+    let mut events = Vec::new();
+    while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
+        let line_bytes: Vec<u8> = buf.drain(..=nl_pos).collect();
+        // Safe: the slice ends at a '\n' byte boundary, so it is valid UTF-8.
+        let line = String::from_utf8_lossy(&line_bytes)
+            .trim_end_matches(|c| c == '\r' || c == '\n')
+            .to_string();
+        if let Some(ev) = parse_sse_data_line(&line) {
+            events.push(ev);
+        }
+    }
+    events
+}
+
 /// Drain all complete `\n`-terminated SSE lines from `buf`.
 ///
 /// Any trailing incomplete line (bytes not yet terminated by `\n`) is left
 /// in `buf` so it can be extended by the next TCP chunk.  This is necessary
 /// because a single SSE event may be split across multiple TCP packets.
+///
+/// Used by tests only; production code calls `drain_complete_sse_lines_bytes`.
+#[cfg(test)]
 pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<ResponseEvent>> {
-    let mut events = Vec::new();
-    while let Some(nl_pos) = buf.find('\n') {
-        // Strip the optional Windows-style \r before \n.
-        let line = buf[..nl_pos].trim_end_matches('\r').to_string();
-        // Advance buffer past the consumed line including the \n.
-        *buf = buf[nl_pos + 1..].to_string();
-        if let Some(ev) = parse_sse_data_line(&line) {
-            events.push(ev);
-        }
-    }
+    let mut byte_buf = std::mem::take(buf).into_bytes();
+    let events = drain_complete_sse_lines_bytes(&mut byte_buf);
+    *buf = String::from_utf8(byte_buf).unwrap_or_default();
     events
 }
 
@@ -1597,6 +1622,156 @@ mod tests {
         assert!(
             matches!(&ev, ResponseEvent::ThinkingDelta(t) if t == "I should consider both sides."),
             "expected ThinkingDelta from OpenRouter reasoning field, got {ev:?}"
+        );
+    }
+
+    // ── Unicode across chunk boundary ─────────────────────────────────────────
+    // Before the Vec<u8> fix, calling String::from_utf8_lossy on each raw TCP
+    // chunk independently would replace the stranded lead byte (e.g. 0xC3) and
+    // the stranded continuation byte (0xA9) each with U+FFFD, so 'é' became
+    // "??".  After the fix the bytes are buffered and decoded as a unit.
+
+    /// Helper: build a single-choice text-delta SSE line with the given content,
+    /// convert to bytes, split at `split_pos`, feed both chunks through
+    /// `drain_complete_sse_lines_bytes`, and assert the extracted TextDelta
+    /// matches `expected`.
+    fn assert_unicode_survives_split(content: &str, split_pos: usize) {
+        let json_line = format!(r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}"#);
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        assert!(
+            split_pos < raw.len(),
+            "split_pos {split_pos} out of range (len={})",
+            raw.len()
+        );
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        buf.extend_from_slice(&raw[..split_pos]);
+        let events1 = drain_complete_sse_lines_bytes(&mut buf);
+        assert!(
+            events1.is_empty(),
+            "no complete line after first chunk (split={split_pos})"
+        );
+
+        buf.extend_from_slice(&raw[split_pos..]);
+        let events2 = drain_complete_sse_lines_bytes(&mut buf);
+        assert_eq!(events2.len(), 1, "should emit exactly one event");
+        assert!(
+            matches!(&events2[0], Ok(ResponseEvent::TextDelta(t)) if t == content),
+            "split at byte {split_pos}: expected TextDelta({content:?}), got {:?}",
+            events2[0]
+        );
+    }
+
+    #[test]
+    fn unicode_split_across_chunk_boundary_is_preserved() {
+        // 'é' = U+00E9 → UTF-8: [0xC3, 0xA9].  Split so 0xC3 is in chunk 1.
+        let content = "caf\u{00e9}";
+        let raw: Vec<u8> = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}{}"#,
+            "\n"
+        )
+        .into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xC3).expect("é not found");
+        assert_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn three_byte_utf8_split_after_byte_1() {
+        // '中' = U+4E2D → UTF-8: [0xE4, 0xB8, 0xAD].  Split after the lead byte.
+        let content = "\u{4e2d}\u{6587}"; // 中文
+        let raw: Vec<u8> = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}{}"#,
+            "\n"
+        )
+        .into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xE4).expect("中 not found");
+        assert_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn three_byte_utf8_split_after_byte_2() {
+        // '中' → [0xE4, 0xB8, 0xAD].  Split between the two continuation bytes.
+        let content = "\u{4e2d}\u{6587}"; // 中文
+        let raw: Vec<u8> = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}{}"#,
+            "\n"
+        )
+        .into_bytes();
+        // Find [0xE4, 0xB8] and split after 0xB8.
+        let split_pos = raw
+            .windows(2)
+            .position(|w| w == [0xE4, 0xB8])
+            .map(|p| p + 2)
+            .expect("中 continuation not found");
+        assert_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn four_byte_utf8_emoji_split_at_each_boundary() {
+        // '🎉' = U+1F389 → UTF-8: [0xF0, 0x9F, 0x8E, 0x89].
+        // Test splits after byte 1, 2, and 3 of the emoji sequence.
+        let content = "party\u{1F389}time";
+        let raw: Vec<u8> = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}{}"#,
+            "\n"
+        )
+        .into_bytes();
+        let lead_pos = raw.iter().position(|&b| b == 0xF0).expect("🎉 not found");
+        // After lead byte (1 byte in)
+        assert_unicode_survives_split(content, lead_pos + 1);
+        // After second byte (2 bytes in)
+        assert_unicode_survives_split(content, lead_pos + 2);
+        // After third byte (3 bytes in)
+        assert_unicode_survives_split(content, lead_pos + 3);
+    }
+
+    #[test]
+    fn mixed_ascii_and_unicode_across_multiple_chunks() {
+        // "café 🎉" split in three parts: before é, between 🎉 bytes.
+        let content = "caf\u{00e9} \u{1F389}";
+        let raw: Vec<u8> = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}{}"#,
+            "\n"
+        )
+        .into_bytes();
+        let pos_e = raw.iter().position(|&b| b == 0xC3).expect("é not found");
+        let pos_emoji = raw.iter().position(|&b| b == 0xF0).expect("🎉 not found");
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(&raw[..pos_e]);
+        assert!(drain_complete_sse_lines_bytes(&mut buf).is_empty());
+        buf.extend_from_slice(&raw[pos_e..pos_emoji + 2]);
+        assert!(drain_complete_sse_lines_bytes(&mut buf).is_empty());
+        buf.extend_from_slice(&raw[pos_emoji + 2..]);
+        let events = drain_complete_sse_lines_bytes(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == content),
+            "mixed Unicode content corrupted: {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn crlf_line_ending_unicode_preserved() {
+        // CRLF endings (Windows-style) must also work correctly.
+        let content = "caf\u{00e9}";
+        let json_line = format!(r#"data: {{"choices":[{{"delta":{{"content":"{content}"}}}}]}}"#);
+        let raw: Vec<u8> = format!("{json_line}\r\n").into_bytes();
+
+        let split_pos = raw.iter().position(|&b| b == 0xC3).expect("é not found");
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(&raw[..split_pos]);
+        assert!(drain_complete_sse_lines_bytes(&mut buf).is_empty());
+        buf.extend_from_slice(&raw[split_pos..]);
+        let events = drain_complete_sse_lines_bytes(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Ok(ResponseEvent::TextDelta(t)) if t == content),
+            "CRLF: content corrupted: {:?}",
+            events[0]
         );
     }
 

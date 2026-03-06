@@ -337,23 +337,25 @@ impl crate::ModelProvider for AnthropicProvider {
         }
 
         let byte_stream = resp.bytes_stream();
-        // SSE lines can be split across TCP chunks, so we carry a remainder
-        // buffer forward.  Only complete lines (terminated by '\n') are parsed;
-        // anything left over is prepended to the next chunk.
+        // SSE lines can be split across TCP chunks, so we carry a raw-byte
+        // remainder buffer forward.  Using Vec<u8> prevents silent corruption
+        // of multi-byte UTF-8 sequences that span chunk boundaries: '\n'
+        // (0x0A) never appears inside a continuation byte, so splitting on it
+        // is always safe and each extracted line is guaranteed valid UTF-8.
         let event_stream = byte_stream
-            .scan(String::new(), |buf, chunk| {
-                let text = match chunk {
-                    Ok(b) => String::from_utf8_lossy(&b).to_string(),
+            .scan(Vec::<u8>::new(), |buf, chunk| {
+                match chunk {
+                    Ok(b) => buf.extend_from_slice(&b),
                     Err(e) => {
                         return futures::future::ready(Some(vec![Err(anyhow::anyhow!(e))]));
                     }
-                };
-                buf.push_str(&text);
+                }
                 let mut events = Vec::new();
-                // Process every complete line (i.e. everything before the last '\n').
-                while let Some(pos) = buf.find('\n') {
-                    let line = buf[..pos].trim_end_matches('\r').to_string();
-                    buf.drain(..=pos);
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&line_bytes)
+                        .trim_end_matches(|c| c == '\r' || c == '\n')
+                        .to_string();
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
                         if let Ok(v) = serde_json::from_str::<Value>(data) {
@@ -906,5 +908,88 @@ mod tests {
         let img = &content[1];
         assert_eq!(img["type"], "image");
         assert_eq!(img["source"]["type"], "base64");
+    }
+
+    // ── SSE Unicode chunk-boundary preservation ───────────────────────────────
+    // Simulate the scan closure: accumulate raw bytes, drain complete SSE lines,
+    // decode as UTF-8 only after a full newline-terminated line is assembled.
+
+    fn drain_sse_bytes(buf: &mut Vec<u8>) -> Vec<ResponseEvent> {
+        let mut events = Vec::new();
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line_bytes)
+                .trim_end_matches(|c| c == '\r' || c == '\n')
+                .to_string();
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Ok(ev) = parse_anthropic_event(&v) {
+                        events.push(ev);
+                    }
+                }
+            }
+        }
+        events
+    }
+
+    fn assert_anthropic_unicode_survives_split(content: &str, split_pos: usize) {
+        let json_line = format!(
+            r#"data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{content}"}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        assert!(split_pos < raw.len(), "split_pos out of range");
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&raw[..split_pos]);
+        assert!(
+            drain_sse_bytes(&mut buf).is_empty(),
+            "unexpected early event at split={split_pos}"
+        );
+        buf.extend_from_slice(&raw[split_pos..]);
+        let events = drain_sse_bytes(&mut buf);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], ResponseEvent::TextDelta(t) if t == content),
+            "split at {split_pos}: expected TextDelta({content:?}), got {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn unicode_2byte_split_preserved() {
+        // 'é' = [0xC3, 0xA9]; split between bytes
+        let content = "caf\u{00e9}";
+        let json_line = format!(
+            r#"data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{content}"}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xC3).expect("é not found");
+        assert_anthropic_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn unicode_3byte_split_after_byte1_preserved() {
+        // '中' = [0xE4, 0xB8, 0xAD]; split after lead byte
+        let content = "\u{4e2d}";
+        let json_line = format!(
+            r#"data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{content}"}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let split_pos = raw.iter().position(|&b| b == 0xE4).expect("中 not found");
+        assert_anthropic_unicode_survives_split(content, split_pos);
+    }
+
+    #[test]
+    fn unicode_4byte_emoji_split_preserved() {
+        // '🎉' = [0xF0, 0x9F, 0x8E, 0x89]; test all three interior splits
+        let content = "\u{1F389}";
+        let json_line = format!(
+            r#"data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{content}"}}}}"#
+        );
+        let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
+        let lead = raw.iter().position(|&b| b == 0xF0).expect("🎉 not found");
+        assert_anthropic_unicode_survives_split(content, lead + 1);
+        assert_anthropic_unicode_survives_split(content, lead + 2);
+        assert_anthropic_unicode_survives_split(content, lead + 3);
     }
 }
