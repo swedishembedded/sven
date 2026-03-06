@@ -63,6 +63,7 @@ impl Widget for StatusBar<'_> {
 
         let mode_str = self.mode.to_string();
         let ctx_bar_str = ctx_bar(self.context_pct, self.ascii);
+        let ctx_pct_str = format!(" {}%", self.context_pct);
 
         // Tool in progress — only shown when a tool is actually running.
         let tool_sym = if self.ascii { "*" } else { "⚙" };
@@ -86,7 +87,7 @@ impl Widget for StatusBar<'_> {
         // Cache hit rate — shown in green when >0.
         let cache_span: Span<'static> = if self.cache_hit_pct > 0 && !self.agent_busy {
             Span::styled(
-                format!("  cache {}%", self.cache_hit_pct),
+                format!("  cache hit {}%", self.cache_hit_pct),
                 Style::default().fg(Color::Rgb(80, 180, 100)),
             )
         } else {
@@ -145,7 +146,9 @@ impl Widget for StatusBar<'_> {
             Span::styled(separator, Style::default().fg(BORDER_DIM)),
             Span::styled(format!(" {mode_str} "), mode_style(self.mode)),
             Span::styled(separator, Style::default().fg(BORDER_DIM)),
-            Span::styled(format!(" {ctx_bar_str} "), ctx_style(self.context_pct)),
+            Span::styled(" ctx ", Style::default().fg(TEXT_DIM)),
+            Span::styled(format!("{ctx_bar_str}"), ctx_style(self.context_pct)),
+            Span::styled(ctx_pct_str, ctx_style(self.context_pct)),
             cache_span,
             tool_span,
             streaming_span,

@@ -66,7 +66,11 @@ impl Tool for GdbStatusTool {
         let server_status = if state.has_server() {
             format!(
                 "Server: running ({})",
-                state.server_addr.as_deref().unwrap_or("unknown address")
+                state
+                    .server
+                    .as_ref()
+                    .map(|s| s.addr.as_str())
+                    .unwrap_or("unknown address")
             )
         } else {
             "Server: not started".to_string()
@@ -84,7 +88,7 @@ impl Tool for GdbStatusTool {
             );
         }
 
-        let gdb = state.client.as_ref().unwrap();
+        let gdb = &state.client.as_ref().unwrap().gdb;
 
         // Drain any pending general messages first so status is fresh
         let pending_msgs = gdb.pop_general().await.unwrap_or_default();

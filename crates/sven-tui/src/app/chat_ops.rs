@@ -129,7 +129,11 @@ impl App {
 
             let n = styled.len();
 
-            if self.nvim.disabled {
+            // Only insert action labels when the segment is expanded (tier ≥ 1)
+            // or is the currently focused segment.  Collapsed tier-0 segments
+            // should not show icons — clicking them cycles expand level instead.
+            let is_focused = self.chat.focused_segment == Some(i);
+            if self.nvim.disabled && (expand >= 1 || is_focused) {
                 if segment_editable_text(&self.chat.segments, i).is_some() {
                     edit_labels.insert(line_start);
                 }

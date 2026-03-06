@@ -59,16 +59,8 @@ pub struct ChatPane<'a> {
 
 impl Widget for ChatPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Build title with scroll position info.
-        let scroll_pct = if self.lines.is_empty() {
-            0
-        } else {
-            ((self.scroll_offset as usize) * 100)
-                .saturating_div(self.lines.len().max(1))
-                .min(100)
-        };
         let title = if self.segment_count > 0 {
-            format!("Chat  [{} segs · {}%]", self.segment_count, scroll_pct)
+            format!("Chat  [{} msgs]", self.segment_count)
         } else {
             "Chat".to_string()
         };

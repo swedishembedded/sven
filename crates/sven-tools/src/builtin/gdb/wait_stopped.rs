@@ -92,7 +92,7 @@ impl Tool for GdbWaitStoppedTool {
             return ToolOutput::err(&call.id, "No active GDB session. Call gdb_connect first.");
         }
 
-        let gdb = state.client.as_ref().unwrap();
+        let gdb = &state.client.as_ref().unwrap().gdb;
         let deadline = Instant::now() + Duration::from_secs(timeout_secs);
 
         // Poll the cached status rather than registering an async awaiter.

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use crate::params::{opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 
@@ -68,30 +69,12 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let path = match call.args.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
-                let args_preview =
-                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'path'. Received: {}",
-                        args_preview
-                    ),
-                );
-            }
+        let path = match require_str(call, "path") {
+            Ok(p) => p.to_string(),
+            Err(e) => return e,
         };
-        let offset = call
-            .args
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as usize;
-        let limit = call
-            .args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_LINE_LIMIT as u64) as usize;
+        let offset = opt_u64(call, "offset").unwrap_or(1) as usize;
+        let limit = opt_u64(call, "limit").unwrap_or(DEFAULT_LINE_LIMIT as u64) as usize;
 
         debug!(path = %path, offset, limit, "read_file tool");
 

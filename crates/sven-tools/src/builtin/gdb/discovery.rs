@@ -14,6 +14,7 @@
 ///   6. `Makefile`                  — JLinkExe / JLinkRTTLogger / flash targets
 ///   7. Chip heuristics             — scan CMakeLists, Cargo.toml, board files
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::Result;
 use regex::Regex;
@@ -241,25 +242,18 @@ fn gdbinit_to_server_command(content: &str) -> Option<String> {
         }
     }
 
-    // Fall back: if there is a `target remote :PORT` line we can infer
-    // JLinkGDBServer is commonly used and build a default command.
-    let remote_re =
-        Regex::new(r"target\s+(?:extended-)?remote\s+(?:[a-zA-Z0-9.]+:)?(\d+)").unwrap();
-    if let Some(caps) = remote_re.captures(content) {
-        let port = &caps[1];
-        // We know the port but not the device – return None and let the
-        // caller fall through to further heuristics; we'll only use this
-        // as a last resort to learn the port.
-        let _ = port; // used in chip_heuristics via extract_port
-    }
-
     None
 }
 
+static GDBINIT_REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"target\s+(?:extended-)?remote\s+(?:[a-zA-Z0-9.]+:)?(\d+)").unwrap()
+});
+
 /// Extract the GDB port hint from a `.gdbinit` file for use by other helpers.
 pub fn extract_port_from_gdbinit(content: &str) -> Option<u16> {
-    let re = Regex::new(r"target\s+(?:extended-)?remote\s+(?:[a-zA-Z0-9.]+:)?(\d+)").unwrap();
-    re.captures(content).and_then(|c| c[1].parse().ok())
+    GDBINIT_REMOTE_RE
+        .captures(content)
+        .and_then(|c| c[1].parse().ok())
 }
 
 /// Parse a VS Code / cortex-debug compatible `launch.json` (from `.vscode/`,
@@ -495,22 +489,23 @@ fn strip_json_comments(s: &str) -> String {
     result
 }
 
+static PORT_PATTERNS: LazyLock<[Regex; 4]> = LazyLock::new(|| {
+    [
+        Regex::new(r"-port[= ](\d+)").unwrap(),
+        Regex::new(r"--port[= ](\d+)").unwrap(),
+        Regex::new(r" -p (\d+)").unwrap(),
+        Regex::new(r":(\d{4,5})\b").unwrap(),
+    ]
+});
+
 /// Extract the port number from a GDB server command string.
 ///
 /// Tries common patterns: `-port NNNN`, `--port=NNNN`, `-p NNNN`, `:NNNN`.
 pub fn extract_port_from_command(cmd: &str) -> Option<u16> {
-    let patterns: &[&str] = &[
-        r"-port[= ](\d+)",
-        r"--port[= ](\d+)",
-        r" -p (\d+)",
-        r":(\d{4,5})\b",
-    ];
-    for pat in patterns {
-        if let Ok(re) = Regex::new(pat) {
-            if let Some(caps) = re.captures(cmd) {
-                if let Ok(port) = caps[1].parse::<u16>() {
-                    return Some(port);
-                }
+    for re in PORT_PATTERNS.iter() {
+        if let Some(caps) = re.captures(cmd) {
+            if let Ok(port) = caps[1].parse::<u16>() {
+                return Some(port);
             }
         }
     }

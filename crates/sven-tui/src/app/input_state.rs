@@ -7,56 +7,45 @@ use std::path::PathBuf;
 
 // ── InputAttachment ───────────────────────────────────────────────────────────
 
-/// A file or image the user attached to the current message via paste.
+/// An image the user attached to the current message via paste.
+///
+/// Only image files (png, jpg, gif, …) are represented here; non-image paths
+/// are inserted inline as plain text rather than being attached.
 #[derive(Debug, Clone)]
-pub enum InputAttachment {
-    File(PathBuf),
-    Image(PathBuf),
+pub struct InputAttachment {
+    pub path: PathBuf,
 }
 
 impl InputAttachment {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
     /// Short display name (just the file name, not the full path).
     pub fn display_name(&self) -> &str {
-        match self {
-            InputAttachment::File(p) | InputAttachment::Image(p) => {
-                p.file_name().and_then(|n| n.to_str()).unwrap_or("(file)")
-            }
-        }
+        self.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("(image)")
     }
 
     /// Icon/prefix character for display.
     pub fn icon(&self, ascii: bool) -> &'static str {
-        match self {
-            InputAttachment::Image(_) => {
-                if ascii {
-                    "[img] "
-                } else {
-                    "🖼  "
-                }
-            }
-            InputAttachment::File(_) => {
-                if ascii {
-                    "[file] "
-                } else {
-                    "📎 "
-                }
-            }
+        if ascii {
+            "[img] "
+        } else {
+            "🖼  "
         }
     }
 
     /// Text injected into the submitted message (the agent receives the path).
     pub fn to_message_text(&self) -> String {
-        match self {
-            InputAttachment::File(p) => format!("[File: {}]", p.display()),
-            InputAttachment::Image(p) => format!("[Image: {}]", p.display()),
-        }
+        format!("[Image: {}]", self.path.display())
     }
 
     /// Full path as a string for display in a compact form.
     pub fn full_path(&self) -> String {
-        match self {
-            InputAttachment::File(p) | InputAttachment::Image(p) => p.display().to_string(),
-        }
+        self.path.display().to_string()
     }
 }
 

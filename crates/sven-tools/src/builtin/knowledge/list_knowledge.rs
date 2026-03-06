@@ -5,7 +5,6 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_config::AgentMode;
 use sven_runtime::SharedKnowledge;
 
 use crate::policy::ApprovalPolicy;
@@ -44,10 +43,6 @@ impl Tool for ListKnowledgeTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
-    }
-
-    fn modes(&self) -> &[AgentMode] {
-        &[AgentMode::Research, AgentMode::Plan, AgentMode::Agent]
     }
 
     fn output_category(&self) -> OutputCategory {

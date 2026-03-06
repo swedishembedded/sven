@@ -1,12 +1,39 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::sync::OnceLock;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use crate::params::{opt_bool, opt_str, opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+
+/// Cached availability of `rg` (ripgrep).  Probed once on first use; the
+/// result never changes during a sven session.
+static HAS_RG: OnceLock<bool> = OnceLock::new();
+
+/// Returns `true` if `rg` (ripgrep) is available on `$PATH`.
+///
+/// The check is performed at most once per process; subsequent calls return
+/// the cached result without spawning a subprocess.
+async fn has_rg() -> bool {
+    if let Some(&cached) = HAS_RG.get() {
+        return cached;
+    }
+    let available = tokio::process::Command::new("which")
+        .arg("rg")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    // `set` may lose the race; the winner's value is always the same.
+    let _ = HAS_RG.set(available);
+    available
+}
 
 pub struct GrepTool;
 
@@ -76,51 +103,16 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
-                let args_preview =
-                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'pattern'. Received: {}",
-                        args_preview
-                    ),
-                );
-            }
+        let pattern = match require_str(call, "pattern") {
+            Ok(p) => p.to_string(),
+            Err(e) => return e,
         };
-        let path = call
-            .args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
-        let include = call
-            .args
-            .get("include")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let case_sensitive = call
-            .args
-            .get("case_sensitive")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let limit = call
-            .args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
-        let output_mode = call
-            .args
-            .get("output_mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("content");
-        let context_lines = call
-            .args
-            .get("context_lines")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+        let path = opt_str(call, "path").unwrap_or(".").to_string();
+        let include = opt_str(call, "include").map(str::to_string);
+        let case_sensitive = opt_bool(call, "case_sensitive").unwrap_or(true);
+        let limit = opt_u64(call, "limit").unwrap_or(100) as usize;
+        let output_mode = opt_str(call, "output_mode").unwrap_or("content");
+        let context_lines = opt_u64(call, "context_lines").unwrap_or(0) as usize;
 
         debug!(pattern = %pattern, path = %path, output_mode = %output_mode, "grep tool");
 
@@ -152,15 +144,7 @@ async fn run_rg(
     output_mode: &str,
     context_lines: usize,
 ) -> anyhow::Result<String> {
-    let has_rg = tokio::process::Command::new("which")
-        .arg("rg")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    let output = if has_rg {
+    let output = if has_rg().await {
         let mut args = vec!["--color".to_string(), "never".to_string()];
 
         match output_mode {

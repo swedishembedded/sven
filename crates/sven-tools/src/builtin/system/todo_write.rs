@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
-use crate::events::{TodoItem, ToolEvent};
+use crate::events::{TodoItem, TodoStatus, ToolEvent};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
@@ -85,54 +85,26 @@ impl Tool for TodoWriteTool {
 
         let mut items: Vec<TodoItem> = Vec::new();
         for (i, item) in todos_value.iter().enumerate() {
-            let id_val = item.get("id").and_then(|v| v.as_str()).map(str::to_string);
-            let content_val = item
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            let status_val = item
-                .get("status")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-
-            let missing: Vec<_> = [
-                ("id", &id_val),
-                ("content", &content_val),
-                ("status", &status_val),
-            ]
-            .iter()
-            .filter_map(|(name, v)| v.is_none().then_some(*name))
-            .collect();
-            if !missing.is_empty() {
-                let fallback = format!("item {}", i + 1);
-                let label = id_val.as_deref().unwrap_or(&fallback);
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "Missing required parameters for todo '{label}': {}. Please provide all required parameters for this tool.",
-                        missing.join(", ")
-                    ),
-                );
+            // Deserialise the item directly; serde validates `status` against
+            // the TodoStatus enum variants so no manual string comparison needed.
+            match serde_json::from_value::<TodoItem>(item.clone()) {
+                Ok(todo) => items.push(todo),
+                Err(e) => {
+                    let fallback = format!("item {}", i + 1);
+                    let label = item.get("id").and_then(|v| v.as_str()).unwrap_or(&fallback);
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("invalid todo '{label}': {e}. status must be one of: pending, in_progress, completed, cancelled"),
+                    );
+                }
             }
-
-            let id = id_val.unwrap();
-            let content = content_val.unwrap();
-            let status = status_val.unwrap();
-            if !["pending", "in_progress", "completed", "cancelled"].contains(&status.as_str()) {
-                return ToolOutput::err(
-                    &call.id,
-                    format!("invalid status '{status}' for todo '{id}'"),
-                );
-            }
-            items.push(TodoItem {
-                id,
-                content,
-                status,
-            });
         }
 
-        // Validate at most one in_progress
-        let in_progress_count = items.iter().filter(|t| t.status == "in_progress").count();
+        // Validate at most one in_progress.
+        let in_progress_count = items
+            .iter()
+            .filter(|t| t.status == TodoStatus::InProgress)
+            .count();
         if in_progress_count > 1 {
             return ToolOutput::err(&call.id, "at most one todo can be 'in_progress' at a time");
         }
@@ -156,15 +128,7 @@ fn format_todos(items: &[TodoItem]) -> String {
     }
     let lines: Vec<String> = items
         .iter()
-        .map(|t| {
-            let icon = match t.status.as_str() {
-                "completed" => "✓",
-                "in_progress" => "→",
-                "cancelled" => "✗",
-                _ => "○",
-            };
-            format!("{icon} [{}] {}", t.id, t.content)
-        })
+        .map(|t| format!("{} [{}] {}", t.status.icon(), t.id, t.content))
         .collect();
     format!("Todos updated:\n{}", lines.join("\n"))
 }

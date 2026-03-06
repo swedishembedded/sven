@@ -343,12 +343,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
             let lines: Vec<String> = todos
                 .iter()
                 .map(|t| {
-                    let icon = match t.status.as_str() {
-                        "completed" => "✓",
-                        "in_progress" => "→",
-                        "cancelled" => "✗",
-                        _ => "○",
-                    };
+                    let icon = t.status.icon();
                     format!("  {icon} [{}] {}", t.id, t.content)
                 })
                 .collect();

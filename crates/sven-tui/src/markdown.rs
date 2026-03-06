@@ -35,6 +35,9 @@ struct MarkdownRenderer {
     code_buf: String,
     // List state: stack of (is_ordered, current_number)
     list_stack: Vec<Option<u64>>,
+    // When Some, the current list item begins with a task-list checkbox.
+    // The bool is the checked state; the field is consumed when the Item starts.
+    pending_task_marker: Option<bool>,
     // Link URL to show after link text
     pending_link_url: Option<String>,
     // Table state: buffer the whole table before rendering (need all widths first).
@@ -63,6 +66,7 @@ impl MarkdownRenderer {
             code_lang: String::new(),
             code_buf: String::new(),
             list_stack: Vec::new(),
+            pending_task_marker: None,
             pending_link_url: None,
             table_alignments: Vec::new(),
             table_rows: Vec::new(),
@@ -90,6 +94,7 @@ impl MarkdownRenderer {
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_STRIKETHROUGH);
         opts.insert(Options::ENABLE_TABLES);
+        opts.insert(Options::ENABLE_TASKLISTS);
 
         let parser = Parser::new_ext(md, opts);
         for event in parser {
@@ -228,11 +233,39 @@ impl MarkdownRenderer {
                         }
                         _ => format!("  {} ", md_bullet(self.ascii)),
                     };
-                    self.current_spans
-                        .push(Span::styled(bullet, Style::default().fg(Color::LightBlue)));
+                    // If a task-list marker was pending (set by TaskListMarker
+                    // event which arrives before the item content), use a
+                    // checkbox prefix instead of the regular bullet.
+                    if let Some(checked) = self.pending_task_marker.take() {
+                        let (box_char, box_style) = if checked {
+                            (
+                                if self.ascii { "[x] " } else { "☑ " },
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::DIM),
+                            )
+                        } else {
+                            (
+                                if self.ascii { "[ ] " } else { "☐ " },
+                                Style::default().fg(Color::Rgb(150, 150, 160)),
+                            )
+                        };
+                        self.current_spans
+                            .push(Span::styled("  ", Style::default()));
+                        self.current_spans
+                            .push(Span::styled(box_char.to_string(), box_style));
+                    } else {
+                        self.current_spans
+                            .push(Span::styled(bullet, Style::default().fg(Color::LightBlue)));
+                    }
                 }
                 Event::End(TagEnd::Item) => {
                     self.push_line();
+                }
+                Event::TaskListMarker(checked) => {
+                    // Store the checked state; it will be consumed when the
+                    // enclosing Tag::Item is rendered.
+                    self.pending_task_marker = Some(checked);
                 }
 
                 // ── Block quotes ──────────────────────────────────────────────

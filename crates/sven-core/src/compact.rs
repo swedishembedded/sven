@@ -82,11 +82,18 @@ pub fn compact_session_with_strategy(
 /// Drops all but the last `keep_n` non-system messages and prepends a canned
 /// notice.  No model call is made — this is a purely deterministic operation
 /// that always succeeds regardless of session size.
+///
+/// The preserved slice is adjusted forward until it starts at a clean message
+/// boundary — i.e. not inside a tool-call/tool-result group.  This prevents
+/// sending orphaned `ToolResult` messages to the API without a preceding
+/// assistant `ToolCall`, which causes a 400 error.
 pub fn emergency_compact(
     messages: &mut Vec<Message>,
     system_msg: Option<Message>,
     keep_n: usize,
 ) -> usize {
+    use sven_model::MessageContent;
+
     let before = messages.len();
     let non_system: Vec<Message> = messages
         .iter()
@@ -94,7 +101,22 @@ pub fn emergency_compact(
         .cloned()
         .collect();
     let keep = keep_n.min(non_system.len());
-    let preserved: Vec<Message> = non_system[non_system.len() - keep..].to_vec();
+    let mut start = non_system.len().saturating_sub(keep);
+
+    // Advance `start` past any leading ToolResult or ToolCall messages so the
+    // preserved slice always begins at a clean boundary.  Sending ToolResult
+    // messages without a preceding assistant ToolCall message causes a 400
+    // error from the API.
+    while start < non_system.len() {
+        match &non_system[start].content {
+            MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
+                start += 1;
+            }
+            _ => break,
+        }
+    }
+
+    let preserved: Vec<Message> = non_system[start..].to_vec();
     let notice = Message::assistant(
         "[Context emergency-compacted: earlier history was dropped to prevent a \
          context-window overflow. The agent may lack full context for earlier \

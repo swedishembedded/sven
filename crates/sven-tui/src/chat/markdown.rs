@@ -32,15 +32,20 @@ pub const SYM_EXPAND: &str = "▶";
 // ── Format helpers ────────────────────────────────────────────────────────────
 
 /// Format todo items as markdown for conversation display.
+///
+/// Renders each item as a GFM task-list checkbox so the markdown renderer
+/// shows `☑`/`☐` instead of raw STATUS labels.
 pub fn format_todos_markdown(todos: &[TodoItem]) -> String {
     let mut result = String::from("\n**Todo List Updated:**\n\n");
     for todo in todos {
-        result.push_str(&format!(
-            "- **{}**: {} (id: {})\n",
-            todo.status.to_uppercase(),
-            todo.content,
-            todo.id
-        ));
+        use sven_tools::events::TodoStatus;
+        let (checkbox, label) = match todo.status {
+            TodoStatus::Completed => ("- [x] ", ""),
+            TodoStatus::Cancelled => ("- [x] ~~", "~~"),
+            TodoStatus::InProgress => ("- [ ] **⟳** ", ""),
+            TodoStatus::Pending => ("- [ ] ", ""),
+        };
+        result.push_str(&format!("{}{}{}\n", checkbox, todo.content, label,));
     }
     result.push('\n');
     result

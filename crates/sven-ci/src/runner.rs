@@ -1292,12 +1292,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             let lines: Vec<String> = todos
                 .iter()
                 .map(|t| {
-                    let icon = match t.status.as_str() {
-                        "completed" => "✓",
-                        "in_progress" => "→",
-                        "cancelled" => "✗",
-                        _ => "○",
-                    };
+                    let icon = t.status.icon();
                     format!("  {icon} [{}] {}", t.id, t.content)
                 })
                 .collect();

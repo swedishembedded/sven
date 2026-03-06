@@ -102,7 +102,7 @@ impl Tool for GdbConnectTool {
 
         let port: u16 = if let Some(p) = call.args.get("port").and_then(|v| v.as_u64()) {
             p as u16
-        } else if let Some(addr) = &state.server_addr {
+        } else if let Some(addr) = state.server.as_ref().map(|s| s.addr.as_str()) {
             // Parse port from "host:port"
             addr.split(':')
                 .next_back()

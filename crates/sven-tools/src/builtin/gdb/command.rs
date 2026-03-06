@@ -97,9 +97,8 @@ impl Tool for GdbCommandTool {
         }
 
         // Temporarily set the timeout for this command, then restore.
-        let gdb = state.client.as_mut().unwrap();
-        gdb.set_timeout(Duration::from_secs(timeout_secs));
-        let gdb = state.client.as_ref().unwrap();
+        let client = state.client.as_mut().unwrap();
+        client.gdb.set_timeout(Duration::from_secs(timeout_secs));
 
         // Use raw_console_cmd (waits for ^done/^running/^error) then pop_general
         // for console output.  This is safer than raw_console_cmd_for_output because
@@ -108,15 +107,20 @@ impl Tool for GdbCommandTool {
         // commands until the process is restarted.  With raw_console_cmd, GDB sends all
         // console output lines BEFORE the result token, so by the time raw_cmd returns
         // the lines are already in pending_general and pop_general retrieves them.
-        let result = gdb.raw_console_cmd(&command).await;
+        let result = client.gdb.raw_console_cmd(&command).await;
 
         // Restore the default timeout regardless of outcome.
         let default_timeout = Duration::from_secs(self.cfg.command_timeout_secs);
-        state.client.as_mut().unwrap().set_timeout(default_timeout);
+        state
+            .client
+            .as_mut()
+            .unwrap()
+            .gdb
+            .set_timeout(default_timeout);
 
         match result {
             Ok(_resp) => {
-                let gdb = state.client.as_ref().unwrap();
+                let gdb = &state.client.as_ref().unwrap().gdb;
                 match gdb.pop_general().await {
                     Ok(msgs) => {
                         let lines: Vec<String> = msgs

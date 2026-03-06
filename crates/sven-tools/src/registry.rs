@@ -18,16 +18,13 @@ pub struct ToolSchema {
 }
 
 /// Central registry holding all available tools.
+///
+/// `ToolRegistry` is automatically `Sync` because `HashMap<String, Arc<dyn Tool>>`
+/// is `Sync` when `dyn Tool: Send + Sync`, which is guaranteed by the `Tool`
+/// supertrait bounds (`Tool: Send + Sync`).  No manual `unsafe impl` is needed.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
 }
-
-// SAFETY: ToolRegistry is Sync because:
-// - HashMap<String, Arc<dyn Tool>> is Sync (String is Sync, Arc<T: Send + Sync> is Sync)
-// - Tools implement Send + Sync (required by the Tool trait)
-// - No interior mutability exists after construction (all methods take &self)
-// - Parallel tool execution is safe because tools are immutable after registration
-unsafe impl Sync for ToolRegistry {}
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -46,33 +43,12 @@ impl ToolRegistry {
 
     /// Produce schemas for ALL registered tools (mode-unfiltered).
     pub fn schemas(&self) -> Vec<ToolSchema> {
-        let mut schemas: Vec<ToolSchema> = self
-            .tools
-            .values()
-            .map(|t| ToolSchema {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema(),
-            })
-            .collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        schemas
+        self.schemas_filtered(|_| true)
     }
 
     /// Produce schemas only for tools available in the given mode.
     pub fn schemas_for_mode(&self, mode: AgentMode) -> Vec<ToolSchema> {
-        let mut schemas: Vec<ToolSchema> = self
-            .tools
-            .values()
-            .filter(|t| t.modes().contains(&mode))
-            .map(|t| ToolSchema {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema(),
-            })
-            .collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        schemas
+        self.schemas_filtered(|t| t.modes().contains(&mode))
     }
 
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
@@ -104,6 +80,24 @@ impl ToolRegistry {
             .collect();
         names.sort();
         names
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// Build a sorted schema list, keeping only tools that satisfy `predicate`.
+    fn schemas_filtered(&self, predicate: impl Fn(&Arc<dyn Tool>) -> bool) -> Vec<ToolSchema> {
+        let mut schemas: Vec<ToolSchema> = self
+            .tools
+            .values()
+            .filter(|t| predicate(t))
+            .map(|t| ToolSchema {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                parameters: t.parameters_schema(),
+            })
+            .collect();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
     }
 }
 

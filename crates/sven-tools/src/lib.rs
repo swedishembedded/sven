@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod builtin;
 pub mod events;
+pub(crate) mod params;
 pub mod policy;
 pub mod registry;
 pub mod tool;
 
-pub use events::{TodoItem, ToolEvent};
+pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use policy::{ApprovalPolicy, ToolPolicy};
 pub use registry::{ToolRegistry, ToolSchema};
 pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};

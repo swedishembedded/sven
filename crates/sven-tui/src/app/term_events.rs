@@ -282,20 +282,27 @@ impl App {
                                             .is_some();
 
                                     // Detect clicks on right-aligned action icons.
-                                    // Layout (7 cols from inner right edge, scrollbar at w-1):
-                                    //   ↻ rerun  — col w-7, absorber w-6  (zone [w-7, w-5])
-                                    //   ✎ edit   — col w-5, absorber w-4  (zone [w-5, w-3])
-                                    //   ✕ delete — col w-3, absorber w-2  (zone [w-3, w-1])
+                                    // Layout (9 cols from inner right edge, scrollbar at w-1):
+                                    //   y copy   — col w-9, w-8  (zone [w-9, w-7])
+                                    //   ↻ rerun  — col w-7, w-6  (zone [w-7, w-5])
+                                    //   ✎ edit   — col w-5, w-4  (zone [w-5, w-3])
+                                    //   ✕ delete — col w-3, w-2  (zone [w-3, w-1])
                                     let is_header_line =
                                         self.chat.remove_labels.contains(&click_line);
 
                                     let label_area_start =
+                                        chat_inner_x + chat_inner_w.saturating_sub(9);
+                                    let rerun_zone_start =
                                         chat_inner_x + chat_inner_w.saturating_sub(7);
                                     let edit_zone_start =
                                         chat_inner_x + chat_inner_w.saturating_sub(5);
                                     let delete_zone_start =
                                         chat_inner_x + chat_inner_w.saturating_sub(3);
 
+                                    let clicked_copy = is_header_line
+                                        && self.chat.copy_labels.contains(&click_line)
+                                        && mouse.column >= label_area_start
+                                        && mouse.column < rerun_zone_start;
                                     let clicked_delete = is_header_line
                                         && mouse.column >= delete_zone_start
                                         && mouse.column
@@ -306,7 +313,7 @@ impl App {
                                         && mouse.column < delete_zone_start;
                                     let clicked_rerun = is_header_line
                                         && self.chat.rerun_labels.contains(&click_line)
-                                        && mouse.column >= label_area_start
+                                        && mouse.column >= rerun_zone_start
                                         && mouse.column < edit_zone_start;
                                     let outside_labels = mouse.column < label_area_start;
 
@@ -334,6 +341,14 @@ impl App {
                                             self.ui.focus = FocusPane::Input;
                                             self.update_editing_segment_live();
                                             self.rerender_chat().await;
+                                        }
+                                    } else if clicked_copy {
+                                        self.ui.confirm_modal = None;
+                                        let saved = self.chat.focused_segment;
+                                        self.chat.focused_segment = Some(seg_idx);
+                                        self.dispatch(Action::CopySegment).await;
+                                        if self.chat.focused_segment.is_some() {
+                                            self.chat.focused_segment = saved;
                                         }
                                     } else if clicked_rerun {
                                         self.ui.confirm_modal = None;
@@ -442,11 +457,25 @@ impl App {
             }
 
             Event::Resize(width, height) => {
+                // Estimate dynamic input height for the layout cache update.
+                let prompt_width: u16 = 2;
+                let avail_wrap_width = width.saturating_sub(prompt_width).max(1) as usize;
+                let wrap_est = crate::input_wrap::wrap_content(
+                    &self.input.buffer,
+                    avail_wrap_width,
+                    self.input.buffer.len(),
+                );
+                let text_lines = wrap_est.lines.len().max(1) as u16;
+                let attach_rows = self.input.attachments.len() as u16;
+                let max_input_height = (height / 2).max(3);
+                let desired_input_height = (text_lines + attach_rows + 2)
+                    .max(self.layout.input_height_pref)
+                    .min(max_input_height);
                 let layout = AppLayout::compute(
                     Rect::new(0, 0, width, height),
                     self.ui.search.active,
                     self.queue.messages.len(),
-                    self.layout.input_height_pref,
+                    desired_input_height,
                 );
                 // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
@@ -474,34 +503,43 @@ impl App {
 
             // ── Bracketed paste ───────────────────────────────────────────────
             Event::Paste(text) => {
-                // Trim only for path detection; preserve internal whitespace for
-                // insertion.  The trimmed version is used solely to check if the
-                // entire paste looks like a file or image path.
-                let candidate = text.trim();
-
-                // ── Path / image attachment detection ─────────────────────────
-                // Normalise common path presentations before probing the filesystem.
-                let resolved = Self::resolve_paste_path(candidate);
-                if let Some(path_buf) = resolved {
-                    if is_image_path(&path_buf) {
-                        self.input
-                            .attachments
-                            .push(InputAttachment::Image(path_buf));
-                    } else {
-                        self.input.attachments.push(InputAttachment::File(path_buf));
-                    }
-                    return false;
-                }
-
-                // ── Normal text paste ──────────────────────────────────────────
-                // Normalise line endings: \r\n → \n, lone \r → \n.
-                // Without this, terminals that send \r\n in paste produce a stray
-                // carriage-return character that appears as a spurious column in
-                // the rendered input and breaks wrap_content's line-split logic.
+                // Normalise line endings first.
                 let normalised: String = text.replace("\r\n", "\n").replace('\r', "\n");
-                for ch in normalised.chars() {
-                    self.input.buffer.insert(self.input.cursor, ch);
-                    self.input.cursor += ch.len_utf8();
+
+                // ── Per-line path / image detection ───────────────────────────
+                // Only image files (png, jpg, etc.) are attached as context
+                // objects; all other paths (directories, code files, text files)
+                // are inserted inline so the model sees them as plain text and
+                // the user can edit them freely.
+                //
+                // Multi-line pastes are checked line by line.  A line that
+                // resolves as an image becomes an attachment (consumed, not
+                // inserted).  Every other line — including resolved non-image
+                // paths — is inserted into the buffer as-is.
+                let lines: Vec<&str> = normalised.split('\n').collect();
+                let single_line = lines.len() == 1;
+                let mut any_inserted = false;
+                for (idx, line) in lines.iter().enumerate() {
+                    let candidate = line.trim();
+                    if let Some(path_buf) = Self::resolve_paste_path(candidate) {
+                        if is_image_path(&path_buf) {
+                            self.input.attachments.push(InputAttachment::new(path_buf));
+                            // Don't insert image paths into the buffer.
+                            continue;
+                        }
+                        // Non-image path: insert as inline text.
+                    }
+                    // Insert the line text.  Add a newline between lines (but
+                    // not after the final segment of a multi-line paste).
+                    if any_inserted || (!single_line && idx > 0) {
+                        self.input.buffer.insert(self.input.cursor, '\n');
+                        self.input.cursor += 1;
+                    }
+                    for ch in line.chars() {
+                        self.input.buffer.insert(self.input.cursor, ch);
+                        self.input.cursor += ch.len_utf8();
+                    }
+                    any_inserted = true;
                 }
                 if self.should_show_completion() {
                     self.update_completion_overlay();

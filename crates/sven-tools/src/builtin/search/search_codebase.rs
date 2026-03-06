@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use crate::params::{opt_bool, opt_str, opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
@@ -65,41 +66,14 @@ impl Tool for SearchCodebaseTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let query = match call.args.get("query").and_then(|v| v.as_str()) {
-            Some(q) => q.to_string(),
-            None => {
-                let args_preview =
-                    serde_json::to_string(&call.args).unwrap_or_else(|_| "null".to_string());
-                return ToolOutput::err(
-                    &call.id,
-                    format!(
-                        "missing required parameter 'query'. Received: {}",
-                        args_preview
-                    ),
-                );
-            }
+        let query = match require_str(call, "query") {
+            Ok(q) => q.to_string(),
+            Err(e) => return e,
         };
-        let path = call
-            .args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
-        let include = call
-            .args
-            .get("include")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let case_sensitive = call
-            .args
-            .get("case_sensitive")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let limit = call
-            .args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
+        let path = opt_str(call, "path").unwrap_or(".").to_string();
+        let include = opt_str(call, "include").map(str::to_string);
+        let case_sensitive = opt_bool(call, "case_sensitive").unwrap_or(true);
+        let limit = opt_u64(call, "limit").unwrap_or(100) as usize;
 
         debug!(query = %query, path = %path, "search_codebase tool");
 

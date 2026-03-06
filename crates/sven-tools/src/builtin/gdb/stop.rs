@@ -68,7 +68,9 @@ impl Tool for GdbStopTool {
         // "quit", its stderr closes with an empty read, triggering a panic in the
         // gdbmi worker's process_stderr() (usize underflow on len()-1 of empty buf).
         // SIGTERM lets GDB exit cleanly without us blocking on its response.
-        if let Some(pid) = state.gdb_pid {
+        if let Some(pid) = state.client.as_ref().and_then(|c| c.pid) {
+            // SAFETY: `pid` is the PID of the gdb-multiarch process we spawned.
+            // Sending SIGTERM lets GDB exit cleanly.
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }

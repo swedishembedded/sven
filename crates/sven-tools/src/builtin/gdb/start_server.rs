@@ -184,7 +184,7 @@ impl Tool for GdbStartServerTool {
         if !force && is_port_listening(port).await {
             debug!(port, "gdb_start_server: server already listening, reusing");
             let addr = format!("localhost:{port}");
-            self.state.lock().await.server_addr = Some(addr.clone());
+            self.state.lock().await.set_external_server(addr.clone());
             return ToolOutput::ok(
                 &call.id,
                 format!(
@@ -248,48 +248,42 @@ impl Tool for GdbStartServerTool {
         let mut state = self.state.lock().await;
         state.set_server(child, addr.clone(), server_pgid);
 
-        if let Some(server) = &mut state.server {
-            match server.try_wait() {
-                Ok(Some(status)) => {
-                    let exit_code = status.code().unwrap_or(-1);
-                    let _ = state.server.take();
-                    state.server_addr = None;
-                    drop(state); // release lock before the async port check
+        let child_exited = state
+            .server
+            .as_mut()
+            .and_then(|s| s.child.as_mut())
+            .and_then(|c| c.try_wait().ok().flatten())
+            .map(|s| s.code().unwrap_or(-1));
 
-                    let port_occupied = is_port_listening(port).await;
-                    if port_occupied {
-                        return ToolOutput::err(
-                            &call.id,
-                            format!(
-                                "GDB server exited immediately (exit {exit_code}).\n\
-                                 Port {port} is already in use — likely a zombie server from a \
-                                 previous session.\n\n\
-                                 • To kill the zombie and restart: \
-                                   call gdb_start_server with force=true\n\
-                                 • To reuse the existing server: \
-                                   call gdb_connect directly"
-                            ),
-                        );
-                    }
+        if let Some(exit_code) = child_exited {
+            let _ = state.server.take();
+            drop(state); // release lock before the async port check
 
-                    return ToolOutput::err(
-                        &call.id,
-                        format!(
-                            "GDB server exited immediately (exit {exit_code}).\n\
-                             Check that the server binary is installed and the command is correct.\n\
-                             Verify the J-Link probe is connected \
-                             ('ss -tln | grep {port}' should show LISTEN)."
-                        ),
-                    );
-                }
-                Ok(None) => {} // still running
-                Err(e) => {
-                    return ToolOutput::err(
-                        &call.id,
-                        format!("Could not check server status: {e}"),
-                    );
-                }
+            let port_occupied = is_port_listening(port).await;
+            if port_occupied {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "GDB server exited immediately (exit {exit_code}).\n\
+                         Port {port} is already in use — likely a zombie server from a \
+                         previous session.\n\n\
+                         • To kill the zombie and restart: \
+                           call gdb_start_server with force=true\n\
+                         • To reuse the existing server: \
+                           call gdb_connect directly"
+                    ),
+                );
             }
+
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "GDB server exited immediately (exit {exit_code}).\n\
+                     Check that the server binary is installed and the command is correct.\n\
+                     Verify the J-Link probe is connected \
+                     ('ss -tln | grep {port}' should show LISTEN)."
+                ),
+            );
         }
 
         ToolOutput::ok(
@@ -405,10 +399,10 @@ mod tests {
         );
         assert!(out.content.contains("gdb_connect"), "got: {}", out.content);
 
-        // server_addr must be stored so gdb_connect can infer the port.
+        // server addr must be stored so gdb_connect can infer the port.
         let s = state.lock().await;
         assert_eq!(
-            s.server_addr.as_deref(),
+            s.server.as_ref().map(|srv| srv.addr.as_str()),
             Some(format!("localhost:{occupied_port}").as_str())
         );
     }

@@ -95,8 +95,9 @@ impl Tool for GdbInterruptTool {
             return ToolOutput::err(&call.id, "No active GDB session. Call gdb_connect first.");
         }
 
-        let gdb = state.client.as_ref().unwrap();
-        let pid = state.gdb_pid;
+        let client = state.client.as_ref().unwrap();
+        let gdb = &client.gdb;
+        let pid = client.pid;
 
         // Check whether the target is already stopped using a single non-blocking
         // status query.  Using await_stopped() would register an AwaitStatus entry

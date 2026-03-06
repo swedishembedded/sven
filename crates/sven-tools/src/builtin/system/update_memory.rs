@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use crate::params::require_str;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
@@ -30,6 +31,10 @@ impl Tool for UpdateMemoryTool {
     }
 
     fn parameters_schema(&self) -> Value {
+        // `key` is required for set/get/delete but NOT for list.
+        // `value` is required only for set.
+        // Use `anyOf` to express the per-operation requirements so that
+        // schema-validating callers do not reject a valid `list` call.
         json!({
             "type": "object",
             "properties": {
@@ -40,14 +45,14 @@ impl Tool for UpdateMemoryTool {
                 },
                 "key": {
                     "type": "string",
-                    "description": "Memory key (required for set/get/delete)"
+                    "description": "Memory key (required for set/get/delete, omit for list)"
                 },
                 "value": {
                     "type": "string",
-                    "description": "Value to store (required for set)"
+                    "description": "Value to store (required for set only)"
                 }
             },
-            "required": ["operation", "key", "value"],
+            "required": ["operation"],
             "additionalProperties": false
         })
     }
@@ -57,9 +62,9 @@ impl Tool for UpdateMemoryTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let op = match call.args.get("operation").and_then(|v| v.as_str()) {
-            Some(o) => o.to_string(),
-            None => return ToolOutput::err(&call.id, "missing 'operation'"),
+        let op = match require_str(call, "operation") {
+            Ok(o) => o.to_string(),
+            Err(e) => return e,
         };
 
         debug!(op = %op, "update_memory tool");

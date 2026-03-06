@@ -245,6 +245,8 @@ pub async fn node_agent_task(
             break;
         }
 
+        // Accumulate consecutive thinking blocks so they emit a single segment.
+        let mut thinking_buf = String::new();
         // Drain events until session completes or is cancelled.
         loop {
             tokio::select! {
@@ -266,7 +268,7 @@ pub async fn node_agent_task(
                         Ok(e) => e,
                         Err(_) => continue,
                     };
-                    let done = handle_event(evt, &tx, &ws_out_tx, sid).await;
+                    let done = handle_event(evt, &tx, &ws_out_tx, sid, &mut thinking_buf).await;
                     if done {
                         break;
                     }
@@ -289,19 +291,33 @@ async fn handle_event(
     tx: &mpsc::Sender<AgentEvent>,
     ws_out_tx: &mpsc::UnboundedSender<String>,
     session_id: Uuid,
+    thinking_buf: &mut String,
 ) -> bool {
     match evt {
         Evt::OutputDelta { delta, role, .. } => {
             if role == "thinking" {
+                thinking_buf.push_str(&delta);
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
             } else {
+                // A non-thinking delta flushes any accumulated thinking.
+                if !thinking_buf.is_empty() {
+                    let content = std::mem::take(thinking_buf);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                }
                 let _ = tx.send(AgentEvent::TextDelta(delta)).await;
             }
         }
         Evt::OutputComplete { text, role, .. } => {
             if role == "thinking" {
-                let _ = tx.send(AgentEvent::ThinkingComplete(text)).await;
+                // Accumulate without flushing — multiple thinking blocks from
+                // the same turn are merged into one ThinkingComplete event.
+                thinking_buf.push_str(&text);
             } else {
+                // Non-thinking output: flush accumulated thinking first.
+                if !thinking_buf.is_empty() {
+                    let content = std::mem::take(thinking_buf);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                }
                 let _ = tx.send(AgentEvent::TextComplete(text)).await;
             }
         }
@@ -311,6 +327,11 @@ async fn handle_event(
             args,
             ..
         } => {
+            // Flush accumulated thinking before the first tool call.
+            if !thinking_buf.is_empty() {
+                let content = std::mem::take(thinking_buf);
+                let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+            }
             let tc = ToolCall {
                 id: call_id,
                 name: tool_name,
@@ -346,6 +367,11 @@ async fn handle_event(
         }
         Evt::SessionState { state, .. } => {
             if state == "completed" || state == "cancelled" {
+                // Flush any remaining accumulated thinking before completing.
+                if !thinking_buf.is_empty() {
+                    let content = std::mem::take(thinking_buf);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 return true;
             }

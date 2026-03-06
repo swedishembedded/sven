@@ -24,7 +24,7 @@ impl AppLayout {
     /// `input_height`     — user-preferred input pane height (clamped 3–20).
     pub fn compute(area: Rect, search_visible: bool, queue_len: usize, input_height: u16) -> Self {
         let status_height = 1u16;
-        let input_height = input_height.clamp(3, 20);
+        let input_height = input_height.clamp(3, area.height.saturating_sub(5).max(3));
         let search_height = if search_visible { 1u16 } else { 0u16 };
         let queue_height: u16 = if queue_len > 0 {
             (queue_len as u16 + 2).min(6)
