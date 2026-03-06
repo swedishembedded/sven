@@ -257,10 +257,11 @@ mod tests {
 
     #[tokio::test]
     async fn finds_pattern_in_file() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/tool.rs");
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "pub struct",
-                "path": "/data/agents/sven/crates/sven-tools/src/tool.rs"
+                "path": path,
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -309,10 +310,11 @@ mod tests {
     #[tokio::test]
     async fn limit_truncates_results() {
         // Search in a directory with many matches, limit to 2
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/builtin");
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "pub",
-                "path": "/data/agents/sven/crates/sven-tools/src/builtin",
+                "path": dir,
                 "limit": 2
             })))
             .await;

@@ -64,7 +64,19 @@ impl App {
         let anim_frame = self.agent.anim_frame;
         let segs_len = self.chat.segments.len();
 
+        // Track result segments that have been visually merged into a grouped pair
+        // line so their loop iteration can be skipped without rendering a duplicate.
+        let mut grouped_result_indices: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+
         for i in 0..segs_len {
+            // ── Grouped result: already rendered as part of the preceding ToolCall.
+            // Push a zero-height range to keep segment ↔ range-index alignment.
+            if grouped_result_indices.contains(&i) {
+                ranges.push((line_start, line_start));
+                continue;
+            }
+
             let seg = &self.chat.segments[i];
             let expand = if self.nvim.disabled {
                 self.chat.effective_expand_level(i, seg)
@@ -80,11 +92,15 @@ impl App {
                 None
             };
 
+            // Mark the result as consumed so its own loop iteration only
+            // records a zero-height range instead of rendering a duplicate line.
+            if let Some(result_idx) = paired_result_idx {
+                grouped_result_indices.insert(result_idx);
+            }
+
             let s = if let Some(result_idx) = paired_result_idx {
                 // Both the tool call (i) and result (result_idx) are tier-0:
-                // render as a single grouped line.  The result segment will be
-                // skipped below.  Still show an animated in-progress indicator
-                // if the tool is still running.
+                // render as a single grouped line.
                 let result_seg = &self.chat.segments[result_idx];
                 make_grouped_preview(seg, result_seg, &self.chat.tool_args, &tool_durations)
             } else if expand == 0 {
@@ -129,17 +145,6 @@ impl App {
             all_lines.extend(styled);
             ranges.push((line_start, line_start + n));
             line_start += n;
-
-            // If we rendered a grouped pair, add an empty range for the result segment.
-            if let Some(result_idx) = paired_result_idx {
-                // The result segment is visually merged with the call — give it a
-                // zero-height range so click detection still resolves it.
-                while ranges.len() <= result_idx {
-                    ranges.push((line_start, line_start));
-                }
-                // Overwrite the result slot with the current line position.
-                ranges[result_idx] = (line_start, line_start);
-            }
         }
 
         if !self.chat.streaming_buffer.is_empty() {

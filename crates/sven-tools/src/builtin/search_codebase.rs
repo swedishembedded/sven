@@ -209,10 +209,11 @@ mod tests {
 
     #[tokio::test]
     async fn finds_in_sven_codebase() {
+        let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
         let out = SearchCodebaseTool
             .execute(&call(json!({
                 "query": "ToolRegistry",
-                "path": "/data/agents/sven/crates/sven-tools/src"
+                "path": src,
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -228,11 +229,13 @@ mod tests {
 
     #[tokio::test]
     async fn include_glob_narrows_results() {
-        // Search only in .toml files — should not return .rs matches
+        // Search only in .toml files — should not return .rs matches.
+        // Use the crate root: it contains Cargo.toml which has "version".
+        let crate_root = env!("CARGO_MANIFEST_DIR");
         let out = SearchCodebaseTool
             .execute(&call(json!({
                 "query": "version",
-                "path": "/data/agents/sven",
+                "path": crate_root,
                 "include_glob": "*.toml"
             })))
             .await;
@@ -249,10 +252,11 @@ mod tests {
 
     #[tokio::test]
     async fn case_insensitive_search() {
+        let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
         let out = SearchCodebaseTool
             .execute(&call(json!({
                 "query": "TOOLREGISTRY",
-                "path": "/data/agents/sven/crates/sven-tools/src",
+                "path": src,
                 "case_sensitive": false
             })))
             .await;

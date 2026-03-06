@@ -236,8 +236,9 @@ impl App {
                             }
 
                             // ── Click on chat pane ────────────────────────────────
-                            let chat_inner_x = self.layout.chat_pane.x + 1;
-                            let chat_inner_w = self.layout.chat_pane.width.saturating_sub(2);
+                            // TOP+BOTTOM-only borders: inner.x == pane.x, inner.width == pane.width.
+                            let chat_inner_x = self.layout.chat_pane.x;
+                            let chat_inner_w = self.layout.chat_pane.width;
                             let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
                             let content_start_row = self.layout.chat_pane.y + 1;
 

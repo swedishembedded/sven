@@ -235,10 +235,11 @@ mod tests {
 
     #[tokio::test]
     async fn finds_toml_files() {
+        let crate_root = env!("CARGO_MANIFEST_DIR");
         let out = FindFileTool
             .execute(&call(json!({
                 "pattern": "*.toml",
-                "root": "/data/agents/sven"
+                "root": crate_root,
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -247,10 +248,11 @@ mod tests {
 
     #[tokio::test]
     async fn finds_with_double_star_pattern() {
+        let crate_root = env!("CARGO_MANIFEST_DIR");
         let out = FindFileTool
             .execute(&call(json!({
                 "pattern": "**/*.toml",
-                "root": "/data/agents/sven"
+                "root": crate_root,
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -309,10 +311,11 @@ mod tests {
 
     #[tokio::test]
     async fn finds_with_wildcard_name_pattern() {
+        let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
         let out = FindFileTool
             .execute(&call(json!({
                 "pattern": "*lint*",
-                "root": "/data/agents/sven/crates/sven-tools/src"
+                "root": src,
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
@@ -321,10 +324,11 @@ mod tests {
 
     #[tokio::test]
     async fn max_results_is_respected() {
+        let crate_root = env!("CARGO_MANIFEST_DIR");
         let out = FindFileTool
             .execute(&call(json!({
                 "pattern": "*.rs",
-                "root": "/data/agents/sven",
+                "root": crate_root,
                 "max_results": 3
             })))
             .await;

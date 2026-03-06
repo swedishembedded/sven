@@ -230,10 +230,16 @@ mod tests {
 
     #[tokio::test]
     async fn runs_on_sven_codebase() {
+        // Navigate from the crate root (sven-tools/) up to the workspace root.
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent() // crates/
+            .and_then(|p| p.parent()) // workspace root
+            .and_then(|p| p.to_str())
+            .unwrap_or(env!("CARGO_MANIFEST_DIR"));
         let t = ReadLintsTool;
         let out = t
             .execute(&call(json!({
-                "workdir": "/data/agents/sven"
+                "workdir": workspace_root
             })))
             .await;
         // Should succeed even if there are lint warnings
