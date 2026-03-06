@@ -1,6 +1,7 @@
 IMAGE   := swedishembedded/sven-site
 PORT    := 3000
 DOCKER  ?= sudo docker
+TARGET  ?= agentsven.com
 
 .PHONY: build serve publish install copy-install
 
@@ -15,9 +16,9 @@ serve: install copy-install
 
 ## publish        – upload the Docker image to martin@swedishembedded.com via SSH
 publish: build
-	@echo "Publishing $(IMAGE) to swedishembedded.com..."
-	$(DOCKER) save $(IMAGE) | ssh martin@swedishembedded.com docker load
-	@echo "Done. Infrastructure on swedishembedded.com will handle deployment."
+	@echo "Publishing $(IMAGE) to $(TARGET)..."
+	$(DOCKER) save $(IMAGE) | ssh $(TARGET) docker load
+	@echo "Done. Infrastructure on $(TARGET) will handle deployment."
 
 ## install        – install npm dependencies
 install:
