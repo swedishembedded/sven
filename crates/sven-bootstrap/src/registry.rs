@@ -13,14 +13,15 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
+use sven_runtime::Shared;
 use sven_tools::{
-    events::ToolEvent, AskQuestionTool, ContextGrepTool, ContextOpenTool, ContextReadTool,
-    ContextStore, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool, GdbConnectTool,
-    GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool, GdbStopTool,
-    GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool, ReadFileTool,
-    ReadImageTool, ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, SearchKnowledgeTool,
-    ShellTool, SwitchModeTool, TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool,
-    WebSearchTool, WriteTool,
+    events::{TodoItem, ToolEvent},
+    AskQuestionTool, ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore,
+    DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool, GdbConnectTool, GdbInterruptTool,
+    GdbSessionState, GdbStartServerTool, GdbStatusTool, GdbStopTool, GdbWaitStoppedTool, GrepTool,
+    ListDirTool, ListKnowledgeTool, LoadSkillTool, ReadFileTool, ReadImageTool, ReadLintsTool,
+    RunTerminalCommandTool, SearchCodebaseTool, SearchKnowledgeTool, ShellTool, SwitchModeTool,
+    TodoWriteTool, ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -212,4 +213,105 @@ pub fn build_tool_registry(
             reg
         }
     }
+}
+
+/// Build a lightweight [`ToolRegistry`] for direct CLI invocation.
+///
+/// This registry contains every built-in tool that can run standalone —
+/// no agent loop, no model, and no TUI channel required.
+///
+/// Tools that are excluded and why:
+/// - `task` — spawns a sub-agent, requires a model and runtime context.
+/// - `context_query` / `context_reduce` — require a model for semantic search.
+/// - `ask_question` — requires a TUI channel to display the interactive modal.
+///
+/// Tools that need channels (`todo_write`, `switch_mode`) or shared state
+/// (GDB, context store, knowledge) are given fresh, session-local instances.
+/// Side effects (writing files, executing commands) are real — the same as
+/// when the agent calls them.
+pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+
+    // ── File ─────────────────────────────────────────────────────────────────
+    reg.register(ReadFileTool);
+    reg.register(ReadImageTool);
+    reg.register(ListDirTool);
+    reg.register(FindFileTool);
+    reg.register(WriteTool);
+    reg.register(EditFileTool);
+    reg.register(DeleteFileTool);
+
+    // ── Search ────────────────────────────────────────────────────────────────
+    reg.register(GrepTool);
+    reg.register(SearchCodebaseTool);
+
+    // ── Web ───────────────────────────────────────────────────────────────────
+    reg.register(WebFetchTool);
+    reg.register(WebSearchTool {
+        api_key: cfg.tools.web.search.api_key.clone(),
+    });
+
+    // ── System ────────────────────────────────────────────────────────────────
+    reg.register(ReadLintsTool);
+    reg.register(UpdateMemoryTool {
+        memory_file: cfg.tools.memory.memory_file.clone(),
+    });
+
+    // TodoWriteTool and SwitchModeTool need channels; use throwaway senders
+    // whose receiving ends are immediately dropped.  Any events they send are
+    // discarded — the side effects (writing the todo list to shared state,
+    // changing mode) are irrelevant in a single-shot CLI invocation.
+    let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
+    let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
+    reg.register(TodoWriteTool::new(todos, event_tx.clone()));
+    let mode_lock = Arc::new(Mutex::new(AgentMode::Agent));
+    reg.register(SwitchModeTool::new(mode_lock, event_tx.clone()));
+
+    // LoadSkillTool with empty skill list (no project root available yet;
+    // callers who need skills should pass the path via `load_skill` directly).
+    reg.register(LoadSkillTool::new(Shared::empty()));
+
+    // ListKnowledge / SearchKnowledge with an empty knowledge store.
+    let knowledge = Shared::empty();
+    reg.register(ListKnowledgeTool {
+        knowledge: knowledge.clone(),
+    });
+    reg.register(SearchKnowledgeTool {
+        knowledge: knowledge.clone(),
+    });
+
+    // ── Terminal ──────────────────────────────────────────────────────────────
+    reg.register(RunTerminalCommandTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
+    reg.register(ShellTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
+
+    // ── Context (memory-mapped large-file tools) ──────────────────────────────
+    let context_store = Arc::new(Mutex::new(ContextStore::new()));
+    reg.register(ContextOpenTool::new(context_store.clone()));
+    reg.register(ContextReadTool::new(context_store.clone()));
+    reg.register(ContextGrepTool::new(context_store.clone()));
+
+    // ── GDB ───────────────────────────────────────────────────────────────────
+    let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+    reg.register(GdbStartServerTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbConnectTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbCommandTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbInterruptTool::new(gdb_state.clone()));
+    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
+    reg.register(GdbStatusTool::new(gdb_state.clone()));
+    reg.register(GdbStopTool::new(gdb_state));
+
+    reg
 }

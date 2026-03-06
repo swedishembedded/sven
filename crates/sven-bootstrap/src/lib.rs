@@ -23,5 +23,5 @@ pub use context::{RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
 };
-pub use registry::build_tool_registry;
+pub use registry::{build_cli_tool_registry, build_tool_registry};
 pub use task_tool::TaskTool;

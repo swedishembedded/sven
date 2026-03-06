@@ -73,15 +73,16 @@ name = "sven"
 path = "src/main.rs"
 
 [dependencies]
-sven-config  = { path = "crates/sven-config" }
-sven-model   = { path = "crates/sven-model" }
-sven-input   = { path = "crates/sven-input" }
-sven-tools   = { path = "crates/sven-tools" }
-sven-core    = { path = "crates/sven-core" }
-sven-ci      = { path = "crates/sven-ci" }
-sven-tui     = { path = "crates/sven-tui" }
-sven-node    = { path = "crates/sven-node" }
-sven-mcp     = { path = "crates/sven-mcp" }
+sven-config      = { path = "crates/sven-config" }
+sven-model       = { path = "crates/sven-model" }
+sven-input       = { path = "crates/sven-input" }
+sven-tools       = { path = "crates/sven-tools" }
+sven-core        = { path = "crates/sven-core" }
+sven-bootstrap   = { path = "crates/sven-bootstrap" }
+sven-ci          = { path = "crates/sven-ci" }
+sven-tui         = { path = "crates/sven-tui" }
+sven-node        = { path = "crates/sven-node" }
+sven-mcp         = { path = "crates/sven-mcp" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }
