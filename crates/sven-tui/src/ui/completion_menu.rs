@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Slash-command completion menu widget — floating popup above the input pane
-//! with type icons and a one-row description preview.
+//! with slash prefix and a one-row description preview.
 
 use ratatui::{
     buffer::Buffer,
@@ -15,30 +15,6 @@ use ratatui::{
 use crate::overlay::completion::CompletionOverlay;
 
 use super::theme::border_type;
-
-// ── icon helpers ──────────────────────────────────────────────────────────────
-
-fn command_icon(value: &str, ascii: bool) -> &'static str {
-    if ascii {
-        return "/ ";
-    }
-    // Strip any leading '/' so that matching works whether the value is stored
-    // as "model" or "/model" (get_completions uses the bare name).
-    let v = value.trim_start_matches('/');
-    if v.starts_with("model") {
-        "🤖 "
-    } else if v.starts_with("mode") {
-        "⚡ "
-    } else if v.starts_with("abort") || v.starts_with("quit") {
-        "⛔ "
-    } else if v.starts_with("clear") {
-        "🗑  "
-    } else if v.starts_with("help") {
-        "❓ "
-    } else {
-        "/ "
-    }
-}
 
 // ── CompletionMenu widget ─────────────────────────────────────────────────────
 
@@ -111,16 +87,13 @@ impl Widget for CompletionMenu<'_> {
             let abs_idx = i + scroll;
             let selected = abs_idx == self.overlay.selected;
 
-            let icon = command_icon(&item.value, self.ascii);
-            // Strip a leading '/' from the label — the icon already carries the
-            // slash (or an emoji), so "/ /model" becomes "/ model".
             let raw_label = if item.display.is_empty() {
                 item.value.as_str()
             } else {
                 item.display.as_str()
             };
-            let label = raw_label.trim_start_matches('/');
-            let avail = (inner.width as usize).saturating_sub(icon.len() + 1);
+            let label = raw_label;
+            let avail = (inner.width as usize).saturating_sub(1);
             let label: String = label.chars().take(avail).collect();
 
             let (fg, bg, modifier) = if selected {
@@ -130,21 +103,13 @@ impl Widget for CompletionMenu<'_> {
             };
 
             let base = Style::default().fg(fg).bg(bg).add_modifier(modifier);
-            let icon_sty = if selected {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray).bg(bg)
-            };
 
             // Pad to fill the row so bg covers the full width.
-            let pad_len = (inner.width as usize).saturating_sub(icon.len() + label.len() + 1);
+            let pad_len = (inner.width as usize).saturating_sub(label.len() + 1);
             let pad = " ".repeat(pad_len);
 
             lines.push(Line::from(vec![
-                Span::styled(format!(" {icon}"), icon_sty),
+                Span::styled(format!("/"), base),
                 Span::styled(format!("{label}{pad}"), base),
             ]));
         }

@@ -19,14 +19,16 @@ pub(crate) struct AgentConn {
     /// Context window usage for the last turn (0–100 %), relative to the
     /// usable input budget (`max_tokens − max_output_tokens`).
     pub context_pct: u8,
-    /// Exact input token count for the last turn (provider-reported).
+    /// Exact input token count for the current/last turn (provider-reported).
     /// Equals `input_tokens + cache_read_tokens + cache_write_tokens`.
+    /// Reset to 0 on TurnComplete/Aborted.
     pub context_tokens: u32,
-    /// Cumulative input tokens across all turns in this session.
+    /// Current context window size in tokens (mirrors context_tokens while a
+    /// turn is in progress; retains the last turn's value between turns so the
+    /// status bar has something to display).  This is NOT a running sum — it
+    /// always reflects the latest prompt size sent to the model.
     pub total_context_tokens: u32,
-    /// Cumulative context window percentage across all turns in this session.
-    /// This is calculated from total_context_tokens relative to the input budget.
-    /// It shows how full the context window is based on cumulative session tokens.
+    /// Context window fill percentage derived from total_context_tokens.
     pub total_context_pct: u8,
     /// The model's maximum context window (tokens), from the last TokenUsage event.
     /// Used to calculate cumulative context percentage.
@@ -34,10 +36,11 @@ pub(crate) struct AgentConn {
     /// The model's maximum output tokens per completion, from the last TokenUsage event.
     /// Used to calculate the usable input budget (max_tokens - max_output_tokens).
     pub max_output_tokens: usize,
-    /// Exact output token count for the last turn (provider-reported).
-    /// Zero until the provider's usage event arrives for this turn.
+    /// Output tokens generated during the current turn, accumulated across all
+    /// API calls within the turn (a tool-use turn involves multiple API calls,
+    /// each with its own output token count).  Reset to 0 on TurnComplete/Aborted.
     pub output_tokens: u32,
-    /// Cumulative output tokens across all turns in this session.
+    /// True cumulative output tokens across all completed turns in this session.
     pub total_output_tokens: u32,
     /// Cache-hit rate for the last turn (0–100 %).
     pub cache_hit_pct: u8,

@@ -26,11 +26,11 @@ pub struct StatusBar<'a> {
     pub model_name: &'a str,
     pub mode: AgentMode,
     pub context_pct: u8,
-    /// Cumulative context percentage based on total_context_tokens.
+    /// Context window fill percentage derived from total_context_tokens.
     pub total_context_pct: u8,
-    /// Cumulative input tokens across all turns in this session.
+    /// Current context window size in tokens (latest turn's prompt size).
     pub total_context_tokens: u32,
-    /// Cumulative output tokens across all turns in this session.
+    /// Cumulative output tokens across all completed turns in this session.
     pub total_output_tokens: u32,
     pub cache_hit_pct: u8,
     pub agent_busy: bool,

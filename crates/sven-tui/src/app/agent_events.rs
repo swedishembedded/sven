@@ -151,6 +151,8 @@ impl App {
                 ..
             } => {
                 // Input side: update when provider reports prompt token counts.
+                // For Anthropic this arrives in the message_start event at the
+                // beginning of each API call within the turn.
                 if input > 0 || cache_read > 0 || cache_write > 0 {
                     let total_ctx = input + cache_read + cache_write;
                     // Use the usable input budget as the denominator so that
@@ -165,30 +167,27 @@ impl App {
                     } as u32;
                     self.agent.context_pct = (total_ctx * 100 / input_budget).min(100) as u8;
                     self.agent.context_tokens = total_ctx;
+                    // Mirror into total_context_tokens immediately so the status bar
+                    // shows the current context size during streaming (not just after
+                    // TurnComplete).  total_context_tokens tracks the latest context
+                    // window size, NOT a running sum across turns.
+                    self.agent.total_context_tokens = total_ctx;
+                    self.agent.total_context_pct = self.agent.context_pct;
                     self.agent.cache_hit_pct = if total_ctx > 0 && cache_read > 0 {
                         (cache_read * 100 / total_ctx).min(100) as u8
                     } else {
                         0
                     };
-                    // Store max_tokens for cumulative percentage calculation.
                     self.agent.max_tokens = max_tokens;
                     self.agent.max_output_tokens = max_output_tokens;
-                    // Update cumulative context percentage if we have tokens.
-                    if self.agent.total_context_tokens > 0 && max_tokens > 0 {
-                        let input_budget = if max_output_tokens > 0 {
-                            max_tokens.saturating_sub(max_output_tokens)
-                        } else {
-                            max_tokens
-                        } as u32;
-                        self.agent.total_context_pct =
-                            (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
-                    }
                 }
-                // Output side: update exact count when provider reports it.
-                // For Anthropic this arrives in the message_delta usage event,
-                // which comes near the end of streaming before TurnComplete.
+                // Output side: accumulate across all API calls within the turn.
+                // For Anthropic, output tokens arrive in the message_delta usage
+                // event at the end of each API call.  A single user turn may
+                // involve several API calls (tool-use loop), so we must add here
+                // rather than overwrite to capture every call's output tokens.
                 if output > 0 {
-                    self.agent.output_tokens = output;
+                    self.agent.output_tokens += output;
                     // Discard the streaming estimate once the exact count is in.
                     self.agent.streaming_tokens = 0;
                 }
@@ -196,21 +195,15 @@ impl App {
             AgentEvent::TurnComplete => {
                 self.agent.busy = false;
                 self.agent.current_tool = None;
-                // Accumulate session totals for token counts.
-                self.agent.total_context_tokens += self.agent.context_tokens;
+                // Preserve the final context size from this turn before reset.
+                // total_context_tokens tracks the current context window size
+                // (NOT a running sum), so use = not +=.
+                self.agent.total_context_tokens = self.agent.context_tokens;
+                // Accumulate output tokens: context_tokens is per-turn (reset each
+                // turn), but output_tokens is a true cumulative billing metric.
                 self.agent.total_output_tokens += self.agent.output_tokens;
-                // Update cumulative context percentage after accumulation.
-                if self.agent.total_context_tokens > 0 && self.agent.max_tokens > 0 {
-                    let input_budget = if self.agent.max_output_tokens > 0 {
-                        self.agent
-                            .max_tokens
-                            .saturating_sub(self.agent.max_output_tokens)
-                    } else {
-                        self.agent.max_tokens
-                    } as u32;
-                    self.agent.total_context_pct =
-                        (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
-                }
+                // total_context_pct was already kept in sync by the TokenUsage
+                // handler; no recalculation needed here.
                 // Reset per-turn counts for the next turn.
                 self.agent.context_tokens = 0;
                 self.agent.output_tokens = 0;
@@ -257,22 +250,12 @@ impl App {
                 }
                 self.agent.busy = false;
                 self.agent.current_tool = None;
-                // Accumulate session totals for any partial output.
-                self.agent.total_context_tokens += self.agent.context_tokens;
+                // Preserve the final context size from this partial turn.
+                self.agent.total_context_tokens = self.agent.context_tokens;
                 self.agent.total_output_tokens += self.agent.output_tokens;
-                // Update cumulative context percentage after accumulation.
-                if self.agent.total_context_tokens > 0 && self.agent.max_tokens > 0 {
-                    let input_budget = if self.agent.max_output_tokens > 0 {
-                        self.agent
-                            .max_tokens
-                            .saturating_sub(self.agent.max_output_tokens)
-                    } else {
-                        self.agent.max_tokens
-                    } as u32;
-                    self.agent.total_context_pct =
-                        (self.agent.total_context_tokens * 100 / input_budget).min(100) as u8;
-                }
                 // Reset per-turn counts.
+                self.agent.context_tokens = 0;
+                self.agent.output_tokens = 0;
                 self.agent.streaming_tokens = 0;
                 self.agent.spinner_frame = 0;
                 self.agent.tool_start_times.clear();
