@@ -49,10 +49,9 @@ pub enum ContextKind {
         root: PathBuf,
         files: Vec<FileEntry>,
     },
-    /// Aggregated results from a `context_query` call (stored as a temp file).
+    /// Aggregated results from a `context_query` call (held in memory).
     Results {
-        path: PathBuf,
-        mmap: Mmap,
+        data: Vec<u8>,
         line_index: Vec<usize>,
         /// Number of per-chunk result entries.
         entry_count: usize,
@@ -262,24 +261,18 @@ impl ContextStore {
         Ok(meta)
     }
 
-    /// Register a results file produced by `context_query`.
+    /// Register query results produced by `context_query`.
     ///
-    /// The caller writes the results to a temp file first, then passes the path
-    /// here.  The file is memory-mapped and registered as a `Results` handle.
+    /// The results text is held in memory; no temporary file is written.
     pub fn register_results(
         &mut self,
-        path: PathBuf,
+        text: String,
         entry_count: usize,
     ) -> Result<ContextMetadata, String> {
-        let file = fs::File::open(&path)
-            .map_err(|e| format!("cannot open results file {}: {}", path.display(), e))?;
-        let mmap = unsafe {
-            Mmap::map(&file)
-                .map_err(|e| format!("mmap failed for results {}: {}", path.display(), e))?
-        };
-        let line_index = build_line_index(&mmap);
+        let data = text.into_bytes();
+        let line_index = build_line_index(&data);
         let total_lines = line_index.len();
-        let total_bytes = mmap.len();
+        let total_bytes = data.len();
 
         let id = self.next_id("res");
         let summary = format!(
@@ -300,8 +293,7 @@ impl ContextStore {
             ContextHandle {
                 id: id.clone(),
                 kind: ContextKind::Results {
-                    path,
-                    mmap,
+                    data,
                     entry_count,
                     line_index,
                 },
@@ -335,10 +327,10 @@ impl ContextStore {
         match &handle.kind {
             ContextKind::SingleFile {
                 mmap, line_index, ..
-            }
-            | ContextKind::Results {
-                mmap, line_index, ..
             } => read_lines_from(mmap, line_index, start_line, end_line),
+            ContextKind::Results {
+                data, line_index, ..
+            } => read_lines_from(data, line_index, start_line, end_line),
             ContextKind::Directory { files, .. } => {
                 if let Some(hint) = file_hint {
                     let entry = files
@@ -418,18 +410,25 @@ impl ContextStore {
                 mmap,
                 line_index,
                 ..
-            }
-            | ContextKind::Results {
-                path,
-                mmap,
-                line_index,
-                ..
             } => {
                 grep_file(
                     &re,
                     mmap,
                     line_index,
                     path,
+                    context_lines,
+                    limit,
+                    &mut results,
+                );
+            }
+            ContextKind::Results {
+                data, line_index, ..
+            } => {
+                grep_file(
+                    &re,
+                    data,
+                    line_index,
+                    Path::new("<results>"),
                     context_lines,
                     limit,
                     &mut results,
@@ -488,12 +487,6 @@ impl ContextStore {
                 mmap,
                 line_index,
                 ..
-            }
-            | ContextKind::Results {
-                path,
-                mmap,
-                line_index,
-                ..
             } => {
                 let total_lines = line_index.len();
                 if total_lines == 0 {
@@ -505,6 +498,22 @@ impl ContextStore {
                     let end = ((chunk_idx + 1) * chunk_lines).min(total_lines);
                     let text = read_lines_from(mmap, line_index, start, end)?;
                     let label = format!("{} L{}-L{}", path.display(), start, end);
+                    f(chunk_idx, total_chunks, &label, &text)?;
+                }
+            }
+            ContextKind::Results {
+                data, line_index, ..
+            } => {
+                let total_lines = line_index.len();
+                if total_lines == 0 {
+                    return Ok(());
+                }
+                let total_chunks = (total_lines + chunk_lines - 1) / chunk_lines;
+                for chunk_idx in 0..total_chunks {
+                    let start = chunk_idx * chunk_lines + 1;
+                    let end = ((chunk_idx + 1) * chunk_lines).min(total_lines);
+                    let text = read_lines_from(data, line_index, start, end)?;
+                    let label = format!("<results> L{}-L{}", start, end);
                     f(chunk_idx, total_chunks, &label, &text)?;
                 }
             }
@@ -556,15 +565,21 @@ impl ContextStore {
         match &handle.kind {
             ContextKind::SingleFile {
                 mmap, line_index, ..
-            }
-            | ContextKind::Results {
-                mmap, line_index, ..
             } => {
                 let n = line_index.len();
                 if n == 0 {
                     return Ok(String::new());
                 }
                 read_lines_from(mmap, line_index, 1, n)
+            }
+            ContextKind::Results {
+                data, line_index, ..
+            } => {
+                let n = line_index.len();
+                if n == 0 {
+                    return Ok(String::new());
+                }
+                read_lines_from(data, line_index, 1, n)
             }
             ContextKind::Directory { files, .. } => {
                 let mut out = String::new();
@@ -613,8 +628,7 @@ pub struct GrepMatch {
 ///
 /// The index contains the byte offset of the start of each line.  Line 0
 /// always starts at byte 0.  The index length equals the number of lines.
-pub fn build_line_index(mmap: &Mmap) -> Vec<usize> {
-    let data = &mmap[..];
+pub fn build_line_index(data: &[u8]) -> Vec<usize> {
     if data.is_empty() {
         return vec![];
     }
@@ -630,7 +644,7 @@ pub fn build_line_index(mmap: &Mmap) -> Vec<usize> {
 /// Extract lines `[start_line, end_line]` (1-indexed, inclusive) from a mmap
 /// using the pre-built line index.  Returns formatted `L{n}:content` lines.
 fn read_lines_from(
-    mmap: &Mmap,
+    data: &[u8],
     line_index: &[usize],
     start_line: usize,
     end_line: usize,
@@ -648,7 +662,6 @@ fn read_lines_from(
         ));
     }
 
-    let data = &mmap[..];
     let mut out = String::new();
     for i in start..end {
         let byte_start = line_index[i];
@@ -674,14 +687,13 @@ fn read_lines_from(
 /// [`GrepMatch`] entries to `results`.
 fn grep_file(
     re: &regex::Regex,
-    mmap: &Mmap,
+    data: &[u8],
     line_index: &[usize],
     path: &Path,
     context_lines: usize,
     limit: usize,
     results: &mut Vec<GrepMatch>,
 ) {
-    let data = &mmap[..];
     let total = line_index.len();
 
     for (i, _) in line_index.iter().enumerate() {

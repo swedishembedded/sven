@@ -387,21 +387,16 @@ impl Tool for ContextQueryTool {
         // Sort results by chunk index to maintain order.
         results.sort_by_key(|(idx, _)| *idx);
 
-        // ── Write results to a temp file and register as a new handle ─────────
+        // ── Register results in memory as a new handle ────────────────────────
         let results_text: String = results
             .iter()
             .map(|(idx, text)| format!("=== chunk {} of {} ===\n{}\n", idx + 1, total_chunks, text))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let tmp_path = std::env::temp_dir().join(format!("sven_ctx_results_{}.txt", uuid_hex()));
-        if let Err(e) = std::fs::write(&tmp_path, &results_text) {
-            return ToolOutput::err(&call.id, format!("failed to write results: {e}"));
-        }
-
         let meta = {
             let mut store = self.store.lock().await;
-            match store.register_results(tmp_path, total_chunks) {
+            match store.register_results(results_text, total_chunks) {
                 Ok(m) => m,
                 Err(e) => {
                     return ToolOutput::err(&call.id, format!("failed to register results: {e}"))
@@ -670,18 +665,6 @@ async fn tree_reduce_inner(
         depth + 1,
     ))
     .await
-}
-
-// ─── Utility ──────────────────────────────────────────────────────────────────
-
-/// Generate a short hex identifier for temp file naming.
-fn uuid_hex() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    format!("{:08x}_{:08x}", t, std::process::id())
 }
 
 // ─── Public constructor helpers ───────────────────────────────────────────────

@@ -1,5 +1,5 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
-//
+
 // SPDX-License-Identifier: Apache-2.0
 pub mod builtin;
 pub mod events;
@@ -12,24 +12,39 @@ pub use policy::{ApprovalPolicy, ToolPolicy};
 pub use registry::{ToolRegistry, ToolSchema};
 pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 
-// New tool exports
-pub use builtin::ask_question::{AskQuestionTool, Question, QuestionRequest};
-pub use builtin::delete_file::DeleteFileTool;
-pub use builtin::edit_file::EditFileTool;
-pub use builtin::find_file::FindFileTool;
-pub use builtin::grep::GrepTool;
-pub use builtin::list_dir::ListDirTool;
-pub use builtin::read_file::ReadFileTool;
-pub use builtin::read_image::ReadImageTool;
-pub use builtin::read_lints::ReadLintsTool;
-pub use builtin::run_terminal_command::RunTerminalCommandTool;
-pub use builtin::search_codebase::SearchCodebaseTool;
-pub use builtin::switch_mode::SwitchModeTool;
-pub use builtin::todo_write::TodoWriteTool;
-pub use builtin::update_memory::UpdateMemoryTool;
-pub use builtin::web_fetch::WebFetchTool;
-pub use builtin::web_search::WebSearchTool;
-pub use builtin::write_file::WriteTool;
+// File operation tools
+pub use builtin::file::delete_file::DeleteFileTool;
+pub use builtin::file::edit_file::EditFileTool;
+pub use builtin::file::find_file::FindFileTool;
+pub use builtin::file::read_file::ReadFileTool;
+pub use builtin::file::write_file::WriteTool;
+
+// Search tools
+pub use builtin::search::grep::GrepTool;
+pub use builtin::search::search_codebase::SearchCodebaseTool;
+pub use builtin::search::search_knowledge::SearchKnowledgeTool;
+
+// System tools
+pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionRequest};
+pub use builtin::system::list_dir::ListDirTool;
+pub use builtin::system::load_skill::LoadSkillTool;
+pub use builtin::system::read_lints::ReadLintsTool;
+pub use builtin::system::switch_mode::SwitchModeTool;
+pub use builtin::system::todo_write::TodoWriteTool;
+pub use builtin::system::update_memory::UpdateMemoryTool;
+
+// Terminal tools
+pub use builtin::terminal::run_terminal_command::RunTerminalCommandTool;
+
+// Web tools
+pub use builtin::web::web_fetch::WebFetchTool;
+pub use builtin::web::web_search::WebSearchTool;
+
+// Knowledge tools
+pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
+
+// Shell tool
+pub use builtin::shell::shell::ShellTool;
 
 // GDB debugging tools
 pub use builtin::gdb::state::GdbSessionState;
@@ -38,16 +53,10 @@ pub use builtin::gdb::{
     GdbStopTool, GdbWaitStoppedTool,
 };
 
-// Skill loading tool
-pub use builtin::load_skill::LoadSkillTool;
-
-// Knowledge base tools
-pub use builtin::list_knowledge::ListKnowledgeTool;
-pub use builtin::search_knowledge::SearchKnowledgeTool;
-
-pub use builtin::shell::ShellTool;
-
 // Context (RLM memory-mapped) tools
 pub use builtin::context::{
     ContextGrepTool, ContextOpenTool, ContextReadTool, ContextStore, SubQueryRunner,
 };
+
+// Image tool (still at root level)
+pub use builtin::read_image::ReadImageTool;

@@ -1,33 +1,22 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
-//
-// SPDX-License-Identifier: Apache-2.0
-pub mod ask_question;
-pub mod context;
-pub mod delete_file;
-pub mod edit_file;
-pub mod find_file;
-pub mod grep;
-pub mod list_dir;
-pub mod list_knowledge;
-pub mod load_skill;
-pub mod read_file;
-pub mod read_image;
-pub mod read_lints;
-pub mod run_terminal_command;
-pub mod search_codebase;
-pub mod search_knowledge;
-pub mod switch_mode;
-pub mod todo_write;
-pub mod update_memory;
-pub mod web_fetch;
-pub mod web_search;
-pub mod write_file;
 
+// SPDX-License-Identifier: Apache-2.0
+pub mod context;
+pub mod file;
 pub mod gdb;
+pub mod knowledge;
+pub mod search;
 pub mod shell;
+pub mod system;
+pub mod terminal;
+pub mod web;
+
+// Legacy re-exports for backward compatibility during transition
+// These modules still exist at root level for now but will be deprecated
+pub mod read_image;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
-//
+
 // Each builtin tool that overrides `output_category()` is verified here so
 // that renames or copy-paste errors are caught at compile time with a clear
 // failure message.  Tools that intentionally use the default (Generic) are
@@ -50,13 +39,13 @@ mod output_category_tests {
 
     #[test]
     fn shell_tool_is_headtail() {
-        let t = super::shell::ShellTool { timeout_secs: 30 };
+        let t = super::shell::shell::ShellTool { timeout_secs: 30 };
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 
     #[test]
     fn run_terminal_command_is_headtail() {
-        let t = super::run_terminal_command::RunTerminalCommandTool { timeout_secs: 30 };
+        let t = super::terminal::run_terminal_command::RunTerminalCommandTool { timeout_secs: 30 };
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 
@@ -82,19 +71,19 @@ mod output_category_tests {
 
     #[test]
     fn grep_tool_is_matchlist() {
-        let t = super::grep::GrepTool;
+        let t = super::search::grep::GrepTool;
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 
     #[test]
     fn search_codebase_is_matchlist() {
-        let t = super::search_codebase::SearchCodebaseTool;
+        let t = super::search::search_codebase::SearchCodebaseTool;
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 
     #[test]
     fn read_lints_is_matchlist() {
-        let t = super::read_lints::ReadLintsTool;
+        let t = super::system::read_lints::ReadLintsTool;
         assert_eq!(t.output_category(), OutputCategory::MatchList);
     }
 
@@ -102,7 +91,7 @@ mod output_category_tests {
 
     #[test]
     fn read_file_is_filecontent() {
-        let t = super::read_file::ReadFileTool;
+        let t = super::file::read_file::ReadFileTool;
         assert_eq!(t.output_category(), OutputCategory::FileContent);
     }
 
@@ -110,43 +99,43 @@ mod output_category_tests {
 
     #[test]
     fn write_tool_is_generic() {
-        let t = super::write_file::WriteTool;
+        let t = super::file::write_file::WriteTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn list_dir_is_generic() {
-        let t = super::list_dir::ListDirTool;
+        let t = super::system::list_dir::ListDirTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn edit_file_is_generic() {
-        let t = super::edit_file::EditFileTool;
+        let t = super::file::edit_file::EditFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn delete_file_is_generic() {
-        let t = super::delete_file::DeleteFileTool;
+        let t = super::file::delete_file::DeleteFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn web_fetch_is_generic() {
-        let t = super::web_fetch::WebFetchTool;
+        let t = super::web::web_fetch::WebFetchTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn web_search_is_generic() {
-        let t = super::web_search::WebSearchTool { api_key: None };
+        let t = super::web::web_search::WebSearchTool { api_key: None };
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
     #[test]
     fn find_file_tool_is_generic() {
-        let t = super::find_file::FindFileTool;
+        let t = super::file::find_file::FindFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 
@@ -154,7 +143,7 @@ mod output_category_tests {
 
     #[test]
     fn list_knowledge_is_matchlist() {
-        let t = super::list_knowledge::ListKnowledgeTool {
+        let t = super::knowledge::list_knowledge::ListKnowledgeTool {
             knowledge: sven_runtime::SharedKnowledge::empty(),
         };
         assert_eq!(t.output_category(), OutputCategory::MatchList);
@@ -162,7 +151,7 @@ mod output_category_tests {
 
     #[test]
     fn search_knowledge_is_matchlist() {
-        let t = super::search_knowledge::SearchKnowledgeTool {
+        let t = super::search::search_knowledge::SearchKnowledgeTool {
             knowledge: sven_runtime::SharedKnowledge::empty(),
         };
         assert_eq!(t.output_category(), OutputCategory::MatchList);

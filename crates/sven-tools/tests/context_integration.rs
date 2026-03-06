@@ -618,9 +618,9 @@ mod store_tests {
         let mut store = ContextStore::new();
         let results_content = "=== chunk 1 of 2 ===\nfound issue at line 42\n\n\
                                === chunk 2 of 2 ===\nno issues found\n";
-        let tmp = write_tmp(results_content);
-        // Results must be registered by path (temp file lifetime must outlast store).
-        let meta = store.register_results(tmp.path().to_path_buf(), 2).unwrap();
+        let meta = store
+            .register_results(results_content.to_string(), 2)
+            .unwrap();
         assert!(
             meta.handle_id.starts_with("res_"),
             "results handle must start with res_: {}",
@@ -1229,9 +1229,8 @@ No issues found.
 === chunk 3 of 3 ===
 MISRA Rule 14.4 violation at line 87: non-boolean condition in if statement.
 "#;
-        let tmp = write_tmp(results);
         let meta = store_inner
-            .register_results(tmp.path().to_path_buf(), 3)
+            .register_results(results.to_string(), 3)
             .unwrap();
         assert!(meta.handle_id.starts_with("res_"));
         assert_eq!(meta.file_count, 1);

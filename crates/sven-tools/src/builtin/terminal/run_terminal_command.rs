@@ -11,7 +11,7 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
-use crate::builtin::shell::head_tail_truncate;
+use crate::builtin::shell::shell::head_tail_truncate;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 

@@ -76,7 +76,7 @@ in `Arc<Mutex<ContextStore>>`.  All five tools share the same pointer.
 |------|-------------|-----------------|
 | `SingleFile` | `context_open` on a regular file | One `Mmap` + `Vec<usize>` line index |
 | `Directory` | `context_open` on a directory | `Vec<FileEntry>`, each with its own `Mmap` + line index |
-| `Results` | `context_query` writes a temp file; `register_results` mmaps it | One `Mmap` + `Vec<usize>` line index |
+| `Results` | `context_query` collects sub-query results; `register_results` stores them in memory | `Vec<u8>` + `Vec<usize>` line index |
 
 ### Line index
 
@@ -152,7 +152,8 @@ optional `file` path-substring for directory handles.
 Delegates to `ContextStore::read_range`, which:
 
 1. Validates the handle exists.
-2. For `SingleFile` / `Results` handles: slices the mmap using the line index.
+2. For `SingleFile` handles: slices the mmap using the line index.
+   For `Results` handles: slices the in-memory byte buffer using the line index.
 3. For `Directory` handles without a `file` hint: iterates files in order,
    tracking a global line offset, and concatenates matching ranges separated by
    `--- /path/to/file ---` headers.
@@ -242,11 +243,10 @@ The **map** step.  Accepts a handle, a `prompt` template (supporting
 
 4. Sort results by chunk index.
 
-5. Serialize results to a temp file:
-   /tmp/sven_ctx_results_<hex>_<pid>.txt
+5. Serialize results to a string (format: `=== chunk N of M ===\n<text>\n`).
 
-6. Acquire store lock → ContextStore::register_results(tmp_path, entry_count)
-   → new Results handle with its own Mmap + line index.
+6. Acquire store lock → ContextStore::register_results(results_text, entry_count)
+   → new in-memory Results handle with its own Vec<u8> + line index.
 
 7. Return: handle ID, byte count, entry count, preview of chunk 0 result,
    and usage instructions.

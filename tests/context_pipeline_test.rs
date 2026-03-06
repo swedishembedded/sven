@@ -507,9 +507,8 @@ mod reduce_tests {
     async fn reduce_sends_full_content_to_runner() {
         let results = "chunk 1: found issue A\nchunk 2: found issue B\nchunk 3: no issues\n";
         let mut store_inner = ContextStore::new();
-        let tmp = write_tmp(results);
         let meta = store_inner
-            .register_results(tmp.path().to_path_buf(), 3)
+            .register_results(results.to_string(), 3)
             .unwrap();
         let store = Arc::new(Mutex::new(store_inner));
 
@@ -562,10 +561,9 @@ mod reduce_tests {
 
     #[tokio::test]
     async fn reduce_returns_runner_response_as_tool_output() {
-        let tmp = write_tmp("result 1\nresult 2\n");
         let mut store_inner = ContextStore::new();
         let meta = store_inner
-            .register_results(tmp.path().to_path_buf(), 2)
+            .register_results("result 1\nresult 2\n".to_string(), 2)
             .unwrap();
         let store = Arc::new(Mutex::new(store_inner));
 
@@ -603,10 +601,9 @@ mod reduce_tests {
 
     #[tokio::test]
     async fn reduce_runner_failure_propagates_as_tool_error() {
-        let tmp = write_tmp("some result\n");
         let mut store_inner = ContextStore::new();
         let meta = store_inner
-            .register_results(tmp.path().to_path_buf(), 1)
+            .register_results("some result\n".to_string(), 1)
             .unwrap();
         let store = Arc::new(Mutex::new(store_inner));
 
