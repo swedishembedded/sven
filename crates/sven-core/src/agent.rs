@@ -911,6 +911,24 @@ impl Agent {
             tool_calls.push(tc);
         }
 
+        // If no structured tool calls arrived but the text contains Anthropic-style
+        // <invoke> markup (MiniMax and other models that fall back to the old XML
+        // function-call format), extract them so they are executed as real tool calls
+        // rather than being silently discarded.  The invoke blocks are stripped from
+        // full_text so the session history stays clean.
+        if tool_calls.is_empty() && full_text.contains("<invoke ") {
+            let (cleaned, invoke_calls) = extract_inline_invoke_tool_calls(&full_text);
+            if !invoke_calls.is_empty() {
+                warn!(
+                    count = invoke_calls.len(),
+                    "model emitted Anthropic-style <invoke> tool calls in text; \
+                     extracting for execution"
+                );
+                full_text = cleaned;
+                tool_calls.extend(invoke_calls);
+            }
+        }
+
         if !full_text.is_empty() {
             let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
         }
@@ -1262,19 +1280,71 @@ fn extract_inline_think_block(text: &str) -> Option<String> {
 
 /// Return true when `text` contains tool-call markup that was written by the
 /// model into the text stream instead of being emitted as a structured tool
-/// call.  Some fine-tuned models (Qwen, older Llama variants) occasionally
-/// fall back to XML-style or Hermes-style function call syntax even when the
+/// call.  Some fine-tuned models (Qwen, older Llama variants, MiniMax) fall
+/// back to XML-style or Hermes-style function call syntax even when the
 /// provider tool-call protocol is available.
 ///
 /// Patterns detected:
 /// - `<tool_call>` / `</tool_call>` (Qwen XML format)
 /// - `<function=name>` (Hermes/Nous function tag)
 /// - `[TOOL_CALL]` (some other open-source variants)
+/// - `<invoke ` (Anthropic old XML / MiniMax format — handled by
+///   `extract_inline_invoke_tool_calls`; listed here as a safety net)
 fn text_contains_malformed_tool_call(text: &str) -> bool {
     text.contains("<tool_call>")
         || text.contains("</tool_call>")
         || text.contains("<function=")
         || text.contains("[TOOL_CALL]")
+        || text.contains("<invoke ")
+}
+
+/// Extract Anthropic-style `<invoke>` tool calls written inline in the text
+/// stream by models (e.g. MiniMax) that fall back to the old XML
+/// function-call format instead of using the structured tool-call protocol.
+///
+/// Format:
+/// ```text
+/// <invoke name="tool_name">
+/// <parameter name="param1">value1</parameter>
+/// <parameter name="param2">value2</parameter>
+/// </invoke>
+/// ```
+///
+/// Returns the text with all `<invoke>…</invoke>` blocks removed and the
+/// extracted [`ToolCall`] objects.  Parameter values that parse as valid JSON
+/// are stored as JSON; otherwise they are stored as plain strings.
+fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+    use regex::Regex;
+
+    let invoke_re = Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#).unwrap();
+    let param_re = Regex::new(r#"(?s)<parameter\s+name="([^"]+)">(.*?)</parameter>"#).unwrap();
+
+    let mut tool_calls = Vec::new();
+
+    for cap in invoke_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        let body = &cap[2];
+
+        let mut args = serde_json::Map::new();
+        for param in param_re.captures_iter(body) {
+            let key = param[1].to_string();
+            let raw = param[2].trim().to_string();
+            // Try to decode as JSON (for nested objects/arrays); fall back to
+            // a plain string value.
+            let val = serde_json::from_str::<serde_json::Value>(&raw)
+                .unwrap_or_else(|_| serde_json::Value::String(raw));
+            args.insert(key, val);
+        }
+
+        tool_calls.push(ToolCall {
+            id: format!("invoke_{}", uuid::Uuid::new_v4().simple()),
+            name,
+            args: serde_json::Value::Object(args),
+        });
+    }
+
+    let cleaned = invoke_re.replace_all(text, "").trim().to_string();
+    (cleaned, tool_calls)
 }
 
 struct PendingToolCall {
