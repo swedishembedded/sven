@@ -14,4 +14,4 @@ COPY --from=build /app/dist ./dist
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -q --spider http://localhost:3000/ || exit 1
-CMD ["serve", "dist", "-l", "3000"]
+CMD ["serve", "dist", "-l", "3000", "-c", "dist/serve.json"]
