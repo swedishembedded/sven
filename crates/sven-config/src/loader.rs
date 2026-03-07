@@ -396,8 +396,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
             validate_unknown_fields(val, &child_path);
         }
         return;
-    } else if path.starts_with("providers.") {
-        let rest = &path["providers.".len()..];
+    } else if let Some(rest) = path.strip_prefix("providers.") {
         if rest.contains('.') {
             // providers.<name>.models.<model_name> — per-model params
             (MODEL_PARAMS_KEYS, "model params")

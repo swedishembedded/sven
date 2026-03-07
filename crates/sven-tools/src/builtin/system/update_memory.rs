@@ -241,6 +241,8 @@ mod tests {
         let t = tmp_memory_tool();
         let out = t.execute(&call(json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("missing 'operation'"));
+        assert!(out
+            .content
+            .contains("missing required parameter 'operation'"));
     }
 }
