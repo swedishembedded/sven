@@ -125,6 +125,47 @@ pub enum McpCommands {
     },
 }
 
+// ── Acp subcommand ────────────────────────────────────────────────────────────
+
+/// `sven acp` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum AcpCommands {
+    /// Expose sven as a full ACP agent over stdio.
+    ///
+    /// Starts an Agent Client Protocol server that speaks JSON-RPC 2.0 on
+    /// stdin/stdout.  Any ACP-compatible IDE (JetBrains, Zed, VS Code with an
+    /// ACP extension) can launch sven as a subprocess and interact with it as
+    /// a first-class AI coding agent with sessions, streaming, plans, and mode
+    /// switching.
+    ///
+    ///   JetBrains / Zed / VS Code (`acp.json`):
+    ///
+    ///   { "agents": { "sven": { "command": "sven", "args": ["acp", "serve"] } } }
+    ///
+    /// The server blocks until stdin reaches EOF (i.e. until the IDE
+    /// disconnects the subprocess).
+    Serve {
+        /// WebSocket URL of a running `sven node` to proxy agent calls through.
+        ///
+        /// When provided, the ACP server connects to the node over WebSocket
+        /// and forwards every session request to it.  The node's agent, tool
+        /// registry, and P2P capabilities are all exposed to the IDE.
+        ///
+        /// Example: --node-url wss://127.0.0.1:18790/ws
+        #[arg(long, value_name = "URL")]
+        node_url: Option<String>,
+
+        /// Bearer token for authenticating with the sven node.
+        ///
+        /// Required when `--node-url` is set.  This is the raw token printed by
+        /// `sven node start` on first launch (not the hash stored on disk).
+        ///
+        /// May also be provided via the SVEN_NODE_TOKEN environment variable.
+        #[arg(long, env = "SVEN_NODE_TOKEN", value_name = "TOKEN")]
+        token: Option<String>,
+    },
+}
+
 // ── Node subcommand ───────────────────────────────────────────────────────────
 
 /// `sven node` subcommands.
@@ -782,6 +823,16 @@ pub enum Commands {
     Mcp {
         #[command(subcommand)]
         command: McpCommands,
+    },
+
+    /// Expose sven as an ACP agent for JetBrains, Zed, VS Code, and other
+    /// ACP-compatible IDEs.
+    ///
+    /// Run `sven acp serve` to start the agent server.  The process blocks on
+    /// stdin/stdout until the IDE disconnects.
+    Acp {
+        #[command(subcommand)]
+        command: AcpCommands,
     },
 
     /// Node: start the agent, pair devices, manage tokens.

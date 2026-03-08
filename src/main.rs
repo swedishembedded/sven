@@ -13,8 +13,8 @@ use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
 use cli::{
-    Cli, Commands, IndexCommands, McpCommands, NodeCommands, OutputFormatArg, PeerCommands,
-    TeamCommands, ToolCommands, WebDevicesCommands,
+    AcpCommands, Cli, Commands, IndexCommands, McpCommands, NodeCommands, OutputFormatArg,
+    PeerCommands, TeamCommands, ToolCommands, WebDevicesCommands,
 };
 use sven_bootstrap::build_cli_tool_registry;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
@@ -48,7 +48,10 @@ async fn main() -> anyhow::Result<()> {
     let is_tui = !cli.is_headless() && cli.command.is_none();
     let is_node = matches!(
         &cli.command,
-        Some(Commands::Node { .. }) | Some(Commands::Mcp { .. }) | Some(Commands::Peer { .. })
+        Some(Commands::Node { .. })
+            | Some(Commands::Mcp { .. })
+            | Some(Commands::Acp { .. })
+            | Some(Commands::Peer { .. })
     );
     init_logging(cli.verbose, is_tui, is_node);
 
@@ -61,6 +64,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Mcp { command } => {
                 return run_mcp_command(command).await;
+            }
+            Commands::Acp { command } => {
+                return run_acp_command(command).await;
             }
             Commands::Node { command } => {
                 return run_node_command(command).await;
@@ -575,6 +581,24 @@ async fn run_peer_command(cmd: &PeerCommands) -> anyhow::Result<()> {
 }
 
 // ── MCP command handler ───────────────────────────────────────────────────────
+
+async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
+    match cmd {
+        AcpCommands::Serve { node_url, token } => {
+            if let Some(url) = node_url {
+                let tok = token.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--token (or SVEN_NODE_TOKEN) is required when --node-url is set"
+                    )
+                })?;
+                sven_acp::serve_stdio_node_proxy(url.clone(), tok).await
+            } else {
+                let config = std::sync::Arc::new(sven_config::load(None)?);
+                sven_acp::serve_stdio(config).await
+            }
+        }
+    }
+}
 
 async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
     match cmd {

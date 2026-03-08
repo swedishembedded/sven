@@ -86,6 +86,12 @@ impl Agent {
         &self.tools
     }
 
+    /// Expose the shared mode lock so external callers (e.g. ACP mode-switch
+    /// requests) can update the mode without going through the tool event channel.
+    pub fn current_mode_lock(&self) -> &Arc<tokio::sync::Mutex<sven_config::AgentMode>> {
+        &self.current_mode
+    }
+
     /// Used by the CI runner to switch models mid-workflow (per-step model
     /// overrides).  The session history is preserved.
     pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {

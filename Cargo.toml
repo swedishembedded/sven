@@ -15,6 +15,7 @@ members = [
     "crates/sven-p2p",
     "crates/sven-node",
     "crates/sven-mcp",
+    "crates/sven-acp",
     "crates/sven-team",
 ]
 
@@ -85,6 +86,7 @@ sven-team        = { path = "crates/sven-team" }
 sven-tui         = { path = "crates/sven-tui" }
 sven-node        = { path = "crates/sven-node" }
 sven-mcp         = { path = "crates/sven-mcp" }
+sven-acp         = { path = "crates/sven-acp" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }
