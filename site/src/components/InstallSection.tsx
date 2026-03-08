@@ -26,7 +26,7 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
     steps: [
       {
         label: 'Install (Linux x86_64 or aarch64)',
-        code: 'curl -fsSL https://agentsven.com/install | sh',
+        code: 'curl -fsSL https://agentsven.com/install.sh | sh',
         comment: '# Installs to /usr/local/bin',
       },
       {

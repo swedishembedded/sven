@@ -97,8 +97,8 @@ export default function Hero() {
               <p className="text-xs text-text-dim mb-2 font-mono uppercase tracking-wider">Quick install</p>
               <div className="inline-flex items-center gap-3 px-4 py-3 rounded-lg bg-bg-elevated border border-bg-border font-mono text-sm">
                 <span style={{ color: '#5b8dee' }}>$</span>
-                <span className="text-text-primary">curl -fsSL https://agentsven.com/install | sh</span>
-                <CopyButton text="curl -fsSL https://agentsven.com/install | sh" />
+                <span className="text-text-primary">curl -fsSL https://agentsven.com/install.sh | sh</span>
+                <CopyButton text="curl -fsSL https://agentsven.com/install.sh | sh" />
               </div>
             </motion.div>
           </div>

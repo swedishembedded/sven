@@ -18,12 +18,23 @@ async function fetchLatestVersion(): Promise<string> {
   }
 }
 
+const installScriptPlugin = (): import('vite').Plugin => ({
+  name: 'install-script-headers',
+  configureServer(server) {
+    server.middlewares.use('/install.sh', (_req, res, next) => {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.setHeader('Content-Disposition', 'inline')
+      next()
+    })
+  },
+})
+
 export default defineConfig(async () => {
   const latestVersion = await fetchLatestVersion()
   console.log(`[vite] sven latest release: ${latestVersion}`)
 
   return {
-    plugins: [react()],
+    plugins: [react(), installScriptPlugin()],
     define: {
       __LATEST_VERSION__: JSON.stringify(latestVersion),
     },
