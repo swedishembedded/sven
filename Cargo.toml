@@ -81,6 +81,7 @@ sven-tools       = { path = "crates/sven-tools" }
 sven-core        = { path = "crates/sven-core" }
 sven-bootstrap   = { path = "crates/sven-bootstrap" }
 sven-ci          = { path = "crates/sven-ci" }
+sven-team        = { path = "crates/sven-team" }
 sven-tui         = { path = "crates/sven-tui" }
 sven-node        = { path = "crates/sven-node" }
 sven-mcp         = { path = "crates/sven-mcp" }

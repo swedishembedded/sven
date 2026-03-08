@@ -109,7 +109,7 @@ impl Widget for CompletionMenu<'_> {
             let pad = " ".repeat(pad_len);
 
             lines.push(Line::from(vec![
-                Span::styled(format!(""), base),
+                Span::styled(String::new(), base),
                 Span::styled(format!("{label}{pad}"), base),
             ]));
         }

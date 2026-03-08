@@ -1574,14 +1574,15 @@ impl NodeState {
                         self.peer_waiters.remove(&peer);
                     }
                 }
-                if self.peer_waiters.contains_key(&peer) {
+                if let std::collections::hash_map::Entry::Vacant(e) = self.peer_waiters.entry(peer)
+                {
+                    e.insert(reply_tx);
+                } else {
                     // A live waiter is already registered — reject rather than
                     // overwrite.  Overwriting would drop the first caller's
                     // receiver, causing it to get a RecvError and retry in a
                     // livelock.
                     let _ = reply_tx.send(Err(P2pError::WaiterConflict));
-                } else {
-                    self.peer_waiters.insert(peer, reply_tx);
                 }
                 false
             }

@@ -75,7 +75,7 @@ impl Widget for WelcomeScreen<'_> {
 
         // ── Logo ──────────────────────────────────────────────────────────────
         for (text, style_hint) in SVEN_LOGO {
-            let line = render_logo_line(*style_hint, text);
+            let line = render_logo_line(style_hint, text);
             lines.push(line);
         }
 

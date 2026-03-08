@@ -32,7 +32,19 @@ pub fn team_lead_prompt(team_name: &str, goal: Option<&str>) -> String {
          - Use 5–6 tasks per teammate as a target; too few and teammates are underutilized, \
            too many and coordination overhead grows.\n\
          - Prefer assigning tasks by role: reviewers review, implementers implement, explorers explore.\n\
-         - Always wait for in-progress tasks before claiming results are complete."
+         - Always wait for in-progress tasks before claiming results are complete.\n\n\
+         **Event-driven rebalancing (Phase 6):**\n\
+         - When you receive an `IdleNotification` from a teammate, immediately call `list_tasks` \
+           and assign the next pending task to that teammate with `assign_task`.\n\
+         - When you receive an `AgentStalled` event, send a `send_message` to the stalled teammate. \
+           If there is no response within two follow-up attempts, call `assign_task` to give the \
+           task to another available teammate.\n\
+         - When you receive a `TokenBudgetWarning` at ≥90%, cancel non-critical pending tasks \
+           and focus the team on the highest-priority remaining work.\n\
+         - When you receive a `ConflictDetected` event, abort the affected tasks with `fail_task`, \
+           resolve the conflict yourself, then re-create the tasks.\n\
+         - When a teammate with a worktree branch completes its tasks, call `merge_teammate_branch` \
+           to merge its work before calling `cleanup_team`."
     )
 }
 

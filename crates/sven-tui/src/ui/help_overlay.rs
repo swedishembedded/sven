@@ -90,7 +90,7 @@ impl Widget for HelpOverlay {
         }
 
         // Split entries into two columns.
-        let half = (BINDINGS.len() + 1) / 2;
+        let half = BINDINGS.len().div_ceil(2);
         let (left_entries, right_entries) = BINDINGS.split_at(half.min(BINDINGS.len()));
 
         let [left_col, right_col] = Layout::default()

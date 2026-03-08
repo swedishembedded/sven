@@ -206,3 +206,145 @@ impl UiState {
         }
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::team_picker::{AgentPickerStatus, TeamPickerEntry};
+
+    fn entry(name: &str, peer: &str, local: bool) -> TeamPickerEntry {
+        TeamPickerEntry {
+            name: name.to_string(),
+            role: "teammate".to_string(),
+            peer_id: peer.to_string(),
+            status: AgentPickerStatus::Active,
+            current_task: None,
+            is_local: local,
+        }
+    }
+
+    fn ui_with_team() -> UiState {
+        let mut ui = UiState::new();
+        ui.team_picker_entries = vec![
+            entry("alice", "peer-alice", true), // local lead
+            entry("bob", "peer-bob", false),
+            entry("carol", "peer-carol", false),
+        ];
+        ui
+    }
+
+    // ── toggle_team_picker ────────────────────────────────────────────────────
+
+    #[test]
+    fn toggle_team_picker_flips_visibility() {
+        let mut ui = UiState::new();
+        assert!(!ui.show_team_picker);
+        ui.toggle_team_picker();
+        assert!(ui.show_team_picker);
+        ui.toggle_team_picker();
+        assert!(!ui.show_team_picker);
+    }
+
+    // ── cycle_teammate_view_forward ───────────────────────────────────────────
+
+    #[test]
+    fn cycle_forward_empty_returns_none() {
+        let mut ui = UiState::new();
+        assert!(ui.cycle_teammate_view_forward().is_none());
+    }
+
+    #[test]
+    fn cycle_forward_from_lead_goes_to_bob() {
+        let mut ui = ui_with_team();
+        // Start at lead (active_session_peer = None).
+        let peer = ui.cycle_teammate_view_forward();
+        assert_eq!(peer, Some("peer-bob"));
+        assert_eq!(ui.active_session_peer.as_deref(), Some("peer-bob"));
+    }
+
+    #[test]
+    fn cycle_forward_from_bob_goes_to_carol() {
+        let mut ui = ui_with_team();
+        ui.active_session_peer = Some("peer-bob".to_string());
+        let peer = ui.cycle_teammate_view_forward();
+        assert_eq!(peer, Some("peer-carol"));
+    }
+
+    #[test]
+    fn cycle_forward_from_carol_wraps_to_lead() {
+        let mut ui = ui_with_team();
+        ui.active_session_peer = Some("peer-carol".to_string());
+        let peer = ui.cycle_teammate_view_forward();
+        // Wraps to alice who is_local → returns None and clears active_session_peer.
+        assert!(peer.is_none());
+        assert!(ui.active_session_peer.is_none());
+    }
+
+    // ── cycle_teammate_view_backward ──────────────────────────────────────────
+
+    #[test]
+    fn cycle_backward_empty_returns_none() {
+        let mut ui = UiState::new();
+        assert!(ui.cycle_teammate_view_backward().is_none());
+    }
+
+    #[test]
+    fn cycle_backward_from_lead_goes_to_carol() {
+        let mut ui = ui_with_team();
+        // active_session_peer = None → "current" resolves to index 0 (alice).
+        // prev of 0 = last = carol.
+        let peer = ui.cycle_teammate_view_backward();
+        assert_eq!(peer, Some("peer-carol"));
+    }
+
+    #[test]
+    fn cycle_backward_from_bob_goes_to_lead() {
+        let mut ui = ui_with_team();
+        ui.active_session_peer = Some("peer-bob".to_string());
+        let peer = ui.cycle_teammate_view_backward();
+        // prev of bob (idx 1) = alice (idx 0) who is_local → returns None.
+        assert!(peer.is_none());
+        assert!(ui.active_session_peer.is_none());
+    }
+
+    // ── team_picker_next / prev ───────────────────────────────────────────────
+
+    #[test]
+    fn team_picker_next_advances_selection() {
+        let mut ui = ui_with_team();
+        ui.team_picker_next();
+        assert_eq!(ui.team_picker_state.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn team_picker_prev_wraps_to_last() {
+        let mut ui = ui_with_team();
+        ui.team_picker_prev();
+        assert_eq!(
+            ui.team_picker_state.list_state.selected(),
+            Some(ui.team_picker_entries.len() - 1)
+        );
+    }
+
+    #[test]
+    fn team_picker_selected_peer_returns_correct_id() {
+        let mut ui = ui_with_team();
+        ui.team_picker_next(); // select bob
+        assert_eq!(ui.team_picker_selected_peer(), Some("peer-bob"));
+    }
+
+    // ── push_toast / prune_toasts ─────────────────────────────────────────────
+
+    #[test]
+    fn push_toast_caps_at_five() {
+        let mut ui = UiState::new();
+        for i in 0..7 {
+            ui.push_toast(Toast::info(format!("msg {i}")));
+        }
+        assert_eq!(ui.toasts.len(), 5);
+        // The oldest two should have been dropped; the last one should be msg 6.
+        assert_eq!(ui.toasts.last().unwrap().message, "msg 6");
+    }
+}

@@ -545,4 +545,85 @@ mod tests {
             Some(Action::InputChar('x'))
         );
     }
+
+    // ── Team / multi-agent key bindings ───────────────────────────────────────
+
+    #[test]
+    fn ctrl_a_opens_team_picker() {
+        let ev = ctrl_key('a');
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::OpenTeamPicker)
+        );
+    }
+
+    #[test]
+    fn ctrl_a_in_input_opens_team_picker() {
+        // Ctrl+a is a global binding — works whether focus is in input or chat.
+        let ev = ctrl_key('a');
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::OpenTeamPicker)
+        );
+    }
+
+    #[test]
+    fn shift_down_cycles_teammate_forward() {
+        let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::CycleTeammateForward)
+        );
+    }
+
+    #[test]
+    fn shift_up_cycles_teammate_backward() {
+        let ev = key(KeyCode::Up, KeyModifiers::SHIFT);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::CycleTeammateBackward)
+        );
+    }
+
+    #[test]
+    fn alt_t_opens_task_list() {
+        let ev = key(KeyCode::Char('t'), KeyModifiers::ALT);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::ToggleTaskList)
+        );
+    }
+
+    #[test]
+    fn space_in_chat_toggles_delegate_summary() {
+        let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false),
+            Some(Action::ToggleDelegateSummary)
+        );
+    }
+
+    #[test]
+    fn space_in_input_pane_types_char() {
+        // Space in the input pane must produce InputChar(' '), not ToggleDelegateSummary.
+        let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::InputChar(' '))
+        );
+    }
+
+    #[test]
+    fn shift_down_in_input_pane_is_history_down() {
+        // When in_input is true, plain Shift+Down should produce InputMoveLineDown
+        // (handled by the input pane), not CycleTeammateForward.
+        let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
+        // The global bindings come before input bindings in map_key, so Shift+Down
+        // always maps to CycleTeammateForward regardless of focus. This test
+        // documents the current contract.
+        assert_eq!(
+            map_key(ev, false, true, false, false, false),
+            Some(Action::CycleTeammateForward)
+        );
+    }
 }

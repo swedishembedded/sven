@@ -43,8 +43,6 @@ pub(crate) const BAR_COMPACT: Color = Color::Rgb(80, 120, 160);
 
 /// Swedish Embedded yellow (chip body color).
 pub const SE_YELLOW: Color = Color::Rgb(230, 180, 40);
-/// Swedish Embedded blue (chip core color).
-
 // ── Animation sequences ───────────────────────────────────────────────────────
 
 /// Braille spinner frame sequence (10 frames).  Event-driven: advances on each
@@ -124,7 +122,7 @@ pub(crate) fn tool_scan(frame: u8, ascii: bool) -> &'static str {
 /// Blinking block cursor appended to the end of streaming text.
 /// Alternates between `▌` and a space on each anim frame (6 Hz at 80ms).
 pub(crate) fn stream_cursor(frame: u8, ascii: bool) -> &'static str {
-    if frame % 2 == 0 {
+    if frame.is_multiple_of(2) {
         if ascii {
             "_"
         } else {

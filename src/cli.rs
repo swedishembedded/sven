@@ -391,6 +391,153 @@ pub enum PeerCommands {
     },
 }
 
+// ── Index subcommand ──────────────────────────────────────────────────────────
+
+/// `sven index` subcommands — manage the repository context index.
+#[derive(Subcommand, Debug)]
+pub enum IndexCommands {
+    /// Build or rebuild the repository context index.
+    ///
+    /// Scans the repository and extracts the file tree, public API symbols,
+    /// and import graph.  Stores the result in `.sven/index/index.json`.
+    ///
+    /// Run this once after cloning and after large-scale refactors.
+    Build {
+        /// Suppress progress output (structured JSON is still written to stdout).
+        #[arg(long)]
+        quiet: bool,
+    },
+
+    /// Search the index for symbols matching a query.
+    ///
+    /// Case-insensitive substring match against symbol names and signatures.
+    ///
+    /// Example:
+    ///   sven index query "authenticate"
+    Query {
+        /// Search query (case-insensitive substring match).
+        query: String,
+        /// Maximum results to show (default: 20).
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show statistics about the current index.
+    Stats,
+}
+
+// ── Team subcommand ───────────────────────────────────────────────────────────
+
+/// `sven team` subcommands — manage agent teams.
+///
+/// Agent teams allow multiple sven instances to collaborate on a shared task
+/// list.  A team is created once (via `create` or `start`) and persists in
+/// `~/.config/sven/teams/` until cleaned up.
+///
+/// Quick start:
+///
+///   # Create a team from a definition file
+///   sven team init --name audit
+///   sven team start --file .sven/teams/audit.yaml
+///
+///   # Monitor progress
+///   sven team status audit
+///
+///   # Clean up when done
+///   sven team cleanup audit --force
+#[derive(Subcommand, Debug)]
+pub enum TeamCommands {
+    /// List all known teams.
+    List,
+
+    /// Print detailed status for a team.
+    Status {
+        /// Team name.
+        name: String,
+    },
+
+    /// Create a new team directory.
+    ///
+    /// This creates the persistent team configuration.  To also spawn
+    /// agent processes from a definition file, use `sven team start`.
+    Create {
+        /// Team name (alphanumeric + hyphens/underscores).
+        #[arg(long)]
+        name: String,
+        /// Optional description of the team's goal.
+        #[arg(long)]
+        goal: Option<String>,
+        /// Maximum simultaneous active teammates (default: 8).
+        #[arg(long, default_value = "8")]
+        max_active: usize,
+        /// Global token budget (0 = unlimited).
+        #[arg(long, default_value = "0")]
+        token_budget: u64,
+    },
+
+    /// Launch agents from a team definition YAML file.
+    ///
+    /// Each member in the definition is spawned as a separate sven process.
+    ///
+    /// Example:
+    ///   sven team start --file .sven/teams/code-review.yaml
+    Start {
+        /// Path to a team definition YAML file.
+        #[arg(long, short = 'f')]
+        file: std::path::PathBuf,
+        /// Path to the sven binary to spawn (defaults to current executable).
+        #[arg(long)]
+        sven_bin: Option<String>,
+        /// Print commands without executing them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Remove a team's configuration directory.
+    Cleanup {
+        /// Team name.
+        name: String,
+        /// Skip confirmation and force removal.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// List team definition files in the current project.
+    ///
+    /// Scans `.sven/teams/*.yaml` in the current directory.
+    Definitions,
+
+    /// Create a starter team definition file.
+    ///
+    /// Writes `.sven/teams/<NAME>.yaml` with a sensible default structure.
+    Init {
+        /// Team name.
+        #[arg(long)]
+        name: String,
+        /// Optional team goal.
+        #[arg(long)]
+        goal: Option<String>,
+    },
+
+    /// Watch a team's live event stream.
+    ///
+    /// Polls the team status and prints updates as they arrive, including
+    /// member status changes, task completions, and budget warnings.
+    ///
+    /// Example:
+    ///   sven team watch security-audit
+    Watch {
+        /// Team name to watch.
+        name: String,
+        /// Refresh interval in seconds (default: 3).
+        #[arg(long, default_value = "3")]
+        interval: u64,
+        /// Exit after this many seconds (0 = run forever).
+        #[arg(long, default_value = "0")]
+        timeout: u64,
+    },
+}
+
 /// `sven node web-devices` subcommands.
 #[derive(Subcommand, Debug)]
 pub enum WebDevicesCommands {
@@ -598,6 +745,15 @@ pub struct Cli {
     #[arg(long)]
     pub regen_system_prompt: bool,
 
+    /// Maximum total tokens (input + output) for the entire run.
+    /// When this budget is reached the runner exits with code 4.
+    /// 0 or omitted means unlimited.
+    ///
+    /// Useful in CI pipelines where token spend must be bounded:
+    ///   sven --max-tokens 50000 'review all changed files'
+    #[arg(long, value_name = "TOKENS")]
+    pub max_tokens: Option<u64>,
+
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -650,6 +806,20 @@ pub enum Commands {
         command: PeerCommands,
     },
 
+    /// Manage agent teams.
+    ///
+    ///   sven team list                     — list all teams
+    ///   sven team status <NAME>            — detailed team status
+    ///   sven team create --name <N>        — create a new team
+    ///   sven team start --file team.yaml   — spawn agents from definition
+    ///   sven team cleanup <NAME> --force   — remove team data
+    ///   sven team definitions              — list project team YAML files
+    ///   sven team init --name <N>          — generate a starter definition
+    Team {
+        #[command(subcommand)]
+        command: TeamCommands,
+    },
+
     /// Generate shell completion script
     Completions {
         #[arg(value_enum)]
@@ -670,6 +840,101 @@ pub enum Commands {
         #[arg(long, short = 'f', required = true)]
         file: PathBuf,
     },
+    /// Build and query a repository context index.
+    ///
+    /// The index captures the file tree, public API symbols, and import graph.
+    /// It is stored in `.sven/index/index.json` inside the repository root.
+    ///
+    ///   sven index build          — build or rebuild the index
+    ///   sven index query "auth"   — find symbols related to auth
+    ///   sven index stats          — show index statistics
+    Index {
+        #[command(subcommand)]
+        command: IndexCommands,
+    },
+
+    /// Map: run one sven agent per stdin line in parallel.
+    ///
+    /// Each non-empty line from stdin is substituted for `{}` in the template
+    /// and passed to a fresh sven agent.  Agents run in parallel (bounded by
+    /// `--concurrency`).  Results are written to stdout in input order,
+    /// separated by `---`.
+    ///
+    /// Examples:
+    ///
+    ///   git diff --name-only HEAD~1 | sven map 'review {} for bugs'
+    ///   cat files.txt | sven map --concurrency 8 'summarise {}'
+    ///   ls src/*.rs | sven map --model anthropic/claude-haiku-4-5 'count todos in {}'
+    Map {
+        /// Template string. `{}` is replaced with each stdin line.
+        #[arg(value_name = "TEMPLATE")]
+        template: String,
+        /// Maximum simultaneous agent instances (default: 4).
+        #[arg(long, default_value = "4")]
+        concurrency: usize,
+        /// Model override forwarded to each child agent.
+        #[arg(long, short = 'M', env = "SVEN_MODEL")]
+        model: Option<String>,
+        /// Output format for each child agent (default: compact).
+        #[arg(long, default_value = "compact")]
+        output_format: String,
+        /// Separator written between sections in the combined output.
+        #[arg(long)]
+        separator: Option<String>,
+    },
+
+    /// Tee: broadcast stdin to N parallel shell commands and merge results.
+    ///
+    /// Each argument is a shell command that receives an identical copy of stdin.
+    /// Outputs are collected in order and written to stdout separated by `---`.
+    ///
+    /// Examples:
+    ///
+    ///   sven 'analyze auth module' --output-format compact \
+    ///     | sven tee \
+    ///         "sven 'find security issues'" \
+    ///         "sven 'find performance issues'"
+    ///
+    ///   cat spec.md | sven tee \
+    ///       "sven --mode plan 'make a plan'" \
+    ///       "sven --mode research 'research patterns'"
+    Tee {
+        /// Shell commands to execute in parallel.  Each receives the same stdin.
+        #[arg(value_name = "COMMAND", required = true)]
+        commands: Vec<String>,
+        /// Shell to use for executing commands (default: sh).
+        #[arg(long, default_value = "sh")]
+        shell: String,
+        /// Separator written between sections in the combined output.
+        #[arg(long)]
+        separator: Option<String>,
+    },
+
+    /// Reduce: aggregate stdin sections into one synthesis agent.
+    ///
+    /// Reads all of stdin and passes it as context to a sven agent together
+    /// with the synthesis prompt.  The agent's response is the final output.
+    ///
+    /// Typically used at the end of a `map` or `tee` pipeline:
+    ///
+    ///   git diff --name-only HEAD~1 \
+    ///     | sven map 'review {} for security issues' \
+    ///     | sven reduce 'prioritise these findings and write a report'
+    Reduce {
+        /// Synthesis prompt sent to the aggregation agent.
+        #[arg(value_name = "PROMPT")]
+        prompt: String,
+        /// Model override for the synthesis agent.
+        #[arg(long, short = 'M', env = "SVEN_MODEL")]
+        model: Option<String>,
+        /// Output format for the synthesis agent (default: compact).
+        #[arg(long, default_value = "compact")]
+        output_format: String,
+        /// Optional preamble prepended before the collected sections.
+        #[arg(long)]
+        preamble: Option<String>,
+    },
+
     /// List available models for the configured provider(s).
     ///
     /// By default the static built-in catalog is shown.

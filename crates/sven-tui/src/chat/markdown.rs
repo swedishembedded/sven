@@ -425,7 +425,7 @@ fn compact_args_summary(arguments: &str, max_args: usize, max_val_chars: usize) 
                 let v_str = match val {
                     serde_json::Value::String(s) => {
                         // Shorten path-like values to the basename.
-                        let base = s.split('/').last().unwrap_or(s.as_str());
+                        let base = s.split('/').next_back().unwrap_or(s.as_str());
                         base.chars().take(max_val_chars).collect::<String>()
                     }
                     serde_json::Value::Bool(b) => b.to_string(),

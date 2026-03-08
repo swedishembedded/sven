@@ -224,7 +224,7 @@ impl Widget for StatusBar<'_> {
             Span::styled(format!(" {mode_str} "), mode_style(self.mode)),
             Span::styled(separator, Style::default().fg(BORDER_DIM)),
             Span::styled(" ctx ", Style::default().fg(TEXT_DIM)),
-            Span::styled(format!("{ctx_bar_str}"), ctx_style(self.context_pct)),
+            Span::styled(ctx_bar_str.to_string(), ctx_style(self.context_pct)),
             Span::styled(ctx_pct_str, ctx_style(self.context_pct)),
             token_span,
             tool_span,

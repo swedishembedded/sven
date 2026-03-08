@@ -590,6 +590,7 @@ fn render_table(
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled(sep_v.to_string(), border_style));
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..num_cols {
             let cell_text = row_cells
                 .get(i)

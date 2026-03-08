@@ -7,7 +7,7 @@ use sven_p2p::protocol::{
     codec::{cbor_decode, cbor_encode},
     types::{
         AgentCard, ContentBlock, LogEntry, P2pRequest, P2pResponse, TaskRequest, TaskResponse,
-        TaskStatus,
+        TaskStatus, TeamEvent,
     },
 };
 use uuid::Uuid;
@@ -451,4 +451,141 @@ fn same_value_encodes_identically() {
         a, b,
         "CBOR encoding must be deterministic for the same value"
     );
+}
+
+// ── TeamEvent ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn team_event_team_join_roundtrip() {
+    let ev = TeamEvent::TeamJoin {
+        team_name: "auth-refactor".into(),
+        peer_id: "12D3KooWAlice".into(),
+        name: "alice".into(),
+        role: "implementer".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_team_leave_roundtrip() {
+    let ev = TeamEvent::TeamLeave {
+        team_name: "auth-refactor".into(),
+        peer_id: "12D3KooWBob".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_task_claimed_roundtrip() {
+    let ev = TeamEvent::TaskClaimed {
+        team_name: "ci-fix".into(),
+        task_id: "task-001".into(),
+        claimed_by: "12D3KooWBob".into(),
+        task_title: "Fix flaky test".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_task_completed_roundtrip() {
+    let ev = TeamEvent::TaskCompleted {
+        team_name: "ci-fix".into(),
+        task_id: "task-001".into(),
+        completed_by: "12D3KooWBob".into(),
+        summary: "Removed timing dependency in test_foo".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_task_failed_roundtrip() {
+    let ev = TeamEvent::TaskFailed {
+        team_name: "ci-fix".into(),
+        task_id: "task-002".into(),
+        failed_by: "12D3KooWCarol".into(),
+        reason: "Unable to reproduce the failure locally".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_idle_notification_roundtrip() {
+    let ev = TeamEvent::IdleNotification {
+        team_name: "ci-fix".into(),
+        peer_id: "12D3KooWCarol".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_plan_submitted_roundtrip() {
+    let ev = TeamEvent::PlanSubmitted {
+        team_name: "refactor".into(),
+        peer_id: "12D3KooWAlice".into(),
+        task_id: "task-003".into(),
+        plan: "1. Extract trait\n2. Implement for each type\n3. Update callers".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_plan_decision_approved_roundtrip() {
+    let ev = TeamEvent::PlanDecision {
+        team_name: "refactor".into(),
+        peer_id: "12D3KooWAlice".into(),
+        task_id: "task-003".into(),
+        approved: true,
+        feedback: String::new(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_plan_decision_rejected_roundtrip() {
+    let ev = TeamEvent::PlanDecision {
+        team_name: "refactor".into(),
+        peer_id: "12D3KooWAlice".into(),
+        task_id: "task-003".into(),
+        approved: false,
+        feedback: "Please use a trait object instead of an enum".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_broadcast_abort_roundtrip() {
+    let ev = TeamEvent::BroadcastAbort {
+        team_name: "ci-fix".into(),
+        lead_peer_id: "12D3KooWLead".into(),
+        reason: "Critical regression detected, stopping all work".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_broadcast_resume_roundtrip() {
+    let ev = TeamEvent::BroadcastResume {
+        team_name: "ci-fix".into(),
+        lead_peer_id: "12D3KooWLead".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
+}
+
+#[test]
+fn team_event_topic_for() {
+    assert_eq!(
+        TeamEvent::topic_for("auth-refactor"),
+        "sven/team/auth-refactor/events"
+    );
+}
+
+#[test]
+fn team_event_unicode_fields_roundtrip() {
+    let ev = TeamEvent::TaskCompleted {
+        team_name: "チーム".into(),
+        task_id: "t-1".into(),
+        completed_by: "peer-🎉".into(),
+        summary: "完了 ✓".into(),
+    };
+    assert_eq!(ev, roundtrip(&ev));
 }

@@ -383,6 +383,52 @@ pub enum TeamEvent {
         team_name: String,
         lead_peer_id: String,
     },
+
+    // ── Phase 6: Operational intelligence events ──────────────────────────────
+    /// A teammate's cumulative token usage has exceeded the warning threshold.
+    ///
+    /// Emitted when a teammate reaches 80 % (or a configured fraction) of the
+    /// team token budget.  The lead can use this to rebalance workload or abort
+    /// non-essential tasks before the budget is fully depleted.
+    TokenBudgetWarning {
+        team_name: String,
+        /// Peer ID of the agent that is consuming tokens.
+        peer_id: String,
+        /// Percentage of the total team budget used (0–100).
+        percent_used: u8,
+        /// Absolute tokens used so far.
+        tokens_used: u64,
+        /// Configured token budget.
+        token_budget: u64,
+    },
+
+    /// A teammate has not produced any activity for an extended period.
+    ///
+    /// The lead should decide whether to reassign the task, send a prompt, or
+    /// abort.  The idle duration threshold is implementation-defined.
+    AgentStalled {
+        team_name: String,
+        /// Peer ID of the stalled agent.
+        peer_id: String,
+        /// Name of the stalled agent.
+        agent_name: String,
+        /// Task ID the agent is currently holding, if any.
+        task_id: Option<String>,
+        /// ISO-8601 timestamp of last observed activity.
+        idle_since: String,
+    },
+
+    /// Two agents have modified the same file concurrently.
+    ///
+    /// Emitted when the lead's worktree merge detects a conflict, or when two
+    /// teammates each claim a task that touches overlapping paths.
+    ConflictDetected {
+        team_name: String,
+        /// Conflicting file paths.
+        files: Vec<String>,
+        /// Peer IDs of the agents involved.
+        agents: Vec<String>,
+    },
 }
 
 impl TeamEvent {

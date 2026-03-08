@@ -1001,6 +1001,7 @@ async fn execute_inbound_room_post(
 /// Loads messages after the most recent 1-hour break (the current "context window"
 /// of the conversation) and converts them into `prior_messages` for the agent.
 /// The character budget limits how far back we load.
+#[allow(clippy::too_many_arguments)]
 async fn build_session_agent(
     config: &Arc<sven_config::Config>,
     model: Arc<dyn sven_model::ModelProvider>,

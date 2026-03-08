@@ -16,11 +16,7 @@
 //! without races.  The lock is held only for the duration of a
 //! read-modify-write cycle (typically a few microseconds).
 
-use std::{
-    fs,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -250,9 +246,10 @@ impl TaskStore {
     where
         F: FnOnce(&mut TaskList) -> Result<R, TaskStoreError>,
     {
+        use std::io::{Read, Seek, SeekFrom, Write};
         use std::os::unix::io::AsRawFd;
 
-        let file = fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(&self.path)?;
@@ -264,10 +261,13 @@ impl TaskStore {
             return Err(TaskStoreError::Io(std::io::Error::last_os_error()));
         }
 
-        // Read current content.
+        // Read current content.  Use a block so the BufReader (which borrows
+        // `file`) is dropped before we need an exclusive `&mut file` for seek.
         let mut data = String::new();
-        let mut reader = std::io::BufReader::new(&file);
-        reader.read_to_string(&mut data)?;
+        {
+            let mut reader = std::io::BufReader::new(&mut file);
+            reader.read_to_string(&mut data)?;
+        }
         let mut list: TaskList = if data.trim().is_empty() {
             TaskList::default()
         } else {
@@ -277,13 +277,17 @@ impl TaskStore {
         // Apply the mutation.
         let result = f(&mut list)?;
 
-        // Write back.
+        // Write back: truncate first, then seek to position 0 before writing.
+        // Without the seek, the write would start at the old EOF and produce a
+        // sparse file with a null-byte hole that breaks the next JSON parse.
         let serialized = serde_json::to_string_pretty(&list)?;
-        // Truncate to zero and write from the beginning.
         file.set_len(0)?;
-        let mut writer = std::io::BufWriter::new(&file);
-        writer.write_all(serialized.as_bytes())?;
-        writer.flush()?;
+        file.seek(SeekFrom::Start(0))?;
+        {
+            let mut writer = std::io::BufWriter::new(&mut file);
+            writer.write_all(serialized.as_bytes())?;
+            writer.flush()?;
+        } // writer dropped here, releasing &mut file
 
         // Release lock (happens automatically when `file` drops, but explicit
         // for clarity).
@@ -551,5 +555,90 @@ mod tests {
         // Now T1 should be claimable.
         let claimed = s.claim_task(&blocked_id, "carol").unwrap();
         assert_eq!(claimed.title, "T1");
+    }
+
+    #[test]
+    fn fail_task_marks_failed() {
+        let (_dir, s) = store();
+        let id = s.create_task("T1", "desc", "alice", vec![]).unwrap();
+        s.fail_task(&id, "hit a wall").unwrap();
+        let list = s.load().unwrap();
+        assert!(
+            matches!(&list.tasks[0].status, TaskStatus::Failed { reason, .. } if reason == "hit a wall")
+        );
+    }
+
+    #[test]
+    fn fail_task_nonexistent_returns_error() {
+        let (_dir, s) = store();
+        assert!(s.fail_task("no-such-id", "reason").is_err());
+    }
+
+    #[test]
+    fn update_description_changes_text() {
+        let (_dir, s) = store();
+        let id = s.create_task("T1", "original", "alice", vec![]).unwrap();
+        s.update_description(&id, "updated description").unwrap();
+        let list = s.load().unwrap();
+        assert_eq!(list.tasks[0].description, "updated description");
+        // Status must remain Pending after a description update.
+        assert!(list.tasks[0].status.is_pending());
+    }
+
+    #[test]
+    fn update_description_nonexistent_returns_error() {
+        let (_dir, s) = store();
+        assert!(s.update_description("no-such-id", "desc").is_err());
+    }
+
+    #[test]
+    fn task_list_counts() {
+        let (_dir, s) = store();
+        let id_a = s.create_task("A", "desc", "alice", vec![]).unwrap();
+        let id_b = s.create_task("B", "desc", "alice", vec![]).unwrap();
+        s.create_task("C", "desc", "alice", vec![]).unwrap();
+        s.claim_task(&id_a, "bob").unwrap();
+        s.complete_task(&id_a, "done").unwrap();
+        s.claim_task(&id_b, "carol").unwrap();
+
+        let list = s.load().unwrap();
+        let (pending, in_progress, completed, failed) = list.counts();
+        assert_eq!(pending, 1, "one pending");
+        assert_eq!(in_progress, 1, "one in-progress");
+        assert_eq!(completed, 1, "one completed");
+        assert_eq!(failed, 0, "no failures");
+    }
+
+    #[test]
+    fn task_status_helpers() {
+        assert!(TaskStatus::Pending.is_pending());
+        assert!(!TaskStatus::Pending.is_terminal());
+
+        let in_progress = TaskStatus::InProgress {
+            claimed_by: "bob".into(),
+            claimed_at: chrono::Utc::now(),
+        };
+        assert!(!in_progress.is_pending());
+        assert!(!in_progress.is_terminal());
+
+        let completed = TaskStatus::Completed {
+            summary: "done".into(),
+            completed_at: chrono::Utc::now(),
+        };
+        assert!(!completed.is_pending());
+        assert!(completed.is_terminal());
+
+        let failed = TaskStatus::Failed {
+            reason: "broken".into(),
+            failed_at: chrono::Utc::now(),
+        };
+        assert!(!failed.is_pending());
+        assert!(failed.is_terminal());
+    }
+
+    #[test]
+    fn cancelled_task_is_terminal() {
+        assert!(TaskStatus::Cancelled.is_terminal());
+        assert!(!TaskStatus::Cancelled.is_pending());
     }
 }

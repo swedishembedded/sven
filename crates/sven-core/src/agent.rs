@@ -1358,7 +1358,7 @@ fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
             // Try to decode as JSON (for nested objects/arrays); fall back to
             // a plain string value.
             let val = serde_json::from_str::<serde_json::Value>(&raw)
-                .unwrap_or_else(|_| serde_json::Value::String(raw));
+                .unwrap_or(serde_json::Value::String(raw));
             args.insert(key, val);
         }
 

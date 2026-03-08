@@ -18,12 +18,13 @@ use crate::task::default_team_dir;
 /// referenced in the orchestrator prompt, but they do not restrict tool
 /// access.  The lead decides task assignments; the LLM uses role hints to
 /// pick the right teammate.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamRole {
     /// The lead coordinates work and synthesizes results.
     Lead,
     /// General-purpose teammate.
+    #[default]
     Teammate,
     /// Focused on implementation.
     Implementer,
@@ -35,12 +36,6 @@ pub enum TeamRole {
     Tester,
     /// Free-form role label.
     Custom(String),
-}
-
-impl Default for TeamRole {
-    fn default() -> Self {
-        TeamRole::Teammate
-    }
 }
 
 impl std::fmt::Display for TeamRole {
@@ -242,5 +237,194 @@ impl TeamConfigStore {
         self.modify(|config| {
             config.tokens_used = config.tokens_used.saturating_add(tokens);
         })
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn store(dir: &TempDir) -> TeamConfigStore {
+        TeamConfigStore::open_at(dir.path().join("config.json"))
+    }
+
+    fn lead_config() -> TeamConfig {
+        TeamConfig::new("my-team", "peer-lead", "alice")
+    }
+
+    // ── TeamRole display ──────────────────────────────────────────────────────
+
+    #[test]
+    fn team_role_display() {
+        assert_eq!(TeamRole::Lead.to_string(), "lead");
+        assert_eq!(TeamRole::Teammate.to_string(), "teammate");
+        assert_eq!(TeamRole::Implementer.to_string(), "implementer");
+        assert_eq!(TeamRole::Reviewer.to_string(), "reviewer");
+        assert_eq!(TeamRole::Explorer.to_string(), "explorer");
+        assert_eq!(TeamRole::Tester.to_string(), "tester");
+        assert_eq!(TeamRole::Custom("wizard".into()).to_string(), "wizard");
+    }
+
+    #[test]
+    fn team_role_default_is_teammate() {
+        assert_eq!(TeamRole::default(), TeamRole::Teammate);
+    }
+
+    // ── MemberStatus display ──────────────────────────────────────────────────
+
+    #[test]
+    fn member_status_display() {
+        assert_eq!(MemberStatus::Unknown.to_string(), "unknown");
+        assert_eq!(MemberStatus::Active.to_string(), "active");
+        assert_eq!(MemberStatus::Idle.to_string(), "idle");
+        assert_eq!(MemberStatus::Closed.to_string(), "closed");
+    }
+
+    #[test]
+    fn member_status_default_is_unknown() {
+        assert_eq!(MemberStatus::default(), MemberStatus::Unknown);
+    }
+
+    // ── TeamConfig ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn new_config_has_lead_member() {
+        let cfg = lead_config();
+        assert_eq!(cfg.name, "my-team");
+        assert_eq!(cfg.lead_peer_id, "peer-lead");
+        assert_eq!(cfg.members.len(), 1);
+        assert_eq!(cfg.members[0].name, "alice");
+        assert_eq!(cfg.members[0].role, TeamRole::Lead);
+        assert_eq!(cfg.members[0].status, MemberStatus::Active);
+    }
+
+    #[test]
+    fn new_config_defaults() {
+        let cfg = lead_config();
+        assert_eq!(cfg.max_active, 8);
+        assert_eq!(cfg.token_budget, 0);
+        assert_eq!(cfg.tokens_used, 0);
+        assert_eq!(cfg.max_iterations, 0);
+        assert!(cfg.goal.is_none());
+    }
+
+    #[test]
+    fn find_member_by_peer_id() {
+        let mut cfg = lead_config();
+        cfg.members[0].peer_id = "peer-lead".to_string();
+        assert!(cfg.find_member("peer-lead").is_some());
+        assert!(cfg.find_member("peer-unknown").is_none());
+    }
+
+    #[test]
+    fn is_lead_check() {
+        let cfg = lead_config();
+        assert!(cfg.is_lead("peer-lead"));
+        assert!(!cfg.is_lead("peer-bob"));
+    }
+
+    // ── budget_exhausted ──────────────────────────────────────────────────────
+
+    #[test]
+    fn budget_exhausted_unlimited() {
+        let mut cfg = lead_config();
+        cfg.token_budget = 0; // unlimited
+        cfg.tokens_used = 1_000_000;
+        assert!(
+            !cfg.budget_exhausted(),
+            "unlimited budget should never be exhausted"
+        );
+    }
+
+    #[test]
+    fn budget_exhausted_under_limit() {
+        let mut cfg = lead_config();
+        cfg.token_budget = 1000;
+        cfg.tokens_used = 999;
+        assert!(!cfg.budget_exhausted());
+    }
+
+    #[test]
+    fn budget_exhausted_at_limit() {
+        let mut cfg = lead_config();
+        cfg.token_budget = 1000;
+        cfg.tokens_used = 1000;
+        assert!(cfg.budget_exhausted());
+    }
+
+    #[test]
+    fn budget_exhausted_over_limit() {
+        let mut cfg = lead_config();
+        cfg.token_budget = 1000;
+        cfg.tokens_used = 1500;
+        assert!(cfg.budget_exhausted());
+    }
+
+    // ── TeamConfigStore persistence ───────────────────────────────────────────
+
+    #[test]
+    fn load_returns_none_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        assert!(s.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        let mut cfg = lead_config();
+        cfg.goal = Some("Fix all the bugs".into());
+        s.save(&cfg).unwrap();
+        let loaded = s.load().unwrap().expect("should exist after save");
+        assert_eq!(loaded.name, cfg.name);
+        assert_eq!(loaded.lead_peer_id, cfg.lead_peer_id);
+        assert_eq!(loaded.goal, cfg.goal);
+        assert_eq!(loaded.members.len(), 1);
+    }
+
+    #[test]
+    fn modify_updates_field() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        s.save(&lead_config()).unwrap();
+        s.modify(|c| c.goal = Some("new goal".into())).unwrap();
+        let cfg = s.load().unwrap().unwrap();
+        assert_eq!(cfg.goal.as_deref(), Some("new goal"));
+    }
+
+    #[test]
+    fn modify_fails_when_no_config() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        assert!(s.modify(|_| {}).is_err());
+    }
+
+    // ── record_token_usage ────────────────────────────────────────────────────
+
+    #[test]
+    fn record_token_usage_accumulates() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        s.save(&lead_config()).unwrap();
+        s.record_token_usage(100).unwrap();
+        s.record_token_usage(250).unwrap();
+        let cfg = s.load().unwrap().unwrap();
+        assert_eq!(cfg.tokens_used, 350);
+    }
+
+    #[test]
+    fn record_token_usage_saturates_at_u64_max() {
+        let dir = TempDir::new().unwrap();
+        let s = store(&dir);
+        let mut cfg = lead_config();
+        cfg.tokens_used = u64::MAX - 1;
+        s.save(&cfg).unwrap();
+        s.record_token_usage(100).unwrap();
+        let loaded = s.load().unwrap().unwrap();
+        assert_eq!(loaded.tokens_used, u64::MAX);
     }
 }

@@ -9,7 +9,7 @@ pub mod registry;
 pub mod tool;
 
 pub use events::{TodoItem, TodoStatus, ToolEvent};
-pub use policy::{ApprovalPolicy, ToolPolicy};
+pub use policy::{ApprovalPolicy, RolePolicy, ToolPolicy};
 pub use registry::{ToolRegistry, ToolSchema};
 pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 

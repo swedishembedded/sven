@@ -271,7 +271,7 @@ impl DeviceRegistry {
         inner
             .devices
             .iter()
-            .filter(|d| filter.as_ref().map_or(true, |f| &d.status == f))
+            .filter(|d| filter.as_ref().is_none_or(|f| &d.status == f))
             .cloned()
             .collect()
     }

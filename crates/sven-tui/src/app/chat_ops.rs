@@ -694,6 +694,7 @@ fn extract_selection_text(
     }
     let e_line = end_line.min(line_count - 1);
     let mut result = String::new();
+    #[allow(clippy::needless_range_loop)]
     for abs_line in start_line..=e_line {
         let line = &lines[abs_line];
         let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();

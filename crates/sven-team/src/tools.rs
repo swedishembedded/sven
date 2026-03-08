@@ -492,3 +492,378 @@ impl Tool for UpdateTaskTool {
         }
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+    use tokio::sync::Mutex;
+
+    use sven_tools::{Tool, ToolCall};
+
+    use crate::task::TaskStore;
+
+    use super::*;
+
+    fn call(id: &str, args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            name: String::new(),
+            args,
+        }
+    }
+
+    fn store_handle(dir: &TempDir) -> TaskStoreHandle {
+        let path = dir.path().join("tasks.json");
+        Arc::new(Mutex::new(TaskStore::open_at(path).unwrap()))
+    }
+
+    // ── Tool metadata (smoke tests) ───────────────────────────────────────────
+
+    #[test]
+    fn tool_names_are_stable() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        assert_eq!(
+            CreateTaskTool {
+                store: h.clone(),
+                agent_name: "a".into()
+            }
+            .name(),
+            "create_task"
+        );
+        assert_eq!(
+            ClaimTaskTool {
+                store: h.clone(),
+                agent_name: "a".into()
+            }
+            .name(),
+            "claim_task"
+        );
+        assert_eq!(
+            CompleteTaskTool { store: h.clone() }.name(),
+            "complete_task"
+        );
+        assert_eq!(ListTasksTool { store: h.clone() }.name(), "list_tasks");
+        assert_eq!(AssignTaskTool { store: h.clone() }.name(), "assign_task");
+        assert_eq!(UpdateTaskTool { store: h.clone() }.name(), "update_task");
+    }
+
+    #[test]
+    fn all_tools_have_auto_policy() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        use sven_tools::ApprovalPolicy;
+        assert_eq!(
+            CreateTaskTool {
+                store: h.clone(),
+                agent_name: "a".into()
+            }
+            .default_policy(),
+            ApprovalPolicy::Auto
+        );
+        assert_eq!(
+            ClaimTaskTool {
+                store: h.clone(),
+                agent_name: "a".into()
+            }
+            .default_policy(),
+            ApprovalPolicy::Auto
+        );
+        assert_eq!(
+            CompleteTaskTool { store: h.clone() }.default_policy(),
+            ApprovalPolicy::Auto
+        );
+        assert_eq!(
+            ListTasksTool { store: h.clone() }.default_policy(),
+            ApprovalPolicy::Auto
+        );
+        assert_eq!(
+            AssignTaskTool { store: h.clone() }.default_policy(),
+            ApprovalPolicy::Auto
+        );
+        assert_eq!(
+            UpdateTaskTool { store: h.clone() }.default_policy(),
+            ApprovalPolicy::Auto
+        );
+    }
+
+    // ── CreateTaskTool ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn create_task_missing_title_is_error() {
+        let dir = TempDir::new().unwrap();
+        let tool = CreateTaskTool {
+            store: store_handle(&dir),
+            agent_name: "alice".into(),
+        };
+        let out = tool
+            .execute(&call("c1", json!({ "description": "do it" })))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("title"));
+    }
+
+    #[tokio::test]
+    async fn create_task_missing_description_is_error() {
+        let dir = TempDir::new().unwrap();
+        let tool = CreateTaskTool {
+            store: store_handle(&dir),
+            agent_name: "alice".into(),
+        };
+        let out = tool.execute(&call("c1", json!({ "title": "T" }))).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("description"));
+    }
+
+    #[tokio::test]
+    async fn create_task_success_returns_id() {
+        let dir = TempDir::new().unwrap();
+        let tool = CreateTaskTool {
+            store: store_handle(&dir),
+            agent_name: "alice".into(),
+        };
+        let out = tool
+            .execute(&call(
+                "c1",
+                json!({ "title": "Do X", "description": "Details" }),
+            ))
+            .await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("Do X"));
+    }
+
+    #[tokio::test]
+    async fn create_task_with_assignment() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let tool = CreateTaskTool {
+            store: h.clone(),
+            agent_name: "alice".into(),
+        };
+        let out = tool
+            .execute(&call(
+                "c1",
+                json!({
+                    "title": "Do X",
+                    "description": "Details",
+                    "assigned_to": "bob"
+                }),
+            ))
+            .await;
+        assert!(!out.is_error);
+        let store = h.lock().await;
+        let list = store.load().unwrap();
+        assert_eq!(list.tasks[0].assigned_to.as_deref(), Some("bob"));
+    }
+
+    // ── ClaimTaskTool ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn claim_task_next_available() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        {
+            let s = h.lock().await;
+            s.create_task("T1", "desc", "alice", vec![]).unwrap();
+        }
+        let tool = ClaimTaskTool {
+            store: h.clone(),
+            agent_name: "bob".into(),
+        };
+        let out = tool.execute(&call("cl1", json!({}))).await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("T1"));
+    }
+
+    #[tokio::test]
+    async fn claim_task_no_tasks_returns_ok_message() {
+        let dir = TempDir::new().unwrap();
+        let tool = ClaimTaskTool {
+            store: store_handle(&dir),
+            agent_name: "bob".into(),
+        };
+        let out = tool.execute(&call("cl1", json!({}))).await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("No pending tasks"));
+    }
+
+    #[tokio::test]
+    async fn claim_task_by_id() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let task_id = {
+            let s = h.lock().await;
+            s.create_task("T1", "desc", "alice", vec![]).unwrap()
+        };
+        let tool = ClaimTaskTool {
+            store: h.clone(),
+            agent_name: "bob".into(),
+        };
+        let out = tool
+            .execute(&call("cl1", json!({ "task_id": task_id })))
+            .await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("T1"));
+    }
+
+    // ── CompleteTaskTool ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn complete_task_missing_task_id_is_error() {
+        let dir = TempDir::new().unwrap();
+        let tool = CompleteTaskTool {
+            store: store_handle(&dir),
+        };
+        let out = tool
+            .execute(&call("ct1", json!({ "summary": "done" })))
+            .await;
+        assert!(out.is_error);
+    }
+
+    #[tokio::test]
+    async fn complete_task_success() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let task_id = {
+            let s = h.lock().await;
+            let id = s.create_task("T1", "desc", "alice", vec![]).unwrap();
+            s.claim_task(&id, "bob").unwrap();
+            id
+        };
+        let tool = CompleteTaskTool { store: h.clone() };
+        let out = tool
+            .execute(&call(
+                "ct1",
+                json!({ "task_id": task_id, "summary": "Done!" }),
+            ))
+            .await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("completed"));
+    }
+
+    // ── ListTasksTool ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_tasks_empty_store() {
+        let dir = TempDir::new().unwrap();
+        let tool = ListTasksTool {
+            store: store_handle(&dir),
+        };
+        let out = tool.execute(&call("lt1", json!({}))).await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("No tasks"));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_shows_all_by_default() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        {
+            let s = h.lock().await;
+            s.create_task("Alpha", "desc", "alice", vec![]).unwrap();
+            s.create_task("Beta", "desc", "alice", vec![]).unwrap();
+        }
+        let tool = ListTasksTool { store: h.clone() };
+        let out = tool.execute(&call("lt1", json!({}))).await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("Alpha"));
+        assert!(out.content.contains("Beta"));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filter_pending_only() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let done_id = {
+            let s = h.lock().await;
+            s.create_task("Done task", "desc", "alice", vec![]).unwrap();
+            let id = s
+                .create_task("Pending task", "desc", "alice", vec![])
+                .unwrap();
+            let done = s
+                .create_task("Completed task", "desc", "alice", vec![])
+                .unwrap();
+            s.claim_task(&done, "bob").unwrap();
+            s.complete_task(&done, "finished").unwrap();
+            id
+        };
+        let tool = ListTasksTool { store: h.clone() };
+        let out = tool
+            .execute(&call("lt1", json!({ "status_filter": "pending" })))
+            .await;
+        assert!(!out.is_error);
+        // Completed task should not appear
+        assert!(!out.content.contains("Completed task"));
+        let _ = done_id;
+    }
+
+    // ── AssignTaskTool ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn assign_task_missing_params_is_error() {
+        let dir = TempDir::new().unwrap();
+        let tool = AssignTaskTool {
+            store: store_handle(&dir),
+        };
+        let out = tool.execute(&call("at1", json!({ "task_id": "x" }))).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("assignee"));
+    }
+
+    #[tokio::test]
+    async fn assign_task_success() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let task_id = {
+            let s = h.lock().await;
+            s.create_task("T1", "desc", "alice", vec![]).unwrap()
+        };
+        let tool = AssignTaskTool { store: h.clone() };
+        let out = tool
+            .execute(&call(
+                "at1",
+                json!({ "task_id": task_id, "assignee": "carol" }),
+            ))
+            .await;
+        assert!(!out.is_error);
+        assert!(out.content.contains("carol"));
+    }
+
+    // ── UpdateTaskTool ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn update_task_missing_params_is_error() {
+        let dir = TempDir::new().unwrap();
+        let tool = UpdateTaskTool {
+            store: store_handle(&dir),
+        };
+        let out = tool.execute(&call("ut1", json!({ "task_id": "x" }))).await;
+        assert!(out.is_error);
+    }
+
+    #[tokio::test]
+    async fn update_task_success() {
+        let dir = TempDir::new().unwrap();
+        let h = store_handle(&dir);
+        let task_id = {
+            let s = h.lock().await;
+            s.create_task("T1", "original", "alice", vec![]).unwrap()
+        };
+        let tool = UpdateTaskTool { store: h.clone() };
+        let out = tool
+            .execute(&call(
+                "ut1",
+                json!({ "task_id": task_id, "description": "updated" }),
+            ))
+            .await;
+        assert!(!out.is_error);
+        let s = h.lock().await;
+        let list = s.load().unwrap();
+        assert_eq!(list.tasks[0].description, "updated");
+    }
+}

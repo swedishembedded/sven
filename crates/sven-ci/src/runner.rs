@@ -30,6 +30,11 @@ use crate::template::apply_template;
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_AGENT_ERROR: i32 = 1;
 pub const EXIT_VALIDATION_ERROR: i32 = 2;
+/// One or more tool calls returned errors during the run but the run completed.
+/// Allows `set -e` pipelines to treat partial failures differently from hard errors.
+pub const EXIT_TOOL_WARNINGS: i32 = 3;
+/// The token budget set via `--max-tokens` was exhausted before all steps completed.
+pub const EXIT_BUDGET_EXHAUSTED: i32 = 4;
 pub const EXIT_TIMEOUT: i32 = 124;
 pub const EXIT_INTERRUPT: i32 = 130;
 
@@ -126,6 +131,10 @@ pub struct CiOptions {
     /// By default the stored system message is reused so that resumed
     /// conversations are fully reproducible.
     pub regen_system_prompt: bool,
+    /// Maximum total tokens (input + output) across the entire run.
+    /// When this budget is exhausted the runner exits with [`EXIT_BUDGET_EXHAUSTED`] (4).
+    /// `None` or `0` means unlimited.
+    pub max_tokens_budget: Option<u64>,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -631,6 +640,11 @@ impl CiRunner {
         let mut session_input_total: u32 = 0;
         let mut session_output_total: u32 = 0;
 
+        // Cross-step tracking for exit code decisions.
+        let mut any_tool_errors: bool = false;
+        let mut run_total_tokens: u64 = 0;
+        let max_tokens_budget = opts.max_tokens_budget;
+
         // Write combined JSONL to path.
         //
         // Layout: [system_record] ++ [existing non-system] ++ [new non-system]
@@ -857,6 +871,9 @@ impl CiRunner {
                                 sven_header_emitted: &mut sven_header_emitted,
                                 session_input_total: &mut session_input_total,
                                 session_output_total: &mut session_output_total,
+                                any_tool_errors: &mut any_tool_errors,
+                                run_total_tokens: &mut run_total_tokens,
+                                max_tokens_budget,
                             });
 
                             // Abort if too many consecutive tool errors
@@ -898,6 +915,9 @@ impl CiRunner {
                                     sven_header_emitted: &mut sven_header_emitted,
                                     session_input_total: &mut session_input_total,
                                     session_output_total: &mut session_output_total,
+                                    any_tool_errors: &mut any_tool_errors,
+                                    run_total_tokens: &mut run_total_tokens,
+                                    max_tokens_budget,
                                 });
                             }
                             break;
@@ -1082,6 +1102,15 @@ impl CiRunner {
             }
         }
 
+        // ── Exit with tool-warning code if any non-fatal tool errors occurred ─
+        // Exit code 3 signals "run completed but with tool warnings" — the
+        // caller can use this to distinguish a clean run from a partially
+        // successful one without treating it as a hard failure.
+        if any_tool_errors {
+            write_stderr("[sven:warn] Run completed with tool errors (exit 3).");
+            std::process::exit(EXIT_TOOL_WARNINGS);
+        }
+
         Ok(())
     }
 }
@@ -1122,6 +1151,12 @@ struct StepState<'a> {
     session_input_total: &'a mut u32,
     /// Running total of output tokens across the whole session.
     session_output_total: &'a mut u32,
+    /// Accumulates `true` when any tool call returns an error (non-fatal).
+    any_tool_errors: &'a mut bool,
+    /// Running total of tokens used across all steps (input + output).
+    run_total_tokens: &'a mut u64,
+    /// Optional token budget cap; when exceeded the runner exits with code 4.
+    max_tokens_budget: Option<u64>,
 }
 
 /// Process a single agent event: write diagnostics to stderr, collect
@@ -1221,6 +1256,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                     "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
                 ));
                 *consecutive_tool_errors += 1;
+                *s.any_tool_errors = true;
             } else {
                 let output_snippet = if trace_level >= 1 && !output.is_empty() {
                     const LIMIT: usize = 1500;
@@ -1313,6 +1349,16 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         } => {
             *s.session_input_total += input;
             *s.session_output_total += output;
+            *s.run_total_tokens += (input + output) as u64;
+            if let Some(budget) = s.max_tokens_budget {
+                if budget > 0 && *s.run_total_tokens >= budget {
+                    write_stderr(&format!(
+                        "[sven:error] Token budget exhausted: {} tokens used (budget: {}). Stopping.",
+                        s.run_total_tokens, budget
+                    ));
+                    std::process::exit(EXIT_BUDGET_EXHAUSTED);
+                }
+            }
             let total_ctx = input + cache_read + cache_write;
             let input_budget = if max_output_tokens > 0 {
                 max_tokens.saturating_sub(max_output_tokens)

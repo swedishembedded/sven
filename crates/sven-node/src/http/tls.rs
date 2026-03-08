@@ -243,10 +243,12 @@ fn local_ca_provision(
 /// When an existing CA key is found, the CA `Certificate` object is
 /// reconstructed in-memory from the same fixed DN and the stored key.
 /// The public key is identical, so:
+///
 /// - SKI (Subject Key Identifier) in the CA cert matches the stored cert.
 /// - AKI (Authority Key Identifier) in signed server certs resolves to the
 ///   stored CA cert in the user's trust store.
 /// - Server cert signatures verify against the stored CA cert's public key.
+///
 /// The in-memory cert is only used for signing; users keep the stored cert.
 fn load_or_generate_ca(
     ca_cert_path: &Path,

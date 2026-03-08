@@ -219,3 +219,99 @@ impl Widget for TeamPickerOverlay<'_> {
         ratatui::widgets::StatefulWidget::render(list, inner, buf, &mut self.state.list_state);
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entries(names: &[&str]) -> Vec<TeamPickerEntry> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| TeamPickerEntry {
+                name: n.to_string(),
+                role: "teammate".to_string(),
+                peer_id: format!("peer-{n}"),
+                status: AgentPickerStatus::Active,
+                current_task: None,
+                is_local: i == 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn default_state_selects_first() {
+        let s = TeamPickerState::default();
+        assert_eq!(s.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn select_next_advances() {
+        let mut s = TeamPickerState::default();
+        s.select_next(3);
+        assert_eq!(s.list_state.selected(), Some(1));
+        s.select_next(3);
+        assert_eq!(s.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn select_next_wraps_around() {
+        let mut s = TeamPickerState::default();
+        s.select_next(3);
+        s.select_next(3);
+        s.select_next(3); // 0 → 1 → 2 → 0
+        assert_eq!(s.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn select_prev_wraps_around() {
+        let mut s = TeamPickerState::default(); // starts at 0
+        s.select_prev(3); // should wrap to 2
+        assert_eq!(s.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn select_next_noop_on_empty() {
+        let mut s = TeamPickerState::default();
+        s.select_next(0); // should not panic
+    }
+
+    #[test]
+    fn select_prev_noop_on_empty() {
+        let mut s = TeamPickerState::default();
+        s.select_prev(0); // should not panic
+    }
+
+    #[test]
+    fn selected_peer_id_returns_correct_entry() {
+        let es = entries(&["alice", "bob", "carol"]);
+        let mut s = TeamPickerState::default();
+        s.select_next(es.len()); // move to bob
+        assert_eq!(s.selected_peer_id(&es), Some("peer-bob"));
+    }
+
+    #[test]
+    fn selected_peer_id_none_on_empty_entries() {
+        let s = TeamPickerState::default();
+        assert_eq!(s.selected_peer_id(&[]), None);
+    }
+
+    #[test]
+    fn agent_picker_status_icons_are_distinct() {
+        let icons: Vec<&str> = [
+            AgentPickerStatus::Active,
+            AgentPickerStatus::Idle,
+            AgentPickerStatus::Closed,
+        ]
+        .iter()
+        .map(|s| s.icon())
+        .collect();
+        // All three icons must be different.
+        assert_eq!(icons.len(), 3);
+        assert_ne!(icons[0], icons[1]);
+        assert_ne!(icons[1], icons[2]);
+        assert_ne!(icons[0], icons[2]);
+    }
+}

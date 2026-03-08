@@ -29,7 +29,7 @@ impl App {
                 self.agent.streaming_tokens = self
                     .agent
                     .streaming_tokens
-                    .saturating_add((delta.len() as u32 + 3) / 4);
+                    .saturating_add((delta.len() as u32).div_ceil(4));
                 // Advance spinner frame.
                 self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);

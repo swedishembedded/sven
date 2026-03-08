@@ -259,6 +259,7 @@ impl Widget for InputPane<'_> {
 /// Compute the screen position of the text cursor within the input pane.
 ///
 /// Accounts for the 2-column `> ` prompt and attachment rows.
+#[allow(clippy::too_many_arguments)]
 pub fn input_cursor_screen_pos(
     area: Rect,
     content: &str,

@@ -13,11 +13,12 @@ use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
 use cli::{
-    Cli, Commands, McpCommands, NodeCommands, OutputFormatArg, PeerCommands, ToolCommands,
-    WebDevicesCommands,
+    Cli, Commands, IndexCommands, McpCommands, NodeCommands, OutputFormatArg, PeerCommands,
+    TeamCommands, ToolCommands, WebDevicesCommands,
 };
 use sven_bootstrap::build_cli_tool_registry;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
+use sven_ci::{MapOptions, ReduceOptions, TeeOptions};
 use sven_config::AgentMode;
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
@@ -82,6 +83,49 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Validate { file } => {
                 return validate_workflow(file);
+            }
+            Commands::Map {
+                template,
+                concurrency,
+                model,
+                output_format,
+                separator,
+            } => {
+                return run_map_command(
+                    template,
+                    *concurrency,
+                    model.as_deref(),
+                    output_format,
+                    separator.as_deref(),
+                )
+                .await;
+            }
+            Commands::Tee {
+                commands,
+                shell,
+                separator,
+            } => {
+                return run_tee_command(commands, shell, separator.as_deref()).await;
+            }
+            Commands::Reduce {
+                prompt,
+                model,
+                output_format,
+                preamble,
+            } => {
+                return run_reduce_command(
+                    prompt,
+                    model.as_deref(),
+                    output_format,
+                    preamble.as_deref(),
+                )
+                .await;
+            }
+            Commands::Team { command } => {
+                return run_team_command(command);
+            }
+            Commands::Index { command } => {
+                return run_index_command(command);
             }
             Commands::ListModels {
                 provider,
@@ -812,6 +856,134 @@ fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Map / Tee / Reduce command handlers ──────────────────────────────────────
+
+/// `sven map TEMPLATE` — run one agent per stdin line.
+async fn run_map_command(
+    template: &str,
+    concurrency: usize,
+    model: Option<&str>,
+    output_format: &str,
+    separator: Option<&str>,
+) -> anyhow::Result<()> {
+    let stdin_data = read_stdin_to_string()?;
+
+    let opts = MapOptions {
+        template: template.to_string(),
+        concurrency,
+        model: model.map(|m| m.to_string()),
+        sven_bin: None,
+        extra_args: Vec::new(),
+        output_format: output_format.to_string(),
+        section_separator: separator.map(|s| s.to_string()),
+    };
+
+    sven_ci::pipe::run_map(opts, stdin_data).await
+}
+
+/// `sven tee CMD...` — broadcast stdin to N parallel commands.
+async fn run_tee_command(
+    commands: &[String],
+    shell: &str,
+    separator: Option<&str>,
+) -> anyhow::Result<()> {
+    let stdin_data = read_stdin_to_string()?;
+
+    let opts = TeeOptions {
+        commands: commands.to_vec(),
+        shell: Some(shell.to_string()),
+        section_separator: separator.map(|s| s.to_string()),
+    };
+
+    sven_ci::pipe::run_tee(opts, stdin_data).await
+}
+
+/// `sven reduce PROMPT` — aggregate stdin into one synthesis agent.
+async fn run_reduce_command(
+    prompt: &str,
+    model: Option<&str>,
+    output_format: &str,
+    preamble: Option<&str>,
+) -> anyhow::Result<()> {
+    let stdin_data = read_stdin_to_string()?;
+
+    let opts = ReduceOptions {
+        prompt: prompt.to_string(),
+        model: model.map(|m| m.to_string()),
+        sven_bin: None,
+        output_format: output_format.to_string(),
+        preamble: preamble.map(|p| p.to_string()),
+    };
+
+    sven_ci::pipe::run_reduce(opts, stdin_data).await
+}
+
+/// Read all of stdin into a string.
+fn read_stdin_to_string() -> anyhow::Result<String> {
+    let mut buf = String::new();
+    io::stdin()
+        .read_to_string(&mut buf)
+        .context("reading stdin")?;
+    Ok(buf)
+}
+
+// ── Index command handler ─────────────────────────────────────────────────────
+
+fn run_index_command(cmd: &IndexCommands) -> anyhow::Result<()> {
+    let project_root =
+        sven_ci::find_project_root().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    match cmd {
+        IndexCommands::Build { quiet } => sven_ci::index::cmd_build(&project_root, *quiet),
+        IndexCommands::Query { query, limit } => {
+            sven_ci::index::cmd_query(&project_root, query, *limit)
+        }
+        IndexCommands::Stats => sven_ci::index::cmd_stats(&project_root),
+    }
+}
+
+// ── Team command handler ──────────────────────────────────────────────────────
+
+fn run_team_command(cmd: &TeamCommands) -> anyhow::Result<()> {
+    match cmd {
+        TeamCommands::List => sven_team::cli::cmd_list(),
+
+        TeamCommands::Status { name } => sven_team::cli::cmd_status(name),
+
+        TeamCommands::Create {
+            name,
+            goal,
+            max_active,
+            token_budget,
+        } => sven_team::cli::cmd_create(name, goal.as_deref(), *max_active, *token_budget),
+
+        TeamCommands::Start {
+            file,
+            sven_bin,
+            dry_run,
+        } => sven_team::cli::cmd_start(file, sven_bin.as_deref(), *dry_run),
+
+        TeamCommands::Cleanup { name, force } => sven_team::cli::cmd_cleanup(name, *force),
+
+        TeamCommands::Definitions => {
+            let project_root =
+                sven_ci::find_project_root().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            sven_team::cli::cmd_definitions(&project_root)
+        }
+
+        TeamCommands::Init { name, goal } => {
+            let project_root =
+                sven_ci::find_project_root().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            sven_team::cli::cmd_init(&project_root, name, goal.as_deref())
+        }
+
+        TeamCommands::Watch {
+            name,
+            interval,
+            timeout,
+        } => sven_team::cli::cmd_watch(name, *interval, *timeout),
+    }
+}
+
 /// Print the list of saved conversations to stdout.
 fn print_chats(limit: usize) {
     match history::list(Some(limit)) {
@@ -1053,6 +1225,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         output_jsonl,
         rerun_toolcalls: cli.rerun_toolcalls,
         regen_system_prompt: cli.regen_system_prompt,
+        max_tokens_budget: cli.max_tokens,
     };
 
     CiRunner::new(config).run(opts).await

@@ -473,6 +473,7 @@ async fn build_agent_with_team(
             config: cfg_handle.clone(),
             agent_peer_id: agent_peer_id.clone(),
             sven_bin: None,
+            use_worktree: false,
         });
         registry.register(ShutdownTeammateTool {
             config: cfg_handle.clone(),
