@@ -66,12 +66,14 @@ async-trait        = { workspace = true }
 tokio-util         = { version = "0.7" }
 
 # ── Sven internal crates ──────────────────────────────────────────────────────
-sven-core     = { path = "../sven-core" }
-sven-config   = { path = "../sven-config" }
-sven-model    = { path = "../sven-model" }
-sven-tools    = { path = "../sven-tools" }
-sven-p2p      = { path = "../sven-p2p" }
-sven-team     = { path = "../sven-team" }
+sven-core      = { path = "../sven-core" }
+sven-config    = { path = "../sven-config" }
+sven-model     = { path = "../sven-model" }
+sven-tools     = { path = "../sven-tools" }
+sven-p2p       = { path = "../sven-p2p" }
+sven-team      = { path = "../sven-team" }
+sven-bootstrap = { path = "../sven-bootstrap" }
+sven-runtime   = { path = "../sven-runtime" }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 anyhow        = { workspace = true }

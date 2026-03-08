@@ -69,9 +69,11 @@ use sven_p2p::{
     InMemoryDiscovery, P2pConfig, P2pEvent, P2pHandle, P2pNode,
 };
 
+use sven_bootstrap::{OutputBufferStore, RuntimeContext};
+
 use crate::tools::MAX_HOP_DEPTH;
 use crate::{
-    agent_builder::{build_node_agent, build_room_reactive_agent, build_task_agent},
+    agent_builder::{build_node_agent, build_room_reactive_agent, build_task_agent, TeamContext},
     config::{NodeConfig, SlackMode},
     control::{
         protocol::{ControlCommand, ControlEvent},
@@ -181,12 +183,22 @@ pub async fn run(
     let model: Arc<dyn sven_model::ModelProvider> =
         Arc::from(sven_model::from_config(&sven_config.model)?);
 
+    // Detect the project root, git/CI context, skills, and knowledge once at
+    // startup.  Wrap in Arc so it can be shared across spawned executor tasks.
+    let runtime_ctx = Arc::new(RuntimeContext::auto_detect());
+    // Shared output buffer store for TaskTool sub-agents; created once so all
+    // agents on this node share the same buffer namespace.
+    let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
+
     let (agent, node_session_depth) = build_node_agent(
         &sven_config,
         Arc::clone(&model),
         p2p_handle.clone(),
         agent_card.clone(),
         config.swarm.rooms.clone(),
+        &runtime_ctx,
+        Arc::clone(&buffer_store),
+        TeamContext::default(),
     )
     .await?;
 
@@ -312,6 +324,8 @@ pub async fn run(
         Arc::clone(&model),
         config.swarm.rooms.clone(),
         Arc::clone(&task_semaphore),
+        Arc::clone(&runtime_ctx),
+        Arc::clone(&buffer_store),
     ));
 
     // ── Inbound session message executor loop ─────────────────────────────────
@@ -324,6 +338,7 @@ pub async fn run(
         Arc::clone(&model),
         config.swarm.rooms.clone(),
         Arc::clone(&task_semaphore),
+        Arc::clone(&buffer_store),
     ));
 
     // ── Reactive room-post executor loop ──────────────────────────────────────
@@ -336,6 +351,7 @@ pub async fn run(
         Arc::clone(&model),
         config.swarm.rooms.clone(),
         Arc::clone(&task_semaphore),
+        Arc::clone(&buffer_store),
     ));
 
     // ── Spawn the P2pNode swarm ───────────────────────────────────────────────
@@ -447,6 +463,8 @@ async fn run_task_executor(
     model: Arc<dyn sven_model::ModelProvider>,
     rooms: Vec<String>,
     semaphore: Arc<Semaphore>,
+    runtime_ctx: Arc<RuntimeContext>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     loop {
         match event_rx.recv().await {
@@ -492,9 +510,12 @@ async fn run_task_executor(
                 let cfg = Arc::clone(&config);
                 let mdl = Arc::clone(&model);
                 let rms = rooms.clone();
+                let rtx = Arc::clone(&runtime_ctx);
+                let buf = Arc::clone(&buffer_store);
                 tokio::spawn(async move {
                     let _permit = permit; // released when task completes
-                    execute_inbound_task(id, from, request, p2p, card, cfg, mdl, rms).await;
+                    execute_inbound_task(id, from, request, p2p, card, cfg, mdl, rms, rtx, buf)
+                        .await;
                 });
             }
             Ok(_) => {}
@@ -534,6 +555,7 @@ async fn run_session_executor(
     model: Arc<dyn sven_model::ModelProvider>,
     rooms: Vec<String>,
     semaphore: Arc<Semaphore>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     // Per-peer active-session set: prevents spawning a second agent for the
     // same peer while the first is still running.  Stored as a HashSet keyed
@@ -633,10 +655,12 @@ async fn run_session_executor(
                 let cfg = Arc::clone(&config);
                 let mdl = Arc::clone(&model);
                 let rms = rooms.clone();
+                let buf = Arc::clone(&buffer_store);
                 let active_peers_clone = std::sync::Arc::clone(&active_peers);
                 tokio::spawn(async move {
                     let _permit = permit;
-                    execute_inbound_session_message(from, message, p2p, card, cfg, mdl, rms).await;
+                    execute_inbound_session_message(from, message, p2p, card, cfg, mdl, rms, buf)
+                        .await;
                     // Release the per-peer slot so the next message from this peer
                     // can be processed once the current session completes.
                     active_peers_clone.lock().await.remove(&from);
@@ -664,6 +688,7 @@ async fn execute_inbound_session_message(
     config: Arc<sven_config::Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     _rooms: Vec<String>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     use std::time::Instant;
     use sven_core::AgentEvent;
@@ -722,6 +747,7 @@ async fn execute_inbound_session_message(
         p2p.store().clone(),
         chars_budget,
         message.depth,
+        buffer_store,
     )
     .await
     {
@@ -823,6 +849,7 @@ async fn run_room_executor(
     model: Arc<dyn sven_model::ModelProvider>,
     rooms: Vec<String>,
     semaphore: Arc<Semaphore>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     let active_rooms: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
@@ -877,11 +904,12 @@ async fn run_room_executor(
                 let cfg = Arc::clone(&config);
                 let mdl = Arc::clone(&model);
                 let rms = rooms.clone();
+                let buf = Arc::clone(&buffer_store);
                 let active_rooms_clone = std::sync::Arc::clone(&active_rooms);
                 let room_name = post.room.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    execute_inbound_room_post(post, p2p, card, cfg, mdl, rms).await;
+                    execute_inbound_room_post(post, p2p, card, cfg, mdl, rms, buf).await;
                     active_rooms_clone.lock().await.remove(&room_name);
                 });
             }
@@ -914,6 +942,7 @@ async fn execute_inbound_room_post(
     config: Arc<sven_config::Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     rooms: Vec<String>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     use std::time::Instant;
     use sven_core::AgentEvent;
@@ -964,6 +993,7 @@ async fn execute_inbound_room_post(
         rooms,
         inbound_depth,
         runtime,
+        buffer_store,
     )
     .await
     {
@@ -1015,6 +1045,7 @@ async fn build_session_agent(
     // the task_depth for DelegationContext, so any protocol switch (session →
     // task delegation) continues the same unified hop budget.
     session_depth: u32,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<sven_core::Agent> {
     use sven_core::AgentRuntimeContext;
     use sven_model::Message;
@@ -1091,6 +1122,7 @@ async fn build_session_agent(
         vec![],
         session_depth,
         runtime,
+        buffer_store,
     )
     .await
 }
@@ -1121,6 +1153,8 @@ async fn execute_inbound_task(
     config: Arc<sven_config::Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     rooms: Vec<String>,
+    runtime_ctx: Arc<RuntimeContext>,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     use std::time::Instant;
     let start = Instant::now();
@@ -1233,6 +1267,8 @@ async fn execute_inbound_task(
         rooms,
         request.depth,
         request.chain.clone(),
+        &runtime_ctx,
+        buffer_store,
     )
     .await
     {

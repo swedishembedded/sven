@@ -46,21 +46,17 @@ pub fn acp_mode_id_to_sven_mode(mode_id: &SessionModeId) -> AgentMode {
 /// budget bookkeeping) so the caller can skip the `session/update` send.
 pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate> {
     match event {
-        AgentEvent::TextDelta(text) => {
-            Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                ContentBlock::from(text.as_str()),
-            )))
-        }
+        AgentEvent::TextDelta(text) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+            ContentBlock::from(text.as_str()),
+        ))),
 
         // TextComplete carries the full accumulated text (not a new delta), so
         // forwarding it would duplicate everything already sent via TextDelta.
         AgentEvent::TextComplete(_) => None,
 
-        AgentEvent::ThinkingDelta(text) => {
-            Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-                ContentBlock::from(text.as_str()),
-            )))
-        }
+        AgentEvent::ThinkingDelta(text) => Some(SessionUpdate::AgentThoughtChunk(
+            ContentChunk::new(ContentBlock::from(text.as_str())),
+        )),
 
         // Same as TextComplete – drop to avoid duplicating thought chunks.
         AgentEvent::ThinkingComplete(_) => None,

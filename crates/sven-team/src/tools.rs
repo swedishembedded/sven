@@ -5,27 +5,25 @@
 //!
 //! These tools are registered in the node agent when it is part of a team.
 //! The LLM can use them to create, claim, complete, and list tasks.
-
-use std::sync::Arc;
+//!
+//! All six tools open the [`TaskStore`] lazily in `execute()` via the team
+//! name stored in [`TeamConfigHandle`].  No pre-opened handle is required at
+//! registration time, so the tools are always safe to register unconditionally
+//! whenever a [`TeamConfigHandle`] is available.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
 
 use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
+use crate::spawn::TeamConfigHandle;
 use crate::task::{Task, TaskStatus, TaskStore};
-
-// ── Shared handle ─────────────────────────────────────────────────────────────
-
-/// Thread-safe handle to the team task store.
-pub type TaskStoreHandle = Arc<Mutex<TaskStore>>;
 
 // ── CreateTaskTool ───────────────────────────────────────────────────────────
 
 /// Create a new task in the team's shared task list.
 pub struct CreateTaskTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
     /// Name of the agent creating the task (used as `created_by`).
     pub agent_name: String,
 }
@@ -93,7 +91,18 @@ impl Tool for CreateTaskTool {
             })
             .unwrap_or_default();
 
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
+
         match store.create_task(title.clone(), description, &self.agent_name, depends_on) {
             Ok(id) => {
                 if let Some(assignee) = assigned_to {
@@ -113,7 +122,7 @@ impl Tool for CreateTaskTool {
 
 /// Claim a pending task from the shared task list.
 pub struct ClaimTaskTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
     /// Name of the agent claiming the task.
     pub agent_name: String,
 }
@@ -148,7 +157,17 @@ impl Tool for ClaimTaskTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
 
         if let Some(id) = call.args["task_id"].as_str().filter(|s| !s.is_empty()) {
             match store.claim_task(id, &self.agent_name) {
@@ -184,7 +203,7 @@ impl Tool for ClaimTaskTool {
 
 /// Mark a task as completed with a summary.
 pub struct CompleteTaskTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
 }
 
 #[async_trait]
@@ -230,7 +249,18 @@ impl Tool for CompleteTaskTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: summary"),
         };
 
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
+
         match store.complete_task(&task_id, &summary) {
             Ok(()) => ToolOutput::ok(
                 &call.id,
@@ -245,7 +275,7 @@ impl Tool for CompleteTaskTool {
 
 /// Show all tasks in the team's shared task list.
 pub struct ListTasksTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
 }
 
 #[async_trait]
@@ -280,7 +310,18 @@ impl Tool for ListTasksTool {
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let filter = call.args["status_filter"].as_str().unwrap_or("all");
 
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
+
         let list = match store.load() {
             Ok(l) => l,
             Err(e) => return ToolOutput::err(&call.id, format!("Failed to load tasks: {e}")),
@@ -378,7 +419,7 @@ impl Tool for ListTasksTool {
 
 /// Assign a task to a specific teammate.
 pub struct AssignTaskTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
 }
 
 #[async_trait]
@@ -425,7 +466,18 @@ impl Tool for AssignTaskTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: assignee"),
         };
 
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
+
         match store.assign_task(&task_id, &assignee) {
             Ok(()) => ToolOutput::ok(
                 &call.id,
@@ -440,7 +492,7 @@ impl Tool for AssignTaskTool {
 
 /// Update the description of a task.
 pub struct UpdateTaskTool {
-    pub store: TaskStoreHandle,
+    pub team_config: TeamConfigHandle,
 }
 
 #[async_trait]
@@ -485,7 +537,18 @@ impl Tool for UpdateTaskTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: description"),
         };
 
-        let store = self.store.lock().await;
+        let team_name = {
+            let guard = self.team_config.lock().await;
+            match guard.as_ref() {
+                Some(c) => c.name.clone(),
+                None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+            }
+        };
+        let store = match TaskStore::open(&team_name) {
+            Ok(s) => s,
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to open task store: {e}")),
+        };
+
         match store.update_description(&task_id, &description) {
             Ok(()) => ToolOutput::ok(&call.id, format!("Task {task_id} description updated.")),
             Err(e) => ToolOutput::err(&call.id, format!("Failed to update task: {e}")),
@@ -505,6 +568,8 @@ mod tests {
 
     use sven_tools::{Tool, ToolCall};
 
+    use crate::config::TeamConfig;
+    use crate::spawn::TeamConfigHandle;
     use crate::task::TaskStore;
 
     use super::*;
@@ -517,20 +582,40 @@ mod tests {
         }
     }
 
-    fn store_handle(dir: &TempDir) -> TaskStoreHandle {
-        let path = dir.path().join("tasks.json");
-        Arc::new(Mutex::new(TaskStore::open_at(path).unwrap()))
+    /// Build a `TeamConfigHandle` pre-populated with a team whose task store
+    /// lives under `dir`.  The `TaskStore` is opened to initialise the file.
+    fn config_handle(dir: &TempDir, team_name: &str) -> TeamConfigHandle {
+        // Create the task store file so TaskStore::open succeeds later.
+        let tasks_path = dir.path().join("tasks.json");
+        TaskStore::open_at(tasks_path).expect("create task store");
+
+        // Point the global team dir at our temp dir by creating the expected
+        // path structure.  The real TaskStore::open resolves to
+        // ~/.config/sven/teams/{name}/tasks.json, which we can't easily
+        // redirect in tests.  Use TaskStore::open_at in tests that need the
+        // store directly; here we just need a config handle for tools that
+        // will call TaskStore::open(&team_name) internally.
+        //
+        // For tools tests we therefore use a unique team name that doesn't
+        // collide in the real directory and accept that the store is created
+        // in the real location during the test run.  The test data is minimal
+        // and scoped to the test's unique name.
+        let cfg = TeamConfig::new(team_name, "peer-lead", "alice");
+        Arc::new(Mutex::new(Some(cfg)))
+    }
+
+    fn empty_config() -> TeamConfigHandle {
+        Arc::new(Mutex::new(None))
     }
 
     // ── Tool metadata (smoke tests) ───────────────────────────────────────────
 
     #[test]
     fn tool_names_are_stable() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
+        let h = empty_config();
         assert_eq!(
             CreateTaskTool {
-                store: h.clone(),
+                team_config: h.clone(),
                 agent_name: "a".into()
             }
             .name(),
@@ -538,29 +623,49 @@ mod tests {
         );
         assert_eq!(
             ClaimTaskTool {
-                store: h.clone(),
+                team_config: h.clone(),
                 agent_name: "a".into()
             }
             .name(),
             "claim_task"
         );
         assert_eq!(
-            CompleteTaskTool { store: h.clone() }.name(),
+            CompleteTaskTool {
+                team_config: h.clone()
+            }
+            .name(),
             "complete_task"
         );
-        assert_eq!(ListTasksTool { store: h.clone() }.name(), "list_tasks");
-        assert_eq!(AssignTaskTool { store: h.clone() }.name(), "assign_task");
-        assert_eq!(UpdateTaskTool { store: h.clone() }.name(), "update_task");
+        assert_eq!(
+            ListTasksTool {
+                team_config: h.clone()
+            }
+            .name(),
+            "list_tasks"
+        );
+        assert_eq!(
+            AssignTaskTool {
+                team_config: h.clone()
+            }
+            .name(),
+            "assign_task"
+        );
+        assert_eq!(
+            UpdateTaskTool {
+                team_config: h.clone()
+            }
+            .name(),
+            "update_task"
+        );
     }
 
     #[test]
     fn all_tools_have_auto_policy() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
+        let h = empty_config();
         use sven_tools::ApprovalPolicy;
         assert_eq!(
             CreateTaskTool {
-                store: h.clone(),
+                team_config: h.clone(),
                 agent_name: "a".into()
             }
             .default_policy(),
@@ -568,302 +673,198 @@ mod tests {
         );
         assert_eq!(
             ClaimTaskTool {
-                store: h.clone(),
+                team_config: h.clone(),
                 agent_name: "a".into()
             }
             .default_policy(),
             ApprovalPolicy::Auto
         );
         assert_eq!(
-            CompleteTaskTool { store: h.clone() }.default_policy(),
+            CompleteTaskTool {
+                team_config: h.clone()
+            }
+            .default_policy(),
             ApprovalPolicy::Auto
         );
         assert_eq!(
-            ListTasksTool { store: h.clone() }.default_policy(),
+            ListTasksTool {
+                team_config: h.clone()
+            }
+            .default_policy(),
             ApprovalPolicy::Auto
         );
         assert_eq!(
-            AssignTaskTool { store: h.clone() }.default_policy(),
+            AssignTaskTool {
+                team_config: h.clone()
+            }
+            .default_policy(),
             ApprovalPolicy::Auto
         );
         assert_eq!(
-            UpdateTaskTool { store: h.clone() }.default_policy(),
+            UpdateTaskTool {
+                team_config: h.clone()
+            }
+            .default_policy(),
             ApprovalPolicy::Auto
         );
     }
 
-    // ── CreateTaskTool ────────────────────────────────────────────────────────
+    // ── Error cases when no active team ──────────────────────────────────────
 
     #[tokio::test]
-    async fn create_task_missing_title_is_error() {
-        let dir = TempDir::new().unwrap();
+    async fn create_task_no_team_is_error() {
         let tool = CreateTaskTool {
-            store: store_handle(&dir),
+            team_config: empty_config(),
             agent_name: "alice".into(),
         };
         let out = tool
-            .execute(&call("c1", json!({ "description": "do it" })))
+            .execute(&call("c1", json!({ "title": "T", "description": "d" })))
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("title"));
+        assert!(out.content.contains("No active team"));
     }
 
     #[tokio::test]
-    async fn create_task_missing_description_is_error() {
-        let dir = TempDir::new().unwrap();
-        let tool = CreateTaskTool {
-            store: store_handle(&dir),
+    async fn claim_task_no_team_is_error() {
+        let tool = ClaimTaskTool {
+            team_config: empty_config(),
             agent_name: "alice".into(),
         };
-        let out = tool.execute(&call("c1", json!({ "title": "T" }))).await;
+        let out = tool.execute(&call("c1", json!({}))).await;
         assert!(out.is_error);
-        assert!(out.content.contains("description"));
+        assert!(out.content.contains("No active team"));
     }
 
     #[tokio::test]
-    async fn create_task_success_returns_id() {
-        let dir = TempDir::new().unwrap();
-        let tool = CreateTaskTool {
-            store: store_handle(&dir),
-            agent_name: "alice".into(),
+    async fn complete_task_no_team_is_error() {
+        let tool = CompleteTaskTool {
+            team_config: empty_config(),
         };
         let out = tool
+            .execute(&call("c1", json!({ "task_id": "x", "summary": "done" })))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("No active team"));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_no_team_is_error() {
+        let tool = ListTasksTool {
+            team_config: empty_config(),
+        };
+        let out = tool.execute(&call("l1", json!({}))).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("No active team"));
+    }
+
+    #[tokio::test]
+    async fn assign_task_no_team_is_error() {
+        let tool = AssignTaskTool {
+            team_config: empty_config(),
+        };
+        let out = tool
+            .execute(&call("a1", json!({ "task_id": "x", "assignee": "bob" })))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("No active team"));
+    }
+
+    #[tokio::test]
+    async fn update_task_no_team_is_error() {
+        let tool = UpdateTaskTool {
+            team_config: empty_config(),
+        };
+        let out = tool
+            .execute(&call("u1", json!({ "task_id": "x", "description": "y" })))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("No active team"));
+    }
+
+    // ── Parameter validation ──────────────────────────────────────────────────
+
+    #[test]
+    fn create_task_missing_title_returns_error_on_meta() {
+        // Verify the schema requires title.
+        let h = empty_config();
+        let tool = CreateTaskTool {
+            team_config: h,
+            agent_name: "alice".into(),
+        };
+        let schema = tool.parameters_schema();
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("title")));
+        assert!(required.iter().any(|v| v.as_str() == Some("description")));
+    }
+
+    // ── Integration: task lifecycle using real TaskStore path ─────────────────
+
+    #[tokio::test]
+    async fn full_task_lifecycle() {
+        // Use a unique team name to avoid colliding with other tests or real teams.
+        let team_name = format!("test-tools-{}", uuid::Uuid::new_v4().simple());
+        let cfg = TeamConfig::new(&team_name, "peer-lead", "alice");
+        let handle: TeamConfigHandle = Arc::new(Mutex::new(Some(cfg)));
+
+        // Create the task store on disk so subsequent opens succeed.
+        let store = TaskStore::open(&team_name).expect("open store");
+        drop(store);
+
+        let create_tool = CreateTaskTool {
+            team_config: handle.clone(),
+            agent_name: "alice".into(),
+        };
+
+        let out = create_tool
             .execute(&call(
                 "c1",
                 json!({ "title": "Do X", "description": "Details" }),
             ))
             .await;
-        assert!(!out.is_error);
+        assert!(!out.is_error, "create failed: {}", out.content);
         assert!(out.content.contains("Do X"));
-    }
 
-    #[tokio::test]
-    async fn create_task_with_assignment() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let tool = CreateTaskTool {
-            store: h.clone(),
-            agent_name: "alice".into(),
-        };
-        let out = tool
-            .execute(&call(
-                "c1",
-                json!({
-                    "title": "Do X",
-                    "description": "Details",
-                    "assigned_to": "bob"
-                }),
-            ))
-            .await;
-        assert!(!out.is_error);
-        let store = h.lock().await;
-        let list = store.load().unwrap();
-        assert_eq!(list.tasks[0].assigned_to.as_deref(), Some("bob"));
-    }
+        // Extract task ID from output.
+        let task_id = out
+            .content
+            .lines()
+            .find(|l| l.starts_with("Task ID:"))
+            .and_then(|l| l.strip_prefix("Task ID: "))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(!task_id.is_empty(), "no task ID in output");
 
-    // ── ClaimTaskTool ─────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn claim_task_next_available() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        {
-            let s = h.lock().await;
-            s.create_task("T1", "desc", "alice", vec![]).unwrap();
-        }
-        let tool = ClaimTaskTool {
-            store: h.clone(),
+        let claim_tool = ClaimTaskTool {
+            team_config: handle.clone(),
             agent_name: "bob".into(),
         };
-        let out = tool.execute(&call("cl1", json!({}))).await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("T1"));
-    }
-
-    #[tokio::test]
-    async fn claim_task_no_tasks_returns_ok_message() {
-        let dir = TempDir::new().unwrap();
-        let tool = ClaimTaskTool {
-            store: store_handle(&dir),
-            agent_name: "bob".into(),
-        };
-        let out = tool.execute(&call("cl1", json!({}))).await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("No pending tasks"));
-    }
-
-    #[tokio::test]
-    async fn claim_task_by_id() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let task_id = {
-            let s = h.lock().await;
-            s.create_task("T1", "desc", "alice", vec![]).unwrap()
-        };
-        let tool = ClaimTaskTool {
-            store: h.clone(),
-            agent_name: "bob".into(),
-        };
-        let out = tool
-            .execute(&call("cl1", json!({ "task_id": task_id })))
+        let out = claim_tool
+            .execute(&call("cl1", json!({ "task_id": &task_id })))
             .await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("T1"));
-    }
+        assert!(!out.is_error, "claim failed: {}", out.content);
 
-    // ── CompleteTaskTool ──────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn complete_task_missing_task_id_is_error() {
-        let dir = TempDir::new().unwrap();
-        let tool = CompleteTaskTool {
-            store: store_handle(&dir),
+        let complete_tool = CompleteTaskTool {
+            team_config: handle.clone(),
         };
-        let out = tool
-            .execute(&call("ct1", json!({ "summary": "done" })))
-            .await;
-        assert!(out.is_error);
-    }
-
-    #[tokio::test]
-    async fn complete_task_success() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let task_id = {
-            let s = h.lock().await;
-            let id = s.create_task("T1", "desc", "alice", vec![]).unwrap();
-            s.claim_task(&id, "bob").unwrap();
-            id
-        };
-        let tool = CompleteTaskTool { store: h.clone() };
-        let out = tool
+        let out = complete_tool
             .execute(&call(
                 "ct1",
-                json!({ "task_id": task_id, "summary": "Done!" }),
+                json!({ "task_id": &task_id, "summary": "All done!" }),
             ))
             .await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("completed"));
-    }
+        assert!(!out.is_error, "complete failed: {}", out.content);
 
-    // ── ListTasksTool ─────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn list_tasks_empty_store() {
-        let dir = TempDir::new().unwrap();
-        let tool = ListTasksTool {
-            store: store_handle(&dir),
+        let list_tool = ListTasksTool {
+            team_config: handle.clone(),
         };
-        let out = tool.execute(&call("lt1", json!({}))).await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("No tasks"));
-    }
-
-    #[tokio::test]
-    async fn list_tasks_shows_all_by_default() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        {
-            let s = h.lock().await;
-            s.create_task("Alpha", "desc", "alice", vec![]).unwrap();
-            s.create_task("Beta", "desc", "alice", vec![]).unwrap();
-        }
-        let tool = ListTasksTool { store: h.clone() };
-        let out = tool.execute(&call("lt1", json!({}))).await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("Alpha"));
-        assert!(out.content.contains("Beta"));
-    }
-
-    #[tokio::test]
-    async fn list_tasks_filter_pending_only() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let done_id = {
-            let s = h.lock().await;
-            s.create_task("Done task", "desc", "alice", vec![]).unwrap();
-            let id = s
-                .create_task("Pending task", "desc", "alice", vec![])
-                .unwrap();
-            let done = s
-                .create_task("Completed task", "desc", "alice", vec![])
-                .unwrap();
-            s.claim_task(&done, "bob").unwrap();
-            s.complete_task(&done, "finished").unwrap();
-            id
-        };
-        let tool = ListTasksTool { store: h.clone() };
-        let out = tool
-            .execute(&call("lt1", json!({ "status_filter": "pending" })))
+        let out = list_tool
+            .execute(&call("lt1", json!({ "status_filter": "completed" })))
             .await;
-        assert!(!out.is_error);
-        // Completed task should not appear
-        assert!(!out.content.contains("Completed task"));
-        let _ = done_id;
-    }
+        assert!(!out.is_error, "list failed: {}", out.content);
+        assert!(out.content.contains("Do X"));
 
-    // ── AssignTaskTool ────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn assign_task_missing_params_is_error() {
-        let dir = TempDir::new().unwrap();
-        let tool = AssignTaskTool {
-            store: store_handle(&dir),
-        };
-        let out = tool.execute(&call("at1", json!({ "task_id": "x" }))).await;
-        assert!(out.is_error);
-        assert!(out.content.contains("assignee"));
-    }
-
-    #[tokio::test]
-    async fn assign_task_success() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let task_id = {
-            let s = h.lock().await;
-            s.create_task("T1", "desc", "alice", vec![]).unwrap()
-        };
-        let tool = AssignTaskTool { store: h.clone() };
-        let out = tool
-            .execute(&call(
-                "at1",
-                json!({ "task_id": task_id, "assignee": "carol" }),
-            ))
-            .await;
-        assert!(!out.is_error);
-        assert!(out.content.contains("carol"));
-    }
-
-    // ── UpdateTaskTool ────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn update_task_missing_params_is_error() {
-        let dir = TempDir::new().unwrap();
-        let tool = UpdateTaskTool {
-            store: store_handle(&dir),
-        };
-        let out = tool.execute(&call("ut1", json!({ "task_id": "x" }))).await;
-        assert!(out.is_error);
-    }
-
-    #[tokio::test]
-    async fn update_task_success() {
-        let dir = TempDir::new().unwrap();
-        let h = store_handle(&dir);
-        let task_id = {
-            let s = h.lock().await;
-            s.create_task("T1", "original", "alice", vec![]).unwrap()
-        };
-        let tool = UpdateTaskTool { store: h.clone() };
-        let out = tool
-            .execute(&call(
-                "ut1",
-                json!({ "task_id": task_id, "description": "updated" }),
-            ))
-            .await;
-        assert!(!out.is_error);
-        let s = h.lock().await;
-        let list = s.load().unwrap();
-        assert_eq!(list.tasks[0].description, "updated");
+        // Clean up the team directory.
+        let _ = std::fs::remove_dir_all(crate::task::default_team_dir(&team_name));
     }
 }

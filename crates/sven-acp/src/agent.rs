@@ -19,10 +19,9 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification, Error,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse, Result as AcpResult, SessionMode, SessionModeId,
-    SessionModeState, SessionNotification, SetSessionModeRequest, SetSessionModeResponse,
-    StopReason,
+    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
+    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
@@ -32,7 +31,9 @@ use sven_config::{AgentMode, Config};
 use sven_core::{Agent, AgentEvent};
 use sven_tools::events::TodoItem;
 
-use crate::bridge::{acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id};
+use crate::bridge::{
+    acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
+};
 
 // ─── Version string ───────────────────────────────────────────────────────────
 
@@ -100,8 +101,9 @@ impl SvenAcpAgent {
     /// Build the list of advertised [`SessionMode`]s.
     fn advertised_modes() -> Vec<SessionMode> {
         vec![
-            SessionMode::new(SessionModeId::new("agent"), "Agent")
-                .description("Full agentic mode: reads, writes, executes tools autonomously".to_string()),
+            SessionMode::new(SessionModeId::new("agent"), "Agent").description(
+                "Full agentic mode: reads, writes, executes tools autonomously".to_string(),
+            ),
             SessionMode::new(SessionModeId::new("plan"), "Plan")
                 .description("Planning mode: proposes changes without writing files".to_string()),
             SessionMode::new(SessionModeId::new("research"), "Research")
@@ -115,7 +117,10 @@ impl SvenAcpAgent {
 #[async_trait::async_trait(?Send)]
 impl agent_client_protocol::Agent for SvenAcpAgent {
     async fn initialize(&self, args: InitializeRequest) -> AcpResult<InitializeResponse> {
-        debug!("ACP initialize: protocol_version={:?}", args.protocol_version);
+        debug!(
+            "ACP initialize: protocol_version={:?}",
+            args.protocol_version
+        );
         Ok(InitializeResponse::new(args.protocol_version)
             .agent_capabilities(AgentCapabilities::new())
             .agent_info(
@@ -165,9 +170,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             cancel_tx: Mutex::new(None),
         });
 
-        self.sessions
-            .borrow_mut()
-            .insert(session_id.clone(), entry);
+        self.sessions.borrow_mut().insert(session_id.clone(), entry);
 
         let mode_state = SessionModeState::new(
             sven_mode_to_acp_mode_id(initial_mode),

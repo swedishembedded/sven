@@ -4,32 +4,43 @@
 //!
 //! Constructs `sven_core::Agent` instances used by the node.
 //!
-//! Two entry points:
+//! ## Entry points
+//!
 //! - [`build_node_agent`] — the long-lived interactive agent that powers
 //!   the HTTP, WebSocket and CLI control surfaces.
 //! - [`build_task_agent`] — a fresh, per-task agent used exclusively for
-//!   executing inbound P2P delegated tasks.  Each call produces a completely
-//!   independent agent; there is no shared mutable state between concurrent
-//!   inbound tasks.
+//!   executing inbound P2P delegated tasks.
+//! - [`build_task_agent_with_runtime`] — per-task agent with a custom
+//!   [`AgentRuntimeContext`] (used by the session executor).
+//! - [`build_room_reactive_agent`] — per-room-post reactive agent.
+//!
+//! ## Three-layer tool composition
+//!
+//! ```text
+//! Layer 1 (common)   build_tool_registry(profile)    via sven-bootstrap
+//! Layer 2 (P2P)      register_p2p_tools()            always
+//! Layer 3 (team)     register_team_tools()           main node agent only
+//! ```
+//!
+//! Only the interactive node agent gets Layer 3.  P2P inbound agents
+//! (task, session, room) get Layers 1 (SubAgent profile) + 2, preventing
+//! recursive team creation inside delegated tasks.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
+use sven_bootstrap::{build_tool_registry, OutputBufferStore, RuntimeContext, ToolSetProfile};
 use sven_config::Config;
 use sven_core::{Agent, AgentRuntimeContext};
 use sven_p2p::{protocol::types::AgentCard, P2pHandle};
 use sven_team::{
     AssignTaskTool, ClaimTaskTool, CleanupTeamTool, CompleteTaskTool, CreateTaskTool,
-    CreateTeamTool, ListTasksTool, ListTeamTool, RegisterTeammateTool, ShutdownTeammateTool,
-    SpawnTeammateTool, TaskStoreHandle, TeamConfigHandle, UpdateTaskTool,
+    CreateTeamTool, ListTasksTool, ListTeamTool, MergeTeammateBranchTool, RegisterTeammateTool,
+    ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle, UpdateTaskTool,
 };
-use sven_tools::{
-    DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
-    RunTerminalCommandTool, SwitchModeTool, TodoItem, TodoWriteTool, ToolEvent, ToolRegistry,
-    UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
-};
+use sven_tools::{events::TodoItem, ToolEvent, ToolRegistry};
 
 use crate::tools::{
     BroadcastAbortTool, DelegateTool, DelegationContext, DelegationContextHandle,
@@ -38,80 +49,74 @@ use crate::tools::{
     SessionDepthTracker, WaitForMessageTool,
 };
 
+// ── TeamContext ────────────────────────────────────────────────────────────────
+
 /// Optional team context for agents participating in a team.
+///
+/// Holds only the lightweight handles needed to construct the team tools.
+/// The `TaskStore` is opened lazily inside each tool's `execute()` call, so no
+/// pre-opened handle is required here.
 #[derive(Clone, Default)]
 pub struct TeamContext {
-    /// Name of the active team (if any).
-    pub team_name: Option<String>,
-    /// Shared task store handle (shared across all tools in this agent).
-    pub task_store: Option<TaskStoreHandle>,
-    /// In-memory team config handle.
+    /// In-memory team config handle (shared across all team tools).
     pub team_config: TeamConfigHandle,
-    /// Name of this agent (for task attribution).
+    /// Name of this agent (for task attribution and team registration).
     pub agent_name: String,
-    /// Peer ID of this agent (for team lead check).
+    /// Peer ID of this agent (for team lead checks).
     pub agent_peer_id: String,
 }
 
-/// Build the shared, long-lived node `Agent`.
+// ── Public builders ────────────────────────────────────────────────────────────
+
+/// Build the shared, long-lived node [`Agent`].
 ///
-/// `model` must be the pre-constructed model provider.  Passing a shared
-/// `Arc` avoids creating a second HTTP client / API connection when
-/// `build_task_agent` is later called for inbound P2P tasks.
+/// Receives `ToolSetProfile::Full` (includes `TaskTool`, buffer tools, skills,
+/// knowledge, context, and GDB tools) plus all P2P tools and, when a team is
+/// active, all team lifecycle and task-management tools.
 ///
-/// The delegation context slot starts empty (`None`); the interactive agent
-/// never runs inside a delegated task so it never needs delegation guards.
-/// Returns both the built `Agent` and the `SessionDepthHandle` so the caller
-/// can reset the per-peer depth map at the start of each new user turn.
-///
-/// Task agents never need this: they are created fresh per task and discarded
-/// when the task completes.  The interactive node agent, however, is
-/// long-lived, so each new user session must call
-/// `depth.lock().await.reset_per_turn()` before the agent runs.
+/// Returns both the built [`Agent`] and the [`SessionDepthHandle`] so the
+/// caller can reset the per-peer depth map at the start of each new user turn.
 pub async fn build_node_agent(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     p2p_handle: P2pHandle,
     agent_card: AgentCard,
     rooms: Vec<String>,
+    runtime_ctx: &RuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+    team_ctx: TeamContext,
 ) -> anyhow::Result<(Agent, SessionDepthHandle)> {
-    let max_ctx = model
-        .config_context_window()
-        .or_else(|| model.catalog_context_window())
-        .unwrap_or(128_000) as usize;
+    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let profile = ToolSetProfile::Full {
+        question_tx: None,
+        todos,
+    };
 
-    // Empty delegation context — the interactive agent is never itself
-    // executing inside a delegated task.
     let delegation_context: DelegationContextHandle = Arc::new(Mutex::new(None));
-
-    // Per-peer session depth tracker; default_depth=0 so every new peer
-    // conversation starts at depth 0.  The per-peer map ensures that a prior
-    // deep conversation with peer B does not pollute a fresh exchange with C.
-    // The handle is returned so the caller can reset per_peer at each turn.
     let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
         default_depth: 0,
         per_peer: HashMap::new(),
     }));
-
-    // Room depth starts at 0 — the node never executes inside a reactive
-    // room handler.  default_depth=0 means PostToRoomTool treats all posts as
-    // independent topic posts (depth=1) unless the LLM provides in_reply_to_depth.
-    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+    let room_depth: RoomDepthHandle = Arc::new(Mutex::new(RoomDepthTracker {
         default_depth: 0,
         per_room: HashMap::new(),
     }));
 
-    let agent = build_agent_with(
+    let agent_runtime = runtime_ctx.to_agent_runtime();
+
+    let agent = build_node_agent_inner(
         config,
         model,
-        max_ctx,
+        profile,
+        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
         delegation_context,
         Arc::clone(&session_depth),
         room_depth,
-        AgentRuntimeContext::default(),
+        agent_runtime,
+        Some(team_ctx),
     )
     .await?;
 
@@ -120,19 +125,13 @@ pub async fn build_node_agent(
 
 /// Build a fresh, **per-task** agent for executing an inbound P2P task.
 ///
-/// Every inbound task gets its own completely isolated agent instance —
-/// independent tool registry, delegation context, and session history.
-/// This guarantees that concurrent inbound tasks never interfere with each
-/// other's delegation depth / chain tracking.
+/// Receives `ToolSetProfile::SubAgent` (no `TaskTool`, preventing recursive
+/// subprocess+P2P nesting) plus all P2P tools.  Team tools are intentionally
+/// omitted so inbound task agents cannot create or manage teams.
 ///
 /// `task_depth` and `task_chain` are taken directly from the inbound
 /// [`TaskRequest`] wire fields and baked into the agent's `DelegateTool` at
-/// construction time, so they can never be corrupted by another concurrent
-/// task.
-///
-/// The P2P delegation guidelines are injected into the system prompt via
-/// `append_system_prompt` so the LLM immediately understands that it must
-/// execute the task locally and may only delegate as a last resort.
+/// construction time.
 pub async fn build_task_agent(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
@@ -141,55 +140,43 @@ pub async fn build_task_agent(
     rooms: Vec<String>,
     task_depth: u32,
     task_chain: Vec<String>,
+    runtime_ctx: &RuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model
-        .config_context_window()
-        .or_else(|| model.catalog_context_window())
-        .unwrap_or(128_000) as usize;
+    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let profile = ToolSetProfile::SubAgent { todos };
 
-    // Pre-populate the delegation context with this task's depth and chain.
-    // No other task will ever touch this Arc — it is created fresh here.
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
             depth: task_depth,
             chain: task_chain,
         })));
-
-    // Inject the P2P execution directive into the system prompt so the LLM
-    // understands from the first token that it must attempt the task locally.
-    let runtime = AgentRuntimeContext {
-        append_system_prompt: Some(sven_core::prompts::p2p_task_guidelines().to_string()),
-        ..AgentRuntimeContext::default()
-    };
-
-    // Seed session depth from task_depth so that any session conversation
-    // started by this task agent continues the unified hop budget.  Without
-    // this, a task at depth 2 would start session chains at depth 1, allowing
-    // combined traversals far beyond MAX_HOP_DEPTH.
     let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
         default_depth: task_depth,
         per_peer: HashMap::new(),
     }));
-
-    // Room depth: task agents can post to rooms but are never reactive handlers.
-    // default_depth=0 so independent room posts carry depth=1 and the per_room
-    // map is only populated when the LLM explicitly uses in_reply_to_depth.
-    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+    let room_depth: RoomDepthHandle = Arc::new(Mutex::new(RoomDepthTracker {
         default_depth: 0,
         per_room: HashMap::new(),
     }));
 
-    build_agent_with(
+    let mut agent_runtime = runtime_ctx.to_agent_runtime();
+    agent_runtime.append_system_prompt =
+        Some(sven_core::prompts::p2p_task_guidelines().to_string());
+
+    build_node_agent_inner(
         config,
         model,
-        max_ctx,
+        profile,
+        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
         delegation_context,
         session_depth,
         room_depth,
-        runtime,
+        agent_runtime,
+        None,
     )
     .await
 }
@@ -198,14 +185,6 @@ pub async fn build_task_agent(
 ///
 /// Used by the session executor so it can inject `prior_messages` and a
 /// session-specific system prompt while still reusing the standard tool set.
-///
-/// `initial_session_depth` is the depth of the inbound `SessionMessageWire`
-/// that triggered this agent.  It is used to seed the `SessionDepthHandle`
-/// shared between `SendMessageTool` and `WaitForMessageTool`, so that the
-/// first explicit `send_message` call carries `initial_session_depth + 1` on
-/// the wire and subsequent calls continue incrementing from wherever
-/// `wait_for_message` last left off.  Pass `0` for task agents and node
-/// interactive sessions.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_task_agent_with_runtime(
     config: &Arc<Config>,
@@ -217,33 +196,30 @@ pub async fn build_task_agent_with_runtime(
     task_chain: Vec<String>,
     initial_session_depth: u32,
     runtime: AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model
-        .config_context_window()
-        .or_else(|| model.catalog_context_window())
-        .unwrap_or(128_000) as usize;
+    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let profile = ToolSetProfile::SubAgent { todos };
+
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
             depth: task_depth,
             chain: task_chain,
         })));
-    // `initial_session_depth` is the depth of the inbound message that spawned
-    // this agent (session message depth for session agents; 0 for others).
-    // Using it as `default_depth` propagates the cross-protocol hop budget:
-    // a session agent at depth 3 that starts fresh peer conversations continues
-    // from depth 3, not from 0.
     let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
         default_depth: initial_session_depth,
         per_peer: HashMap::new(),
     }));
-    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+    let room_depth: RoomDepthHandle = Arc::new(Mutex::new(RoomDepthTracker {
         default_depth: 0,
         per_room: HashMap::new(),
     }));
-    build_agent_with(
+
+    build_node_agent_inner(
         config,
         model,
-        max_ctx,
+        profile,
+        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -251,6 +227,7 @@ pub async fn build_task_agent_with_runtime(
         session_depth,
         room_depth,
         runtime,
+        None,
     )
     .await
 }
@@ -259,14 +236,7 @@ pub async fn build_task_agent_with_runtime(
 ///
 /// Seeds `room_depth.default_depth` with `inbound_post_depth` so that any
 /// call to `PostToRoomTool` inside the spawned agent automatically carries
-/// `inbound_post_depth + 1` as the outgoing depth, correctly propagating the
-/// reactive reply chain without requiring the LLM to specify `in_reply_to_depth`
-/// for its first response.
-///
-/// Also seeds `task_depth = inbound_post_depth` and
-/// `initial_session_depth = inbound_post_depth` so that any task delegation
-/// or session message sent by the reactive agent contributes to the same
-/// unified hop budget.
+/// `inbound_post_depth + 1` as the outgoing depth.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_room_reactive_agent(
     config: &Arc<Config>,
@@ -276,35 +246,30 @@ pub async fn build_room_reactive_agent(
     rooms: Vec<String>,
     inbound_post_depth: u32,
     runtime: AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
-    let max_ctx = model
-        .config_context_window()
-        .or_else(|| model.catalog_context_window())
-        .unwrap_or(128_000) as usize;
+    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let profile = ToolSetProfile::SubAgent { todos };
 
     let delegation_context: DelegationContextHandle =
-        Arc::new(tokio::sync::Mutex::new(Some(DelegationContext {
+        Arc::new(Mutex::new(Some(DelegationContext {
             depth: inbound_post_depth,
             chain: vec![],
         })));
-
-    let session_depth: SessionDepthHandle =
-        Arc::new(tokio::sync::Mutex::new(SessionDepthTracker {
-            default_depth: inbound_post_depth,
-            per_peer: HashMap::new(),
-        }));
-
-    // Seed default_depth from the inbound post so PostToRoomTool computes
-    // outgoing = inbound_post_depth + 1 for the reactive agent's first post.
-    let room_depth: RoomDepthHandle = Arc::new(tokio::sync::Mutex::new(RoomDepthTracker {
+    let session_depth: SessionDepthHandle = Arc::new(Mutex::new(SessionDepthTracker {
+        default_depth: inbound_post_depth,
+        per_peer: HashMap::new(),
+    }));
+    let room_depth: RoomDepthHandle = Arc::new(Mutex::new(RoomDepthTracker {
         default_depth: inbound_post_depth,
         per_room: HashMap::new(),
     }));
 
-    build_agent_with(
+    build_node_agent_inner(
         config,
         model,
-        max_ctx,
+        profile,
+        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -312,89 +277,108 @@ pub async fn build_room_reactive_agent(
         session_depth,
         room_depth,
         runtime,
+        None,
     )
     .await
 }
 
-/// Shared internal builder used by both [`build_node_agent`] and
-/// [`build_task_agent`].
+// ── Internal builder ───────────────────────────────────────────────────────────
+
+/// Single internal builder that all public functions delegate to.
+///
+/// Applies the three-layer tool composition:
+///
+/// 1. **Layer 1** — common tools via `build_tool_registry(profile)`.
+/// 2. **Layer 2** — P2P routing tools (always).
+/// 3. **Layer 3** — team lifecycle + task-management tools (only when
+///    `team_ctx` is `Some`, i.e. the main interactive node agent).
 #[allow(clippy::too_many_arguments)]
-async fn build_agent_with(
+async fn build_node_agent_inner(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
-    max_ctx: usize,
+    profile: ToolSetProfile,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
     p2p_handle: P2pHandle,
     agent_card: AgentCard,
     rooms: Vec<String>,
     delegation_context: DelegationContextHandle,
     session_depth_handle: SessionDepthHandle,
     room_depth_handle: RoomDepthHandle,
-    runtime: AgentRuntimeContext,
+    agent_runtime: AgentRuntimeContext,
+    team_ctx: Option<TeamContext>,
 ) -> anyhow::Result<Agent> {
-    build_agent_with_team(
+    let mode = Arc::new(Mutex::new(config.agent.default_mode));
+    let (tool_tx, tool_rx) = mpsc::channel::<ToolEvent>(64);
+
+    // Layer 1: common tools via sven-bootstrap registry builder.
+    let mut registry = build_tool_registry(
         config,
-        model,
-        max_ctx,
-        p2p_handle,
+        model.clone(),
+        profile,
+        mode.clone(),
+        tool_tx.clone(),
+        agent_runtime.clone(),
+        buffer_store,
+    );
+
+    // Layer 2: P2P routing and collaboration tools.
+    register_p2p_tools(
+        &mut registry,
+        p2p_handle.clone(),
         agent_card,
         rooms,
         delegation_context,
         session_depth_handle,
         room_depth_handle,
-        runtime,
-        TeamContext::default(),
-    )
-    .await
+        tool_tx.clone(),
+    );
+
+    // Layer 3: team tools (main node agent only).
+    if let Some(ctx) = team_ctx {
+        register_team_tools(&mut registry, &ctx, &p2p_handle);
+    }
+
+    let max_ctx = model
+        .config_context_window()
+        .or_else(|| model.catalog_context_window())
+        .unwrap_or(128_000) as usize;
+
+    Ok(Agent::new(
+        model,
+        Arc::new(registry),
+        Arc::new(config.agent.clone()),
+        agent_runtime,
+        mode,
+        tool_rx,
+        max_ctx,
+    ))
 }
 
-/// Full internal builder with optional team context.
+// ── Layer 2: P2P tools registration ───────────────────────────────────────────
+
+/// Register all P2P routing and collaboration tools into `registry`.
+///
+/// These are added for every agent variant (interactive node agent, P2P task
+/// agents, session agents, and room-reactive agents) because all of them may
+/// need to communicate with peers.
 #[allow(clippy::too_many_arguments)]
-async fn build_agent_with_team(
-    config: &Arc<Config>,
-    model: Arc<dyn sven_model::ModelProvider>,
-    max_ctx: usize,
-    p2p_handle: P2pHandle,
+fn register_p2p_tools(
+    registry: &mut ToolRegistry,
+    p2p: P2pHandle,
     agent_card: AgentCard,
     rooms: Vec<String>,
     delegation_context: DelegationContextHandle,
-    session_depth_handle: SessionDepthHandle,
-    room_depth_handle: RoomDepthHandle,
-    runtime: AgentRuntimeContext,
-    team_ctx: TeamContext,
-) -> anyhow::Result<Agent> {
-    let mode = Arc::new(Mutex::new(config.agent.default_mode));
-    let (tool_tx, tool_rx) = mpsc::channel::<ToolEvent>(64);
-    let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-
-    let mut registry = ToolRegistry::new();
-
-    // Standard tools (same set as the TUI/CI runner).
-    registry.register(RunTerminalCommandTool::default());
-    registry.register(ReadFileTool);
-    registry.register(WriteTool);
-    registry.register(EditFileTool);
-    registry.register(FindFileTool);
-    registry.register(GrepTool);
-    registry.register(ListDirTool);
-    registry.register(DeleteFileTool);
-    registry.register(WebFetchTool);
-    registry.register(WebSearchTool {
-        api_key: config.tools.web.search.api_key.clone(),
-    });
-    registry.register(ReadLintsTool);
-    registry.register(UpdateMemoryTool {
-        memory_file: config.tools.memory.memory_file.clone(),
-    });
-    registry.register(TodoWriteTool::new(todos, tool_tx.clone()));
-    registry.register(SwitchModeTool::new(mode.clone(), tool_tx.clone()));
-
-    // P2P routing tools.
+    session_depth: SessionDepthHandle,
+    room_depth: RoomDepthHandle,
+    tool_tx: mpsc::Sender<ToolEvent>,
+) {
+    // Peer discovery and task delegation.
     registry.register(ListPeersTool {
-        p2p: p2p_handle.clone(),
+        p2p: p2p.clone(),
         rooms: rooms.clone(),
     });
     registry.register(DelegateTool {
-        p2p: p2p_handle.clone(),
+        p2p: p2p.clone(),
         rooms,
         our_card: agent_card,
         delegation_context,
@@ -402,14 +386,14 @@ async fn build_agent_with_team(
     });
 
     // Session and room collaboration tools.
-    let store = p2p_handle.store().clone();
+    let store = p2p.store().clone();
     registry.register(SendMessageTool {
-        p2p: p2p_handle.clone(),
-        session_depth: Arc::clone(&session_depth_handle),
+        p2p: p2p.clone(),
+        session_depth: Arc::clone(&session_depth),
     });
     registry.register(WaitForMessageTool {
-        p2p: p2p_handle.clone(),
-        session_depth: Arc::clone(&session_depth_handle),
+        p2p: p2p.clone(),
+        session_depth: Arc::clone(&session_depth),
     });
     registry.register(SearchConversationTool {
         store: Arc::clone(&store),
@@ -418,81 +402,85 @@ async fn build_agent_with_team(
         store: Arc::clone(&store),
     });
     registry.register(PostToRoomTool {
-        p2p: p2p_handle.clone(),
-        room_depth: room_depth_handle,
+        p2p: p2p.clone(),
+        room_depth,
     });
     registry.register(ReadRoomHistoryTool {
         store: Arc::clone(&store),
     });
+}
 
-    // Team tools — only registered when a team context is active.
-    if let Some(task_store) = team_ctx.task_store {
-        registry.register(CreateTaskTool {
-            store: task_store.clone(),
-            agent_name: team_ctx.agent_name.clone(),
-        });
-        registry.register(ClaimTaskTool {
-            store: task_store.clone(),
-            agent_name: team_ctx.agent_name.clone(),
-        });
-        registry.register(CompleteTaskTool {
-            store: task_store.clone(),
-        });
-        registry.register(ListTasksTool {
-            store: task_store.clone(),
-        });
-        registry.register(AssignTaskTool {
-            store: task_store.clone(),
-        });
-        registry.register(UpdateTaskTool {
-            store: task_store.clone(),
-        });
-    }
+// ── Layer 3: team tools registration ──────────────────────────────────────────
 
-    {
-        let cfg_handle = team_ctx.team_config.clone();
-        let agent_peer_id = team_ctx.agent_peer_id.clone();
-        let agent_name_str = team_ctx.agent_name.clone();
+/// Register team lifecycle and task-management tools into `registry`.
+///
+/// Called only for the main interactive node agent.  P2P inbound agents
+/// (task, session, room-reactive) do not receive these tools, preventing
+/// recursive team creation inside delegated tasks.
+///
+/// All six task tools open the [`sven_team::TaskStore`] lazily inside their
+/// `execute()` calls, so they are always safe to register regardless of
+/// whether a team is currently active.
+fn register_team_tools(registry: &mut ToolRegistry, ctx: &TeamContext, p2p: &P2pHandle) {
+    let cfg = ctx.team_config.clone();
+    let agent_name = ctx.agent_name.clone();
+    let agent_peer_id = ctx.agent_peer_id.clone();
 
-        registry.register(CreateTeamTool {
-            team_config: cfg_handle.clone(),
-            agent_peer_id: agent_peer_id.clone(),
-            agent_name: agent_name_str.clone(),
-        });
-        registry.register(ListTeamTool {
-            config: cfg_handle.clone(),
-        });
-        registry.register(CleanupTeamTool {
-            config: cfg_handle.clone(),
-            agent_peer_id: agent_peer_id.clone(),
-        });
-        registry.register(RegisterTeammateTool {
-            config: cfg_handle.clone(),
-        });
-        registry.register(SpawnTeammateTool {
-            config: cfg_handle.clone(),
-            agent_peer_id: agent_peer_id.clone(),
-            sven_bin: None,
-            use_worktree: false,
-        });
-        registry.register(ShutdownTeammateTool {
-            config: cfg_handle.clone(),
-            agent_peer_id: agent_peer_id.clone(),
-        });
-        registry.register(BroadcastAbortTool {
-            p2p: p2p_handle.clone(),
-            agent_peer_id,
-            team_config: cfg_handle,
-        });
-    }
+    // Task management tools — lazy TaskStore, always registered.
+    registry.register(CreateTaskTool {
+        team_config: cfg.clone(),
+        agent_name: agent_name.clone(),
+    });
+    registry.register(ClaimTaskTool {
+        team_config: cfg.clone(),
+        agent_name: agent_name.clone(),
+    });
+    registry.register(CompleteTaskTool {
+        team_config: cfg.clone(),
+    });
+    registry.register(ListTasksTool {
+        team_config: cfg.clone(),
+    });
+    registry.register(AssignTaskTool {
+        team_config: cfg.clone(),
+    });
+    registry.register(UpdateTaskTool {
+        team_config: cfg.clone(),
+    });
 
-    Ok(Agent::new(
-        model,
-        Arc::new(registry),
-        Arc::new(config.agent.clone()),
-        runtime,
-        mode,
-        tool_rx,
-        max_ctx,
-    ))
+    // Team lifecycle tools.
+    registry.register(CreateTeamTool {
+        team_config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+        agent_name: agent_name.clone(),
+    });
+    registry.register(ListTeamTool {
+        config: cfg.clone(),
+    });
+    registry.register(CleanupTeamTool {
+        config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+    });
+    registry.register(RegisterTeammateTool {
+        config: cfg.clone(),
+    });
+    registry.register(SpawnTeammateTool {
+        config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+        sven_bin: None,
+        use_worktree: false,
+    });
+    registry.register(ShutdownTeammateTool {
+        config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+    });
+    registry.register(MergeTeammateBranchTool {
+        config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+    });
+    registry.register(BroadcastAbortTool {
+        p2p: p2p.clone(),
+        agent_peer_id,
+        team_config: cfg,
+    });
 }

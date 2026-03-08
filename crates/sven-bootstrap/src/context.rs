@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
+use sven_core::AgentRuntimeContext;
 use sven_runtime::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
 use sven_tools::{events::TodoItem, QuestionRequest};
 
@@ -93,6 +94,30 @@ impl RuntimeContext {
         Self {
             knowledge: SharedKnowledge::empty(),
             ..Default::default()
+        }
+    }
+
+    /// Convert this [`RuntimeContext`] into an [`AgentRuntimeContext`] suitable
+    /// for passing to [`sven_core::Agent::new`].
+    ///
+    /// The resulting context carries project/git/CI notes, skills, agents, and
+    /// knowledge but leaves `append_system_prompt` and `prior_messages` at
+    /// their defaults — callers that need to inject additional prompt text or
+    /// pre-loaded messages should mutate the returned struct before use.
+    pub fn to_agent_runtime(&self) -> AgentRuntimeContext {
+        AgentRuntimeContext {
+            project_root: self.project_root.clone(),
+            git_context_note: self
+                .git_context
+                .as_ref()
+                .and_then(|g| g.to_prompt_section()),
+            ci_context_note: self.ci_context.as_ref().and_then(|c| c.to_prompt_section()),
+            project_context_file: self.project_context_file.clone(),
+            skills: self.skills.clone(),
+            agents: self.agents.clone(),
+            knowledge: self.knowledge.clone(),
+            knowledge_drift_note: self.knowledge_drift_note.clone(),
+            ..AgentRuntimeContext::default()
         }
     }
 }

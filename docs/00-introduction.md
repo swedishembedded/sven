@@ -111,3 +111,4 @@ to standard output.
 - **[Troubleshooting](07-troubleshooting.md)** — common issues and fixes
 - **[Sven Node](08-node.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents
 - **[Agent Collaboration](09-collaboration.md)** — persistent peer conversations, rooms, and the `sven peer chat` command
+- **[Teams and Tasks](11-teams-and-tasks.md)** — form a team of agents, break work into tasks, and orchestrate parallel workstreams

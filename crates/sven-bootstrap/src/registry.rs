@@ -65,20 +65,16 @@ pub fn build_tool_registry(
         ToolSetProfile::Full { question_tx, todos } => {
             let mut reg = ToolRegistry::new();
 
-            reg.register(ReadFileTool);
-            reg.register(ReadImageTool);
-            reg.register(ListDirTool);
-            reg.register(FindFileTool);
-            reg.register(GrepTool);
-            reg.register(SearchCodebaseTool);
-            reg.register(WebFetchTool);
-            reg.register(WebSearchTool {
-                api_key: cfg.tools.web.search.api_key.clone(),
-            });
-            reg.register(ReadLintsTool);
-            reg.register(UpdateMemoryTool {
-                memory_file: cfg.tools.memory.memory_file.clone(),
-            });
+            register_base_tools(
+                &mut reg,
+                cfg,
+                model.clone(),
+                mode_lock,
+                tool_event_tx.clone(),
+                &sub_agent_runtime,
+                Arc::clone(&buffer_store),
+            );
+
             // Only register ask_question when a TUI channel is available.
             // In headless/CI/sub-agent mode there is no UI to display the modal,
             // so we omit the tool entirely — the model won't attempt to call it.
@@ -86,60 +82,14 @@ pub fn build_tool_registry(
                 reg.register(AskQuestionTool::new_tui(tx));
             }
             reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
-            reg.register(WriteTool);
-            reg.register(EditFileTool);
-            reg.register(DeleteFileTool);
-            reg.register(RunTerminalCommandTool {
-                timeout_secs: cfg.tools.timeout_secs,
-            });
-            reg.register(ShellTool {
-                timeout_secs: cfg.tools.timeout_secs,
-            });
+
+            // TaskTool allows spawning local sub-agents.  Omitted from SubAgent
+            // profile to prevent unbounded subprocess nesting.
             reg.register(TaskTool::new(
                 Arc::clone(&buffer_store),
-                tool_event_tx.clone(),
+                tool_event_tx,
                 Some(format!("{}/{}", cfg.model.provider, cfg.model.name)),
             ));
-            // Buffer access tools — same store as TaskTool writes into.
-            reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
-            reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
-            reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
-            reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
-            reg.register(ListKnowledgeTool {
-                knowledge: sub_agent_runtime.knowledge.clone(),
-            });
-            reg.register(SearchKnowledgeTool {
-                knowledge: sub_agent_runtime.knowledge.clone(),
-            });
-
-            // Context (RLM memory-mapped) tools — shared store per session.
-            let context_store = Arc::new(Mutex::new(ContextStore::new()));
-            reg.register(ContextOpenTool::new(context_store.clone()));
-            reg.register(ContextReadTool::new(context_store.clone()));
-            reg.register(ContextGrepTool::new(context_store.clone()));
-            let (ctx_query, ctx_reduce) =
-                build_context_query_tools(context_store, model, cfg, Some(tool_event_tx.clone()));
-            reg.register(ctx_query);
-            reg.register(ctx_reduce);
-
-            let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbStartServerTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbConnectTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbCommandTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbInterruptTool::new(gdb_state.clone()));
-            reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-            reg.register(GdbStatusTool::new(gdb_state.clone()));
-            reg.register(GdbStopTool::new(gdb_state));
 
             reg
         }
@@ -147,81 +97,115 @@ pub fn build_tool_registry(
         ToolSetProfile::SubAgent { todos } => {
             let mut reg = ToolRegistry::new();
 
-            reg.register(ReadFileTool);
-            reg.register(ReadImageTool);
-            reg.register(ListDirTool);
-            reg.register(FindFileTool);
-            reg.register(GrepTool);
-            reg.register(SearchCodebaseTool);
-            reg.register(WebFetchTool);
-            reg.register(WebSearchTool {
-                api_key: cfg.tools.web.search.api_key.clone(),
-            });
-            reg.register(ReadLintsTool);
-            reg.register(UpdateMemoryTool {
-                memory_file: cfg.tools.memory.memory_file.clone(),
-            });
+            register_base_tools(
+                &mut reg,
+                cfg,
+                model,
+                mode_lock,
+                tool_event_tx.clone(),
+                &sub_agent_runtime,
+                buffer_store,
+            );
+
             // ask_question is intentionally omitted: sub-agents run headless
-            // and have no UI channel to display the modal.  The model won't
-            // attempt to call a tool that isn't in the registry.
-            reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-            reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
-            reg.register(WriteTool);
-            reg.register(EditFileTool);
-            reg.register(DeleteFileTool);
-            reg.register(RunTerminalCommandTool {
-                timeout_secs: cfg.tools.timeout_secs,
-            });
-            reg.register(ShellTool {
-                timeout_secs: cfg.tools.timeout_secs,
-            });
-            // TaskTool intentionally omitted to limit sub-agent nesting.
-            // Buffer tools included so subagents can read parent-created buffers.
-            reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
-            reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
-            reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
-            reg.register(LoadSkillTool::new(sub_agent_runtime.skills.clone()));
-            reg.register(ListKnowledgeTool {
-                knowledge: sub_agent_runtime.knowledge.clone(),
-            });
-            reg.register(SearchKnowledgeTool {
-                knowledge: sub_agent_runtime.knowledge.clone(),
-            });
-
-            // Context (RLM memory-mapped) tools — sub-agents also get
-            // context_open/read/grep so they can handle large content.
-            // context_query is included; context_reduce is omitted from
-            // sub-agents to avoid recursive query chains.
-            let context_store = Arc::new(Mutex::new(ContextStore::new()));
-            reg.register(ContextOpenTool::new(context_store.clone()));
-            reg.register(ContextReadTool::new(context_store.clone()));
-            reg.register(ContextGrepTool::new(context_store.clone()));
-            let (ctx_query, ctx_reduce) =
-                build_context_query_tools(context_store, model, cfg, Some(tool_event_tx.clone()));
-            reg.register(ctx_query);
-            reg.register(ctx_reduce);
-
-            let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-            reg.register(GdbStartServerTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbConnectTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbCommandTool::new(
-                gdb_state.clone(),
-                cfg.tools.gdb.clone(),
-            ));
-            reg.register(GdbInterruptTool::new(gdb_state.clone()));
-            reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-            reg.register(GdbStatusTool::new(gdb_state.clone()));
-            reg.register(GdbStopTool::new(gdb_state));
+            // and have no UI channel to display the modal.
+            // TaskTool is intentionally omitted to limit sub-agent nesting.
+            reg.register(TodoWriteTool::new(todos, tool_event_tx));
 
             reg
         }
     }
+}
+
+/// Register the tool set shared by every agent profile (Full and SubAgent).
+///
+/// Covers file I/O, search, web, terminal, GDB, context (RLM), skills,
+/// knowledge, and buffer read tools.  Profile-specific tools (`TaskTool`,
+/// `AskQuestionTool`, `TodoWriteTool`) are **not** registered here — the
+/// caller adds them after this call according to the profile.
+fn register_base_tools(
+    reg: &mut ToolRegistry,
+    cfg: &Config,
+    model: Arc<dyn ModelProvider>,
+    mode_lock: Arc<Mutex<AgentMode>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    runtime: &AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+) {
+    // ── File ─────────────────────────────────────────────────────────────────
+    reg.register(ReadFileTool);
+    reg.register(ReadImageTool);
+    reg.register(ListDirTool);
+    reg.register(FindFileTool);
+    reg.register(WriteTool);
+    reg.register(EditFileTool);
+    reg.register(DeleteFileTool);
+
+    // ── Search ────────────────────────────────────────────────────────────────
+    reg.register(GrepTool);
+    reg.register(SearchCodebaseTool);
+
+    // ── Web ───────────────────────────────────────────────────────────────────
+    reg.register(WebFetchTool);
+    reg.register(WebSearchTool {
+        api_key: cfg.tools.web.search.api_key.clone(),
+    });
+
+    // ── System ────────────────────────────────────────────────────────────────
+    reg.register(ReadLintsTool);
+    reg.register(UpdateMemoryTool {
+        memory_file: cfg.tools.memory.memory_file.clone(),
+    });
+    reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
+    reg.register(RunTerminalCommandTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
+    reg.register(ShellTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
+
+    // ── Buffer access (shared with TaskTool) ─────────────────────────────────
+    reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
+    reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
+    reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
+
+    // ── Skills and knowledge ──────────────────────────────────────────────────
+    reg.register(LoadSkillTool::new(runtime.skills.clone()));
+    reg.register(ListKnowledgeTool {
+        knowledge: runtime.knowledge.clone(),
+    });
+    reg.register(SearchKnowledgeTool {
+        knowledge: runtime.knowledge.clone(),
+    });
+
+    // ── Context (RLM memory-mapped large-file tools) ──────────────────────────
+    let context_store = Arc::new(Mutex::new(ContextStore::new()));
+    reg.register(ContextOpenTool::new(context_store.clone()));
+    reg.register(ContextReadTool::new(context_store.clone()));
+    reg.register(ContextGrepTool::new(context_store.clone()));
+    let (ctx_query, ctx_reduce) =
+        build_context_query_tools(context_store, model, cfg, Some(tool_event_tx));
+    reg.register(ctx_query);
+    reg.register(ctx_reduce);
+
+    // ── GDB ───────────────────────────────────────────────────────────────────
+    let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+    reg.register(GdbStartServerTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbConnectTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbCommandTool::new(
+        gdb_state.clone(),
+        cfg.tools.gdb.clone(),
+    ));
+    reg.register(GdbInterruptTool::new(gdb_state.clone()));
+    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
+    reg.register(GdbStatusTool::new(gdb_state.clone()));
+    reg.register(GdbStopTool::new(gdb_state));
 }
 
 /// Build a lightweight [`ToolRegistry`] for direct CLI invocation.

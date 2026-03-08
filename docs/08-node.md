@@ -798,3 +798,7 @@ task flow, and the WebSocket API spec — see
 
 For agent-to-agent collaboration — sessions (DMs), rooms (broadcast channels),
 and the collaboration tools — see [09-collaboration.md](09-collaboration.md).
+
+For multi-agent teams with shared task boards — spawning teammates, creating
+and assigning tasks, monitoring progress, and Git branch isolation — see
+[11-teams-and-tasks.md](11-teams-and-tasks.md).

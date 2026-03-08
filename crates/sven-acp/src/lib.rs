@@ -56,9 +56,10 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
             let outgoing = tokio::io::stdout().compat_write();
             let incoming = tokio::io::stdin().compat();
 
-            let (conn, handle_io) = AgentSideConnection::new(acp_agent, outgoing, incoming, |fut| {
-                tokio::task::spawn_local(fut);
-            });
+            let (conn, handle_io) =
+                AgentSideConnection::new(acp_agent, outgoing, incoming, |fut| {
+                    tokio::task::spawn_local(fut);
+                });
 
             // Background task: forward session notifications from the agent to conn.
             tokio::task::spawn_local(async move {

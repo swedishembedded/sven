@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, AgentRuntimeContext};
+use sven_core::Agent;
 use sven_model::ModelProvider;
 use sven_tools::{events::ToolEvent, OutputBufferStore};
 
@@ -85,25 +85,11 @@ impl AgentBuilder {
         let (tool_event_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
 
         // Convert RuntimeContext → AgentRuntimeContext (the sven-core type).
-        let runtime = AgentRuntimeContext {
-            project_root: self.runtime_ctx.project_root,
-            git_context_note: self
-                .runtime_ctx
-                .git_context
-                .and_then(|g| g.to_prompt_section()),
-            ci_context_note: self
-                .runtime_ctx
-                .ci_context
-                .and_then(|c| c.to_prompt_section()),
-            project_context_file: self.runtime_ctx.project_context_file,
-            append_system_prompt: self.runtime_ctx.append_system_prompt,
-            system_prompt_override: self.runtime_ctx.system_prompt_override,
-            skills: self.runtime_ctx.skills,
-            agents: self.runtime_ctx.agents,
-            knowledge: self.runtime_ctx.knowledge,
-            knowledge_drift_note: self.runtime_ctx.knowledge_drift_note,
-            prior_messages: Vec::new(),
-        };
+        let mut runtime = self.runtime_ctx.to_agent_runtime();
+        // Preserve any append/override fields that may have been set on the
+        // RuntimeContext before it was passed to the builder.
+        runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
+        runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
 
         // Pass runtime.clone() as sub_agent_runtime so TaskTool sub-agents
         // inherit the parent's project root, AGENTS.md, CI/git context.

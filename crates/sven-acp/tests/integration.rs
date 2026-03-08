@@ -6,8 +6,10 @@
 //! These tests drive the ACP layer directly at the bridge / agent level
 //! without requiring a running sven node or real LLM provider.
 
-use sven_acp::bridge::{acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id};
 use agent_client_protocol::SessionUpdate;
+use sven_acp::bridge::{
+    acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
+};
 use sven_config::AgentMode;
 use sven_core::AgentEvent;
 
@@ -17,7 +19,11 @@ use sven_core::AgentEvent;
 fn agent_mode_round_trip() {
     for mode in [AgentMode::Agent, AgentMode::Plan, AgentMode::Research] {
         let id = sven_mode_to_acp_mode_id(mode);
-        assert_eq!(acp_mode_id_to_sven_mode(&id), mode, "round-trip failed for {mode:?}");
+        assert_eq!(
+            acp_mode_id_to_sven_mode(&id),
+            mode,
+            "round-trip failed for {mode:?}"
+        );
     }
 }
 
@@ -96,7 +102,10 @@ fn todo_update_becomes_plan() {
         },
     ];
     let ev = AgentEvent::TodoUpdate(todos);
-    assert!(matches!(agent_event_to_session_update(&ev), Some(SessionUpdate::Plan(_))));
+    assert!(matches!(
+        agent_event_to_session_update(&ev),
+        Some(SessionUpdate::Plan(_))
+    ));
 }
 
 #[test]

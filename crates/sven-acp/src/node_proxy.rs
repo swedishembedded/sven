@@ -17,10 +17,9 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification, Error,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse, Result as AcpResult, SessionMode, SessionModeId,
-    SessionModeState, SessionNotification, SetSessionModeRequest, SetSessionModeResponse,
-    StopReason,
+    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
+    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -62,35 +61,26 @@ enum WsCommand {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WsEvent {
     OutputDelta {
-        session_id: Uuid,
         delta: String,
         role: String,
     },
-    OutputComplete {
-        session_id: Uuid,
-        text: String,
-        role: String,
-    },
+    OutputComplete {},
     ToolCall {
-        session_id: Uuid,
         call_id: String,
         tool_name: String,
         args: serde_json::Value,
     },
     ToolResult {
-        session_id: Uuid,
         call_id: String,
         output: String,
         is_error: bool,
     },
     ToolNeedsApproval {
-        session_id: Uuid,
         call_id: String,
         tool_name: String,
         args: serde_json::Value,
     },
     SessionState {
-        session_id: Uuid,
         state: NodeSessionState,
     },
     #[serde(other)]
@@ -131,11 +121,7 @@ pub struct SvenAcpNodeProxy {
 }
 
 impl SvenAcpNodeProxy {
-    pub fn new(
-        ws_url: String,
-        token: String,
-        conn_tx: mpsc::UnboundedSender<ConnMessage>,
-    ) -> Self {
+    pub fn new(ws_url: String, token: String, conn_tx: mpsc::UnboundedSender<ConnMessage>) -> Self {
         Self {
             ws_url,
             token,
@@ -183,11 +169,11 @@ impl SvenAcpNodeProxy {
 
         req.headers_mut().insert(
             "Authorization",
-            format!("Bearer {}", self.token)
-                .parse()
-                .map_err(|_: tokio_tungstenite::tungstenite::http::header::InvalidHeaderValue| {
+            format!("Bearer {}", self.token).parse().map_err(
+                |_: tokio_tungstenite::tungstenite::http::header::InvalidHeaderValue| {
                     Error::internal_error()
-                })?,
+                },
+            )?,
         );
 
         // Accept self-signed certs (node uses a local CA by default).

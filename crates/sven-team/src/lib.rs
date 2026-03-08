@@ -33,8 +33,7 @@ pub use spawn::{
 };
 pub use task::{default_team_dir, Task, TaskList, TaskStatus, TaskStore, TaskStoreError};
 pub use tools::{
-    AssignTaskTool, ClaimTaskTool, CompleteTaskTool, CreateTaskTool, ListTasksTool,
-    TaskStoreHandle, UpdateTaskTool,
+    AssignTaskTool, ClaimTaskTool, CompleteTaskTool, CreateTaskTool, ListTasksTool, UpdateTaskTool,
 };
 pub use worktree::{
     create_teammate_worktree, find_repo_root, list_team_worktrees, merge_teammate_branch,
