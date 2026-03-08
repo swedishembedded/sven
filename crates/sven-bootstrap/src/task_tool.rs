@@ -233,6 +233,9 @@ impl Tool for TaskTool {
             .arg(mode)
             .arg(&prompt)
             .env(DEPTH_ENV, (current_depth + 1).to_string())
+            // Pass through the current environment so sub-agents can access
+            // API keys and other env vars that the parent used for config expansion.
+            .envs(std::env::vars())
             // Prevent the subprocess from opening a TUI.
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

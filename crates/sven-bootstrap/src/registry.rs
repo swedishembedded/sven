@@ -99,7 +99,7 @@ pub fn build_tool_registry(
             reg.register(TaskTool::new(
                 Arc::clone(&buffer_store),
                 tool_event_tx.clone(),
-                Some(cfg.model.name.clone()),
+                Some(format!("{}/{}", cfg.model.provider, cfg.model.name)),
             ));
             // Buffer access tools — same store as TaskTool writes into.
             reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
