@@ -675,6 +675,32 @@ impl Agent {
                 ToolEvent::Progress { call_id, message } => {
                     let _ = tx.send(AgentEvent::ToolProgress { call_id, message }).await;
                 }
+                ToolEvent::DelegateSummary {
+                    to_name,
+                    task_title,
+                    duration_ms,
+                    status,
+                    result_preview,
+                } => {
+                    // Forward as a CollabEvent so the TUI can render a
+                    // collapsible DelegateSummary segment.
+                    let ev = crate::prompts::CollabEvent::TeammateFinished {
+                        name: to_name.clone(),
+                        task_id: String::new(),
+                        status: status.clone(),
+                    };
+                    let _ = tx.send(AgentEvent::CollabEvent(ev)).await;
+                    // Also forward the structured delegate summary.
+                    let _ = tx
+                        .send(AgentEvent::DelegateSummary {
+                            to_name,
+                            task_title,
+                            duration_ms,
+                            status,
+                            result_preview,
+                        })
+                        .await;
+                }
             }
         }
     }

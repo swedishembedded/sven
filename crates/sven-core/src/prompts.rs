@@ -371,6 +371,115 @@ pub fn build_agents_section(agents: &[AgentInfo]) -> String {
     )
 }
 
+/// Format a collab event as a compact, styled line for the chat pane.
+///
+/// Called by the TUI when rendering `ChatSegment::CollabEvent` entries.
+/// Returns a short human-readable summary, e.g.:
+/// `"● spawned security-reviewer [reviewer]"`.
+pub fn format_collab_event(event: &CollabEvent) -> String {
+    match event {
+        CollabEvent::TeammateSpawned { name, role } => {
+            format!("● spawned {name} [{role}]")
+        }
+        CollabEvent::TaskDelegated {
+            task_id,
+            to_name,
+            task_title,
+        } => {
+            format!("→ delegated \"{task_title}\" to {to_name} [{task_id}]")
+        }
+        CollabEvent::WaitingForTeammates { names } => {
+            format!("⏳ waiting for: {}", names.join(", "))
+        }
+        CollabEvent::TeammateFinished {
+            name,
+            task_id,
+            status,
+        } => {
+            let icon = if status == "completed" { "✓" } else { "✗" };
+            format!("{icon} {name} finished task [{task_id}]: {status}")
+        }
+        CollabEvent::TeammateMessage { from, preview } => {
+            format!("💬 {from}: {preview}")
+        }
+        CollabEvent::TeammateIdle { name } => {
+            format!("○ {name} is idle — no more tasks")
+        }
+        CollabEvent::TeamCreated { team_name } => {
+            format!("⬡ team '{team_name}' created")
+        }
+        CollabEvent::TeamCleanedUp { team_name } => {
+            format!("⬡ team '{team_name}' cleaned up")
+        }
+        CollabEvent::PlanSubmitted { name, task_id } => {
+            format!("📋 {name} submitted plan for review [task {task_id}]")
+        }
+        CollabEvent::PlanApproved { name, task_id } => {
+            format!("✓ plan approved for {name} [task {task_id}] — implementing")
+        }
+        CollabEvent::PlanRejected {
+            name,
+            task_id,
+            feedback,
+        } => {
+            format!("✗ plan rejected for {name} [task {task_id}]: {feedback}")
+        }
+    }
+}
+
+/// A collaboration event that can be recorded as a `ChatSegment::CollabEvent`.
+///
+/// These are display-only entries that track the lifecycle of team operations
+/// without adding them to the LLM context.
+#[derive(Debug, Clone)]
+pub enum CollabEvent {
+    TeammateSpawned {
+        name: String,
+        role: String,
+    },
+    TaskDelegated {
+        task_id: String,
+        to_name: String,
+        task_title: String,
+    },
+    WaitingForTeammates {
+        names: Vec<String>,
+    },
+    TeammateFinished {
+        name: String,
+        task_id: String,
+        /// `"completed"`, `"failed"`, or `"cancelled"`.
+        status: String,
+    },
+    TeammateMessage {
+        from: String,
+        /// First ~60 chars of the message (inline preview).
+        preview: String,
+    },
+    TeammateIdle {
+        name: String,
+    },
+    TeamCreated {
+        team_name: String,
+    },
+    TeamCleanedUp {
+        team_name: String,
+    },
+    PlanSubmitted {
+        name: String,
+        task_id: String,
+    },
+    PlanApproved {
+        name: String,
+        task_id: String,
+    },
+    PlanRejected {
+        name: String,
+        task_id: String,
+        feedback: String,
+    },
+}
+
 /// Guidelines injected into the system prompt when an agent is executing a
 /// task that was **delegated to it by a peer** over the P2P swarm.
 ///

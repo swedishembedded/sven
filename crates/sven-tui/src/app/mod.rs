@@ -384,6 +384,27 @@ impl App {
             )
         };
         let in_edit = self.edit.active();
+
+        // Compute team progress for the status bar.
+        let task_progress: Option<(usize, usize)> = None; // TODO: wire up from team store
+
+        // Viewing-teammate name for status bar hint.
+        let viewing_teammate: Option<&str> =
+            self.ui.active_session_peer.as_ref().and_then(|peer_id| {
+                self.ui
+                    .team_picker_entries
+                    .iter()
+                    .find(|e| e.peer_id == *peer_id)
+                    .map(|e| e.name.as_str())
+            });
+
+        let team_active_count = self
+            .ui
+            .team_picker_entries
+            .iter()
+            .filter(|e| !e.is_local && matches!(e.status, crate::ui::AgentPickerStatus::Active))
+            .count() as u8;
+
         frame.render_widget(
             StatusBar {
                 model_name: status_model_name,
@@ -403,6 +424,11 @@ impl App {
                 streaming_tokens: self.agent.streaming_tokens,
                 in_edit,
                 in_search: self.ui.search.active,
+                team_name: self.ui.team_name.as_deref(),
+                team_role: None, // TODO: wire from team config
+                team_active_count,
+                task_progress,
+                viewing_teammate,
             },
             layout.status_bar,
         );
@@ -595,6 +621,20 @@ impl App {
         // ── Help overlay ──────────────────────────────────────────────────────
         if self.ui.show_help {
             frame.render_widget(HelpOverlay { ascii }, frame.area());
+        }
+
+        // ── Team picker overlay ───────────────────────────────────────────────
+        if self.ui.show_team_picker {
+            let team_name = self.ui.team_name.as_deref().unwrap_or("(no team)");
+            frame.render_widget(
+                crate::ui::TeamPickerOverlay {
+                    entries: &self.ui.team_picker_entries,
+                    state: &mut self.ui.team_picker_state,
+                    team_name,
+                    ascii,
+                },
+                frame.area(),
+            );
         }
 
         // ── Question modal ────────────────────────────────────────────────────

@@ -11,3 +11,4 @@ pub mod new;
 pub mod provider;
 pub mod quit;
 pub mod refresh;
+pub mod team;

@@ -11,6 +11,7 @@ use crate::{
     chat::search::SearchState,
     overlay::{completion::CompletionOverlay, confirm::ConfirmModal, question::QuestionModal},
     pager::PagerOverlay,
+    ui::team_picker::{TeamPickerEntry, TeamPickerState},
 };
 
 // ── FocusPane ─────────────────────────────────────────────────────────────────
@@ -82,6 +83,17 @@ pub(crate) struct UiState {
     pub pending_nav: bool,
     /// Toast notifications (newest last). Cleaned up each frame.
     pub toasts: Vec<Toast>,
+    /// Team picker overlay (shown when `show_team_picker` is true).
+    pub show_team_picker: bool,
+    /// Current set of team members for the picker.
+    pub team_picker_entries: Vec<TeamPickerEntry>,
+    /// Selection state for the team picker list.
+    pub team_picker_state: TeamPickerState,
+    /// Current team name (if any).
+    pub team_name: Option<String>,
+    /// Peer ID of the currently viewed session in the team picker.
+    /// `None` = viewing the local (lead) session.
+    pub active_session_peer: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -97,6 +109,11 @@ impl UiState {
             confirm_modal: None,
             pending_nav: false,
             toasts: Vec::new(),
+            show_team_picker: false,
+            team_picker_entries: Vec::new(),
+            team_picker_state: TeamPickerState::default(),
+            team_name: None,
+            active_session_peer: None,
         }
     }
 
@@ -112,5 +129,80 @@ impl UiState {
     /// Remove expired toasts.  Call once per frame to keep the list lean.
     pub fn prune_toasts(&mut self) {
         self.toasts.retain(|t| !t.is_expired());
+    }
+
+    /// Toggle the team picker overlay.
+    pub fn toggle_team_picker(&mut self) {
+        self.show_team_picker = !self.show_team_picker;
+    }
+
+    /// Move selection down in the team picker.
+    pub fn team_picker_next(&mut self) {
+        let len = self.team_picker_entries.len();
+        self.team_picker_state.select_next(len);
+    }
+
+    /// Move selection up in the team picker.
+    pub fn team_picker_prev(&mut self) {
+        let len = self.team_picker_entries.len();
+        self.team_picker_state.select_prev(len);
+    }
+
+    /// Return the peer ID currently selected in the team picker.
+    pub fn team_picker_selected_peer(&self) -> Option<&str> {
+        self.team_picker_state
+            .selected_peer_id(&self.team_picker_entries)
+    }
+
+    /// Cycle to the next teammate view (wraps around).
+    ///
+    /// Returns the peer ID of the newly active session, or `None` when cycling
+    /// back to the lead.
+    pub fn cycle_teammate_view_forward(&mut self) -> Option<&str> {
+        if self.team_picker_entries.is_empty() {
+            return None;
+        }
+        let current = self
+            .team_picker_entries
+            .iter()
+            .position(|e| Some(e.peer_id.as_str()) == self.active_session_peer.as_deref())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let next_idx = current % self.team_picker_entries.len();
+        let peer_id = self.team_picker_entries[next_idx].peer_id.clone();
+
+        // If we landed on a "local" entry, return to lead view.
+        if self.team_picker_entries[next_idx].is_local {
+            self.active_session_peer = None;
+            None
+        } else {
+            self.active_session_peer = Some(peer_id);
+            self.active_session_peer.as_deref()
+        }
+    }
+
+    /// Cycle to the previous teammate view.
+    pub fn cycle_teammate_view_backward(&mut self) -> Option<&str> {
+        if self.team_picker_entries.is_empty() {
+            return None;
+        }
+        let len = self.team_picker_entries.len();
+        let current = self
+            .team_picker_entries
+            .iter()
+            .position(|e| Some(e.peer_id.as_str()) == self.active_session_peer.as_deref())
+            .unwrap_or(0);
+
+        let prev_idx = if current == 0 { len - 1 } else { current - 1 };
+        let peer_id = self.team_picker_entries[prev_idx].peer_id.clone();
+
+        if self.team_picker_entries[prev_idx].is_local {
+            self.active_session_peer = None;
+            None
+        } else {
+            self.active_session_peer = Some(peer_id);
+            self.active_session_peer.as_deref()
+        }
     }
 }

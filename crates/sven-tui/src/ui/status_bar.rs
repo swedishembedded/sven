@@ -49,6 +49,18 @@ pub struct StatusBar<'a> {
     pub in_edit: bool,
     /// True when the search bar is active.
     pub in_search: bool,
+    // ── Team info (all `None` when not in a team) ──────────────────────────
+    /// Active team name (e.g. `"auth-refactor"`).
+    pub team_name: Option<&'a str>,
+    /// `"lead"` or the local agent's role in the team.
+    pub team_role: Option<&'a str>,
+    /// Number of active teammates (excluding the local agent).
+    pub team_active_count: u8,
+    /// `completed/total` task progress, e.g. `(3, 7)`.
+    pub task_progress: Option<(usize, usize)>,
+    /// Name of the teammate whose session is currently being viewed.
+    /// `None` = viewing the local session.
+    pub viewing_teammate: Option<&'a str>,
 }
 
 /// Format a token count compactly: raw below 1000, "Xk" below 1M, "X.XM" above.
@@ -166,6 +178,36 @@ impl Widget for StatusBar<'_> {
             }
         };
 
+        // ── Team info ─────────────────────────────────────────────────────────
+        // Shows: "⬡ auth-refactor [lead] 3/7 tasks | viewing: security-reviewer"
+        let team_span: Span<'static> = if let Some(team) = self.team_name {
+            let role_part = self
+                .team_role
+                .map(|r| format!(" [{r}]"))
+                .unwrap_or_default();
+            let tasks_part = if let Some((done, total)) = self.task_progress {
+                format!(" {done}/{total}t")
+            } else {
+                String::new()
+            };
+            let active_part = if self.team_active_count > 0 {
+                format!(" {}●", self.team_active_count)
+            } else {
+                String::new()
+            };
+            let viewing_part = if let Some(name) = self.viewing_teammate {
+                format!(" → {name}")
+            } else {
+                String::new()
+            };
+            Span::styled(
+                format!("  ⬡ {team}{role_part}{tasks_part}{active_part}{viewing_part}"),
+                Style::default().fg(SE_YELLOW),
+            )
+        } else {
+            Span::raw("")
+        };
+
         let left_spans = vec![
             brand,
             Span::styled(separator, Style::default().fg(BORDER_DIM)),
@@ -187,6 +229,7 @@ impl Widget for StatusBar<'_> {
             token_span,
             tool_span,
             pending_span,
+            team_span,
         ];
 
         let right_spans = vec![Span::styled(

@@ -20,6 +20,11 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::Config;
 use sven_core::{Agent, AgentRuntimeContext};
 use sven_p2p::{protocol::types::AgentCard, P2pHandle};
+use sven_team::{
+    AssignTaskTool, ClaimTaskTool, CleanupTeamTool, CompleteTaskTool, CreateTaskTool,
+    CreateTeamTool, ListTasksTool, ListTeamTool, RegisterTeammateTool, ShutdownTeammateTool,
+    SpawnTeammateTool, TaskStoreHandle, TeamConfigHandle, UpdateTaskTool,
+};
 use sven_tools::{
     DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ListDirTool, ReadFileTool, ReadLintsTool,
     RunTerminalCommandTool, SwitchModeTool, TodoItem, TodoWriteTool, ToolEvent, ToolRegistry,
@@ -27,10 +32,26 @@ use sven_tools::{
 };
 
 use crate::tools::{
-    DelegateTool, DelegationContext, DelegationContextHandle, ListConversationsTool, ListPeersTool,
-    PostToRoomTool, ReadRoomHistoryTool, RoomDepthHandle, RoomDepthTracker, SearchConversationTool,
-    SendMessageTool, SessionDepthHandle, SessionDepthTracker, WaitForMessageTool,
+    BroadcastAbortTool, DelegateTool, DelegationContext, DelegationContextHandle,
+    ListConversationsTool, ListPeersTool, PostToRoomTool, ReadRoomHistoryTool, RoomDepthHandle,
+    RoomDepthTracker, SearchConversationTool, SendMessageTool, SessionDepthHandle,
+    SessionDepthTracker, WaitForMessageTool,
 };
+
+/// Optional team context for agents participating in a team.
+#[derive(Clone, Default)]
+pub struct TeamContext {
+    /// Name of the active team (if any).
+    pub team_name: Option<String>,
+    /// Shared task store handle (shared across all tools in this agent).
+    pub task_store: Option<TaskStoreHandle>,
+    /// In-memory team config handle.
+    pub team_config: TeamConfigHandle,
+    /// Name of this agent (for task attribution).
+    pub agent_name: String,
+    /// Peer ID of this agent (for team lead check).
+    pub agent_peer_id: String,
+}
 
 /// Build the shared, long-lived node `Agent`.
 ///
@@ -310,6 +331,37 @@ async fn build_agent_with(
     room_depth_handle: RoomDepthHandle,
     runtime: AgentRuntimeContext,
 ) -> anyhow::Result<Agent> {
+    build_agent_with_team(
+        config,
+        model,
+        max_ctx,
+        p2p_handle,
+        agent_card,
+        rooms,
+        delegation_context,
+        session_depth_handle,
+        room_depth_handle,
+        runtime,
+        TeamContext::default(),
+    )
+    .await
+}
+
+/// Full internal builder with optional team context.
+#[allow(clippy::too_many_arguments)]
+async fn build_agent_with_team(
+    config: &Arc<Config>,
+    model: Arc<dyn sven_model::ModelProvider>,
+    max_ctx: usize,
+    p2p_handle: P2pHandle,
+    agent_card: AgentCard,
+    rooms: Vec<String>,
+    delegation_context: DelegationContextHandle,
+    session_depth_handle: SessionDepthHandle,
+    room_depth_handle: RoomDepthHandle,
+    runtime: AgentRuntimeContext,
+    team_ctx: TeamContext,
+) -> anyhow::Result<Agent> {
     let mode = Arc::new(Mutex::new(config.agent.default_mode));
     let (tool_tx, tool_rx) = mpsc::channel::<ToolEvent>(64);
     let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
@@ -334,7 +386,7 @@ async fn build_agent_with(
         memory_file: config.tools.memory.memory_file.clone(),
     });
     registry.register(TodoWriteTool::new(todos, tool_tx.clone()));
-    registry.register(SwitchModeTool::new(mode.clone(), tool_tx));
+    registry.register(SwitchModeTool::new(mode.clone(), tool_tx.clone()));
 
     // P2P routing tools.
     registry.register(ListPeersTool {
@@ -346,6 +398,7 @@ async fn build_agent_with(
         rooms,
         our_card: agent_card,
         delegation_context,
+        tool_tx: Some(tool_tx),
     });
 
     // Session and room collaboration tools.
@@ -371,6 +424,66 @@ async fn build_agent_with(
     registry.register(ReadRoomHistoryTool {
         store: Arc::clone(&store),
     });
+
+    // Team tools — only registered when a team context is active.
+    if let Some(task_store) = team_ctx.task_store {
+        registry.register(CreateTaskTool {
+            store: task_store.clone(),
+            agent_name: team_ctx.agent_name.clone(),
+        });
+        registry.register(ClaimTaskTool {
+            store: task_store.clone(),
+            agent_name: team_ctx.agent_name.clone(),
+        });
+        registry.register(CompleteTaskTool {
+            store: task_store.clone(),
+        });
+        registry.register(ListTasksTool {
+            store: task_store.clone(),
+        });
+        registry.register(AssignTaskTool {
+            store: task_store.clone(),
+        });
+        registry.register(UpdateTaskTool {
+            store: task_store.clone(),
+        });
+    }
+
+    {
+        let cfg_handle = team_ctx.team_config.clone();
+        let agent_peer_id = team_ctx.agent_peer_id.clone();
+        let agent_name_str = team_ctx.agent_name.clone();
+
+        registry.register(CreateTeamTool {
+            team_config: cfg_handle.clone(),
+            agent_peer_id: agent_peer_id.clone(),
+            agent_name: agent_name_str.clone(),
+        });
+        registry.register(ListTeamTool {
+            config: cfg_handle.clone(),
+        });
+        registry.register(CleanupTeamTool {
+            config: cfg_handle.clone(),
+            agent_peer_id: agent_peer_id.clone(),
+        });
+        registry.register(RegisterTeammateTool {
+            config: cfg_handle.clone(),
+        });
+        registry.register(SpawnTeammateTool {
+            config: cfg_handle.clone(),
+            agent_peer_id: agent_peer_id.clone(),
+            sven_bin: None,
+        });
+        registry.register(ShutdownTeammateTool {
+            config: cfg_handle.clone(),
+            agent_peer_id: agent_peer_id.clone(),
+        });
+        registry.register(BroadcastAbortTool {
+            p2p: p2p_handle.clone(),
+            agent_peer_id,
+            team_config: cfg_handle,
+        });
+    }
 
     Ok(Agent::new(
         model,

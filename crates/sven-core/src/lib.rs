@@ -15,6 +15,6 @@ pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, smart_truncate,
 };
 pub use events::{AgentEvent, CompactionStrategyUsed};
-pub use prompts::system_prompt;
+pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;
 pub use session::{Session, TurnRecord};

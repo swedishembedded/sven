@@ -28,6 +28,36 @@ impl App {
                     self.ui.show_help = false;
                     return false;
                 }
+                // Team picker overlay intercepts keys.
+                if self.ui.show_team_picker {
+                    use crossterm::event::KeyCode;
+                    match k.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            self.ui.show_team_picker = false;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            self.ui.team_picker_next();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            self.ui.team_picker_prev();
+                        }
+                        KeyCode::Enter => {
+                            let peer_id =
+                                self.ui.team_picker_selected_peer().map(|s| s.to_string());
+                            self.ui.active_session_peer = peer_id;
+                            self.ui.show_team_picker = false;
+                        }
+                        // Ctrl+a again closes.
+                        KeyCode::Char('a')
+                            if k.modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
+                            self.ui.show_team_picker = false;
+                        }
+                        _ => {}
+                    }
+                    return false;
+                }
                 if self.ui.question_modal.is_some() {
                     return self.handle_modal_key(k);
                 }

@@ -231,6 +231,8 @@ pub struct DelegateTool {
     /// Per-task delegation context, pre-populated by `build_task_agent`.
     /// Never shared between concurrent tasks.
     pub delegation_context: DelegationContextHandle,
+    /// Optional tool event sender for emitting `DelegateSummary` events.
+    pub tool_tx: Option<tokio::sync::mpsc::Sender<sven_tools::events::ToolEvent>>,
 }
 
 impl DelegateTool {
@@ -423,6 +425,13 @@ impl Tool for DelegateTool {
             .cloned()
             .unwrap_or_else(|| "default".to_string());
 
+        let task_title_preview: String = task_text
+            .lines()
+            .next()
+            .unwrap_or("delegated task")
+            .chars()
+            .take(80)
+            .collect();
         let request = TaskRequest {
             id: uuid::Uuid::new_v4(),
             originator_room: room,
@@ -470,6 +479,25 @@ impl Tool for DelegateTool {
                             response.agent.name, response.duration_ms
                         ),
                     );
+                }
+
+                // Emit a DelegateSummary tool event so the TUI can show a
+                // condensed, collapsible summary of the delegated subtree.
+                if let Some(ref tx) = self.tool_tx {
+                    let preview = text
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("")
+                        .chars()
+                        .take(120)
+                        .collect::<String>();
+                    let _ = tx.try_send(sven_tools::events::ToolEvent::DelegateSummary {
+                        to_name: response.agent.name.clone(),
+                        task_title: task_title_preview.clone(),
+                        duration_ms: response.duration_ms,
+                        status: status_label.to_string(),
+                        result_preview: preview,
+                    });
                 }
 
                 ToolOutput::ok(
@@ -1277,6 +1305,86 @@ fn resolve_peer_id(p2p: &P2pHandle, peer_str: &str) -> Result<libp2p::PeerId, St
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
+    }
+}
+
+// ── BroadcastAbortTool ────────────────────────────────────────────────────────
+
+/// Broadcast an abort signal to all teammates in the current team.
+///
+/// This publishes a `BroadcastAbort` gossipsub event so every teammate
+/// immediately stops claiming new tasks.  Only the team lead may issue this.
+pub struct BroadcastAbortTool {
+    pub p2p: P2pHandle,
+    pub agent_peer_id: String,
+    pub team_config: sven_team::TeamConfigHandle,
+}
+
+#[async_trait]
+impl sven_tools::Tool for BroadcastAbortTool {
+    fn name(&self) -> &str {
+        "broadcast_abort"
+    }
+
+    fn description(&self) -> &str {
+        "Broadcast an abort signal to all teammates in the current team. \
+         Only the team lead can do this. \
+         Teammates will stop claiming new tasks immediately. \
+         Use broadcast_resume to allow them to continue. \
+         Use this when the overall goal has changed, or when a critical error occurs."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Human-readable reason for the abort (shown in teammate TUIs)"
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> sven_tools::ApprovalPolicy {
+        sven_tools::ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> sven_tools::ToolOutput {
+        let reason = call.args["reason"]
+            .as_str()
+            .unwrap_or("lead requested abort")
+            .to_string();
+
+        let guard = self.team_config.lock().await;
+        let config = match guard.as_ref() {
+            Some(c) => c,
+            None => return sven_tools::ToolOutput::err(&call.id, "No active team."),
+        };
+        if !config.is_lead(&self.agent_peer_id) {
+            return sven_tools::ToolOutput::err(
+                &call.id,
+                "Only the team lead can broadcast abort.",
+            );
+        }
+        let team_name = config.name.clone();
+        drop(guard);
+
+        let event = sven_p2p::protocol::types::TeamEvent::BroadcastAbort {
+            team_name: team_name.clone(),
+            lead_peer_id: self.agent_peer_id.clone(),
+            reason: reason.clone(),
+        };
+
+        match self.p2p.publish_team_event(&team_name, event).await {
+            Ok(()) => sven_tools::ToolOutput::ok(
+                &call.id,
+                format!("Abort broadcast to team '{team_name}': {reason}"),
+            ),
+            Err(e) => {
+                sven_tools::ToolOutput::err(&call.id, format!("Failed to publish abort event: {e}"))
+            }
+        }
     }
 }
 

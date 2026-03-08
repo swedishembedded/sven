@@ -62,4 +62,17 @@ pub enum ToolEvent {
         /// Short human-readable status message, e.g. "chunk 12/200".
         message: String,
     },
+    /// A delegate subtree has completed; emit a condensed summary in the chat.
+    DelegateSummary {
+        /// Name of the agent the work was delegated to.
+        to_name: String,
+        /// Short title of the delegated task.
+        task_title: String,
+        /// Wall-clock duration in milliseconds.
+        duration_ms: u64,
+        /// `"completed"`, `"failed"`, or `"partial"`.
+        status: String,
+        /// First meaningful line of the result, shown collapsed.
+        result_preview: String,
+    },
 }

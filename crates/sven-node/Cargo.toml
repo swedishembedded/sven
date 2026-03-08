@@ -71,6 +71,7 @@ sven-config   = { path = "../sven-config" }
 sven-model    = { path = "../sven-model" }
 sven-tools    = { path = "../sven-tools" }
 sven-p2p      = { path = "../sven-p2p" }
+sven-team     = { path = "../sven-team" }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 anyhow        = { workspace = true }

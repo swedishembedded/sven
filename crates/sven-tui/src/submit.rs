@@ -89,6 +89,76 @@ impl App {
                         return false;
                     }
 
+                    if matches!(
+                        result.immediate_action,
+                        Some(ImmediateAction::RefreshSkills)
+                    ) {
+                        // Skills are rescanned lazily; a simple toast acknowledgement is sufficient.
+                        self.ui
+                            .push_toast(crate::app::ui_state::Toast::info("Skills refreshed"));
+                        return false;
+                    }
+
+                    if matches!(
+                        result.immediate_action,
+                        Some(ImmediateAction::OpenTeamPicker)
+                    ) {
+                        self.ui.show_help = false;
+                        self.ui.toggle_team_picker();
+                        return false;
+                    }
+
+                    if matches!(
+                        result.immediate_action,
+                        Some(ImmediateAction::ToggleTaskList)
+                    ) {
+                        use crate::pager::PagerOverlay;
+                        if self.ui.pager.is_none() {
+                            let placeholder = "Task list is not available in this session.\n\
+                                               Connect to a team-enabled sven node to see tasks.";
+                            use crate::markdown::StyledLines;
+                            let lines =
+                                StyledLines::from(vec![ratatui::text::Line::from(placeholder)]);
+                            self.ui.pager = Some(PagerOverlay::new(lines));
+                        } else {
+                            self.ui.pager = None;
+                        }
+                        return false;
+                    }
+
+                    if let Some(ImmediateAction::ApprovePlan { ref task_id }) =
+                        result.immediate_action
+                    {
+                        let ev = sven_core::CollabEvent::PlanApproved {
+                            name: String::new(),
+                            task_id: task_id.clone(),
+                        };
+                        self.chat
+                            .segments
+                            .push(crate::chat::segment::ChatSegment::CollabEvent(ev));
+                        self.save_history_async();
+                        self.rerender_chat().await;
+                        return false;
+                    }
+
+                    if let Some(ImmediateAction::RejectPlan {
+                        ref task_id,
+                        ref feedback,
+                    }) = result.immediate_action
+                    {
+                        let ev = sven_core::CollabEvent::PlanRejected {
+                            name: String::new(),
+                            task_id: task_id.clone(),
+                            feedback: feedback.clone(),
+                        };
+                        self.chat
+                            .segments
+                            .push(crate::chat::segment::ChatSegment::CollabEvent(ev));
+                        self.save_history_async();
+                        self.rerender_chat().await;
+                        return false;
+                    }
+
                     // In node-proxy mode the node owns model/mode selection;
                     // silently ignore /model and /mode commands.
                     if !self.is_node_proxy {

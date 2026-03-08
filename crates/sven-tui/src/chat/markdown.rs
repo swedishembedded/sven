@@ -81,6 +81,35 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
                 content
             )
         }
+        ChatSegment::CollabEvent(ev) => {
+            let line = sven_core::prompts::format_collab_event(ev);
+            format!("\n*{line}*\n")
+        }
+        ChatSegment::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+            expanded,
+            inner,
+        } => {
+            let duration_s = (*duration_ms as f64) / 1000.0;
+            let status_icon = if status == "completed" { "✓" } else { "✗" };
+            let summary_line = format!(
+                "\n{status_icon} **Delegated** \"{task_title}\" → *{to_name}* · {status} · {duration_s:.1}s\n\
+                 > {result_preview}\n"
+            );
+            if *expanded && !inner.is_empty() {
+                let mut inner_parts = vec![summary_line];
+                for inner_seg in inner {
+                    inner_parts.push(segment_to_markdown(inner_seg, tool_args_cache));
+                }
+                inner_parts.join("")
+            } else {
+                summary_line
+            }
+        }
     }
 }
 
@@ -244,6 +273,8 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
         ChatSegment::Thinking { .. } => (Some(Style::default().fg(BAR_THINKING)), false),
         ChatSegment::Error(_) => (Some(Style::default().fg(BAR_ERROR)), false),
         ChatSegment::ContextCompacted { .. } => (Some(Style::default().fg(BAR_COMPACT)), false),
+        ChatSegment::CollabEvent(_) => (Some(Style::default().fg(BAR_COMPACT)), true),
+        ChatSegment::DelegateSummary { .. } => (Some(Style::default().fg(BAR_TOOL)), false),
     }
 }
 

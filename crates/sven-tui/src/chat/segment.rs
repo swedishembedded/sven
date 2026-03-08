@@ -4,7 +4,7 @@
 //! Core chat data: the `ChatSegment` enum and helpers that operate on segment
 //! slices without needing access to the full `App` state.
 
-use sven_core::CompactionStrategyUsed;
+use sven_core::{prompts::CollabEvent, CompactionStrategyUsed};
 use sven_model::{Message, MessageContent, Role};
 
 /// One entry in the chat display (a concrete message or a display-only note).
@@ -20,6 +20,29 @@ pub enum ChatSegment {
     Error(String),
     Thinking {
         content: String,
+    },
+    /// A team collaboration lifecycle event (display-only, not sent to LLM).
+    ///
+    /// Rendered as a compact status line with a coloured icon, e.g.:
+    /// `"● spawned security-reviewer [reviewer]"`.
+    CollabEvent(CollabEvent),
+    /// Collapsible summary of work delegated to a teammate.
+    ///
+    /// Between `delegate_task` → result pairs, the intermediate tool
+    /// calls/results are folded into this entry.  When `expanded = false`
+    /// only the summary line is shown; clicking expands the full subtree.
+    DelegateSummary {
+        to_name: String,
+        task_title: String,
+        duration_ms: u64,
+        /// `"completed"`, `"failed"`, or `"partial"`.
+        status: String,
+        /// One-line result preview.
+        result_preview: String,
+        /// Whether the full subtree is currently shown.
+        expanded: bool,
+        /// The segments inside the delegate subtree (tool call + result).
+        inner: Vec<ChatSegment>,
     },
 }
 
@@ -51,7 +74,10 @@ pub fn segment_editable_text(segments: &[ChatSegment], i: usize) -> Option<Strin
 pub fn segment_is_removable(seg: &ChatSegment) -> bool {
     match seg {
         ChatSegment::Message(_) | ChatSegment::Thinking { .. } => true,
-        ChatSegment::ContextCompacted { .. } | ChatSegment::Error(_) => false,
+        ChatSegment::ContextCompacted { .. }
+        | ChatSegment::Error(_)
+        | ChatSegment::CollabEvent(_)
+        | ChatSegment::DelegateSummary { .. } => false,
     }
 }
 
@@ -94,6 +120,13 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
         Some(ChatSegment::Thinking { content }) => content.trim().to_string(),
         Some(ChatSegment::ContextCompacted { .. }) => return "(context compaction)".into(),
         Some(ChatSegment::Error(e)) => e.trim().to_string(),
+        Some(ChatSegment::CollabEvent(ev)) => return sven_core::prompts::format_collab_event(ev),
+        Some(ChatSegment::DelegateSummary {
+            to_name,
+            task_title,
+            status,
+            ..
+        }) => return format!("(delegated \"{task_title}\" to {to_name}: {status})"),
     };
     // Collapse to first line and truncate.
     let first_line = raw.lines().next().unwrap_or("").trim();
@@ -105,8 +138,8 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
 }
 
 /// Collect the `Message` objects from a segment slice, skipping non-message
-/// entries (ContextCompacted, Error, Thinking).  Used when building the
-/// payload for a Resubmit request.
+/// entries (ContextCompacted, Error, Thinking, CollabEvent, DelegateSummary).
+/// Used when building the payload for a Resubmit request.
 pub fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
     segments
         .iter()

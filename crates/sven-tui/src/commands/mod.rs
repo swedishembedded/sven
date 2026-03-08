@@ -76,6 +76,19 @@ pub enum ImmediateAction {
     ClearChat,
     /// Start a completely new conversation with a fresh JSONL file.
     NewConversation,
+    /// Approve a teammate's pending plan (optionally with a specific task_id).
+    ApprovePlan {
+        task_id: String,
+    },
+    /// Reject a teammate's pending plan with feedback.
+    RejectPlan {
+        task_id: String,
+        feedback: String,
+    },
+    /// Open the team picker overlay.
+    OpenTeamPicker,
+    /// Toggle the team task list view.
+    ToggleTaskList,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

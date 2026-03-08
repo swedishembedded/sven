@@ -340,6 +340,9 @@ impl App {
                     turn: Some(*turn),
                 }),
                 ChatSegment::Error(_) => None,
+                // Collab events and delegate summaries are display-only; skip.
+                ChatSegment::CollabEvent(_) => None,
+                ChatSegment::DelegateSummary { .. } => None,
             })
             .collect();
 

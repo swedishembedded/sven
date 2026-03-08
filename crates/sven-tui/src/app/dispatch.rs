@@ -884,6 +884,65 @@ impl App {
                 self.ui.pager = Some(pager);
             }
 
+            // ── Team / multi-agent actions ────────────────────────────────────
+            Action::OpenTeamPicker => {
+                // Close any other overlay first.
+                self.ui.show_help = false;
+                self.ui.toggle_team_picker();
+            }
+
+            Action::TeamPickerNext => {
+                self.ui.team_picker_next();
+            }
+            Action::TeamPickerPrev => {
+                self.ui.team_picker_prev();
+            }
+
+            Action::TeamPickerSelect => {
+                if self.ui.show_team_picker {
+                    let peer_id = self.ui.team_picker_selected_peer().map(|s| s.to_string());
+                    self.ui.active_session_peer = peer_id;
+                    self.ui.show_team_picker = false;
+                }
+            }
+
+            Action::TeamPickerClose => {
+                self.ui.show_team_picker = false;
+            }
+
+            Action::CycleTeammateForward => {
+                self.ui.cycle_teammate_view_forward();
+            }
+
+            Action::CycleTeammateBackward => {
+                self.ui.cycle_teammate_view_backward();
+            }
+
+            Action::ToggleTaskList => {
+                // Reuse the pager overlay with the current task list text.
+                // TODO: render actual task list from the TaskStore.
+                let placeholder = "Task list is not available in this session.\n\
+                                   Connect to a team-enabled sven node to see task details.";
+                if self.ui.pager.is_none() {
+                    use crate::markdown::StyledLines;
+                    let lines = StyledLines::from(vec![ratatui::text::Line::from(placeholder)]);
+                    self.ui.pager = Some(PagerOverlay::new(lines));
+                } else {
+                    self.ui.pager = None;
+                }
+            }
+
+            Action::ToggleDelegateSummary => {
+                if let Some(seg_idx) = self.chat.focused_segment {
+                    if let Some(ChatSegment::DelegateSummary { expanded, .. }) =
+                        self.chat.segments.get_mut(seg_idx)
+                    {
+                        *expanded = !*expanded;
+                        self.rerender_chat().await;
+                    }
+                }
+            }
+
             _ => {}
         }
         false
@@ -902,10 +961,28 @@ impl App {
 
     pub(crate) fn should_show_completion(&self) -> bool {
         let (_, line) = self.command_line_at_cursor();
-        line.starts_with('/') || self.input.buffer.starts_with('/')
+        line.starts_with('/')
+            || self.input.buffer.starts_with('/')
+            || self.at_mention_prefix().is_some()
     }
 
     pub(crate) fn update_completion_overlay(&mut self) {
+        // ── @mention completions ──────────────────────────────────────────────
+        // Check if the cursor is immediately following an `@` prefix in the
+        // input buffer.  If so, show teammate names as completions instead of
+        // the normal command completions.
+        if let Some(mention_prefix) = self.at_mention_prefix() {
+            let items = self.mention_completion_items(&mention_prefix);
+            if !items.is_empty() {
+                let prev_selected = self.ui.completion.as_ref().map(|o| o.selected).unwrap_or(0);
+                let mut overlay = CompletionOverlay::new(items);
+                overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
+                overlay.adjust_scroll_pub();
+                self.ui.completion = Some(overlay);
+                return;
+            }
+        }
+
         let (_, cmd_line) = self.command_line_at_cursor();
         let parse_source = if cmd_line.starts_with('/') {
             cmd_line
@@ -928,6 +1005,51 @@ impl App {
             overlay.adjust_scroll_pub();
             self.ui.completion = Some(overlay);
         }
+    }
+
+    /// Return the `@mention` prefix at the cursor, or `None` if the cursor is
+    /// not inside an `@word` token.
+    ///
+    /// Examples:
+    /// - Buffer `"hey @ali"`, cursor=8 → `Some("ali")`
+    /// - Buffer `"hey @"`, cursor=5  → `Some("")`
+    /// - Buffer `"hello world"`, cursor=11 → `None`
+    fn at_mention_prefix(&self) -> Option<String> {
+        let buf = &self.input.buffer;
+        let cursor = self.input.cursor.min(buf.len());
+        let before_cursor = &buf[..cursor];
+        // Find the last `@` that is either at the start or preceded by whitespace.
+        let at_pos = before_cursor.rfind('@')?;
+        let before_at = &before_cursor[..at_pos];
+        if !before_at.is_empty() && !before_at.ends_with(|c: char| c.is_whitespace()) {
+            return None; // `@` is inside a word, not a mention sigil
+        }
+        // The text between `@` and the cursor is the partial name.
+        let partial = &before_cursor[at_pos + 1..];
+        // Must not contain whitespace — a whitespace terminates the mention token.
+        if partial.contains(|c: char| c.is_whitespace()) {
+            return None;
+        }
+        Some(partial.to_string())
+    }
+
+    /// Build completion items for the `@mention` autocomplete, filtering by
+    /// the partial teammate name already typed.
+    fn mention_completion_items(&self, partial: &str) -> Vec<CompletionItem> {
+        self.ui
+            .team_picker_entries
+            .iter()
+            .filter(|e| !e.is_local) // don't suggest yourself
+            .filter(|e| {
+                partial.is_empty() || e.name.to_lowercase().starts_with(&partial.to_lowercase())
+            })
+            .map(|e| CompletionItem {
+                display: format!("@{}  [{}]", e.name, e.role),
+                value: e.name.clone(),
+                description: Some(e.current_task.clone().unwrap_or_else(|| "idle".to_string())),
+                score: 0,
+            })
+            .collect()
     }
 
     pub(crate) fn apply_completion(&mut self, item: &CompletionItem) {

@@ -307,6 +307,91 @@ pub enum TaskStatus {
     Partial,
 }
 
+// ── Team lifecycle events ─────────────────────────────────────────────────────
+
+/// Events broadcast over gossipsub to coordinate team state.
+///
+/// Published on `sven/team/{team-name}/events`.  All team members
+/// (including the lead) subscribe to this topic so they can update
+/// their local view of team state without polling.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TeamEvent {
+    /// A peer has joined the team.
+    TeamJoin {
+        team_name: String,
+        peer_id: String,
+        name: String,
+        /// Role as a string (e.g. "reviewer", "implementer").
+        role: String,
+    },
+    /// A peer is leaving the team (clean shutdown).
+    TeamLeave { team_name: String, peer_id: String },
+    /// A peer has claimed a task from the shared task list.
+    TaskClaimed {
+        team_name: String,
+        task_id: String,
+        claimed_by: String,
+        task_title: String,
+    },
+    /// A peer has completed a task.
+    TaskCompleted {
+        team_name: String,
+        task_id: String,
+        completed_by: String,
+        summary: String,
+    },
+    /// A peer has failed a task.
+    TaskFailed {
+        team_name: String,
+        task_id: String,
+        failed_by: String,
+        reason: String,
+    },
+    /// A peer has gone idle (no more tasks to claim, waiting for the lead).
+    IdleNotification { team_name: String, peer_id: String },
+    /// A peer has submitted a plan for lead approval.
+    PlanSubmitted {
+        team_name: String,
+        peer_id: String,
+        task_id: String,
+        plan: String,
+    },
+    /// The lead has approved or rejected a submitted plan.
+    PlanDecision {
+        team_name: String,
+        peer_id: String,
+        task_id: String,
+        approved: bool,
+        /// Feedback from the lead (required when rejected).
+        feedback: String,
+    },
+    /// The lead is broadcasting an abort signal to all teammates.
+    ///
+    /// Teammates should stop their current work and enter idle state.
+    /// They should NOT start claiming new tasks until they receive a
+    /// `TeamResume` event or explicit instruction.
+    BroadcastAbort {
+        team_name: String,
+        /// Peer ID of the lead issuing the abort.
+        lead_peer_id: String,
+        /// Human-readable reason for the abort (shown in TUI).
+        reason: String,
+    },
+    /// The lead is resuming work after a `BroadcastAbort`.
+    BroadcastResume {
+        team_name: String,
+        lead_peer_id: String,
+    },
+}
+
+impl TeamEvent {
+    /// Build the gossipsub topic string for a given team name.
+    pub fn topic_for(team_name: &str) -> String {
+        format!("sven/team/{team_name}/events")
+    }
+}
+
 // ── Wire envelope ─────────────────────────────────────────────────────────────
 
 /// Top-level request sent from one peer to another.

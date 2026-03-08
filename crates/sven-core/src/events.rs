@@ -110,4 +110,14 @@ pub enum AgentEvent {
     Question { id: String, questions: Vec<String> },
     /// Answer to a previous Question event
     QuestionAnswer { id: String, answer: String },
+    /// A team lifecycle event to be shown in the chat as a collapsible segment.
+    CollabEvent(crate::prompts::CollabEvent),
+    /// A completed delegate subtree — rendered as a collapsible `DelegateSummary` segment.
+    DelegateSummary {
+        to_name: String,
+        task_title: String,
+        duration_ms: u64,
+        status: String,
+        result_preview: String,
+    },
 }

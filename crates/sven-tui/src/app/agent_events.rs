@@ -361,6 +361,32 @@ impl App {
             AgentEvent::ModeChanged(mode) => {
                 self.session.mode = mode;
             }
+            AgentEvent::CollabEvent(ev) => {
+                self.chat.segments.push(ChatSegment::CollabEvent(ev));
+                self.save_history_async();
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+            }
+            AgentEvent::DelegateSummary {
+                to_name,
+                task_title,
+                duration_ms,
+                status,
+                result_preview,
+            } => {
+                self.chat.segments.push(ChatSegment::DelegateSummary {
+                    to_name,
+                    task_title,
+                    duration_ms,
+                    status,
+                    result_preview,
+                    expanded: false,
+                    inner: vec![],
+                });
+                self.save_history_async();
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+            }
             _ => {}
         }
         false

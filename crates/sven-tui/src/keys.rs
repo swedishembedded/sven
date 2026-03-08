@@ -113,6 +113,26 @@ pub enum Action {
     CopySegment,
     /// Copy all chat content to the system clipboard (Y in chat pane).
     CopyAll,
+
+    // Team / multi-agent
+    /// Toggle the team picker overlay (Ctrl+a).
+    OpenTeamPicker,
+    /// Navigate down in the team picker list.
+    TeamPickerNext,
+    /// Navigate up in the team picker list.
+    TeamPickerPrev,
+    /// Confirm selection in the team picker (Enter).
+    TeamPickerSelect,
+    /// Close the team picker without switching (Esc).
+    TeamPickerClose,
+    /// Cycle the active view forward to the next teammate (Shift+Down).
+    CycleTeammateForward,
+    /// Cycle the active view backward to the previous teammate (Shift+Up).
+    CycleTeammateBackward,
+    /// Toggle the task list overlay (Ctrl+t when in team mode).
+    ToggleTaskList,
+    /// Expand or collapse a DelegateSummary segment at cursor (Space / Enter).
+    ToggleDelegateSummary,
 }
 
 /// Map a raw key event to an [`Action`], depending on which pane has focus.
@@ -212,6 +232,10 @@ pub fn map_key(
         KeyCode::F(1) => Some(Action::Help),
         KeyCode::F(4) => Some(Action::CycleMode),
         KeyCode::Char('t') if ctrl => Some(Action::OpenPager),
+        // Team / multi-agent controls
+        KeyCode::Char('a') if ctrl => Some(Action::OpenTeamPicker),
+        KeyCode::Down if shift => Some(Action::CycleTeammateForward),
+        KeyCode::Up if shift => Some(Action::CycleTeammateBackward),
 
         // ── Input pane ────────────────────────────────────────────────────────
         // ESC in the input pane: cancel ongoing edit, or clear the input box.

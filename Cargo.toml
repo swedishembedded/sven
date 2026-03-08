@@ -15,6 +15,7 @@ members = [
     "crates/sven-p2p",
     "crates/sven-node",
     "crates/sven-mcp",
+    "crates/sven-team",
 ]
 
 [workspace.dependencies]

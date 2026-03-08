@@ -113,6 +113,12 @@ pub enum P2pEvent {
     RoomPost {
         post: RoomPost,
     },
+    // ── Team events ───────────────────────────────────────────────────────────
+    /// A team lifecycle event was received over gossipsub.
+    TeamEvent {
+        team_name: String,
+        event: crate::protocol::types::TeamEvent,
+    },
     Error(P2pError),
 }
 
@@ -150,6 +156,15 @@ pub(crate) enum P2pCommand {
         /// `0` for tool-initiated posts; reactive handlers pass their
         /// incoming post's `depth + 1`.
         depth: u32,
+    },
+    /// Publish a `TeamEvent` to the gossipsub team-events topic.
+    PublishTeamEvent {
+        team_name: String,
+        event: crate::protocol::types::TeamEvent,
+    },
+    /// Subscribe to team events for the given team (called when joining a team).
+    SubscribeTeamEvents {
+        team_name: String,
     },
     Announce,
     Shutdown,
@@ -339,6 +354,35 @@ impl P2pHandle {
                 content,
                 sender_card,
                 depth,
+            })
+            .await
+            .map_err(|_| P2pError::Shutdown)
+    }
+
+    // ── Team event API ────────────────────────────────────────────────────────
+
+    /// Subscribe to team lifecycle events for the given team name.
+    ///
+    /// Must be called before any `TeamEvent` can be received for this team.
+    pub async fn subscribe_team_events(&self, team_name: &str) -> Result<(), P2pError> {
+        self.cmd_tx
+            .send(P2pCommand::SubscribeTeamEvents {
+                team_name: team_name.to_string(),
+            })
+            .await
+            .map_err(|_| P2pError::Shutdown)
+    }
+
+    /// Publish a `TeamEvent` to all subscribers of the team's gossipsub topic.
+    pub async fn publish_team_event(
+        &self,
+        team_name: &str,
+        event: crate::protocol::types::TeamEvent,
+    ) -> Result<(), P2pError> {
+        self.cmd_tx
+            .send(P2pCommand::PublishTeamEvent {
+                team_name: team_name.to_string(),
+                event,
             })
             .await
             .map_err(|_| P2pError::Shutdown)
@@ -1584,6 +1628,30 @@ impl NodeState {
                 });
                 false
             }
+            P2pCommand::PublishTeamEvent { team_name, event } => {
+                let topic_str = crate::protocol::types::TeamEvent::topic_for(&team_name);
+                match cbor_encode(&event) {
+                    Ok(data) => {
+                        let topic = gossipsub::IdentTopic::new(topic_str);
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic, data) {
+                            tracing::warn!(team = %team_name, "team event gossipsub publish failed: {e}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("cbor_encode TeamEvent failed: {e}"),
+                }
+                false
+            }
+            P2pCommand::SubscribeTeamEvents { team_name } => {
+                let topic = gossipsub::IdentTopic::new(
+                    crate::protocol::types::TeamEvent::topic_for(&team_name),
+                );
+                if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                    tracing::warn!(team = %team_name, "gossipsub subscribe team events failed: {e}");
+                } else {
+                    tracing::info!(team = %team_name, "subscribed to team event topic");
+                }
+                false
+            }
             P2pCommand::Announce => {
                 // Force a re-announce to every connected application peer.
                 // Clear announced_to first so we can re-use the dedup guard —
@@ -1809,6 +1877,31 @@ impl NodeState {
                     break;
                 }
             }
+        }
+
+        // Determine topic string to route to the right decoder.
+        let topic_str = message.topic.as_str();
+
+        // Team event topics have the form `sven/team/{name}/events`.
+        if let Some(team_name) = topic_str
+            .strip_prefix("sven/team/")
+            .and_then(|s| s.strip_suffix("/events"))
+        {
+            match crate::protocol::codec::cbor_decode::<crate::protocol::types::TeamEvent>(
+                &message.data,
+            ) {
+                Ok(event) => {
+                    tracing::debug!(team = %team_name, "team event received");
+                    self.emit(P2pEvent::TeamEvent {
+                        team_name: team_name.to_string(),
+                        event,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(team = %team_name, "failed to decode TeamEvent: {e}");
+                }
+            }
+            return;
         }
 
         let post: RoomPost = match crate::protocol::codec::cbor_decode(&message.data) {

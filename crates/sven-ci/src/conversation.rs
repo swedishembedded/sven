@@ -401,7 +401,10 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
         AgentEvent::ToolProgress { message, .. } => {
             write_stderr(&format!("[sven:progress] {message}"));
         }
-        AgentEvent::TurnComplete | AgentEvent::QuestionAnswer { .. } => {}
+        AgentEvent::TurnComplete
+        | AgentEvent::QuestionAnswer { .. }
+        | AgentEvent::CollabEvent(_)
+        | AgentEvent::DelegateSummary { .. } => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
