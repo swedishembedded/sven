@@ -236,6 +236,8 @@ pub fn map_key(
         KeyCode::Char('a') if ctrl => Some(Action::OpenTeamPicker),
         KeyCode::Down if shift => Some(Action::CycleTeammateForward),
         KeyCode::Up if shift => Some(Action::CycleTeammateBackward),
+        // Alt+t — task list (distinct from Ctrl+t which opens the chat pager).
+        KeyCode::Char('t') if alt => Some(Action::ToggleTaskList),
 
         // ── Input pane ────────────────────────────────────────────────────────
         // ESC in the input pane: cancel ongoing edit, or clear the input box.
@@ -291,6 +293,9 @@ pub fn map_key(
         KeyCode::Char('y') if !in_input && plain => Some(Action::CopySegment),
         KeyCode::Char('Y') if !in_input => Some(Action::CopyAll),
         KeyCode::Char('q') if !in_input && plain => Some(Action::FocusQueue),
+
+        // Space in the chat pane toggles a DelegateSummary segment.
+        KeyCode::Char(' ') if !in_input && plain => Some(Action::ToggleDelegateSummary),
 
         // Submit buffer to agent (Ctrl+Enter from chat pane with Neovim)
         KeyCode::Enter if !in_input && ctrl => Some(Action::SubmitBufferToAgent),

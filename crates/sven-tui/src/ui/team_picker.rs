@@ -39,6 +39,10 @@ pub struct TeamPickerEntry {
 }
 
 /// Display status for a team picker entry.
+///
+/// `Active` is constructed immediately for the local agent.  `Idle` and
+/// `Closed` are populated when real P2P `TeamEvent` updates arrive.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentPickerStatus {
     Active,

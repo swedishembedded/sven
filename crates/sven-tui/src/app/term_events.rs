@@ -28,33 +28,23 @@ impl App {
                     self.ui.show_help = false;
                     return false;
                 }
-                // Team picker overlay intercepts keys.
+                // Team picker overlay intercepts keys — all mutations route
+                // through dispatch() so the logic lives in exactly one place.
                 if self.ui.show_team_picker {
-                    use crossterm::event::KeyCode;
-                    match k.code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            self.ui.show_team_picker = false;
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            self.ui.team_picker_next();
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            self.ui.team_picker_prev();
-                        }
-                        KeyCode::Enter => {
-                            let peer_id =
-                                self.ui.team_picker_selected_peer().map(|s| s.to_string());
-                            self.ui.active_session_peer = peer_id;
-                            self.ui.show_team_picker = false;
-                        }
+                    use crossterm::event::{KeyCode, KeyModifiers};
+                    let action = match k.code {
+                        KeyCode::Esc | KeyCode::Char('q') => Some(Action::TeamPickerClose),
+                        KeyCode::Down | KeyCode::Char('j') => Some(Action::TeamPickerNext),
+                        KeyCode::Up | KeyCode::Char('k') => Some(Action::TeamPickerPrev),
+                        KeyCode::Enter => Some(Action::TeamPickerSelect),
                         // Ctrl+a again closes.
-                        KeyCode::Char('a')
-                            if k.modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                        {
-                            self.ui.show_team_picker = false;
+                        KeyCode::Char('a') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                            Some(Action::TeamPickerClose)
                         }
-                        _ => {}
+                        _ => None,
+                    };
+                    if let Some(a) = action {
+                        return self.dispatch(a).await;
                     }
                     return false;
                 }

@@ -888,6 +888,20 @@ impl App {
             Action::OpenTeamPicker => {
                 // Close any other overlay first.
                 self.ui.show_help = false;
+                // When no P2P team has been formed yet, seed the picker with a
+                // self-entry so the overlay is usable and AgentPickerStatus
+                // variants are exercised for display from day one.
+                if self.ui.team_picker_entries.is_empty() {
+                    use crate::ui::team_picker::{AgentPickerStatus, TeamPickerEntry};
+                    self.ui.team_picker_entries.push(TeamPickerEntry {
+                        name: "local".to_string(),
+                        role: format!("{:?}", self.session.mode).to_lowercase(),
+                        peer_id: String::new(),
+                        status: AgentPickerStatus::Active,
+                        current_task: None,
+                        is_local: true,
+                    });
+                }
                 self.ui.toggle_team_picker();
             }
 

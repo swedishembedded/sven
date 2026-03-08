@@ -52,8 +52,8 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("── Team (multi-agent) ──", "", true),
     ("^a", "Open team picker", false),
     ("Shift+↓/↑", "Cycle teammate views", false),
-    ("^t", "Task list / pager toggle", false),
-    ("Space / Enter", "Expand delegate summary", false),
+    ("Alt+t", "Toggle task list overlay", false),
+    ("Space", "Expand/collapse delegate summary", false),
 ];
 
 pub struct HelpOverlay {
