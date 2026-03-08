@@ -31,4 +31,7 @@ tag-message = "Release v{{version}}"
 
 allow-branch = ["main"]
 
-pre-release-hook = ["cargo", "test", "--all", "--"]
+# Tests are run by the Makefile release targets (make release/minor etc.)
+# *before* invoking cargo-release so that a test failure never leaves
+# Cargo.toml with a bumped but uncommitted version.
+# pre-release-hook is intentionally omitted here.

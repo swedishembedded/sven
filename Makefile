@@ -197,17 +197,17 @@ release/publish:
 	@echo "Release: https://github.com/$(REPO)/releases/tag/$(TAG)"
 
 ## release/patch   – bump patch version (0.1.x→0.1.x+1), tag, push → triggers CI
-release/patch: _require-cargo-release tests/e2e/basic
+release/patch: _require-cargo-release test tests/e2e/basic
 	@cargo release patch -p sven --execute
 	@git push origin main --follow-tags
 
 ## release/minor   – bump minor version (0.x.0→0.x+1.0), tag, push → triggers CI
-release/minor: _require-cargo-release tests/e2e/basic
+release/minor: _require-cargo-release test tests/e2e/basic
 	@cargo release minor -p sven --execute
 	@git push origin main --follow-tags
 
 ## release/major   – bump major version (x.0.0→x+1.0.0), tag, push → triggers CI
-release/major: _require-cargo-release tests/e2e/basic
+release/major: _require-cargo-release test tests/e2e/basic
 	@cargo release major -p sven --execute
 	@git push origin main --follow-tags
 

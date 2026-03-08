@@ -57,6 +57,7 @@ use tracing::warn;
 
 use crate::shared::Shared;
 use crate::skills::{build_sorted_search_dirs, enumerate_md_files_recursive, MAX_SKILL_FILE_BYTES};
+use dirs;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -284,7 +285,7 @@ pub fn discover_agents(project_root: Option<&Path>) -> Vec<AgentInfo> {
         }
     };
 
-    for dir in &build_sorted_search_dirs(project_root) {
+    for dir in &build_sorted_search_dirs(project_root, dirs::home_dir().as_deref()) {
         let label = dir.to_string_lossy();
         load(
             dir.join(".agents").join("agents"),
