@@ -2,6 +2,8 @@
 # Run `pre-commit autoupdate` periodically to keep hook versions current.
 default_install_hook_types: [pre-commit]
 default_stages: [pre-commit]
+# Stop on first failure so we don't run slow hooks (e.g. clippy) after fmt fails.
+fail_fast: true
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
