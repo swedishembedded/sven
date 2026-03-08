@@ -3,4 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shell execution tool.
 
-pub mod shell;
+mod tool;
+pub(crate) use tool::head_tail_truncate;
+pub use tool::ShellTool;

@@ -492,7 +492,7 @@ impl ContextStore {
                 if total_lines == 0 {
                     return Ok(());
                 }
-                let total_chunks = (total_lines + chunk_lines - 1) / chunk_lines;
+                let total_chunks = total_lines.div_ceil(chunk_lines);
                 for chunk_idx in 0..total_chunks {
                     let start = chunk_idx * chunk_lines + 1;
                     let end = ((chunk_idx + 1) * chunk_lines).min(total_lines);
@@ -508,7 +508,7 @@ impl ContextStore {
                 if total_lines == 0 {
                     return Ok(());
                 }
-                let total_chunks = (total_lines + chunk_lines - 1) / chunk_lines;
+                let total_chunks = total_lines.div_ceil(chunk_lines);
                 for chunk_idx in 0..total_chunks {
                     let start = chunk_idx * chunk_lines + 1;
                     let end = ((chunk_idx + 1) * chunk_lines).min(total_lines);
@@ -536,7 +536,7 @@ impl ContextStore {
                 if total_lines == 0 {
                     return Ok(());
                 }
-                let total_chunks = (total_lines + chunk_lines - 1) / chunk_lines;
+                let total_chunks = total_lines.div_ceil(chunk_lines);
                 let label = format!(
                     "{}/* ({} files)",
                     handle.metadata.summary.lines().next().unwrap_or("dir"),

@@ -191,7 +191,7 @@ impl crate::ModelProvider for GoogleProvider {
                 while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
                     let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
                     let line = String::from_utf8_lossy(&line_bytes)
-                        .trim_end_matches(|c| c == '\r' || c == '\n')
+                        .trim_end_matches(['\r', '\n'])
                         .to_string();
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
@@ -542,7 +542,7 @@ mod tests {
         while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
             let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
             let line = String::from_utf8_lossy(&line_bytes)
-                .trim_end_matches(|c| c == '\r' || c == '\n')
+                .trim_end_matches(['\r', '\n'])
                 .to_string();
             if let Some(data) = line.strip_prefix("data: ") {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {

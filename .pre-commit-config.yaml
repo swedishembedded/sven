@@ -30,7 +30,7 @@ repos:
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: env CARGO_HOME=/home/user/.cargo cargo clippy --fix --allow-dirty --allow-staged -- -D warnings
+        entry: env CARGO_HOME=/home/user/.cargo cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false

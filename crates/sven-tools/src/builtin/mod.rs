@@ -42,7 +42,7 @@ mod output_category_tests {
 
     #[test]
     fn shell_tool_is_headtail() {
-        let t = super::shell::shell::ShellTool { timeout_secs: 30 };
+        let t = super::shell::ShellTool { timeout_secs: 30 };
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 

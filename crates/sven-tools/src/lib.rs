@@ -45,7 +45,7 @@ pub use builtin::web::web_search::WebSearchTool;
 pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
 
 // Shell tool
-pub use builtin::shell::shell::ShellTool;
+pub use builtin::shell::ShellTool;
 
 // GDB debugging tools
 pub use builtin::gdb::state::GdbSessionState;

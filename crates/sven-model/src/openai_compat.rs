@@ -500,7 +500,7 @@ pub(crate) fn drain_complete_sse_lines_bytes(
         let line_bytes: Vec<u8> = buf.drain(..=nl_pos).collect();
         // Safe: the slice ends at a '\n' byte boundary, so it is valid UTF-8.
         let line = String::from_utf8_lossy(&line_bytes)
-            .trim_end_matches(|c| c == '\r' || c == '\n')
+            .trim_end_matches(['\r', '\n'])
             .to_string();
         if let Some(ev) = parse_sse_data_line(&line) {
             events.push(ev);
