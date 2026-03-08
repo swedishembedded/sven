@@ -69,7 +69,6 @@ enum WsEvent {
     OutputComplete {
         session_id: Uuid,
         text: String,
-        #[allow(dead_code)]
         role: String,
     },
     ToolCall {
