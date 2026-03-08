@@ -130,7 +130,7 @@ responses:
       - id: tc-list
         tool: list_dir
         args:
-          dir_path: /tmp
+          path: /tmp
           depth: 1
     after_tool_reply: "Listed /tmp directory. Found the expected files."
 
@@ -204,7 +204,7 @@ responses:
     pattern: "find rust files"
     tool_calls:
       - id: tc-glob
-        tool: glob_file_search
+        tool: find_file
         args:
           pattern: "*.rs"
           root: /data/agents/sven/crates
@@ -228,7 +228,7 @@ responses:
       - id: tc-rf
         tool: read_file
         args:
-          file_path: /tmp/sven_e2e_test.txt
+          path: /tmp/sven_e2e_test.txt
     after_tool_reply: "File read with line numbers."
 
   - match_type: contains
@@ -284,7 +284,7 @@ responses:
       - id: tc-ld
         tool: list_dir
         args:
-          dir_path: /data/agents/sven/crates
+          path: /data/agents/sven/crates
           depth: 1
     after_tool_reply: "Directory listing complete."
 
@@ -346,7 +346,7 @@ responses:
     pattern: "find elf"
     tool_calls:
       - id: tc-glob-elf
-        tool: glob_file_search
+        tool: find_file
         args:
           pattern: "*.elf"
           root: /tmp

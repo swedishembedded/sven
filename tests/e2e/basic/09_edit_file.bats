@@ -130,7 +130,7 @@ responses:
     after_tool_reply: "Tool responded."
 EOF
     ef_run "ef missing path"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Tool responded."
 }
 
@@ -148,7 +148,7 @@ responses:
     after_tool_reply: "Tool responded."
 EOF
     ef_run "ef missing diff"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Tool responded."
 }
 
@@ -167,7 +167,7 @@ responses:
     after_tool_reply: "Tool responded."
 EOF
     ef_run "ef no markers"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     # File must be unchanged
     ef_file_equals "some content"$'\n'
 }
@@ -188,7 +188,7 @@ responses:
     after_tool_reply: "Tool responded."
 EOF
     ef_run "ef nonexistent"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Tool responded."
 }
 
@@ -645,7 +645,7 @@ responses:
     after_tool_reply: "Atomicity checked."
 EOF
     ef_run "ef atomic fail"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Atomicity checked."
     # File must be byte-for-byte unchanged — hunks are all-or-nothing.
     local checksum_after
@@ -668,7 +668,7 @@ responses:
     after_tool_reply: "Single fail checked."
 EOF
     ef_run "ef single fail"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Single fail checked."
 }
 
@@ -757,7 +757,7 @@ responses:
     after_tool_reply: "Fuzzy reject checked."
 EOF
     ef_run "ef fuzzy reject"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     local checksum_after
     checksum_after="$(sha256sum "${_EF_TEST_FILE}" | cut -d' ' -f1)"
     [ "${checksum_before}" = "${checksum_after}" ]
@@ -823,7 +823,7 @@ EOF
 
     # Second edit with OLD context must fail; 'updated()' must remain.
     ef_run "ef stale edit"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     ef_file_contains "updated()"
 }
 
@@ -844,7 +844,7 @@ responses:
     after_tool_reply: "Context not found checked."
 EOF
     ef_run "ef ctx not found"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     # Regardless of whether the error propagates to stdout or is swallowed by
     # the after_tool_reply, the file must be unchanged.
     ef_file_not_contains "x();"

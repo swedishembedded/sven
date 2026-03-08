@@ -84,37 +84,38 @@ load helpers
 
 # ── context_open: nonexistent path ───────────────────────────────────────────
 # The tool should return an error as tool output; the agent continues and
-# the session must still exit 0 with the after_tool_reply delivered.
+# delivers the after_tool_reply. Exit code 0 (clean) or 3 (tool warnings)
+# are both acceptable — the important thing is the agent does not abort.
 
 @test "10.11 context_open on missing path exits 0 (agent continues)" {
     run bash -c 'echo "open context missing path" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
 }
 
 @test "10.12 context_open on missing path still delivers after-tool reply" {
     run bash -c 'echo "open context missing path" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "missing path"
 }
 
 # ── context_grep: unknown handle ──────────────────────────────────────────────
 # context_grep should return "unknown handle" as a tool error, but the agent
-# must still complete the step and exit 0.
+# must still complete the step. Exit 0 or 3 (tool warnings) are acceptable.
 
 @test "10.13 context_grep with unknown handle exits 0" {
     run bash -c 'echo "grep context bad handle" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
 }
 
 @test "10.14 context_grep unknown handle delivers after-tool reply" {
     run bash -c 'echo "grep context bad handle" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "invalid context handle"
 }
 
 @test "10.15 context_grep tool activity appears on stderr" {
     run_split_output bash -c 'echo "grep context bad handle" | "$BIN" --headless --model mock'
-    [ "${EXIT_CODE}" -eq 0 ]
+    [ "${EXIT_CODE}" -eq 0 ] || [ "${EXIT_CODE}" -eq 3 ]
     [[ "${STDERR_OUT}" == *"context_grep"* ]] || \
     [[ "${STDERR_OUT}" == *"[tool"* ]]
 }
@@ -123,12 +124,12 @@ load helpers
 
 @test "10.16 context_read with unknown handle exits 0" {
     run bash -c 'echo "read context bad handle" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
 }
 
 @test "10.17 context_read unknown handle delivers after-tool reply" {
     run bash -c 'echo "read context bad handle" | "$BIN" --headless --model mock 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "invalid context handle"
 }
 
@@ -138,13 +139,13 @@ load helpers
 @test "10.18 context_query with unknown handle exits 0 in agent mode" {
     run bash -c \
         'echo "query context bad handle" | "$BIN" --headless --model mock --mode agent 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
 }
 
 @test "10.19 context_query unknown handle delivers after-tool reply" {
     run bash -c \
         'echo "query context bad handle" | "$BIN" --headless --model mock --mode agent 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "invalid handle"
 }
 
@@ -153,13 +154,13 @@ load helpers
 @test "10.20 context_reduce with unknown handle exits 0 in agent mode" {
     run bash -c \
         'echo "reduce context bad handle" | "$BIN" --headless --model mock --mode agent 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
 }
 
 @test "10.21 context_reduce unknown handle delivers after-tool reply" {
     run bash -c \
         'echo "reduce context bad handle" | "$BIN" --headless --model mock --mode agent 2>/dev/null'
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "invalid handle"
 }
 

@@ -89,8 +89,10 @@ run_split_output() {
     local tmpout tmp_stderr
     tmpout="$(mktemp)"
     tmp_stderr="$(mktemp)"
-    "$@" >"${tmpout}" 2>"${tmp_stderr}"
-    EXIT_CODE=$?
+    # Capture exit code explicitly so bats set -e doesn't abort the function
+    # when the command exits non-zero (e.g. exit 3 = tool warnings).
+    EXIT_CODE=0
+    "$@" >"${tmpout}" 2>"${tmp_stderr}" || EXIT_CODE=$?
     STDOUT_OUT="$(cat "${tmpout}")"
     STDERR_OUT="$(cat "${tmp_stderr}")"
     rm -f "${tmpout}" "${tmp_stderr}"
