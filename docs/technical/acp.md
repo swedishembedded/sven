@@ -119,10 +119,9 @@ Add to `~/.config/zed/settings.json`:
 
 ```json
 {
-  "assistant": {
-    "enabled": true,
-    "provider": {
-      "type": "acp",
+  "agent_servers": {
+    "sven": {
+      "type": "custom",
       "command": "sven",
       "args": ["acp", "serve"]
     }
