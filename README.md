@@ -267,6 +267,7 @@ See [docs/providers.md](docs/providers.md) for configuration details.
 | [Examples](docs/06-examples.md) | Real-world use cases |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
+| [IDE integration (ACP)](docs/03-user-guide.md#ide-integration-via-acp) | Zed, JetBrains, VS Code via Agent Client Protocol |
 
 Build the full user guide locally:
 
@@ -342,6 +343,34 @@ Security defaults — all on, none optional:
 | P2P authorisation | Deny-all — every operator device must be explicitly paired |
 | HTTP binding | `127.0.0.1` — loopback only |
 | Bearer token storage | SHA-256 hash only — plaintext never written to disk |
+
+---
+
+## IDE integration — ACP
+
+Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.org),
+letting ACP-aware editors drive it directly as an AI coding agent over stdio.
+No daemon, no relay, no IDE API key required — sven manages its own model.
+
+```sh
+# Zed: add to ~/.config/zed/settings.json
+{
+  "agent_servers": {
+    "sven": { "type": "custom", "command": "sven", "args": ["acp", "serve"] }
+  }
+}
+```
+
+The same `sven acp serve` command works for VS Code (ACP extension) and JetBrains
+(AI Assistant plugin). To attach an IDE to a running `sven node` instead of
+spawning a local agent:
+
+```sh
+sven acp serve --node-url wss://localhost:8443 --token "$SVEN_NODE_TOKEN"
+```
+
+See the [IDE integration guide](docs/03-user-guide.md#ide-integration-via-acp)
+and the [ACP technical reference](docs/technical/acp.md) for full details.
 
 ---
 
