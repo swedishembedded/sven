@@ -132,9 +132,9 @@ pub fn partial_content(
 /// Render a single-line collapsed preview for a segment (ratatui-only mode).
 ///
 /// The preview is a compact, information-dense one-liner:
-/// - Tool call:   `⚙ tool_name  key=val key2=val2  ▶`
-/// - Tool result: `✓ tool_name  first_line_of_output…  ▶`
-/// - Thinking:    `◆ first_sentence_of_thought…  ▶`
+/// - Tool call:   `⚙  tool_name  smart_description  duration  ▶`
+/// - Tool result: `✓/✗  tool_name  duration  ▶`
+/// - Thinking:    `◆  Reasoning  ~N words  ▶`
 /// - User:        `You  first_line…  ▶`
 /// - Agent:       `first_line…  ▶`
 pub fn collapsed_preview(
@@ -152,7 +152,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n**You:** `{preview}{ellipsis}` {SYM_EXPAND}\n")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
@@ -162,7 +162,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n**Agent:** `{preview}{ellipsis}` {SYM_EXPAND}\n")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (
                 Role::Assistant,
@@ -171,13 +171,18 @@ pub fn collapsed_preview(
                     function,
                 },
             ) => {
-                let args_summary = compact_args_summary(&function.arguments, 2, 35);
+                let summary = tool_smart_summary(&function.name, &function.arguments);
+                let summary_part = if summary.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {summary}")
+                };
                 let duration = tool_durations
                     .get(tool_call_id)
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
                 format!(
-                    "\n**Agent:tool_call:{tool_call_id}**\n{SYM_TOOL} **{}**  {args_summary}{duration}  {SYM_EXPAND}\n",
+                    "\n{SYM_TOOL}  {}{summary_part}{duration}  {SYM_EXPAND}\n",
                     function.name
                 )
             }
@@ -194,37 +199,17 @@ pub fn collapsed_preview(
                     .unwrap_or("tool");
                 let is_error = content.to_string().starts_with("error:");
                 let sym = if is_error { SYM_ERR } else { SYM_OK };
-                let content_text = content.to_string();
-                let first_line = content_text
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("")
-                    .trim();
-                let preview: String = first_line.chars().take(70).collect();
-                let truncated = if content_text.len() > preview.len() + 1 {
-                    "…"
-                } else {
-                    ""
-                };
                 let duration = tool_durations
                     .get(tool_call_id)
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
-                format!(
-                    "\n**Tool:{tool_call_id}**\n{sym} **{tool_name}**  `{preview}{truncated}`{duration}  {SYM_EXPAND}\n"
-                )
+                format!("\n{sym}  {tool_name}{duration}  {SYM_EXPAND}\n")
             }
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
-            // Take first meaningful sentence (up to first `.`, `!`, `?` or 80 chars).
-            let preview = first_sentence(content, 80);
-            let truncated = if content.len() > preview.len() + 1 {
-                "…"
-            } else {
-                ""
-            };
-            format!("\n**Agent:thinking**\n{SYM_THINK} **Thought**  `{preview}{truncated}`  {SYM_EXPAND}\n")
+            let word_count = content.split_whitespace().count();
+            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}\n")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }
@@ -400,63 +385,158 @@ pub(crate) fn message_to_markdown(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Extract a compact argument summary from JSON arguments.
-/// Shows at most `max_args` key=value pairs, each value truncated to `max_val_chars`.
-/// Public alias used by `chat_ops.rs` for the grouped tool-call preview.
-pub fn compact_args_summary_pub(arguments: &str, max_args: usize, max_val_chars: usize) -> String {
-    compact_args_summary(arguments, max_args, max_val_chars)
+/// Return the last `n` non-empty path components joined by `/`.
+///
+/// `/data/agents/sven/crates/sven-tui/src/chat/markdown.rs`  →  `chat/markdown.rs`
+pub fn shorten_path(path: &str, n: usize) -> String {
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() <= n {
+        return path.trim_start_matches('/').to_string();
+    }
+    parts[parts.len() - n..].join("/")
 }
 
-/// Extract a compact argument summary from JSON arguments.
-/// Shows at most `max_args` key=value pairs, each value truncated to `max_val_chars`.
-fn compact_args_summary(arguments: &str, max_args: usize, max_val_chars: usize) -> String {
-    let v = match serde_json::from_str::<serde_json::Value>(arguments) {
-        Ok(v) => v,
-        Err(_) => {
-            let s: String = arguments.chars().take(max_val_chars).collect();
-            return s;
+/// Strip internal anchor/role-prefix lines from a markdown string before
+/// ratatui rendering.  These lines (`**Agent:tool_call:…**`, `**Tool:…**`,
+/// `**Agent:thinking**`, and the role-prefix `**You:**` / `**Agent:**` inlines)
+/// are required for nvim buffer round-trip parsing but are noise in the TUI.
+///
+/// Lines whose entire trimmed content matches an anchor pattern are removed.
+/// Inline prefixes on text message lines (`**You:** text`, `**Agent:** text`)
+/// are stripped to leave just the text.
+pub fn strip_display_anchors(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    for line in md.lines() {
+        let t = line.trim();
+        // Drop pure anchor lines.
+        if t.starts_with("**Agent:tool_call:")
+            || t.starts_with("**Tool:")
+            || t == "**Agent:thinking**"
+            || t == "**Agent:**"
+            || t == "**You:**"
+        {
+            continue;
         }
-    };
-    if let serde_json::Value::Object(map) = v {
-        let parts: Vec<String> = map
-            .iter()
-            .take(max_args)
-            .map(|(k, val)| {
-                let v_str = match val {
-                    serde_json::Value::String(s) => {
-                        // Shorten path-like values to the basename.
-                        let base = s.split('/').next_back().unwrap_or(s.as_str());
-                        base.chars().take(max_val_chars).collect::<String>()
-                    }
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    other => other.to_string().chars().take(max_val_chars).collect(),
-                };
-                format!("{k}={v_str}")
-            })
-            .collect();
-        if map.len() > max_args {
-            format!("{}  +{}", parts.join("  "), map.len() - max_args)
+        // Strip inline role prefix from text message lines.
+        let display = if let Some(rest) = t
+            .strip_prefix("**Agent:** ")
+            .or_else(|| t.strip_prefix("**You:** "))
+        {
+            rest
         } else {
-            parts.join("  ")
-        }
+            line
+        };
+        out.push_str(display);
+        out.push('\n');
+    }
+    out
+}
+
+/// Truncate a string to at most `max` Unicode scalar values, appending `…` if trimmed.
+fn truncate_str(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        s.to_string()
     } else {
-        arguments.chars().take(max_val_chars).collect()
+        let t: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{t}…")
+    }
+}
+
+/// Build a human-readable one-line description of a tool call for the collapsed
+/// tier-0 display.  Returns just the *value* that is meaningful for each tool,
+/// without the redundant `key=` prefix.
+///
+/// Examples:
+/// - `read_file {"path":"/data/foo/bar.rs"}` → `foo/bar.rs`
+/// - `shell {"command":"cargo build --release"}` → `cargo build --release`
+/// - `grep {"pattern":"foo","path":"/data/baz"}` → `foo  baz`
+pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(args_json) {
+        Ok(v) => v,
+        Err(_) => return truncate_str(args_json, 55),
+    };
+
+    let str_field = |key: &str| -> Option<String> {
+        v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+
+    match name {
+        // File operations — show last 2 path components for context
+        "read_file" | "write_file" | "str_replace_editor" | "str_replace" | "delete_file"
+        | "Read" | "Write" | "StrReplace" | "Delete" => str_field("path")
+            .map(|p| shorten_path(&p, 2))
+            .unwrap_or_default(),
+
+        // Shell — show the command (truncated)
+        "shell" | "bash" | "Shell" => str_field("command")
+            .map(|c| truncate_str(&c, 55))
+            .unwrap_or_default(),
+
+        // Search — pattern + optional short path
+        "grep" | "search" | "Grep" => {
+            let pattern = str_field("pattern").unwrap_or_default();
+            let path = str_field("path")
+                .or_else(|| str_field("target_directory"))
+                .unwrap_or_default();
+            let path_short = if path.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", shorten_path(&path, 2))
+            };
+            truncate_str(&format!("{pattern}{path_short}"), 55)
+        }
+
+        // Glob — show the pattern
+        "glob" | "Glob" => str_field("glob_pattern")
+            .or_else(|| str_field("pattern"))
+            .map(|p| truncate_str(&p, 55))
+            .unwrap_or_default(),
+
+        // Web operations
+        "web_search" | "WebSearch" => str_field("search_term")
+            .or_else(|| str_field("query"))
+            .map(|q| truncate_str(&q, 55))
+            .unwrap_or_default(),
+        "web_fetch" | "WebFetch" => str_field("url")
+            .map(|u| {
+                // Strip scheme for brevity
+                let stripped = u
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://");
+                truncate_str(stripped, 55)
+            })
+            .unwrap_or_default(),
+
+        // Semantic / AI search
+        "semantic_search" | "SemanticSearch" => str_field("query")
+            .map(|q| truncate_str(&q, 55))
+            .unwrap_or_default(),
+
+        // Todo management — fixed label
+        "todo_write" | "TodoWrite" | "todo_read" | "TodoRead" => "update todos".to_string(),
+
+        // Lints
+        "ReadLints" | "read_lints" => "check lints".to_string(),
+
+        // Internal buffer/editor tools — opaque IDs add no value
+        _ if name.starts_with("buf_") || name.starts_with("nvim_") => String::new(),
+
+        // Generic fallback: first string value, no key name
+        _ => {
+            if let serde_json::Value::Object(map) = &v {
+                for (_, val) in map.iter() {
+                    if let serde_json::Value::String(s) = val {
+                        return truncate_str(s, 55);
+                    }
+                }
+            }
+            String::new()
+        }
     }
 }
 
 /// Extract the first sentence from text (up to `max_chars`), ending at `.!?` or a newline.
-fn first_sentence(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    let mut end = trimmed.len().min(max_chars);
-    for (i, ch) in trimmed.char_indices().take(max_chars) {
-        if matches!(ch, '.' | '!' | '?' | '\n') {
-            end = i + 1;
-            break;
-        }
-    }
-    trimmed[..end].trim().to_string()
-}
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────
 

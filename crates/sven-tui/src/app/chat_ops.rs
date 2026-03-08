@@ -16,7 +16,7 @@ use crate::{
         markdown::{
             apply_bar_and_dim, apply_focused_bar, collapsed_preview, format_conversation,
             parse_markdown_to_messages, partial_content, segment_bar_style, segment_to_markdown,
-            SYM_THINK, SYM_TOOL,
+            strip_display_anchors, SYM_THINK, SYM_TOOL,
         },
         segment::{
             segment_at_line, segment_editable_text, segment_is_removable, segment_is_rerunnable,
@@ -114,24 +114,31 @@ impl App {
                 make_grouped_preview(seg, result_seg, &self.chat.tool_args, &tool_durations)
             } else if expand == 0 {
                 // In-progress tool call: animate with scanning dot.
-                animated_tool_preview(seg, &tool_start_times, anim_frame, ascii).unwrap_or_else(
-                    || collapsed_preview(seg, &self.chat.tool_args, &tool_durations),
+                animated_tool_preview(
+                    seg,
+                    &tool_start_times,
+                    &tool_streaming_content,
+                    anim_frame,
+                    ascii,
                 )
+                .unwrap_or_else(|| collapsed_preview(seg, &self.chat.tool_args, &tool_durations))
             } else if expand == 1 {
                 // Tier-1: show either live streaming content (for running sub-agents)
                 // or the standard partial content view.
-                if let Some(ref content) = streaming_preview {
+                let raw = if let Some(ref content) = streaming_preview {
                     format_streaming_preview(seg, &self.chat.tool_args, content, PARTIAL_VIEW_LINES)
                 } else {
                     partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
-                }
+                };
+                strip_display_anchors(&raw)
             } else {
                 // Tier-2: full content or full streaming output.
-                if let Some(ref content) = streaming_preview {
+                let raw = if let Some(ref content) = streaming_preview {
                     format_streaming_preview(seg, &self.chat.tool_args, content, usize::MAX)
                 } else {
                     segment_to_markdown(seg, &self.chat.tool_args)
-                }
+                };
+                strip_display_anchors(&raw)
             };
 
             let lines = render_markdown(&s, render_width, ascii);
@@ -498,10 +505,13 @@ impl App {
 fn animated_tool_preview(
     seg: &ChatSegment,
     tool_start_times: &HashMap<String, Instant>,
+    tool_streaming_content: &HashMap<String, String>,
     anim_frame: u8,
     ascii: bool,
 ) -> Option<String> {
-    let (call_id, name) = match seg {
+    use crate::chat::markdown::tool_smart_summary;
+
+    let (call_id, name, args) = match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
             (
                 Role::Assistant,
@@ -509,7 +519,11 @@ fn animated_tool_preview(
                     tool_call_id,
                     function,
                 },
-            ) => (tool_call_id.as_str(), function.name.as_str()),
+            ) => (
+                tool_call_id.as_str(),
+                function.name.as_str(),
+                function.arguments.as_str(),
+            ),
             _ => return None,
         },
         _ => return None,
@@ -518,8 +532,37 @@ fn animated_tool_preview(
     let start = tool_start_times.get(call_id)?;
     let elapsed = start.elapsed().as_secs_f32();
     let scan = crate::ui::theme::tool_scan(anim_frame, ascii);
+
+    let summary = tool_smart_summary(name, args);
+    let summary_part = if summary.is_empty() {
+        String::new()
+    } else {
+        format!("  {summary}")
+    };
+
+    // Show the last non-empty line of streaming progress (capped to 50 chars).
+    let progress_part = tool_streaming_content
+        .get(call_id)
+        .and_then(|content| {
+            content
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let trimmed = line.trim();
+                    let short: String = trimmed.chars().take(50).collect();
+                    let ellipsis = if trimmed.chars().count() > 50 {
+                        "…"
+                    } else {
+                        ""
+                    };
+                    format!("  `{short}{ellipsis}`")
+                })
+        })
+        .unwrap_or_default();
+
     Some(format!(
-        "\n**Agent:tool_call:{call_id}**\n{SYM_TOOL} **{name}**  {scan}  {elapsed:.1}s\n"
+        "\n{SYM_TOOL}  {name}{summary_part}{progress_part}  {scan}  {elapsed:.1}s\n"
     ))
 }
 
@@ -555,7 +598,7 @@ fn make_grouped_preview(
     _tool_args: &std::collections::HashMap<String, String>,
     tool_durations: &std::collections::HashMap<String, f32>,
 ) -> String {
-    use crate::chat::markdown::{compact_args_summary_pub, SYM_ERR, SYM_EXPAND, SYM_OK};
+    use crate::chat::markdown::{tool_smart_summary, SYM_ERR, SYM_EXPAND, SYM_OK};
 
     let (call_id, name, args) = match call_seg {
         ChatSegment::Message(m) => match &m.content {
@@ -572,47 +615,27 @@ fn make_grouped_preview(
         _ => return String::new(),
     };
 
-    let (result_content, is_error) = match result_seg {
+    let is_error = match result_seg {
         ChatSegment::Message(m) => match &m.content {
-            MessageContent::ToolResult { content, .. } => {
-                let s = content.to_string();
-                let err = s.starts_with("error:");
-                (s, err)
-            }
-            _ => (String::new(), false),
+            MessageContent::ToolResult { content, .. } => content.to_string().starts_with("error:"),
+            _ => false,
         },
-        _ => (String::new(), false),
+        _ => false,
     };
 
-    let args_sum = compact_args_summary_pub(args, 1, 30);
-    let result_preview: String = result_content
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(40)
-        .collect();
-    let result_sym = if is_error { SYM_ERR } else { SYM_OK };
+    let summary = tool_smart_summary(name, args);
+    let summary_part = if summary.is_empty() {
+        String::new()
+    } else {
+        format!("  {summary}")
+    };
+    let status_sym = if is_error { SYM_ERR } else { SYM_OK };
     let duration = tool_durations
         .get(call_id)
         .map(|s| format!("  {:.1}s", s))
         .unwrap_or_default();
 
-    let args_part = if args_sum.is_empty() {
-        String::new()
-    } else {
-        format!("  {args_sum}")
-    };
-    let result_part = if result_preview.is_empty() {
-        String::new()
-    } else {
-        format!("  → {result_sym} `{result_preview}`")
-    };
-
-    format!(
-        "\n**Agent:tool_call:{call_id}**\n{SYM_TOOL} **{name}**{args_part}{result_part}{duration}  {SYM_EXPAND}\n"
-    )
+    format!("\n{SYM_TOOL}  {name}{summary_part}  {status_sym}{duration}  {SYM_EXPAND}\n")
 }
 
 // ── Clipboard via OSC 52 ──────────────────────────────────────────────────────
