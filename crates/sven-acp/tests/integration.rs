@@ -47,6 +47,20 @@ fn thinking_delta_becomes_thought_chunk() {
 }
 
 #[test]
+fn text_complete_has_no_update_to_avoid_double_send() {
+    // TextComplete carries the full accumulated text, not a fresh delta.
+    // Forwarding it would duplicate all content already sent via TextDelta.
+    let ev = AgentEvent::TextComplete("full response".into());
+    assert!(agent_event_to_session_update(&ev).is_none());
+}
+
+#[test]
+fn thinking_complete_has_no_update_to_avoid_double_send() {
+    let ev = AgentEvent::ThinkingComplete("full thought".into());
+    assert!(agent_event_to_session_update(&ev).is_none());
+}
+
+#[test]
 fn turn_complete_has_no_update() {
     assert!(agent_event_to_session_update(&AgentEvent::TurnComplete).is_none());
 }
