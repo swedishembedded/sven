@@ -9,6 +9,7 @@ mod runtime_context;
 mod session;
 #[cfg(test)]
 mod tests;
+mod tool_slots;
 
 pub use agent::Agent;
 pub use compact::{

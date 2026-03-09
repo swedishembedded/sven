@@ -1,8 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -11,7 +11,7 @@ use tracing::warn;
 
 use sven_config::{AgentConfig, AgentMode, CompactionStrategy};
 use sven_model::{CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role};
-use sven_tools::{events::ToolEvent, ToolCall, ToolOutput, ToolRegistry};
+use sven_tools::{events::ToolEvent, ToolCall, ToolRegistry};
 
 use crate::{
     compact::{compact_session_with_strategy, emergency_compact, smart_truncate},
@@ -19,6 +19,7 @@ use crate::{
     prompts::system_prompt,
     runtime_context::AgentRuntimeContext,
     session::Session,
+    tool_slots::ToolSlotManager,
 };
 
 /// The core agent.  Owns a session and drives the model ↔ tool loop.
@@ -322,7 +323,8 @@ impl Agent {
                     _ = &mut *cancel => None,
                     result = self.stream_one_turn(tx.clone(), mode, false) => Some(result),
                 };
-                if let Some(Ok((text, _, _))) = wrap_turn {
+                // with_tools=false so slot_manager is always empty; discard it.
+                if let Some(Ok((text, _slot_manager, _))) = wrap_turn {
                     if !text.is_empty() {
                         self.session.push(Message::assistant(&text));
                     }
@@ -341,9 +343,10 @@ impl Agent {
                 result = self.stream_one_turn(tx.clone(), mode, true) => Some(result),
             };
 
-            let (text, tool_calls, had_tool_calls) = match turn {
+            let (text, slot_manager, had_tool_calls) = match turn {
                 None => {
-                    // Aborted mid-stream.
+                    // Aborted mid-stream.  Any tool slots dispatched during
+                    // streaming are aborted via ToolSlotManager::Drop.
                     if !partial_text.is_empty() {
                         self.session.push(Message::assistant(&partial_text));
                     }
@@ -387,9 +390,39 @@ impl Agent {
 
             empty_turn_retries = 0;
 
-            // Phase 1: push all assistant tool-call messages.
-            for tc in &tool_calls {
-                let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+            // Await tool results with cancellation support.
+            //
+            // slot_manager is moved into the join_all future.  If cancel fires
+            // during execution the future is dropped, triggering
+            // ToolSlotManager::Drop which aborts every in-flight task.
+            //
+            // A 100 ms drain timer interleaves with join_all so that progress
+            // events and mode-change side-effects reach the UI and the agent
+            // state while tools are running.
+            let join_fut = slot_manager.join_all(&tx);
+            tokio::pin!(join_fut);
+            let results = loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut *cancel => {
+                        // join_fut is dropped when we return; ToolSlotManager
+                        // Drop aborts all in-flight handles automatically.
+                        let _ = tx
+                            .send(AgentEvent::Aborted { partial_text })
+                            .await;
+                        return Ok(());
+                    }
+                    res = &mut join_fut => break res,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        self.drain_tool_events(&tx).await;
+                    }
+                }
+            };
+            // Final drain after all tools complete.
+            self.drain_tool_events(&tx).await;
+
+            // Push all assistant ToolCall messages first (OpenAI wire format).
+            for (tc, _) in &results {
                 self.session.push(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {
@@ -402,51 +435,9 @@ impl Agent {
                 });
             }
 
-            // Phase 2: execute tools in parallel.
-            let mut tasks = Vec::with_capacity(tool_calls.len());
-            for tc in tool_calls.clone() {
-                let registry = Arc::clone(&self.tools);
-                tasks.push(tokio::spawn(async move { registry.execute(&tc).await }));
-            }
-
-            let mut outputs = Vec::with_capacity(tool_calls.len());
-            for (i, task) in tasks.into_iter().enumerate() {
-                // Poll the task while draining progress events in real-time so
-                // the UI spinner updates during long-running tools (e.g. context_query).
-                let output = {
-                    tokio::pin!(task);
-                    loop {
-                        tokio::select! {
-                            result = &mut task => {
-                                break match result {
-                                    Ok(o) => o,
-                                    Err(e) => ToolOutput::err(
-                                        &tool_calls[i].id,
-                                        format!("tool panicked: {e}"),
-                                    ),
-                                };
-                            }
-                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                                self.drain_tool_events(&tx).await;
-                            }
-                        }
-                    }
-                };
-                self.drain_tool_events(&tx).await;
-                let _ = tx
-                    .send(AgentEvent::ToolCallFinished {
-                        call_id: tool_calls[i].id.clone(),
-                        tool_name: tool_calls[i].name.clone(),
-                        output: output.content.clone(),
-                        is_error: output.is_error,
-                    })
-                    .await;
-                outputs.push(output);
-            }
-
-            // Phase 3: push tool-result messages with smart truncation.
+            // Push all ToolResult messages with smart truncation.
             let cap = self.config.tool_result_token_cap;
-            for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
+            for (tc, output) in &results {
                 let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
@@ -500,7 +491,9 @@ impl Agent {
 
                 let mode = *self.current_mode.lock().await;
                 self.session.schema_overhead = self.estimate_schema_overhead(mode);
-                let (text, _, _) = self.stream_one_turn(tx.clone(), mode, false).await?;
+                // with_tools=false so slot_manager is always empty; discard it.
+                let (text, _slot_manager, _) =
+                    self.stream_one_turn(tx.clone(), mode, false).await?;
                 if !text.is_empty() {
                     self.session.push(Message::assistant(&text));
                 }
@@ -512,7 +505,7 @@ impl Agent {
             // Update schema overhead so the budget gate and calibration are
             // accurate for this turn's actual request size.
             self.session.schema_overhead = self.estimate_schema_overhead(mode);
-            let (text, tool_calls, had_tool_calls) =
+            let (text, slot_manager, had_tool_calls) =
                 self.stream_one_turn(tx.clone(), mode, true).await?;
 
             if !text.is_empty() {
@@ -550,11 +543,30 @@ impl Agent {
 
             empty_turn_retries = 0;
 
-            // Phase 1: push all assistant tool-call messages (must all come
-            // before any tool-result messages for OpenAI's parallel-tool-call
-            // wire format).
-            for tc in &tool_calls {
-                let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+            // Await all tool results.  ToolCallStarted events were already
+            // emitted during streaming (in stream_one_turn) as each slot's
+            // args became complete.  join_all emits ToolCallFinished for each
+            // slot as it completes (in any order).
+            //
+            // A 100 ms drain timer interleaves with join_all so that progress
+            // events and mode-change side-effects (session patching) reach the
+            // UI and the agent state without waiting for the slowest tool.
+            let join_fut = slot_manager.join_all(&tx);
+            tokio::pin!(join_fut);
+            let results = loop {
+                tokio::select! {
+                    res = &mut join_fut => break res,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        self.drain_tool_events(&tx).await;
+                    }
+                }
+            };
+            // Final drain after all tools complete.
+            self.drain_tool_events(&tx).await;
+
+            // Push all assistant ToolCall messages first (OpenAI wire format
+            // requires all ToolCall messages to precede any ToolResult messages).
+            for (tc, _) in &results {
                 self.session.push(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {
@@ -567,60 +579,10 @@ impl Agent {
                 });
             }
 
-            // Phase 2: execute all tools in parallel using tokio::spawn.
-            // Each task gets a cloned Arc to the registry (cheap, atomic refcount).
-            // Tasks are isolated — one panic doesn't cancel others.
-            let mut tasks = Vec::with_capacity(tool_calls.len());
-            for tc in tool_calls.clone() {
-                let registry = Arc::clone(&self.tools);
-                let task = tokio::spawn(async move { registry.execute(&tc).await });
-                tasks.push(task);
-            }
-
-            // Await all tasks in order, preserving result indices for correct
-            // conversation history serialization.  While waiting, drain tool
-            // events every 100 ms so progress updates reach the UI in real time.
-            let mut outputs = Vec::with_capacity(tool_calls.len());
-            for (i, task) in tasks.into_iter().enumerate() {
-                let output = {
-                    tokio::pin!(task);
-                    loop {
-                        tokio::select! {
-                            result = &mut task => {
-                                break match result {
-                                    Ok(o) => o,
-                                    Err(e) => ToolOutput::err(
-                                        &tool_calls[i].id,
-                                        format!("tool execution panicked: {}", e),
-                                    ),
-                                };
-                            }
-                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                                self.drain_tool_events(&tx).await;
-                            }
-                        }
-                    }
-                };
-
-                // Final drain after task completes.
-                self.drain_tool_events(&tx).await;
-
-                let _ = tx
-                    .send(AgentEvent::ToolCallFinished {
-                        call_id: tool_calls[i].id.clone(),
-                        tool_name: tool_calls[i].name.clone(),
-                        output: output.content.clone(),
-                        is_error: output.is_error,
-                    })
-                    .await;
-
-                outputs.push(output);
-            }
-
-            // Phase 3: push all tool-result messages, applying smart truncation
-            // when a result exceeds the configured token cap.
+            // Push all ToolResult messages, applying smart truncation when a
+            // result exceeds the configured token cap.
             let cap = self.config.tool_result_token_cap;
-            for (tc, output) in tool_calls.iter().zip(outputs.iter()) {
+            for (tc, output) in &results {
                 let category = self.tools.output_category(&tc.name);
                 let tool_msg = if output.has_images() {
                     use sven_model::ToolContentPart;
@@ -711,14 +673,21 @@ impl Agent {
         }
     }
 
-    /// Call the model once, streaming text deltas and collecting tool-call events.
-    /// Returns (full_text, tool_calls, had_tool_calls).
+    /// Call the model once, streaming text deltas and dispatching tool calls
+    /// as soon as their JSON arguments are complete.
+    ///
+    /// Returns `(full_text, slot_manager, had_tool_calls)`.
+    ///
+    /// `slot_manager` holds one `JoinHandle` per dispatched tool.  All
+    /// `ToolCallStarted` events are emitted here (during streaming).  The
+    /// caller must call [`ToolSlotManager::join_all`] to await results and
+    /// emit the corresponding `ToolCallFinished` events.
     async fn stream_one_turn(
         &mut self,
         tx: mpsc::Sender<AgentEvent>,
         mode: AgentMode,
         with_tools: bool,
-    ) -> anyhow::Result<(String, Vec<ToolCall>, bool)> {
+    ) -> anyhow::Result<(String, ToolSlotManager, bool)> {
         let tools: Vec<sven_model::ToolSchema> = if with_tools {
             self.tools
                 .schemas_for_mode(mode)
@@ -810,14 +779,13 @@ impl Agent {
         };
 
         let mut full_text = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        // Keyed by the parallel-tool-call index from the provider.
-        // OpenAI interleaves chunks for different tool calls by index;
-        // other providers always use index 0.
-        let mut pending_tcs: HashMap<u32, PendingToolCall> = HashMap::new();
+        // Manages per-slot parallel dispatch: slots are started as soon as
+        // their JSON arguments form a valid object during streaming.
+        let mut slot_manager = ToolSlotManager::new(Arc::clone(&self.tools));
         // Accumulate thinking deltas so we can emit a single ThinkingComplete
         // event to consumers (CI runner, TUI) once the thinking block ends.
         let mut thinking_buf = String::new();
+
         while let Some(event) = stream.next().await {
             match event? {
                 ResponseEvent::MaxTokens => {}
@@ -842,18 +810,11 @@ impl Agent {
                     name,
                     arguments,
                 } => {
-                    let ptc = pending_tcs.entry(index).or_insert_with(|| PendingToolCall {
-                        id: String::new(),
-                        name: String::new(),
-                        args_buf: String::new(),
-                    });
-                    if !id.is_empty() {
-                        ptc.id = id;
+                    // Dispatch the slot immediately when its args form valid
+                    // JSON; emit ToolCallStarted so the UI shows progress.
+                    if let Some(tc) = slot_manager.feed(index, &id, &name, &arguments) {
+                        let _ = tx.send(AgentEvent::ToolCallStarted(tc)).await;
                     }
-                    if !name.is_empty() {
-                        ptc.name = name;
-                    }
-                    ptc.args_buf.push_str(&arguments);
                 }
                 ResponseEvent::Usage {
                     input_tokens,
@@ -899,6 +860,10 @@ impl Agent {
                 }
                 _ => {}
             }
+
+            // Drain tool events produced by already-dispatched slots so that
+            // progress updates reach the UI while the LLM stream continues.
+            self.drain_tool_events(&tx).await;
         }
 
         // When a model that doesn't use reasoning_content (e.g. a local GGUF
@@ -915,32 +880,13 @@ impl Agent {
             }
         }
 
-        // Flush all accumulated parallel tool calls, ordered by index.
+        // Finalize any slots whose JSON args were still incomplete when the
+        // stream ended (truncated output, slow streaming, etc.).
         // Tool calls with an empty name cannot be dispatched and are dropped —
         // storing them would corrupt the conversation history sent back to the
-        // API on the next turn.  An empty id (which violates Anthropic's
-        // `^[a-zA-Z0-9_-]+$` constraint) gets a synthetic fallback so the
-        // turn can still be completed without a spurious 400 error.
-        let mut pending_sorted: Vec<(u32, PendingToolCall)> = pending_tcs.into_iter().collect();
-        pending_sorted.sort_by_key(|(idx, _)| *idx);
-        for (i, (_, ptc)) in pending_sorted.into_iter().enumerate() {
-            if ptc.name.is_empty() {
-                warn!(
-                    tool_call_id = %ptc.id,
-                    "dropping tool call with empty name from model; cannot dispatch"
-                );
-                continue;
-            }
-            let mut tc = ptc.finish();
-            if tc.id.is_empty() {
-                tc.id = format!("tc_synthetic_{i}");
-                warn!(
-                    tool_name = %tc.name,
-                    tool_call_id = %tc.id,
-                    "tool call from model had empty id; generated synthetic id"
-                );
-            }
-            tool_calls.push(tc);
+        // API on the next turn.
+        for tc in slot_manager.finalize_remaining() {
+            let _ = tx.send(AgentEvent::ToolCallStarted(tc)).await;
         }
 
         // If no structured tool calls arrived but the text contains Anthropic-style
@@ -948,7 +894,7 @@ impl Agent {
         // function-call format), extract them so they are executed as real tool calls
         // rather than being silently discarded.  The invoke blocks are stripped from
         // full_text so the session history stays clean.
-        if tool_calls.is_empty() && full_text.contains("<invoke ") {
+        if slot_manager.is_empty() && full_text.contains("<invoke ") {
             let (cleaned, invoke_calls) = extract_inline_invoke_tool_calls(&full_text);
             if !invoke_calls.is_empty() {
                 warn!(
@@ -957,7 +903,10 @@ impl Agent {
                      extracting for execution"
                 );
                 full_text = cleaned;
-                tool_calls.extend(invoke_calls);
+                for (i, tc) in invoke_calls.into_iter().enumerate() {
+                    let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+                    slot_manager.insert_call(i as u32, tc);
+                }
             }
         }
 
@@ -965,8 +914,8 @@ impl Agent {
             let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
         }
 
-        let had_tool_calls = !tool_calls.is_empty();
-        Ok((full_text, tool_calls, had_tool_calls))
+        let had_tool_calls = !slot_manager.is_empty();
+        Ok((full_text, slot_manager, had_tool_calls))
     }
 
     /// Run a single tool-free turn and return the full text response.
@@ -977,7 +926,8 @@ impl Agent {
         tx: mpsc::Sender<AgentEvent>,
         mode: AgentMode,
     ) -> anyhow::Result<String> {
-        let (text, _, _) = self.stream_one_turn(tx, mode, false).await?;
+        // with_tools=false → slot_manager is always empty; drop it immediately.
+        let (text, _slot_manager, _) = self.stream_one_turn(tx, mode, false).await?;
         Ok(text)
     }
 
@@ -1377,146 +1327,4 @@ fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
 
     let cleaned = invoke_re.replace_all(text, "").trim().to_string();
     (cleaned, tool_calls)
-}
-
-struct PendingToolCall {
-    id: String,
-    name: String,
-    args_buf: String,
-}
-
-impl PendingToolCall {
-    fn finish(self) -> ToolCall {
-        // Always resolve to a JSON object.  Model providers (notably Anthropic)
-        // require tool_use input to be an object; sending `null` causes a 400
-        // on the *next* completion request and surfaces as "model completion failed".
-        let args = if self.args_buf.is_empty() {
-            warn!(
-                tool_name = %self.name,
-                tool_call_id = %self.id,
-                "model sent tool call with empty arguments; substituting {{}}"
-            );
-            serde_json::Value::Object(Default::default())
-        } else {
-            match serde_json::from_str(&self.args_buf) {
-                Ok(v) => v,
-                Err(parse_err) => {
-                    // Attempt generic JSON repairs before giving up.
-                    match attempt_json_repair(&self.args_buf) {
-                        Ok(v) => {
-                            warn!(
-                                tool_name = %self.name,
-                                tool_call_id = %self.id,
-                                "repaired invalid JSON arguments from model"
-                            );
-                            v
-                        }
-                        Err(_) => {
-                            warn!(
-                                tool_name = %self.name,
-                                tool_call_id = %self.id,
-                                args_buf = %self.args_buf,
-                                error = %parse_err,
-                                "model sent tool call with invalid JSON arguments; substituting {{}}"
-                            );
-                            serde_json::Value::Object(Default::default())
-                        }
-                    }
-                }
-            }
-        };
-        ToolCall {
-            id: self.id,
-            name: self.name,
-            args,
-        }
-    }
-}
-
-/// Attempt to repair common JSON syntax errors.
-///
-/// This handles issues like:
-/// - Invalid escape sequences inside string values (e.g. `\c`, `\p`)
-/// - Missing commas between key-value pairs
-/// - Truncated strings
-fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
-    // 1. Fix invalid JSON escape sequences inside string values.
-    // Models (notably Anthropic) sometimes emit `\c`, `\(`, etc. which are
-    // not valid JSON escapes. We escape the backslash so serde_json can parse.
-    let fixed = fix_invalid_json_escapes(json_str);
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&fixed) {
-        return Ok(v);
-    }
-
-    // 2. Fix missing comma between key-value pairs like: "key1"value": "...
-    // Pattern: "key"VALUE": where VALUE is alphanumeric
-    let repaired = regex::Regex::new(r#""([^"]+)"([a-zA-Z_][a-zA-Z0-9_]*)":\s*"#)
-        .unwrap()
-        .replace_all(&fixed, r#""$1", "$2": "#);
-
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&repaired) {
-        return Ok(v);
-    }
-
-    // 3. Try adding missing closing quote and brace if JSON ends abruptly
-    if !fixed.trim().ends_with('}') {
-        let mut completed = fixed.clone();
-        let quote_count = fixed.chars().filter(|&c| c == '"').count();
-        if quote_count % 2 == 1 {
-            completed.push('"');
-        }
-        if !completed.trim().ends_with('}') {
-            completed.push('}');
-        }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&completed) {
-            return Ok(v);
-        }
-    }
-
-    // All repair attempts failed
-    anyhow::bail!("JSON repair failed: all repair strategies exhausted")
-}
-
-/// Walk through a JSON string and replace any invalid escape sequences inside
-/// string values with a properly escaped backslash.
-///
-/// Valid JSON escape characters are: `"`, `\`, `/`, `b`, `f`, `n`, `r`, `t`, `u`.
-/// Anything else (e.g. `\c`, `\p`, `\(`) is turned into `\\X` so the
-/// resulting JSON round-trips through serde_json without a parse error.
-fn fix_invalid_json_escapes(json_str: &str) -> String {
-    let mut result = String::with_capacity(json_str.len() + 16);
-    let mut chars = json_str.chars();
-    let mut in_string = false;
-
-    while let Some(c) = chars.next() {
-        if in_string {
-            match c {
-                '\\' => match chars.next() {
-                    Some(next)
-                        if matches!(next, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u') =>
-                    {
-                        result.push('\\');
-                        result.push(next);
-                    }
-                    Some(next) => {
-                        result.push('\\');
-                        result.push('\\');
-                        result.push(next);
-                    }
-                    None => result.push('\\'),
-                },
-                '"' => {
-                    in_string = false;
-                    result.push('"');
-                }
-                _ => result.push(c),
-            }
-        } else {
-            if c == '"' {
-                in_string = true;
-            }
-            result.push(c);
-        }
-    }
-    result
 }

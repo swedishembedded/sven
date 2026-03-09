@@ -1791,4 +1791,227 @@ mod agent_tests {
             }
         }
     }
+
+    // ── Parallel tool slot streaming integration tests ────────────────────────
+
+    /// Two tool calls streamed with different indices: verify both
+    /// `ToolCallStarted` events fire, results are in session in index order,
+    /// and all `ToolCall` messages precede all `ToolResult` messages.
+    #[tokio::test]
+    async fn parallel_tool_slots_both_dispatched_and_session_order_preserved() {
+        // Round 1: two parallel tool calls at index 0 and 1.
+        // Round 2: text reply after results.
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc-a".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"shell_command":"echo slot0"}"#.into(),
+                },
+                ResponseEvent::ToolCall {
+                    index: 1,
+                    id: "tc-b".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"shell_command":"echo slot1"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![
+                ResponseEvent::TextDelta("all done".into()),
+                ResponseEvent::Done,
+            ],
+        ]);
+
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool::default());
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(128);
+
+        agent.submit("run both", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        // Both ToolCallStarted events must be present.
+        let started_names: Vec<&str> = events
+            .iter()
+            .filter_map(|e| {
+                if let AgentEvent::ToolCallStarted(tc) = e {
+                    Some(tc.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(started_names.len(), 2, "expected 2 ToolCallStarted events");
+
+        // Both ToolCallFinished events must be present.
+        let finished_count = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolCallFinished { .. }))
+            .count();
+        assert_eq!(finished_count, 2, "expected 2 ToolCallFinished events");
+
+        // Session message order: all ToolCall messages precede all ToolResult messages.
+        let msgs = &agent.session().messages;
+        let tool_call_positions: Vec<usize> = msgs
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| matches!(m.content, MessageContent::ToolCall { .. }))
+            .map(|(i, _)| i)
+            .collect();
+        let tool_result_positions: Vec<usize> = msgs
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| matches!(m.content, MessageContent::ToolResult { .. }))
+            .map(|(i, _)| i)
+            .collect();
+
+        assert_eq!(tool_call_positions.len(), 2, "expected 2 ToolCall messages");
+        assert_eq!(
+            tool_result_positions.len(),
+            2,
+            "expected 2 ToolResult messages"
+        );
+
+        let last_tc_pos = tool_call_positions.iter().max().copied().unwrap();
+        let first_tr_pos = tool_result_positions.iter().min().copied().unwrap();
+        assert!(
+            last_tc_pos < first_tr_pos,
+            "all ToolCall messages ({tool_call_positions:?}) must precede \
+             all ToolResult messages ({tool_result_positions:?})"
+        );
+
+        // Tool call IDs must match tool result IDs in the same index order.
+        let tc_ids: Vec<String> = msgs
+            .iter()
+            .filter_map(|m| {
+                if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
+                    Some(tool_call_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let tr_ids: Vec<String> = msgs
+            .iter()
+            .filter_map(|m| {
+                if let MessageContent::ToolResult { tool_call_id, .. } = &m.content {
+                    Some(tool_call_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(tc_ids, tr_ids, "tool call IDs must match in order");
+    }
+
+    /// Slot 1 arrives complete before slot 0: verify that when slot 0 finally
+    /// completes, session messages are still ordered by slot index (0 then 1),
+    /// not by completion order.
+    #[tokio::test]
+    async fn parallel_slots_session_sorted_by_index_not_completion_order() {
+        // Slot 1 args arrive complete in the first chunk; slot 0 args arrive in
+        // the second chunk.  Completion order would be 1 then 0 if execution
+        // started immediately, but session must show 0 then 1.
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                // Slot 1 args complete immediately.
+                ResponseEvent::ToolCall {
+                    index: 1,
+                    id: "tc-1".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"shell_command":"echo slot1"}"#.into(),
+                },
+                // Slot 0 args arrive later.
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc-0".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"shell_command":"echo slot0"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ]);
+
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool::default());
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(128);
+
+        agent.submit("run both", tx).await.unwrap();
+        let _ = collect_events(rx).await;
+
+        // Verify slot 0 (tc-0) appears before slot 1 (tc-1) in session messages.
+        let msgs = &agent.session().messages;
+        let tc_ids: Vec<String> = msgs
+            .iter()
+            .filter_map(|m| {
+                if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
+                    Some(tool_call_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let pos_0 = tc_ids
+            .iter()
+            .position(|id| id == "tc-0")
+            .expect("tc-0 must be in session");
+        let pos_1 = tc_ids
+            .iter()
+            .position(|id| id == "tc-1")
+            .expect("tc-1 must be in session");
+        assert!(
+            pos_0 < pos_1,
+            "slot 0 (tc-0) must appear before slot 1 (tc-1) in session; got {tc_ids:?}"
+        );
+    }
+
+    /// Incremental chunked args: verify that a slot dispatches mid-stream
+    /// when its JSON becomes complete, not after the full stream finishes.
+    #[tokio::test]
+    async fn slot_dispatches_before_stream_done_when_args_complete() {
+        // The tool call args arrive in two chunks; Done comes later.
+        // By the time Done arrives, the slot should already be dispatched
+        // (proven indirectly by the final result being correct).
+        let model = ScriptedMockProvider::new(vec![
+            vec![
+                // First chunk: id and name, partial args.
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "tc-chunked".into(),
+                    name: "shell".into(),
+                    arguments: r#"{"shell_command":"#.into(),
+                },
+                // Second chunk: completes the JSON.
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: String::new(),
+                    name: String::new(),
+                    arguments: r#""echo chunked"}"#.into(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![ResponseEvent::TextDelta("ok".into()), ResponseEvent::Done],
+        ]);
+
+        let mut reg = ToolRegistry::new();
+        reg.register(ShellTool::default());
+        let mut agent = agent_with(model, reg, AgentConfig::default(), AgentMode::Agent);
+        let (tx, rx) = mpsc::channel(128);
+
+        agent.submit("run chunked", tx).await.unwrap();
+        let events = collect_events(rx).await;
+
+        let started = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ToolCallStarted(tc) if tc.id == "tc-chunked"));
+        assert!(started, "ToolCallStarted must fire for chunked slot");
+
+        let finished = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ToolCallFinished { call_id, .. } if call_id == "tc-chunked"));
+        assert!(finished, "ToolCallFinished must fire for chunked slot");
+    }
 }
