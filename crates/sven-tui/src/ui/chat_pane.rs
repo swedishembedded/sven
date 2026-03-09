@@ -103,28 +103,33 @@ impl Widget for ChatPane<'_> {
             })
             .collect();
 
+        // Content rect: only this region may be tinted (keeps highlights inside chat pane).
+        let content_rect = Rect::new(inner.x, inner.y, inner.width, content_height);
+
         Paragraph::new(visible)
             .style(Style::default().bg(BG))
-            .render(
-                Rect::new(inner.x, inner.y, inner.width, content_height),
-                buf,
-            );
+            .render(content_rect, buf);
 
-        // ── Edit highlight ────────────────────────────────────────────────────
+        // ── Edit highlight (clipped to content_rect) ─────────────────────────
         if let Some((seg_start, seg_end)) = self.editing_line_range {
+            let edit_style = Style::default().bg(Color::Rgb(0, 45, 65));
             for vis_row in 0..content_height as usize {
                 let abs_line = vis_row + self.scroll_offset as usize;
                 if abs_line >= seg_start && abs_line < seg_end {
                     let y = inner.y + vis_row as u16;
-                    for x in inner.x..inner.x + inner.width {
-                        buf[(x, y)].set_bg(Color::Rgb(0, 45, 65));
+                    let row_rect = Rect::new(inner.x, y, inner.width, 1);
+                    let clipped = content_rect.intersection(row_rect);
+                    if !clipped.is_empty() {
+                        buf.set_style(clipped, edit_style);
                     }
                 }
             }
         }
 
-        // ── Mouse drag selection highlight ────────────────────────────────────
+        // ── Mouse drag selection highlight (clipped to content_rect) ────────
         if let Some((s_line, s_col, e_line, e_col)) = self.selection {
+            let sel_bg = Color::Rgb(50, 80, 135);
+            let sel_fg = Color::Rgb(220, 220, 230);
             for vis_row in 0..content_height as usize {
                 let abs_line = vis_row + self.scroll_offset as usize;
                 if abs_line >= s_line && abs_line <= e_line {
@@ -139,11 +144,21 @@ impl Widget for ChatPane<'_> {
                     } else {
                         inner.x + inner.width
                     };
-                    for x in from_x..to_x {
-                        buf[(x, y)].set_bg(Color::Rgb(50, 80, 135));
+                    let w = to_x.saturating_sub(from_x);
+                    if w == 0 {
+                        continue;
+                    }
+                    let row_rect = Rect::new(from_x, y, w, 1);
+                    let clipped = content_rect.intersection(row_rect);
+                    if !clipped.is_empty() {
+                        buf.set_style(clipped, Style::default().bg(sel_bg));
                         // Ensure text remains legible over the selection background.
-                        if buf[(x, y)].fg == Color::Reset {
-                            buf[(x, y)].set_fg(Color::Rgb(220, 220, 230));
+                        for col in clipped.x..clipped.x + clipped.width {
+                            if let Some(cell) = buf.cell_mut((col, y)) {
+                                if cell.fg == Color::Reset {
+                                    cell.set_fg(sel_fg);
+                                }
+                            }
                         }
                     }
                 }
