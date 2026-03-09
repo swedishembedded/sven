@@ -325,6 +325,70 @@ impl App {
 
     // ── History persistence ───────────────────────────────────────────────────
 
+    /// Synchronous variant of `save_history_async` for use at clean exit.
+    ///
+    /// Called just before `run()` returns so that any messages typed in the
+    /// current session are written to disk even if the tokio runtime is about
+    /// to drop (which would cancel any pending `tokio::spawn` write tasks).
+    pub(crate) fn save_history_sync(&mut self) {
+        let records: Vec<ConversationRecord> = self
+            .chat
+            .segments
+            .iter()
+            .filter_map(|seg| match seg {
+                ChatSegment::Message(m) => Some(ConversationRecord::Message(m.clone())),
+                ChatSegment::Thinking { content } => Some(ConversationRecord::Thinking {
+                    content: content.clone(),
+                }),
+                ChatSegment::ContextCompacted {
+                    tokens_before,
+                    tokens_after,
+                    strategy,
+                    turn,
+                } => Some(ConversationRecord::ContextCompacted {
+                    tokens_before: *tokens_before,
+                    tokens_after: *tokens_after,
+                    strategy: Some(strategy.to_string()),
+                    turn: Some(*turn),
+                }),
+                _ => None,
+            })
+            .collect();
+
+        if records.is_empty() {
+            return;
+        }
+
+        let yaml_path = self.yaml_path.clone();
+        let model = Some(self.session.model_display.clone());
+        let mode = Some(self.session.mode.to_string());
+        let active_id = self.sessions.active_id.clone();
+        let mut doc = if let Some(entry) = self.sessions.get(&active_id) {
+            entry.to_document(&self.chat, model, mode)
+        } else {
+            let turns = sven_input::records_to_turns(&records);
+            sven_input::ChatDocument {
+                id: active_id,
+                title: self.chat_title.clone(),
+                model,
+                mode,
+                status: sven_input::ChatStatus::Active,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                turns,
+            }
+        };
+
+        let result = if let Some(ref path) = yaml_path {
+            sven_input::save_chat_to(path, &mut doc)
+        } else {
+            sven_input::save_chat(&mut doc)
+        };
+        if let Err(e) = result {
+            tracing::debug!("failed to save YAML chat document on exit: {e}");
+        }
+    }
+
     pub(crate) fn save_history_async(&mut self) {
         let records: Vec<ConversationRecord> = self
             .chat
