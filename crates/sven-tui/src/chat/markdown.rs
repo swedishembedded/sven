@@ -153,7 +153,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}")
             }
             (Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
@@ -163,7 +163,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}")
             }
             (
                 Role::Assistant,
@@ -183,7 +183,7 @@ pub fn collapsed_preview(
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
                 format!(
-                    "\n{SYM_TOOL}  {}{summary_part}{duration}  {SYM_EXPAND}\n",
+                    "\n{SYM_TOOL}  {}{summary_part}{duration}  {SYM_EXPAND}",
                     function.name
                 )
             }
@@ -204,13 +204,13 @@ pub fn collapsed_preview(
                     .get(tool_call_id)
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
-                format!("\n{sym}  {tool_name}{duration}  {SYM_EXPAND}\n")
+                format!("\n{sym}  {tool_name}{duration}  {SYM_EXPAND}")
             }
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
             let word_count = content.split_whitespace().count();
-            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}\n")
+            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }
