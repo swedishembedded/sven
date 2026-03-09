@@ -22,7 +22,10 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use sven_runtime::{format_agents_list, format_skills_tree, AgentInfo, SkillInfo};
+use chrono::Local;
+use sven_runtime::{
+    find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
+};
 use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
 
 use crate::markdown::render_markdown;
@@ -122,26 +125,16 @@ impl InspectorOverlay {
 
     /// Build the context inspector from runtime session state.
     ///
-    /// Shows project context, skills/agents counts, and active buffer handles.
+    /// Shows date/time, project root, workspace root, and active buffer handles.
     /// In node-proxy mode the subprocess buffers live in the node process, so a
     /// note is shown instead of potentially empty local data.
     pub fn for_context(
         project_root: Option<&std::path::Path>,
-        skills_count: usize,
-        agents_count: usize,
-        tools_count: usize,
         buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
         is_node_proxy: bool,
         ascii: bool,
     ) -> Self {
-        let md = format_context_markdown(
-            project_root,
-            skills_count,
-            agents_count,
-            tools_count,
-            buffer_store,
-            is_node_proxy,
-        );
+        let md = format_context_markdown(project_root, buffer_store, is_node_proxy);
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Context.title()),
@@ -270,9 +263,6 @@ fn format_peers_markdown(
 /// Render the context overview as markdown.
 fn format_context_markdown(
     project_root: Option<&std::path::Path>,
-    skills_count: usize,
-    agents_count: usize,
-    tools_count: usize,
     buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
     is_node_proxy: bool,
 ) -> String {
@@ -288,14 +278,33 @@ fn format_context_markdown(
 
     // ── Runtime context ───────────────────────────────────────────────────────
     out.push_str("### Runtime\n\n");
+    out.push_str(&format!(
+        "**Date/Time:** `{}`\n\n",
+        Local::now().format("%Y-%m-%d %H:%M:%S %Z")
+    ));
     if let Some(root) = project_root {
         out.push_str(&format!("**Project root:** `{}`\n\n", root.display()));
+        let workspace_root = find_workspace_root(root);
+        if workspace_root != root {
+            out.push_str(&format!(
+                "**Workspace root:** `{}`\n\n",
+                workspace_root.display()
+            ));
+            out.push_str(
+                "**Relative paths** supplied by the user are resolved relative to the \
+                 workspace root unless they begin with the project root.\n\n",
+            );
+        } else {
+            out.push_str("**Workspace root:** _same as project root_\n\n");
+            out.push_str(
+                "**Relative paths** supplied by the user are resolved relative to the \
+                 project root.\n\n",
+            );
+        }
     } else {
         out.push_str("**Project root:** _not detected_\n\n");
+        out.push_str("**Workspace root:** _not detected_\n\n");
     }
-    out.push_str(&format!("**Skills loaded:** {skills_count}\n\n"));
-    out.push_str(&format!("**Subagents configured:** {agents_count}\n\n"));
-    out.push_str(&format!("**Tools registered:** {tools_count}\n\n"));
 
     // ── Output buffers ────────────────────────────────────────────────────────
     out.push_str("### Output Buffers\n\n");

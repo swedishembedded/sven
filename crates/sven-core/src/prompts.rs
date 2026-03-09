@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sven_config::AgentMode;
-use sven_runtime::{AgentInfo, KnowledgeInfo, SkillInfo};
+use sven_runtime::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -675,14 +675,29 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     };
 
     let project_section = if let Some(root) = ctx.project_root {
+        let workspace_root = find_workspace_root(root);
+        let workspace_line = if workspace_root != root {
+            format!(
+                "\nWorkspace root: `{}` (contains shared tooling above the git repository)\n\
+                 - When the user provides relative paths, resolve them relative to the \
+                   workspace root.",
+                workspace_root.display()
+            )
+        } else {
+            String::from(
+                "\nWorkspace root: same as project root.\n\
+                 - When the user provides relative paths, resolve them relative to the \
+                   project root.",
+            )
+        };
         format!(
             "\n\n## Project Context\n\
-             Project root directory: `{}`\n\
-             - Use this absolute path for all file read/write operations.\n\
-             - Pass this path as the `workdir` argument to `run_terminal_command` \
-               so shell commands execute in the correct directory.\n\
-             - Prefer absolute paths over relative paths in every tool call.",
-            root.display()
+             Project root: `{project_root}`\
+             {workspace_line}\n\
+             - Use absolute paths for all file read/write operations.\n\
+             - Pass the project root as the `workdir` argument to `run_terminal_command` \
+               so shell commands execute in the correct directory.",
+            project_root = root.display(),
         )
     } else {
         String::new()

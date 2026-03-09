@@ -16,8 +16,10 @@ use crate::markdown::StyledLines;
 pub enum PagerAction {
     /// Close the pager and return to normal mode.
     Close,
-    /// Open the inline search bar (shared with main view).
+    /// Open the inline search bar and navigate forward (`/` in vim).
     OpenSearch,
+    /// Open the inline search bar and navigate backward (`?` in vim).
+    OpenSearchBackward,
     /// Navigate to next search match (app updates search, then calls
     /// `scroll_to_line` with the new match).
     SearchNext,
@@ -93,7 +95,7 @@ impl PagerOverlay {
         }
     }
 
-    fn scroll_up(&mut self, n: usize) {
+    pub fn scroll_up(&mut self, n: usize) {
         if self.scroll_offset == usize::MAX {
             let max = self.lines.len().saturating_sub(self.last_visible_height);
             self.scroll_offset = max;
@@ -101,7 +103,7 @@ impl PagerOverlay {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
     }
 
-    fn scroll_down(&mut self, n: usize) {
+    pub fn scroll_down(&mut self, n: usize) {
         if self.scroll_offset == usize::MAX {
             return; // already at bottom
         }
@@ -133,9 +135,14 @@ impl PagerOverlay {
 
             // ── Full-page ─────────────────────────────────────────────────────
             KeyCode::Char('f') if ctrl => self.scroll_down(full),
+            KeyCode::Char(' ') => self.scroll_down(full),
             KeyCode::PageDown => self.scroll_down(full),
             KeyCode::Char('b') if ctrl => self.scroll_up(full),
             KeyCode::PageUp => self.scroll_up(full),
+
+            // ── Single-line vim scroll (Ctrl+e / Ctrl+y) ──────────────────────
+            KeyCode::Char('e') if ctrl => self.scroll_down(1),
+            KeyCode::Char('y') if ctrl => self.scroll_up(1),
 
             // ── Jump to bottom ────────────────────────────────────────────────
             KeyCode::Char('G') => self.scroll_offset = usize::MAX,
@@ -152,7 +159,10 @@ impl PagerOverlay {
             KeyCode::Home => self.scroll_offset = 0,
 
             // ── Search forwarding ─────────────────────────────────────────────
+            // `/` → forward search (opens bar, `n` walks forward)
+            // `?` → backward search (opens bar, `N` walks backward / use Shift+N)
             KeyCode::Char('/') => return PagerAction::OpenSearch,
+            KeyCode::Char('?') => return PagerAction::OpenSearchBackward,
             KeyCode::Char('n') => return PagerAction::SearchNext,
             KeyCode::Char('N') => return PagerAction::SearchPrev,
 
@@ -259,19 +269,19 @@ impl PagerOverlay {
         let k = Style::default().fg(Color::Gray);
         let d = Style::default().fg(Color::DarkGray);
         let hints = Line::from(vec![
-            Span::styled(" j/k/J/K", k),
+            Span::styled(" j/k", k),
             Span::styled(":line  ", d),
             Span::styled("^u/^d", k),
             Span::styled(":½pg  ", d),
-            Span::styled("^b/^f", k),
+            Span::styled("Space/^b", k),
             Span::styled(":page  ", d),
             Span::styled("gg/G", k),
             Span::styled(":top/bot  ", d),
-            Span::styled("/", k),
+            Span::styled("//? ", k),
             Span::styled(":search  ", d),
             Span::styled("n/N", k),
             Span::styled(":match  ", d),
-            Span::styled("q", k),
+            Span::styled("q/Esc", k),
             Span::styled(":close", d),
         ]);
         frame.render_widget(Paragraph::new(hints), hints_area);

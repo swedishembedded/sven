@@ -131,6 +131,31 @@ impl App {
             }
 
             Event::Mouse(mouse) => {
+                // ── Overlay scroll: inspector and pager both eat mouse wheel ──
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_up(3);
+                            return false;
+                        }
+                        if let Some(pager) = &mut self.ui.pager {
+                            pager.scroll_up(3);
+                            return false;
+                        }
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_down(3);
+                            return false;
+                        }
+                        if let Some(pager) = &mut self.ui.pager {
+                            pager.scroll_down(3);
+                            return false;
+                        }
+                    }
+                    _ => {}
+                }
+
                 if self.ui.pager.is_none() {
                     let over_input = mouse.row >= self.layout.input_pane.y
                         && mouse.row < self.layout.input_pane.y + self.layout.input_pane.height;
@@ -809,7 +834,7 @@ impl App {
             PagerAction::Close => {
                 self.ui.pager = None;
             }
-            PagerAction::OpenSearch => {
+            PagerAction::OpenSearch | PagerAction::OpenSearchBackward => {
                 self.ui.search.query.clear();
                 self.ui.search.current = 0;
                 self.ui.search.update_matches(&self.chat.lines);
@@ -874,9 +899,30 @@ impl App {
             PagerAction::OpenSearch => {
                 self.ui.search.query.clear();
                 self.ui.search.current = 0;
-                // Update matches against the inspector's own lines.
                 let lines = inspector.pager.cloned_lines();
                 self.ui.search.update_matches(&lines);
+                // Jump to first match immediately.
+                if let Some(line) = self.ui.search.current_line() {
+                    if let Some(insp) = &mut self.ui.inspector {
+                        insp.pager.scroll_to_line(line);
+                    }
+                }
+                self.ui.search.active = true;
+            }
+            PagerAction::OpenSearchBackward => {
+                self.ui.search.query.clear();
+                self.ui.search.current = 0;
+                let lines = inspector.pager.cloned_lines();
+                self.ui.search.update_matches(&lines);
+                // Start from the last match for backward search.
+                if !self.ui.search.matches.is_empty() {
+                    self.ui.search.current = self.ui.search.matches.len() - 1;
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_to_line(line);
+                        }
+                    }
+                }
                 self.ui.search.active = true;
             }
             PagerAction::SearchNext => {

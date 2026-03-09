@@ -151,9 +151,6 @@ impl App {
                             ),
                             InspectorKind::Context => InspectorOverlay::for_context(
                                 project_root.as_deref(),
-                                skills.len(),
-                                agents.len(),
-                                self.shared_tools.get().len(),
                                 Some(buffer_store),
                                 is_node,
                                 ascii,

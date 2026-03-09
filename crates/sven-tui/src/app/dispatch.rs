@@ -434,6 +434,11 @@ impl App {
             }
 
             Action::SubmitBufferToAgent => {
+                // Ignore submit signals that arrive while the agent is already
+                // running (e.g. a stray :w during streaming).
+                if self.agent.busy {
+                    return false;
+                }
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let markdown = {
                         let bridge = nvim_bridge.lock().await;
@@ -484,8 +489,20 @@ impl App {
                             }
                             self.rerender_chat().await;
                             self.scroll_to_bottom();
+                            // Strip the trailing user message from the history
+                            // because `replace_history_and_submit` will re-append
+                            // it via `new_user_content`.  Without this the user
+                            // message appears twice ([..., User:"Hi", User:"Hi"]),
+                            // which causes the model to treat it as a new prompt
+                            // after the tool-use round and generate an extra reply.
+                            let last_user_pos = messages.iter().rposition(|m| m.role == Role::User);
+                            let history = if let Some(pos) = last_user_pos {
+                                messages[..pos].to_vec()
+                            } else {
+                                messages
+                            };
                             self.send_resubmit_to_agent(
-                                messages,
+                                history,
                                 QueuedMessage::plain(new_user_content),
                             )
                             .await;
@@ -557,33 +574,76 @@ impl App {
             Action::SearchClose => {
                 self.ui.search.active = false;
                 if let Some(line) = self.ui.search.current_line() {
-                    if let Some(pager) = &mut self.ui.pager {
+                    if self.ui.inspector.is_some() {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_to_line(line);
+                        }
+                    } else if let Some(pager) = &mut self.ui.pager {
                         pager.scroll_to_line(line);
+                    } else {
+                        self.chat.scroll_offset = line as u16;
                     }
                 }
             }
             Action::SearchInput(c) => {
                 self.ui.search.query.push(c);
-                self.ui.search.update_matches(&self.chat.lines);
-                if let Some(line) = self.ui.search.current_line() {
-                    self.chat.scroll_offset = line as u16;
-                    if let Some(pager) = &mut self.ui.pager {
-                        pager.scroll_to_line(line);
+                if self.ui.inspector.is_some() {
+                    // Search scoped to the inspector's own content.
+                    let lines = self
+                        .ui
+                        .inspector
+                        .as_ref()
+                        .map(|i| i.pager.cloned_lines())
+                        .unwrap_or_default();
+                    self.ui.search.update_matches(&lines);
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_to_line(line);
+                        }
+                    }
+                } else {
+                    self.ui.search.update_matches(&self.chat.lines);
+                    if let Some(line) = self.ui.search.current_line() {
+                        self.chat.scroll_offset = line as u16;
+                        if let Some(pager) = &mut self.ui.pager {
+                            pager.scroll_to_line(line);
+                        }
                     }
                 }
             }
             Action::SearchBackspace => {
                 self.ui.search.query.pop();
-                self.ui.search.update_matches(&self.chat.lines);
+                if self.ui.inspector.is_some() {
+                    let lines = self
+                        .ui
+                        .inspector
+                        .as_ref()
+                        .map(|i| i.pager.cloned_lines())
+                        .unwrap_or_default();
+                    self.ui.search.update_matches(&lines);
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(insp) = &mut self.ui.inspector {
+                            insp.pager.scroll_to_line(line);
+                        }
+                    }
+                } else {
+                    self.ui.search.update_matches(&self.chat.lines);
+                }
             }
             Action::SearchNextMatch => {
                 if !self.ui.search.matches.is_empty() {
                     self.ui.search.current =
                         (self.ui.search.current + 1) % self.ui.search.matches.len();
                     if let Some(line) = self.ui.search.current_line() {
-                        self.chat.scroll_offset = line as u16;
-                        if let Some(pager) = &mut self.ui.pager {
-                            pager.scroll_to_line(line);
+                        if self.ui.inspector.is_some() {
+                            if let Some(insp) = &mut self.ui.inspector {
+                                insp.pager.scroll_to_line(line);
+                            }
+                        } else {
+                            self.chat.scroll_offset = line as u16;
+                            if let Some(pager) = &mut self.ui.pager {
+                                pager.scroll_to_line(line);
+                            }
                         }
                     }
                 }
@@ -597,9 +657,15 @@ impl App {
                         .checked_sub(1)
                         .unwrap_or(self.ui.search.matches.len() - 1);
                     if let Some(line) = self.ui.search.current_line() {
-                        self.chat.scroll_offset = line as u16;
-                        if let Some(pager) = &mut self.ui.pager {
-                            pager.scroll_to_line(line);
+                        if self.ui.inspector.is_some() {
+                            if let Some(insp) = &mut self.ui.inspector {
+                                insp.pager.scroll_to_line(line);
+                            }
+                        } else {
+                            self.chat.scroll_offset = line as u16;
+                            if let Some(pager) = &mut self.ui.pager {
+                                pager.scroll_to_line(line);
+                            }
                         }
                     }
                 }
