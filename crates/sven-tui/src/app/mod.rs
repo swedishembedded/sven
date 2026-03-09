@@ -1173,6 +1173,12 @@ impl App {
         self.chat = ChatState::new();
         self.agent = AgentConn::new();
         self.session = crate::state::SessionState::new(self.config.model.clone(), AgentMode::Agent);
+        // Clear any in-flight queue and edit state from the previous session so
+        // queued messages don't bleed into the new session's agent.
+        self.queue = QueueState::new();
+        self.edit = EditState::new();
+        // New TUI sessions use YAML persistence only; no JSONL path.
+        self.jsonl_path = None;
 
         // Spawn an agent task; sets self.agent.tx and the entry's agent_tx/cancel.
         self.spawn_agent_for_session(&new_id).await;
@@ -1270,7 +1276,7 @@ impl App {
             self.agent.busy = target_busy;
         }
 
-        // Update chat title and yaml path.
+        // Update chat title, yaml path, and jsonl path.
         self.chat_title = self
             .sessions
             .get(&target_id)
@@ -1280,6 +1286,10 @@ impl App {
             .sessions
             .get(&target_id)
             .and_then(|e| e.yaml_path.clone());
+        self.jsonl_path = self
+            .sessions
+            .get(&target_id)
+            .and_then(|e| e.jsonl_path.clone());
 
         self.sessions.promote_to_top(&target_id);
         self.sessions.sync_list_selection_to_active();
@@ -1293,6 +1303,7 @@ impl App {
         if let Some(entry) = self.sessions.get_mut(&active_id) {
             entry.stored_chat = Some(self.chat.clone());
             entry.session_state = Some(self.session.clone());
+            entry.jsonl_path = self.jsonl_path.clone();
             entry.busy = self.agent.busy;
             entry.current_tool = self.agent.current_tool.clone();
             entry.title = self.chat_title.clone();

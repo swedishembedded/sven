@@ -59,6 +59,8 @@ pub(crate) struct SessionEntry {
     /// Saved model/mode state for this session (populated when session is inactive).
     /// The active session's live state is in `App.session`.
     pub session_state: Option<crate::state::SessionState>,
+    /// JSONL log path for this session (None for TUI-created sessions that use YAML).
+    pub jsonl_path: Option<std::path::PathBuf>,
 
     // ── Agent connection ──────────────────────────────────────────────────────
     /// Sender for submitting requests to this session's background agent task.
@@ -86,6 +88,7 @@ impl SessionEntry {
             updated_at: doc.updated_at,
             stored_chat: None,
             session_state: None,
+            jsonl_path: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -107,6 +110,7 @@ impl SessionEntry {
             updated_at: doc.updated_at,
             stored_chat: None,
             session_state: None,
+            jsonl_path: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -127,6 +131,7 @@ impl SessionEntry {
             updated_at: now,
             stored_chat: None,
             session_state: None,
+            jsonl_path: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -341,6 +346,7 @@ impl SessionManager {
                 updated_at: chat_entry.updated_at,
                 stored_chat: None, // lazy-loaded when activated
                 session_state: None,
+                jsonl_path: None,
                 agent_tx: None,
                 agent_cancel: Arc::new(Mutex::new(None)),
                 busy: false,
