@@ -8,6 +8,7 @@ pub(crate) mod agent_events;
 pub(crate) mod chat_ops;
 pub(crate) mod chat_state;
 pub(crate) mod dispatch;
+pub(crate) mod hit_test;
 pub(crate) mod input_state;
 pub(crate) mod layout_cache;
 pub(crate) mod nvim_state;
@@ -746,22 +747,10 @@ impl App {
                     .filter_map(|id| self.sessions.get(id)),
                 &self.sessions.active_id,
                 self.agent.anim_frame,
+                self.agent.busy,
             );
-            // Compute scroll offset so list_selected is always visible.
-            // When focused the last inner row is the hint, reducing visible items by 1.
-            let cl_pane = layout.chat_list_pane;
             let cl_focused = self.ui.focus == FocusPane::ChatList;
-            let hint_rows = if cl_focused && cl_pane.height >= 3 {
-                1usize
-            } else {
-                0
-            };
-            let visible_items = (cl_pane.height as usize).saturating_sub(2 + hint_rows);
-            let chat_list_scroll_offset = if self.sessions.list_selected >= visible_items {
-                self.sessions.list_selected + 1 - visible_items
-            } else {
-                0
-            };
+            let chat_list_scroll_offset = self.chat_list_scroll_offset();
             frame.render_widget(
                 crate::ui::ChatListPane {
                     items: &items,
@@ -1346,7 +1335,6 @@ impl App {
         self.input.attachments = target_input_attachments;
         self.queue = target_queue;
 
-        self.sessions.promote_to_top(&target_id);
         self.sessions.sync_list_selection_to_active();
         self.rerender_chat().await;
         self.scroll_to_bottom();
@@ -1438,6 +1426,26 @@ impl App {
         match notify {
             Some(n) => n.notified().await,
             None => std::future::pending().await,
+        }
+    }
+
+    // ── Chat list scroll offset ───────────────────────────────────────────────
+
+    /// Compute the scroll offset that was used (or will be used) to render the
+    /// chat list, so that visual row → item index conversions are consistent
+    /// between click handling and rendering.
+    ///
+    /// When the pane is focused the last inner row is reserved for the "[enter]
+    /// hint", reducing the number of visible items by 1.
+    pub(crate) fn chat_list_scroll_offset(&self) -> usize {
+        let cl = self.layout.chat_list_pane;
+        let focused = self.ui.focus == FocusPane::ChatList;
+        let hint_rows = if focused && cl.height >= 3 { 1usize } else { 0 };
+        let visible = (cl.height as usize).saturating_sub(2 + hint_rows);
+        if self.sessions.list_selected >= visible {
+            self.sessions.list_selected + 1 - visible
+        } else {
+            0
         }
     }
 }

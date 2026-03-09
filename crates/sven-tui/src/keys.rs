@@ -159,6 +159,80 @@ pub enum Action {
     ResizeChatListGrow,
     /// Shrink the chat list pane width.
     ResizeChatListShrink,
+
+    // ── Mouse-originated actions ──────────────────────────────────────────────
+    // These are produced by `App::mouse_to_action` and dispatched like any
+    // keyboard action so that all state mutations live in `dispatch.rs`.
+    /// Click on a row in the chat-list sidebar.
+    /// `inner_row` is the 0-based visual row; `chat_list_scroll_offset()` must
+    /// be added in the dispatch handler to obtain the actual item index.
+    ChatListClick {
+        inner_row: usize,
+    },
+
+    /// Click on the chat-pane scrollbar.
+    /// `rel_row` is 0-based from the top of the content area.
+    ChatScrollbarClick {
+        rel_row: u16,
+    },
+
+    /// Click on a row in the queue panel.
+    QueueClick {
+        index: usize,
+    },
+
+    /// Click the copy icon on a segment header.
+    SegmentIconCopy {
+        seg_idx: usize,
+    },
+    /// Click the edit icon on a segment header.
+    SegmentIconEdit {
+        seg_idx: usize,
+    },
+    /// Click the delete icon on a segment header (opens confirm modal).
+    SegmentIconDelete {
+        seg_idx: usize,
+    },
+    /// Click the rerun icon on a segment header.
+    SegmentIconRerun {
+        seg_idx: usize,
+    },
+
+    /// Click anywhere in the chat content area that is not an action icon.
+    ///
+    /// Dispatching this action sets the selection anchor **and**, if the click
+    /// falls on a collapsible segment body, cycles its expand level.
+    ChatContentClick {
+        abs_line: usize,
+        inner_col: u16,
+    },
+
+    /// Mouse drag extending an in-progress text selection.
+    ///
+    /// `abs_line` and `inner_col` are the clamped pointer position (already
+    /// bounded to the chat content area).  `mouse_row` is the **raw** terminal
+    /// row used to detect the auto-scroll zones near the top/bottom edge.
+    SelectionExtend {
+        abs_line: usize,
+        inner_col: u16,
+        mouse_row: u16,
+    },
+
+    /// Mouse button released — finalise and copy any active selection.
+    SelectionFinish,
+
+    /// Clear any in-progress or completed selection (e.g. click outside chat).
+    SelectionClear,
+
+    /// Scroll-wheel up while the pointer is over the input pane (moves cursor).
+    InputScrollUp,
+    /// Scroll-wheel down while the pointer is over the input pane (moves cursor).
+    InputScrollDown,
+
+    /// Scroll-wheel up while Neovim bridge is active (forwarded as `<C-y>`).
+    NvimScrollUp,
+    /// Scroll-wheel down while Neovim bridge is active (forwarded as `<C-e>`).
+    NvimScrollDown,
 }
 
 /// Map a raw key event to an [`Action`], depending on which pane has focus.

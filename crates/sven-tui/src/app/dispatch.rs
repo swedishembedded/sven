@@ -10,12 +10,16 @@ use crate::{
     chat::{
         markdown::parse_markdown_to_messages,
         segment::{
-            messages_for_resubmit, segment_editable_text, segment_tool_call_id, ChatSegment,
+            messages_for_resubmit, segment_at_line, segment_editable_text, segment_short_preview,
+            segment_tool_call_id, ChatSegment,
         },
     },
     commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
-    overlay::completion::CompletionOverlay,
+    overlay::{
+        completion::CompletionOverlay,
+        confirm::{ConfirmModal, ConfirmedAction},
+    },
     pager::PagerOverlay,
 };
 
@@ -1132,6 +1136,251 @@ impl App {
 
             Action::ResizeChatListShrink => {
                 self.layout.chat_list_shrink();
+            }
+
+            // ── Mouse-originated actions ──────────────────────────────────────
+            Action::ChatListClick { inner_row } => {
+                // `inner_row` is the 0-based visual row; add the scroll offset
+                // that was in effect at render time to get the item index.
+                // We use the focus state *before* changing it so the offset
+                // matches what the user saw.
+                let scroll_offset = self.chat_list_scroll_offset();
+                let max_idx = self.sessions.display_order.len().saturating_sub(1);
+                let actual_idx = (inner_row + scroll_offset).min(max_idx);
+                self.sessions.list_selected = actual_idx;
+                if let Some(id) = self.sessions.display_order.get(actual_idx).cloned() {
+                    if id != self.sessions.active_id {
+                        self.switch_session(id).await;
+                    }
+                }
+                self.ui.focus = FocusPane::Input;
+            }
+
+            Action::ChatScrollbarClick { rel_row } => {
+                let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
+                let total_chat_lines = self.chat.lines.len() as u16;
+                if chat_inner_h > 0 && total_chat_lines > chat_inner_h {
+                    let new_offset = (rel_row as u32 * (total_chat_lines - chat_inner_h) as u32
+                        / chat_inner_h.saturating_sub(1).max(1) as u32)
+                        as u16;
+                    self.chat.scroll_offset =
+                        new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
+                    self.chat.auto_scroll = false;
+                    self.recompute_focused_segment();
+                }
+                // Scrollbar click clears any in-progress selection.
+                self.chat.selection_anchor = None;
+                self.chat.selection_end = None;
+                self.chat.is_selecting = false;
+            }
+
+            Action::QueueClick { index } => {
+                // Clear selection anchor (click is outside chat content).
+                self.chat.selection_anchor = None;
+                self.chat.selection_end = None;
+                self.chat.is_selecting = false;
+
+                if index < self.queue.messages.len() {
+                    self.queue.selected = Some(index);
+                    self.ui.focus = FocusPane::Queue;
+                    if let Some(qm) = self.queue.messages.get(index) {
+                        let text = qm.content.clone();
+                        self.edit.queue_index = Some(index);
+                        self.edit.cursor = text.len();
+                        self.edit.original_text = Some(text.clone());
+                        self.edit.buffer = text;
+                        self.ui.focus = FocusPane::Input;
+                    }
+                }
+            }
+
+            Action::SegmentIconDelete { seg_idx } => {
+                let preview = segment_short_preview(self.chat.segments.get(seg_idx));
+                self.ui.confirm_modal = Some(ConfirmModal::new(
+                    "Delete message",
+                    format!("Remove this message from the conversation?\n{preview}"),
+                    ConfirmedAction::RemoveSegment(seg_idx),
+                ));
+            }
+
+            Action::SegmentIconEdit { seg_idx } => {
+                if let Some(text) = segment_editable_text(&self.chat.segments, seg_idx) {
+                    self.edit.message_index = Some(seg_idx);
+                    self.edit.cursor = text.len();
+                    self.edit.original_text = Some(text.clone());
+                    self.edit.buffer = text;
+                    self.ui.focus = FocusPane::Input;
+                    self.update_editing_segment_live();
+                    self.rerender_chat().await;
+                }
+            }
+
+            Action::SegmentIconCopy { seg_idx } => {
+                self.ui.confirm_modal = None;
+                let saved = self.chat.focused_segment;
+                self.chat.focused_segment = Some(seg_idx);
+                Box::pin(self.dispatch(Action::CopySegment)).await;
+                if self.chat.focused_segment.is_some() {
+                    self.chat.focused_segment = saved;
+                }
+            }
+
+            Action::SegmentIconRerun { seg_idx } => {
+                self.ui.confirm_modal = None;
+                let saved = self.chat.focused_segment;
+                self.chat.focused_segment = Some(seg_idx);
+                Box::pin(self.dispatch(Action::RerunFromSegment)).await;
+                if self.chat.focused_segment.is_some() {
+                    self.chat.focused_segment = saved;
+                }
+            }
+
+            Action::ChatContentClick {
+                abs_line,
+                inner_col,
+            } => {
+                // Set selection anchor for a potential drag.  Any previous
+                // completed selection is cleared so it doesn't stay highlighted
+                // while the user starts a new one.
+                self.chat.selection_anchor = Some((abs_line, inner_col));
+                self.chat.selection_end = None;
+                self.chat.is_selecting = false;
+
+                // Clear any open confirm modal if the click is outside the
+                // icon area (the icon detection already happens in hit_test).
+                // Since this action only fires for non-icon clicks, always clear.
+                self.ui.confirm_modal = None;
+
+                // Expand/collapse if the click lands on a collapsible segment.
+                if let Some(seg_idx) = segment_at_line(&self.chat.segment_line_ranges, abs_line) {
+                    let is_collapsible = match self.chat.segments.get(seg_idx) {
+                        Some(ChatSegment::Message(m)) => matches!(
+                            (&m.role, &m.content),
+                            (Role::User, MessageContent::Text(_))
+                                | (Role::Assistant, MessageContent::Text(_))
+                                | (Role::Assistant, MessageContent::ToolCall { .. })
+                                | (Role::Tool, MessageContent::ToolResult { .. })
+                        ),
+                        Some(ChatSegment::Thinking { .. }) => true,
+                        _ => false,
+                    };
+                    if is_collapsible {
+                        if let Some(seg) = self.chat.segments.get(seg_idx) {
+                            let cur = self.chat.effective_expand_level(seg_idx, seg);
+                            let next = (cur + 1) % 3;
+                            self.chat.expand_level.insert(seg_idx, next);
+                        }
+                        self.build_display_from_segments();
+                        self.ui.search.update_matches(&self.chat.lines);
+                        let max_offset =
+                            (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
+                        self.chat.scroll_offset = self.chat.scroll_offset.min(max_offset);
+                        if let Some(&(seg_start, _)) = self.chat.segment_line_ranges.get(seg_idx) {
+                            if (seg_start as u16) < self.chat.scroll_offset {
+                                self.chat.scroll_offset = seg_start as u16;
+                            }
+                        }
+                        self.recompute_focused_segment();
+                    }
+                }
+            }
+
+            Action::SelectionExtend {
+                abs_line,
+                inner_col,
+                mouse_row,
+            } => {
+                let capped = abs_line.min(self.chat.lines.len().saturating_sub(1));
+                self.chat.selection_end = Some((capped, inner_col));
+                self.chat.is_selecting = true;
+
+                // Auto-scroll when the pointer is near the top / bottom edge.
+                let cp = self.layout.chat_pane;
+                let content_top = cp.y + 1;
+                let content_bottom = content_top + cp.height.saturating_sub(2);
+                const SCROLL_ZONE: u16 = 2;
+                if mouse_row < content_top + SCROLL_ZONE {
+                    self.scroll_up(1);
+                } else if mouse_row >= content_bottom.saturating_sub(SCROLL_ZONE) {
+                    self.scroll_down(1);
+                }
+            }
+
+            Action::SelectionFinish => {
+                self.copy_selection_to_clipboard();
+                // Keep anchor + end so the selection stays highlighted until
+                // the next mouse-down clears it.
+            }
+
+            Action::SelectionClear => {
+                self.chat.selection_anchor = None;
+                self.chat.selection_end = None;
+                self.chat.is_selecting = false;
+            }
+
+            Action::InputScrollUp => {
+                let w = self.layout.input_inner_width as usize;
+                if w > 0 {
+                    let in_edit = self.edit.active();
+                    let (buf, cursor) = if in_edit {
+                        (self.edit.buffer.clone(), self.edit.cursor)
+                    } else {
+                        (self.input.buffer.clone(), self.input.cursor)
+                    };
+                    let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
+                    let new_row = wrap.cursor_row.saturating_sub(1);
+                    let new_cursor = crate::input_wrap::byte_offset_at_row_col(
+                        &buf,
+                        w,
+                        new_row,
+                        wrap.cursor_col,
+                    );
+                    if in_edit {
+                        self.edit.cursor = new_cursor;
+                    } else {
+                        self.input.cursor = new_cursor;
+                    }
+                }
+            }
+
+            Action::InputScrollDown => {
+                let w = self.layout.input_inner_width as usize;
+                if w > 0 {
+                    let in_edit = self.edit.active();
+                    let (buf, cursor) = if in_edit {
+                        (self.edit.buffer.clone(), self.edit.cursor)
+                    } else {
+                        (self.input.buffer.clone(), self.input.cursor)
+                    };
+                    let wrap = crate::input_wrap::wrap_content(&buf, w, cursor);
+                    let max_row = wrap.lines.len().saturating_sub(1);
+                    let new_row = (wrap.cursor_row + 1).min(max_row);
+                    let new_cursor = crate::input_wrap::byte_offset_at_row_col(
+                        &buf,
+                        w,
+                        new_row,
+                        wrap.cursor_col,
+                    );
+                    if in_edit {
+                        self.edit.cursor = new_cursor;
+                    } else {
+                        self.input.cursor = new_cursor;
+                    }
+                }
+            }
+
+            Action::NvimScrollUp => {
+                if let Some(nvim_bridge) = &self.nvim.bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-y>").await;
+                }
+            }
+
+            Action::NvimScrollDown => {
+                if let Some(nvim_bridge) = &self.nvim.bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-e>").await;
+                }
             }
 
             _ => {}

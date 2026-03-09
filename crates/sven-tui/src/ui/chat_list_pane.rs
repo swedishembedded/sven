@@ -227,10 +227,16 @@ impl Widget for ChatListPane<'_> {
 }
 
 /// Build a `ChatListItem` slice from session manager data for rendering.
+///
+/// `active_busy` is the live busy state of the currently active session
+/// (`App::agent.busy`).  `SessionEntry::busy` for the active session can be
+/// stale (it is only flushed by `save_active_to_session_entry`), so we
+/// override it here to avoid ghost spinners.
 pub fn build_chat_list_items<'a>(
     entries: impl Iterator<Item = &'a SessionEntry>,
     active_id: &sven_input::SessionId,
     anim_frame: u8,
+    active_busy: bool,
 ) -> Vec<ChatListItem<'a>> {
     entries
         .map(|entry| {
@@ -238,7 +244,7 @@ pub fn build_chat_list_items<'a>(
             ChatListItem {
                 title: &entry.title,
                 status: entry.status,
-                busy: entry.busy,
+                busy: if is_active { active_busy } else { entry.busy },
                 is_active,
                 anim_frame,
             }
