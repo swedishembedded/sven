@@ -653,3 +653,152 @@ mod tests {
         assert!(out.is_error, "expected error for unknown handle");
     }
 }
+
+// ─── Adversarial tests ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod adversarial_tests {
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Mutex};
+
+    use sven_tools::{
+        tool::{Tool, ToolCall},
+        OutputBufferStore,
+    };
+
+    use super::{TaskTool, DEPTH_ENV, MAX_DEPTH};
+
+    // Serialize tests that mutate the SVEN_SUBAGENT_DEPTH env var to avoid
+    // race conditions when Rust runs tests in parallel async tasks.
+    // tokio::sync::Mutex can be held across .await points without deadlocking.
+    static DEPTH_ENV_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn make_task() -> TaskTool {
+        let (tx, _rx) = mpsc::channel(8);
+        let store = Arc::new(Mutex::new(OutputBufferStore::new()));
+        TaskTool::new(store, tx, None)
+    }
+
+    fn call(args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "adv".into(),
+            name: "task".into(),
+            args,
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_missing_prompt_is_error() {
+        let t = make_task();
+        let out = t.execute(&call(json!({"action": "spawn"}))).await;
+        assert!(
+            out.is_error,
+            "missing prompt should be an error: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("prompt"),
+            "error should name missing field"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_null_prompt_is_error() {
+        let t = make_task();
+        let out = t.execute(&call(json!({"prompt": null}))).await;
+        assert!(
+            out.is_error,
+            "null prompt should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_integer_prompt_is_error() {
+        let t = make_task();
+        let out = t.execute(&call(json!({"prompt": 42}))).await;
+        assert!(
+            out.is_error,
+            "integer prompt should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_blocked_at_max_depth() {
+        let _guard = DEPTH_ENV_MUTEX.lock().await;
+        // Simulate being at the maximum allowed depth.
+        std::env::set_var(DEPTH_ENV, MAX_DEPTH.to_string());
+        let t = make_task();
+        let out = t.execute(&call(json!({"prompt": "do something"}))).await;
+        std::env::remove_var(DEPTH_ENV);
+        assert!(
+            out.is_error,
+            "spawn should be blocked at max depth: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("depth") || out.content.contains("maximum"),
+            "error should mention depth: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_blocked_beyond_max_depth() {
+        let _guard = DEPTH_ENV_MUTEX.lock().await;
+        let beyond = MAX_DEPTH + 5;
+        std::env::set_var(DEPTH_ENV, beyond.to_string());
+        let t = make_task();
+        let out = t.execute(&call(json!({"prompt": "do something"}))).await;
+        std::env::remove_var(DEPTH_ENV);
+        assert!(
+            out.is_error,
+            "spawn should be blocked beyond max depth: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_action_falls_through_to_spawn() {
+        let _guard = DEPTH_ENV_MUTEX.lock().await;
+        // An unknown action value defaults to "spawn" behavior.
+        std::env::set_var(DEPTH_ENV, MAX_DEPTH.to_string());
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "totally_unknown", "prompt": "x"})))
+            .await;
+        std::env::remove_var(DEPTH_ENV);
+        // At max depth the spawn attempt will be blocked with an error.
+        assert!(out.is_error);
+    }
+
+    #[tokio::test]
+    async fn status_with_empty_string_handle_is_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "status", "handle": ""})))
+            .await;
+        assert!(
+            out.is_error,
+            "empty handle should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn read_with_inverted_line_range_does_not_panic() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({
+                "action": "read",
+                "handle": "buf_0001",
+                "start_line": 9999,
+                "end_line": 1
+            })))
+            .await;
+        // Inverted range on a nonexistent handle must not panic.
+        let _ = out.is_error;
+    }
+}

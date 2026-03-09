@@ -1172,7 +1172,7 @@ impl Tool for ReadTeammateLogTool {
             },
             None => (
                 None,
-                format!("not found in team roster — check spelling or use list_team"),
+                "not found in team roster — check spelling or use list_team".to_string(),
             ),
         };
         drop(guard);

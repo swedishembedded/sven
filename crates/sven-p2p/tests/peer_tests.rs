@@ -78,17 +78,14 @@ async fn spawn_relay(
         let mut addr_tx = Some(addr_tx);
         loop {
             tokio::select! {
-                ev = swarm.select_next_some() => match ev {
-                    SwarmEvent::NewListenAddr { address, .. } => {
-                        let full = address.with(Protocol::P2p(local_pid.into()));
-                        swarm.add_external_address(full.clone());
-                        let _ = disc_clone.publish_relay_addrs(&[full.clone()]);
-                        if !sent_addr {
-                            if let Some(tx) = addr_tx.take() { let _ = tx.send(full); }
-                            sent_addr = true;
-                        }
+                ev = swarm.select_next_some() => if let SwarmEvent::NewListenAddr { address, .. } = ev {
+                    let full = address.with(Protocol::P2p(local_pid));
+                    swarm.add_external_address(full.clone());
+                    let _ = disc_clone.publish_relay_addrs(&[full.clone()]);
+                    if !sent_addr {
+                        if let Some(tx) = addr_tx.take() { let _ = tx.send(full); }
+                        sent_addr = true;
                     }
-                    _ => {}
                 },
                 _ = tokio::signal::ctrl_c() => break,
             }

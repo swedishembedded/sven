@@ -237,6 +237,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn null_path_is_error() {
+        let t = WriteTool;
+        let out = t.execute(&call(json!({"path": null, "text": "x"}))).await;
+        assert!(out.is_error, "null path should be an error");
+    }
+
+    #[tokio::test]
+    async fn integer_path_is_error() {
+        let t = WriteTool;
+        let out = t.execute(&call(json!({"path": 42, "text": "x"}))).await;
+        assert!(out.is_error, "integer path should be an error");
+    }
+
+    #[tokio::test]
+    async fn path_traversal_does_not_crash() {
+        let t = WriteTool;
+        // The tool should either write to the traversed path or error cleanly,
+        // but must not panic.
+        let out = t
+            .execute(&call(json!({
+                "path": "/tmp/sven_adv_traversal/../../tmp/sven_adv_out.txt",
+                "text": "traversal"
+            })))
+            .await;
+        let _ = out.is_error;
+        let _ = std::fs::remove_file("/tmp/sven_adv_out.txt");
+    }
+
+    #[tokio::test]
+    async fn extremely_large_content_does_not_panic() {
+        let path = format!("/tmp/sven_adv_large_write_{}.txt", std::process::id());
+        let t = WriteTool;
+        let large_text = "x".repeat(10_000_000);
+        let out = t
+            .execute(&call(json!({"path": path, "text": large_text})))
+            .await;
+        let _ = out.is_error;
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
     async fn write_preserves_unicode_content() {
         let path = tmp_path();
         let t = WriteTool;

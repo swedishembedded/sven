@@ -292,4 +292,89 @@ mod tests {
         let p = ToolPolicy::from_config(&ToolsConfig::default());
         assert_eq!(p.decide("cargo build"), ApprovalPolicy::Ask);
     }
+
+    // ── Adversarial policy inputs ─────────────────────────────────────────────
+
+    #[test]
+    fn adversarial_glob_with_invalid_regex_char_does_not_panic() {
+        // `*[` is not a valid regex after glob-to-regex expansion.
+        // glob_to_regex should return None, and no tool should match.
+        let p = policy_with(&["*["], &[]);
+        // Must not panic; policy falls back to Ask when no valid patterns exist.
+        let _ = p.decide("any command");
+    }
+
+    #[test]
+    fn adversarial_empty_pattern_does_not_match_everything() {
+        let p = policy_with(&[""], &[]);
+        // `^$` only matches the empty string, not arbitrary commands.
+        assert_ne!(p.decide("rm -rf /"), ApprovalPolicy::Auto);
+        assert_ne!(p.decide("cat /etc/passwd"), ApprovalPolicy::Auto);
+    }
+
+    #[test]
+    fn adversarial_tab_separator_bypasses_space_glob() {
+        // Pattern `rm *` should only match `rm ` + anything with a space separator.
+        // A command using a tab instead of a space should NOT match.
+        let p = policy_with(&["rm *"], &[]);
+        let result = p.decide("rm\t-rf /");
+        assert_ne!(
+            result,
+            ApprovalPolicy::Auto,
+            "tab should not match space glob"
+        );
+    }
+
+    #[test]
+    fn adversarial_uppercase_command_does_not_match_lowercase_pattern() {
+        let p = policy_with(&["rm"], &[]);
+        // Pattern is case-sensitive; `RM` should not match `rm`.
+        assert_ne!(p.decide("RM /tmp/foo"), ApprovalPolicy::Auto);
+    }
+
+    #[test]
+    fn adversarial_unicode_homoglyph_does_not_match_ascii_pattern() {
+        let p = policy_with(&["rm"], &[]);
+        // Cyrillic р (U+0440) looks like Latin r but is a different codepoint.
+        assert_ne!(p.decide("рm /tmp/foo"), ApprovalPolicy::Auto);
+    }
+
+    #[test]
+    fn adversarial_very_long_command_string_does_not_hang() {
+        let p = policy_with(&["cat *"], &["rm *"]);
+        let long_cmd = format!("cat {}", "A".repeat(1_000_000));
+        // Must complete without hanging (no catastrophic backtracking).
+        let _ = p.decide(&long_cmd);
+    }
+
+    #[test]
+    fn adversarial_deny_pattern_with_invalid_glob_does_not_panic() {
+        let p = policy_with(&[], &["*["]);
+        let _ = p.decide("rm -rf /");
+    }
+
+    #[test]
+    fn adversarial_role_policy_wildcard_denies_prefix() {
+        let rp = RolePolicy::new(vec!["file_*".to_string()], None);
+        assert!(rp.is_tool_denied("file_write"));
+        assert!(rp.is_tool_denied("file_read"));
+        assert!(!rp.is_tool_denied("shell"));
+    }
+
+    #[test]
+    fn adversarial_path_with_dotdot_is_denied_when_outside_root() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        // /tmp/<root>/../../etc/passwd resolves outside root
+        let outside = root.join("../../etc/passwd");
+        let rp = RolePolicy::new(Vec::new(), Some(root));
+        assert!(!rp.is_path_allowed(&outside));
+    }
+
+    #[test]
+    fn adversarial_path_allowed_with_no_fs_root() {
+        let rp = RolePolicy::default();
+        assert!(rp.is_path_allowed(Path::new("/etc/passwd")));
+        assert!(rp.is_path_allowed(Path::new("/root/.ssh/id_rsa")));
+    }
 }

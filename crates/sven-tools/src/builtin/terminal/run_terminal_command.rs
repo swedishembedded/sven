@@ -223,3 +223,153 @@ mod tests {
         assert_eq!(t.modes(), &[AgentMode::Agent]);
     }
 }
+
+#[cfg(test)]
+mod adversarial_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tool::{Tool, ToolCall};
+
+    fn call(args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "adv".into(),
+            name: "run_terminal_command".into(),
+            args,
+        }
+    }
+
+    #[tokio::test]
+    async fn null_command_value_is_error() {
+        let t = RunTerminalCommandTool::default();
+        let out = t.execute(&call(json!({"command": null}))).await;
+        assert!(
+            out.is_error,
+            "null command must be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn integer_command_value_is_error() {
+        let t = RunTerminalCommandTool::default();
+        let out = t.execute(&call(json!({"command": 42}))).await;
+        assert!(
+            out.is_error,
+            "integer command must be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_command_does_not_crash() {
+        let t = RunTerminalCommandTool::default();
+        let out = t.execute(&call(json!({"command": ""}))).await;
+        // Empty string: sh -c '' exits 0 — either success or error is acceptable
+        let _ = out;
+    }
+
+    #[tokio::test]
+    async fn very_long_command_string_does_not_crash() {
+        let t = RunTerminalCommandTool::default();
+        let long_cmd = "echo ".to_string() + &"x".repeat(100_000);
+        let out = t.execute(&call(json!({"command": long_cmd}))).await;
+        // Kernel may reject ARG_MAX-busting commands; must not panic
+        let _ = out;
+    }
+
+    #[tokio::test]
+    async fn command_with_shell_metacharacters_does_not_crash() {
+        let t = RunTerminalCommandTool::default();
+        let out = t
+            .execute(&call(json!({"command": "echo $((1+1)); echo 'done'"})))
+            .await;
+        // Metacharacters executed by sh — must not panic the Rust side
+        let _ = out;
+    }
+
+    #[tokio::test]
+    async fn command_producing_large_output_is_truncated_not_oom() {
+        let t = RunTerminalCommandTool::default();
+        // dd produces ~50 MB of 'A' bytes — must be truncated, not OOM
+        let out = t
+            .execute(&call(
+                json!({"command": "dd if=/dev/zero bs=1M count=50 2>/dev/null | tr '\\0' 'A'"}),
+            ))
+            .await;
+        // Must complete without OOM; content should be significantly less than 50 MB
+        assert!(
+            out.content.len() < 5_000_000,
+            "output not truncated ({}B)",
+            out.content.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn workdir_pointing_to_nonexistent_path_is_error() {
+        let t = RunTerminalCommandTool::default();
+        let out = t
+            .execute(&call(json!({
+                "command": "pwd",
+                "workdir": "/nonexistent/path/that/does/not/exist"
+            })))
+            .await;
+        assert!(
+            out.is_error,
+            "nonexistent workdir must be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn extra_unknown_fields_are_ignored() {
+        let t = RunTerminalCommandTool::default();
+        let out = t
+            .execute(&call(
+                json!({"command": "echo hi", "injected_field": "malicious_value"}),
+            ))
+            .await;
+        assert!(
+            !out.is_error,
+            "unknown fields must be ignored: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn unicode_in_command_does_not_crash() {
+        let t = RunTerminalCommandTool::default();
+        let out = t
+            .execute(&call(json!({"command": "echo '日本語テスト 🦀 \u{0000}'"})))
+            .await;
+        let _ = out;
+    }
+
+    #[tokio::test]
+    async fn newline_in_workdir_is_error() {
+        let t = RunTerminalCommandTool::default();
+        let out = t
+            .execute(&call(
+                json!({"command": "pwd", "workdir": "/tmp\nevil_path"}),
+            ))
+            .await;
+        // A newline in workdir should prevent successful execution
+        assert!(
+            out.is_error,
+            "workdir with newline should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_code_1_is_is_error() {
+        // run_terminal_command marks any non-zero exit as is_error (unlike shell tool)
+        let t = RunTerminalCommandTool::default();
+        let out = t.execute(&call(json!({"command": "false"}))).await;
+        assert!(
+            out.is_error,
+            "non-zero exit must be is_error: {}",
+            out.content
+        );
+    }
+}

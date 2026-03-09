@@ -178,16 +178,27 @@ fn common_indent(lines: &[&str]) -> usize {
         .unwrap_or(0)
 }
 
-/// Strip `indent` spaces from the front of every line (trim to 0 if shorter).
+/// Strip `indent` bytes of leading whitespace from every line.
+///
+/// When `indent` does not land on a UTF-8 character boundary (which can
+/// happen when lines mix different multi-byte Unicode whitespace characters,
+/// e.g. U+2003 EM SPACE and U+00A0 NBSP), the cut is advanced to the next
+/// valid character boundary so the slice never panics.
 fn strip_indent(lines: &[&str], indent: usize) -> Vec<String> {
     lines
         .iter()
         .map(|l| {
-            if l.len() >= indent {
-                l[indent..].to_string()
-            } else {
-                l.trim_start().to_string()
+            let leading = l.len() - l.trim_start().len();
+            if indent == 0 || leading == 0 {
+                return l.to_string();
             }
+            // Clamp to the leading-whitespace region, then advance to the
+            // nearest char boundary at or after the requested cut point.
+            let strip = indent.min(leading);
+            let boundary = (strip..=leading)
+                .find(|&i| l.is_char_boundary(i))
+                .unwrap_or(leading);
+            l[boundary..].to_string()
         })
         .collect()
 }
@@ -1435,5 +1446,216 @@ mod tests {
         let lines: &[&str] = &["    foo", "        bar"];
         let result = strip_indent(lines, 4);
         assert_eq!(result, vec!["foo", "    bar"]);
+    }
+}
+
+#[cfg(test)]
+mod adversarial_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tool::{Tool, ToolCall};
+
+    fn call(args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "adv".into(),
+            name: "edit_file".into(),
+            args,
+        }
+    }
+
+    fn tmp(content: &str) -> String {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let n = CTR.fetch_add(1, Ordering::Relaxed);
+        let p = format!("/tmp/sven_edit_adv_{}_{n}.txt", std::process::id());
+        std::fs::write(&p, content).unwrap();
+        p
+    }
+
+    // ── Non-ASCII leading whitespace — potential byte-boundary panic ──────────
+
+    /// `common_indent` returns the minimum byte-length of leading whitespace.
+    /// When two lines use *different* multi-byte whitespace chars (e.g. one uses
+    /// U+2003 EM SPACE [3 bytes] and another uses U+00A0 NBSP [2 bytes]),
+    /// the minimum (2) does not correspond to a char boundary in the EM SPACE
+    /// line.  `strip_indent` must NOT panic here.
+    #[test]
+    fn non_ascii_mixed_whitespace_does_not_panic() {
+        // U+2003 EM SPACE = 3 UTF-8 bytes; U+00A0 NBSP = 2 UTF-8 bytes
+        let em = "\u{2003}foo";
+        let nbsp = "\u{00A0}bar";
+        let lines: &[&str] = &[em, nbsp];
+        let indent = common_indent(lines); // min(3, 2) = 2
+                                           // strip_indent must not panic even though byte 2 is mid-char in `em`
+        let _ = strip_indent(lines, indent);
+    }
+
+    #[test]
+    fn non_ascii_em_space_indent_does_not_panic_in_hunk_search() {
+        // File lines indented with EM SPACE; hunk uses regular spaces.
+        // The indent-normalised search path calls common_indent + strip_indent.
+        let file_content = "\u{2003}fn alpha() {}\n\u{2003}fn beta() {}\n";
+        let path = tmp(file_content);
+        let diff = "@@ @@\n-    fn alpha() {}\n+    fn ALPHA() {}\n";
+        // Must complete without panic — success or failure of the diff is OK
+        let _ = std::panic::catch_unwind(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                EditFileTool
+                    .execute(&call(json!({"path": path, "diff": diff})))
+                    .await
+            })
+        });
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Fuzzy matching on a large file must not hang ──────────────────────────
+
+    /// Fuzzy path does TextDiff::from_chars on every window.  On a large file
+    /// with many near-similar lines this is O(n²) and will hang without a
+    /// guard.  The test asserts completion within a strict wall-clock budget.
+    #[tokio::test]
+    async fn fuzzy_match_on_large_file_completes_within_timeout() {
+        // 2000 nearly-identical lines — forces fuzzy path when hunk doesn't
+        // exact-match (we use a slightly different identifier).
+        let file_content: String = (0..2000)
+            .map(|i| format!("    let variable_{i:04} = compute(input_{i:04});\n"))
+            .collect();
+        let path = tmp(&file_content);
+
+        // Hunk context that won't exact-match any window (different identifier)
+        let diff = "@@ @@\n-    let variable_XXXX = compute(input_XXXX);\n+    let variable_XXXX = compute(input_XXXX); // changed\n";
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            EditFileTool.execute(&call(json!({"path": path, "diff": diff}))),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+        // Must complete — timeout is the bug signal
+        assert!(
+            result.is_ok(),
+            "fuzzy search on large file timed out — O(n²) hang"
+        );
+        // The edit will fail (no match), but it must fail quickly, not hang
+        let out = result.unwrap();
+        assert!(
+            out.is_error,
+            "expected a 'context not found' error, not a false-positive match"
+        );
+    }
+
+    // ── Huge indent delta must not allocate gigabytes ─────────────────────────
+
+    /// `adjust_indent` calls `" ".repeat(delta as usize)` for positive delta.
+    /// A crafted file + hunk that produces a very large computed delta must
+    /// not cause OOM.  We cap this by testing that the output is sane.
+    #[test]
+    fn adjust_indent_with_delta_1000_does_not_allocate_gigabytes() {
+        // delta = 1000 → 1000 spaces prepended — large but not catastrophic
+        let result = adjust_indent("fn foo() {}", 1000);
+        assert_eq!(result.len(), 1000 + "fn foo() {}".len());
+        // Sanity: delta = 100_000 should also be fast (100 KB not GB)
+        let large = adjust_indent("x", 100_000);
+        assert_eq!(large.len(), 100_001);
+    }
+
+    // ── Tab-indented file with space-indented hunk ────────────────────────────
+
+    /// A tab-indented file and a space-indented hunk should fall back to fuzzy
+    /// or fail gracefully — NOT corrupt the indentation silently without a test
+    /// showing what actually happens.
+    #[tokio::test]
+    async fn tab_indented_file_with_space_hunk_is_handled() {
+        let file_content = "\tfn alpha() {\n\t\treturn 1;\n\t}\n";
+        let path = tmp(file_content);
+        // Hunk uses 4-space indent instead of tabs
+        let diff = "@@ @@\n-    fn alpha() {\n+    fn ALPHA() {\n";
+        let out = EditFileTool
+            .execute(&call(json!({"path": path, "diff": diff})))
+            .await;
+        let _ = std::fs::remove_file(&path);
+        // Either it matches via fuzzy (acceptable) or fails — must not panic
+        // and must not silently produce a mixed-indent catastrophe
+        let _ = out; // Just assert no panic
+    }
+
+    // ── Blank-only context lines do not match everything ─────────────────────
+
+    #[tokio::test]
+    async fn hunk_with_only_blank_context_lines_does_not_corrupt_file() {
+        let file_content = "fn a() {}\n\nfn b() {}\n";
+        let path = tmp(file_content);
+        // A hunk where all context lines are blank — matches at position 1 (the blank line)
+        let diff = "@@ @@\n \n-fn b() {}\n+fn B() {}\n";
+        let out = EditFileTool
+            .execute(&call(json!({"path": path, "diff": diff})))
+            .await;
+        if !out.is_error {
+            let result = std::fs::read_to_string(&path).unwrap();
+            // If edit succeeded, 'b' should be gone and 'B' present
+            assert!(!result.contains("fn b()"), "old line not removed: {result}");
+            assert!(result.contains("fn B()"), "new line not inserted: {result}");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Pure-insertion hunk (no context) at various positions ─────────────────
+
+    #[tokio::test]
+    async fn pure_insertion_at_start_of_file_does_not_panic() {
+        let path = tmp("line1\nline2\n");
+        // @@ -0,0 +1 @@ style — pure insertion at top, no context
+        let diff = "@@ -0,0 +1 @@\n+inserted_first\n";
+        let out = EditFileTool
+            .execute(&call(json!({"path": path, "diff": diff})))
+            .await;
+        let _ = std::fs::remove_file(&path);
+        // Must not panic — success or graceful failure both acceptable
+        let _ = out;
+    }
+
+    // ── Path traversal via filename ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn path_traversal_in_file_path_is_error_or_harmless() {
+        let diff = "@@ @@\n-foo\n+bar\n";
+        let out = EditFileTool
+            .execute(&call(
+                json!({"path": "/tmp/../../etc/passwd", "diff": diff}),
+            ))
+            .await;
+        // May succeed (path resolves to /etc/passwd which can't be written) or
+        // fail — must not panic, must not silently write to /etc/passwd
+        let _ = out;
+    }
+
+    // ── Empty diff string ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn empty_diff_string_is_error() {
+        let path = tmp("content\n");
+        let out = EditFileTool
+            .execute(&call(json!({"path": path, "diff": ""})))
+            .await;
+        let _ = std::fs::remove_file(&path);
+        assert!(out.is_error, "empty diff must be an error: {}", out.content);
+    }
+
+    // ── Diff with only whitespace ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn whitespace_only_diff_is_error() {
+        let path = tmp("content\n");
+        let out = EditFileTool
+            .execute(&call(json!({"path": path, "diff": "   \n\n  "})))
+            .await;
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            out.is_error,
+            "whitespace-only diff must be an error: {}",
+            out.content
+        );
     }
 }

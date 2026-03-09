@@ -366,4 +366,96 @@ mod tests {
     fn unquote_unquoted_is_unchanged() {
         assert_eq!(unquote("plain"), "plain");
     }
+
+    // ── Adversarial frontmatter inputs ────────────────────────────────────────
+
+    #[test]
+    fn adversarial_empty_input_does_not_panic() {
+        let (meta, rest) = parse_frontmatter("");
+        assert!(meta.is_none());
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn adversarial_only_open_delimiter_does_not_panic() {
+        let md = "---\n";
+        let (meta, rest) = parse_frontmatter(md);
+        assert!(meta.is_none());
+        assert_eq!(rest, md);
+    }
+
+    #[test]
+    fn adversarial_100_vars_all_parsed() {
+        let mut md = String::from("---\nvars:\n");
+        for i in 0..100 {
+            md.push_str(&format!("  key_{i}: value_{i}\n"));
+        }
+        md.push_str("---\n## Step\ngo.");
+        let (meta, _) = parse_frontmatter(&md);
+        let vars = meta.expect("should parse").vars.expect("should have vars");
+        assert_eq!(vars.len(), 100);
+    }
+
+    #[test]
+    fn adversarial_very_long_value_does_not_panic() {
+        let long_val = "x".repeat(1_000_000);
+        let md = format!("---\ntitle: {long_val}\n---\n## s\ngo.");
+        let (meta, _) = parse_frontmatter(&md);
+        let title = meta.expect("should parse").title.expect("title present");
+        assert_eq!(title.len(), 1_000_000);
+    }
+
+    #[test]
+    fn adversarial_frontmatter_with_unicode_keys_does_not_panic() {
+        let md = "---\ntitle: 日本語のタイトル\nvars:\n  キー: 値\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        // Unicode keys in vars are allowed; result is parsed without panic.
+        let _ = meta;
+    }
+
+    #[test]
+    fn adversarial_duplicate_vars_keys_last_one_wins() {
+        let md = "---\nvars:\n  key: first\n  key: second\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let vars = meta.expect("parsed").vars.expect("has vars");
+        // HashMap insertion: last write wins.
+        assert_eq!(vars.get("key").map(String::as_str), Some("second"));
+    }
+
+    #[test]
+    fn adversarial_mixed_crlf_and_lf_frontmatter() {
+        let md = "---\r\ntitle: Mixed\r\n---\r\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        // CRLF-terminated frontmatter should be parsed.
+        let m = meta.expect("CRLF frontmatter should parse");
+        assert_eq!(m.title.as_deref(), Some("Mixed"));
+    }
+
+    #[test]
+    fn adversarial_frontmatter_with_null_bytes_does_not_panic() {
+        // Rust strings cannot contain interior NUL via string literals,
+        // but the parser may encounter them in practice via file reads.
+        // Build a string that contains the Unicode replacement char instead.
+        let md = "---\ntitle: hello\u{FFFD}world\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        let _ = meta;
+    }
+
+    #[test]
+    fn adversarial_10000_heading_markdown_body_does_not_panic() {
+        let headings: String = (0..10_000).map(|i| format!("## Heading {i}\n")).collect();
+        let md = format!("---\ntitle: Many Headings\n---\n{headings}");
+        let (meta, body) = parse_frontmatter(&md);
+        assert!(meta.is_some());
+        assert!(!body.is_empty());
+    }
+
+    #[test]
+    fn adversarial_value_with_colon_is_parsed_correctly() {
+        let md = "---\ntitle: key: not a nested key\n---\n## s\ngo.";
+        let (meta, _) = parse_frontmatter(md);
+        // split_kv splits on the FIRST colon; the rest is the value.
+        let m = meta.expect("parsed");
+        assert_eq!(m.title.as_deref(), Some("key: not a nested key"));
+    }
 }

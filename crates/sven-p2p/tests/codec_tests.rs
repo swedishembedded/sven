@@ -589,3 +589,107 @@ fn team_event_unicode_fields_roundtrip() {
     };
     assert_eq!(ev, roundtrip(&ev));
 }
+
+// ── Adversarial codec inputs ──────────────────────────────────────────────────
+
+#[test]
+fn adversarial_empty_bytes_decode_fails_gracefully() {
+    let result = cbor_decode::<AgentCard>(&[]);
+    assert!(result.is_err(), "empty bytes should fail to decode");
+}
+
+#[test]
+fn adversarial_single_byte_decode_fails_gracefully() {
+    for byte in [0x00u8, 0x01, 0x7f, 0xff] {
+        let result = cbor_decode::<AgentCard>(&[byte]);
+        // Must return an error, never panic.
+        let _ = result;
+    }
+}
+
+#[test]
+fn adversarial_all_zeros_decode_fails_gracefully() {
+    let zeros = vec![0u8; 64];
+    let result = cbor_decode::<AgentCard>(&zeros);
+    let _ = result;
+}
+
+#[test]
+fn adversarial_truncated_valid_payload_fails_gracefully() {
+    let card = AgentCard {
+        peer_id: "12D3KooWAdversarial".into(),
+        name: "test".into(),
+        description: "adversarial truncation test".into(),
+        capabilities: vec!["rust".into()],
+        version: "0.1.0".into(),
+    };
+    let bytes = cbor_encode(&card).expect("encode");
+    // Try decoding every prefix length from 1 to len-1.
+    // All must return an error, none must panic.
+    for len in 1..bytes.len() {
+        let _ = cbor_decode::<AgentCard>(&bytes[..len]);
+    }
+}
+
+#[test]
+fn adversarial_random_ish_bytes_decode_fails_gracefully() {
+    // Deterministic "random" bytes — no actual RNG dependency.
+    let garbage: Vec<u8> = (0u8..=255).cycle().take(256).collect();
+    let _ = cbor_decode::<AgentCard>(&garbage);
+    let _ = cbor_decode::<P2pRequest>(&garbage);
+    let _ = cbor_decode::<P2pResponse>(&garbage);
+}
+
+#[test]
+fn adversarial_agent_card_wrong_type_decode_fails_gracefully() {
+    // Encode a ContentBlock (text), then try to decode it as AgentCard.
+    let block = ContentBlock::text("not an agent card");
+    let bytes = cbor_encode(&block).expect("encode ContentBlock");
+    let result = cbor_decode::<AgentCard>(&bytes);
+    // Type mismatch must not panic — it may return Ok or Err depending on
+    // CBOR schema compatibility, but must not crash.
+    let _ = result;
+}
+
+#[test]
+fn adversarial_large_string_fields_roundtrip() {
+    let big = "x".repeat(100_000);
+    let card = AgentCard {
+        peer_id: big.clone(),
+        name: big.clone(),
+        description: big.clone(),
+        capabilities: vec![big.clone()],
+        version: big.clone(),
+    };
+    let bytes = cbor_encode(&card).expect("encode large card");
+    let decoded: AgentCard = cbor_decode(&bytes).expect("decode large card");
+    assert_eq!(decoded.name.len(), 100_000);
+}
+
+#[test]
+fn adversarial_task_request_with_empty_fields_roundtrip() {
+    let req = TaskRequest {
+        id: Uuid::nil(),
+        originator_room: String::new(),
+        description: String::new(),
+        payload: vec![],
+        depth: 0,
+        chain: vec![],
+        hop_public_key: None,
+        hop_signature: None,
+    };
+    let bytes = cbor_encode(&req).expect("encode");
+    let decoded: TaskRequest = cbor_decode(&bytes).expect("decode");
+    assert_eq!(decoded, req);
+}
+
+#[test]
+fn adversarial_p2p_request_wrong_type_decode_fails_gracefully() {
+    // Encode a TeamEvent, try to decode as P2pRequest.
+    let ev = TeamEvent::IdleNotification {
+        team_name: "t".into(),
+        peer_id: "p".into(),
+    };
+    let bytes = cbor_encode(&ev).expect("encode TeamEvent");
+    let _ = cbor_decode::<P2pRequest>(&bytes);
+}

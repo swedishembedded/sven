@@ -394,3 +394,149 @@ mod tests {
         assert!(required.iter().any(|v| v.as_str() == Some("shell_command")));
     }
 }
+
+// ─── Adversarial tests ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod adversarial_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tool::{Tool, ToolCall};
+
+    fn call(args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "adv".into(),
+            name: "shell".into(),
+            args,
+        }
+    }
+
+    #[tokio::test]
+    async fn null_command_value_is_error() {
+        let t = ShellTool::default();
+        let out = t.execute(&call(json!({"shell_command": null}))).await;
+        assert!(
+            out.is_error,
+            "null command should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn integer_command_value_is_error() {
+        let t = ShellTool::default();
+        let out = t.execute(&call(json!({"shell_command": 42}))).await;
+        assert!(
+            out.is_error,
+            "integer command should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_command_does_not_crash() {
+        let t = ShellTool::default();
+        let out = t.execute(&call(json!({"shell_command": ""}))).await;
+        // Must return without panicking; is_error is acceptable
+        let _ = out.is_error;
+    }
+
+    #[tokio::test]
+    async fn very_long_command_string_does_not_crash() {
+        let t = ShellTool { timeout_secs: 5 };
+        let long_cmd = format!("echo {}", "A".repeat(1_000_000));
+        let out = t.execute(&call(json!({"shell_command": long_cmd}))).await;
+        // Must complete without panic; output may be truncated
+        let _ = out.is_error;
+    }
+
+    #[tokio::test]
+    async fn command_with_shell_metacharacters_does_not_crash() {
+        let t = ShellTool { timeout_secs: 5 };
+        // The shell_command runs under sh -c; these special chars must not cause
+        // a panic in the Rust layer even if sh reports an error.
+        let out = t
+            .execute(&call(
+                json!({"shell_command": "echo 'single;quotes && ok'"}),
+            ))
+            .await;
+        let _ = out.is_error;
+    }
+
+    #[tokio::test]
+    async fn command_producing_large_output_is_truncated_not_oom() {
+        let t = ShellTool { timeout_secs: 10 };
+        // Generate ~500 KB of output; the truncation logic must keep memory bounded.
+        let out = t
+            .execute(&call(json!({"shell_command": "yes | head -c 512000"})))
+            .await;
+        assert!(
+            out.content.len() <= OUTPUT_LIMIT_BYTES * 4,
+            "output grew beyond expected bound: {} bytes",
+            out.content.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn workdir_pointing_to_nonexistent_path_is_error() {
+        let t = ShellTool::default();
+        let out = t
+            .execute(&call(json!({
+                "shell_command": "pwd",
+                "workdir": "/tmp/sven_adversarial_nonexistent_dir_xyz"
+            })))
+            .await;
+        assert!(
+            out.is_error,
+            "nonexistent workdir should be an error: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn extra_unknown_fields_are_ignored() {
+        let t = ShellTool::default();
+        let out = t
+            .execute(&call(json!({
+                "shell_command": "echo ok",
+                "totally_unknown_field": "value",
+                "another_unknown": 999
+            })))
+            .await;
+        assert!(
+            !out.is_error,
+            "unknown extra fields should not cause failure: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn unicode_in_command_does_not_crash() {
+        let t = ShellTool::default();
+        // RTL override, zero-width joiner, multi-byte sequences
+        let out = t
+            .execute(&call(
+                json!({"shell_command": "echo '日本語 \u{202E}RTL\u{200D}ZWJ'"}),
+            ))
+            .await;
+        let _ = out.is_error;
+    }
+
+    #[tokio::test]
+    async fn newline_in_workdir_is_error() {
+        let t = ShellTool::default();
+        let out = t
+            .execute(&call(json!({
+                "shell_command": "pwd",
+                "workdir": "/tmp/line1\nline2"
+            })))
+            .await;
+        // Paths containing newlines are not valid directory names on Linux.
+        assert!(
+            out.is_error,
+            "newline in workdir should be an error: {}",
+            out.content
+        );
+    }
+}

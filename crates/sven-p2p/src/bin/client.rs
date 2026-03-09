@@ -637,7 +637,7 @@ fn draw_ui(
         .map(|line| match line {
             ChatLine::Message { from, body } => ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{from}"),
+                    from.to_string(),
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),

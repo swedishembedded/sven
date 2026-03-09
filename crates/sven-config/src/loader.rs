@@ -645,4 +645,97 @@ model:
         // Should not produce any warnings — just verifying no panic.
         validate_unknown_fields(&yaml, "");
     }
+
+    // ── Adversarial config inputs ─────────────────────────────────────────────
+
+    #[test]
+    fn adversarial_empty_yaml_file_returns_valid_config() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "").unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert!(
+            !cfg.model.provider.is_empty(),
+            "empty config should return defaults"
+        );
+    }
+
+    #[test]
+    fn adversarial_yaml_with_only_separator_returns_valid_config() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "---").unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert!(!cfg.model.provider.is_empty());
+    }
+
+    #[test]
+    fn adversarial_type_mismatch_in_model_field_falls_back_gracefully() {
+        use std::io::Write;
+        // model should be a mapping, but here we provide a list.
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "model:\n  - foo\n  - bar").unwrap();
+        // Should not panic; falls back to defaults via unwrap_or_default.
+        let result = load(Some(f.path()));
+        let _ = result;
+    }
+
+    #[test]
+    fn adversarial_deeply_nested_yaml_does_not_stack_overflow() {
+        use std::io::Write;
+        // Build deeply nested YAML: {a: {a: {a: ...}}}
+        let nested: String = "a:\n".to_string() + &"  ".repeat(200).repeat(200);
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{}", nested).unwrap();
+        // Must not stack overflow; result may be error or default config.
+        let _ = load(Some(f.path()));
+    }
+
+    #[test]
+    fn adversarial_env_expansion_of_undefined_var_produces_empty_string() {
+        std::env::remove_var("SVEN_ADV_TOTALLY_NONEXISTENT_XYZZY");
+        let result = expand_env_vars("key: ${SVEN_ADV_TOTALLY_NONEXISTENT_XYZZY}", "test");
+        assert_eq!(result, "key: ");
+    }
+
+    #[test]
+    fn adversarial_env_expansion_value_containing_var_ref_does_not_produce_deep_value() {
+        // OUTER_VAR is set to the string "${SVEN_ADV_INNER_VAR}" (a literal var-ref).
+        // INNER_VAR is also set to "inner_value".
+        // expand_env_vars must NOT recursively substitute the inner reference;
+        // "inner_value" must never appear in the output.
+        std::env::set_var("SVEN_ADV_OUTER_VAR2", "${SVEN_ADV_INNER_VAR2}");
+        std::env::set_var("SVEN_ADV_INNER_VAR2", "inner_value");
+        let result = expand_env_vars("key: ${SVEN_ADV_OUTER_VAR2}", "test");
+        // Round 1 expands OUTER → literal text "${SVEN_ADV_INNER_VAR2}".
+        // Round 2 sees a remaining ${...} reference (treated as unset) → substitutes "".
+        // Either way, "inner_value" must not appear.
+        assert!(
+            !result.contains("inner_value"),
+            "deep expansion must not occur; result was: {result:?}"
+        );
+        std::env::remove_var("SVEN_ADV_OUTER_VAR2");
+        std::env::remove_var("SVEN_ADV_INNER_VAR2");
+    }
+
+    #[test]
+    fn adversarial_all_unknown_top_level_keys_does_not_panic() {
+        let yaml = val("totally_made_up_key: 42\nanother_fake: true\n");
+        validate_unknown_fields(&yaml, "");
+    }
+
+    #[test]
+    fn adversarial_large_number_of_providers_does_not_panic() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "providers:").unwrap();
+        for i in 0..100 {
+            writeln!(
+                f,
+                "  provider_{i}:\n    name: openai\n    base_url: http://localhost:{i}"
+            )
+            .unwrap();
+        }
+        let _ = load(Some(f.path()));
+    }
 }
