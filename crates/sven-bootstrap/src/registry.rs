@@ -6,6 +6,16 @@
 //! All callers (CI runner, conversation runner, TUI, sub-agents) use
 //! `build_tool_registry` with the appropriate [`ToolSetProfile`] instead of
 //! each inlining their own registration loop.
+//!
+//! ## Tool consolidation
+//!
+//! The registry now exposes 14-15 high-quality compound tools instead of 42
+//! individual tools. This reduces the model's decision surface, cuts input
+//! token cost, and keeps the Anthropic prefix-cache stable across turns.
+//!
+//! Individual tools (`gdb_start_server`, `buf_read`, etc.) are preserved as
+//! Rust types for testing and internal use but are no longer registered as
+//! separate entries in the tool registry.
 
 use std::sync::Arc;
 
@@ -16,42 +26,28 @@ use sven_model::ModelProvider;
 use sven_runtime::Shared;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, BufGrepTool, BufReadTool, BufStatusTool, ContextGrepTool, ContextOpenTool,
-    ContextReadTool, ContextStore, DeleteFileTool, EditFileTool, FindFileTool, GdbCommandTool,
-    GdbConnectTool, GdbInterruptTool, GdbSessionState, GdbStartServerTool, GdbStatusTool,
-    GdbStopTool, GdbWaitStoppedTool, GrepTool, ListDirTool, ListKnowledgeTool, LoadSkillTool,
-    OutputBufferStore, ReadFileTool, ReadImageTool, ReadLintsTool, RunTerminalCommandTool,
-    SearchCodebaseTool, SearchKnowledgeTool, ShellTool, SwitchModeTool, TodoWriteTool,
-    ToolRegistry, UpdateMemoryTool, WebFetchTool, WebSearchTool, WriteTool,
+    AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GdbSessionState, GrepTool,
+    LoadSkillTool, MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
+    TodoWriteTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
 
 use crate::context::ToolSetProfile;
-use crate::context_query::build_context_query_tools;
+use crate::context_tool::ContextTool;
 use crate::task_tool::TaskTool;
+use crate::GdbTool;
 
 /// Build a [`ToolRegistry`] populated according to the given `profile`.
 ///
-/// This is the single canonical place where tools are wired up.  Adding a
-/// new tool to sven means adding it here once and it will appear in every
-/// appropriate profile automatically.
+/// This is the single canonical place where tools are wired up.
 ///
 /// ### Shared-state parameters
 ///
-/// * `mode_lock` — the **same** `Arc` that will be passed to `Agent::new()`.
-///   `SwitchModeTool` holds a clone so that mode changes are immediately
-///   visible to the agent loop via `drain_tool_events`.
-/// * `tool_event_tx` — the sending half of the channel whose receiving end
-///   is passed to `Agent::new()`.  `TodoWriteTool` and `SwitchModeTool` send
-///   events here; the agent drains them after each tool execution.
-/// * `sub_agent_runtime` — inherited by `TaskTool` sub-agents (project root,
-///   CI/git notes, AGENTS.md).  Only used for the `Full` profile; pass
-///   `AgentRuntimeContext::default()` otherwise.
-/// * `buffer_store` — shared [`OutputBufferStore`] for `task`, `buf_read`,
-///   `buf_grep`, `buf_status`.  Create once per session with
-///   `Arc::new(Mutex::new(OutputBufferStore::new()))` and pass the same
-///   instance to both this function and any code that needs to inspect buffers.
+/// * `mode_lock` — unused after removing `SwitchModeTool`; kept for API compatibility.
+/// * `tool_event_tx` — the sending half of the channel whose receiving end is
+///   passed to `Agent::new()`. `TodoWriteTool` sends events here.
+/// * `buffer_store` — shared [`OutputBufferStore`] for the extended `task` tool.
 pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
@@ -61,89 +57,185 @@ pub fn build_tool_registry(
     sub_agent_runtime: AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> ToolRegistry {
+    // mode_lock is no longer forwarded to a tool (SwitchModeTool removed).
+    // Accepted for API compatibility with existing callers.
+    let _ = mode_lock;
+
     match profile {
-        ToolSetProfile::Full { question_tx, todos } => {
-            let mut reg = ToolRegistry::new();
-
-            register_base_tools(
-                &mut reg,
-                cfg,
-                model.clone(),
-                mode_lock,
-                tool_event_tx.clone(),
-                &sub_agent_runtime,
-                Arc::clone(&buffer_store),
-            );
-
-            // Only register ask_question when a TUI channel is available.
-            // In headless/CI/sub-agent mode there is no UI to display the modal,
-            // so we omit the tool entirely — the model won't attempt to call it.
-            if let Some(tx) = question_tx {
-                reg.register(AskQuestionTool::new_tui(tx));
-            }
-            reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
-
-            // TaskTool allows spawning local sub-agents.  Omitted from SubAgent
-            // profile to prevent unbounded subprocess nesting.
-            reg.register(TaskTool::new(
-                Arc::clone(&buffer_store),
-                tool_event_tx,
-                Some(format!("{}/{}", cfg.model.provider, cfg.model.name)),
-            ));
-
-            reg
+        ToolSetProfile::Full { question_tx, todos } => build_profile_full(FullProfileParams {
+            cfg,
+            model,
+            question_tx,
+            todos,
+            tool_event_tx,
+            runtime: &sub_agent_runtime,
+            buffer_store,
+            include_gdb_context: true,
+        }),
+        ToolSetProfile::Coding { question_tx, todos } => build_profile_full(FullProfileParams {
+            cfg,
+            model,
+            question_tx,
+            todos,
+            tool_event_tx,
+            runtime: &sub_agent_runtime,
+            buffer_store,
+            include_gdb_context: false,
+        }),
+        ToolSetProfile::Research { question_tx, todos } => {
+            build_profile_research(cfg, question_tx, todos, tool_event_tx, &sub_agent_runtime)
         }
-
-        ToolSetProfile::SubAgent { todos } => {
-            let mut reg = ToolRegistry::new();
-
-            register_base_tools(
-                &mut reg,
-                cfg,
-                model,
-                mode_lock,
-                tool_event_tx.clone(),
-                &sub_agent_runtime,
-                buffer_store,
-            );
-
-            // ask_question is intentionally omitted: sub-agents run headless
-            // and have no UI channel to display the modal.
-            // TaskTool is intentionally omitted to limit sub-agent nesting.
-            reg.register(TodoWriteTool::new(todos, tool_event_tx));
-
-            reg
-        }
+        ToolSetProfile::SubAgent { todos } => build_profile_subagent(
+            cfg,
+            model,
+            todos,
+            tool_event_tx,
+            &sub_agent_runtime,
+            buffer_store,
+        ),
     }
 }
 
-/// Register the tool set shared by every agent profile (Full and SubAgent).
+/// Parameters shared by the Full and Coding profile builders.
+struct FullProfileParams<'a> {
+    cfg: &'a Config,
+    model: Arc<dyn ModelProvider>,
+    question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    todos: Arc<Mutex<Vec<TodoItem>>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    runtime: &'a AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+    include_gdb_context: bool,
+}
+
+/// Full and Coding profiles share the same builder; `include_gdb_context`
+/// controls whether GDB and context tools are included.
+fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+
+    register_base_tools(
+        &mut reg,
+        p.cfg,
+        p.model,
+        p.tool_event_tx.clone(),
+        p.runtime,
+        Arc::clone(&p.buffer_store),
+        p.include_gdb_context,
+    );
+
+    if let Some(tx) = p.question_tx {
+        reg.register(AskQuestionTool::new_tui(tx));
+    }
+    reg.register(TodoWriteTool::new(p.todos, p.tool_event_tx.clone()));
+
+    reg.register(TaskTool::new(
+        Arc::clone(&p.buffer_store),
+        p.tool_event_tx,
+        Some(format!("{}/{}", p.cfg.model.provider, p.cfg.model.name)),
+    ));
+
+    reg
+}
+
+/// Research profile: read-only, no write tools, no task spawning.
+fn build_profile_research(
+    cfg: &Config,
+    question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    todos: Arc<Mutex<Vec<TodoItem>>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    runtime: &AgentRuntimeContext,
+) -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+
+    // Read-only file tools only.
+    reg.register(ReadFileTool);
+    reg.register(FindFileTool);
+    reg.register(GrepTool);
+    reg.register(WebFetchTool);
+    reg.register(WebSearchTool {
+        api_key: cfg.tools.web.search.api_key.clone(),
+    });
+    reg.register(MemoryTool::new(
+        cfg.tools.memory.memory_file.clone(),
+        runtime.knowledge.clone(),
+    ));
+    reg.register(LoadSkillTool::new(runtime.skills.clone()));
+
+    if let Some(tx) = question_tx {
+        reg.register(AskQuestionTool::new_tui(tx));
+    }
+    reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
+
+    // Task is included for delegation but limited to research mode.
+    let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
+    reg.register(TaskTool::new(
+        buffer_store,
+        tool_event_tx,
+        Some(format!("{}/{}", cfg.model.provider, cfg.model.name)),
+    ));
+
+    reg
+}
+
+/// SubAgent profile: Coding minus ask_question minus task.
+fn build_profile_subagent(
+    cfg: &Config,
+    model: Arc<dyn ModelProvider>,
+    todos: Arc<Mutex<Vec<TodoItem>>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    runtime: &AgentRuntimeContext,
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+) -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+
+    register_base_tools(
+        &mut reg,
+        cfg,
+        model,
+        tool_event_tx.clone(),
+        runtime,
+        buffer_store,
+        false, // No GDB/context in sub-agents
+    );
+
+    // ask_question omitted: sub-agents run headless.
+    // TaskTool omitted: prevent unbounded nesting.
+    reg.register(TodoWriteTool::new(todos, tool_event_tx));
+
+    reg
+}
+
+/// Register the lean consolidated tool set shared by agent profiles.
 ///
-/// Covers file I/O, search, web, terminal, GDB, context (RLM), skills,
-/// knowledge, and buffer read tools.  Profile-specific tools (`TaskTool`,
-/// `AskQuestionTool`, `TodoWriteTool`) are **not** registered here — the
-/// caller adds them after this call according to the profile.
+/// `include_full` controls whether the GDB and context tools are included.
+/// SubAgent uses the slimmer set (no GDB, no context) since sub-agents
+/// typically perform focused coding/research tasks.
+#[allow(clippy::too_many_arguments)]
 fn register_base_tools(
     reg: &mut ToolRegistry,
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
-    mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
+    include_full: bool,
 ) {
-    // ── File ─────────────────────────────────────────────────────────────────
+    // ── File I/O ─────────────────────────────────────────────────────────────
+    // read_file already handles images (auto-detected by extension).
     reg.register(ReadFileTool);
-    reg.register(ReadImageTool);
-    reg.register(ListDirTool);
     reg.register(FindFileTool);
     reg.register(WriteTool);
     reg.register(EditFileTool);
-    reg.register(DeleteFileTool);
 
     // ── Search ────────────────────────────────────────────────────────────────
+    // grep now supports whole_project=true (replaces search_codebase).
     reg.register(GrepTool);
-    reg.register(SearchCodebaseTool);
+
+    // ── Shell ─────────────────────────────────────────────────────────────────
+    // shell covers: run commands, delete files, list dirs, run linters.
+    reg.register(ShellTool {
+        timeout_secs: cfg.tools.timeout_secs,
+    });
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(WebFetchTool);
@@ -151,92 +243,53 @@ fn register_base_tools(
         api_key: cfg.tools.web.search.api_key.clone(),
     });
 
-    // ── System ────────────────────────────────────────────────────────────────
-    reg.register(ReadLintsTool);
-    reg.register(UpdateMemoryTool {
-        memory_file: cfg.tools.memory.memory_file.clone(),
-    });
-    reg.register(SwitchModeTool::new(mode_lock, tool_event_tx.clone()));
-    reg.register(RunTerminalCommandTool {
-        timeout_secs: cfg.tools.timeout_secs,
-    });
-    reg.register(ShellTool {
-        timeout_secs: cfg.tools.timeout_secs,
-    });
+    // ── Memory (KV + project knowledge) ──────────────────────────────────────
+    // Compound tool: set|get|delete|list|search_knowledge|list_knowledge
+    reg.register(MemoryTool::new(
+        cfg.tools.memory.memory_file.clone(),
+        runtime.knowledge.clone(),
+    ));
 
-    // ── Buffer access (shared with TaskTool) ─────────────────────────────────
-    reg.register(BufReadTool::new(Arc::clone(&buffer_store)));
-    reg.register(BufGrepTool::new(Arc::clone(&buffer_store)));
-    reg.register(BufStatusTool::new(Arc::clone(&buffer_store)));
-
-    // ── Skills and knowledge ──────────────────────────────────────────────────
+    // ── Skills ────────────────────────────────────────────────────────────────
     reg.register(LoadSkillTool::new(runtime.skills.clone()));
-    reg.register(ListKnowledgeTool {
-        knowledge: runtime.knowledge.clone(),
-    });
-    reg.register(SearchKnowledgeTool {
-        knowledge: runtime.knowledge.clone(),
-    });
 
-    // ── Context (RLM memory-mapped large-file tools) ──────────────────────────
-    let context_store = Arc::new(Mutex::new(ContextStore::new()));
-    reg.register(ContextOpenTool::new(context_store.clone()));
-    reg.register(ContextReadTool::new(context_store.clone()));
-    reg.register(ContextGrepTool::new(context_store.clone()));
-    let (ctx_query, ctx_reduce) =
-        build_context_query_tools(context_store, model, cfg, Some(tool_event_tx));
-    reg.register(ctx_query);
-    reg.register(ctx_reduce);
+    // ── Context and GDB (Full profile only) ──────────────────────────────────
+    if include_full {
+        // Compound context tool: open|read|grep|query|reduce
+        let context_store = Arc::new(Mutex::new(ContextStore::new()));
+        reg.register(ContextTool::new(
+            context_store,
+            model,
+            cfg,
+            Some(tool_event_tx),
+        ));
 
-    // ── GDB ───────────────────────────────────────────────────────────────────
-    let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-    reg.register(GdbStartServerTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbConnectTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbCommandTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbInterruptTool::new(gdb_state.clone()));
-    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-    reg.register(GdbStatusTool::new(gdb_state.clone()));
-    reg.register(GdbStopTool::new(gdb_state));
+        // Compound GDB tool: start_server|connect|command|interrupt|wait_stopped|status|stop
+        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+        reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+    } else {
+        // Suppress unused warnings for the buffer_store in SubAgent path.
+        let _ = buffer_store;
+        let _ = tool_event_tx;
+    }
 }
 
 /// Build a lightweight [`ToolRegistry`] for direct CLI invocation.
 ///
-/// This registry contains every built-in tool that can run standalone —
-/// no agent loop, no model, and no TUI channel required.
-///
-/// Tools that are excluded and why:
-/// - `task` — spawns a sub-agent, requires a model and runtime context.
-/// - `context_query` / `context_reduce` — require a model for semantic search.
-/// - `ask_question` — requires a TUI channel to display the interactive modal.
-///
-/// Tools that need channels (`todo_write`, `switch_mode`) or shared state
-/// (GDB, context store, knowledge) are given fresh, session-local instances.
-/// Side effects (writing files, executing commands) are real — the same as
-/// when the agent calls them.
+/// Contains the same consolidated tool set as the agent, minus tools that
+/// require a live model or TUI channel. Intended for `sven tool <name> <args>`
+/// direct invocation.
 pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
-    // ── File ─────────────────────────────────────────────────────────────────
+    // ── File I/O ─────────────────────────────────────────────────────────────
     reg.register(ReadFileTool);
-    reg.register(ReadImageTool);
-    reg.register(ListDirTool);
     reg.register(FindFileTool);
     reg.register(WriteTool);
     reg.register(EditFileTool);
-    reg.register(DeleteFileTool);
 
     // ── Search ────────────────────────────────────────────────────────────────
     reg.register(GrepTool);
-    reg.register(SearchCodebaseTool);
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(WebFetchTool);
@@ -245,66 +298,31 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     });
 
     // ── System ────────────────────────────────────────────────────────────────
-    reg.register(ReadLintsTool);
-    reg.register(UpdateMemoryTool {
-        memory_file: cfg.tools.memory.memory_file.clone(),
-    });
-
-    // TodoWriteTool and SwitchModeTool need channels; use throwaway senders
-    // whose receiving ends are immediately dropped.  Any events they send are
-    // discarded — the side effects (writing the todo list to shared state,
-    // changing mode) are irrelevant in a single-shot CLI invocation.
-    let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
-    let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
-    reg.register(TodoWriteTool::new(todos, event_tx.clone()));
-    let mode_lock = Arc::new(Mutex::new(AgentMode::Agent));
-    reg.register(SwitchModeTool::new(mode_lock, event_tx.clone()));
-
-    // LoadSkillTool with empty skill list (no project root available yet;
-    // callers who need skills should pass the path via `load_skill` directly).
-    reg.register(LoadSkillTool::new(Shared::empty()));
-
-    // ListKnowledge / SearchKnowledge with an empty knowledge store.
-    let knowledge = Shared::empty();
-    reg.register(ListKnowledgeTool {
-        knowledge: knowledge.clone(),
-    });
-    reg.register(SearchKnowledgeTool {
-        knowledge: knowledge.clone(),
-    });
-
-    // ── Terminal ──────────────────────────────────────────────────────────────
-    reg.register(RunTerminalCommandTool {
-        timeout_secs: cfg.tools.timeout_secs,
-    });
     reg.register(ShellTool {
         timeout_secs: cfg.tools.timeout_secs,
     });
 
-    // ── Context (memory-mapped large-file tools) ──────────────────────────────
-    let context_store = Arc::new(Mutex::new(ContextStore::new()));
-    reg.register(ContextOpenTool::new(context_store.clone()));
-    reg.register(ContextReadTool::new(context_store.clone()));
-    reg.register(ContextGrepTool::new(context_store.clone()));
+    let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
+    let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
+    reg.register(TodoWriteTool::new(todos, event_tx.clone()));
+
+    reg.register(LoadSkillTool::new(Shared::empty()));
+
+    // ── Memory ────────────────────────────────────────────────────────────────
+    let knowledge = Shared::empty();
+    reg.register(MemoryTool::new(
+        cfg.tools.memory.memory_file.clone(),
+        knowledge,
+    ));
+
+    // ── Context (no model available for query/reduce) ─────────────────────────
+    // Only open/read/grep are fully usable without a model.
+    // The compound context tool is not registered in CLI mode since query/reduce
+    // require a live model provider.
 
     // ── GDB ───────────────────────────────────────────────────────────────────
     let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-    reg.register(GdbStartServerTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbConnectTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbCommandTool::new(
-        gdb_state.clone(),
-        cfg.tools.gdb.clone(),
-    ));
-    reg.register(GdbInterruptTool::new(gdb_state.clone()));
-    reg.register(GdbWaitStoppedTool::new(gdb_state.clone()));
-    reg.register(GdbStatusTool::new(gdb_state.clone()));
-    reg.register(GdbStopTool::new(gdb_state));
+    reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
 
     reg
 }

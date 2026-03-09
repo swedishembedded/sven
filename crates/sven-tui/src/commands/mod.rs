@@ -185,11 +185,6 @@ pub fn try_dispatch(input: &str, registry: &CommandRegistry) -> Option<(String, 
     Some((cmd_name, cmd.execute(cmd_args)))
 }
 
-// ── Argument metadata ─────────────────────────────────────────────────────────
-
-/// Describes one argument expected by a slash command.
-///
-
 // ── Dispatch integration tests ────────────────────────────────────────────────
 //
 // These tests exercise the full parse → arg-build → execute pipeline through

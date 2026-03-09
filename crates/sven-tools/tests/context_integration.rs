@@ -36,6 +36,7 @@ const STORE_RS: &str = "crates/sven-tools/src/builtin/context/store.rs";
 const CONTEXT_DIR: &str = "crates/sven-tools/src/builtin/context";
 
 /// The mod.rs file in the context module: small, predictable content.
+#[allow(dead_code)]
 const MOD_RS: &str = "crates/sven-tools/src/builtin/context/mod.rs";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1116,7 +1117,7 @@ mod workflow_tests {
             .expect("could not extract line number from grep output");
 
         assert!(
-            grep_line >= 390 && grep_line <= 420,
+            (390..=420).contains(&grep_line),
             "pub fn grep should be around line 397-410, got {grep_line}"
         );
 

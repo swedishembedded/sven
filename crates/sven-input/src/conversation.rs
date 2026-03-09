@@ -1184,7 +1184,7 @@ mod tests {
 
     #[test]
     fn jsonl_parse_pending_user_at_end() {
-        let messages = vec![
+        let messages = [
             user_msg("First task"),
             sven_msg("Done."),
             user_msg("Second task"),
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[test]
     fn jsonl_parse_no_pending_when_last_is_assistant() {
-        let messages = vec![user_msg("Task"), sven_msg("Done.")];
+        let messages = [user_msg("Task"), sven_msg("Done.")];
         let jsonl = messages
             .iter()
             .map(|m| serde_json::to_string(m).unwrap())
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     fn jsonl_parse_skips_system_messages() {
-        let messages = vec![
+        let messages = [
             Message::system("You are sven."),
             user_msg("Hello"),
             sven_msg("Hi"),

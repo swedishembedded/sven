@@ -715,7 +715,7 @@ mod agent_tests {
         let mock = ScriptedMockProvider::tool_then_text(
             "ri-1",
             "read_image",
-            &format!(r#"{{"path":"{path}"}}"#),
+            format!(r#"{{"path":"{path}"}}"#),
             "I see a red pixel",
         )
         .with_vision();

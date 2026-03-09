@@ -417,7 +417,7 @@ mod tests {
 
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbStartServerTool::new(state, GdbConfig::default());
-        let cmd = format!("false"); // exits immediately — proves we didn't return early
+        let cmd = "false".to_string(); // exits immediately — proves we didn't return early
         let out = t
             .execute(&call(json!({"command": cmd, "force": true})))
             .await;

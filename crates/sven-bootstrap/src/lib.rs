@@ -15,6 +15,7 @@
 pub mod agent;
 pub mod context;
 pub mod context_query;
+pub mod context_tool;
 pub mod registry;
 pub mod task_tool;
 
@@ -23,8 +24,13 @@ pub use context::{RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
 };
+pub use context_tool::ContextTool;
 pub use registry::{build_cli_tool_registry, build_tool_registry};
 pub use task_tool::TaskTool;
+
+// Re-export compound tools from sven-tools for convenience.
+pub use sven_tools::GdbTool;
+pub use sven_tools::MemoryTool;
 
 // Re-export OutputBufferStore so frontends can access it via sven-bootstrap.
 pub use sven_tools::OutputBufferStore;

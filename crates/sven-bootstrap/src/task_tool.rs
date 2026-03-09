@@ -37,7 +37,7 @@ use sven_tools::{
     events::ToolEvent,
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    BufferSource, BufferStatus, OutputBufferStore,
+    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
 };
 
 /// Maximum subagent nesting depth (checked via `SVEN_SUBAGENT_DEPTH`).
@@ -55,6 +55,9 @@ const PROGRESS_TAIL_LINES: usize = 20;
 
 /// Spawns a full sven subprocess to execute a focused task, streams its output
 /// into a shared [`OutputBufferStore`], and returns a buffer handle immediately.
+///
+/// Also serves as the buffer inspection interface (absorbs buf_status, buf_read,
+/// buf_grep) via the `action` parameter to reduce total tool count.
 pub struct TaskTool {
     /// Shared buffer store — same instance as registered for buf_read/buf_grep/buf_status.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
@@ -86,58 +89,76 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Spawn a focused sub-agent to complete an isolated task.  The sub-agent is a full sven \
-         process running in headless mode.  This tool returns a buffer handle immediately — the \
-         sub-agent keeps running in the background.\n\n\
-         **Workflow:**\n\
-         1. Call `task` to spawn the sub-agent and get a handle (e.g. `buf_001`).\n\
-         2. Optionally call `task` again (with a different prompt) to spawn more sub-agents in parallel.\n\
-         3. Poll with `buf_status` to check progress and when the sub-agent finishes.\n\
-         4. Use `buf_grep` to locate specific sections (errors, results, identifiers).\n\
-         5. Use `buf_read` to read specific line ranges in detail.\n\n\
-         **When to use:**\n\
-         - Exploring a large unfamiliar directory or codebase area\n\
-         - Running a multi-step investigation that benefits from a clean context window\n\
+        "Spawn a focused sub-agent or inspect a running sub-agent's output.\n\
+         action: spawn (default) | status | read | grep\n\n\
+         **Spawn workflow (action=spawn or omitted):**\n\
+         1. Call `task` with prompt → get a buffer handle (e.g. buf_0001)\n\
+         2. Optionally spawn more sub-agents in parallel with different prompts\n\
+         3. Poll with `task(action=status, handle=...)` to check progress\n\
+         4. Use `task(action=grep, ...)` to locate sections in the output\n\
+         5. Use `task(action=read, ...)` to read specific line ranges\n\n\
+         **When to spawn:**\n\
+         - Exploring a large unfamiliar area or running a multi-step investigation\n\
          - Implementing a self-contained feature in a specific file/module\n\
-         - Running tests, checking build output, or analysing failures in parallel\n\n\
-         **When NOT to use:**\n\
-         - Simple tasks you can do directly with one or two tool calls\n\
-         - Tasks that require user interaction (sub-agents run headless)\n\n\
-         Sub-agents have access to all standard tools.  Maximum nesting depth is 3."
+         - Running tests, build output, or analyses in parallel\n\n\
+         Sub-agents have access to all standard tools. Maximum nesting depth is 3."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "status", "read", "grep"],
+                    "description": "spawn (default): launch sub-agent; status/read/grep: inspect existing buffer"
+                },
                 "prompt": {
                     "type": "string",
-                    "description": "Complete, self-contained task description for the sub-agent. \
-                                    Include all context the sub-agent needs — it starts with a \
-                                    fresh context window."
+                    "description": "[action=spawn] Complete, self-contained task description for the sub-agent"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Short human-readable label for this sub-agent task (shown in TUI). \
-                                    Example: 'Analyze auth module', 'Run test suite'"
+                    "description": "[action=spawn] Short human-readable label (shown in TUI)"
                 },
                 "mode": {
                     "type": "string",
                     "enum": ["research", "plan", "agent"],
-                    "description": "Operating mode for the sub-agent (default: agent)"
+                    "description": "[action=spawn] Operating mode for the sub-agent (default: agent)"
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Working directory for the sub-agent process. \
-                                    Defaults to the current working directory."
+                    "description": "[action=spawn] Working directory (defaults to current)"
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model override for the sub-agent (e.g. 'fast' for a cheaper model). \
-                                    Defaults to the same model as the parent."
+                    "description": "[action=spawn] Model override (e.g. 'fast')"
+                },
+                "handle": {
+                    "type": "string",
+                    "description": "[action=status|read|grep] Buffer handle from a previous spawn"
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "[action=read] First line to read (1-indexed)"
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "[action=read] Last line to read (inclusive)"
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "[action=grep] Regex pattern to search for in the buffer"
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "[action=grep] Lines of context before/after each match (default 2)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "[action=grep] Max matches (default 50)"
                 }
             },
-            "required": ["prompt"],
             "additionalProperties": false
         })
     }
@@ -151,6 +172,19 @@ impl Tool for TaskTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let action = call
+            .args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("spawn");
+
+        match action {
+            "status" => return self.execute_status(call).await,
+            "read" => return self.execute_read(call).await,
+            "grep" => return self.execute_grep(call).await,
+            _ => {}
+        }
+
         let prompt = match call.args.get("prompt").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'prompt'"),
@@ -401,13 +435,221 @@ impl Tool for TaskTool {
                  Handle: {handle_id}\n\
                  Description: {description}\n\
                  Status: running\n\n\
-                 Use `buf_status` to check progress, `buf_grep` to search the output, \
-                 and `buf_read` to read specific line ranges.\n\n\
+                 Use task(action=status, handle=...) to check progress,\n\
+                 task(action=grep, ...) to search output,\n\
+                 task(action=read, ...) to read specific line ranges.\n\n\
                  Raw JSON: {json_result}",
                 handle_id = handle_id,
                 description = description,
                 json_result = json_result,
             ),
         )
+    }
+}
+
+impl TaskTool {
+    async fn execute_status(&self, call: &ToolCall) -> ToolOutput {
+        let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
+            Some(h) => h.to_string(),
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    "missing required parameter 'handle' for action=status",
+                )
+            }
+        };
+        let delegate_call = ToolCall {
+            id: call.id.clone(),
+            name: "buf_status".into(),
+            args: serde_json::json!({ "handle": handle }),
+        };
+        let buf_status = BufStatusTool::new(self.buffer_store.clone());
+        buf_status.execute(&delegate_call).await
+    }
+
+    async fn execute_read(&self, call: &ToolCall) -> ToolOutput {
+        let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
+            Some(h) => h.to_string(),
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    "missing required parameter 'handle' for action=read",
+                )
+            }
+        };
+        let start_line = call
+            .args
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        let end_line = call
+            .args
+            .get("end_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50);
+        let delegate_call = ToolCall {
+            id: call.id.clone(),
+            name: "buf_read".into(),
+            args: serde_json::json!({
+                "handle": handle,
+                "start_line": start_line,
+                "end_line": end_line
+            }),
+        };
+        let buf_read = BufReadTool::new(self.buffer_store.clone());
+        buf_read.execute(&delegate_call).await
+    }
+
+    async fn execute_grep(&self, call: &ToolCall) -> ToolOutput {
+        let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
+            Some(h) => h.to_string(),
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    "missing required parameter 'handle' for action=grep",
+                )
+            }
+        };
+        let pattern = match call.args.get("pattern").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    "missing required parameter 'pattern' for action=grep",
+                )
+            }
+        };
+        let context_lines = call
+            .args
+            .get("context_lines")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2);
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50);
+        let delegate_call = ToolCall {
+            id: call.id.clone(),
+            name: "buf_grep".into(),
+            args: serde_json::json!({
+                "handle": handle,
+                "pattern": pattern,
+                "context_lines": context_lines,
+                "limit": limit
+            }),
+        };
+        let buf_grep = BufGrepTool::new(self.buffer_store.clone());
+        buf_grep.execute(&delegate_call).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Mutex};
+
+    use sven_tools::{
+        tool::{Tool, ToolCall},
+        OutputBufferStore,
+    };
+
+    use super::TaskTool;
+
+    fn make_task() -> TaskTool {
+        let (tx, _rx) = mpsc::channel(8);
+        let store = Arc::new(Mutex::new(OutputBufferStore::new()));
+        TaskTool::new(store, tx, None)
+    }
+
+    fn call(args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "t1".into(),
+            name: "task".into(),
+            args,
+        }
+    }
+
+    #[test]
+    fn name_is_task() {
+        assert_eq!(make_task().name(), "task");
+    }
+
+    #[tokio::test]
+    async fn status_action_missing_handle_is_error() {
+        let t = make_task();
+        let out = t.execute(&call(json!({"action": "status"}))).await;
+        assert!(out.is_error, "expected error, got: {}", out.content);
+        assert!(
+            out.content.contains("handle"),
+            "error should mention 'handle'"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_action_missing_handle_is_error() {
+        let t = make_task();
+        let out = t.execute(&call(json!({"action": "read"}))).await;
+        assert!(out.is_error, "expected error, got: {}", out.content);
+        assert!(
+            out.content.contains("handle"),
+            "error should mention 'handle'"
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_action_missing_handle_is_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "grep", "pattern": "foo"})))
+            .await;
+        assert!(out.is_error, "expected error, got: {}", out.content);
+        assert!(
+            out.content.contains("handle"),
+            "error should mention 'handle'"
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_action_missing_pattern_is_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "grep", "handle": "buf_0001"})))
+            .await;
+        assert!(out.is_error, "expected error, got: {}", out.content);
+        assert!(
+            out.content.contains("pattern"),
+            "error should mention 'pattern'"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_action_with_unknown_handle_returns_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "status", "handle": "buf_9999"})))
+            .await;
+        assert!(out.is_error, "expected error for unknown handle");
+    }
+
+    #[tokio::test]
+    async fn read_action_with_unknown_handle_returns_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(json!({"action": "read", "handle": "buf_9999"})))
+            .await;
+        assert!(out.is_error, "expected error for unknown handle");
+    }
+
+    #[tokio::test]
+    async fn grep_action_with_unknown_handle_returns_error() {
+        let t = make_task();
+        let out = t
+            .execute(&call(
+                json!({"action": "grep", "handle": "buf_9999", "pattern": "foo"}),
+            ))
+            .await;
+        assert!(out.is_error, "expected error for unknown handle");
     }
 }

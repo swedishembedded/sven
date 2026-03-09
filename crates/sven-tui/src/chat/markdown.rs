@@ -538,8 +538,6 @@ pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
     }
 }
 
-/// Extract the first sentence from text (up to `max_chars`), ending at `.!?` or a newline.
-
 // ── Parse helpers ─────────────────────────────────────────────────────────────
 
 /// Parse a markdown buffer back into structured `Message`s for resubmit.
@@ -1027,7 +1025,7 @@ mod tests {
 
     #[test]
     fn roundtrip_user_and_agent_messages_preserves_content() {
-        let original = vec![
+        let original = [
             Message::user("first question"),
             Message::assistant("first answer"),
             Message::user("second question"),
@@ -1048,7 +1046,7 @@ mod tests {
     fn roundtrip_conversation_with_tool_call_and_result_preserves_all_data() {
         let mut cache = HashMap::new();
         cache.insert("call1".to_string(), "read_file".to_string());
-        let original = vec![
+        let original = [
             Message::user("read the file"),
             Message {
                 role: Role::Assistant,

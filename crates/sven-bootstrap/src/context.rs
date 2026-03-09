@@ -124,28 +124,220 @@ impl RuntimeContext {
 
 // ─── ToolSetProfile ───────────────────────────────────────────────────────────
 
-/// Selects which tool set to register and carries the caller-owned shared
-/// state that stateful tools require.
+/// Session-locked profile that selects the tool set for an entire session.
 ///
-/// TUI and headless/CI use the same full tool set; only `--mode` (research /
-/// plan / agent) controls which tools are exposed to the model. When
-/// `question_tx` is `Some`, ask_question uses the TUI channel; when `None`,
-/// it uses stdin (headless/CI).
+/// Profiles are detected once at session start (via `detect_profile`) and
+/// never change mid-session, which keeps the Anthropic prefix-cache for the
+/// tools array stable across all turns.
 ///
-/// `mode_lock` and the tool-event channel are intentionally **not** part of
-/// this enum — `AgentBuilder::build()` creates them, wires them into the
-/// registry, and passes the same instances to `Agent::new()` so that
-/// `SwitchModeTool` and `TodoWriteTool` events are correctly observed by the
-/// agent loop.
+/// `question_tx` is `Some` when ask_question routes to the TUI; `None` for
+/// headless/CI/sub-agent contexts where no UI is attached.
 pub enum ToolSetProfile {
-    /// Full tool set (TUI and headless/CI). Same tools; mode gates visibility.
+    /// Full tool set (TUI and headless/CI, with GDB and context tools).
     ///
-    /// `question_tx`: when `Some`, ask_question routes to the TUI; when `None`, uses stdin.
+    /// Use when the project has GDB configuration or large-content analysis
+    /// is expected. Includes all 15 tools.
     Full {
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
     },
 
-    /// Sub-agent tool set (Full minus TaskTool to prevent unbounded nesting).
+    /// Coding profile (default — no GDB, no context). 12 tools.
+    ///
+    /// For typical software engineering sessions without embedded debugging
+    /// or large-file analysis. Leaner tools array caches more efficiently.
+    Coding {
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+    },
+
+    /// Research profile (read-only, no write tools). 8 tools.
+    ///
+    /// For exploration sessions where the agent should not modify files.
+    /// No edit_file, write, shell (modifying commands), or task.
+    Research {
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+    },
+
+    /// Sub-agent tool set (Coding minus ask_question, minus task).
+    ///
+    /// Prevents unbounded nesting. Sub-agents should not spawn further
+    /// sub-agents or interrupt the user with questions.
     SubAgent { todos: Arc<Mutex<Vec<TodoItem>>> },
+}
+
+impl ToolSetProfile {
+    /// Auto-detect the appropriate profile from the runtime context and agent mode.
+    ///
+    /// Detection heuristics (evaluated in priority order):
+    /// 1. If `is_sub_agent` → `SubAgent`
+    /// 2. If agent mode is Research → `Research`
+    /// 3. If project has GDB config (`.gdbinit`, `openocd.cfg`, `debugging/`) → `Full`
+    /// 4. Default → `Coding`
+    pub fn detect(
+        is_sub_agent: bool,
+        mode: sven_config::AgentMode,
+        project_root: Option<&std::path::Path>,
+        question_tx: Option<mpsc::Sender<QuestionRequest>>,
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+    ) -> Self {
+        if is_sub_agent {
+            return ToolSetProfile::SubAgent { todos };
+        }
+
+        if mode == sven_config::AgentMode::Research {
+            return ToolSetProfile::Research { question_tx, todos };
+        }
+
+        if has_gdb_config(project_root) {
+            return ToolSetProfile::Full { question_tx, todos };
+        }
+
+        ToolSetProfile::Coding { question_tx, todos }
+    }
+
+    /// Returns a short name for the profile (for logging/display).
+    pub fn name(&self) -> &'static str {
+        match self {
+            ToolSetProfile::Full { .. } => "full",
+            ToolSetProfile::Coding { .. } => "coding",
+            ToolSetProfile::Research { .. } => "research",
+            ToolSetProfile::SubAgent { .. } => "subagent",
+        }
+    }
+}
+
+/// Returns `true` when the project root contains GDB configuration files
+/// indicating that embedded debugging tools are needed.
+pub(crate) fn has_gdb_config(project_root: Option<&std::path::Path>) -> bool {
+    let root = match project_root {
+        Some(r) => r,
+        None => return false,
+    };
+
+    // Common GDB config files / directories
+    for indicator in &[
+        ".gdbinit",
+        "openocd.cfg",
+        "openocd_board.cfg",
+        "pyocd.yaml",
+        "pyocd.yml",
+        "JLinkSettings.ini",
+        "debugging",
+    ] {
+        if root.join(indicator).exists() {
+            return true;
+        }
+    }
+
+    // Also check for .vscode/launch.json or debugging/launch.json with GDB config
+    let launch_paths = [
+        root.join(".vscode").join("launch.json"),
+        root.join("debugging").join("launch.json"),
+    ];
+    for launch_path in &launch_paths {
+        if let Ok(content) = std::fs::read_to_string(launch_path) {
+            if content.contains("gdb") || content.contains("GDB") || content.contains("JLink") {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    use sven_config::AgentMode;
+    use sven_tools::events::TodoItem;
+
+    use super::{has_gdb_config, ToolSetProfile};
+
+    fn todos() -> Arc<Mutex<Vec<TodoItem>>> {
+        Arc::new(Mutex::new(vec![]))
+    }
+
+    // ── has_gdb_config ────────────────────────────────────────────────────────
+
+    #[test]
+    fn has_gdb_config_returns_false_for_none() {
+        assert!(!has_gdb_config(None));
+    }
+
+    #[test]
+    fn has_gdb_config_returns_false_for_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_gdb_config(Some(dir.path())));
+    }
+
+    #[test]
+    fn has_gdb_config_detects_gdbinit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gdbinit"), "").unwrap();
+        assert!(has_gdb_config(Some(dir.path())));
+    }
+
+    #[test]
+    fn has_gdb_config_detects_openocd_cfg() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("openocd.cfg"), "").unwrap();
+        assert!(has_gdb_config(Some(dir.path())));
+    }
+
+    #[test]
+    fn has_gdb_config_detects_vscode_launch_with_gdb() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".vscode")).unwrap();
+        std::fs::write(
+            dir.path().join(".vscode/launch.json"),
+            r#"{"configurations": [{"type": "gdb"}]}"#,
+        )
+        .unwrap();
+        assert!(has_gdb_config(Some(dir.path())));
+    }
+
+    // ── ToolSetProfile::detect ────────────────────────────────────────────────
+
+    #[test]
+    fn detect_sub_agent_returns_subagent_profile() {
+        let profile = ToolSetProfile::detect(true, AgentMode::Agent, None, None, todos());
+        assert_eq!(profile.name(), "subagent");
+    }
+
+    #[test]
+    fn detect_research_mode_returns_research_profile() {
+        let profile = ToolSetProfile::detect(false, AgentMode::Research, None, None, todos());
+        assert_eq!(profile.name(), "research");
+    }
+
+    #[test]
+    fn detect_with_gdb_config_returns_full_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gdbinit"), "").unwrap();
+        let profile =
+            ToolSetProfile::detect(false, AgentMode::Agent, Some(dir.path()), None, todos());
+        assert_eq!(profile.name(), "full");
+    }
+
+    #[test]
+    fn detect_default_returns_coding_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile =
+            ToolSetProfile::detect(false, AgentMode::Agent, Some(dir.path()), None, todos());
+        assert_eq!(profile.name(), "coding");
+    }
+
+    #[test]
+    fn detect_sub_agent_takes_priority_over_research_mode() {
+        let profile = ToolSetProfile::detect(true, AgentMode::Research, None, None, todos());
+        assert_eq!(
+            profile.name(),
+            "subagent",
+            "sub-agent flag must take priority"
+        );
+    }
 }

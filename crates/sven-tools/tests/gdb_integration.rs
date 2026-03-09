@@ -1,22 +1,22 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-/// Integration tests for the GDB tooling.
-///
-/// Tests are organised into three groups:
-///
-///   1. **Always-run tests** (no ignore): use temp files or tiny helper
-///      processes (nc, sleep, false) — run in standard `cargo test`.
-///
-///   2. **Probe-required tests** (#[ignore]): need a live J-Link probe and a
-///      connected target. Run explicitly:
-///        cargo test -p sven-tools -- gdb_integration --ignored --nocapture
-///
-///   3. **Mock server tests**: spin up an in-process TCP server that mimics
-///      GDB/MI protocol. Run in standard `cargo test`.
-///
-/// Hardware tests also have a `hardware-tests` feature gate; they remain
-/// `#[ignore]` as a safety net even when the feature is enabled.
+// Integration tests for the GDB tooling.
+//
+// Tests are organised into three groups:
+//
+// 1. Always-run tests (no ignore): use temp files or tiny helper
+//    processes (nc, sleep, false) — run in standard `cargo test`.
+//
+// 2. Probe-required tests (#[ignore]): need a live J-Link probe and a
+//    connected target. Run explicitly:
+//    cargo test -p sven-tools -- gdb_integration --ignored --nocapture
+//
+// 3. Mock server tests: spin up an in-process TCP server that mimics
+//    GDB/MI protocol. Run in standard `cargo test`.
+//
+// Hardware tests also have a `hardware-tests` feature gate; they remain
+// `#[ignore]` as a safety net even when the feature is enabled.
 
 mod gdb_integration {
     use std::sync::Arc;

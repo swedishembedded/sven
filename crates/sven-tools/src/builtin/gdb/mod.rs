@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod command;
+pub mod compound;
 pub mod connect;
 pub mod discovery;
 pub mod interrupt;
@@ -12,6 +13,7 @@ pub mod stop;
 pub mod wait_stopped;
 
 pub use command::GdbCommandTool;
+pub use compound::GdbTool;
 pub use connect::GdbConnectTool;
 pub use interrupt::GdbInterruptTool;
 pub use start_server::GdbStartServerTool;

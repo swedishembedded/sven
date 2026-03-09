@@ -112,78 +112,66 @@ impl<'a> PromptContext<'a> {
 mod guidelines {
     pub fn general() -> &'static str {
         "- Be concise and precise. Use tools instead of guessing.\n\
-         - Check `update_memory` (list) at session start for stored project context."
+         - Check `memory` (action=list) at session start for stored project context."
     }
 
     pub fn tool_usage() -> &'static str {
-        "- NEVER use `run_terminal_command` for file I/O — use `read_file`/`write`/`edit_file`/`grep`/`glob`.\n\
-         - Prefer `edit_file` over `write` for modifying existing files (preserves surrounding context).\n\
-         - Discovery workflow: `glob` to find files → `grep` to narrow → `read_file` with specific ranges for context.\n\
-         - Use `grep` output_mode='content' + context_lines for code-level inspection; use `search_codebase` for broad whole-repo sweeps.\n\
-         - Use shell one liners like sed and awk for replacements at scale. \n\
+        "- Prefer `edit_file` over `write` for modifying existing files (preserves surrounding context).\n\
+         - Use `shell` for all command execution (delete files, run linters, list directories, etc.).\n\
+         - Discovery workflow: `find_file` to locate files → `grep` to narrow → `read_file` with specific ranges for context.\n\
+         - Use `grep` output_mode='content' + context_lines for code-level inspection; use whole_project=true for codebase-wide sweeps.\n\
+         - Use `shell` one-liners (sed, awk) for replacements at scale.\n\
          - Batch `read_file` calls in parallel — read all potentially relevant files in one turn."
     }
 
     pub fn large_content() -> &'static str {
         "- For files over ~500 lines, build logs, large codebases, or any content that would \
-         exceed your context window: use `context_open` to get a memory-mapped handle, then \
-         `context_read` / `context_grep` / `context_query` to analyze it without loading it \
-         into your context.\n\
-         - Never attempt to `read_file` on content larger than 500 lines when deeper analysis \
-         is required — the context tools are more effective and keep your context window clean.\n\
-         - Workflow: `context_open` → `context_grep` (locate sections) → `context_read` \
-         (inspect specific lines) → `context_query` (semantic analysis across chunks) → \
-         `context_reduce` (synthesize a final answer from chunk results).\n\
-         - `context_query` dispatches independent sub-agents over chunks in parallel; each \
-         receives ONLY the chunk plus your prompt. Design prompts to be self-contained.\n\
-         - `context_reduce` applies tree reduction automatically when results exceed the \
-         sub-agent context window."
+         exceed your context window: use `context(action=open)` to get a memory-mapped handle, then \
+         `context(action=read/grep/query)` to analyze without loading it into your context.\n\
+         - Workflow: open → grep (locate sections) → read (inspect specific lines) → \
+         query (semantic analysis across chunks) → reduce (synthesize a final answer).\n\
+         - `context(action=query)` dispatches independent sub-agents over chunks in parallel; \
+         each receives ONLY the chunk plus your prompt. Design prompts to be self-contained.\n\
+         - `context(action=reduce)` applies tree reduction automatically when results are too large."
     }
 
     pub fn code_quality() -> &'static str {
         "- Make sure all the code you generate is production quality and follows good separation of concerns and clean code principles.\n\
          - NEVER create new files proactively unless explicitly requested. Do not create 'summary' md files unless requested.\n\
-         - Write tests when adding new functionality. \n\
+         - Write tests when adding new functionality.\n\
          - Preserve existing code structure and coding style patterns."
     }
 
     pub fn workflow_efficiency() -> &'static str {
-        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete after completing each step.\n\
-         - Use `switch_mode` to transition between Research, Plan, and Agent modes proactively.\n\
-         - Store project-specific conventions in `update_memory`; retrieve them at the start of new sessions.\n\
+        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete after each step.\n\
+         - Store project-specific conventions with `memory(action=set)`; retrieve with `memory(action=list)` at session start.\n\
          - Batch independent tool calls in parallel to increase efficiency.\n\
-         - Before modifying a subsystem, call `search_knowledge` to retrieve any existing knowledge spec.\n\
-         - After significant structural changes to a subsystem, update the `.sven/knowledge/` doc's `updated:` date and relevant sections."
+         - Before modifying a subsystem, call `memory(action=search_knowledge)` to retrieve any existing knowledge spec.\n\
+         - After significant structural changes, update the `.sven/knowledge/` doc's `updated:` date and relevant sections."
     }
 
     pub fn task_delegation() -> &'static str {
-        "- Use the `task` tool to spawn focused sub-agents for isolated, well-defined sub-tasks \
-         that benefit from a fresh context window.\n\
-         - Good candidates for `task`: exploring a large unfamiliar codebase area; running a \
-         multi-step investigation (find + read + analyse); implementing a self-contained feature; \
-         running tests and analysing failures.\n\
-         - You can spawn multiple sub-agents in parallel by calling `task` multiple times in the \
-         same turn.  Each sub-agent runs independently in its own process.\n\
-         - `task` returns a buffer handle immediately (e.g. `buf_0001`).  Use `buf_status` to \
-         poll completion, `buf_grep` to search the output, and `buf_read` to inspect specific \
-         line ranges.  You do NOT need to read the entire output — grep for what you need.\n\
-         - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool \
-         calls.  Sub-agents add process-spawn overhead and are overkill for small work.\n\
-         - Sub-agents have access to all standard tools but cannot spawn further sub-agents \
-         (depth limit of 3 is enforced automatically)."
+        "- Use `task` to spawn focused sub-agents for isolated, well-defined sub-tasks that benefit from a fresh context window.\n\
+         - Good candidates: exploring a large unfamiliar codebase area; running a multi-step investigation; \
+         implementing a self-contained feature; running tests and analysing failures.\n\
+         - You can spawn multiple sub-agents in parallel by calling `task` multiple times in the same turn.\n\
+         - `task` returns a buffer handle immediately (e.g. `buf_0001`). Use `task(action=status)` to poll, \
+         `task(action=grep)` to search output, `task(action=read)` to inspect specific line ranges.\n\
+         - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool calls.\n\
+         - Sub-agents cannot spawn further sub-agents (depth limit of 3 is enforced automatically)."
     }
 
     pub fn error_handling() -> &'static str {
         "- When a tool fails, try a different approach.\n\
-         - Always set `workdir` in `run_terminal_command` to project_root for commands that depend on location.\n\
+         - Use `shell` with an explicit `workdir` for commands that depend on location.\n\
          - NEVER skip git hooks or force-push without explicit user permission."
     }
 
     pub fn debugging() -> &'static str {
         "- When asked to debug, diagnose a crash, inspect runtime state, or step through code on a \
-           target device: you MUST use the GDB tools (`gdb_start_server`, `gdb_connect`, \
-           `gdb_command`, `gdb_interrupt`, `gdb_stop`). \
-           Do NOT substitute reading source code for actual runtime debugging - GDB is a better source of truth."
+           target device: you MUST use the `gdb` compound tool \
+           (`gdb(action=start_server)`, `gdb(action=connect)`, `gdb(action=command)`, `gdb(action=stop)`). \
+           Do NOT substitute reading source code for actual runtime debugging — GDB is a better source of truth."
     }
 }
 
@@ -882,15 +870,11 @@ mod tests {
             "prompt should contain a Debugging section"
         );
         assert!(
-            pr.contains("gdb_start_server"),
-            "debugging section must mention gdb_start_server"
+            pr.contains("gdb") || pr.contains("GDB"),
+            "debugging section must mention gdb"
         );
         assert!(
-            pr.contains("gdb_connect"),
-            "debugging section must mention gdb_connect"
-        );
-        assert!(
-            pr.contains("MUST use the GDB tools") || pr.contains("you MUST use the GDB tools"),
+            pr.contains("MUST use") || pr.contains("you MUST use"),
             "debugging section must mandate GDB tool use"
         );
     }
@@ -900,8 +884,8 @@ mod tests {
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
             let pr = system_prompt(mode, None, empty());
             assert!(
-                pr.contains("gdb_connect"),
-                "mode {mode} prompt should mention gdb_connect in debugging guideline"
+                pr.contains("gdb") || pr.contains("GDB"),
+                "mode {mode} prompt should mention gdb in debugging guideline"
             );
         }
     }
@@ -1046,19 +1030,19 @@ mod tests {
     fn guidelines_mention_critical_tools() {
         let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
-            pr.contains("`run_terminal_command`"),
-            "guidelines should mention run_terminal_command"
-        );
-        assert!(
             pr.contains("`edit_file`"),
             "guidelines should mention edit_file"
         );
         assert!(pr.contains("`grep`"), "guidelines should mention grep");
-        assert!(pr.contains("`glob`"), "guidelines should mention glob");
+        assert!(
+            pr.contains("`find_file`"),
+            "guidelines should mention find_file"
+        );
         assert!(
             pr.contains("`read_file`"),
             "guidelines should mention read_file"
         );
+        assert!(pr.contains("`shell`"), "guidelines should mention shell");
     }
 
     #[test]
@@ -1083,11 +1067,7 @@ mod tests {
     fn guidelines_mention_mode_switching() {
         let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(
-            pr.contains("switch_mode"),
-            "guidelines should mention mode switching"
-        );
-        assert!(
-            pr.contains("Research, Plan, and Agent"),
+            pr.contains("Research") && pr.contains("Plan") && pr.contains("Agent"),
             "guidelines should list all modes"
         );
     }

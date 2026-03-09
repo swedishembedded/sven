@@ -51,7 +51,7 @@ use crate::conversation::ConversationRecord;
 // ── SessionId ─────────────────────────────────────────────────────────────────
 
 /// Opaque identifier for a chat session, backed by a UUID.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(String);
 
 impl SessionId {
@@ -80,21 +80,16 @@ impl std::fmt::Display for SessionId {
 // ── ChatStatus ────────────────────────────────────────────────────────────────
 
 /// Lifecycle status of a chat session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatStatus {
     /// Session is currently open and may be active.
+    #[default]
     Active,
     /// Session completed normally (agent turn finished, no pending input).
     Completed,
     /// Session has been archived by the user.
     Archived,
-}
-
-impl Default for ChatStatus {
-    fn default() -> Self {
-        ChatStatus::Active
-    }
 }
 
 // ── TurnRecord ────────────────────────────────────────────────────────────────

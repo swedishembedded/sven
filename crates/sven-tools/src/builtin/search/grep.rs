@@ -44,16 +44,13 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Pattern search built on ripgrep. Prefer over search_codebase when you know the exact symbol or string. \
-         Provide path to narrow down the search.\n\
-         pattern: full grep style regex (escape literal braces: \\{\\}). \n\
+        "Pattern search built on ripgrep.\n\
+         pattern: full regex (escape literal braces: \\{\\}).\n\
          include: glob filter (*.rs, **/*.{ts,tsx}).\n\
-         case_sensitive: enabled by default. \n\
-         limit: 100 by default.\n\
-         output_mode: content (default, shows file:line:col:text) | files_with_matches | count\n\
-         context_lines: lines of context before+after each match (default 0).\n\
-         Use files_with_matches for discovery, then read_file for details.\n\
-         For whole-codebase search with .git/target/node_modules auto-excluded → use search_codebase."
+         whole_project: true → auto-exclude .git/ target/ node_modules/ dist/ __pycache__/ *.lock\n\
+         case_sensitive: default true. limit: 100. context_lines: 0.\n\
+         output_mode: content (default, file:line:col:text) | files_with_matches | count\n\
+         Use files_with_matches for discovery, then read_file for details."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -71,6 +68,10 @@ impl Tool for GrepTool {
                 "include": {
                     "type": "string",
                     "description": "Glob pattern to filter files, e.g. '*.rs' or '*.{ts,tsx}'"
+                },
+                "whole_project": {
+                    "type": "boolean",
+                    "description": "Exclude build artifacts (.git, target, node_modules, dist, __pycache__, *.lock). Default false."
                 },
                 "case_sensitive": {
                     "type": "boolean",
@@ -109,17 +110,19 @@ impl Tool for GrepTool {
         };
         let path = opt_str(call, "path").unwrap_or(".").to_string();
         let include = opt_str(call, "include").map(str::to_string);
+        let whole_project = opt_bool(call, "whole_project").unwrap_or(false);
         let case_sensitive = opt_bool(call, "case_sensitive").unwrap_or(true);
         let limit = opt_u64(call, "limit").unwrap_or(100) as usize;
         let output_mode = opt_str(call, "output_mode").unwrap_or("content");
         let context_lines = opt_u64(call, "context_lines").unwrap_or(0) as usize;
 
-        debug!(pattern = %pattern, path = %path, output_mode = %output_mode, "grep tool");
+        debug!(pattern = %pattern, path = %path, output_mode = %output_mode, whole_project, "grep tool");
 
         let result = run_rg(
             &pattern,
             &path,
             include.as_deref(),
+            whole_project,
             case_sensitive,
             limit,
             output_mode,
@@ -135,10 +138,12 @@ impl Tool for GrepTool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_rg(
     pattern: &str,
     path: &str,
     include: Option<&str>,
+    whole_project: bool,
     case_sensitive: bool,
     limit: usize,
     output_mode: &str,
@@ -166,6 +171,19 @@ async fn run_rg(
         }
         if context_lines > 0 && output_mode == "content" {
             args.push(format!("-C{}", context_lines));
+        }
+        if whole_project {
+            for excl in &[
+                ".git/**",
+                "target/**",
+                "node_modules/**",
+                "dist/**",
+                "__pycache__/**",
+                "*.lock",
+            ] {
+                args.push("--glob".to_string());
+                args.push(format!("!{excl}"));
+            }
         }
         if let Some(glob) = include {
             args.push("-g".to_string());
@@ -196,6 +214,12 @@ async fn run_rg(
         }
         if context_lines > 0 && output_mode == "content" {
             args.push(format!("-C{}", context_lines));
+        }
+        if whole_project {
+            for excl in &[".git", "target", "node_modules", "dist", "__pycache__"] {
+                args.push("--exclude-dir".to_string());
+                args.push(excl.to_string());
+            }
         }
         if let Some(glob) = include {
             args.push("--include".to_string());

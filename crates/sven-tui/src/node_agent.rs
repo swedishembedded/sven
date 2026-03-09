@@ -364,17 +364,15 @@ pub async fn fetch_node_tools(url: &str, token: &str, insecure: bool) -> Vec<Too
                 Ok(tungstenite::Message::Close(_)) => break,
                 _ => continue,
             };
-            if let Ok(evt) = serde_json::from_str::<Evt>(&text) {
-                if let Evt::ToolList { tools } = evt {
-                    return tools
-                        .into_iter()
-                        .map(|t| ToolSchema {
-                            name: t.name,
-                            description: t.description,
-                            parameters: t.parameters,
-                        })
-                        .collect::<Vec<_>>();
-                }
+            if let Ok(Evt::ToolList { tools }) = serde_json::from_str::<Evt>(&text) {
+                return tools
+                    .into_iter()
+                    .map(|t| ToolSchema {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.parameters,
+                    })
+                    .collect::<Vec<_>>();
             }
         }
         vec![]

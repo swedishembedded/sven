@@ -31,6 +31,7 @@ pub use builtin::search::search_knowledge::SearchKnowledgeTool;
 pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionRequest};
 pub use builtin::system::list_dir::ListDirTool;
 pub use builtin::system::load_skill::LoadSkillTool;
+pub use builtin::system::memory::MemoryTool;
 pub use builtin::system::read_lints::ReadLintsTool;
 pub use builtin::system::switch_mode::SwitchModeTool;
 pub use builtin::system::todo_write::TodoWriteTool;
@@ -49,8 +50,9 @@ pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
 // Shell tool
 pub use builtin::shell::ShellTool;
 
-// GDB debugging tools
+// GDB debugging tools (compound + individual kept for internal use)
 pub use builtin::gdb::state::GdbSessionState;
+pub use builtin::gdb::GdbTool;
 pub use builtin::gdb::{
     GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbStartServerTool, GdbStatusTool,
     GdbStopTool, GdbWaitStoppedTool,

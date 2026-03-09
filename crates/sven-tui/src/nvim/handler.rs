@@ -251,6 +251,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::type_complexity)]
     fn make_handler() -> (
         NvimHandler,
         Arc<Mutex<Grid>>,

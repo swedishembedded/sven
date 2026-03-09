@@ -1369,7 +1369,7 @@ mod tests {
                  \n**Agent:** Response one\n\
                  ---\n\n**You:** Second\n\
                  \n**Agent:** Response two UNIQUE_END\n";
-            bridge.set_buffer_content(&content).await.unwrap();
+            bridge.set_buffer_content(content).await.unwrap();
             sleep(Duration::from_millis(200)).await;
             bridge.send_input("G").await.unwrap();
             sleep(Duration::from_millis(200)).await;
@@ -1404,7 +1404,7 @@ mod tests {
                  \n**Agent:** Answer one\n\
                  ---\n\n**You:** Turn two EDIT_TARGET\n\
                  \n**Agent:** Answer two\n";
-            bridge.set_buffer_content(&content).await.unwrap();
+            bridge.set_buffer_content(content).await.unwrap();
             sleep(Duration::from_millis(200)).await;
             let target_line = bridge.eval_vim("search('EDIT_TARGET', 'n')").await.unwrap();
             let target_line_num = match target_line {

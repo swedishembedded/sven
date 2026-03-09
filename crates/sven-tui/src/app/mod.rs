@@ -1289,7 +1289,7 @@ impl App {
                     sven_input::turns_to_messages(&doc.turns)
                         .into_iter()
                         .filter(|m| m.role != sven_model::Role::System)
-                        .map(|m| crate::chat::segment::ChatSegment::Message(m))
+                        .map(crate::chat::segment::ChatSegment::Message)
                         .collect();
                 // Refresh entry metadata from the full document.
                 if let Some(entry) = self.sessions.get_mut(&target_id) {

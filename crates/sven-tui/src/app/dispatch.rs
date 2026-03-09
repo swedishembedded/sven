@@ -16,7 +16,7 @@ use crate::{
     },
     commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
-    overlay::{completion::CompletionOverlay},
+    overlay::completion::CompletionOverlay,
     pager::PagerOverlay,
 };
 
