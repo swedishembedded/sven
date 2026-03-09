@@ -17,7 +17,7 @@ use ratatui::{
 use crate::app::input_state::InputAttachment;
 use crate::input_wrap::wrap_content;
 
-use super::theme::{open_pane_block, BAR_AGENT, BG, TEXT_DIM};
+use super::theme::{open_pane_block, open_pane_block_resizing, BAR_AGENT, BG, TEXT_DIM};
 
 // ── InputEditMode ─────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ pub struct InputPane<'a> {
     pub edit_mode: InputEditMode,
     /// File/image attachments to display as bullet rows above the text.
     pub attachments: &'a [InputAttachment],
+    /// Whether the top border is currently being drag-resized.
+    pub is_resizing: bool,
 }
 
 impl Widget for InputPane<'_> {
@@ -81,7 +83,7 @@ impl Widget for InputPane<'_> {
             String::new()
         };
 
-        let block = open_pane_block(title, self.focused, self.ascii);
+        let block = open_pane_block_resizing(title, self.focused, self.ascii, self.is_resizing);
         let inner = block.inner(area);
         // Clear the inner area first so stale characters from a previous frame
         // (e.g. when content shrinks or scrolls away) are always erased.

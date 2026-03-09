@@ -21,6 +21,8 @@ pub const BG_ELEVATED: Color = Color::Rgb(25, 25, 35);
 pub const BORDER_DIM: Color = Color::Rgb(55, 55, 75);
 /// Focused border / accent.
 pub const BORDER_FOCUS: Color = Color::Rgb(100, 140, 220);
+/// Border color used while drag-resizing a pane.
+pub const BORDER_RESIZE: Color = Color::Rgb(80, 200, 160);
 /// Default text.
 pub const TEXT: Color = Color::Rgb(200, 200, 210);
 /// Dimmed / secondary text.
@@ -236,7 +238,18 @@ pub(crate) fn pane_block(title: &str, focused: bool, ascii: bool) -> Block<'stat
 /// Build a borderless (TOP + BOTTOM only) pane block.  No left/right `│`
 /// characters — terminal selection produces clean text without border chars.
 pub(crate) fn open_pane_block(title: &str, focused: bool, _ascii: bool) -> Block<'static> {
-    let border_style = if focused {
+    open_pane_block_resizing(title, focused, _ascii, false)
+}
+
+pub(crate) fn open_pane_block_resizing(
+    title: &str,
+    focused: bool,
+    _ascii: bool,
+    is_resizing: bool,
+) -> Block<'static> {
+    let border_style = if is_resizing {
+        Style::default().fg(BORDER_RESIZE)
+    } else if focused {
         Style::default().fg(BORDER_FOCUS)
     } else {
         Style::default().fg(BORDER_DIM)
@@ -244,7 +257,11 @@ pub(crate) fn open_pane_block(title: &str, focused: bool, _ascii: bool) -> Block
     Block::default()
         .title(Span::styled(
             format!(" {title} "),
-            if focused {
+            if is_resizing {
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(BORDER_RESIZE)
+            } else if focused {
                 Style::default()
                     .add_modifier(Modifier::BOLD)
                     .fg(BORDER_FOCUS)

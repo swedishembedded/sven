@@ -378,6 +378,36 @@ impl App {
             });
         }
 
+        // Save as YAML chat document.
+        {
+            let yaml_path = self.yaml_path.clone();
+            let turns = sven_input::records_to_turns(&records);
+            let session_id = self.sessions.active_id.clone();
+            let title = self.chat_title.clone();
+            let model = Some(self.session.model_display.clone());
+            let mode = Some(self.session.mode.to_string());
+            tokio::spawn(async move {
+                let mut doc = sven_input::ChatDocument {
+                    id: session_id,
+                    title,
+                    model,
+                    mode,
+                    status: sven_input::ChatStatus::Active,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    turns,
+                };
+                let result = if let Some(ref path) = yaml_path {
+                    sven_input::save_chat_to(path, &mut doc)
+                } else {
+                    sven_input::save_chat(&mut doc)
+                };
+                if let Err(e) = result {
+                    tracing::debug!("failed to save YAML chat document: {e}");
+                }
+            });
+        }
+
         if messages.is_empty() {
             return;
         }

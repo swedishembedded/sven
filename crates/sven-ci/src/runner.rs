@@ -135,6 +135,11 @@ pub struct CiOptions {
     /// When this budget is exhausted the runner exits with [`EXIT_BUDGET_EXHAUSTED`] (4).
     /// `None` or `0` means unlimited.
     pub max_tokens_budget: Option<u64>,
+    /// Load conversation history from a YAML chat document before running.
+    /// Parsed into messages that seed the agent; workflow steps run on top.
+    pub load_chat: Option<PathBuf>,
+    /// Write (or update) the YAML chat document after every step.
+    pub output_chat: Option<PathBuf>,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -540,6 +545,47 @@ impl CiRunner {
 
         // ── Load JSONL history ───────────────────────────────────────────────
         // Use the pre-parsed JSONL (if any); fall back to piped conversation.
+        // ── Pre-load YAML chat document (if --load-chat was specified) ─────────
+        // If no JSONL was provided, load history from the YAML chat document.
+        let pre_parsed_chat_messages: Option<Vec<Message>> =
+            if opts.load_jsonl.is_none() && opts.load_chat.is_some() {
+                if let Some(ref cpath) = opts.load_chat {
+                    match std::fs::read_to_string(cpath) {
+                        Ok(content) => match sven_input::parse_chat_document(&content) {
+                            Ok(doc) => {
+                                let msgs = sven_input::turns_to_messages(&doc.turns)
+                                    .into_iter()
+                                    .filter(|m| m.role != sven_model::Role::System)
+                                    .collect::<Vec<_>>();
+                                write_progress(&format!(
+                                    "[sven:info] Loaded {} message(s) from YAML chat document",
+                                    msgs.len()
+                                ));
+                                Some(msgs)
+                            }
+                            Err(e) => {
+                                write_stderr(&format!(
+                                    "[sven:error] Failed to parse --load-chat {}: {e}",
+                                    cpath.display()
+                                ));
+                                std::process::exit(EXIT_VALIDATION_ERROR);
+                            }
+                        },
+                        Err(e) => {
+                            write_stderr(&format!(
+                                "[sven:error] Failed to read --load-chat {}: {e}",
+                                cpath.display()
+                            ));
+                            std::process::exit(EXIT_VALIDATION_ERROR);
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         let (existing_jsonl_records, jsonl_seed_count) = if let Some(mut parsed) = pre_parsed_jsonl
         {
             // If --rerun-toolcalls: replay tool calls in-place before seeding
@@ -575,6 +621,11 @@ impl CiRunner {
                 agent.seed_history(parsed.history).await;
                 (parsed.records, count)
             }
+        } else if let Some(chat_msgs) = pre_parsed_chat_messages {
+            // YAML chat document seed (--load-chat path)
+            let count = chat_msgs.len();
+            agent.seed_history(chat_msgs).await;
+            (Vec::new(), count)
         } else if !conversation_history.is_empty() {
             // Piped markdown conversation (legacy path)
             let count = conversation_history.len();
@@ -1049,6 +1100,42 @@ impl CiRunner {
                 &run_jsonl_records,
             );
             write_progress(&format!("[sven:jsonl] Log written to {}", path.display()));
+        }
+
+        // ── Final YAML chat document flush ───────────────────────────────────
+        if let Some(ref chat_out_path) = opts.output_chat {
+            // Build a ChatDocument from all accumulated records (existing + run).
+            let all_records: Vec<ConversationRecord> = existing_jsonl_records
+                .iter()
+                .chain(run_jsonl_records.iter())
+                .cloned()
+                .collect();
+            let turns = sven_input::records_to_turns(&all_records);
+            let doc_title = title.clone().unwrap_or_else(|| "CI Run".to_string());
+            let mut doc = sven_input::ChatDocument {
+                id: sven_input::SessionId::new(),
+                title: doc_title,
+                model: Some(format!(
+                    "{}/{}",
+                    self.config.model.provider, self.config.model.name
+                )),
+                mode: Some(opts.mode.to_string()),
+                status: sven_input::ChatStatus::Completed,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                turns,
+            };
+            if let Err(e) = sven_input::save_chat_to(chat_out_path, &mut doc) {
+                write_stderr(&format!(
+                    "[sven:warn] Failed to write YAML chat document to {}: {e}",
+                    chat_out_path.display()
+                ));
+            } else {
+                write_progress(&format!(
+                    "[sven:chat] Chat document written to {}",
+                    chat_out_path.display()
+                ));
+            }
         }
 
         // ── Finalize JSON output ─────────────────────────────────────────────

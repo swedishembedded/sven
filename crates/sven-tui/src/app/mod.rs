@@ -12,6 +12,7 @@ pub(crate) mod input_state;
 pub(crate) mod layout_cache;
 pub(crate) mod nvim_state;
 pub(crate) mod queue_state;
+pub(crate) mod session_manager;
 pub(crate) mod term_events;
 pub(crate) mod ui_state;
 
@@ -52,6 +53,7 @@ pub(crate) use input_state::{EditState, InputState};
 pub(crate) use layout_cache::LayoutCache;
 pub(crate) use nvim_state::NvimState;
 pub(crate) use queue_state::QueueState;
+pub(crate) use session_manager::{SessionEntry, SessionManager};
 pub(crate) use ui_state::UiState;
 
 // Re-export FocusPane at the app module level — imported from `crate::app::FocusPane`
@@ -121,6 +123,10 @@ pub struct AppOptions {
     /// When `Some`, connect the TUI to a running node instead of running a
     /// local agent.  Gives the TUI full access to the node's P2P tools.
     pub node_backend: Option<NodeBackend>,
+    /// Load an existing YAML chat document to resume the conversation.
+    pub chat_path: Option<PathBuf>,
+    /// Save the chat to this YAML path (for headless/CI mode output).
+    pub output_chat_path: Option<PathBuf>,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -169,6 +175,12 @@ pub struct App {
     pub(crate) agent: AgentConn,
     pub(crate) nvim: NvimState,
     pub(crate) layout: LayoutCache,
+    /// Multi-session manager — holds all chat sessions and the shared event mux.
+    pub(crate) sessions: SessionManager,
+    /// Path to the YAML chat document for the current active session.
+    pub(crate) yaml_path: Option<PathBuf>,
+    /// Title of the current active chat session.
+    pub(crate) chat_title: String,
 }
 
 impl App {
@@ -258,6 +270,39 @@ impl App {
             .or_else(|| opts.jsonl_load_path.clone())
             .or_else(sven_runtime::resolve_auto_log_path);
 
+        // ── Load YAML chat document (if --chat / --load-chat was specified) ──
+        // Only load from YAML when the segments are still empty (JSONL loading
+        // takes priority when both --jsonl and --chat are specified).
+        let initial_segments = if initial_segments.is_empty() {
+            if let Some(ref yaml_path) = opts.chat_path {
+                if yaml_path.exists() {
+                    match std::fs::read_to_string(yaml_path) {
+                        Ok(content) => match sven_input::parse_chat_document(&content) {
+                            Ok(doc) => sven_input::turns_to_messages(&doc.turns)
+                                .into_iter()
+                                .filter(|m| m.role != sven_model::Role::System)
+                                .map(ChatSegment::Message)
+                                .collect(),
+                            Err(e) => {
+                                debug!("failed to parse YAML chat document: {e}");
+                                Vec::new()
+                            }
+                        },
+                        Err(e) => {
+                            debug!("failed to read YAML chat document: {e}");
+                            Vec::new()
+                        }
+                    }
+                } else {
+                    initial_segments
+                }
+            } else {
+                initial_segments
+            }
+        } else {
+            initial_segments
+        };
+
         let mut chat = ChatState::new();
         chat.segments = initial_segments;
 
@@ -269,6 +314,25 @@ impl App {
             .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
         let shared_tools = sven_tools::SharedTools::empty();
+
+        // ── Session manager initialization ────────────────────────────────────
+        let (mut session_manager, initial_session_entry) = SessionManager::new();
+        let active_session_id = initial_session_entry.id.clone();
+        let initial_yaml_path = opts
+            .output_chat_path
+            .clone()
+            .or_else(|| opts.chat_path.clone())
+            .or_else(|| {
+                sven_input::ensure_chat_dir()
+                    .ok()
+                    .map(|dir| dir.join(format!("{}.yaml", active_session_id)))
+            });
+
+        // Register the initial session entry (without stored_chat — App.chat IS the chat).
+        session_manager.register(initial_session_entry);
+
+        // Load previously saved sessions from disk into the sidebar.
+        session_manager.load_from_disk();
 
         let mut app = Self {
             config,
@@ -295,6 +359,9 @@ impl App {
             agent: AgentConn::new(),
             nvim: NvimState::new(opts.no_nvim),
             layout: LayoutCache::new(),
+            sessions: session_manager,
+            yaml_path: initial_yaml_path,
+            chat_title: "New chat".to_string(),
         };
 
         for qm in opts.initial_queue {
@@ -415,6 +482,7 @@ impl App {
             self.ui.search.active,
             self.queue.messages.len(),
             desired_input_height,
+            self.layout.effective_chat_list_width(),
         );
         // Clean up expired toasts every frame.
         self.ui.prune_toasts();
@@ -599,6 +667,8 @@ impl App {
                 ascii,
                 edit_mode,
                 attachments: &self.input.attachments,
+                is_resizing: self.layout.resize_drag
+                    == Some(crate::app::layout_cache::ResizeDrag::InputHeight),
             },
             layout.input_pane,
         );
@@ -644,6 +714,30 @@ impl App {
                     ascii,
                 },
                 layout.queue_pane,
+            );
+        }
+
+        // ── Chat list pane (right side) ───────────────────────────────────────
+        if self.layout.chat_list_visible && layout.chat_list_pane.width > 0 {
+            let items = crate::ui::build_chat_list_items(
+                self.sessions
+                    .display_order
+                    .iter()
+                    .filter_map(|id| self.sessions.get(id)),
+                &self.sessions.active_id,
+                self.agent.anim_frame,
+            );
+            frame.render_widget(
+                crate::ui::ChatListPane {
+                    items: &items,
+                    selected: self.sessions.list_selected,
+                    focused: self.ui.focus == FocusPane::ChatList,
+                    ascii,
+                    scroll_offset: 0,
+                    is_resizing: self.layout.resize_drag
+                        == Some(crate::app::layout_cache::ResizeDrag::ChatListWidth),
+                },
+                layout.chat_list_pane,
             );
         }
 
@@ -750,7 +844,18 @@ impl App {
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
         self.agent.tx = Some(submit_tx.clone());
-        self.agent.event_rx = Some(event_rx);
+        // Remove per-agent event_rx — events now flow through the mux channel.
+        // Set up a forwarding task: per-session events → (SessionId, AgentEvent) mux.
+        let active_id = self.sessions.active_id.clone();
+        let mux_tx = self.sessions.multi_event_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = event_rx;
+            while let Some(event) = rx.recv().await {
+                if mux_tx.send((active_id.clone(), event)).await.is_err() {
+                    break;
+                }
+            }
+        });
 
         if let Some(nb) = self.node_backend.take() {
             // Node-proxy mode: forward all agent interactions to the running
@@ -818,6 +923,7 @@ impl App {
                     false,
                     self.queue.messages.len(),
                     self.layout.input_height_pref,
+                    self.layout.effective_chat_list_width(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
@@ -831,6 +937,7 @@ impl App {
                     false,
                     0,
                     self.layout.input_height_pref,
+                    self.layout.effective_chat_list_width(),
                 );
                 (
                     layout.chat_pane.width.saturating_sub(2),
@@ -930,6 +1037,7 @@ impl App {
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
+                    self.layout.effective_chat_list_width(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 let max_scroll =
@@ -945,6 +1053,7 @@ impl App {
                 self.layout.input_inner_height = layout.input_pane.height.saturating_sub(2);
                 self.layout.input_pane = layout.input_pane;
                 self.layout.queue_pane = layout.queue_pane;
+                self.layout.chat_list_pane = layout.chat_list_pane;
             }
 
             // ── Cursor scroll adjustment ──────────────────────────────────────
@@ -1001,8 +1110,8 @@ impl App {
             let submit_notify_clone = self.nvim.submit_notify.clone();
             let quit_notify_clone = self.nvim.quit_notify.clone();
             tokio::select! {
-                Some(agent_event) = self.recv_agent_event() => {
-                    if self.handle_agent_event(agent_event).await { break; }
+                Some((session_id, agent_event)) = self.recv_agent_event() => {
+                    if self.handle_agent_event(session_id, agent_event).await { break; }
                 }
                 Some(Ok(term_event)) = crossterm_events.next() => {
                     if self.handle_term_event(term_event).await { break; }
@@ -1010,7 +1119,7 @@ impl App {
                 Some(req) = question_rx.recv() => {
                     self.handle_question_request(req);
                 }
-                _ = anim_tick.tick(), if self.agent.busy => {
+                _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
                     // Advance the clock-driven animation frame and rebuild the
                     // display so animated indicators update at a steady 80ms rate.
                     self.agent.anim_frame = self.agent.anim_frame.wrapping_add(1);
@@ -1030,12 +1139,186 @@ impl App {
         Ok(())
     }
 
-    pub(crate) async fn recv_agent_event(&mut self) -> Option<AgentEvent> {
-        if let Some(rx) = &mut self.agent.event_rx {
-            rx.recv().await
+    pub(crate) async fn recv_agent_event(&mut self) -> Option<(sven_input::SessionId, AgentEvent)> {
+        self.sessions.multi_event_rx.recv().await
+    }
+
+    // ── Multi-session operations ──────────────────────────────────────────────
+
+    /// Create a new chat session, make it active, and clear the current chat state.
+    pub(crate) async fn new_session(&mut self) {
+        // Snapshot active chat into its session entry before creating the new one.
+        self.save_active_to_session_entry();
+
+        // Create the session entry and make it active.
+        let new_id = self.sessions.create_session("New chat");
+        self.sessions.active_id = new_id.clone();
+
+        // Reset live chat/agent state for the new empty session.
+        self.chat = ChatState::new();
+        self.agent = AgentConn::new();
+
+        // Spawn an agent task; sets self.agent.tx and the entry's agent_tx/cancel.
+        self.spawn_agent_for_session(&new_id).await;
+
+        self.chat_title = "New chat".to_string();
+        self.yaml_path = sven_input::ensure_chat_dir()
+            .ok()
+            .map(|dir| dir.join(format!("{}.yaml", new_id)));
+
+        self.sessions.promote_to_top(&new_id);
+        self.sessions.sync_list_selection_to_active();
+        self.rerender_chat().await;
+        self.ui.focus = FocusPane::Input;
+    }
+
+    /// Switch to a different session.
+    pub(crate) async fn switch_session(&mut self, target_id: sven_input::SessionId) {
+        // Save active state.
+        self.save_active_to_session_entry();
+
+        // Swap in the target session's stored state.
+        let target_chat = self
+            .sessions
+            .get_mut(&target_id)
+            .and_then(|e| e.stored_chat.take());
+
+        // If the target session has no stored chat, try to load from disk.
+        let target_chat = target_chat.or_else(|| {
+            let yaml_path = self.sessions.get(&target_id)?.yaml_path.clone()?;
+            if yaml_path.exists() {
+                let content = std::fs::read_to_string(&yaml_path).ok()?;
+                let doc = sven_input::parse_chat_document(&content).ok()?;
+                let segments: Vec<crate::chat::segment::ChatSegment> =
+                    sven_input::turns_to_messages(&doc.turns)
+                        .into_iter()
+                        .filter(|m| m.role != sven_model::Role::System)
+                        .map(|m| crate::chat::segment::ChatSegment::Message(m))
+                        .collect();
+                let mut chat = ChatState::new();
+                chat.segments = segments;
+                Some(chat)
+            } else {
+                None
+            }
+        });
+
+        let old_chat = std::mem::replace(&mut self.chat, target_chat.unwrap_or_default());
+        let _ = old_chat; // already saved to session entry
+
+        // Update active session ID.
+        self.sessions.active_id = target_id.clone();
+
+        // Swap agent tx (we keep background tasks running; just update which tx we use).
+        let target_tx = self
+            .sessions
+            .get(&target_id)
+            .and_then(|e| e.agent_tx.clone());
+        let target_cancel = self
+            .sessions
+            .get(&target_id)
+            .map(|e| e.agent_cancel.clone())
+            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
+        let target_busy = self
+            .sessions
+            .get(&target_id)
+            .map(|e| e.busy)
+            .unwrap_or(false);
+
+        // If the target session has no agent yet, spawn one.
+        if target_tx.is_none() {
+            self.spawn_agent_for_active_session().await;
         } else {
-            None
+            self.agent.tx = target_tx;
+            self.agent.cancel = target_cancel;
+            self.agent.busy = target_busy;
         }
+
+        // Update chat title and yaml path.
+        self.chat_title = self
+            .sessions
+            .get(&target_id)
+            .map(|e| e.title.clone())
+            .unwrap_or_else(|| "Chat".to_string());
+        self.yaml_path = self
+            .sessions
+            .get(&target_id)
+            .and_then(|e| e.yaml_path.clone());
+
+        self.sessions.promote_to_top(&target_id);
+        self.sessions.sync_list_selection_to_active();
+        self.rerender_chat().await;
+        self.scroll_to_bottom();
+    }
+
+    /// Snapshot the current active session's chat state into its SessionEntry.
+    fn save_active_to_session_entry(&mut self) {
+        let active_id = self.sessions.active_id.clone();
+        if let Some(entry) = self.sessions.get_mut(&active_id) {
+            entry.stored_chat = Some(self.chat.clone());
+            entry.busy = self.agent.busy;
+            entry.current_tool = self.agent.current_tool.clone();
+            entry.title = self.chat_title.clone();
+            entry.updated_at = chrono::Utc::now();
+        }
+    }
+
+    /// Spawn a new local agent task for the currently active session.
+    async fn spawn_agent_for_active_session(&mut self) {
+        let id = self.sessions.active_id.clone();
+        self.spawn_agent_for_session(&id).await;
+    }
+
+    /// Spawn a new local agent task for the given session ID, updating
+    /// `self.agent` (if it's the active session) and the entry's `agent_tx`.
+    async fn spawn_agent_for_session(&mut self, id: &sven_input::SessionId) {
+        let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
+        let (evt_tx, evt_rx) = mpsc::channel::<AgentEvent>(512);
+        let (question_tx, _) = mpsc::channel::<sven_tools::QuestionRequest>(4);
+        let cancel = Arc::new(tokio::sync::Mutex::new(None));
+
+        if *id == self.sessions.active_id {
+            self.agent.tx = Some(submit_tx.clone());
+            self.agent.cancel = cancel.clone();
+        }
+        if let Some(entry) = self.sessions.get_mut(id) {
+            entry.agent_tx = Some(submit_tx);
+            entry.agent_cancel = cancel.clone();
+        }
+
+        // Forwarding task.
+        let mux_tx = self.sessions.multi_event_tx.clone();
+        let session_id = id.clone();
+        tokio::spawn(async move {
+            let mut rx = evt_rx;
+            while let Some(event) = rx.recv().await {
+                if mux_tx.send((session_id.clone(), event)).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let cfg = self.config.clone();
+        let mode = self.session.mode;
+        let startup_model_cfg = self.session.model_cfg.clone();
+        let shared_skills = self.shared_skills.clone();
+        let shared_agents = self.shared_agents.clone();
+        let shared_tools = self.shared_tools.clone();
+        let buffer_store = Arc::clone(&self.buffer_store);
+
+        tokio::spawn(crate::agent::agent_task(
+            cfg,
+            startup_model_cfg,
+            mode,
+            submit_rx,
+            evt_tx,
+            question_tx,
+            cancel,
+            shared_skills,
+            shared_agents,
+            shared_tools,
+            buffer_store,
+        ));
     }
 
     async fn nvim_notify_future(notify: Option<&tokio::sync::Notify>) {

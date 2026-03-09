@@ -774,6 +774,25 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub jsonl: Option<PathBuf>,
 
+    /// Load (and save) a YAML chat document.
+    /// The file is parsed as a ChatDocument; the conversation history seeds the agent
+    /// and new turns are appended.  In TUI mode the file is kept in sync after every turn.
+    /// If the file does not exist it is created automatically with a fresh session ID.
+    /// Equivalent to --load-chat PATH --output-chat PATH.
+    #[arg(long, value_name = "PATH", conflicts_with = "load_chat")]
+    pub chat: Option<PathBuf>,
+
+    /// Load conversation history from a YAML chat document before running.
+    /// Cannot be combined with --chat.
+    #[arg(long, value_name = "PATH", conflicts_with = "chat")]
+    pub load_chat: Option<PathBuf>,
+
+    /// Write the chat document to this YAML path after the run.
+    /// If omitted and --load-chat is set, the original file is updated in place.
+    /// Cannot be combined with --chat.
+    #[arg(long, value_name = "PATH")]
+    pub output_chat: Option<PathBuf>,
+
     /// Replay all tool calls in the loaded JSONL conversation with fresh results
     /// before submitting to the model.  Requires --load-jsonl or --jsonl.
     #[arg(long)]
@@ -1067,6 +1086,19 @@ impl Cli {
     /// Resolve the effective JSONL output path: --output-jsonl takes priority, then --jsonl.
     pub fn effective_output_jsonl(&self) -> Option<&PathBuf> {
         self.output_jsonl.as_ref().or(self.jsonl.as_ref())
+    }
+
+    /// Resolve the effective YAML chat input path: --load-chat takes priority, then --chat.
+    pub fn effective_load_chat(&self) -> Option<&PathBuf> {
+        self.load_chat.as_ref().or(self.chat.as_ref())
+    }
+
+    /// Resolve the effective YAML chat output path: --output-chat takes priority, then --chat.
+    pub fn effective_output_chat(&self) -> Option<&PathBuf> {
+        self.output_chat
+            .as_ref()
+            .or(self.load_chat.as_ref())
+            .or(self.chat.as_ref())
     }
 }
 

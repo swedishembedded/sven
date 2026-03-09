@@ -1272,6 +1272,8 @@ async fn run_as_teammate(
                     rerun_toolcalls: false,
                     regen_system_prompt: false,
                     max_tokens_budget: None,
+                    load_chat: None,
+                    output_chat: None,
                 };
 
                 let run_result = CiRunner::new(config.clone()).run(ci_opts).await;
@@ -1422,6 +1424,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         OutputFormatArg::Jsonl => OutputFormat::Jsonl,
     };
 
+    let load_chat = cli.effective_load_chat().cloned();
+    let output_chat = cli.effective_output_chat().cloned();
+
     let opts = CiOptions {
         mode: cli.mode,
         model_override: cli.model,
@@ -1443,6 +1448,8 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         rerun_toolcalls: cli.rerun_toolcalls,
         regen_system_prompt: cli.regen_system_prompt,
         max_tokens_budget: cli.max_tokens,
+        load_chat,
+        output_chat,
     };
 
     CiRunner::new(config).run(opts).await
@@ -1664,6 +1671,9 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         }
     };
 
+    let chat_load_path = cli.effective_load_chat().cloned();
+    let chat_output_path = cli.effective_output_chat().cloned();
+
     let opts = AppOptions {
         mode: cli.mode,
         initial_prompt: cli.prompt,
@@ -1674,6 +1684,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         jsonl_load_path,
         initial_queue,
         node_backend,
+        chat_path: chat_load_path,
+        output_chat_path: chat_output_path,
     };
 
     let app = App::new(config, opts);

@@ -15,6 +15,7 @@ use crate::{chat::segment::ChatSegment, markdown::StyledLines};
 pub type ExpandLevel = u8;
 
 /// All state owned by the chat pane.
+#[derive(Clone)]
 pub(crate) struct ChatState {
     /// Rendered display lines (pre-wrapped, styled) used by the chat widget.
     pub lines: StyledLines,
@@ -60,6 +61,12 @@ pub(crate) struct ChatState {
     pub selection_end: Option<(usize, u16)>,
     /// True while or after a drag selection is active (cleared on next mouse-down).
     pub is_selecting: bool,
+}
+
+impl Default for ChatState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChatState {

@@ -18,7 +18,19 @@ use crate::{
 impl App {
     // ── Agent event handler ───────────────────────────────────────────────────
 
-    pub(crate) async fn handle_agent_event(&mut self, event: AgentEvent) -> bool {
+    pub(crate) async fn handle_agent_event(
+        &mut self,
+        session_id: sven_input::SessionId,
+        event: AgentEvent,
+    ) -> bool {
+        // Route events for background sessions to their stored state.
+        if session_id != self.sessions.active_id {
+            if let Some(entry) = self.sessions.get_mut(&session_id) {
+                entry.apply_background_event(&event);
+            }
+            return false;
+        }
+
         match event {
             AgentEvent::TextDelta(delta) => {
                 self.chat.streaming_is_thinking = false;
@@ -190,6 +202,31 @@ impl App {
                 }
             }
             AgentEvent::TurnComplete => {
+                // After the first completed turn, derive a heuristic title from
+                // the first user message if no title has been set yet.
+                if self.chat_title == "New chat" || self.chat_title.is_empty() {
+                    let first_user_text = self.chat.segments.iter().find_map(|seg| {
+                        use crate::chat::segment::ChatSegment;
+                        use sven_model::{MessageContent, Role};
+                        if let ChatSegment::Message(m) = seg {
+                            if m.role == Role::User {
+                                if let MessageContent::Text(t) = &m.content {
+                                    return Some(t.clone());
+                                }
+                            }
+                        }
+                        None
+                    });
+                    if let Some(user_text) = first_user_text {
+                        let title = sven_input::make_title(&user_text);
+                        self.chat_title = title.clone();
+                        let active_id = self.sessions.active_id.clone();
+                        if let Some(entry) = self.sessions.get_mut(&active_id) {
+                            entry.title = title;
+                        }
+                    }
+                }
+
                 self.agent.busy = false;
                 self.agent.current_tool = None;
                 self.chat.tool_streaming_content.clear();

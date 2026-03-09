@@ -7,6 +7,7 @@
 //! (or [`ratatui::widgets::StatefulWidget`]) implementor plus any data types
 //! that are tightly coupled to its rendering.
 
+pub(crate) mod chat_list_pane;
 pub(crate) mod chat_pane;
 pub(crate) mod completion_menu;
 pub(crate) mod help_overlay;
@@ -24,6 +25,7 @@ pub(crate) mod which_key;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
+pub(crate) use chat_list_pane::{build_chat_list_items, ChatListPane};
 pub(crate) use chat_pane::{nvim_cursor_screen_pos, ChatLabels, ChatPane};
 pub(crate) use completion_menu::CompletionMenu;
 pub(crate) use help_overlay::HelpOverlay;

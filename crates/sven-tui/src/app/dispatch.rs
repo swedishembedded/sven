@@ -56,7 +56,7 @@ impl App {
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Chat;
                 }
-                FocusPane::Chat => {}
+                FocusPane::Chat | FocusPane::ChatList => {}
             },
             Action::NavDown => match self.ui.focus {
                 FocusPane::Chat => {
@@ -72,7 +72,7 @@ impl App {
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Input;
                 }
-                FocusPane::Input => {}
+                FocusPane::Input | FocusPane::ChatList => {}
             },
             Action::FocusQueue => {
                 if !self.queue.messages.is_empty() {
@@ -1021,6 +1021,97 @@ impl App {
                         self.rerender_chat().await;
                     }
                 }
+            }
+
+            // ── Chat list sidebar actions ─────────────────────────────────────
+            Action::ToggleChatList => {
+                self.layout.chat_list_visible = !self.layout.chat_list_visible;
+            }
+
+            Action::FocusChatList => {
+                if self.layout.chat_list_visible {
+                    self.ui.focus = FocusPane::ChatList;
+                    self.sessions.sync_list_selection_to_active();
+                }
+            }
+
+            Action::ChatListSelectNext => {
+                self.sessions.select_next();
+            }
+
+            Action::ChatListSelectPrev => {
+                self.sessions.select_prev();
+            }
+
+            Action::ChatListActivate => {
+                if let Some(id) = self
+                    .sessions
+                    .display_order
+                    .get(self.sessions.list_selected)
+                    .cloned()
+                {
+                    if id != self.sessions.active_id {
+                        self.switch_session(id).await;
+                    }
+                    self.ui.focus = FocusPane::Input;
+                }
+            }
+
+            Action::NewChat => {
+                self.new_session().await;
+            }
+
+            Action::DeleteChat => {
+                if let Some(id) = self
+                    .sessions
+                    .display_order
+                    .get(self.sessions.list_selected)
+                    .cloned()
+                {
+                    if id != self.sessions.active_id {
+                        self.sessions.delete(&id);
+                        self.ui
+                            .push_toast(crate::app::ui_state::Toast::info("Chat deleted"));
+                    } else {
+                        self.ui.push_toast(crate::app::ui_state::Toast::warning(
+                            "Cannot delete active chat",
+                        ));
+                    }
+                }
+            }
+
+            Action::ArchiveChat => {
+                if let Some(id) = self
+                    .sessions
+                    .display_order
+                    .get(self.sessions.list_selected)
+                    .cloned()
+                {
+                    self.sessions.archive(&id);
+                    // Save the updated status to disk.
+                    if let Some(entry) = self.sessions.get(&id) {
+                        if let Some(path) = entry.yaml_path.clone() {
+                            if path.exists() {
+                                if let Ok(content) = std::fs::read_to_string(&path) {
+                                    if let Ok(mut doc) = sven_input::parse_chat_document(&content) {
+                                        doc.status = sven_input::ChatStatus::Archived;
+                                        let _ = sven_input::save_chat_to(&path, &mut doc);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.ui
+                        .push_toast(crate::app::ui_state::Toast::info("Chat archived"));
+                }
+            }
+
+            Action::ResizeChatListGrow => {
+                self.layout.chat_list_grow();
+            }
+
+            Action::ResizeChatListShrink => {
+                self.layout.chat_list_shrink();
             }
 
             _ => {}

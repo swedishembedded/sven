@@ -9,6 +9,7 @@ use sven_model::{MessageContent, Role};
 
 use crate::{
     app::input_state::{is_image_path, InputAttachment},
+    app::layout_cache::ResizeDrag,
     app::{App, FocusPane},
     chat::segment::{segment_at_line, segment_editable_text, segment_short_preview, ChatSegment},
     input::{is_reserved_key, to_nvim_notation},
@@ -111,6 +112,7 @@ impl App {
 
                 let in_edit_mode =
                     self.edit.message_index.is_some() || self.edit.queue_index.is_some();
+                let in_chat_list = self.ui.focus == FocusPane::ChatList;
                 if let Some(action) = map_key(
                     k,
                     in_search,
@@ -118,6 +120,7 @@ impl App {
                     self.ui.pending_nav,
                     in_edit_mode,
                     in_queue,
+                    in_chat_list,
                 ) {
                     if action == Action::NavPrefix {
                         self.ui.pending_nav = true;
@@ -150,6 +153,42 @@ impl App {
                         }
                         if let Some(pager) = &mut self.ui.pager {
                             pager.scroll_down(3);
+                            return false;
+                        }
+                    }
+                    _ => {}
+                }
+
+                // ── Pane border resize (drag handles) ─────────────────────────
+                // Handled before any other mouse logic so that a drag started
+                // on the border is captured even if the pointer moves into another pane.
+                match mouse.kind {
+                    MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                        if self.layout.on_chat_list_border(mouse.column, mouse.row) {
+                            self.layout.resize_drag = Some(ResizeDrag::ChatListWidth);
+                            return false;
+                        }
+                        if self.layout.on_input_border(mouse.column, mouse.row) {
+                            self.layout.resize_drag = Some(ResizeDrag::InputHeight);
+                            return false;
+                        }
+                    }
+                    MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                        match self.layout.resize_drag {
+                            Some(ResizeDrag::ChatListWidth) => {
+                                self.layout.drag_chat_list_width(mouse.column);
+                                return false;
+                            }
+                            Some(ResizeDrag::InputHeight) => {
+                                self.layout.drag_input_height(mouse.row);
+                                return false;
+                            }
+                            None => {}
+                        }
+                    }
+                    MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                        if self.layout.resize_drag.is_some() {
+                            self.layout.resize_drag = None;
                             return false;
                         }
                     }
@@ -524,6 +563,7 @@ impl App {
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
+                    self.layout.effective_chat_list_width(),
                 );
                 // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
