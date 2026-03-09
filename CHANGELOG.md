@@ -16,10 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not interrupt it. A spinner in the sidebar shows which sessions are
   still running. Background events are buffered and displayed when you return.
 - **YAML-based persistence**: every session is automatically saved to
-  `~/.config/sven/history/<id>.yaml` and restored on next launch.
+  `~/.config/sven/history/<id>.yaml` and restored on next launch; last active
+  session is restored on startup.
 - Per-session model and mode: each chat remembers its own `/model` and `/mode`
   settings; changes in one session do not affect others.
 - Mouse drag to resize the chat list sidebar.
+- **Inspector overlay**: view skills, subagents, peers, and context in a
+  dedicated overlay; `/tools` inspector with node-proxy support.
+- **Parallel tool slots** (sven-core): streaming dispatch with multiple
+  concurrent tool slots.
+- Vim-style pane navigation (e.g. focus chat list / main pane).
 
 ### Fixed
 - `/new` was clearing the active chat in-place instead of creating a new
@@ -33,6 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Active message-edit state (`e` key) was not cleared on new session creation.
 - JSONL log path was not tracked per-session; history writes after a session
   switch could land in the wrong session's file.
+- State leakage when creating new sessions (input, queue, edit state and
+  agent state now isolated per chat session).
+- Chat list click could trigger segment actions in the wrong session; mouse
+  routing is now centralized with HitArea hit-test.
+- Duplicate agent spawned on initial session; duplicate no longer created.
+- Message loss on exit; session state is saved so messages are not dropped.
+- `wait_for_message` could drop replies when a peer responded before the
+  waiter registered.
+- Neovim double-response bug; inspector and pager UX improved.
+- TodoUpdate segment ordering in tool output.
+- Chat pane selection and scrollbar ghost/stuck rendering.
+
+### Changed
+- Chat document formatting improved (sven-input).
+- Mouse routing refactored to centralize hit-testing (HitArea).
+- Inspector overlay: removed dead `kind` field.
+- Documentation for parallel tool slots and multi-session TUI.
 
 ## [1.3.2] - 2026-03-07
 
@@ -156,6 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
+[1.5.0]: https://github.com/bosun-ai/sven/releases/tag/v1.5.0
+[1.4.0]: https://github.com/bosun-ai/sven/releases/tag/v1.4.0
 [1.3.2]: https://github.com/bosun-ai/sven/releases/tag/v1.3.2
 [1.3.0]: https://github.com/bosun-ai/sven/releases/tag/v1.3.0
 [1.2.3]: https://github.com/bosun-ai/sven/releases/tag/v1.2.3
