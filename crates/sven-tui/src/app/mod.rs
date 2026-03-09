@@ -135,11 +135,22 @@ pub struct App {
     /// In this mode the node owns model/mode selection; the TUI is a dumb
     /// terminal that only forwards text and renders streamed responses.
     pub(crate) is_node_proxy: bool,
+    /// Node URL retained after `run()` consumes `node_backend`, so the
+    /// inspector can query the node for its tool list via `/tools`.
+    pub(crate) node_url: Option<String>,
+    /// Node bearer token, retained alongside `node_url`.
+    pub(crate) node_token: Option<String>,
+    /// Whether the node connection should skip TLS verification.
+    pub(crate) node_insecure: bool,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,
     pub(crate) shared_skills: sven_runtime::SharedSkills,
     pub(crate) shared_agents: sven_runtime::SharedAgents,
+    /// Shared tool snapshot — populated by AgentBuilder after the local tool
+    /// registry is built.  Empty in node-proxy mode (tools are fetched live
+    /// from the node when `/tools` is opened).
+    pub(crate) shared_tools: sven_tools::SharedTools,
     pub(crate) history_path: Option<PathBuf>,
     pub(crate) jsonl_path: Option<PathBuf>,
     /// Set to `true` after a tool call completes — triggers a terminal-state
@@ -251,17 +262,27 @@ impl App {
         chat.segments = initial_segments;
 
         let is_node_proxy = opts.node_backend.is_some();
+        let (node_url, node_token, node_insecure) = opts
+            .node_backend
+            .as_ref()
+            .map(|nb| (Some(nb.url.clone()), Some(nb.token.clone()), nb.insecure))
+            .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
+        let shared_tools = sven_tools::SharedTools::empty();
 
         let mut app = Self {
             config,
             node_backend: opts.node_backend,
             is_node_proxy,
+            node_url,
+            node_token,
+            node_insecure,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,
             shared_skills,
             shared_agents,
+            shared_tools,
             history_path,
             jsonl_path,
             needs_terminal_recover: false,
@@ -754,6 +775,7 @@ impl App {
             let cancel_handle_task = self.agent.cancel.clone();
             let shared_skills_task = self.shared_skills.clone();
             let shared_agents_task = self.shared_agents.clone();
+            let shared_tools_task = self.shared_tools.clone();
             let buffer_store_task = Arc::clone(&self.buffer_store);
             tokio::spawn(async move {
                 agent_task(
@@ -766,6 +788,7 @@ impl App {
                     cancel_handle_task,
                     shared_skills_task,
                     shared_agents_task,
+                    shared_tools_task,
                     buffer_store_task,
                 )
                 .await;

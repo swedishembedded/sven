@@ -10,7 +10,7 @@ use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_model::Message;
 use sven_runtime::{SharedAgents, SharedSkills};
-use sven_tools::{QuestionRequest, TodoItem};
+use sven_tools::{QuestionRequest, SharedTools, TodoItem};
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
@@ -65,6 +65,9 @@ pub async fn agent_task(
     cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
+    // Pre-created shared tool snapshot; populated after registry build so the
+    // TUI can display available tools via `/tools` without reaching into the agent.
+    shared_tools: SharedTools,
     // Pre-created buffer store; the TUI holds a clone to display live status.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
@@ -95,6 +98,7 @@ pub async fn agent_task(
     let mut agent = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
         .with_buffer_store(buffer_store)
+        .with_shared_tools(shared_tools)
         .build(mode, model.clone(), profile)
         .await;
 

@@ -6,6 +6,7 @@
 
 use sven_core::{prompts::CollabEvent, CompactionStrategyUsed};
 use sven_model::{Message, MessageContent, Role};
+use sven_tools::TodoItem;
 
 /// One entry in the chat display (a concrete message or a display-only note).
 #[derive(Debug, Clone)]
@@ -21,6 +22,13 @@ pub enum ChatSegment {
     Thinking {
         content: String,
     },
+    /// A todo list snapshot (display-only, never sent to the LLM).
+    ///
+    /// Emitted by the `TodoUpdate` agent event.  Using a dedicated variant
+    /// instead of `Message(assistant text)` prevents the todo content from
+    /// being injected between a `ToolCall` and its `ToolResult`, which would
+    /// violate the API's structural invariant and cause 400 errors.
+    TodoUpdate(Vec<TodoItem>),
     /// A team collaboration lifecycle event (display-only, not sent to LLM).
     ///
     /// Rendered as a compact status line with a coloured icon, e.g.:
@@ -76,6 +84,7 @@ pub fn segment_is_removable(seg: &ChatSegment) -> bool {
         ChatSegment::Message(_) | ChatSegment::Thinking { .. } => true,
         ChatSegment::ContextCompacted { .. }
         | ChatSegment::Error(_)
+        | ChatSegment::TodoUpdate(_)
         | ChatSegment::CollabEvent(_)
         | ChatSegment::DelegateSummary { .. } => false,
     }
@@ -120,6 +129,9 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
         Some(ChatSegment::Thinking { content }) => content.trim().to_string(),
         Some(ChatSegment::ContextCompacted { .. }) => return "(context compaction)".into(),
         Some(ChatSegment::Error(e)) => e.trim().to_string(),
+        Some(ChatSegment::TodoUpdate(todos)) => {
+            return format!("(todo update · {} items)", todos.len())
+        }
         Some(ChatSegment::CollabEvent(ev)) => return sven_core::prompts::format_collab_event(ev),
         Some(ChatSegment::DelegateSummary {
             to_name,
@@ -137,15 +149,57 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     }
 }
 
+/// Remove any messages that sit between an assistant `ToolCall` and its
+/// matching `ToolResult`.  Such interleaved messages violate the API's
+/// structural invariant and cause 400 errors.
+///
+/// This is a defensive safeguard.  The primary fix is that `TodoUpdate` events
+/// now produce a `ChatSegment::TodoUpdate` (display-only) instead of a
+/// `ChatSegment::Message`, so they are never included here at all.
+fn sanitize_tool_groups(messages: Vec<Message>) -> Vec<Message> {
+    use std::collections::HashSet;
+    let mut out: Vec<Message> = Vec::with_capacity(messages.len());
+    let mut pending_call_ids: HashSet<String> = HashSet::new();
+
+    for msg in messages {
+        match &msg.content {
+            MessageContent::ToolCall { tool_call_id, .. } => {
+                pending_call_ids.insert(tool_call_id.clone());
+                out.push(msg);
+            }
+            MessageContent::ToolResult { tool_call_id, .. } => {
+                pending_call_ids.remove(tool_call_id);
+                out.push(msg);
+            }
+            _ => {
+                if !pending_call_ids.is_empty() {
+                    tracing::warn!(
+                        role = ?msg.role,
+                        "dropping message between ToolCall and ToolResult to satisfy API invariant"
+                    );
+                } else {
+                    out.push(msg);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Collect the `Message` objects from a segment slice, skipping non-message
-/// entries (ContextCompacted, Error, Thinking, CollabEvent, DelegateSummary).
-/// Used when building the payload for a Resubmit request.
+/// entries (ContextCompacted, Error, Thinking, TodoUpdate, CollabEvent,
+/// DelegateSummary).  Used when building the payload for a Resubmit request.
+///
+/// The returned list is passed through [`sanitize_tool_groups`] to remove any
+/// messages that ended up between a `ToolCall` and its `ToolResult` (e.g. due
+/// to a partial abort mid-tool).
 pub fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
-    segments
+    let raw: Vec<Message> = segments
         .iter()
         .filter_map(|s| match s {
             ChatSegment::Message(m) => Some(m.clone()),
             _ => None,
         })
-        .collect()
+        .collect();
+    sanitize_tool_groups(raw)
 }

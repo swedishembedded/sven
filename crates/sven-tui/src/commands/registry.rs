@@ -53,6 +53,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::inspect::SubagentsCommand));
         reg.register(Arc::new(builtin::inspect::PeersCommand));
         reg.register(Arc::new(builtin::inspect::ContextCommand));
+        reg.register(Arc::new(builtin::inspect::ToolsCommand));
         reg
     }
 

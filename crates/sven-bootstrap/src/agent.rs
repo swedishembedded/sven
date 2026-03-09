@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_core::Agent;
 use sven_model::ModelProvider;
-use sven_tools::{events::ToolEvent, OutputBufferStore};
+use sven_tools::{events::ToolEvent, OutputBufferStore, SharedTools};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
@@ -34,6 +34,9 @@ pub struct AgentBuilder {
     /// builder and exposed via [`AgentBuilder::buffer_store`] so that callers
     /// (e.g. the TUI) can hold a reference for live rendering.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
+    /// Optional shared tool snapshot populated after registry construction so
+    /// that the TUI can inspect available tools via `/tools`.
+    shared_tools: Option<SharedTools>,
 }
 
 impl AgentBuilder {
@@ -44,6 +47,7 @@ impl AgentBuilder {
             config,
             runtime_ctx: RuntimeContext::empty(),
             buffer_store: Arc::new(Mutex::new(OutputBufferStore::new())),
+            shared_tools: None,
         }
     }
 
@@ -69,6 +73,16 @@ impl AgentBuilder {
     /// be polled by the TUI for live streaming display.
     pub fn buffer_store(&self) -> Arc<Mutex<OutputBufferStore>> {
         Arc::clone(&self.buffer_store)
+    }
+
+    /// Inject a [`SharedTools`] handle that will be populated after the tool
+    /// registry is built inside [`AgentBuilder::build`].
+    ///
+    /// The TUI holds a clone of this handle and calls `.get()` to obtain a
+    /// cheap `Arc<[ToolSchema]>` snapshot when the `/tools` inspector is opened.
+    pub fn with_shared_tools(mut self, shared_tools: SharedTools) -> Self {
+        self.shared_tools = Some(shared_tools);
+        self
     }
 
     /// Build the [`Agent`] with the given mode, model, and tool-set profile.
@@ -112,6 +126,12 @@ impl AgentBuilder {
             runtime.clone(),
             Arc::clone(&self.buffer_store),
         );
+
+        // Populate the shared tool snapshot so the TUI `/tools` inspector can
+        // display all registered tools without accessing the registry directly.
+        if let Some(ref st) = self.shared_tools {
+            st.set(registry.schemas());
+        }
 
         // Resolve context window: prefer live probe (actual n_ctx loaded by the
         // server), fall back to the static catalog, then default to 128 000.

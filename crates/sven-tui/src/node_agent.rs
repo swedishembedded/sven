@@ -30,7 +30,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sven_core::AgentEvent;
-use sven_tools::ToolCall;
+use sven_tools::{ToolCall, ToolSchema};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -58,6 +58,7 @@ enum Cmd {
         session_id: Uuid,
         call_id: String,
     },
+    ListTools,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,8 +113,22 @@ enum Evt {
         code: u32,
         message: String,
     },
+    ToolList {
+        tools: Vec<NodeToolInfo>,
+    },
     #[serde(other)]
     Unknown,
+}
+
+/// Tool schema as returned by the node's `ListTools` response.
+///
+/// Field names match the node's JSON serialisation (identical to
+/// `sven_tools::ToolSchema` — kept local to avoid a cross-crate dependency).
+#[derive(Debug, Deserialize)]
+struct NodeToolInfo {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────────
@@ -284,6 +299,91 @@ pub async fn node_agent_task(
     }
 }
 
+// ── Node inspector helpers ─────────────────────────────────────────────────────
+
+/// Fetch the list of tools registered on the connected node.
+///
+/// Opens a fresh WebSocket connection, sends a `ListTools` command, waits for
+/// the `ToolList` response, and closes the connection.  Returns an empty vec
+/// on any error (connection refused, timeout, parse error, etc.) so that the
+/// caller can display a graceful "not available" message.
+///
+/// This is used by the `/tools` inspector when the TUI is in node-proxy mode.
+pub async fn fetch_node_tools(url: &str, token: &str, insecure: bool) -> Vec<ToolSchema> {
+    use tokio_tungstenite::connect_async_tls_with_config;
+    use tungstenite::http::Request;
+
+    let insecure = insecure || is_localhost_url(url);
+    let connector = build_tls_connector(insecure);
+
+    let request = match Request::builder()
+        .uri(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Host", "127.0.0.1")
+        .header("Upgrade", "websocket")
+        .header("Connection", "Upgrade")
+        .header("Sec-WebSocket-Key", generate_ws_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())
+    {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
+
+    let (ws_stream, _) = match connect_async_tls_with_config(request, None, false, connector).await
+    {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+
+    let (mut ws_sink, mut ws_rx) = ws_stream.split();
+
+    // Send ListTools command.
+    let json = match serde_json::to_string(&Cmd::ListTools) {
+        Ok(j) => j,
+        Err(_) => return vec![],
+    };
+    {
+        use futures::SinkExt;
+        if ws_sink
+            .send(tungstenite::Message::Text(json))
+            .await
+            .is_err()
+        {
+            return vec![];
+        }
+    }
+
+    // Read until we receive a ToolList event (ignore other events).
+    // Timeout after 5 seconds to avoid hanging if the node is slow.
+    let timeout = tokio::time::Duration::from_secs(5);
+    let result = tokio::time::timeout(timeout, async {
+        while let Some(msg) = ws_rx.next().await {
+            let text = match msg {
+                Ok(tungstenite::Message::Text(t)) => t,
+                Ok(tungstenite::Message::Close(_)) => break,
+                _ => continue,
+            };
+            if let Ok(evt) = serde_json::from_str::<Evt>(&text) {
+                if let Evt::ToolList { tools } = evt {
+                    return tools
+                        .into_iter()
+                        .map(|t| ToolSchema {
+                            name: t.name,
+                            description: t.description,
+                            parameters: t.parameters,
+                        })
+                        .collect::<Vec<_>>();
+                }
+            }
+        }
+        vec![]
+    })
+    .await;
+
+    result.unwrap_or_default()
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 async fn handle_event(
@@ -384,7 +484,8 @@ async fn handle_event(
             let _ = tx.send(AgentEvent::Error(message)).await;
             return true;
         }
-        Evt::Unknown => {}
+        // ToolList is only consumed by fetch_node_tools; ignore it here.
+        Evt::ToolList { .. } | Evt::Unknown => {}
     }
     false
 }

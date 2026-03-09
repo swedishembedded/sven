@@ -529,9 +529,25 @@ mod dispatch_tests {
         ));
     }
 
+    // ── /tools ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tools_triggers_open_inspector_tools() {
+        let (name, result) = try_dispatch("/tools", &registry()).unwrap();
+        assert_eq!(name, "tools");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Tools
+            })
+        ));
+    }
+
+    // ── shared assertion ──────────────────────────────────────────────────────
+
     #[test]
     fn inspect_commands_do_not_set_model_mode_or_message() {
-        for cmd in &["/skills", "/subagents", "/peers", "/context"] {
+        for cmd in &["/skills", "/subagents", "/peers", "/context", "/tools"] {
             let (_, result) = try_dispatch(cmd, &registry()).unwrap();
             assert!(
                 result.model_override.is_none(),

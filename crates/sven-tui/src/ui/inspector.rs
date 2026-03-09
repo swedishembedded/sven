@@ -15,6 +15,7 @@
 //! /subagents → InspectorKind::Subagents
 //! /peers     → InspectorKind::Peers
 //! /context   → InspectorKind::Context
+//! /tools     → InspectorKind::Tools
 //! ```
 
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use sven_runtime::{format_agents_list, format_skills_tree, AgentInfo, SkillInfo};
-use sven_tools::OutputBufferStore;
+use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
 
 use crate::markdown::render_markdown;
 use crate::pager::PagerOverlay;
@@ -36,6 +37,7 @@ pub enum InspectorKind {
     Subagents,
     Peers,
     Context,
+    Tools,
 }
 
 impl InspectorKind {
@@ -46,6 +48,7 @@ impl InspectorKind {
             InspectorKind::Subagents => "SUBAGENTS",
             InspectorKind::Peers => "PEERS",
             InspectorKind::Context => "CONTEXT",
+            InspectorKind::Tools => "TOOLS",
         }
     }
 }
@@ -61,11 +64,20 @@ pub struct InspectorOverlay {
 }
 
 impl InspectorOverlay {
-    // ── Sync constructors (skills / subagents / peers use them) ───────────────
+    // ── Constructors ──────────────────────────────────────────────────────────
 
     /// Build the skills inspector from a slice of discovered skills.
-    pub fn for_skills(skills: &[SkillInfo], ascii: bool) -> Self {
-        let md = format_skills_tree(skills);
+    ///
+    /// `is_node_proxy` adds a note that skills are locally discovered and may
+    /// differ from the connected node's skill set.
+    pub fn for_skills(skills: &[SkillInfo], is_node_proxy: bool, ascii: bool) -> Self {
+        let mut md = format_skills_tree(skills);
+        if is_node_proxy {
+            md = format!(
+                "> **Connected to node** — skills are discovered from the local \
+                 filesystem and may differ from the node's skill set.\n\n{md}"
+            );
+        }
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Skills.title()),
@@ -73,8 +85,16 @@ impl InspectorOverlay {
     }
 
     /// Build the subagents inspector from a slice of discovered agents.
-    pub fn for_subagents(agents: &[AgentInfo], ascii: bool) -> Self {
-        let md = format_agents_list(agents);
+    ///
+    /// `is_node_proxy` adds a note that subagents are locally discovered.
+    pub fn for_subagents(agents: &[AgentInfo], is_node_proxy: bool, ascii: bool) -> Self {
+        let mut md = format_agents_list(agents);
+        if is_node_proxy {
+            md = format!(
+                "> **Connected to node** — subagents are discovered from the local \
+                 filesystem and may differ from the node's subagent set.\n\n{md}"
+            );
+        }
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Subagents.title()),
@@ -83,15 +103,17 @@ impl InspectorOverlay {
 
     /// Build the peers inspector.
     ///
-    /// Shows discovered subagents (the statically configured agents, available
-    /// as slash commands) and any active subprocess buffers from the
-    /// `OutputBufferStore` if provided.
+    /// Shows discovered subagents (statically configured, available as slash
+    /// commands) and any active subprocess buffers from the `OutputBufferStore`.
+    /// In node-proxy mode the buffer store lives in the node process, so a
+    /// note is shown instead of an empty buffer list.
     pub fn for_peers(
         configured_agents: &[AgentInfo],
         buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
+        is_node_proxy: bool,
         ascii: bool,
     ) -> Self {
-        let md = format_peers_markdown(configured_agents, buffer_store);
+        let md = format_peers_markdown(configured_agents, buffer_store, is_node_proxy);
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Peers.title()),
@@ -101,17 +123,46 @@ impl InspectorOverlay {
     /// Build the context inspector from runtime session state.
     ///
     /// Shows project context, skills/agents counts, and active buffer handles.
+    /// In node-proxy mode the subprocess buffers live in the node process, so a
+    /// note is shown instead of potentially empty local data.
     pub fn for_context(
         project_root: Option<&std::path::Path>,
         skills_count: usize,
         agents_count: usize,
+        tools_count: usize,
         buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
+        is_node_proxy: bool,
         ascii: bool,
     ) -> Self {
-        let md = format_context_markdown(project_root, skills_count, agents_count, buffer_store);
+        let md = format_context_markdown(
+            project_root,
+            skills_count,
+            agents_count,
+            tools_count,
+            buffer_store,
+            is_node_proxy,
+        );
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Context.title()),
+        }
+    }
+
+    /// Build the tools inspector.
+    ///
+    /// In local mode `tools` comes from the shared registry snapshot.
+    /// In node-proxy mode the caller fetches the list from the node first via
+    /// [`crate::node_agent::fetch_node_tools`] and passes it here.
+    pub fn for_tools(tools: &[ToolSchema], is_node_proxy: bool, ascii: bool) -> Self {
+        let source_note = if is_node_proxy {
+            "> **Connected to node** — showing tools registered on the node.\n\n"
+        } else {
+            ""
+        };
+        let md = format!("{}{}", source_note, format_tools_list(tools));
+        let lines = render_markdown(&md, 0, ascii);
+        Self {
+            pager: PagerOverlay::with_title(lines, InspectorKind::Tools.title()),
         }
     }
 }
@@ -126,6 +177,7 @@ impl InspectorOverlay {
 fn format_peers_markdown(
     configured_agents: &[AgentInfo],
     buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
+    is_node_proxy: bool,
 ) -> String {
     let mut out = String::from("## Peers\n\n");
 
@@ -165,6 +217,15 @@ fn format_peers_markdown(
 
     // ── Active subprocess buffers ─────────────────────────────────────────────
     out.push_str("### Active Subprocess Buffers\n\n");
+
+    if is_node_proxy {
+        out.push_str(
+            "_Subprocess buffers are not available in node-proxy mode — they live \
+             in the node process. Use `/tools` to inspect the node's tool set._\n\n",
+        );
+        return out;
+    }
+
     let metadata = buffer_store
         .as_ref()
         .and_then(|store| store.try_lock().ok())
@@ -211,9 +272,19 @@ fn format_context_markdown(
     project_root: Option<&std::path::Path>,
     skills_count: usize,
     agents_count: usize,
+    tools_count: usize,
     buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
+    is_node_proxy: bool,
 ) -> String {
     let mut out = String::from("## Context\n\n");
+
+    if is_node_proxy {
+        out.push_str(
+            "> **Connected to node** — context data below reflects the local TUI session. \
+             Subprocess buffers and tool calls are executed in the node process. \
+             Use `/tools` to inspect the node's registered tools.\n\n",
+        );
+    }
 
     // ── Runtime context ───────────────────────────────────────────────────────
     out.push_str("### Runtime\n\n");
@@ -224,9 +295,19 @@ fn format_context_markdown(
     }
     out.push_str(&format!("**Skills loaded:** {skills_count}\n\n"));
     out.push_str(&format!("**Subagents configured:** {agents_count}\n\n"));
+    out.push_str(&format!("**Tools registered:** {tools_count}\n\n"));
 
     // ── Output buffers ────────────────────────────────────────────────────────
     out.push_str("### Output Buffers\n\n");
+
+    if is_node_proxy {
+        out.push_str(
+            "_Output buffers are not available in node-proxy mode — they live \
+             in the node process._\n\n",
+        );
+        return out;
+    }
+
     let metadata = buffer_store
         .as_ref()
         .and_then(|store| store.try_lock().ok())

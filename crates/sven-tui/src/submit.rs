@@ -135,21 +135,42 @@ impl App {
                         let agents = self.shared_agents.get();
                         let buffer_store = std::sync::Arc::clone(&self.buffer_store);
                         let project_root = sven_runtime::find_project_root().ok();
+                        let is_node = self.is_node_proxy;
                         let inspector = match kind {
-                            InspectorKind::Skills => InspectorOverlay::for_skills(&skills, ascii),
+                            InspectorKind::Skills => {
+                                InspectorOverlay::for_skills(&skills, is_node, ascii)
+                            }
                             InspectorKind::Subagents => {
-                                InspectorOverlay::for_subagents(&agents, ascii)
+                                InspectorOverlay::for_subagents(&agents, is_node, ascii)
                             }
-                            InspectorKind::Peers => {
-                                InspectorOverlay::for_peers(&agents, Some(buffer_store), ascii)
-                            }
+                            InspectorKind::Peers => InspectorOverlay::for_peers(
+                                &agents,
+                                Some(buffer_store),
+                                is_node,
+                                ascii,
+                            ),
                             InspectorKind::Context => InspectorOverlay::for_context(
                                 project_root.as_deref(),
                                 skills.len(),
                                 agents.len(),
+                                self.shared_tools.get().len(),
                                 Some(buffer_store),
+                                is_node,
                                 ascii,
                             ),
+                            InspectorKind::Tools => {
+                                let tools = if is_node {
+                                    // Fetch live from the node.
+                                    let url = self.node_url.clone().unwrap_or_default();
+                                    let token = self.node_token.clone().unwrap_or_default();
+                                    let insecure = self.node_insecure;
+                                    crate::node_agent::fetch_node_tools(&url, &token, insecure)
+                                        .await
+                                } else {
+                                    self.shared_tools.get().to_vec()
+                                };
+                                InspectorOverlay::for_tools(&tools, is_node, ascii)
+                            }
                         };
                         self.ui.inspector = Some(inspector);
                         return false;

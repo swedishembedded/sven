@@ -17,6 +17,17 @@ pub struct ToolSchema {
     pub parameters: serde_json::Value,
 }
 
+/// Shared, atomically-replaceable snapshot of the agent's tool registry.
+///
+/// Works exactly like [`sven_runtime::SharedSkills`] and
+/// [`sven_runtime::SharedAgents`]: callers hold a cheap `Clone` and call
+/// `.get()` to obtain an `Arc<[ToolSchema]>` snapshot without locking.
+///
+/// The store is populated by [`AgentBuilder`] after the registry is built so
+/// that the TUI can list available tools via `/tools` without reaching into
+/// the agent's internals.
+pub type SharedTools = sven_runtime::Shared<ToolSchema>;
+
 /// Central registry holding all available tools.
 ///
 /// `ToolRegistry` is automatically `Sync` because `HashMap<String, Arc<dyn Tool>>`

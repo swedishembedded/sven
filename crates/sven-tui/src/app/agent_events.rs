@@ -11,10 +11,7 @@ use sven_tools::QuestionRequest;
 
 use crate::{
     app::{App, FocusPane},
-    chat::{
-        markdown::format_todos_markdown,
-        segment::{messages_for_resubmit, ChatSegment},
-    },
+    chat::segment::{messages_for_resubmit, ChatSegment},
     overlay::question::QuestionModal,
 };
 
@@ -328,11 +325,7 @@ impl App {
                 self.agent.current_tool = None;
             }
             AgentEvent::TodoUpdate(todos) => {
-                let todo_md = format_todos_markdown(&todos);
-                self.chat
-                    .segments
-                    .push(ChatSegment::Message(Message::assistant(&todo_md)));
-                self.save_history_async();
+                self.chat.segments.push(ChatSegment::TodoUpdate(todos));
                 self.rerender_chat().await;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;

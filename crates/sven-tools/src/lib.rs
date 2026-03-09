@@ -2,15 +2,17 @@
 
 // SPDX-License-Identifier: Apache-2.0
 pub mod builtin;
+pub mod display;
 pub mod events;
 pub(crate) mod params;
 pub mod policy;
 pub mod registry;
 pub mod tool;
 
+pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use policy::{ApprovalPolicy, RolePolicy, ToolPolicy};
-pub use registry::{ToolRegistry, ToolSchema};
+pub use registry::{SharedTools, ToolRegistry, ToolSchema};
 pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
 
 // File operation tools

@@ -145,3 +145,37 @@ impl SlashCommand for ContextCommand {
         }
     }
 }
+
+// ── /tools ────────────────────────────────────────────────────────────────────
+
+/// Open the tools inspector.
+pub struct ToolsCommand;
+
+impl SlashCommand for ToolsCommand {
+    fn name(&self) -> &str {
+        "tools"
+    }
+
+    fn description(&self) -> &str {
+        "Show all available tools with descriptions and parameter counts. \
+         In node-proxy mode, fetches the tool list live from the connected node."
+    }
+
+    fn complete(
+        &self,
+        _arg_index: usize,
+        _partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
+        vec![]
+    }
+
+    fn execute(&self, _args: Vec<String>) -> CommandResult {
+        CommandResult {
+            immediate_action: Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Tools,
+            }),
+            ..Default::default()
+        }
+    }
+}

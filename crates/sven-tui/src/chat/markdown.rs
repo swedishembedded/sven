@@ -81,6 +81,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
                 content
             )
         }
+        ChatSegment::TodoUpdate(todos) => format_todos_markdown(todos),
         ChatSegment::CollabEvent(ev) => {
             let line = sven_core::prompts::format_collab_event(ev);
             format!("\n*{line}*\n")
@@ -258,6 +259,7 @@ pub fn segment_bar_style(seg: &ChatSegment) -> (Option<Style>, bool) {
         ChatSegment::Thinking { .. } => (Some(Style::default().fg(BAR_THINKING)), false),
         ChatSegment::Error(_) => (Some(Style::default().fg(BAR_ERROR)), false),
         ChatSegment::ContextCompacted { .. } => (Some(Style::default().fg(BAR_COMPACT)), false),
+        ChatSegment::TodoUpdate(_) => (Some(Style::default().fg(BAR_COMPACT)), true),
         ChatSegment::CollabEvent(_) => (Some(Style::default().fg(BAR_COMPACT)), true),
         ChatSegment::DelegateSummary { .. } => (Some(Style::default().fg(BAR_TOOL)), false),
     }
