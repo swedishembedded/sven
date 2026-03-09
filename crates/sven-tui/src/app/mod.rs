@@ -1169,9 +1169,10 @@ impl App {
         let new_id = self.sessions.create_session("New chat");
         self.sessions.active_id = new_id.clone();
 
-        // Reset live chat/agent state for the new empty session.
+        // Reset live chat/agent/session state for the new empty session.
         self.chat = ChatState::new();
         self.agent = AgentConn::new();
+        self.session = crate::state::SessionState::new(self.config.model.clone(), AgentMode::Agent);
 
         // Spawn an agent task; sets self.agent.tx and the entry's agent_tx/cancel.
         self.spawn_agent_for_session(&new_id).await;
@@ -1231,6 +1232,16 @@ impl App {
         let old_chat = std::mem::replace(&mut self.chat, target_chat.unwrap_or_default());
         let _ = old_chat; // already saved to session entry
 
+        // Restore per-session model/mode state.
+        let target_session_state = self
+            .sessions
+            .get_mut(&target_id)
+            .and_then(|e| e.session_state.take())
+            .unwrap_or_else(|| {
+                crate::state::SessionState::new(self.config.model.clone(), AgentMode::Agent)
+            });
+        self.session = target_session_state;
+
         // Update active session ID.
         self.sessions.active_id = target_id.clone();
 
@@ -1281,6 +1292,7 @@ impl App {
         let active_id = self.sessions.active_id.clone();
         if let Some(entry) = self.sessions.get_mut(&active_id) {
             entry.stored_chat = Some(self.chat.clone());
+            entry.session_state = Some(self.session.clone());
             entry.busy = self.agent.busy;
             entry.current_tool = self.agent.current_tool.clone();
             entry.title = self.chat_title.clone();

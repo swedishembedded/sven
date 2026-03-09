@@ -55,6 +55,11 @@ pub(crate) struct SessionEntry {
     /// Stored chat segments for inactive sessions (active session uses `App.chat`).
     pub stored_chat: Option<ChatState>,
 
+    // ── Per-session model/mode state ──────────────────────────────────────────
+    /// Saved model/mode state for this session (populated when session is inactive).
+    /// The active session's live state is in `App.session`.
+    pub session_state: Option<crate::state::SessionState>,
+
     // ── Agent connection ──────────────────────────────────────────────────────
     /// Sender for submitting requests to this session's background agent task.
     pub agent_tx: Option<mpsc::Sender<AgentRequest>>,
@@ -80,6 +85,7 @@ impl SessionEntry {
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             stored_chat: None,
+            session_state: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -100,6 +106,7 @@ impl SessionEntry {
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             stored_chat: None,
+            session_state: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -119,6 +126,7 @@ impl SessionEntry {
             created_at: now,
             updated_at: now,
             stored_chat: None,
+            session_state: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -332,6 +340,7 @@ impl SessionManager {
                 created_at: chat_entry.updated_at, // best available approximation
                 updated_at: chat_entry.updated_at,
                 stored_chat: None, // lazy-loaded when activated
+                session_state: None,
                 agent_tx: None,
                 agent_cancel: Arc::new(Mutex::new(None)),
                 busy: false,

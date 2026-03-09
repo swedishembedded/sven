@@ -85,7 +85,7 @@ impl App {
                         result.immediate_action,
                         Some(ImmediateAction::NewConversation)
                     ) {
-                        self.start_new_conversation().await;
+                        self.new_session().await;
                         return false;
                     }
 

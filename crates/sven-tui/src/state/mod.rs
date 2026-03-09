@@ -16,6 +16,7 @@
 use sven_config::{AgentMode, ModelConfig};
 
 /// Unified session state: active model/mode plus staged transitions.
+#[derive(Clone)]
 pub struct SessionState {
     /// Config for the currently active model (what the agent is using).
     pub model_cfg: ModelConfig,

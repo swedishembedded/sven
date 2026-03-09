@@ -435,33 +435,6 @@ impl App {
         }
     }
 
-    /// Start a completely new conversation with a fresh JSONL file.
-    pub(crate) async fn start_new_conversation(&mut self) {
-        // Clear current chat segments
-        self.chat.segments.clear();
-        self.chat.tool_args.clear();
-
-        // Generate a new JSONL path
-        if let Some(new_path) = sven_runtime::resolve_auto_log_path() {
-            self.jsonl_path = Some(new_path.clone());
-            tracing::info!(path = %new_path.display(), "started new conversation");
-
-            // Save empty state to the new file
-            let records: Vec<ConversationRecord> = vec![];
-            let serialized = serialize_jsonl_records(&records);
-            if let Err(e) = std::fs::write(&new_path, &serialized) {
-                tracing::warn!("failed to create new JSONL file: {e}");
-            }
-        } else {
-            tracing::warn!("could not resolve new log path - keeping current JSONL path");
-        }
-
-        // Also clear history path to start fresh
-        self.history_path = None;
-
-        self.rerender_chat().await;
-    }
-
     // ── Neovim sync ───────────────────────────────────────────────────────────
 
     pub(crate) async fn sync_nvim_buffer_to_segments(&mut self) {
