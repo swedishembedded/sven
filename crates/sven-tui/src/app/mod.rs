@@ -75,6 +75,13 @@ impl ModelDirective {
             ModelDirective::SwitchTo(c) => *c,
         }
     }
+
+    /// Display label for UI (e.g. queue panel). Never panics.
+    pub fn display_label(&self) -> String {
+        match self {
+            ModelDirective::SwitchTo(c) => format!("{}/{}", c.provider, c.name),
+        }
+    }
 }
 
 /// A message waiting in the queue, with optional per-message transitions.
@@ -659,6 +666,10 @@ impl App {
             .copied();
 
         let auto_scroll_paused = !self.chat.auto_scroll && !self.chat.lines.is_empty();
+        let highlight_line_range = (self.ui.focus == FocusPane::Chat && self.nvim.disabled)
+            .then_some(self.chat.focused_segment)
+            .flatten()
+            .and_then(|idx| self.chat.segment_line_ranges.get(idx).copied());
         if !show_welcome {
             frame.render_widget(
                 ChatPane {
@@ -675,6 +686,7 @@ impl App {
                     segment_count: self.chat.segments.len(),
                     auto_scroll_paused,
                     selection: self.chat.normalized_selection(),
+                    highlight_line_range,
                 },
                 layout.chat_pane,
             );
@@ -763,10 +775,9 @@ impl App {
                 .map(|qm| QueueItem {
                     content: &qm.content,
                     model_label: qm.model_transition.as_ref().map(|d| {
-                        let ModelDirective::SwitchTo(c) = d;
                         // Leak to 'static for the widget lifetime — the queue
                         // lives in self which outlives this frame.
-                        Box::leak(format!("{}/{}", c.provider, c.name).into_boxed_str()) as &str
+                        Box::leak(d.display_label().into_boxed_str()) as &str
                     }),
                     mode_label: qm.mode_transition,
                 })
@@ -882,6 +893,7 @@ impl App {
                     focused_button: modal.focused_button,
                     has_action: modal.has_action(),
                     ascii,
+                    border_color: modal.border_color,
                 },
                 frame.area(),
             );

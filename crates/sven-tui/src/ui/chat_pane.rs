@@ -45,6 +45,9 @@ pub struct ChatPane<'a> {
     /// Active mouse drag selection: `(start_abs_line, start_col, end_abs_line, end_col)`.
     /// Columns are relative to the inner area left edge.  `None` = no selection.
     pub selection: Option<(usize, u16, usize, u16)>,
+    /// Line range (start, end) of the keyboard-highlighted segment when chat has focus.
+    /// Drawn as a subtle full-line highlight; actions (e/y/r/x) apply to this segment.
+    pub highlight_line_range: Option<(usize, usize)>,
 }
 
 impl Widget for ChatPane<'_> {
@@ -109,6 +112,22 @@ impl Widget for ChatPane<'_> {
         Paragraph::new(visible)
             .style(Style::default().bg(BG))
             .render(content_rect, buf);
+
+        // ── Segment highlight (j/k selection; clipped to content_rect) ───────
+        if let Some((seg_start, seg_end)) = self.highlight_line_range {
+            let highlight_style = Style::default().bg(Color::Rgb(35, 45, 55));
+            for vis_row in 0..content_height as usize {
+                let abs_line = vis_row + self.scroll_offset as usize;
+                if abs_line >= seg_start && abs_line < seg_end {
+                    let y = inner.y + vis_row as u16;
+                    let row_rect = Rect::new(inner.x, y, content_width, 1);
+                    let clipped = content_rect.intersection(row_rect);
+                    if !clipped.is_empty() {
+                        buf.set_style(clipped, highlight_style);
+                    }
+                }
+            }
+        }
 
         // ── Edit highlight (clipped to content_rect) ─────────────────────────
         if let Some((seg_start, seg_end)) = self.editing_line_range {

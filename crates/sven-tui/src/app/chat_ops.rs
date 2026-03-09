@@ -14,9 +14,9 @@ use crate::{
     app::App,
     chat::{
         markdown::{
-            apply_bar_and_dim, apply_focused_bar, collapsed_preview, format_conversation,
-            parse_markdown_to_messages, partial_content, segment_bar_style, segment_to_markdown,
-            strip_display_anchors, SYM_THINK, SYM_TOOL,
+            apply_bar_and_dim, collapsed_preview, format_conversation, parse_markdown_to_messages,
+            partial_content, segment_bar_style, segment_to_markdown, strip_display_anchors,
+            SYM_THINK, SYM_TOOL,
         },
         segment::{
             segment_at_line, segment_editable_text, segment_is_removable, segment_is_rerunnable,
@@ -143,16 +143,7 @@ impl App {
 
             let lines = render_markdown(&s, render_width, ascii);
             let (bar_style, dim) = segment_bar_style(seg);
-            let mut styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
-
-            // Highlight the bar for the focused segment.
-            if self.nvim.disabled {
-                if let Some(focused) = self.chat.focused_segment {
-                    if focused == i {
-                        styled = apply_focused_bar(styled, bar_char);
-                    }
-                }
-            }
+            let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
 
             let n = styled.len();
 
@@ -212,15 +203,17 @@ impl App {
         self.chat.remove_labels = remove_labels;
         self.chat.rerun_labels = rerun_labels;
         self.chat.copy_labels = copy_labels;
-        self.recompute_focused_segment();
+        // Keep existing highlight if still valid; otherwise set from center (e.g. first load).
+        if self.chat.focused_segment.is_none_or(|i| i >= segs_len) {
+            self.recompute_focused_segment();
+        }
     }
 
-    /// Recompute the keyboard-focused segment based on the current scroll
-    /// offset and chat height.
+    /// Recompute the keyboard-focused segment (highlight) based on the current
+    /// scroll offset and chat height. Used when focus moves to the chat pane.
     pub(crate) fn recompute_focused_segment(&mut self) {
         let center = self.chat.scroll_offset as usize + self.layout.chat_height as usize / 2;
-        self.chat.focused_segment = segment_at_line(&self.chat.segment_line_ranges, center)
-            .filter(|&idx| segment_editable_text(&self.chat.segments, idx).is_some());
+        self.chat.focused_segment = segment_at_line(&self.chat.segment_line_ranges, center);
     }
 
     /// Re-render the chat pane: update the Neovim buffer (if active) and
@@ -261,7 +254,6 @@ impl App {
     pub(crate) fn scroll_up(&mut self, n: u16) {
         self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(n);
         self.chat.auto_scroll = false;
-        self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_down(&mut self, n: u16) {
@@ -270,7 +262,6 @@ impl App {
         if self.chat.scroll_offset >= max {
             self.chat.auto_scroll = true;
         }
-        self.recompute_focused_segment();
     }
 
     pub(crate) fn scroll_to_bottom(&mut self) {
@@ -278,7 +269,21 @@ impl App {
             self.chat.scroll_offset =
                 (self.chat.lines.len() as u16).saturating_sub(self.layout.chat_height);
         }
-        self.recompute_focused_segment();
+    }
+
+    /// Adjust scroll so the segment at `seg_idx` is visible. Called after j/k move the highlight.
+    pub(crate) fn scroll_chat_to_show_segment(&mut self, seg_idx: usize) {
+        let Some(&(seg_start, seg_end)) = self.chat.segment_line_ranges.get(seg_idx) else {
+            return;
+        };
+        let h = self.layout.chat_height as usize;
+        let seg_start_u = seg_start as u16;
+        if seg_start_u < self.chat.scroll_offset {
+            self.chat.scroll_offset = seg_start_u;
+        } else if seg_end > self.chat.scroll_offset as usize + h {
+            self.chat.scroll_offset = (seg_end.saturating_sub(h)) as u16;
+        }
+        self.chat.auto_scroll = false;
     }
 
     /// Adjust `input.scroll_offset` so the cursor row is within the visible

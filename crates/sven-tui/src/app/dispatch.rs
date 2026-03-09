@@ -21,6 +21,29 @@ use crate::{
     pager::PagerOverlay,
 };
 
+/// Plain-text help for the chat pane shortcuts modal (Enter in chat).
+const CHAT_HELP_MESSAGE: &str = "\
+Navigation
+  j / k       Move highlight down / up
+  Enter       Show this help
+
+Actions (apply to the highlighted message)
+  e           Edit message
+  y           Copy segment to clipboard
+  Y           Copy all to clipboard
+  x           Remove segment
+  d           Truncate chat from here
+  r           Rerun from this segment
+
+Scrolling
+  ^u / ^d     Page up / down
+  g / G       Top / bottom
+
+Other
+  /           Search
+  q           Focus queue panel
+  Space       Toggle delegate summary";
+
 impl App {
     // ── Action dispatcher ─────────────────────────────────────────────────────
 
@@ -53,10 +76,12 @@ impl App {
                         self.ui.focus = FocusPane::Queue;
                     } else {
                         self.ui.focus = FocusPane::Chat;
+                        self.recompute_focused_segment();
                     }
                 }
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Chat;
+                    self.recompute_focused_segment();
                 }
                 FocusPane::Chat | FocusPane::ChatList => {}
             },
@@ -79,6 +104,7 @@ impl App {
             Action::NavLeft => {
                 if self.ui.focus == FocusPane::ChatList {
                     self.ui.focus = FocusPane::Chat;
+                    self.recompute_focused_segment();
                 }
             }
             Action::NavRight => {
@@ -533,6 +559,43 @@ impl App {
                 }
             }
 
+            Action::ChatHighlightDown => {
+                if self.nvim.bridge.is_some() {
+                    return false;
+                }
+                let n = self.chat.segments.len();
+                if n == 0 {
+                    return false;
+                }
+                let next = match self.chat.focused_segment {
+                    Some(i) => (i + 1).min(n - 1),
+                    None => 0,
+                };
+                self.chat.focused_segment = Some(next);
+                self.scroll_chat_to_show_segment(next);
+            }
+            Action::ChatHighlightUp => {
+                if self.nvim.bridge.is_some() {
+                    return false;
+                }
+                let n = self.chat.segments.len();
+                if n == 0 {
+                    return false;
+                }
+                let prev = match self.chat.focused_segment {
+                    Some(i) => i.saturating_sub(1),
+                    None => n - 1,
+                };
+                self.chat.focused_segment = Some(prev);
+                self.scroll_chat_to_show_segment(prev);
+            }
+            Action::ShowChatHelp => {
+                self.ui.confirm_modal = Some(ConfirmModal::info_with_border(
+                    "Chat shortcuts",
+                    CHAT_HELP_MESSAGE,
+                    ratatui::style::Color::Green,
+                ));
+            }
             Action::ScrollUp => {
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
@@ -586,6 +649,7 @@ impl App {
                 self.ui.search.update_matches(&self.chat.lines);
                 self.ui.search.active = true;
                 self.ui.focus = FocusPane::Chat;
+                self.recompute_focused_segment();
             }
             Action::SearchClose => {
                 self.ui.search.active = false;
@@ -1207,7 +1271,6 @@ impl App {
                     self.chat.scroll_offset =
                         new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
                     self.chat.auto_scroll = false;
-                    self.recompute_focused_segment();
                 }
                 // Scrollbar click clears any in-progress selection.
                 self.chat.selection_anchor = None;
@@ -1280,7 +1343,7 @@ impl App {
                                 self.chat.scroll_offset = seg_start as u16;
                             }
                         }
-                        self.recompute_focused_segment();
+                        self.chat.focused_segment = Some(seg_idx);
                     }
                 }
             }

@@ -20,6 +20,8 @@
 //! ));
 //! ```
 
+use ratatui::style::Color;
+
 /// The action to execute when the user presses Confirm.
 ///
 /// Add variants here for any new confirmable operation.
@@ -56,6 +58,8 @@ pub struct ConfirmModal {
     /// The action to execute when Confirm is activated.
     /// `None` makes this an info-only dialog (only Cancel / Enter closes it).
     pub action: Option<ConfirmedAction>,
+    /// Border (and title) color for the modal.
+    pub border_color: Color,
 }
 
 impl ConfirmModal {
@@ -73,6 +77,7 @@ impl ConfirmModal {
             cancel_label: " Cancel ".into(),
             focused_button: 1, // default focus on Cancel (safer)
             action: Some(action),
+            border_color: Color::Red,
         }
     }
 
@@ -87,6 +92,24 @@ impl ConfirmModal {
             cancel_label: " OK ".into(),
             focused_button: 1,
             action: None,
+            border_color: Color::Red,
+        }
+    }
+
+    /// Info-only dialog with a custom border color (e.g. green for help / shortcuts).
+    pub fn info_with_border(
+        title: impl Into<String>,
+        message: impl Into<String>,
+        border_color: Color,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            confirm_label: String::new(),
+            cancel_label: " OK ".into(),
+            focused_button: 1,
+            action: None,
+            border_color,
         }
     }
 

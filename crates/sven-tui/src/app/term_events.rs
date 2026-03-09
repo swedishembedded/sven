@@ -126,6 +126,7 @@ impl App {
                 let in_edit_mode =
                     self.edit.message_index.is_some() || self.edit.queue_index.is_some();
                 let in_chat_list = self.ui.focus == FocusPane::ChatList;
+                let in_chat_pane = self.ui.focus == FocusPane::Chat;
                 if let Some(action) = map_key(
                     k,
                     in_search,
@@ -134,6 +135,7 @@ impl App {
                     in_edit_mode,
                     in_queue,
                     in_chat_list,
+                    in_chat_pane,
                 ) {
                     if action == Action::NavPrefix {
                         self.ui.pending_nav = true;

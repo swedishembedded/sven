@@ -22,6 +22,12 @@ pub enum Action {
     // Scrolling (in chat pane)
     ScrollUp,
     ScrollDown,
+    /// Move the chat highlight to the next segment (j when chat has focus).
+    ChatHighlightDown,
+    /// Move the chat highlight to the previous segment (k when chat has focus).
+    ChatHighlightUp,
+    /// Show the chat shortcuts help modal (Enter when chat has focus).
+    ShowChatHelp,
     ScrollPageUp,
     ScrollPageDown,
     ScrollTop,
@@ -225,6 +231,8 @@ pub enum Action {
 /// `in_edit_mode` — true when editing a queued message; Enter/Esc confirm/cancel.
 /// `in_queue` — true when the queue panel has keyboard focus.
 /// `in_chat_list` — true when the chat list sidebar has keyboard focus.
+/// `in_chat_pane` — true when the chat pane has keyboard focus (so j/k move highlight, Enter shows help).
+#[allow(clippy::too_many_arguments)]
 pub fn map_key(
     event: KeyEvent,
     in_search: bool,
@@ -233,6 +241,7 @@ pub fn map_key(
     in_edit_mode: bool,
     in_queue: bool,
     in_chat_list: bool,
+    in_chat_pane: bool,
 ) -> Option<Action> {
     let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
     let alt = event.modifiers.contains(KeyModifiers::ALT);
@@ -383,6 +392,14 @@ pub fn map_key(
         KeyCode::Char(c) if in_input && plain => Some(Action::InputChar(c)),
 
         // ── Chat pane ─────────────────────────────────────────────────────────
+        // When chat has focus: j/k move highlight, Enter shows help; otherwise j/k scroll.
+        KeyCode::Up | KeyCode::Char('k') if !in_input && plain && in_chat_pane => {
+            Some(Action::ChatHighlightUp)
+        }
+        KeyCode::Down | KeyCode::Char('j') if !in_input && plain && in_chat_pane => {
+            Some(Action::ChatHighlightDown)
+        }
+        KeyCode::Enter if !in_input && plain && in_chat_pane => Some(Action::ShowChatHelp),
         KeyCode::Up | KeyCode::Char('k') if !in_input && plain => Some(Action::ScrollUp),
         KeyCode::Down | KeyCode::Char('j') if !in_input && plain => Some(Action::ScrollDown),
         KeyCode::Char('K') if !in_input => Some(Action::ScrollUp),
@@ -456,7 +473,7 @@ mod tests {
         key(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    // Helper: call map_key with in_chat_list=false (the common case in tests).
+    // Helper: call map_key with in_chat_list=false, in_chat_pane as given (default false).
     fn mk(
         ev: KeyEvent,
         in_search: bool,
@@ -464,6 +481,7 @@ mod tests {
         pending_nav: bool,
         in_edit: bool,
         in_queue: bool,
+        in_chat_pane: bool,
     ) -> Option<Action> {
         map_key(
             ev,
@@ -473,6 +491,7 @@ mod tests {
             in_edit,
             in_queue,
             false,
+            in_chat_pane,
         )
     }
 
@@ -480,11 +499,11 @@ mod tests {
     fn ctrl_w_returns_nav_prefix() {
         let ev = ctrl_key('w');
         assert_eq!(
-            mk(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false, false),
             Some(Action::NavPrefix)
         );
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::NavPrefix)
         );
     }
@@ -492,7 +511,7 @@ mod tests {
     #[test]
     fn pending_nav_k_returns_nav_up() {
         assert_eq!(
-            mk(plain_key('k'), false, false, true, false, false),
+            mk(plain_key('k'), false, false, true, false, false, false),
             Some(Action::NavUp)
         );
     }
@@ -500,7 +519,7 @@ mod tests {
     #[test]
     fn pending_nav_j_returns_nav_down() {
         assert_eq!(
-            mk(plain_key('j'), false, false, true, false, false),
+            mk(plain_key('j'), false, false, true, false, false, false),
             Some(Action::NavDown)
         );
     }
@@ -508,7 +527,7 @@ mod tests {
     #[test]
     fn pending_nav_h_returns_nav_left() {
         assert_eq!(
-            mk(plain_key('h'), false, false, true, false, false),
+            mk(plain_key('h'), false, false, true, false, false, false),
             Some(Action::NavLeft)
         );
     }
@@ -516,7 +535,7 @@ mod tests {
     #[test]
     fn pending_nav_l_returns_nav_right() {
         assert_eq!(
-            mk(plain_key('l'), false, false, true, false, false),
+            mk(plain_key('l'), false, false, true, false, false, false),
             Some(Action::NavRight)
         );
     }
@@ -524,7 +543,7 @@ mod tests {
     #[test]
     fn pending_nav_plus_grows_input() {
         assert_eq!(
-            mk(plain_key('+'), false, false, true, false, false),
+            mk(plain_key('+'), false, false, true, false, false, false),
             Some(Action::ResizeInputGrow)
         );
     }
@@ -532,7 +551,7 @@ mod tests {
     #[test]
     fn pending_nav_minus_shrinks_input() {
         assert_eq!(
-            mk(plain_key('-'), false, false, true, false, false),
+            mk(plain_key('-'), false, false, true, false, false, false),
             Some(Action::ResizeInputShrink)
         );
     }
@@ -541,7 +560,7 @@ mod tests {
     fn ctrl_up_in_input_is_history_up() {
         let ev = key(KeyCode::Up, KeyModifiers::CONTROL);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::InputHistoryUp)
         );
     }
@@ -550,7 +569,7 @@ mod tests {
     fn ctrl_down_in_input_is_history_down() {
         let ev = key(KeyCode::Down, KeyModifiers::CONTROL);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::InputHistoryDown)
         );
     }
@@ -559,7 +578,7 @@ mod tests {
     fn plain_up_in_input_is_move_line_up() {
         let ev = key(KeyCode::Up, KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::InputMoveLineUp)
         );
     }
@@ -568,20 +587,23 @@ mod tests {
     fn plain_down_in_input_is_move_line_down() {
         let ev = key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::InputMoveLineDown)
         );
     }
 
     #[test]
     fn pending_nav_other_key_cancels() {
-        assert_eq!(mk(plain_key('x'), false, false, true, false, false), None);
+        assert_eq!(
+            mk(plain_key('x'), false, false, true, false, false, false),
+            None
+        );
     }
 
     #[test]
     fn ctrl_w_in_input_does_not_type_w() {
         let ev = ctrl_key('w');
-        let action = mk(ev, false, true, false, false, false);
+        let action = mk(ev, false, true, false, false, false, false);
         assert_ne!(action, Some(Action::InputChar('w')));
         assert_eq!(action, Some(Action::NavPrefix));
     }
@@ -590,7 +612,7 @@ mod tests {
     fn plain_char_in_input_types() {
         // 'h' is NavLeft in pending_nav, but plain 'h' in input types normally.
         assert_eq!(
-            mk(plain_key('h'), false, true, false, false, false),
+            mk(plain_key('h'), false, true, false, false, false, false),
             Some(Action::InputChar('h'))
         );
     }
@@ -598,7 +620,7 @@ mod tests {
     #[test]
     fn plain_char_x_outside_input_removes_segment() {
         assert_eq!(
-            mk(plain_key('x'), false, false, false, false, false),
+            mk(plain_key('x'), false, false, false, false, false, false),
             Some(Action::RemoveChatSegment)
         );
     }
@@ -606,33 +628,47 @@ mod tests {
     #[test]
     fn ctrl_k_in_input_deletes_to_end() {
         assert_eq!(
-            mk(ctrl_key('k'), false, true, false, false, false),
+            mk(ctrl_key('k'), false, true, false, false, false, false),
             Some(Action::InputDeleteToEnd)
         );
     }
 
     #[test]
     fn ctrl_k_in_chat_does_not_fire() {
-        assert_eq!(mk(ctrl_key('k'), false, false, false, false, false), None);
+        assert_eq!(
+            mk(ctrl_key('k'), false, false, false, false, false, false),
+            None
+        );
     }
 
     #[test]
     fn ctrl_c_outside_input_not_reserved() {
-        assert_eq!(mk(ctrl_key('c'), false, false, false, false, false), None);
+        assert_eq!(
+            mk(ctrl_key('c'), false, false, false, false, false, false),
+            None
+        );
     }
 
     #[test]
     fn ctrl_c_interrupts_inside_input() {
         assert_eq!(
-            mk(ctrl_key('c'), false, true, false, false, false),
+            mk(ctrl_key('c'), false, true, false, false, false, false),
             Some(Action::InterruptAgent)
         );
     }
 
     #[test]
-    fn j_in_chat_scrolls_down() {
+    fn j_in_chat_pane_moves_highlight_down() {
         assert_eq!(
-            mk(plain_key('j'), false, false, false, false, false),
+            mk(plain_key('j'), false, false, false, false, false, true),
+            Some(Action::ChatHighlightDown)
+        );
+    }
+
+    #[test]
+    fn j_not_in_chat_pane_scrolls_down() {
+        assert_eq!(
+            mk(plain_key('j'), false, false, false, false, false, false),
             Some(Action::ScrollDown)
         );
     }
@@ -640,7 +676,7 @@ mod tests {
     #[test]
     fn ctrl_u_in_chat_page_up() {
         assert_eq!(
-            mk(ctrl_key('u'), false, false, false, false, false),
+            mk(ctrl_key('u'), false, false, false, false, false, false),
             Some(Action::ScrollPageUp)
         );
     }
@@ -648,7 +684,7 @@ mod tests {
     #[test]
     fn e_in_chat_opens_edit() {
         assert_eq!(
-            mk(plain_key('e'), false, false, false, false, false),
+            mk(plain_key('e'), false, false, false, false, false, false),
             Some(Action::EditMessageAtCursor)
         );
     }
@@ -657,7 +693,7 @@ mod tests {
     fn edit_mode_enter_confirms() {
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, true, false, true, false),
+            mk(ev, false, true, false, true, false, false),
             Some(Action::EditMessageConfirm)
         );
     }
@@ -666,7 +702,7 @@ mod tests {
     fn edit_mode_esc_cancels() {
         let ev = key(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, true, false, true, false),
+            mk(ev, false, true, false, true, false, false),
             Some(Action::EditMessageCancel)
         );
     }
@@ -674,7 +710,7 @@ mod tests {
     #[test]
     fn edit_mode_char_goes_to_input() {
         assert_eq!(
-            mk(plain_key('x'), false, true, false, true, false),
+            mk(plain_key('x'), false, true, false, true, false, false),
             Some(Action::InputChar('x'))
         );
     }
@@ -684,7 +720,7 @@ mod tests {
     #[test]
     fn ctrl_a_opens_team_picker() {
         assert_eq!(
-            mk(ctrl_key('a'), false, false, false, false, false),
+            mk(ctrl_key('a'), false, false, false, false, false, false),
             Some(Action::OpenTeamPicker)
         );
     }
@@ -692,7 +728,7 @@ mod tests {
     #[test]
     fn ctrl_a_in_input_opens_team_picker() {
         assert_eq!(
-            mk(ctrl_key('a'), false, true, false, false, false),
+            mk(ctrl_key('a'), false, true, false, false, false, false),
             Some(Action::OpenTeamPicker)
         );
     }
@@ -701,7 +737,7 @@ mod tests {
     fn shift_down_cycles_teammate_forward() {
         let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
         assert_eq!(
-            mk(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false, false),
             Some(Action::CycleTeammateForward)
         );
     }
@@ -710,7 +746,7 @@ mod tests {
     fn shift_up_cycles_teammate_backward() {
         let ev = key(KeyCode::Up, KeyModifiers::SHIFT);
         assert_eq!(
-            mk(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false, false),
             Some(Action::CycleTeammateBackward)
         );
     }
@@ -719,7 +755,7 @@ mod tests {
     fn alt_t_opens_task_list() {
         let ev = key(KeyCode::Char('t'), KeyModifiers::ALT);
         assert_eq!(
-            mk(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false, false),
             Some(Action::ToggleTaskList)
         );
     }
@@ -728,7 +764,7 @@ mod tests {
     fn space_in_chat_toggles_delegate_summary() {
         let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false, false),
             Some(Action::ToggleDelegateSummary)
         );
     }
@@ -737,7 +773,7 @@ mod tests {
     fn space_in_input_pane_types_char() {
         let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::InputChar(' '))
         );
     }
@@ -746,8 +782,17 @@ mod tests {
     fn shift_down_in_input_pane_is_history_down() {
         let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
         assert_eq!(
-            mk(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false, false),
             Some(Action::CycleTeammateForward)
+        );
+    }
+
+    #[test]
+    fn enter_in_chat_pane_shows_help() {
+        let ev = key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, false, false, true),
+            Some(Action::ShowChatHelp)
         );
     }
 }

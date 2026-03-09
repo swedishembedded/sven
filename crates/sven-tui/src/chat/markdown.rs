@@ -296,6 +296,8 @@ pub fn apply_bar_and_dim(
 }
 
 /// Highlight the bar character of a focused segment (make it brighter/bold).
+/// (Unused when the chat pane uses full-line highlight instead.)
+#[allow(dead_code)]
 pub fn apply_focused_bar(lines: StyledLines, bar_char: &str) -> StyledLines {
     lines
         .into_iter()

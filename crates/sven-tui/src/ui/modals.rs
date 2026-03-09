@@ -30,6 +30,8 @@ pub struct ConfirmModalView<'a> {
     pub focused_button: usize,
     pub has_action: bool,
     pub ascii: bool,
+    /// Border (and title) color for the modal.
+    pub border_color: Color,
 }
 
 impl Widget for ConfirmModalView<'_> {
@@ -58,11 +60,13 @@ impl Widget for ConfirmModalView<'_> {
         let block = Block::default()
             .title(Span::styled(
                 format!(" {} ", self.title),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(self.border_color)
+                    .add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
             .border_type(bt)
-            .border_style(Style::default().fg(Color::Red))
+            .border_style(Style::default().fg(self.border_color))
             .style(Style::default().bg(Color::Black));
 
         let inner = block.inner(modal_area);
