@@ -131,11 +131,13 @@ impl Widget for StatusBar<'_> {
             } else {
                 String::new()
             };
-            let label = if out_str.is_empty() {
-                format!("  in: {in_str}{cache_str}")
+            // Always show "out:" label when we have input tokens, even if 0.
+            let out_label = if out_str.is_empty() {
+                "out: 0"
             } else {
-                format!("  in: {in_str} out: {out_str}{cache_str}")
+                out_str.as_str()
             };
+            let label = format!("  in: {in_str} out: {out_label}{cache_str}");
             Span::styled(label, Style::default().fg(TEXT_DIM))
         } else {
             Span::raw("")
@@ -176,6 +178,7 @@ impl Widget for StatusBar<'_> {
                 FocusPane::Chat => "",
                 FocusPane::Queue => "↑↓ select · Enter send · Esc close",
                 FocusPane::ChatList => "j/k nav · Enter switch · n new · d del · ^b hide",
+                FocusPane::Peers => "j/k nav · Enter delegate · ← back",
             }
         };
 

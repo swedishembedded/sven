@@ -123,4 +123,15 @@ pub enum AgentEvent {
         status: String,
         result_preview: String,
     },
+    /// List of connected peers (node-proxy mode).
+    PeerList(Vec<PeerInfo>),
+}
+
+/// Information about a connected peer.
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub name: String,
+    pub peer_id: String,
+    pub connected: bool,
+    pub can_delegate: bool,
 }

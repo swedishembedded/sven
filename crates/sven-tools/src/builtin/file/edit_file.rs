@@ -121,7 +121,7 @@ fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
     }
 
     if hunks.is_empty() {
-        return Err("No hunks found in diff. Use @@ headers.".to_string());
+        return Err("Editing file failed. No hunk markers found in input diff. Please format the diff correctly.".to_string());
     }
     Ok(hunks)
 }
@@ -600,7 +600,11 @@ mod tests {
             ))
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("No hunks"), "{}", out.content);
+        assert!(
+            out.content.contains("Editing file failed"),
+            "{}",
+            out.content
+        );
         let _ = std::fs::remove_file(&path);
     }
 

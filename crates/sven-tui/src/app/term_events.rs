@@ -178,6 +178,11 @@ impl App {
                 // ── Pane border resize (stateful drag; spans multiple events) ─
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
+                        // Check peers split border first (within sidebar).
+                        if self.layout.on_peers_split_border(mouse.column, mouse.row) {
+                            self.layout.resize_drag = Some(ResizeDrag::PeersSplit);
+                            return false;
+                        }
                         if self.layout.on_chat_list_border(mouse.column, mouse.row) {
                             self.layout.resize_drag = Some(ResizeDrag::ChatListWidth);
                             return false;
@@ -188,6 +193,10 @@ impl App {
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => match self.layout.resize_drag {
+                        Some(ResizeDrag::PeersSplit) => {
+                            self.layout.drag_peers_pane_height(mouse.row);
+                            return false;
+                        }
                         Some(ResizeDrag::ChatListWidth) => {
                             self.layout.drag_chat_list_width(mouse.column);
                             return false;
@@ -235,6 +244,7 @@ impl App {
                     self.queue.messages.len(),
                     desired_input_height,
                     self.layout.effective_chat_list_width(),
+                    self.layout.effective_peers_pane_height(),
                 );
                 // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);

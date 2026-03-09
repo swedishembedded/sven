@@ -28,9 +28,20 @@ pub enum FocusPane {
     Queue,
     /// The right-side chat list sidebar.
     ChatList,
+    /// The right-side peers pane (below chat list in sidebar).
+    Peers,
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
+
+/// A brief notification shown in the bottom-right corner.
+/// Information about a connected peer.
+pub struct PeerInfo {
+    pub name: String,
+    pub peer_id: String,
+    pub connected: bool,
+    pub can_delegate: bool,
+}
 
 /// A brief notification shown in the bottom-right corner.
 pub struct Toast {
@@ -101,6 +112,10 @@ pub(crate) struct UiState {
     /// Peer ID of the currently viewed session in the team picker.
     /// `None` = viewing the local (lead) session.
     pub active_session_peer: Option<String>,
+    /// List of connected peers (populated when in P2P mode with delegation).
+    pub peers: Vec<PeerInfo>,
+    /// Selected index in the peers list.
+    pub peers_selected: usize,
 }
 
 #[allow(dead_code)]
@@ -122,6 +137,8 @@ impl UiState {
             team_picker_state: TeamPickerState::default(),
             team_name: None,
             active_session_peer: None,
+            peers: Vec::new(),
+            peers_selected: 0,
         }
     }
 

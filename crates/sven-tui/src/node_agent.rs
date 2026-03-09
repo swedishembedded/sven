@@ -30,6 +30,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sven_core::AgentEvent;
+use sven_core::PeerInfo;
 use sven_tools::{ToolCall, ToolSchema};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
@@ -59,6 +60,8 @@ enum Cmd {
         call_id: String,
     },
     ListTools,
+    /// Request list of connected peers.
+    ListPeers,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +119,14 @@ enum Evt {
     ToolList {
         tools: Vec<NodeToolInfo>,
     },
+    PeerList {
+        peers: Vec<NodePeerInfo>,
+    },
+    /// Peer connected/disconnected event.
+    PeerEvent {
+        event_type: String, // "connected" or "disconnected"
+        peer: NodePeerInfo,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -129,6 +140,15 @@ struct NodeToolInfo {
     name: String,
     description: String,
     parameters: serde_json::Value,
+}
+
+/// Peer info as returned by the node's `ListPeers` response.
+#[derive(Debug, Deserialize)]
+struct NodePeerInfo {
+    name: String,
+    peer_id: String,
+    connected: bool,
+    can_delegate: bool,
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────────
@@ -229,6 +249,50 @@ pub async fn node_agent_task(
             }
             AgentRequest::GenerateTitle { .. } => {
                 // Title generation is local-agent only; not sent in node-proxy mode.
+                continue;
+            }
+            AgentRequest::ListPeers => {
+                // Send ListPeers command to the node.
+                if send_cmd(&ws_out_tx, &Cmd::ListPeers).is_err() {
+                    let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
+                    break;
+                }
+                // Wait for the response and forward it.
+                loop {
+                    let msg = match ws_stream.next().await {
+                        Some(Ok(m)) => m,
+                        Some(Err(e)) => {
+                            let _ = tx.send(AgentEvent::Error(format!("WS recv: {e}"))).await;
+                            break;
+                        }
+                        None => break,
+                    };
+                    let text = match msg {
+                        tungstenite::Message::Text(t) => t,
+                        tungstenite::Message::Close(_) => break,
+                        _ => continue,
+                    };
+                    let evt: Evt = match serde_json::from_str(&text) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    match evt {
+                        Evt::PeerList { peers } => {
+                            let peer_infos: Vec<PeerInfo> = peers
+                                .into_iter()
+                                .map(|p| PeerInfo {
+                                    name: p.name,
+                                    peer_id: p.peer_id,
+                                    connected: p.connected,
+                                    can_delegate: p.can_delegate,
+                                })
+                                .collect();
+                            let _ = tx.send(AgentEvent::PeerList(peer_infos)).await;
+                            break;
+                        }
+                        _ => continue,
+                    }
+                }
                 continue;
             }
         };
@@ -487,7 +551,7 @@ async fn handle_event(
             return true;
         }
         // ToolList is only consumed by fetch_node_tools; ignore it here.
-        Evt::ToolList { .. } | Evt::Unknown => {}
+        Evt::ToolList { .. } | Evt::PeerList { .. } | Evt::PeerEvent { .. } | Evt::Unknown => {}
     }
     false
 }

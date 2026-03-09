@@ -563,6 +563,7 @@ impl App {
             self.queue.messages.len(),
             desired_input_height,
             self.layout.effective_chat_list_width(),
+            self.layout.effective_peers_pane_height(),
         );
         // Clean up expired toasts every frame.
         self.ui.prune_toasts();
@@ -820,6 +821,34 @@ impl App {
                 layout.chat_list_pane,
             );
         }
+        // ── Peers pane (right side, below chat list) ───────────────────────────
+        if layout.peers_pane.height > 0 && layout.peers_pane.width > 0 {
+            let items: Vec<crate::ui::PeerListItem<'_>> = self
+                .ui
+                .peers
+                .iter()
+                .map(|peer| crate::ui::PeerListItem {
+                    name: &peer.name,
+                    peer_id: &peer.peer_id,
+                    connected: peer.connected,
+                    can_delegate: peer.can_delegate,
+                })
+                .collect();
+            let peers_focused = self.ui.focus == FocusPane::Peers;
+            let peers_scroll_offset = self.peers_scroll_offset();
+            frame.render_widget(
+                crate::ui::PeersPane {
+                    items: &items,
+                    selected: self.ui.peers_selected,
+                    focused: peers_focused,
+                    ascii,
+                    scroll_offset: peers_scroll_offset,
+                    is_resizing: self.layout.resize_drag
+                        == Some(crate::app::layout_cache::ResizeDrag::PeersSplit),
+                },
+                layout.peers_pane,
+            );
+        }
 
         // ── Completion overlay ────────────────────────────────────────────────
         if let Some(ref overlay) = self.ui.completion {
@@ -993,6 +1022,14 @@ impl App {
             });
         }
 
+        // In node-proxy mode, request the initial peer list.
+        if self.is_node_proxy {
+            let submit_tx = self.agent.tx.clone();
+            if let Some(ref tx) = submit_tx {
+                let _ = tx.try_send(AgentRequest::ListPeers);
+            }
+        }
+
         if !self.chat.segments.is_empty() {
             let messages: Vec<Message> = self
                 .chat
@@ -1017,6 +1054,7 @@ impl App {
                     self.queue.messages.len(),
                     self.layout.input_height_pref,
                     self.layout.effective_chat_list_width(),
+                    self.layout.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
@@ -1031,6 +1069,7 @@ impl App {
                     0,
                     self.layout.input_height_pref,
                     self.layout.effective_chat_list_width(),
+                    self.layout.effective_peers_pane_height(),
                 );
                 (
                     layout.chat_pane.width.saturating_sub(2),
@@ -1131,6 +1170,7 @@ impl App {
                     self.queue.messages.len(),
                     desired_input_height,
                     self.layout.effective_chat_list_width(),
+                    self.layout.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 let max_scroll =
@@ -1147,6 +1187,7 @@ impl App {
                 self.layout.input_pane = layout.input_pane;
                 self.layout.queue_pane = layout.queue_pane;
                 self.layout.chat_list_pane = layout.chat_list_pane;
+                self.layout.peers_pane = layout.peers_pane;
             }
 
             // ── Cursor scroll adjustment ──────────────────────────────────────
@@ -1512,6 +1553,20 @@ impl App {
         let visible = (cl.height as usize).saturating_sub(2 + hint_rows);
         if self.sessions.list_selected >= visible {
             self.sessions.list_selected + 1 - visible
+        } else {
+            0
+        }
+    }
+
+    /// Compute scroll offset for the peers pane.
+    pub(crate) fn peers_scroll_offset(&self) -> usize {
+        let pp = self.layout.peers_pane;
+        let focused = self.ui.focus == FocusPane::Peers;
+        let hint_rows = if focused && pp.height >= 3 { 1usize } else { 0 };
+        let visible = (pp.height as usize).saturating_sub(2 + hint_rows);
+        let selected = self.ui.peers_selected;
+        if selected >= visible {
+            selected + 1 - visible
         } else {
             0
         }

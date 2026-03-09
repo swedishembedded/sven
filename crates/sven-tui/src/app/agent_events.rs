@@ -211,6 +211,22 @@ impl App {
                     self.chat_title = title;
                 }
             }
+            AgentEvent::PeerList(peers) => {
+                // Update the peers list in UI state.
+                self.ui.peers = peers
+                    .into_iter()
+                    .map(|p| crate::app::ui_state::PeerInfo {
+                        name: p.name,
+                        peer_id: p.peer_id,
+                        connected: p.connected,
+                        can_delegate: p.can_delegate,
+                    })
+                    .collect();
+                // Reset selection if out of bounds.
+                if self.ui.peers_selected >= self.ui.peers.len() {
+                    self.ui.peers_selected = self.ui.peers.len().saturating_sub(1);
+                }
+            }
             AgentEvent::TurnComplete => {
                 // Fallback only in node-proxy mode (we never send GenerateTitle there).
                 // Local agent always gets TitleGenerated from the title task (LLM or heuristic).

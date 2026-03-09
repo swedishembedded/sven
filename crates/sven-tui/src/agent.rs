@@ -45,6 +45,9 @@ pub enum AgentRequest {
     /// Generate a short chat title from the first user message (LLM, low
     /// max_tokens, no tools). Result is sent as `AgentEvent::TitleGenerated`.
     GenerateTitle { user_text: String },
+    /// Request list of connected peers (node-proxy mode only).
+    /// Result is sent as `AgentEvent::PeerList`.
+    ListPeers,
 }
 
 /// Background task that owns the `Agent` and forwards events back to the TUI.
@@ -254,6 +257,11 @@ pub async fn agent_task(
                     let final_title = title.unwrap_or_else(|| make_title(&user_text));
                     let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;
                 });
+            }
+            AgentRequest::ListPeers => {
+                // In local agent mode, we do not have access to P2P peers.
+                // Send an empty peer list.
+                let _ = tx.send(AgentEvent::PeerList(Vec::new())).await;
             }
         }
     }

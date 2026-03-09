@@ -84,6 +84,10 @@ impl App {
                     self.recompute_focused_segment();
                 }
                 FocusPane::Chat | FocusPane::ChatList => {}
+                FocusPane::Peers => {
+                    // Navigate from peers to chat list.
+                    self.ui.focus = FocusPane::ChatList;
+                }
             },
             Action::NavDown => match self.ui.focus {
                 FocusPane::Chat | FocusPane::ChatList => {
@@ -100,6 +104,10 @@ impl App {
                     self.ui.focus = FocusPane::Input;
                 }
                 FocusPane::Input => {}
+                FocusPane::Peers => {
+                    // Navigate from peers to chat list.
+                    self.ui.focus = FocusPane::ChatList;
+                }
             },
             Action::NavLeft => {
                 if self.ui.focus == FocusPane::ChatList {
@@ -108,7 +116,7 @@ impl App {
                 }
             }
             Action::NavRight => {
-                if self.ui.focus != FocusPane::ChatList {
+                if self.ui.focus != FocusPane::ChatList && self.ui.focus != FocusPane::Peers {
                     if !self.layout.chat_list_visible {
                         self.layout.chat_list_visible = true;
                     }
