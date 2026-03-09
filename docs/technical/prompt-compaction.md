@@ -44,12 +44,17 @@ ensure_fits_budget()          ← fires before every model call
   │
   ▼
 stream_one_turn()             ← model call
+  │  ResponseEvent::ToolCall  → ToolSlotManager::feed()
+  │      └─ args complete?    → tokio::spawn task (parallel, mid-stream)
   │  ResponseEvent::Usage
-  └─ update_calibration()     ← EMA correction of token estimate
+  │      └─ update_calibration()  ← EMA correction of token estimate
+  │  ResponseEvent::Done
+  │      └─ finalize_remaining()  ← repair & dispatch any incomplete slots
   │
   ▼
-Phase 3: push tool results
+join_all()                    ← await all in-flight tool tasks (FuturesUnordered)
   └─ smart_truncate()         ← cap large results before they enter the session
+  │  push ToolCall × N (index order), then ToolResult × N
   │
   ▼
 ensure_fits_budget()          ← fires again after every batch of tool results
@@ -373,17 +378,21 @@ session.push(user_message)
 [stream_one_turn]
   schema_overhead recalculated
   model streaming call
-  ResponseEvent::Usage → update_calibration()
+  ResponseEvent::ToolCall → ToolSlotManager::feed()
+      └─ args complete? → tokio::spawn task (mid-stream, parallel)
+  ResponseEvent::Usage  → update_calibration()
+  ResponseEvent::Done   → finalize_remaining() (repair & dispatch leftovers)
         │
         ▼
-[tool calls dispatched in parallel]
+[join_all — await all in-flight tool tasks via FuturesUnordered]
         │
         ▼
-[Phase 3: push tool results]
+[push tool results]
+  results sorted by slot index (OpenAI ordering: ToolCall × N, then ToolResult × N)
   for each result:
     category = registry.output_category(tool_name)
     content  = smart_truncate(content, category, cap)
-    session.push(tool_result)
+    session.push(tool_call / tool_result)
         │
         ▼
 [ensure_fits_budget: turn=N]   ← same logic, fires after every tool batch
@@ -391,3 +400,6 @@ session.push(user_message)
         ▼
 [next model call or TurnComplete]
 ```
+
+See [parallel-tool-slots.md](parallel-tool-slots.md) for a detailed explanation
+of how `ToolSlotManager` dispatches and awaits parallel tool tasks.

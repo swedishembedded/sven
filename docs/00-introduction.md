@@ -94,6 +94,12 @@ ask sven to execute tools — reading files, running commands, searching the
 codebase. The results go back to the model, which continues reasoning until the
 task is complete or it needs to ask you something.
 
+When the model requests multiple tools in one turn, sven executes them in
+parallel. Each tool is dispatched the moment its arguments finish streaming —
+without waiting for the other tools or for the model to finish its full
+response. This keeps long-running tools like shell commands or remote queries
+from stacking latency on top of each other.
+
 All of this happens in the background. In the TUI you see the conversation and
 tool calls stream in as they happen. In headless mode the final text is written
 to standard output.
