@@ -513,6 +513,7 @@ impl P2pNode {
             pending_heartbeats: HashSet::new(),
             store: Arc::clone(&self.store),
             peer_waiters: HashMap::new(),
+            pending_reply_buffer: HashMap::new(),
             // Track gossipsub topic subscriptions.
             subscribed_rooms: self.config.rooms.iter().cloned().collect(),
             // Deduplicate gossipsub re-deliveries.
@@ -597,6 +598,21 @@ struct NodeState {
     /// Per-peer waiters: peer_id → oneshot sender that fires when the next
     /// inbound message from that peer arrives.  One waiter slot per peer.
     peer_waiters: HashMap<PeerId, oneshot::Sender<Result<ConversationRecord, P2pError>>>,
+    /// Single-slot buffer per peer for messages that arrived while no
+    /// `wait_for_message` waiter was registered.
+    ///
+    /// When `on_session_message` fires with no live waiter for a peer, the
+    /// message is stored here in addition to being broadcast to the session
+    /// executor.  When `WaitPeerMessage` subsequently arrives for the same
+    /// peer, it drains the buffer immediately instead of blocking — eliminating
+    /// the race between `send_message` and `wait_for_message` that caused
+    /// replies to be lost when the remote peer responded faster than the LLM
+    /// issued the next tool call.
+    ///
+    /// The slot holds at most one record per peer (the most recent).  Older
+    /// buffered messages are overwritten by newer ones.  The buffer entry is
+    /// cleared as soon as a waiter consumes it.
+    pending_reply_buffer: HashMap<PeerId, ConversationRecord>,
     /// Rooms this node is subscribed to on the gossipsub mesh (for future join/leave support).
     #[allow(dead_code)]
     subscribed_rooms: HashSet<String>,
@@ -1560,6 +1576,21 @@ impl NodeState {
                 false
             }
             P2pCommand::WaitPeerMessage { peer, reply_tx } => {
+                // Fast path: drain the buffer if a message arrived between
+                // send_message and wait_for_message.  This eliminates the race
+                // where a fast-responding peer's reply was routed to the session
+                // executor before the waiter registered, causing wait_for_message
+                // to block until timeout even though the reply already landed.
+                if let Some(buffered) = self.pending_reply_buffer.remove(&peer) {
+                    tracing::debug!(
+                        %peer,
+                        seq = buffered.seq,
+                        "delivering buffered reply to wait_for_message (race avoided)"
+                    );
+                    let _ = reply_tx.send(Ok(buffered));
+                    return false;
+                }
+
                 // Evict any stale waiter whose receiver was already dropped
                 // (timeout fired on the tool side, or the agent was cancelled).
                 // Without this check the slot stays occupied until the peer
@@ -1824,6 +1855,12 @@ impl NodeState {
         // ran, tx.send() fails here.  In that case we fall through to the
         // session executor so the message is not silently discarded — the peer
         // sent a real reply and it deserves a response.
+        //
+        // When no waiter is registered, we also store the message in a
+        // single-slot per-peer buffer so a subsequent wait_for_message call
+        // can drain it immediately.  This eliminates the race between
+        // send_message and wait_for_message when the remote peer responds
+        // faster than the LLM issues the next tool call.
         let broadcast_to_executor = if let Some(tx) = self.peer_waiters.remove(&peer) {
             if tx.send(Ok(record.clone())).is_err() {
                 tracing::debug!(
@@ -1836,6 +1873,14 @@ impl NodeState {
                 false
             }
         } else {
+            // Buffer the most recent message so a soon-to-arrive
+            // wait_for_message can pick it up without a timeout.
+            tracing::debug!(
+                %peer,
+                seq = record.seq,
+                "no waiter registered; buffering reply for wait_for_message"
+            );
+            self.pending_reply_buffer.insert(peer, record.clone());
             true
         };
         if broadcast_to_executor {
