@@ -196,6 +196,37 @@ You can also use any custom string: `role: "documentation-writer"` or
 
 ---
 
+## How to direct teammate work
+
+The **only** correct way to give a teammate work is through the task system.
+`send_message` and `delegate_task` are for communicating with *separate sven
+nodes* (other machines configured in `swarm.peers`). They do not work with
+locally spawned teammates and the model should never attempt to use them for
+intra-team coordination.
+
+| What you want | Correct tool |
+|---|---|
+| Give a teammate a specific piece of work | `create_task` with `assigned_to` |
+| Re-point a task to a different teammate | `assign_task` |
+| See what everyone is working on | `list_tasks` + `list_team` |
+| Send a note to a peer on another machine | `send_message` / `wait_for_message` |
+| Offload a task to a peer on another machine | `delegate_task` |
+
+Prompt pattern that reliably works:
+
+```
+Create a task titled 'Write the CHANGELOG entry' with the description:
+"Read git log since the last tag. Write a new section under '## 2.0.0'
+in CHANGELOG.md covering only user-facing changes."
+Assign it to changelog-writer.
+Then call list_team and list_tasks to monitor progress.
+```
+
+The teammate picks up the task by calling `claim_task`, does the work, then
+calls `complete_task` with a summary. You see the result in `list_tasks`.
+
+---
+
 ## Working directories and Git isolation
 
 By default all teammates work in the same directory as the lead.  For tasks
@@ -363,10 +394,10 @@ sven node exec "List the current team status and show all tasks with their statu
 # Shutdown and clean up a team
 sven node exec "Shut down all teammates in team 'audit' and clean up the team."
 
-# Ask a teammate to take over a specific task
+# Assign a specific task to a named teammate
 sven node exec "
 Find the task titled 'Review findings' in the task list and assign it to
-sec-reviewer. Ask sec-reviewer via delegate_task to claim and complete it."
+sec-reviewer using assign_task."
 ```
 
 ---

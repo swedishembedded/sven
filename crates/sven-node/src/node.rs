@@ -70,7 +70,9 @@ use sven_p2p::{
 };
 
 use sven_bootstrap::{OutputBufferStore, RuntimeContext};
+use sven_team;
 
+use crate::peer::wait_for_local_id;
 use crate::tools::MAX_HOP_DEPTH;
 use crate::{
     agent_builder::{build_node_agent, build_room_reactive_agent, build_task_agent, TeamContext},
@@ -177,6 +179,23 @@ pub async fn run(
     let p2p_node = P2pNode::new(p2p_config);
     let p2p_handle = p2p_node.handle();
 
+    // ── Spawn the P2P swarm early so we can read the local peer ID ────────────
+    // The peer ID is derived from the Ed25519 keypair inside P2pNode::run and
+    // published through a OnceLock before any connections are accepted.
+    // Spawning early lets us resolve the ID synchronously before building the
+    // agent so TeamContext can be populated with the real peer identity.
+    tokio::spawn({
+        let node = p2p_node;
+        async move {
+            match node.run().await {
+                Ok(()) => info!("agent P2P node stopped"),
+                Err(e) => tracing::error!("agent P2P node error: {e}"),
+            }
+        }
+    });
+    let local_peer_id = wait_for_local_id(&p2p_handle).await;
+    info!(rooms = ?config.swarm.rooms, "agent P2P node started (mDNS discovery active)");
+
     // ── Build the agent with P2P routing tools ────────────────────────────────
     // Create the model provider once.  The Arc is shared with every per-task
     // agent built later so we only open one HTTP connection / API client.
@@ -190,6 +209,29 @@ pub async fn run(
     // agents on this node share the same buffer namespace.
     let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
 
+    // ── Restore any existing team from a previous run ─────────────────────────
+    // Scan disk for teams where this node is the lead.  If exactly one is
+    // found, pre-populate the in-memory handle so the agent can use all team
+    // tools immediately without calling create_team again.
+    let restored_team_config = {
+        let teams = sven_team::find_teams_by_lead(&local_peer_id);
+        if teams.len() == 1 {
+            let t = &teams[0];
+            info!(team = %t.name, "restored team from previous run");
+            Arc::new(tokio::sync::Mutex::new(Some(t.clone())))
+        } else {
+            if teams.len() > 1 {
+                let names: Vec<&str> = teams.iter().map(|t| t.name.as_str()).collect();
+                info!(
+                    teams = ?names,
+                    "multiple teams found on disk — not auto-restoring; \
+                     use load_team to select one"
+                );
+            }
+            Arc::new(tokio::sync::Mutex::new(None))
+        }
+    };
+
     let (agent, node_session_depth) = build_node_agent(
         &sven_config,
         Arc::clone(&model),
@@ -198,7 +240,11 @@ pub async fn run(
         config.swarm.rooms.clone(),
         &runtime_ctx,
         Arc::clone(&buffer_store),
-        TeamContext::default(),
+        TeamContext {
+            agent_name: agent_card.name.clone(),
+            agent_peer_id: local_peer_id,
+            team_config: restored_team_config,
+        },
     )
     .await?;
 
@@ -353,16 +399,6 @@ pub async fn run(
         Arc::clone(&task_semaphore),
         Arc::clone(&buffer_store),
     ));
-
-    // ── Spawn the P2pNode swarm ───────────────────────────────────────────────
-    let rooms = config.swarm.rooms.clone();
-    tokio::spawn(async move {
-        match p2p_node.run().await {
-            Ok(()) => info!("agent P2P node stopped"),
-            Err(e) => tracing::error!("agent P2P node error: {e}"),
-        }
-    });
-    info!(rooms = ?rooms, "agent P2P node started (mDNS discovery active)");
 
     // ── P2P operator control node (optional) ─────────────────────────────────
     if let Some(ref ctrl) = config.control {

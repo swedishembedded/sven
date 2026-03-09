@@ -100,6 +100,7 @@ serde_yaml  = { workspace = true }
 serde       = { workspace = true }
 libc        = { workspace = true }
 ratatui     = { workspace = true }
+chrono      = { workspace = true }
 
 [dev-dependencies]
 serde_json       = { workspace = true }

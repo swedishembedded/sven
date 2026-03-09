@@ -37,8 +37,9 @@ use sven_core::{Agent, AgentRuntimeContext};
 use sven_p2p::{protocol::types::AgentCard, P2pHandle};
 use sven_team::{
     AssignTaskTool, ClaimTaskTool, CleanupTeamTool, CompleteTaskTool, CreateTaskTool,
-    CreateTeamTool, ListTasksTool, ListTeamTool, MergeTeammateBranchTool, RegisterTeammateTool,
-    ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle, UpdateTaskTool,
+    CreateTeamTool, ListTasksTool, ListTeamTool, LoadTeamTool, MergeTeammateBranchTool,
+    RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle,
+    UpdateTaskTool,
 };
 use sven_tools::{events::TodoItem, ToolEvent, ToolRegistry};
 
@@ -475,6 +476,10 @@ fn register_team_tools(registry: &mut ToolRegistry, ctx: &TeamContext, p2p: &P2p
         agent_peer_id: agent_peer_id.clone(),
     });
     registry.register(MergeTeammateBranchTool {
+        config: cfg.clone(),
+        agent_peer_id: agent_peer_id.clone(),
+    });
+    registry.register(LoadTeamTool {
         config: cfg.clone(),
         agent_peer_id: agent_peer_id.clone(),
     });

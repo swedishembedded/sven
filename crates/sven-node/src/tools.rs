@@ -300,7 +300,8 @@ impl Tool for DelegateTool {
     }
 
     fn description(&self) -> &str {
-        "LAST RESORT ONLY: Send a task to a peer agent when local execution is genuinely \
+        "LAST RESORT ONLY: Send a task to a **pre-configured remote peer agent** \
+         (a separate sven node listed in swarm.peers) when local execution is genuinely \
          impossible. You MUST attempt the task locally with your own tools first. Only use \
          this tool if (1) you have already tried and failed locally, and (2) the task \
          explicitly requires a capability that only exists on a specific other peer. \
@@ -309,7 +310,10 @@ impl Tool for DelegateTool {
          SECURITY: Always use the base58 peer ID (not the name) as the `peer` parameter \
          to avoid name-collision attacks. If you pass a name and multiple peers share it, \
          the call will fail with an ambiguity error. \
-         Blocks until the remote agent responds (up to 15 minutes)."
+         Blocks until the remote agent responds (up to 15 minutes). \
+         \n\nNOTE: This does NOT work with locally spawned teammates. \
+         Teammates are coordinated through the task system: use `assign_task` to give \
+         them work and monitor via `list_tasks` / `list_team`."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -622,11 +626,15 @@ impl Tool for SendMessageTool {
     }
 
     fn description(&self) -> &str {
-        "Send a text message to a peer agent. There is one persistent conversation \
-         per peer — like a WhatsApp chat. History is stored locally and can be \
-         searched later with `search_conversation`. After sending, call \
-         `wait_for_message` with the same peer to receive the reply. \
-         Use the base58 peer ID from `list_peers` or a unique agent name."
+        "Send a text message to a **pre-configured remote peer agent** (a separate \
+         sven node listed in swarm.peers). There is one persistent conversation per \
+         peer — like a WhatsApp chat. After sending, call `wait_for_message` with \
+         the same peer to receive the reply. Use the base58 peer ID from \
+         `list_peers` or a unique agent name. \
+         \n\nNOTE: This tool is for inter-node P2P communication ONLY. \
+         It does NOT work with locally spawned teammates — teammates are \
+         coordinated through the task system: use `assign_task` to give them \
+         work and `list_tasks` / `list_team` to monitor progress."
     }
 
     fn parameters_schema(&self) -> Value {

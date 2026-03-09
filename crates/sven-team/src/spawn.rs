@@ -95,20 +95,53 @@ impl Tool for CreateTeamTool {
         let goal = call.args["goal"].as_str().map(|s| s.to_string());
         let max_active = call.args["max_active"].as_u64().unwrap_or(8) as usize;
 
-        // Build the config.
-        let mut config = TeamConfig::new(&name, &self.agent_peer_id, &self.agent_name);
-        config.goal = goal;
-        config.max_active = max_active;
-        // Set lead peer_id properly.
-        if let Some(m) = config.members.first_mut() {
-            m.peer_id = self.agent_peer_id.clone();
-        }
-
-        // Persist config.
         let cfg_store = match TeamConfigStore::open(&name) {
             Ok(s) => s,
             Err(e) => return ToolOutput::err(&call.id, format!("Failed to create team dir: {e}")),
         };
+
+        // ── Idempotency: reload instead of overwriting ────────────────────────
+        // If the team already exists on disk, restore the in-memory handle
+        // rather than discarding existing members and tasks.
+        if let Ok(Some(existing)) = cfg_store.load() {
+            if existing.lead_peer_id == self.agent_peer_id {
+                // This node is already the lead — restore state after a restart.
+                *self.team_config.lock().await = Some(existing.clone());
+                let (p, i, c, f) = TaskStore::open(&name)
+                    .ok()
+                    .and_then(|s| s.load().ok())
+                    .map(|l| l.counts())
+                    .unwrap_or((0, 0, 0, 0));
+                return ToolOutput::ok(
+                    &call.id,
+                    format!(
+                        "Team '{name}' already exists and you are the lead — restored.\n\
+                         Members: {} | tasks: pending={p}, in_progress={i}, \
+                         completed={c}, failed={f}\n\
+                         Use list_team and list_tasks to see current status.",
+                        existing.members.len()
+                    ),
+                );
+            } else {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "A team named '{name}' already exists with a different lead ({}). \
+                         Choose a different name or use cleanup_team to remove it first.",
+                        existing.lead_peer_id
+                    ),
+                );
+            }
+        }
+
+        // ── Fresh team ────────────────────────────────────────────────────────
+        let mut config = TeamConfig::new(&name, &self.agent_peer_id, &self.agent_name);
+        config.goal = goal;
+        config.max_active = max_active;
+        if let Some(m) = config.members.first_mut() {
+            m.peer_id = self.agent_peer_id.clone();
+        }
+
         if let Err(e) = cfg_store.save(&config) {
             return ToolOutput::err(&call.id, format!("Failed to save team config: {e}"));
         }
@@ -190,7 +223,22 @@ impl Tool for ListTeamTool {
 
         for m in &config.members {
             let role_str = m.role.to_string();
-            let status_icon = match m.status {
+
+            // Detect crashed processes: if we have a PID and the process is no
+            // longer running, override the stored status with Closed.
+            let effective_status = if let (Some(pid), MemberStatus::Active | MemberStatus::Idle) =
+                (m.pid, &m.status)
+            {
+                if crate::config::is_process_alive(pid) {
+                    m.status.clone()
+                } else {
+                    MemberStatus::Closed
+                }
+            } else {
+                m.status.clone()
+            };
+
+            let status_icon = match effective_status {
                 MemberStatus::Active => "●",
                 MemberStatus::Idle => "○",
                 MemberStatus::Closed => "✗",
@@ -210,8 +258,17 @@ impl Tool for ListTeamTool {
                 ""
             };
 
+            let crashed_note = if matches!(effective_status, MemberStatus::Closed)
+                && matches!(m.status, MemberStatus::Active | MemberStatus::Idle)
+                && m.pid.is_some()
+            {
+                " (process exited)"
+            } else {
+                ""
+            };
+
             lines.push(format!(
-                "{status_icon} **{}** [{}]{lead_marker}{task_hint}\n  peer: {}",
+                "{status_icon} **{}** [{}]{lead_marker}{task_hint}{crashed_note}\n  peer: {}",
                 m.name, role_str, m.peer_id
             ));
         }
@@ -316,6 +373,106 @@ impl Tool for CleanupTeamTool {
     }
 }
 
+// ── LoadTeamTool ──────────────────────────────────────────────────────────────
+
+/// Restore an existing team into the active in-memory handle after a restart.
+pub struct LoadTeamTool {
+    pub config: TeamConfigHandle,
+    pub agent_peer_id: String,
+}
+
+#[async_trait]
+impl Tool for LoadTeamTool {
+    fn name(&self) -> &str {
+        "load_team"
+    }
+
+    fn description(&self) -> &str {
+        "Restore an existing team from disk into the active in-memory handle. \
+         Use this after a node restart when a team already exists on disk but \
+         has not been loaded yet. \
+         Only the team lead can load a team. \
+         If you call create_team and the team already exists it will also be \
+         restored automatically — load_team is only needed when you want to \
+         re-attach to a team without calling create_team."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the team to load (must already exist on disk)"
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let name = match call.args["name"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: name"),
+        };
+
+        let cfg_store = match TeamConfigStore::open(&name) {
+            Ok(s) => s,
+            Err(e) => {
+                return ToolOutput::err(&call.id, format!("Failed to open team directory: {e}"))
+            }
+        };
+
+        let existing = match cfg_store.load() {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "Team '{name}' does not exist. \
+                         Use create_team to create a new team."
+                    ),
+                )
+            }
+            Err(e) => return ToolOutput::err(&call.id, format!("Failed to read team config: {e}")),
+        };
+
+        if existing.lead_peer_id != self.agent_peer_id {
+            return ToolOutput::err(
+                &call.id,
+                format!(
+                    "Team '{name}' exists but you are not the lead \
+                     (lead is {}).",
+                    existing.lead_peer_id
+                ),
+            );
+        }
+
+        let (p, i, c, f) = TaskStore::open(&name)
+            .ok()
+            .and_then(|s| s.load().ok())
+            .map(|l| l.counts())
+            .unwrap_or((0, 0, 0, 0));
+
+        *self.config.lock().await = Some(existing.clone());
+
+        ToolOutput::ok(
+            &call.id,
+            format!(
+                "Team '{name}' loaded. You are the lead.\n\
+                 Members: {} | tasks: pending={p}, in_progress={i}, \
+                 completed={c}, failed={f}\n\
+                 Use list_team and list_tasks to see current status.",
+                existing.members.len()
+            ),
+        )
+    }
+}
+
 // ── RegisterTeammateTool ──────────────────────────────────────────────────────
 
 /// Register a new teammate in the team config (called after a peer joins).
@@ -412,6 +569,7 @@ impl Tool for RegisterTeammateTool {
                 status: MemberStatus::Active,
                 current_task_id: None,
                 joined_at: Utc::now(),
+                pid: None,
             });
         });
 
@@ -590,13 +748,23 @@ impl Tool for SpawnTeammateTool {
             .map(|(p, _)| p.clone())
             .or_else(|| std::env::current_dir().ok());
 
+        // Open a log file for the teammate's stderr so issues are observable.
+        // Log path: ~/.config/sven/teams/{team}/{name}.log
+        let log_file = crate::task::default_team_dir(&team_name).join(format!("{name}.log"));
+        let stderr_handle = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null());
+
         // Spawn detached.
         let mut cmd = std::process::Command::new(&sven_bin);
         cmd.args(&args)
             // Redirect stdio so the spawned process doesn't inherit the TUI.
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(stderr_handle);
         // Detach from process group so SIGINT doesn't kill the child.
         if let Some(ref cwd) = spawn_cwd {
             cmd.current_dir(cwd);
@@ -607,10 +775,49 @@ impl Tool for SpawnTeammateTool {
         match result {
             Ok(child) => {
                 let pid = child.id();
+
+                // Pre-register the teammate in the team config with the OS PID
+                // so list_team can immediately detect a crash without waiting
+                // for the child process to register itself.
+                let cfg_store = crate::config::TeamConfigStore::open(&team_name);
+                if let Ok(store) = cfg_store {
+                    let peer_id = crate::config::teammate_stable_peer_id(&team_name, &name);
+                    let member_role = match role_str {
+                        "implementer" => crate::config::TeamRole::Implementer,
+                        "reviewer" => crate::config::TeamRole::Reviewer,
+                        "explorer" => crate::config::TeamRole::Explorer,
+                        "tester" => crate::config::TeamRole::Tester,
+                        _ => crate::config::TeamRole::Teammate,
+                    };
+                    let member_model = model.clone();
+                    let member_pid = pid;
+                    let member_name = name.clone();
+                    let _ = store.modify(|cfg| {
+                        if let Some(m) = cfg.members.iter_mut().find(|m| m.peer_id == peer_id) {
+                            // Update PID if already registered (e.g. re-spawn).
+                            m.pid = Some(member_pid);
+                            m.status = crate::config::MemberStatus::Active;
+                        } else {
+                            cfg.members.push(crate::config::TeamMember {
+                                peer_id,
+                                name: member_name,
+                                role: member_role,
+                                model: member_model,
+                                status: crate::config::MemberStatus::Active,
+                                current_task_id: None,
+                                joined_at: chrono::Utc::now(),
+                                pid: Some(member_pid),
+                            });
+                        }
+                    });
+                }
                 let mut msg = format!(
                     "Teammate '{name}' spawned (pid={pid}) with role '{role_str}'.\n\
-                     It will join team '{team_name}' and appear in list_team once connected.\n\
-                     Use shutdown_teammate to stop it when done."
+                     It is now polling team '{team_name}' for tasks assigned to it.\n\
+                     Log: {}\n\
+                     Use list_team to verify registration, list_tasks to see task status.\n\
+                     Use shutdown_teammate to stop it when done.",
+                    log_file.display()
                 );
                 if let Some((_, ref branch)) = worktree_info {
                     msg.push_str(&format!(

@@ -312,7 +312,7 @@ fn default_keypair_path() -> Option<PathBuf> {
 
 /// Wait until `P2pHandle::local_peer_id_string()` is populated (set after the
 /// keypair is loaded during node startup), then return it.
-async fn wait_for_local_id(handle: &P2pHandle) -> String {
+pub(crate) async fn wait_for_local_id(handle: &P2pHandle) -> String {
     for _ in 0..50 {
         let id = handle.local_peer_id_string();
         if !id.is_empty() {

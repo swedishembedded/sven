@@ -25,11 +25,14 @@ pub mod tools;
 pub mod worktree;
 
 // Re-export the most commonly used types.
-pub use config::{MemberStatus, TeamConfig, TeamConfigStore, TeamMember, TeamRole};
+pub use config::{
+    find_teams_by_lead, is_process_alive, teammate_stable_peer_id, MemberStatus, TeamConfig,
+    TeamConfigStore, TeamMember, TeamRole,
+};
 pub use definition::{TeamDefinition, TeamMemberDef};
 pub use spawn::{
-    CleanupTeamTool, CreateTeamTool, ListTeamTool, MergeTeammateBranchTool, RegisterTeammateTool,
-    ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle,
+    CleanupTeamTool, CreateTeamTool, ListTeamTool, LoadTeamTool, MergeTeammateBranchTool,
+    RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle,
 };
 pub use task::{default_team_dir, Task, TaskList, TaskStatus, TaskStore, TaskStoreError};
 pub use tools::{

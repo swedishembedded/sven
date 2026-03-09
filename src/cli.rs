@@ -798,6 +798,33 @@ pub struct Cli {
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
+
+    // ── Teammate mode (injected by spawn_teammate, not for direct user use) ──
+    /// Join a team as a teammate and execute tasks from the shared task list.
+    ///
+    /// When set, the process enters a polling loop: it claims pending tasks
+    /// assigned to `--agent-name`, executes each as a headless agent run, and
+    /// marks them complete.  The loop exits when the team config marks this
+    /// agent as "closed" (via shutdown_teammate) or when the team directory
+    /// disappears.
+    ///
+    /// This flag is set automatically by `spawn_teammate`; users should not
+    /// invoke it directly.
+    #[arg(long, hide = true)]
+    pub team_name: Option<String>,
+
+    /// Role hint for team membership (teammate, implementer, reviewer, etc.).
+    /// Stored in the team config roster for the lead's reference.
+    #[arg(long, hide = true)]
+    pub team_role: Option<String>,
+
+    /// Peer ID of the team lead.  Informational — used to find the team config.
+    #[arg(long, hide = true)]
+    pub team_lead_peer: Option<String>,
+
+    /// Name for this agent within the team.  Used for task assignment matching.
+    #[arg(long, hide = true, alias = "agent-name")]
+    pub teammate_name: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]

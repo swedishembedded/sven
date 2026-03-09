@@ -94,10 +94,80 @@ pub struct TeamMember {
     pub current_task_id: Option<String>,
     /// When this member was added to the team.
     pub joined_at: DateTime<Utc>,
+    /// OS process ID of the spawned teammate process (`None` for the lead or
+    /// manually registered peers).  Used by `list_team` to detect crashed
+    /// processes: if the PID is set but the process is no longer running the
+    /// member is reported as `Closed` even if the config still says `Active`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 fn is_default_status(s: &MemberStatus) -> bool {
     matches!(s, MemberStatus::Unknown)
+}
+
+/// Returns `true` when an OS process with `pid` is currently running.
+///
+/// Uses `kill(pid, 0)` on Unix — sends no signal but returns success only if
+/// the process exists and we have permission to signal it.
+pub fn is_process_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let ret = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        ret == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true // on non-Unix, assume alive; no crash detection
+    }
+}
+
+/// Scan `~/.config/sven/teams/` and return all `TeamConfig`s where
+/// `lead_peer_id == lead_peer`.
+///
+/// Used on node startup to restore the active team after a restart.
+pub fn find_teams_by_lead(lead_peer: &str) -> Vec<TeamConfig> {
+    let teams_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+        .join("sven")
+        .join("teams");
+    let Ok(entries) = std::fs::read_dir(&teams_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| {
+            let cfg_path = e.path().join("config.json");
+            let data = std::fs::read_to_string(&cfg_path).ok()?;
+            let cfg: TeamConfig = serde_json::from_str(&data).ok()?;
+            if cfg.lead_peer_id == lead_peer {
+                Some(cfg)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Derive a stable, deterministic synthetic peer ID for a locally spawned
+/// teammate process.
+///
+/// This ID is computed identically by both the `spawn_teammate` tool (which
+/// pre-registers the entry with the OS PID) and the running teammate process
+/// (which re-uses the same ID on registration).  Using the same ID prevents
+/// duplicate roster entries when the process starts.
+///
+/// The format is intentionally different from base58-encoded libp2p peer IDs
+/// so it can be identified at a glance in logs and the team config.
+pub fn teammate_stable_peer_id(team_name: &str, agent_name: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    team_name.hash(&mut h);
+    agent_name.hash(&mut h);
+    format!("tm-{agent_name}-{:016x}", h.finish())
 }
 
 /// Top-level team configuration.
@@ -151,6 +221,7 @@ impl TeamConfig {
                 status: MemberStatus::Active,
                 current_task_id: None,
                 joined_at: Utc::now(),
+                pid: None,
             }],
             created_at: Utc::now(),
             goal: None,

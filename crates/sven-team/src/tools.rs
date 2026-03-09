@@ -36,9 +36,13 @@ impl Tool for CreateTaskTool {
 
     fn description(&self) -> &str {
         "Create a new task in the team's shared task list. \
-         Each task should be a self-contained unit of work that produces a clear deliverable. \
-         Tasks can depend on other tasks — a dependent task cannot be claimed until all its \
-         dependencies are completed. \
+         This is the correct way to give work to teammates — \
+         do NOT use send_message or delegate_task with teammates. \
+         Each task should be a self-contained unit of work with a clear deliverable. \
+         Set assigned_to to direct the task to a specific teammate; leave it unset to \
+         let any available teammate self-claim it via claim_task. \
+         Tasks can depend on other tasks — a dependent task cannot be claimed until all \
+         its dependencies are completed. \
          Returns the new task ID."
     }
 
@@ -430,9 +434,11 @@ impl Tool for AssignTaskTool {
 
     fn description(&self) -> &str {
         "Assign a pending task to a specific teammate. \
-         Only the team lead should use this tool. \
+         This is the correct way to direct a teammate to do specific work — \
+         do NOT use send_message or delegate_task to communicate with teammates. \
+         The teammate will pick up the task via claim_task and complete it autonomously. \
          Unassigned tasks can be self-claimed by any teammate; \
-         assigning restricts the task to the specified agent."
+         assigning restricts the task to the named agent."
     }
 
     fn parameters_schema(&self) -> Value {
