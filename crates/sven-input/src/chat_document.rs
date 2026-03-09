@@ -198,12 +198,23 @@ impl ChatDocument {
 
 // ── Serialization ─────────────────────────────────────────────────────────────
 
+/// YAML document start marker. Prepended so saved files are valid multi-document
+/// YAML and clearly delimited.
+const YAML_DOCUMENT_START: &str = "---\n";
+
 /// Serialize a `ChatDocument` to a YAML string.
 ///
 /// Uses `serde_yaml` which automatically formats multi-line strings as
-/// YAML block scalars (`|`) for human readability.
+/// YAML block scalars (`|`) for human readability. Output is prefixed with `---`
+/// and uses 2-space indentation for nested structures.
 pub fn serialize_chat_document(doc: &ChatDocument) -> Result<String> {
-    serde_yaml::to_string(doc).context("serializing ChatDocument to YAML")
+    let raw = serde_yaml::to_string(doc).context("serializing ChatDocument to YAML")?;
+    let out = if raw.starts_with("---") {
+        raw
+    } else {
+        format!("{YAML_DOCUMENT_START}{raw}")
+    };
+    Ok(out)
 }
 
 /// Parse a `ChatDocument` from YAML text.
