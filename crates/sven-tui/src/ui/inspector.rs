@@ -56,8 +56,6 @@ impl InspectorKind {
 ///
 /// Wraps [`PagerOverlay`] and delegates all rendering and key-handling to it.
 pub struct InspectorOverlay {
-    #[allow(dead_code)]
-    pub kind: InspectorKind,
     /// Inner pager that does all the work.
     pub pager: PagerOverlay,
 }
@@ -70,7 +68,6 @@ impl InspectorOverlay {
         let md = format_skills_tree(skills);
         let lines = render_markdown(&md, 0, ascii);
         Self {
-            kind: InspectorKind::Skills,
             pager: PagerOverlay::with_title(lines, InspectorKind::Skills.title()),
         }
     }
@@ -80,7 +77,6 @@ impl InspectorOverlay {
         let md = format_agents_list(agents);
         let lines = render_markdown(&md, 0, ascii);
         Self {
-            kind: InspectorKind::Subagents,
             pager: PagerOverlay::with_title(lines, InspectorKind::Subagents.title()),
         }
     }
@@ -98,7 +94,6 @@ impl InspectorOverlay {
         let md = format_peers_markdown(configured_agents, buffer_store);
         let lines = render_markdown(&md, 0, ascii);
         Self {
-            kind: InspectorKind::Peers,
             pager: PagerOverlay::with_title(lines, InspectorKind::Peers.title()),
         }
     }
@@ -116,7 +111,6 @@ impl InspectorOverlay {
         let md = format_context_markdown(project_root, skills_count, agents_count, buffer_store);
         let lines = render_markdown(&md, 0, ascii);
         Self {
-            kind: InspectorKind::Context,
             pager: PagerOverlay::with_title(lines, InspectorKind::Context.title()),
         }
     }
