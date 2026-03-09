@@ -126,6 +126,35 @@ impl App {
                         return false;
                     }
 
+                    if let Some(ImmediateAction::OpenInspector { ref kind }) =
+                        result.immediate_action
+                    {
+                        use crate::ui::{InspectorKind, InspectorOverlay};
+                        let ascii = self.ascii();
+                        let skills = self.shared_skills.get();
+                        let agents = self.shared_agents.get();
+                        let buffer_store = std::sync::Arc::clone(&self.buffer_store);
+                        let project_root = sven_runtime::find_project_root().ok();
+                        let inspector = match kind {
+                            InspectorKind::Skills => InspectorOverlay::for_skills(&skills, ascii),
+                            InspectorKind::Subagents => {
+                                InspectorOverlay::for_subagents(&agents, ascii)
+                            }
+                            InspectorKind::Peers => {
+                                InspectorOverlay::for_peers(&agents, Some(buffer_store), ascii)
+                            }
+                            InspectorKind::Context => InspectorOverlay::for_context(
+                                project_root.as_deref(),
+                                skills.len(),
+                                agents.len(),
+                                Some(buffer_store),
+                                ascii,
+                            ),
+                        };
+                        self.ui.inspector = Some(inspector);
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::ApprovePlan { ref task_id }) =
                         result.immediate_action
                     {

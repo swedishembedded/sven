@@ -209,6 +209,17 @@ impl OutputBufferStore {
         self.buffers.contains_key(handle_id)
     }
 
+    /// Return summary metadata for all buffers, sorted by handle ID.
+    pub fn list_metadata(&self) -> Vec<BufferMetadata> {
+        let mut entries: Vec<BufferMetadata> = self
+            .buffers
+            .iter()
+            .map(|(id, buf)| buf.metadata(id))
+            .collect();
+        entries.sort_by(|a, b| a.handle_id.cmp(&b.handle_id));
+        entries
+    }
+
     /// Read a line range `[start_line, end_line]` (1-indexed, inclusive).
     ///
     /// Returns formatted `L{n}:{content}` lines, the same format as

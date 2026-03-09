@@ -41,6 +41,8 @@ pub struct PagerOverlay {
     /// Cached visible content height from the last render frame, used for
     /// computing half-page and full-page scroll amounts.
     pub last_visible_height: usize,
+    /// Title shown in the header bar (e.g. "TRANSCRIPT", "SKILLS").
+    title: String,
 }
 
 impl PagerOverlay {
@@ -51,12 +53,29 @@ impl PagerOverlay {
             scroll_offset: usize::MAX,
             last_was_g: false,
             last_visible_height: 24,
+            title: "TRANSCRIPT".to_string(),
+        }
+    }
+
+    /// Create a new pager with a custom header title.
+    pub fn with_title(lines: StyledLines, title: impl Into<String>) -> Self {
+        Self {
+            lines,
+            scroll_offset: usize::MAX,
+            last_was_g: false,
+            last_visible_height: 24,
+            title: title.into(),
         }
     }
 
     /// Replace the displayed lines (e.g. after a chat update while pager is open).
     pub fn set_lines(&mut self, lines: StyledLines) {
         self.lines = lines;
+    }
+
+    /// Return a clone of the current lines (used for search indexing).
+    pub fn cloned_lines(&self) -> StyledLines {
+        self.lines.clone()
     }
 
     /// Scroll the pager so that `line` is visible near the top.
@@ -169,12 +188,13 @@ impl PagerOverlay {
 
         // ── Header ────────────────────────────────────────────────────────────
         let dash = if ascii { "-" } else { "╌" };
-        let half_w = (area.width as usize / 2).saturating_sub(7);
+        let title_text = format!(" {} ", self.title);
+        let half_w = (area.width as usize / 2).saturating_sub(title_text.len() / 2 + 1);
         let fill = dash.repeat(half_w);
         let header = Line::from(vec![
             Span::styled(fill.clone(), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                " TRANSCRIPT ",
+                title_text,
                 Style::default()
                     .fg(Color::Gray)
                     .add_modifier(Modifier::BOLD),

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::{AgentBuilder, OutputBufferStore, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_model::Message;
@@ -65,6 +65,8 @@ pub async fn agent_task(
     cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
+    // Pre-created buffer store; the TUI holds a clone to display live status.
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> =
         match sven_model::from_config(&startup_model_cfg) {
@@ -92,6 +94,7 @@ pub async fn agent_task(
 
     let mut agent = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
+        .with_buffer_store(buffer_store)
         .build(mode, model.clone(), profile)
         .await;
 

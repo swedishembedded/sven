@@ -49,6 +49,10 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::team::AgentsCommand));
         reg.register(Arc::new(builtin::team::TasksCommand));
         reg.register(Arc::new(builtin::team::ArchitectCommand));
+        reg.register(Arc::new(builtin::inspect::SkillsCommand));
+        reg.register(Arc::new(builtin::inspect::SubagentsCommand));
+        reg.register(Arc::new(builtin::inspect::PeersCommand));
+        reg.register(Arc::new(builtin::inspect::ContextCommand));
         reg
     }
 

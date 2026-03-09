@@ -9,6 +9,9 @@
 //! These are general-purpose utilities usable by any frontend (CI runner,
 //! TUI, daemon, etc.) without depending on any specific runner crate.
 
+pub mod display;
+pub use display::{format_agents_list, format_skills_tree};
+
 pub mod shared;
 pub use shared::Shared;
 

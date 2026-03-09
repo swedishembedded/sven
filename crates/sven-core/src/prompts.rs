@@ -654,11 +654,14 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         AgentMode::Plan => {
             "You are a planning assistant.  Analyse the request and produce a clear, structured \
              plan with numbered steps.  You may read files to inform the plan, but MUST NOT \
-             modify them.  Output the plan in Markdown. \
+             modify them. If `sven/plan` skill exists then use it. If not then output the plan in Markdown. \
+             under `.sven/plans/[unique name].plan.md`. Create directory if it doesn't exist. \
              When a task is ambiguous or you need information to proceed, use the `ask_question` \
              tool to collect structured answers from the user rather than making assumptions or \
              writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
-             prefer it over free-form text questions whenever the user is interactive."
+             prefer it over free-form text questions whenever the user is interactive.  \
+             You can spawn subtasks to explore different parts of the codebase. "
+
         }
         AgentMode::Agent => {
             "You are a capable coding agent.  You can read and write files, run shell commands, \

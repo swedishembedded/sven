@@ -28,6 +28,8 @@ use sven_tools::QuestionRequest;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use sven_bootstrap::OutputBufferStore;
+
 use crate::{
     agent::{agent_task, AgentRequest},
     chat::segment::ChatSegment,
@@ -143,6 +145,9 @@ pub struct App {
     /// Set to `true` after a tool call completes — triggers a terminal-state
     /// recovery pass before the next draw.
     pub(crate) needs_terminal_recover: bool,
+    /// Shared output buffer store — also held by the agent's `TaskTool` so that
+    /// the TUI can display live subprocess buffer status via `/context` or `/peers`.
+    pub(crate) buffer_store: Arc<tokio::sync::Mutex<OutputBufferStore>>,
 
     // ── Grouped sub-state ─────────────────────────────────────────────────────
     pub(crate) chat: ChatState,
@@ -246,6 +251,8 @@ impl App {
         chat.segments = initial_segments;
 
         let is_node_proxy = opts.node_backend.is_some();
+        let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
+
         let mut app = Self {
             config,
             node_backend: opts.node_backend,
@@ -258,6 +265,7 @@ impl App {
             history_path,
             jsonl_path,
             needs_terminal_recover: false,
+            buffer_store,
             chat,
             input: InputState::new(),
             edit: EditState::new(),
@@ -309,6 +317,30 @@ impl App {
         nvim_cursor: Option<(u16, u16)>,
     ) {
         let ascii = self.ascii();
+        // ── Full-screen inspector overlay (early return) ──────────────────────
+        if let Some(inspector) = &mut self.ui.inspector {
+            inspector.pager.render(
+                frame,
+                &self.ui.search.matches,
+                self.ui.search.current,
+                &self.ui.search.query,
+                self.ui.search.regex.as_ref(),
+                ascii,
+            );
+            if self.ui.search.active {
+                let area = frame.area();
+                let search_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
+                frame.render_widget(
+                    SearchBar {
+                        query: &self.ui.search.query,
+                        match_count: self.ui.search.matches.len(),
+                        current_match: self.ui.search.current,
+                    },
+                    search_area,
+                );
+            }
+            return;
+        }
         // ── Full-screen pager (early return) ──────────────────────────────────
         if let Some(pager) = &mut self.ui.pager {
             pager.render(
@@ -722,6 +754,7 @@ impl App {
             let cancel_handle_task = self.agent.cancel.clone();
             let shared_skills_task = self.shared_skills.clone();
             let shared_agents_task = self.shared_agents.clone();
+            let buffer_store_task = Arc::clone(&self.buffer_store);
             tokio::spawn(async move {
                 agent_task(
                     cfg,
@@ -733,6 +766,7 @@ impl App {
                     cancel_handle_task,
                     shared_skills_task,
                     shared_agents_task,
+                    buffer_store_task,
                 )
                 .await;
             });

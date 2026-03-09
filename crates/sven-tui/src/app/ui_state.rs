@@ -11,7 +11,10 @@ use crate::{
     chat::search::SearchState,
     overlay::{completion::CompletionOverlay, confirm::ConfirmModal, question::QuestionModal},
     pager::PagerOverlay,
-    ui::team_picker::{TeamPickerEntry, TeamPickerState},
+    ui::{
+        team_picker::{TeamPickerEntry, TeamPickerState},
+        InspectorOverlay,
+    },
 };
 
 // ── FocusPane ─────────────────────────────────────────────────────────────────
@@ -76,6 +79,8 @@ pub(crate) struct UiState {
     pub show_help: bool,
     pub search: SearchState,
     pub pager: Option<PagerOverlay>,
+    /// Full-screen inspector overlay for skills, subagents, peers, or context.
+    pub inspector: Option<InspectorOverlay>,
     pub completion: Option<CompletionOverlay>,
     pub question_modal: Option<QuestionModal>,
     pub confirm_modal: Option<ConfirmModal>,
@@ -104,6 +109,7 @@ impl UiState {
             show_help: false,
             search: SearchState::default(),
             pager: None,
+            inspector: None,
             completion: None,
             question_modal: None,
             confirm_modal: None,

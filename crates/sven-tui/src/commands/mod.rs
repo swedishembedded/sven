@@ -22,6 +22,8 @@ pub use registry::CommandRegistry;
 use std::sync::Arc;
 use sven_config::{AgentMode, Config};
 
+use crate::ui::InspectorKind;
+
 // ── Context ───────────────────────────────────────────────────────────────────
 
 /// Context passed to commands when generating completions.
@@ -89,6 +91,10 @@ pub enum ImmediateAction {
     OpenTeamPicker,
     /// Toggle the team task list view.
     ToggleTaskList,
+    /// Open the inspector overlay for the given view kind.
+    OpenInspector {
+        kind: InspectorKind,
+    },
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -451,5 +457,94 @@ mod dispatch_tests {
         assert!(result.model_override.is_none());
         assert!(result.mode_override.is_none());
         assert!(result.message_to_send.is_none());
+    }
+
+    // ── /skills ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn skills_triggers_open_inspector_skills() {
+        let (name, result) = try_dispatch("/skills", &registry()).unwrap();
+        assert_eq!(name, "skills");
+        assert!(
+            matches!(
+                result.immediate_action,
+                Some(ImmediateAction::OpenInspector {
+                    kind: InspectorKind::Skills
+                })
+            ),
+            "expected OpenInspector(Skills)"
+        );
+    }
+
+    #[test]
+    fn skills_with_trailing_space_works() {
+        let (_, result) = try_dispatch("/skills ", &registry()).unwrap();
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Skills
+            })
+        ));
+    }
+
+    // ── /subagents ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn subagents_triggers_open_inspector_subagents() {
+        let (name, result) = try_dispatch("/subagents", &registry()).unwrap();
+        assert_eq!(name, "subagents");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Subagents
+            })
+        ));
+    }
+
+    // ── /peers ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn peers_triggers_open_inspector_peers() {
+        let (name, result) = try_dispatch("/peers", &registry()).unwrap();
+        assert_eq!(name, "peers");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Peers
+            })
+        ));
+    }
+
+    // ── /context ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn context_triggers_open_inspector_context() {
+        let (name, result) = try_dispatch("/context", &registry()).unwrap();
+        assert_eq!(name, "context");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Context
+            })
+        ));
+    }
+
+    #[test]
+    fn inspect_commands_do_not_set_model_mode_or_message() {
+        for cmd in &["/skills", "/subagents", "/peers", "/context"] {
+            let (_, result) = try_dispatch(cmd, &registry()).unwrap();
+            assert!(
+                result.model_override.is_none(),
+                "{cmd} must not set model_override"
+            );
+            assert!(
+                result.mode_override.is_none(),
+                "{cmd} must not set mode_override"
+            );
+            assert!(
+                result.message_to_send.is_none(),
+                "{cmd} must not set message_to_send"
+            );
+        }
     }
 }

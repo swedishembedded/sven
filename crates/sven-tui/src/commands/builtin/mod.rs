@@ -5,6 +5,7 @@
 
 pub mod abort;
 pub mod clear;
+pub mod inspect;
 pub mod mode;
 pub mod model;
 pub mod new;

@@ -54,6 +54,9 @@ impl App {
                 if self.ui.confirm_modal.is_some() {
                     return self.handle_confirm_modal_key(k).await;
                 }
+                if self.ui.inspector.is_some() {
+                    return self.handle_inspector_key(k).await;
+                }
                 if self.ui.pager.is_some() {
                     return self.handle_pager_key(k).await;
                 }
@@ -834,6 +837,70 @@ impl App {
                     if let Some(line) = self.ui.search.current_line() {
                         if let Some(pager) = &mut self.ui.pager {
                             pager.scroll_to_line(line);
+                        }
+                    }
+                }
+            }
+            PagerAction::Handled => {}
+        }
+        false
+    }
+
+    /// Handle a key event while the inspector overlay is open.
+    ///
+    /// The inspector pager uses the same search state as the main pager but
+    /// scopes matches to the inspector's own lines.
+    pub(crate) async fn handle_inspector_key(&mut self, k: crossterm::event::KeyEvent) -> bool {
+        use crate::keys::map_search_key;
+        use crate::pager::PagerAction;
+
+        if self.ui.search.active {
+            if let Some(action) = map_search_key(k) {
+                return self.dispatch(action).await;
+            }
+            return false;
+        }
+
+        let inspector = match &mut self.ui.inspector {
+            Some(i) => i,
+            None => return false,
+        };
+
+        match inspector.pager.handle_key(k) {
+            PagerAction::Close => {
+                self.ui.inspector = None;
+                self.ui.search.active = false;
+            }
+            PagerAction::OpenSearch => {
+                self.ui.search.query.clear();
+                self.ui.search.current = 0;
+                // Update matches against the inspector's own lines.
+                let lines = inspector.pager.cloned_lines();
+                self.ui.search.update_matches(&lines);
+                self.ui.search.active = true;
+            }
+            PagerAction::SearchNext => {
+                if !self.ui.search.matches.is_empty() {
+                    self.ui.search.current =
+                        (self.ui.search.current + 1) % self.ui.search.matches.len();
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(inspector) = &mut self.ui.inspector {
+                            inspector.pager.scroll_to_line(line);
+                        }
+                    }
+                }
+            }
+            PagerAction::SearchPrev => {
+                if !self.ui.search.matches.is_empty() {
+                    self.ui.search.current = self
+                        .ui
+                        .search
+                        .current
+                        .checked_sub(1)
+                        .unwrap_or(self.ui.search.matches.len() - 1);
+                    if let Some(line) = self.ui.search.current_line() {
+                        if let Some(inspector) = &mut self.ui.inspector {
+                            inspector.pager.scroll_to_line(line);
                         }
                     }
                 }

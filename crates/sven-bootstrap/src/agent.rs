@@ -53,10 +53,20 @@ impl AgentBuilder {
         self
     }
 
+    /// Inject a pre-created [`OutputBufferStore`] handle.
+    ///
+    /// Use this when the caller (e.g. the TUI) needs to hold a reference to
+    /// the same store that the agent tools will write to, so that it can
+    /// display live buffer status without going through the agent event channel.
+    pub fn with_buffer_store(mut self, store: Arc<Mutex<OutputBufferStore>>) -> Self {
+        self.buffer_store = store;
+        self
+    }
+
     /// Return a clone of the shared [`OutputBufferStore`] handle.
     ///
-    /// Call this **after** `build()` to get a reference that can be polled by
-    /// the TUI for live streaming display.
+    /// Call this **before** or **after** `build()` to get a reference that can
+    /// be polled by the TUI for live streaming display.
     pub fn buffer_store(&self) -> Arc<Mutex<OutputBufferStore>> {
         Arc::clone(&self.buffer_store)
     }
