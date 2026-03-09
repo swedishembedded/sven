@@ -708,7 +708,7 @@ mod tests {
         //   Thinking → {"type":"thinking","data":{"content":"..."}}
         // MessageContent::Text is untagged, so it serializes as a plain string.
         use serde_json::json;
-        let records = vec![
+        let records = [
             json!({"type":"message","data":{"role":"user","content":"hello"}}),
             json!({"type":"thinking","data":{"content":"Let me think..."}}),
             json!({"type":"message","data":{"role":"assistant","content":"world"}}),

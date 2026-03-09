@@ -300,12 +300,25 @@ impl App {
             };
             let _ = tx
                 .send(AgentRequest::Submit {
-                    content: qm.content,
+                    content: qm.content.clone(),
                     model_override,
                     mode_override,
                 })
                 .await;
             self.agent.busy = true;
+            // First message in chat: request LLM-generated title (local agent only).
+            if self.chat.segments.len() == 1
+                && (self.chat_title == "New chat" || self.chat_title.is_empty())
+                && !self.is_node_proxy
+            {
+                if let Some(tx) = &self.agent.tx {
+                    let _ = tx
+                        .send(AgentRequest::GenerateTitle {
+                            user_text: qm.content,
+                        })
+                        .await;
+                }
+            }
         }
     }
 
@@ -323,15 +336,27 @@ impl App {
                     qm.mode_transition,
                 )
             };
+            let is_first_message = messages.is_empty()
+                && (self.chat_title == "New chat" || self.chat_title.is_empty())
+                && !self.is_node_proxy;
             let _ = tx
                 .send(AgentRequest::Resubmit {
                     messages,
-                    new_user_content: qm.content,
+                    new_user_content: qm.content.clone(),
                     model_override,
                     mode_override,
                 })
                 .await;
             self.agent.busy = true;
+            if is_first_message {
+                if let Some(tx) = &self.agent.tx {
+                    let _ = tx
+                        .send(AgentRequest::GenerateTitle {
+                            user_text: qm.content,
+                        })
+                        .await;
+                }
+            }
         }
     }
 

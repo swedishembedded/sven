@@ -348,6 +348,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
         } else {
             "max_tokens"
         };
+        let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
 
         // GPT-5 models only support temperature=1 (the default)
         // Reasoning models (o1, o3) don't support temperature parameter at all
@@ -363,7 +364,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
             "model": self.model,
             "messages": messages,
             "stream": req.stream,
-            max_tokens_key: self.max_tokens,
+            max_tokens_key: max_tokens,
             "stream_options": { "include_usage": true },
         });
         if use_temperature {

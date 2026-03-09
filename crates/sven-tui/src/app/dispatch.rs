@@ -17,6 +17,7 @@ use crate::{
     commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
     overlay::completion::CompletionOverlay,
+    overlay::confirm::{ConfirmModal, ConfirmedAction},
     pager::PagerOverlay,
 };
 
@@ -1089,15 +1090,24 @@ impl App {
                     .get(self.sessions.list_selected)
                     .cloned()
                 {
-                    if id != self.sessions.active_id {
-                        self.sessions.delete(&id);
-                        self.ui
-                            .push_toast(crate::app::ui_state::Toast::info("Chat deleted"));
+                    let title = self
+                        .sessions
+                        .get(&id)
+                        .map(|e| e.title.as_str())
+                        .unwrap_or("Untitled");
+                    let is_active = id == self.sessions.active_id;
+                    let message = if is_active {
+                        format!(
+                            "Delete \"{}\"? You will be switched to another chat.",
+                            title
+                        )
                     } else {
-                        self.ui.push_toast(crate::app::ui_state::Toast::warning(
-                            "Cannot delete active chat",
-                        ));
-                    }
+                        format!("Delete \"{}\"?", title)
+                    };
+                    self.ui.confirm_modal = Some(
+                        ConfirmModal::new("Delete chat", message, ConfirmedAction::DeleteChat(id))
+                            .labels(" Delete ", " Cancel "),
+                    );
                 }
             }
 

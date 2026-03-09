@@ -110,6 +110,9 @@ pub enum AgentEvent {
     Question { id: String, questions: Vec<String> },
     /// Answer to a previous Question event
     QuestionAnswer { id: String, answer: String },
+    /// Chat title generated from the first user message (LLM, low max_tokens).
+    /// The TUI sets the session title as soon as this is received.
+    TitleGenerated(String),
     /// A team lifecycle event to be shown in the chat as a collapsible segment.
     CollabEvent(crate::prompts::CollabEvent),
     /// A completed delegate subtree — rendered as a collapsible `DelegateSummary` segment.

@@ -621,6 +621,26 @@ impl App {
                                     self.chat.focused_segment = saved;
                                 }
                             }
+                            ConfirmedAction::DeleteChat(id) => {
+                                if id == self.sessions.active_id {
+                                    let other = self
+                                        .sessions
+                                        .display_order
+                                        .iter()
+                                        .find(|x| *x != &id)
+                                        .cloned();
+                                    if let Some(other_id) = other {
+                                        self.switch_session(other_id).await;
+                                    } else {
+                                        self.new_session().await;
+                                    }
+                                }
+                                if self.sessions.delete(&id) {
+                                    self.ui.push_toast(crate::app::ui_state::Toast::info(
+                                        "Chat deleted",
+                                    ));
+                                }
+                            }
                         }
                     }
                 }

@@ -51,20 +51,6 @@ pub const SE_YELLOW: Color = Color::Rgb(230, 180, 40);
 /// streaming delta — speed reflects how fast the model is generating tokens.
 pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// 8-frame oscilloscope signal-wave for the thinking (Seasoning) animation.
-/// A Gaussian pulse travels across 8 columns, evoking an embedded-systems
-/// oscilloscope trace.  Clock-driven at ~80 ms/frame → smooth 12 fps.
-pub(crate) const THINKING_WAVE: [&str; 8] = [
-    "▁▁▁▃▅▇▅▃",
-    "▁▁▃▅▇▅▃▁",
-    "▁▃▅▇▅▃▁▁",
-    "▃▅▇▅▃▁▁▁",
-    "▅▇▅▃▁▁▁▃",
-    "▇▅▃▁▁▁▃▅",
-    "▅▃▁▁▁▃▅▇",
-    "▃▁▁▁▃▅▇▅",
-];
-
 /// 12-frame scanning dot for in-progress tool calls.
 /// Mirrors the classic "scanning light" on embedded test equipment.
 pub(crate) const TOOL_SCAN: [&str; 12] = [
@@ -93,19 +79,6 @@ pub(crate) fn spinner_char(frame: u8, ascii: bool) -> &'static str {
         };
     }
     SPINNER_FRAMES[(frame % 10) as usize]
-}
-
-/// Return the oscilloscope wave frame for clock-driven thinking animation.
-pub(crate) fn thinking_wave(frame: u8, ascii: bool) -> &'static str {
-    if ascii {
-        return match frame % 4 {
-            0 => "~~~~",
-            1 => "-/--",
-            2 => "-^--",
-            _ => "-\\--",
-        };
-    }
-    THINKING_WAVE[(frame % 8) as usize]
 }
 
 /// Return the scanning dot frame for in-progress tool calls.

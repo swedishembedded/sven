@@ -720,6 +720,7 @@ impl Agent {
             // Stable session identifier forwarded to providers that support
             // an explicit cache key (e.g. OpenRouter's prompt_cache_key).
             cache_key: Some(self.session.id.clone()),
+            max_output_tokens_override: None,
         };
 
         let mut stream = match self.model.complete(req).await {
@@ -767,6 +768,7 @@ impl Agent {
                         stream: true,
                         system_dynamic_suffix: self.dynamic_context(),
                         cache_key: Some(self.session.id.clone()),
+                        max_output_tokens_override: None,
                     };
                     self.model
                         .complete(req2)

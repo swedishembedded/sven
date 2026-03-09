@@ -138,10 +138,11 @@ impl crate::ModelProvider for GoogleProvider {
             Some(json!([{ "functionDeclarations": function_declarations }]))
         };
 
+        let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
         let mut body = json!({
             "contents": contents,
             "generationConfig": {
-                "maxOutputTokens": self.max_tokens,
+                "maxOutputTokens": max_tokens,
                 "temperature": self.temperature,
             }
         });
@@ -512,7 +513,7 @@ mod tests {
         );
         let parts = message_to_gemini_parts(&msg, &HashMap::new());
         // Should have functionResponse + 1 inline_data part
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
         let resp_output = &parts[0]["functionResponse"]["response"]["output"];
         assert_eq!(
             resp_output, "[see attached images]",

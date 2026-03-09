@@ -180,15 +180,15 @@ impl App {
 
         if !self.chat.streaming_buffer.is_empty() {
             let (s, bar_color) = if self.chat.streaming_is_thinking {
-                // Oscilloscope wave shifts every anim_frame tick (clock-driven).
-                let wave = crate::ui::theme::thinking_wave(anim_frame, ascii);
+                // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
+                let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
                 let preview = first_words(&self.chat.streaming_buffer, 8);
                 let sep = if self.chat.segments.is_empty() {
                     ""
                 } else {
                     "\n"
                 };
-                let text = format!("{sep}{SYM_THINK} **Seasoning**  {wave}  `{preview}`");
+                let text = format!("{sep}{SYM_THINK} **Seasoning**  {dot}  `{preview}`");
                 (text, Some(Style::default().fg(BAR_THINKING)))
             } else {
                 // Blinking ▌ cursor shows the stream is live.

@@ -28,6 +28,10 @@ impl App {
             if let Some(entry) = self.sessions.get_mut(&session_id) {
                 entry.apply_background_event(&event);
             }
+            // Move chat to top of list when the model finishes a response (not on click).
+            if matches!(event, AgentEvent::TurnComplete) {
+                self.sessions.promote_to_top(&session_id);
+            }
             return false;
         }
 
@@ -201,9 +205,14 @@ impl App {
                     self.agent.streaming_tokens = 0;
                 }
             }
+            AgentEvent::TitleGenerated(title) => {
+                self.sessions.set_title(&session_id, title.clone());
+                if session_id == self.sessions.active_id {
+                    self.chat_title = title;
+                }
+            }
             AgentEvent::TurnComplete => {
-                // After the first completed turn, derive a heuristic title from
-                // the first user message if no title has been set yet.
+                // Fallback: if LLM title never arrived, derive heuristic from first user message.
                 if self.chat_title == "New chat" || self.chat_title.is_empty() {
                     let first_user_text = self.chat.segments.iter().find_map(|seg| {
                         use crate::chat::segment::ChatSegment;
@@ -250,6 +259,8 @@ impl App {
                     }
                 }
                 self.save_history_async();
+                // Move this chat to top of list when the model finishes a response (not on click).
+                self.sessions.promote_to_top(&session_id);
                 // Only dequeue the next message if no queue item is being edited
                 // and an abort did not explicitly suppress auto-advance.
                 if self.edit.queue_index.is_none() && !self.queue.abort_pending {

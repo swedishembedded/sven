@@ -114,6 +114,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         | AgentEvent::Question { .. }
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)
+        | AgentEvent::TitleGenerated(_)
         | AgentEvent::DelegateSummary { .. } => None,
     }
 }

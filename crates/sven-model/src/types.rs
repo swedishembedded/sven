@@ -375,6 +375,10 @@ pub struct CompletionRequest {
     /// Providers that do not use this field (OpenAI, Anthropic, Google, …)
     /// silently ignore it.
     pub cache_key: Option<String>,
+    /// Optional per-request override for max output tokens (e.g. for short
+    /// title generation). When set, providers use this instead of their
+    /// configured default for this request only.
+    pub max_output_tokens_override: Option<u32>,
 }
 
 /// A single streamed event from the model.

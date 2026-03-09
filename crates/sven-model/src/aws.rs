@@ -205,10 +205,11 @@ impl crate::ModelProvider for BedrockProvider {
             Some(json!({ "tools": tools }))
         };
 
+        let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
         let mut body = json!({
             "messages": messages,
             "inferenceConfig": {
-                "maxTokens": self.max_tokens,
+                "maxTokens": max_tokens,
                 "temperature": self.temperature,
             }
         });

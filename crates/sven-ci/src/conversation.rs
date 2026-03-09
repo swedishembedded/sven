@@ -404,6 +404,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
         AgentEvent::TurnComplete
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)
+        | AgentEvent::TitleGenerated(_)
         | AgentEvent::DelegateSummary { .. } => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {

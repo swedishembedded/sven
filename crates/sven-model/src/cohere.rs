@@ -170,11 +170,12 @@ impl crate::ModelProvider for CohereProvider {
             })
             .collect();
 
+        let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
         let mut body = json!({
             "model": self.model,
             "messages": messages,
             "stream": req.stream,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens,
             "temperature": self.temperature,
         });
         if !system_text.is_empty() {

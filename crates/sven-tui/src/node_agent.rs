@@ -227,6 +227,10 @@ pub async fn node_agent_task(
                 debug!("node_agent_task: ignoring LoadHistory (node manages history)");
                 continue;
             }
+            AgentRequest::GenerateTitle { .. } => {
+                // Title generation is local-agent only; not sent in node-proxy mode.
+                continue;
+            }
         };
 
         let sid = Uuid::new_v4();
