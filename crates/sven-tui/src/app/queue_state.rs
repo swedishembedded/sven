@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use crate::app::QueuedMessage;
 
 /// State for the pending-message queue and its selection.
+#[derive(Clone)]
 pub(crate) struct QueueState {
     /// Messages waiting to be sent to the agent.
     pub messages: VecDeque<QueuedMessage>,

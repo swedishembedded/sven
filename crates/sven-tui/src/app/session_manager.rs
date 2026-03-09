@@ -32,7 +32,10 @@ use sven_core::AgentEvent;
 use sven_input::{ChatDocument, ChatStatus, SessionId};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::{agent::AgentRequest, app::chat_state::ChatState};
+use crate::{
+    agent::AgentRequest,
+    app::{chat_state::ChatState, input_state::InputAttachment, queue_state::QueueState},
+};
 
 // ── SessionEntry ──────────────────────────────────────────────────────────────
 
@@ -54,6 +57,16 @@ pub(crate) struct SessionEntry {
     // ── Stored chat state (populated when session is inactive) ────────────────
     /// Stored chat segments for inactive sessions (active session uses `App.chat`).
     pub stored_chat: Option<ChatState>,
+
+    // ── Stored input/queue state (populated when session is inactive) ─────────
+    /// Saved input buffer text for this session when inactive.
+    pub stored_input_buffer: Option<String>,
+    /// Saved cursor position within the input buffer.
+    pub stored_input_cursor: Option<usize>,
+    /// Saved input attachments (images) for this session when inactive.
+    pub stored_input_attachments: Option<Vec<InputAttachment>>,
+    /// Saved pending-message queue for this session when inactive.
+    pub stored_queue: Option<QueueState>,
 
     // ── Per-session model/mode state ──────────────────────────────────────────
     /// Saved model/mode state for this session (populated when session is inactive).
@@ -87,6 +100,10 @@ impl SessionEntry {
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             stored_chat: None,
+            stored_input_buffer: None,
+            stored_input_cursor: None,
+            stored_input_attachments: None,
+            stored_queue: None,
             session_state: None,
             jsonl_path: None,
             agent_tx: None,
@@ -109,6 +126,10 @@ impl SessionEntry {
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             stored_chat: None,
+            stored_input_buffer: None,
+            stored_input_cursor: None,
+            stored_input_attachments: None,
+            stored_queue: None,
             session_state: None,
             jsonl_path: None,
             agent_tx: None,
@@ -130,6 +151,10 @@ impl SessionEntry {
             created_at: now,
             updated_at: now,
             stored_chat: None,
+            stored_input_buffer: None,
+            stored_input_cursor: None,
+            stored_input_attachments: None,
+            stored_queue: None,
             session_state: None,
             jsonl_path: None,
             agent_tx: None,
@@ -345,6 +370,10 @@ impl SessionManager {
                 created_at: chat_entry.updated_at, // best available approximation
                 updated_at: chat_entry.updated_at,
                 stored_chat: None, // lazy-loaded when activated
+                stored_input_buffer: None,
+                stored_input_cursor: None,
+                stored_input_attachments: None,
+                stored_queue: None,
                 session_state: None,
                 jsonl_path: None,
                 agent_tx: None,
@@ -443,28 +472,5 @@ impl SessionManager {
             entry.title = title;
             entry.updated_at = Utc::now();
         }
-    }
-}
-
-// ── Spinner frames ────────────────────────────────────────────────────────────
-
-/// Return an appropriate spinner/status character for a session entry.
-///
-/// - Busy active: animated braille spinner
-/// - Busy background: static spinner frame
-/// - Completed: checkmark (gray in theme)
-/// - Active idle: bullet
-/// - Inactive idle: space
-pub fn session_status_char(entry: &SessionEntry, is_active: bool, anim_frame: u8) -> char {
-    if entry.busy {
-        // Braille dot spinner — 8 frames.
-        const SPINNER: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
-        SPINNER[(anim_frame as usize) % SPINNER.len()]
-    } else if entry.status == ChatStatus::Completed {
-        '✓'
-    } else if is_active {
-        '●'
-    } else {
-        '○'
     }
 }

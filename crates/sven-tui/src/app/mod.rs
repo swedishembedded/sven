@@ -181,6 +181,10 @@ pub struct App {
     pub(crate) yaml_path: Option<PathBuf>,
     /// Title of the current active chat session.
     pub(crate) chat_title: String,
+    /// Shared question sender — cloned into every agent task so that question
+    /// requests from all sessions are routed through the single `question_rx`
+    /// in `run()`.  `None` before `run()` is called (e.g. in tests).
+    pub(crate) question_tx: Option<mpsc::Sender<QuestionRequest>>,
 }
 
 impl App {
@@ -377,6 +381,7 @@ impl App {
             chat_title: loaded_doc
                 .map(|d| d.title)
                 .unwrap_or_else(|| "New chat".to_string()),
+            question_tx: None,
         };
 
         for qm in opts.initial_queue {
@@ -858,6 +863,10 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
+        // Store the sender so that agents spawned for new/switched-to sessions
+        // all route their questions through the same handler in the run loop.
+        self.question_tx = Some(question_tx.clone());
+
         self.agent.tx = Some(submit_tx.clone());
         // Register the initial session's agent channels in its entry so that
         // switch_session() finds them and does NOT spawn a second agent when the
@@ -1177,10 +1186,11 @@ impl App {
         let new_id = self.sessions.create_session("New chat");
         self.sessions.active_id = new_id.clone();
 
-        // Reset live chat/agent/session state for the new empty session.
+        // Reset live chat/agent/input/queue/edit state for the new empty session.
         self.chat = ChatState::new();
         self.agent = AgentConn::new();
         self.session = crate::state::SessionState::new(self.config.model.clone(), AgentMode::Agent);
+        self.input = InputState::new();
         // Clear any in-flight queue and edit state from the previous session so
         // queued messages don't bleed into the new session's agent.
         self.queue = QueueState::new();
@@ -1299,6 +1309,28 @@ impl App {
             .get(&target_id)
             .and_then(|e| e.jsonl_path.clone());
 
+        // Cancel any in-progress inline edit so stale edit state doesn't bleed
+        // into the newly active session.
+        self.edit.clear();
+
+        // Restore the target session's input buffer and queue (or reset to empty).
+        let (target_input_buffer, target_input_cursor, target_input_attachments, target_queue) =
+            if let Some(entry) = self.sessions.get_mut(&target_id) {
+                (
+                    entry.stored_input_buffer.take().unwrap_or_default(),
+                    entry.stored_input_cursor.take().unwrap_or(0),
+                    entry.stored_input_attachments.take().unwrap_or_default(),
+                    entry.stored_queue.take().unwrap_or_else(QueueState::new),
+                )
+            } else {
+                (String::new(), 0, Vec::new(), QueueState::new())
+            };
+        self.input.buffer = target_input_buffer;
+        self.input.cursor = target_input_cursor;
+        self.input.scroll_offset = 0;
+        self.input.attachments = target_input_attachments;
+        self.queue = target_queue;
+
         self.sessions.promote_to_top(&target_id);
         self.sessions.sync_list_selection_to_active();
         self.rerender_chat().await;
@@ -1310,6 +1342,10 @@ impl App {
         let active_id = self.sessions.active_id.clone();
         if let Some(entry) = self.sessions.get_mut(&active_id) {
             entry.stored_chat = Some(self.chat.clone());
+            entry.stored_input_buffer = Some(self.input.buffer.clone());
+            entry.stored_input_cursor = Some(self.input.cursor);
+            entry.stored_input_attachments = Some(self.input.attachments.clone());
+            entry.stored_queue = Some(self.queue.clone());
             entry.session_state = Some(self.session.clone());
             entry.jsonl_path = self.jsonl_path.clone();
             entry.busy = self.agent.busy;
@@ -1330,7 +1366,13 @@ impl App {
     async fn spawn_agent_for_session(&mut self, id: &sven_input::SessionId) {
         let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
         let (evt_tx, evt_rx) = mpsc::channel::<AgentEvent>(512);
-        let (question_tx, _) = mpsc::channel::<sven_tools::QuestionRequest>(4);
+        // Reuse the shared question sender so all sessions route questions
+        // through the single question_rx in run().  Fall back to a disconnected
+        // channel only in tests where run() was never called.
+        let question_tx = self.question_tx.clone().unwrap_or_else(|| {
+            let (tx, _) = mpsc::channel::<sven_tools::QuestionRequest>(4);
+            tx
+        });
         let cancel = Arc::new(tokio::sync::Mutex::new(None));
 
         if *id == self.sessions.active_id {

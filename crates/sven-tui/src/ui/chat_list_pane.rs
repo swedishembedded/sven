@@ -18,7 +18,7 @@ use ratatui::{
 };
 use sven_input::ChatStatus;
 
-use crate::app::session_manager::{session_status_char, SessionEntry};
+use crate::app::session_manager::SessionEntry;
 
 use super::theme::{BORDER_DIM, BORDER_FOCUS, BORDER_RESIZE, SPINNER_FRAMES, TEXT, TEXT_DIM};
 
@@ -235,8 +235,6 @@ pub fn build_chat_list_items<'a>(
     entries
         .map(|entry| {
             let is_active = &entry.id == active_id;
-            let status_ch = session_status_char(entry, is_active, anim_frame);
-            let _ = status_ch; // used for rendering above
             ChatListItem {
                 title: &entry.title,
                 status: entry.status,
