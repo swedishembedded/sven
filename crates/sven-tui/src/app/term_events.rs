@@ -278,8 +278,11 @@ impl App {
                         }
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                             // ── Click on chat list sidebar ────────────────────────
-                            // Any click inside the chat list pane focuses it and
-                            // selects the row that was clicked.
+                            // A click inside the chat list pane selects the row and
+                            // immediately switches to that session.  We MUST return
+                            // here so the event does not fall through into the chat
+                            // segment expand/collapse handler below, which has no
+                            // column guard and would mutate the wrong session's chat.
                             let cl = self.layout.chat_list_pane;
                             if self.layout.chat_list_visible
                                 && cl.width > 0
@@ -288,12 +291,42 @@ impl App {
                                 && mouse.row >= cl.y
                                 && mouse.row < cl.y + cl.height
                             {
-                                self.ui.focus = FocusPane::ChatList;
-                                // Row 0 is the border/title; items start at row 1.
+                                // Compute the scroll offset that was used to render
+                                // the list so that visual row → item index is correct.
+                                // The hint row is only shown when the pane is already
+                                // focused; use the state *before* we change focus.
+                                let was_focused = self.ui.focus == FocusPane::ChatList;
+                                let hint_rows = if was_focused && cl.height >= 3 {
+                                    1usize
+                                } else {
+                                    0
+                                };
+                                let visible_items =
+                                    (cl.height as usize).saturating_sub(2 + hint_rows);
+                                let scroll_offset = if self.sessions.list_selected >= visible_items
+                                {
+                                    self.sessions.list_selected + 1 - visible_items
+                                } else {
+                                    0
+                                };
+
+                                // Row 0 of inner area is item at scroll_offset.
                                 let inner_row =
                                     (mouse.row as usize).saturating_sub((cl.y + 1) as usize);
                                 let max_idx = self.sessions.display_order.len().saturating_sub(1);
-                                self.sessions.list_selected = inner_row.min(max_idx);
+                                let actual_idx = (inner_row + scroll_offset).min(max_idx);
+                                self.sessions.list_selected = actual_idx;
+
+                                // Switch to the clicked session immediately.
+                                if let Some(id) =
+                                    self.sessions.display_order.get(actual_idx).cloned()
+                                {
+                                    if id != self.sessions.active_id {
+                                        self.switch_session(id).await;
+                                    }
+                                }
+                                self.ui.focus = FocusPane::Input;
+                                return false;
                             }
 
                             if self.nvim.disabled {

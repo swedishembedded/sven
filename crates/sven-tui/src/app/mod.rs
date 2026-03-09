@@ -747,13 +747,28 @@ impl App {
                 &self.sessions.active_id,
                 self.agent.anim_frame,
             );
+            // Compute scroll offset so list_selected is always visible.
+            // When focused the last inner row is the hint, reducing visible items by 1.
+            let cl_pane = layout.chat_list_pane;
+            let cl_focused = self.ui.focus == FocusPane::ChatList;
+            let hint_rows = if cl_focused && cl_pane.height >= 3 {
+                1usize
+            } else {
+                0
+            };
+            let visible_items = (cl_pane.height as usize).saturating_sub(2 + hint_rows);
+            let chat_list_scroll_offset = if self.sessions.list_selected >= visible_items {
+                self.sessions.list_selected + 1 - visible_items
+            } else {
+                0
+            };
             frame.render_widget(
                 crate::ui::ChatListPane {
                     items: &items,
                     selected: self.sessions.list_selected,
-                    focused: self.ui.focus == FocusPane::ChatList,
+                    focused: cl_focused,
                     ascii,
-                    scroll_offset: 0,
+                    scroll_offset: chat_list_scroll_offset,
                     is_resizing: self.layout.resize_drag
                         == Some(crate::app::layout_cache::ResizeDrag::ChatListWidth),
                 },
