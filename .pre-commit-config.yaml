@@ -30,9 +30,12 @@ repos:
         types: [rust]
         pass_filenames: true
 
+      # Clippy runs only on packages that contain the passed (staged) files.
+      # On commit: only changed packages are checked. Use "pre-commit run --all-files"
+      # to check the full workspace.
       - id: cargo-clippy
         name: cargo clippy
-        entry: env CARGO_HOME=/home/user/.cargo cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+        entry: bash scripts/clippy-staged.sh
         language: system
         types: [rust]
-        pass_filenames: false
+        pass_filenames: true
