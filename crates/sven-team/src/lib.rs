@@ -32,7 +32,8 @@ pub use config::{
 pub use definition::{TeamDefinition, TeamMemberDef};
 pub use spawn::{
     CleanupTeamTool, CreateTeamTool, ListTeamTool, LoadTeamTool, MergeTeammateBranchTool,
-    RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool, TeamConfigHandle,
+    ReadTeammateLogTool, RegisterTeammateTool, ShutdownTeammateTool, SpawnTeammateTool,
+    TeamConfigHandle,
 };
 pub use task::{default_team_dir, Task, TaskList, TaskStatus, TaskStore, TaskStoreError};
 pub use tools::{

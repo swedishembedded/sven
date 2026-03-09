@@ -16,8 +16,42 @@ use serde_json::{json, Value};
 
 use sven_tools::{ApprovalPolicy, Tool, ToolCall, ToolOutput};
 
+use crate::config::{is_process_alive, MemberStatus, TeamMember};
 use crate::spawn::TeamConfigHandle;
 use crate::task::{Task, TaskStatus, TaskStore};
+
+/// Return a warning string if `assignee_name` is not an active team member.
+///
+/// Returns `None` when the assignee is active (or not found in the roster,
+/// which may be intentional for future members).
+fn inactive_assignee_warning(assignee_name: &str, members: &[TeamMember]) -> Option<String> {
+    let member = members
+        .iter()
+        .find(|m| m.name.eq_ignore_ascii_case(assignee_name))?;
+
+    let effective_status = match (member.pid, &member.status) {
+        (Some(pid), MemberStatus::Active | MemberStatus::Idle) => {
+            if is_process_alive(pid) {
+                return None; // actively running — no warning needed
+            }
+            MemberStatus::Closed
+        }
+        (_, s) => s.clone(),
+    };
+
+    match effective_status {
+        MemberStatus::Active | MemberStatus::Idle => None,
+        MemberStatus::Closed => Some(format!(
+            "Teammate '{assignee_name}' is not currently running (process exited). \
+             The task will stay pending until they are re-spawned. \
+             Use spawn_teammate to restart them, or read_teammate_log to diagnose the exit."
+        )),
+        MemberStatus::Unknown => Some(format!(
+            "Teammate '{assignee_name}' has unknown status. \
+             Use list_team to check whether they are active before assigning work."
+        )),
+    }
+}
 
 // ── CreateTaskTool ───────────────────────────────────────────────────────────
 
@@ -95,10 +129,15 @@ impl Tool for CreateTaskTool {
             })
             .unwrap_or_default();
 
-        let team_name = {
+        let (team_name, assignee_warning) = {
             let guard = self.team_config.lock().await;
             match guard.as_ref() {
-                Some(c) => c.name.clone(),
+                Some(c) => {
+                    let warn = assigned_to
+                        .as_deref()
+                        .and_then(|name| inactive_assignee_warning(name, &c.members));
+                    (c.name.clone(), warn)
+                }
                 None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
             }
         };
@@ -109,12 +148,15 @@ impl Tool for CreateTaskTool {
 
         match store.create_task(title.clone(), description, &self.agent_name, depends_on) {
             Ok(id) => {
-                if let Some(assignee) = assigned_to {
-                    let _ = store.assign_task(&id, &assignee);
+                if let Some(ref assignee) = assigned_to {
+                    let _ = store.assign_task(&id, assignee);
                 }
+                let warn = assignee_warning
+                    .map(|w| format!("\n⚠ {w}"))
+                    .unwrap_or_default();
                 ToolOutput::ok(
                     &call.id,
-                    format!("Task created: \"{title}\"\nTask ID: {id}\nStatus: pending"),
+                    format!("Task created: \"{title}\"\nTask ID: {id}\nStatus: pending{warn}"),
                 )
             }
             Err(e) => ToolOutput::err(&call.id, format!("Failed to create task: {e}")),
@@ -472,10 +514,13 @@ impl Tool for AssignTaskTool {
             _ => return ToolOutput::err(&call.id, "Missing required parameter: assignee"),
         };
 
-        let team_name = {
+        let (team_name, assignee_warning) = {
             let guard = self.team_config.lock().await;
             match guard.as_ref() {
-                Some(c) => c.name.clone(),
+                Some(c) => {
+                    let warn = inactive_assignee_warning(&assignee, &c.members);
+                    (c.name.clone(), warn)
+                }
                 None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
             }
         };
@@ -485,10 +530,15 @@ impl Tool for AssignTaskTool {
         };
 
         match store.assign_task(&task_id, &assignee) {
-            Ok(()) => ToolOutput::ok(
-                &call.id,
-                format!("Task {task_id} assigned to '{assignee}'."),
-            ),
+            Ok(()) => {
+                let warn = assignee_warning
+                    .map(|w| format!("\n⚠ {w}"))
+                    .unwrap_or_default();
+                ToolOutput::ok(
+                    &call.id,
+                    format!("Task {task_id} assigned to '{assignee}'.{warn}"),
+                )
+            }
             Err(e) => ToolOutput::err(&call.id, format!("Failed to assign task: {e}")),
         }
     }

@@ -189,12 +189,22 @@ impl Tool for ListTeamTool {
     }
 
     fn description(&self) -> &str {
-        "Show all team members with their role, current status, and active task. \
+        "Show team members with their role, current status, and active task. \
+         Closed and exited teammates are hidden by default — pass show_closed=true to see them. \
          Use this to monitor who is working on what and whether any teammate needs help."
     }
 
     fn parameters_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "show_closed": {
+                    "type": "boolean",
+                    "description": "Include closed/exited teammates in the output (default: false)",
+                    "default": false
+                }
+            }
+        })
     }
 
     fn default_policy(&self) -> ApprovalPolicy {
@@ -202,6 +212,8 @@ impl Tool for ListTeamTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let show_closed = call.args["show_closed"].as_bool().unwrap_or(false);
+
         let guard = self.config.lock().await;
         let config = match guard.as_ref() {
             Some(c) => c,
@@ -215,28 +227,48 @@ impl Tool for ListTeamTool {
         let tasks = task_store.load().unwrap_or_default();
         let (p, i, c, f) = tasks.counts();
 
+        // Compute effective status for each member (detect crashed processes).
+        let all_members: Vec<(&crate::config::TeamMember, MemberStatus)> = config
+            .members
+            .iter()
+            .map(|m| {
+                let effective = if let (Some(pid), MemberStatus::Active | MemberStatus::Idle) =
+                    (m.pid, &m.status)
+                {
+                    if crate::config::is_process_alive(pid) {
+                        m.status.clone()
+                    } else {
+                        MemberStatus::Closed
+                    }
+                } else {
+                    m.status.clone()
+                };
+                (m, effective)
+            })
+            .collect();
+
+        let hidden_count = all_members
+            .iter()
+            .filter(|(_, s)| matches!(s, MemberStatus::Closed))
+            .count();
+        let visible_count = all_members.len() - hidden_count;
+        let hidden_note = if !show_closed && hidden_count > 0 {
+            format!(" ({hidden_count} closed/exited hidden — pass show_closed=true to see)")
+        } else {
+            String::new()
+        };
+
         let mut lines = vec![format!(
-            "Team '{}' — {} member(s) | tasks: pending={p}, in_progress={i}, completed={c}, failed={f}\n",
+            "Team '{}' — {visible_count} active member(s){hidden_note} | tasks: pending={p}, in_progress={i}, completed={c}, failed={f}\n",
             config.name,
-            config.members.len()
         )];
 
-        for m in &config.members {
-            let role_str = m.role.to_string();
+        for (m, effective_status) in &all_members {
+            if !show_closed && matches!(effective_status, MemberStatus::Closed) {
+                continue;
+            }
 
-            // Detect crashed processes: if we have a PID and the process is no
-            // longer running, override the stored status with Closed.
-            let effective_status = if let (Some(pid), MemberStatus::Active | MemberStatus::Idle) =
-                (m.pid, &m.status)
-            {
-                if crate::config::is_process_alive(pid) {
-                    m.status.clone()
-                } else {
-                    MemberStatus::Closed
-                }
-            } else {
-                m.status.clone()
-            };
+            let role_str = m.role.to_string();
 
             let status_icon = match effective_status {
                 MemberStatus::Active => "●",
@@ -490,9 +522,12 @@ impl Tool for RegisterTeammateTool {
     }
 
     fn description(&self) -> &str {
-        "Register a new peer as a teammate in the team config. \
-         Used when a peer joins the team. \
-         Provide the peer's ID, name, and role."
+        "Register an externally-discovered P2P peer as a teammate in the team config. \
+         Use this ONLY when a peer has joined the P2P room on its own and you have its \
+         real libp2p peer ID from list_peers. \
+         DO NOT call this after spawn_teammate — spawning already handles registration \
+         automatically using a stable synthetic peer ID. \
+         Calling register_teammate after spawn_teammate will create duplicate roster entries."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -787,7 +822,8 @@ impl Tool for SpawnTeammateTool {
                         "reviewer" => crate::config::TeamRole::Reviewer,
                         "explorer" => crate::config::TeamRole::Explorer,
                         "tester" => crate::config::TeamRole::Tester,
-                        _ => crate::config::TeamRole::Teammate,
+                        "teammate" | "" => crate::config::TeamRole::Teammate,
+                        r => crate::config::TeamRole::Custom(r.to_string()),
                     };
                     let member_model = model.clone();
                     let member_pid = pid;
@@ -812,11 +848,12 @@ impl Tool for SpawnTeammateTool {
                     });
                 }
                 let mut msg = format!(
-                    "Teammate '{name}' spawned (pid={pid}) with role '{role_str}'.\n\
-                     It is now polling team '{team_name}' for tasks assigned to it.\n\
+                    "Teammate '{name}' spawned (pid={pid}) with role '{role_str}' and registered in team '{team_name}'.\n\
+                     Registration is complete — do NOT call register_teammate.\n\
+                     The teammate will pick up tasks assigned to it by name '{name}'.\n\
                      Log: {}\n\
-                     Use list_team to verify registration, list_tasks to see task status.\n\
-                     Use shutdown_teammate to stop it when done.",
+                     Use create_task with assigned_to=\"{name}\" to give it work.\n\
+                     Use shutdown_teammate with name=\"{name}\" to stop it when done.",
                     log_file.display()
                 );
                 if let Some((_, ref branch)) = worktree_info {
@@ -860,6 +897,7 @@ impl Tool for ShutdownTeammateTool {
     fn description(&self) -> &str {
         "Signal a teammate to shut down gracefully. \
          Only the team lead can do this. \
+         Pass the teammate's name (preferred) or peer_id to identify who to shut down. \
          Updates the team config to mark the teammate as closed. \
          The teammate will stop claiming new tasks and finish its current one before exiting."
     }
@@ -867,11 +905,14 @@ impl Tool for ShutdownTeammateTool {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["peer_id"],
             "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the teammate to shut down (preferred over peer_id)"
+                },
                 "peer_id": {
                     "type": "string",
-                    "description": "Peer ID of the teammate to shut down"
+                    "description": "Peer ID of the teammate to shut down (use name instead when possible)"
                 }
             }
         })
@@ -882,10 +923,15 @@ impl Tool for ShutdownTeammateTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let target_peer = match call.args["peer_id"].as_str() {
-            Some(s) if !s.is_empty() => s.to_string(),
-            _ => return ToolOutput::err(&call.id, "Missing required parameter: peer_id"),
-        };
+        let name_arg = call.args["name"].as_str().filter(|s| !s.is_empty());
+        let peer_id_arg = call.args["peer_id"].as_str().filter(|s| !s.is_empty());
+
+        if name_arg.is_none() && peer_id_arg.is_none() {
+            return ToolOutput::err(
+                &call.id,
+                "Provide either 'name' or 'peer_id' to identify the teammate to shut down.",
+            );
+        }
 
         let guard = self.config.lock().await;
         let config = match guard.as_ref() {
@@ -895,6 +941,27 @@ impl Tool for ShutdownTeammateTool {
         if !config.is_lead(&self.agent_peer_id) {
             return ToolOutput::err(&call.id, "Only the team lead can shut down teammates.");
         }
+
+        // Resolve peer ID from name if only name was given.
+        let target_peer = if let Some(pid) = peer_id_arg {
+            pid.to_string()
+        } else {
+            let target_name = name_arg.unwrap();
+            match config
+                .members
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(target_name))
+            {
+                Some(m) => m.peer_id.clone(),
+                None => {
+                    return ToolOutput::err(
+                        &call.id,
+                        format!("No teammate named '{target_name}' found in the team."),
+                    )
+                }
+            }
+        };
+
         let team_name = config.name.clone();
         drop(guard);
 
@@ -1015,6 +1082,152 @@ impl Tool for MergeTeammateBranchTool {
                 ),
             ),
         }
+    }
+}
+
+// ── ReadTeammateLogTool ────────────────────────────────────────────────────────
+
+/// Read the tail of a spawned teammate's log file.
+///
+/// The log is written by `SpawnTeammateTool` to
+/// `~/.config/sven/teams/{team}/{name}.log`.  This tool lets the lead check
+/// whether a spawned process started correctly, see its latest output, and
+/// diagnose startup failures — without needing to know the log path.
+pub struct ReadTeammateLogTool {
+    pub config: TeamConfigHandle,
+}
+
+#[async_trait]
+impl Tool for ReadTeammateLogTool {
+    fn name(&self) -> &str {
+        "read_teammate_log"
+    }
+
+    fn description(&self) -> &str {
+        "Read the last N lines from a spawned teammate's log file. \
+         Use this to check whether a teammate started correctly, to see its latest \
+         output and progress, or to diagnose why it exited unexpectedly. \
+         Also reports whether the teammate process is currently running. \
+         Always call this before concluding a teammate is broken or needs re-spawning."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the teammate whose log to read"
+                },
+                "lines": {
+                    "type": "integer",
+                    "description": "Number of lines to show from the end of the log (default: 50)",
+                    "default": 50
+                }
+            }
+        })
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let name = match call.args["name"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolOutput::err(&call.id, "Missing required parameter: name"),
+        };
+        let max_lines = call.args["lines"].as_u64().unwrap_or(50) as usize;
+
+        let guard = self.config.lock().await;
+        let config = match guard.as_ref() {
+            Some(c) => c,
+            None => return ToolOutput::err(&call.id, "No active team. Use create_team first."),
+        };
+        let team_name = config.name.clone();
+
+        // Find the member by name to get its PID.
+        let (pid, process_status) = match config
+            .members
+            .iter()
+            .find(|m| m.name.eq_ignore_ascii_case(&name))
+        {
+            Some(m) => match m.pid {
+                Some(p) => {
+                    let alive = crate::config::is_process_alive(p);
+                    (
+                        Some(p),
+                        if alive {
+                            format!("running (pid={p})")
+                        } else {
+                            format!("exited (pid={p} — process no longer running)")
+                        },
+                    )
+                }
+                None => (
+                    None,
+                    "unknown (no PID recorded — manually registered peer?)".to_string(),
+                ),
+            },
+            None => (
+                None,
+                format!("not found in team roster — check spelling or use list_team"),
+            ),
+        };
+        drop(guard);
+
+        let log_path = crate::task::default_team_dir(&team_name).join(format!("{name}.log"));
+
+        if !log_path.exists() {
+            return ToolOutput::ok(
+                &call.id,
+                format!(
+                    "Teammate '{name}' — process status: {process_status}\n\
+                     No log file found at: {}\n\
+                     The teammate may not have been spawned yet, or was spawned with a different name.",
+                    log_path.display()
+                ),
+            );
+        }
+
+        let content = match std::fs::read_to_string(&log_path) {
+            Ok(s) => s,
+            Err(e) => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!("Failed to read log at {}: {e}", log_path.display()),
+                )
+            }
+        };
+
+        let all_lines: Vec<&str> = content.lines().collect();
+        let tail: Vec<&str> = if all_lines.len() > max_lines {
+            all_lines[all_lines.len() - max_lines..].to_vec()
+        } else {
+            all_lines.clone()
+        };
+
+        let log_section = if tail.is_empty() {
+            "(log file is empty — the process may have started but produced no output yet)"
+                .to_string()
+        } else {
+            tail.join("\n")
+        };
+
+        let _ = pid; // pid used above for status string
+        ToolOutput::ok(
+            &call.id,
+            format!(
+                "Teammate '{name}' — process status: {process_status}\n\
+                 Log: {} ({} lines total, showing last {max_lines})\n\
+                 {}\n{}",
+                log_path.display(),
+                all_lines.len(),
+                "─".repeat(60),
+                log_section,
+            ),
+        )
     }
 }
 
@@ -1202,6 +1415,7 @@ mod tests {
             status: MemberStatus::Active,
             current_task_id: None,
             joined_at: chrono::Utc::now(),
+            pid: None,
         });
         let cfg: TeamConfigHandle = Arc::new(Mutex::new(Some(inner)));
         let tool = CleanupTeamTool {

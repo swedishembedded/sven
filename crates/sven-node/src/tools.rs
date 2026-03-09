@@ -539,8 +539,11 @@ impl Tool for ListPeersTool {
     }
 
     fn description(&self) -> &str {
-        "List all currently connected agent peers with their names, capabilities, \
-         and peer IDs. Use this to discover available agents before delegating tasks."
+        "List external agent peers connected over the P2P network (separate sven nodes). \
+         Use this before delegate_task to find available peers and their capabilities. \
+         NOTE: This shows ONLY external P2P nodes — NOT locally spawned teammates. \
+         Spawned teammates are visible in list_team, not here. \
+         Do NOT call list_peers to find team members or to get a peer_id for register_teammate."
     }
 
     fn parameters_schema(&self) -> Value {
