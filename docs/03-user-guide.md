@@ -4,19 +4,20 @@
 
 ### Layout
 
-The TUI has four visual regions:
+The TUI has four visual regions. The chat list sidebar on the right is optional
+and can be toggled with `Ctrl+B`:
 
 ```
-┌─────────────────────────────────────────────────┐
-│ gpt-4o  agent  ctx:18%  ⠿ run_terminal_command  │  status bar
-├─────────────────────────────────────────────────┤
-│                                                  │
-│   chat pane                                      │
-│   (scrollable conversation history)              │
-│                                                  │
-├─────────────────────────────────────────────────┤
-│ > type here and press Enter                      │  input box
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┬───────────────────┐
+│ gpt-4o  agent  ctx:18%  ⠿ run_terminal │ ● New chat        │  status bar
+├─────────────────────────────────────────┤ ○ Rate limiter    │
+│                                         │ ○ Codebase review │
+│   chat pane                             │ ✓ Auth redesign   │
+│   (scrollable conversation history)     │                   │
+│                                         │ n:new d:del a:arch│
+├─────────────────────────────────────────┤                   │
+│ > type here and press Enter             │                   │
+└─────────────────────────────────────────┴───────────────────┘
 ```
 
 **Status bar** — always visible at the top. Shows:
@@ -30,6 +31,10 @@ collapsed tool calls are all shown here. Scrolls independently of the input box.
 
 **Input box** — a multi-line text field. Press `Enter` to send, `Shift+Enter`
 to insert a newline.
+
+**Chat list sidebar** — shows all open sessions. The active session is
+highlighted. Sessions running a background agent task show a spinner. Toggle
+with `Ctrl+B`.
 
 ---
 
@@ -47,6 +52,52 @@ Switch focus with the `Ctrl+W` chord:
 
 When the chat pane has focus, navigation keys work as described below. When the
 input box has focus, all printable characters go to the text field.
+
+---
+
+### Chat list sidebar
+
+The chat list sidebar lets you manage multiple concurrent conversations without
+leaving the TUI. Each session runs its own independent agent task — you can
+have one session researching a problem while another is implementing a fix.
+
+**Opening and navigating the sidebar**
+
+Press `Ctrl+B` to show the sidebar and give it keyboard focus. Press `Ctrl+B`
+again (or `Esc`, `q`, `h`, or `←`) to return focus to the input box.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+B` | Toggle sidebar visibility / focus |
+| `j` / `↓` | Move selection down |
+| `k` / `↑` | Move selection up |
+| `Enter` / `l` / `→` | Switch to the selected session |
+| `n` | Create a new empty session |
+| `d` / `Delete` | Delete the selected session (cannot delete the active one) |
+| `a` | Archive the selected session |
+| `+` / `=` | Widen the sidebar |
+| `-` | Narrow the sidebar |
+
+**Session status icons**
+
+| Icon | Meaning |
+|------|---------|
+| `⣾` (spinner) | Agent is currently running in this session |
+| `●` | Active session, idle |
+| `○` | Inactive session, idle |
+| `✓` | Session completed |
+
+**Per-session model and mode**
+
+Each session keeps its own model and mode. Running `/model` or `/mode` in one
+session does not affect any other session. New sessions always start with the
+default model and mode from your configuration.
+
+**Background sessions**
+
+When you switch away from a session that has an agent running, it keeps running
+in the background. The spinner in the sidebar shows which sessions are still
+active. You can switch back at any time to see the results.
 
 ---
 
@@ -271,10 +322,22 @@ You can customise these patterns in the configuration file — see
 
 ## Conversation management
 
-### Starting and continuing conversations
+### Multiple sessions inside the TUI
 
-Every TUI session is automatically saved. When you close sven, the conversation
-is written to a file in `~/.config/sven/history/`.
+You can run several conversations simultaneously without restarting sven. Open
+the chat list sidebar with `Ctrl+B` and press `n` to create a new session, or
+use the `/new` command from the input box. Switch between sessions by selecting
+one and pressing `Enter`.
+
+Each session has its own:
+- Conversation history
+- Agent task (background sessions keep running while you work elsewhere)
+- Model and mode settings (changed with `/model` and `/mode`)
+
+All sessions are automatically saved to `~/.config/sven/history/` as YAML files
+and restored the next time you launch sven.
+
+### Starting and continuing conversations from the CLI
 
 To list saved conversations:
 
@@ -337,10 +400,38 @@ returns to idle, ready for your next message.
 
 ---
 
-## The `/quit` command
+## Slash commands
 
-To exit sven from the input box, type `/quit` and press `Enter`. In the Neovim
-buffer, use `:q` or `:qa`.
+Type `/` in the input box to see all available commands. Tab-completion works
+for both command names and their arguments.
+
+### Built-in commands
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Start a new chat session. A fresh tab appears in the sidebar with its own isolated agent, model, and mode. |
+| `/clear` | Clear the current session's message history. The session itself stays open; only the visible conversation is erased. |
+| `/model <provider/name>` | Switch the model for this session (e.g. `/model anthropic/claude-opus-4-6`). Tab-completes over your configured models. The switch takes effect on the next message you send. |
+| `/mode <research\|plan\|agent>` | Switch the agent mode for this session. Tab-completes all three modes. |
+| `/provider <name>` | Switch provider while keeping the current model name. |
+| `/abort` | Abort the current agent turn. Queued messages stay queued; partial output is preserved. |
+| `/refresh` | Re-scan skill directories and register any newly added skills as commands. |
+| `/skills` | Open the skills inspector — a browsable tree of all loaded skills. |
+| `/subagents` | Show all configured subagents with their descriptions, models, and paths. |
+| `/peers` | Show active subagent subprocess buffers and configured peer agents. |
+| `/context` | Show the current agent context: project root, skill and agent counts, output buffer handles. |
+| `/tools` | Show all available tools with descriptions and parameter counts. |
+| `/approve [task_id]` | Approve a teammate's pending plan (team mode). |
+| `/reject [task_id] [reason]` | Reject a plan with feedback (team mode). |
+| `/agents` | Show the team members overlay (also `Ctrl+A`). |
+| `/tasks` | Show the current team task list (also `Alt+T`). |
+| `/quit` | Exit sven. In the Neovim buffer, use `:q` or `:qa`. |
+
+### Skill commands
+
+Every skill you have installed is also available as a slash command named after
+its directory path — for example `/sven`, `/sven/plan`, or `/git-workflow`.
+See the [Skills](#skills) section for details.
 
 ---
 

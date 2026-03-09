@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Multi-session TUI**: run several conversations simultaneously without
+  restarting sven. A collapsible chat list sidebar (toggle with `Ctrl+B`)
+  shows all open sessions with live status indicators. Press `n` to create a
+  new session, `Enter` to switch, `d` to delete, `a` to archive.
+- **Background sessions**: switching away from a session with an active agent
+  does not interrupt it. A spinner in the sidebar shows which sessions are
+  still running. Background events are buffered and displayed when you return.
+- **YAML-based persistence**: every session is automatically saved to
+  `~/.config/sven/history/<id>.yaml` and restored on next launch.
+- Per-session model and mode: each chat remembers its own `/model` and `/mode`
+  settings; changes in one session do not affect others.
+- Mouse drag to resize the chat list sidebar.
+
+### Fixed
+- `/new` was clearing the active chat in-place instead of creating a new
+  session. It now creates a proper new session visible in the sidebar, with its
+  own isolated agent task (old agent events no longer bleed into the new chat).
+- `/model` and `/mode` state was global across sessions; switching sessions
+  would carry the staged model or mode override into the new chat. Each session
+  now saves and restores its own model/mode state independently.
+- Queued messages and `abort_pending` were not cleared when creating a new
+  session, causing the old session's queue to be sent to the new session's agent.
+- Active message-edit state (`e` key) was not cleared on new session creation.
+- JSONL log path was not tracked per-session; history writes after a session
+  switch could land in the wrong session's file.
+
 ## [1.3.2] - 2026-03-07
 
 ### Added
