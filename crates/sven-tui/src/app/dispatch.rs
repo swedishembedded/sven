@@ -59,7 +59,7 @@ impl App {
                 FocusPane::Chat | FocusPane::ChatList => {}
             },
             Action::NavDown => match self.ui.focus {
-                FocusPane::Chat => {
+                FocusPane::Chat | FocusPane::ChatList => {
                     if !self.queue.messages.is_empty() {
                         if self.queue.selected.is_none() {
                             self.queue.selected = Some(0);
@@ -72,8 +72,22 @@ impl App {
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Input;
                 }
-                FocusPane::Input | FocusPane::ChatList => {}
+                FocusPane::Input => {}
             },
+            Action::NavLeft => {
+                if self.ui.focus == FocusPane::ChatList {
+                    self.ui.focus = FocusPane::Chat;
+                }
+            }
+            Action::NavRight => {
+                if self.ui.focus != FocusPane::ChatList {
+                    if !self.layout.chat_list_visible {
+                        self.layout.chat_list_visible = true;
+                    }
+                    self.ui.focus = FocusPane::ChatList;
+                    self.sessions.sync_list_selection_to_active();
+                }
+            }
             Action::FocusQueue => {
                 if !self.queue.messages.is_empty() {
                     if self.queue.selected.is_none() {

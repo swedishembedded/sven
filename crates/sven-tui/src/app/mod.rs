@@ -859,6 +859,14 @@ impl App {
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
 
         self.agent.tx = Some(submit_tx.clone());
+        // Register the initial session's agent channels in its entry so that
+        // switch_session() finds them and does NOT spawn a second agent when the
+        // user switches away and then returns to this session.
+        let initial_id = self.sessions.active_id.clone();
+        if let Some(entry) = self.sessions.get_mut(&initial_id) {
+            entry.agent_tx = Some(submit_tx.clone());
+            entry.agent_cancel = self.agent.cancel.clone();
+        }
         // Remove per-agent event_rx — events now flow through the mux channel.
         // Set up a forwarding task: per-session events → (SessionId, AgentEvent) mux.
         let active_id = self.sessions.active_id.clone();
@@ -1393,6 +1401,8 @@ impl App {
             jsonl_load_path: None,
             initial_queue: Vec::new(),
             node_backend: None,
+            chat_path: None,
+            output_chat_path: None,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);

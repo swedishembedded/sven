@@ -14,6 +14,10 @@ pub enum Action {
     NavUp,
     /// Navigate to the pane below the current one (Ctrl+w j).
     NavDown,
+    /// Navigate to the pane to the left of the current one (Ctrl+w h).
+    NavLeft,
+    /// Navigate to the pane to the right of the current one (Ctrl+w l).
+    NavRight,
 
     // Scrolling (in chat pane)
     ScrollUp,
@@ -184,6 +188,8 @@ pub fn map_key(
         return match event.code {
             KeyCode::Char('k') | KeyCode::Up => Some(Action::NavUp),
             KeyCode::Char('j') | KeyCode::Down => Some(Action::NavDown),
+            KeyCode::Char('h') | KeyCode::Left => Some(Action::NavLeft),
+            KeyCode::Char('l') | KeyCode::Right => Some(Action::NavRight),
             KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ResizeInputGrow),
             KeyCode::Char('-') => Some(Action::ResizeInputShrink),
             _ => None, // cancel without action
@@ -393,51 +399,83 @@ mod tests {
         key(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
+    // Helper: call map_key with in_chat_list=false (the common case in tests).
+    fn mk(
+        ev: KeyEvent,
+        in_search: bool,
+        in_input: bool,
+        pending_nav: bool,
+        in_edit: bool,
+        in_queue: bool,
+    ) -> Option<Action> {
+        map_key(
+            ev,
+            in_search,
+            in_input,
+            pending_nav,
+            in_edit,
+            in_queue,
+            false,
+        )
+    }
+
     #[test]
     fn ctrl_w_returns_nav_prefix() {
         let ev = ctrl_key('w');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false),
             Some(Action::NavPrefix)
         );
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::NavPrefix)
         );
     }
 
     #[test]
     fn pending_nav_k_returns_nav_up() {
-        let ev = plain_key('k');
         assert_eq!(
-            map_key(ev, false, false, true, false, false),
+            mk(plain_key('k'), false, false, true, false, false),
             Some(Action::NavUp)
         );
     }
 
     #[test]
     fn pending_nav_j_returns_nav_down() {
-        let ev = plain_key('j');
         assert_eq!(
-            map_key(ev, false, false, true, false, false),
+            mk(plain_key('j'), false, false, true, false, false),
             Some(Action::NavDown)
         );
     }
 
     #[test]
-    fn pending_nav_plus_grows_input() {
-        let ev = plain_key('+');
+    fn pending_nav_h_returns_nav_left() {
         assert_eq!(
-            map_key(ev, false, false, true, false, false),
+            mk(plain_key('h'), false, false, true, false, false),
+            Some(Action::NavLeft)
+        );
+    }
+
+    #[test]
+    fn pending_nav_l_returns_nav_right() {
+        assert_eq!(
+            mk(plain_key('l'), false, false, true, false, false),
+            Some(Action::NavRight)
+        );
+    }
+
+    #[test]
+    fn pending_nav_plus_grows_input() {
+        assert_eq!(
+            mk(plain_key('+'), false, false, true, false, false),
             Some(Action::ResizeInputGrow)
         );
     }
 
     #[test]
     fn pending_nav_minus_shrinks_input() {
-        let ev = plain_key('-');
         assert_eq!(
-            map_key(ev, false, false, true, false, false),
+            mk(plain_key('-'), false, false, true, false, false),
             Some(Action::ResizeInputShrink)
         );
     }
@@ -446,7 +484,7 @@ mod tests {
     fn ctrl_up_in_input_is_history_up() {
         let ev = key(KeyCode::Up, KeyModifiers::CONTROL);
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::InputHistoryUp)
         );
     }
@@ -455,19 +493,16 @@ mod tests {
     fn ctrl_down_in_input_is_history_down() {
         let ev = key(KeyCode::Down, KeyModifiers::CONTROL);
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::InputHistoryDown)
         );
     }
 
-    // Plain Up/Down in the input pane produce InputMoveLineUp/Down; the dispatch
-    // handler internally falls through to history navigation when the cursor is
-    // already on the first/last visual row (shell-style behaviour).
     #[test]
     fn plain_up_in_input_is_move_line_up() {
         let ev = key(KeyCode::Up, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::InputMoveLineUp)
         );
     }
@@ -476,96 +511,87 @@ mod tests {
     fn plain_down_in_input_is_move_line_down() {
         let ev = key(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::InputMoveLineDown)
         );
     }
 
     #[test]
     fn pending_nav_other_key_cancels() {
-        let ev = plain_key('x');
-        assert_eq!(map_key(ev, false, false, true, false, false), None);
+        assert_eq!(mk(plain_key('x'), false, false, true, false, false), None);
     }
 
     #[test]
     fn ctrl_w_in_input_does_not_type_w() {
         let ev = ctrl_key('w');
-        let action = map_key(ev, false, true, false, false, false);
+        let action = mk(ev, false, true, false, false, false);
         assert_ne!(action, Some(Action::InputChar('w')));
         assert_eq!(action, Some(Action::NavPrefix));
     }
 
     #[test]
     fn plain_char_in_input_types() {
-        let ev = plain_key('h');
+        // 'h' is NavLeft in pending_nav, but plain 'h' in input types normally.
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(plain_key('h'), false, true, false, false, false),
             Some(Action::InputChar('h'))
         );
     }
 
     #[test]
     fn plain_char_x_outside_input_removes_segment() {
-        let ev = plain_key('x');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
-            Some(Action::RemoveChatSegment),
+            mk(plain_key('x'), false, false, false, false, false),
+            Some(Action::RemoveChatSegment)
         );
     }
 
     #[test]
     fn ctrl_k_in_input_deletes_to_end() {
-        let ev = ctrl_key('k');
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ctrl_key('k'), false, true, false, false, false),
             Some(Action::InputDeleteToEnd)
         );
     }
 
     #[test]
     fn ctrl_k_in_chat_does_not_fire() {
-        let ev = ctrl_key('k');
-        assert_eq!(map_key(ev, false, false, false, false, false), None);
+        assert_eq!(mk(ctrl_key('k'), false, false, false, false, false), None);
     }
 
     #[test]
     fn ctrl_c_outside_input_not_reserved() {
-        let ev = ctrl_key('c');
-        assert_eq!(map_key(ev, false, false, false, false, false), None);
+        assert_eq!(mk(ctrl_key('c'), false, false, false, false, false), None);
     }
 
     #[test]
     fn ctrl_c_interrupts_inside_input() {
-        let ev = ctrl_key('c');
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ctrl_key('c'), false, true, false, false, false),
             Some(Action::InterruptAgent)
         );
     }
 
     #[test]
     fn j_in_chat_scrolls_down() {
-        let ev = plain_key('j');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(plain_key('j'), false, false, false, false, false),
             Some(Action::ScrollDown)
         );
     }
 
     #[test]
     fn ctrl_u_in_chat_page_up() {
-        let ev = ctrl_key('u');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ctrl_key('u'), false, false, false, false, false),
             Some(Action::ScrollPageUp)
         );
     }
 
     #[test]
     fn e_in_chat_opens_edit() {
-        let ev = plain_key('e');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(plain_key('e'), false, false, false, false, false),
             Some(Action::EditMessageAtCursor)
         );
     }
@@ -574,7 +600,7 @@ mod tests {
     fn edit_mode_enter_confirms() {
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, true, false),
+            mk(ev, false, true, false, true, false),
             Some(Action::EditMessageConfirm)
         );
     }
@@ -583,16 +609,15 @@ mod tests {
     fn edit_mode_esc_cancels() {
         let ev = key(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, true, false),
+            mk(ev, false, true, false, true, false),
             Some(Action::EditMessageCancel)
         );
     }
 
     #[test]
     fn edit_mode_char_goes_to_input() {
-        let ev = plain_key('x');
         assert_eq!(
-            map_key(ev, false, true, false, true, false),
+            mk(plain_key('x'), false, true, false, true, false),
             Some(Action::InputChar('x'))
         );
     }
@@ -601,19 +626,16 @@ mod tests {
 
     #[test]
     fn ctrl_a_opens_team_picker() {
-        let ev = ctrl_key('a');
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ctrl_key('a'), false, false, false, false, false),
             Some(Action::OpenTeamPicker)
         );
     }
 
     #[test]
     fn ctrl_a_in_input_opens_team_picker() {
-        // Ctrl+a is a global binding — works whether focus is in input or chat.
-        let ev = ctrl_key('a');
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ctrl_key('a'), false, true, false, false, false),
             Some(Action::OpenTeamPicker)
         );
     }
@@ -622,7 +644,7 @@ mod tests {
     fn shift_down_cycles_teammate_forward() {
         let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false),
             Some(Action::CycleTeammateForward)
         );
     }
@@ -631,7 +653,7 @@ mod tests {
     fn shift_up_cycles_teammate_backward() {
         let ev = key(KeyCode::Up, KeyModifiers::SHIFT);
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false),
             Some(Action::CycleTeammateBackward)
         );
     }
@@ -640,7 +662,7 @@ mod tests {
     fn alt_t_opens_task_list() {
         let ev = key(KeyCode::Char('t'), KeyModifiers::ALT);
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false),
             Some(Action::ToggleTaskList)
         );
     }
@@ -649,31 +671,25 @@ mod tests {
     fn space_in_chat_toggles_delegate_summary() {
         let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, false, false, false, false),
+            mk(ev, false, false, false, false, false),
             Some(Action::ToggleDelegateSummary)
         );
     }
 
     #[test]
     fn space_in_input_pane_types_char() {
-        // Space in the input pane must produce InputChar(' '), not ToggleDelegateSummary.
         let ev = key(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::InputChar(' '))
         );
     }
 
     #[test]
     fn shift_down_in_input_pane_is_history_down() {
-        // When in_input is true, plain Shift+Down should produce InputMoveLineDown
-        // (handled by the input pane), not CycleTeammateForward.
         let ev = key(KeyCode::Down, KeyModifiers::SHIFT);
-        // The global bindings come before input bindings in map_key, so Shift+Down
-        // always maps to CycleTeammateForward regardless of focus. This test
-        // documents the current contract.
         assert_eq!(
-            map_key(ev, false, true, false, false, false),
+            mk(ev, false, true, false, false, false),
             Some(Action::CycleTeammateForward)
         );
     }
