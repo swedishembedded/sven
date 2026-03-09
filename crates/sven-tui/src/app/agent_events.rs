@@ -212,8 +212,11 @@ impl App {
                 }
             }
             AgentEvent::TurnComplete => {
-                // Fallback: if LLM title never arrived, derive heuristic from first user message.
-                if self.chat_title == "New chat" || self.chat_title.is_empty() {
+                // Fallback only in node-proxy mode (we never send GenerateTitle there).
+                // Local agent always gets TitleGenerated from the title task (LLM or heuristic).
+                if self.is_node_proxy
+                    && (self.chat_title == "New chat" || self.chat_title.is_empty())
+                {
                     let first_user_text = self.chat.segments.iter().find_map(|seg| {
                         use crate::chat::segment::ChatSegment;
                         use sven_model::{MessageContent, Role};

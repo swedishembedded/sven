@@ -9,6 +9,7 @@ use futures::StreamExt;
 use sven_bootstrap::{AgentBuilder, OutputBufferStore, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
+use sven_input::make_title;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::{QuestionRequest, SharedTools, TodoItem};
@@ -128,6 +129,7 @@ pub async fn agent_task(
                             agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>);
                         }
                         Err(e) => {
+                            debug!(error = %e, "model override init failed, sending error to TUI");
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))
                                 .await;
@@ -165,6 +167,7 @@ pub async fn agent_task(
                             agent.set_model(Arc::from(m) as Arc<dyn sven_model::ModelProvider>);
                         }
                         Err(e) => {
+                            debug!(error = %e, "model override init failed on resubmit, sending error to TUI");
                             let _ = tx
                                 .send(AgentEvent::Error(format!("model override init: {e}")))
                                 .await;
@@ -247,9 +250,9 @@ pub async fn agent_task(
                             None
                         }
                     };
-                    if let Some(t) = title {
-                        let _ = event_tx.send(AgentEvent::TitleGenerated(t)).await;
-                    }
+                    // Always send a title so the TUI doesn't race with TurnComplete fallback.
+                    let final_title = title.unwrap_or_else(|| make_title(&user_text));
+                    let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;
                 });
             }
         }
