@@ -82,6 +82,16 @@ impl Widget for ChatPane<'_> {
             0
         };
         let content_height = inner.height.saturating_sub(banner_reserved);
+        let total_lines = self.lines.len();
+        let visible_height = content_height as usize;
+        let show_scrollbar = self.no_nvim && inner.width > 1 && total_lines > visible_height;
+        // When scrollbar is visible, keep content one column left so the scrollbar
+        // column is never overwritten by paragraph/content (avoids stuck thumb/track).
+        let content_width = if show_scrollbar {
+            inner.width.saturating_sub(1)
+        } else {
+            inner.width
+        };
 
         let visible: Vec<Line<'static>> = self
             .lines
@@ -104,7 +114,7 @@ impl Widget for ChatPane<'_> {
             .collect();
 
         // Content rect: only this region may be tinted (keeps highlights inside chat pane).
-        let content_rect = Rect::new(inner.x, inner.y, inner.width, content_height);
+        let content_rect = Rect::new(inner.x, inner.y, content_width, content_height);
 
         Paragraph::new(visible)
             .style(Style::default().bg(BG))
@@ -117,7 +127,7 @@ impl Widget for ChatPane<'_> {
                 let abs_line = vis_row + self.scroll_offset as usize;
                 if abs_line >= seg_start && abs_line < seg_end {
                     let y = inner.y + vis_row as u16;
-                    let row_rect = Rect::new(inner.x, y, inner.width, 1);
+                    let row_rect = Rect::new(inner.x, y, content_width, 1);
                     let clipped = content_rect.intersection(row_rect);
                     if !clipped.is_empty() {
                         buf.set_style(clipped, edit_style);
@@ -135,14 +145,14 @@ impl Widget for ChatPane<'_> {
                 if abs_line >= s_line && abs_line <= e_line {
                     let y = inner.y + vis_row as u16;
                     let from_x = if abs_line == s_line {
-                        (inner.x + s_col).min(inner.x + inner.width)
+                        (inner.x + s_col).min(inner.x + content_width)
                     } else {
                         inner.x
                     };
                     let to_x = if abs_line == e_line {
-                        (inner.x + e_col).min(inner.x + inner.width)
+                        (inner.x + e_col).min(inner.x + content_width)
                     } else {
-                        inner.x + inner.width
+                        inner.x + content_width
                     };
                     let w = to_x.saturating_sub(from_x);
                     if w == 0 {
@@ -167,7 +177,7 @@ impl Widget for ChatPane<'_> {
 
         // ── Action label overlays (no-nvim mode) ──────────────────────────────
         // Labels: [y] copy  [r] rerun  [e] edit  [x] delete
-        if self.no_nvim && inner.width > 10 {
+        if self.no_nvim && content_width > 10 {
             let (icon_rerun, icon_edit, icon_delete, icon_copy) = if self.ascii {
                 ("r", "e", "x", "y")
             } else {
@@ -188,11 +198,11 @@ impl Widget for ChatPane<'_> {
                 .add_modifier(Modifier::BOLD);
 
             // Layout: ... [y] [r] [e] [x]  — 2 chars each + 1 separator
-            // Total: 9 chars from the right edge
-            let x_copy = inner.x + inner.width.saturating_sub(9);
-            let x_rerun = inner.x + inner.width.saturating_sub(7);
-            let x_edit = inner.x + inner.width.saturating_sub(5);
-            let x_delete = inner.x + inner.width.saturating_sub(3);
+            // Total: 9 chars from the right edge of content (excludes scrollbar column)
+            let x_copy = inner.x + content_width.saturating_sub(9);
+            let x_rerun = inner.x + content_width.saturating_sub(7);
+            let x_edit = inner.x + content_width.saturating_sub(5);
+            let x_delete = inner.x + content_width.saturating_sub(3);
 
             for &abs_line in &self.labels.remove_label_lines {
                 if abs_line < self.scroll_offset as usize {
@@ -235,23 +245,22 @@ impl Widget for ChatPane<'_> {
         }
 
         // ── Scrollbar (rightmost column) ──────────────────────────────────────
-        if self.no_nvim && inner.width > 1 {
-            let total_lines = self.lines.len();
-            let visible_height = content_height as usize;
-            if total_lines > visible_height {
-                let sb_x = inner.x + inner.width - 1;
-                let sb_area = Rect::new(sb_x, inner.y, 1, content_height);
-                let scrollable_range = total_lines.saturating_sub(visible_height) + 1;
-                let mut sb_state = ScrollbarState::new(scrollable_range)
-                    .position(self.scroll_offset as usize)
-                    .viewport_content_length(visible_height);
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(None)
-                    .end_symbol(None)
-                    .thumb_symbol("|")
-                    .track_symbol(Some("░"))
-                    .render(sb_area, buf, &mut sb_state);
-            }
+        if show_scrollbar {
+            let sb_x = inner.x + inner.width - 1;
+            let sb_area = Rect::new(sb_x, inner.y, 1, content_height);
+            // Clear the scrollbar column before drawing so previous thumb/track
+            // positions don't persist (avoids "stuck" scrollbar bits).
+            Clear.render(sb_area, buf);
+            let scrollable_range = total_lines.saturating_sub(visible_height) + 1;
+            let mut sb_state = ScrollbarState::new(scrollable_range)
+                .position(self.scroll_offset as usize)
+                .viewport_content_length(visible_height);
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_symbol("|")
+                .track_symbol(Some("░"))
+                .render(sb_area, buf, &mut sb_state);
         }
 
         // ── Auto-scroll paused banner ─────────────────────────────────────────
