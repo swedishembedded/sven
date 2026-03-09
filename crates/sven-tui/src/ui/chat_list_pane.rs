@@ -13,7 +13,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::Span,
     widgets::{Block, BorderType, Borders, Widget},
 };
 use sven_input::ChatStatus;

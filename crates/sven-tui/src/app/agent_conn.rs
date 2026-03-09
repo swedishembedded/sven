@@ -5,7 +5,6 @@
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use sven_core::AgentEvent;
 use tokio::sync::mpsc;
 
 use crate::agent::AgentRequest;
@@ -55,8 +54,6 @@ pub(crate) struct AgentConn {
     pub cancel: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Channel to send requests to the agent background task.
     pub tx: Option<mpsc::Sender<AgentRequest>>,
-    /// Channel to receive events from the agent background task.
-    pub event_rx: Option<mpsc::Receiver<AgentEvent>>,
     /// Wall-clock start time for each in-progress tool call, keyed by call_id.
     pub tool_start_times: HashMap<String, Instant>,
     /// Clock-driven animation frame counter, incremented every ~80 ms by the
@@ -84,7 +81,6 @@ impl AgentConn {
             spinner_frame: 0,
             cancel: Arc::new(tokio::sync::Mutex::new(None)),
             tx: None,
-            event_rx: None,
             tool_start_times: HashMap::new(),
             anim_frame: 0,
         }

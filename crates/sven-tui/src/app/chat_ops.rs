@@ -378,25 +378,29 @@ impl App {
             });
         }
 
-        // Save as YAML chat document.
+        // Save as YAML chat document, preserving the original created_at timestamp.
         {
             let yaml_path = self.yaml_path.clone();
-            let turns = sven_input::records_to_turns(&records);
-            let session_id = self.sessions.active_id.clone();
-            let title = self.chat_title.clone();
             let model = Some(self.session.model_display.clone());
             let mode = Some(self.session.mode.to_string());
-            tokio::spawn(async move {
-                let mut doc = sven_input::ChatDocument {
-                    id: session_id,
-                    title,
+            let active_id = self.sessions.active_id.clone();
+            let mut doc = if let Some(entry) = self.sessions.get(&active_id) {
+                entry.to_document(&self.chat, model, mode)
+            } else {
+                // Fallback for the rare case where the active entry isn't found.
+                let turns = sven_input::records_to_turns(&records);
+                sven_input::ChatDocument {
+                    id: active_id,
+                    title: self.chat_title.clone(),
                     model,
                     mode,
                     status: sven_input::ChatStatus::Active,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                     turns,
-                };
+                }
+            };
+            tokio::spawn(async move {
                 let result = if let Some(ref path) = yaml_path {
                     sven_input::save_chat_to(path, &mut doc)
                 } else {

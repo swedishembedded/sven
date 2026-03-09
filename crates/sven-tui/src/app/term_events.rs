@@ -276,223 +276,249 @@ impl App {
                                 self.scroll_down(1);
                             }
                         }
-                        MouseEventKind::Down(crossterm::event::MouseButton::Left)
-                            if self.nvim.disabled =>
-                        {
-                            // ── Selection anchor ──────────────────────────────────
-                            // Record the anchor for a potential drag selection.
-                            // Any previous completed selection is cleared.
-                            let over_chat_for_sel = mouse.row >= chat_content_top
-                                && mouse.row < chat_content_bottom
-                                && !over_queue
-                                && !over_input;
-                            if over_chat_for_sel {
-                                let abs_line = (mouse.row - chat_content_top) as usize
-                                    + self.chat.scroll_offset as usize;
-                                let inner_col = mouse
-                                    .column
-                                    .saturating_sub(chat_content_x)
-                                    .min(self.layout.chat_pane.width.saturating_sub(1));
-                                self.chat.selection_anchor = Some((abs_line, inner_col));
-                                self.chat.selection_end = None;
-                                self.chat.is_selecting = false;
-                            } else {
-                                self.chat.selection_anchor = None;
-                                self.chat.selection_end = None;
-                                self.chat.is_selecting = false;
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            // ── Click on chat list sidebar ────────────────────────
+                            // Any click inside the chat list pane focuses it and
+                            // selects the row that was clicked.
+                            let cl = self.layout.chat_list_pane;
+                            if self.layout.chat_list_visible
+                                && cl.width > 0
+                                && mouse.column >= cl.x
+                                && mouse.column < cl.x + cl.width
+                                && mouse.row >= cl.y
+                                && mouse.row < cl.y + cl.height
+                            {
+                                self.ui.focus = FocusPane::ChatList;
+                                // Row 0 is the border/title; items start at row 1.
+                                let inner_row =
+                                    (mouse.row as usize).saturating_sub((cl.y + 1) as usize);
+                                let max_idx = self.sessions.display_order.len().saturating_sub(1);
+                                self.sessions.list_selected = inner_row.min(max_idx);
                             }
 
-                            // ── Click on queue panel ──────────────────────────────
-                            if over_queue && !self.queue.messages.is_empty() {
-                                let inner_y = self.layout.queue_pane.y + 1; // skip border
-                                if mouse.row >= inner_y {
-                                    let item_idx = (mouse.row - inner_y) as usize;
-                                    if item_idx < self.queue.messages.len() {
-                                        self.queue.selected = Some(item_idx);
-                                        self.ui.focus = FocusPane::Queue;
-                                        if let Some(qm) = self.queue.messages.get(item_idx) {
-                                            let text = qm.content.clone();
-                                            self.edit.queue_index = Some(item_idx);
-                                            self.edit.cursor = text.len();
-                                            self.edit.original_text = Some(text.clone());
-                                            self.edit.buffer = text;
-                                            self.ui.focus = FocusPane::Input;
+                            if self.nvim.disabled {
+                                // ── Selection anchor ──────────────────────────────────
+                                // Record the anchor for a potential drag selection.
+                                // Any previous completed selection is cleared.
+                                let over_chat_for_sel = mouse.row >= chat_content_top
+                                    && mouse.row < chat_content_bottom
+                                    && !over_queue
+                                    && !over_input;
+                                if over_chat_for_sel {
+                                    let abs_line = (mouse.row - chat_content_top) as usize
+                                        + self.chat.scroll_offset as usize;
+                                    let inner_col = mouse
+                                        .column
+                                        .saturating_sub(chat_content_x)
+                                        .min(self.layout.chat_pane.width.saturating_sub(1));
+                                    self.chat.selection_anchor = Some((abs_line, inner_col));
+                                    self.chat.selection_end = None;
+                                    self.chat.is_selecting = false;
+                                } else {
+                                    self.chat.selection_anchor = None;
+                                    self.chat.selection_end = None;
+                                    self.chat.is_selecting = false;
+                                }
+
+                                // ── Click on queue panel ──────────────────────────────
+                                if over_queue && !self.queue.messages.is_empty() {
+                                    let inner_y = self.layout.queue_pane.y + 1; // skip border
+                                    if mouse.row >= inner_y {
+                                        let item_idx = (mouse.row - inner_y) as usize;
+                                        if item_idx < self.queue.messages.len() {
+                                            self.queue.selected = Some(item_idx);
+                                            self.ui.focus = FocusPane::Queue;
+                                            if let Some(qm) = self.queue.messages.get(item_idx) {
+                                                let text = qm.content.clone();
+                                                self.edit.queue_index = Some(item_idx);
+                                                self.edit.cursor = text.len();
+                                                self.edit.original_text = Some(text.clone());
+                                                self.edit.buffer = text;
+                                                self.ui.focus = FocusPane::Input;
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // ── Click on chat pane ────────────────────────────────
-                            // TOP+BOTTOM-only borders: inner.x == pane.x, inner.width == pane.width.
-                            let chat_inner_x = self.layout.chat_pane.x;
-                            let chat_inner_w = self.layout.chat_pane.width;
-                            let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
-                            let content_start_row = self.layout.chat_pane.y + 1;
+                                // ── Click on chat pane ────────────────────────────────
+                                // TOP+BOTTOM-only borders: inner.x == pane.x, inner.width == pane.width.
+                                let chat_inner_x = self.layout.chat_pane.x;
+                                let chat_inner_w = self.layout.chat_pane.width;
+                                let chat_inner_h = self.layout.chat_pane.height.saturating_sub(2);
+                                let content_start_row = self.layout.chat_pane.y + 1;
 
-                            // ── Scrollbar click ───────────────────────────────────
-                            let scrollbar_col = chat_inner_x + chat_inner_w.saturating_sub(1);
-                            let total_chat_lines = self.chat.lines.len() as u16;
-                            let over_chat = mouse.row >= content_start_row
-                                && mouse.row < content_start_row + chat_inner_h
-                                && !over_queue
-                                && !over_input;
-                            if over_chat
-                                && mouse.column == scrollbar_col
-                                && chat_inner_h > 0
-                                && total_chat_lines > chat_inner_h
-                            {
-                                let rel_row = mouse.row - content_start_row;
-                                let new_offset = (rel_row as u32
-                                    * (total_chat_lines - chat_inner_h) as u32
-                                    / chat_inner_h.saturating_sub(1).max(1) as u32)
-                                    as u16;
-                                self.chat.scroll_offset =
-                                    new_offset.min(total_chat_lines.saturating_sub(chat_inner_h));
-                                self.chat.auto_scroll = false;
-                                self.recompute_focused_segment();
-                            }
-
-                            let clicked_scrollbar =
-                                mouse.column == scrollbar_col && total_chat_lines > chat_inner_h;
-                            if mouse.row >= content_start_row
-                                && !over_queue
-                                && !over_input
-                                && !clicked_scrollbar
-                            {
-                                let click_line = (mouse.row - content_start_row) as usize
-                                    + self.chat.scroll_offset as usize;
-                                if let Some(seg_idx) =
-                                    segment_at_line(&self.chat.segment_line_ranges, click_line)
+                                // ── Scrollbar click ───────────────────────────────────
+                                let scrollbar_col = chat_inner_x + chat_inner_w.saturating_sub(1);
+                                let total_chat_lines = self.chat.lines.len() as u16;
+                                let over_chat = mouse.row >= content_start_row
+                                    && mouse.row < content_start_row + chat_inner_h
+                                    && !over_queue
+                                    && !over_input;
+                                if over_chat
+                                    && mouse.column == scrollbar_col
+                                    && chat_inner_h > 0
+                                    && total_chat_lines > chat_inner_h
                                 {
-                                    let _is_editable =
-                                        segment_editable_text(&self.chat.segments, seg_idx)
-                                            .is_some();
+                                    let rel_row = mouse.row - content_start_row;
+                                    let new_offset = (rel_row as u32
+                                        * (total_chat_lines - chat_inner_h) as u32
+                                        / chat_inner_h.saturating_sub(1).max(1) as u32)
+                                        as u16;
+                                    self.chat.scroll_offset = new_offset
+                                        .min(total_chat_lines.saturating_sub(chat_inner_h));
+                                    self.chat.auto_scroll = false;
+                                    self.recompute_focused_segment();
+                                }
 
-                                    // Detect clicks on right-aligned action icons.
-                                    // Layout (9 cols from inner right edge, scrollbar at w-1):
-                                    //   y copy   — col w-9, w-8  (zone [w-9, w-7])
-                                    //   ↻ rerun  — col w-7, w-6  (zone [w-7, w-5])
-                                    //   ✎ edit   — col w-5, w-4  (zone [w-5, w-3])
-                                    //   ✕ delete — col w-3, w-2  (zone [w-3, w-1])
-                                    let is_header_line =
-                                        self.chat.remove_labels.contains(&click_line);
+                                let clicked_scrollbar = mouse.column == scrollbar_col
+                                    && total_chat_lines > chat_inner_h;
+                                if mouse.row >= content_start_row
+                                    && !over_queue
+                                    && !over_input
+                                    && !clicked_scrollbar
+                                {
+                                    let click_line = (mouse.row - content_start_row) as usize
+                                        + self.chat.scroll_offset as usize;
+                                    if let Some(seg_idx) =
+                                        segment_at_line(&self.chat.segment_line_ranges, click_line)
+                                    {
+                                        let _is_editable =
+                                            segment_editable_text(&self.chat.segments, seg_idx)
+                                                .is_some();
 
-                                    let label_area_start =
-                                        chat_inner_x + chat_inner_w.saturating_sub(9);
-                                    let rerun_zone_start =
-                                        chat_inner_x + chat_inner_w.saturating_sub(7);
-                                    let edit_zone_start =
-                                        chat_inner_x + chat_inner_w.saturating_sub(5);
-                                    let delete_zone_start =
-                                        chat_inner_x + chat_inner_w.saturating_sub(3);
+                                        // Detect clicks on right-aligned action icons.
+                                        // Layout (9 cols from inner right edge, scrollbar at w-1):
+                                        //   y copy   — col w-9, w-8  (zone [w-9, w-7])
+                                        //   ↻ rerun  — col w-7, w-6  (zone [w-7, w-5])
+                                        //   ✎ edit   — col w-5, w-4  (zone [w-5, w-3])
+                                        //   ✕ delete — col w-3, w-2  (zone [w-3, w-1])
+                                        let is_header_line =
+                                            self.chat.remove_labels.contains(&click_line);
 
-                                    let clicked_copy = is_header_line
-                                        && self.chat.copy_labels.contains(&click_line)
-                                        && mouse.column >= label_area_start
-                                        && mouse.column < rerun_zone_start;
-                                    let clicked_delete = is_header_line
-                                        && mouse.column >= delete_zone_start
-                                        && mouse.column
-                                            < chat_inner_x + chat_inner_w.saturating_sub(1);
-                                    let clicked_edit = is_header_line
-                                        && self.chat.edit_labels.contains(&click_line)
-                                        && mouse.column >= edit_zone_start
-                                        && mouse.column < delete_zone_start;
-                                    let clicked_rerun = is_header_line
-                                        && self.chat.rerun_labels.contains(&click_line)
-                                        && mouse.column >= rerun_zone_start
-                                        && mouse.column < edit_zone_start;
-                                    let outside_labels = mouse.column < label_area_start;
+                                        let label_area_start =
+                                            chat_inner_x + chat_inner_w.saturating_sub(9);
+                                        let rerun_zone_start =
+                                            chat_inner_x + chat_inner_w.saturating_sub(7);
+                                        let edit_zone_start =
+                                            chat_inner_x + chat_inner_w.saturating_sub(5);
+                                        let delete_zone_start =
+                                            chat_inner_x + chat_inner_w.saturating_sub(3);
 
-                                    if clicked_delete {
-                                        use crate::overlay::confirm::{
-                                            ConfirmModal, ConfirmedAction,
-                                        };
-                                        let preview =
-                                            segment_short_preview(self.chat.segments.get(seg_idx));
-                                        self.ui.confirm_modal = Some(ConfirmModal::new(
+                                        let clicked_copy = is_header_line
+                                            && self.chat.copy_labels.contains(&click_line)
+                                            && mouse.column >= label_area_start
+                                            && mouse.column < rerun_zone_start;
+                                        let clicked_delete = is_header_line
+                                            && mouse.column >= delete_zone_start
+                                            && mouse.column
+                                                < chat_inner_x + chat_inner_w.saturating_sub(1);
+                                        let clicked_edit = is_header_line
+                                            && self.chat.edit_labels.contains(&click_line)
+                                            && mouse.column >= edit_zone_start
+                                            && mouse.column < delete_zone_start;
+                                        let clicked_rerun = is_header_line
+                                            && self.chat.rerun_labels.contains(&click_line)
+                                            && mouse.column >= rerun_zone_start
+                                            && mouse.column < edit_zone_start;
+                                        let outside_labels = mouse.column < label_area_start;
+
+                                        if clicked_delete {
+                                            use crate::overlay::confirm::{
+                                                ConfirmModal, ConfirmedAction,
+                                            };
+                                            let preview = segment_short_preview(
+                                                self.chat.segments.get(seg_idx),
+                                            );
+                                            self.ui.confirm_modal = Some(ConfirmModal::new(
                                             "Delete message",
                                             format!(
                                                 "Remove this message from the conversation?\n{preview}"
                                             ),
                                             ConfirmedAction::RemoveSegment(seg_idx),
                                         ));
-                                    } else if clicked_edit {
-                                        if let Some(text) =
-                                            segment_editable_text(&self.chat.segments, seg_idx)
-                                        {
-                                            self.edit.message_index = Some(seg_idx);
-                                            self.edit.cursor = text.len();
-                                            self.edit.original_text = Some(text.clone());
-                                            self.edit.buffer = text;
-                                            self.ui.focus = FocusPane::Input;
-                                            self.update_editing_segment_live();
-                                            self.rerender_chat().await;
-                                        }
-                                    } else if clicked_copy {
-                                        self.ui.confirm_modal = None;
-                                        let saved = self.chat.focused_segment;
-                                        self.chat.focused_segment = Some(seg_idx);
-                                        self.dispatch(Action::CopySegment).await;
-                                        if self.chat.focused_segment.is_some() {
-                                            self.chat.focused_segment = saved;
-                                        }
-                                    } else if clicked_rerun {
-                                        self.ui.confirm_modal = None;
-                                        let saved = self.chat.focused_segment;
-                                        self.chat.focused_segment = Some(seg_idx);
-                                        self.dispatch(Action::RerunFromSegment).await;
-                                        if self.chat.focused_segment.is_some() {
-                                            self.chat.focused_segment = saved;
-                                        }
-                                    } else {
-                                        if outside_labels {
-                                            self.ui.confirm_modal = None;
-                                        }
-                                        // All other clicks: cycle expand level.
-                                        let is_collapsible = match self.chat.segments.get(seg_idx) {
-                                            Some(ChatSegment::Message(m)) => matches!(
-                                                (&m.role, &m.content),
-                                                (Role::User, MessageContent::Text(_))
-                                                    | (Role::Assistant, MessageContent::Text(_))
-                                                    | (
-                                                        Role::Assistant,
-                                                        MessageContent::ToolCall { .. },
-                                                    )
-                                                    | (
-                                                        Role::Tool,
-                                                        MessageContent::ToolResult { .. },
-                                                    )
-                                            ),
-                                            Some(ChatSegment::Thinking { .. }) => true,
-                                            _ => false,
-                                        };
-                                        if is_collapsible {
-                                            // Cycle: 0 → 1 → 2 → 0
-                                            if let Some(seg) = self.chat.segments.get(seg_idx) {
-                                                let cur =
-                                                    self.chat.effective_expand_level(seg_idx, seg);
-                                                let next = (cur + 1) % 3;
-                                                self.chat.expand_level.insert(seg_idx, next);
-                                            }
-                                            self.build_display_from_segments();
-                                            self.ui.search.update_matches(&self.chat.lines);
-                                            let max_offset = (self.chat.lines.len() as u16)
-                                                .saturating_sub(self.layout.chat_height);
-                                            self.chat.scroll_offset =
-                                                self.chat.scroll_offset.min(max_offset);
-                                            if let Some(&(seg_start, _)) =
-                                                self.chat.segment_line_ranges.get(seg_idx)
+                                        } else if clicked_edit {
+                                            if let Some(text) =
+                                                segment_editable_text(&self.chat.segments, seg_idx)
                                             {
-                                                if (seg_start as u16) < self.chat.scroll_offset {
-                                                    self.chat.scroll_offset = seg_start as u16;
-                                                }
+                                                self.edit.message_index = Some(seg_idx);
+                                                self.edit.cursor = text.len();
+                                                self.edit.original_text = Some(text.clone());
+                                                self.edit.buffer = text;
+                                                self.ui.focus = FocusPane::Input;
+                                                self.update_editing_segment_live();
+                                                self.rerender_chat().await;
                                             }
-                                            self.recompute_focused_segment();
+                                        } else if clicked_copy {
+                                            self.ui.confirm_modal = None;
+                                            let saved = self.chat.focused_segment;
+                                            self.chat.focused_segment = Some(seg_idx);
+                                            self.dispatch(Action::CopySegment).await;
+                                            if self.chat.focused_segment.is_some() {
+                                                self.chat.focused_segment = saved;
+                                            }
+                                        } else if clicked_rerun {
+                                            self.ui.confirm_modal = None;
+                                            let saved = self.chat.focused_segment;
+                                            self.chat.focused_segment = Some(seg_idx);
+                                            self.dispatch(Action::RerunFromSegment).await;
+                                            if self.chat.focused_segment.is_some() {
+                                                self.chat.focused_segment = saved;
+                                            }
+                                        } else {
+                                            if outside_labels {
+                                                self.ui.confirm_modal = None;
+                                            }
+                                            // All other clicks: cycle expand level.
+                                            let is_collapsible =
+                                                match self.chat.segments.get(seg_idx) {
+                                                    Some(ChatSegment::Message(m)) => matches!(
+                                                        (&m.role, &m.content),
+                                                        (Role::User, MessageContent::Text(_))
+                                                            | (
+                                                                Role::Assistant,
+                                                                MessageContent::Text(_)
+                                                            )
+                                                            | (
+                                                                Role::Assistant,
+                                                                MessageContent::ToolCall { .. },
+                                                            )
+                                                            | (
+                                                                Role::Tool,
+                                                                MessageContent::ToolResult { .. },
+                                                            )
+                                                    ),
+                                                    Some(ChatSegment::Thinking { .. }) => true,
+                                                    _ => false,
+                                                };
+                                            if is_collapsible {
+                                                // Cycle: 0 → 1 → 2 → 0
+                                                if let Some(seg) = self.chat.segments.get(seg_idx) {
+                                                    let cur = self
+                                                        .chat
+                                                        .effective_expand_level(seg_idx, seg);
+                                                    let next = (cur + 1) % 3;
+                                                    self.chat.expand_level.insert(seg_idx, next);
+                                                }
+                                                self.build_display_from_segments();
+                                                self.ui.search.update_matches(&self.chat.lines);
+                                                let max_offset = (self.chat.lines.len() as u16)
+                                                    .saturating_sub(self.layout.chat_height);
+                                                self.chat.scroll_offset =
+                                                    self.chat.scroll_offset.min(max_offset);
+                                                if let Some(&(seg_start, _)) =
+                                                    self.chat.segment_line_ranges.get(seg_idx)
+                                                {
+                                                    if (seg_start as u16) < self.chat.scroll_offset
+                                                    {
+                                                        self.chat.scroll_offset = seg_start as u16;
+                                                    }
+                                                }
+                                                self.recompute_focused_segment();
+                                            }
                                         }
                                     }
                                 }
-                            }
+                            } // end if self.nvim.disabled
                         }
                         // ── Drag: extend drag selection ───────────────────────────
                         MouseEventKind::Drag(crossterm::event::MouseButton::Left)

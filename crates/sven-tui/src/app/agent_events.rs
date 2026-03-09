@@ -221,9 +221,7 @@ impl App {
                         let title = sven_input::make_title(&user_text);
                         self.chat_title = title.clone();
                         let active_id = self.sessions.active_id.clone();
-                        if let Some(entry) = self.sessions.get_mut(&active_id) {
-                            entry.title = title;
-                        }
+                        self.sessions.set_title(&active_id, title);
                     }
                 }
 

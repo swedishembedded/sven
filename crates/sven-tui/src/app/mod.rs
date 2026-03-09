@@ -273,16 +273,23 @@ impl App {
         // ── Load YAML chat document (if --chat / --load-chat was specified) ──
         // Only load from YAML when the segments are still empty (JSONL loading
         // takes priority when both --jsonl and --chat are specified).
+        // `loaded_doc` captures the parsed document so we can restore its
+        // metadata (title, status, timestamps) into the initial SessionEntry.
+        let mut loaded_doc: Option<sven_input::ChatDocument> = None;
         let initial_segments = if initial_segments.is_empty() {
             if let Some(ref yaml_path) = opts.chat_path {
                 if yaml_path.exists() {
                     match std::fs::read_to_string(yaml_path) {
                         Ok(content) => match sven_input::parse_chat_document(&content) {
-                            Ok(doc) => sven_input::turns_to_messages(&doc.turns)
-                                .into_iter()
-                                .filter(|m| m.role != sven_model::Role::System)
-                                .map(ChatSegment::Message)
-                                .collect(),
+                            Ok(doc) => {
+                                let segs = sven_input::turns_to_messages(&doc.turns)
+                                    .into_iter()
+                                    .filter(|m| m.role != sven_model::Role::System)
+                                    .map(ChatSegment::Message)
+                                    .collect();
+                                loaded_doc = Some(doc);
+                                segs
+                            }
                             Err(e) => {
                                 debug!("failed to parse YAML chat document: {e}");
                                 Vec::new()
@@ -316,7 +323,13 @@ impl App {
         let shared_tools = sven_tools::SharedTools::empty();
 
         // ── Session manager initialization ────────────────────────────────────
-        let (mut session_manager, initial_session_entry) = SessionManager::new();
+        let (mut session_manager, mut initial_session_entry) = SessionManager::new();
+        // If we loaded a YAML document, restore its title/status/timestamps into
+        // the initial session entry so the sidebar shows the correct metadata.
+        if let Some(ref doc) = loaded_doc {
+            initial_session_entry =
+                SessionEntry::from_document_into(doc, initial_session_entry.id.clone());
+        }
         let active_session_id = initial_session_entry.id.clone();
         let initial_yaml_path = opts
             .output_chat_path
@@ -361,7 +374,9 @@ impl App {
             layout: LayoutCache::new(),
             sessions: session_manager,
             yaml_path: initial_yaml_path,
-            chat_title: "New chat".to_string(),
+            chat_title: loaded_doc
+                .map(|d| d.title)
+                .unwrap_or_else(|| "New chat".to_string()),
         };
 
         for qm in opts.initial_queue {
@@ -1184,6 +1199,8 @@ impl App {
             .and_then(|e| e.stored_chat.take());
 
         // If the target session has no stored chat, try to load from disk.
+        // Also refresh session entry metadata (title, status, created_at) from
+        // the full document — load_from_disk only has ChatEntry approximations.
         let target_chat = target_chat.or_else(|| {
             let yaml_path = self.sessions.get(&target_id)?.yaml_path.clone()?;
             if yaml_path.exists() {
@@ -1195,6 +1212,14 @@ impl App {
                         .filter(|m| m.role != sven_model::Role::System)
                         .map(|m| crate::chat::segment::ChatSegment::Message(m))
                         .collect();
+                // Refresh entry metadata from the full document.
+                if let Some(entry) = self.sessions.get_mut(&target_id) {
+                    let refreshed = SessionEntry::from_document(&doc);
+                    entry.title = refreshed.title;
+                    entry.status = refreshed.status;
+                    entry.created_at = refreshed.created_at;
+                    entry.updated_at = refreshed.updated_at;
+                }
                 let mut chat = ChatState::new();
                 chat.segments = segments;
                 Some(chat)

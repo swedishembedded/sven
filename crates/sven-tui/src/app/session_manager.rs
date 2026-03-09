@@ -69,13 +69,34 @@ pub(crate) struct SessionEntry {
 }
 
 impl SessionEntry {
-    /// Create a new `SessionEntry` from a `ChatDocument`.
+    /// Create a new `SessionEntry` from a `ChatDocument`, keeping the document's
+    /// original `SessionId` so the file path derived from it stays consistent.
     pub fn from_document(doc: &ChatDocument) -> Self {
         Self {
             id: doc.id.clone(),
             title: doc.title.clone(),
             status: doc.status,
             yaml_path: Some(sven_input::chat_path(&doc.id)),
+            created_at: doc.created_at,
+            updated_at: doc.updated_at,
+            stored_chat: None,
+            agent_tx: None,
+            agent_cancel: Arc::new(Mutex::new(None)),
+            busy: false,
+            current_tool: None,
+            context_pct: 0,
+        }
+    }
+
+    /// Restore metadata from a `ChatDocument` into a pre-existing entry,
+    /// keeping the supplied `id` (so the session manager's active_id reference
+    /// stays valid).  Used when continuing a loaded chat in the TUI.
+    pub fn from_document_into(doc: &ChatDocument, id: SessionId) -> Self {
+        Self {
+            id,
+            title: doc.title.clone(),
+            status: doc.status,
+            yaml_path: None, // set separately via initial_yaml_path
             created_at: doc.created_at,
             updated_at: doc.updated_at,
             stored_chat: None,
@@ -106,8 +127,15 @@ impl SessionEntry {
         }
     }
 
-    /// Build a `ChatDocument` from this entry and the supplied chat state.
-    pub fn to_document(&self, chat: &ChatState) -> ChatDocument {
+    /// Build a `ChatDocument` from this entry, the supplied chat state, and
+    /// runtime display metadata.  The entry's `created_at` is preserved so
+    /// repeated saves don't reset the document's creation timestamp.
+    pub fn to_document(
+        &self,
+        chat: &ChatState,
+        model: Option<String>,
+        mode: Option<String>,
+    ) -> ChatDocument {
         use sven_input::{records_to_turns, ConversationRecord};
         use sven_model::Role;
 
@@ -147,11 +175,11 @@ impl SessionEntry {
         ChatDocument {
             id: self.id.clone(),
             title: self.title.clone(),
-            model: None,
-            mode: None,
+            model,
+            mode,
             status: self.status,
             created_at: self.created_at,
-            updated_at: self.updated_at,
+            updated_at: Utc::now(),
             turns,
         }
     }
@@ -325,28 +353,11 @@ impl SessionManager {
         self.entries.get_mut(id)
     }
 
-    /// Get the active session entry.
-    pub fn active(&self) -> Option<&SessionEntry> {
-        self.entries.get(&self.active_id)
-    }
-
-    /// Get the currently highlighted entry in the sidebar.
-    pub fn selected_entry(&self) -> Option<&SessionEntry> {
-        self.display_order
-            .get(self.list_selected)
-            .and_then(|id| self.entries.get(id))
-    }
-
     /// True if any background session's agent task is currently busy.
     pub fn any_background_busy(&self) -> bool {
         self.entries
             .values()
             .any(|e| e.id != self.active_id && e.busy)
-    }
-
-    /// Total number of sessions.
-    pub fn len(&self) -> usize {
-        self.display_order.len()
     }
 
     /// Select the previous (older) entry in the sidebar.
@@ -417,13 +428,6 @@ impl SessionManager {
             entry.title = title;
             entry.updated_at = Utc::now();
         }
-    }
-
-    /// Receive the next tagged agent event from any session, non-blocking.
-    ///
-    /// Returns `None` if no event is currently available.
-    pub fn try_recv_event(&mut self) -> Option<(SessionId, AgentEvent)> {
-        self.multi_event_rx.try_recv().ok()
     }
 }
 

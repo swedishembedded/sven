@@ -1026,13 +1026,19 @@ impl App {
             // ── Chat list sidebar actions ─────────────────────────────────────
             Action::ToggleChatList => {
                 self.layout.chat_list_visible = !self.layout.chat_list_visible;
+                // When hiding, move focus away from the now-invisible pane.
+                if !self.layout.chat_list_visible && self.ui.focus == FocusPane::ChatList {
+                    self.ui.focus = FocusPane::Input;
+                }
             }
 
             Action::FocusChatList => {
-                if self.layout.chat_list_visible {
-                    self.ui.focus = FocusPane::ChatList;
-                    self.sessions.sync_list_selection_to_active();
+                if !self.layout.chat_list_visible {
+                    // Show the pane first, then focus it.
+                    self.layout.chat_list_visible = true;
                 }
+                self.ui.focus = FocusPane::ChatList;
+                self.sessions.sync_list_selection_to_active();
             }
 
             Action::ChatListSelectNext => {
