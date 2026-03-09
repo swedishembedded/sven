@@ -42,9 +42,9 @@ use crate::{
     node_agent::node_agent_task,
     nvim::NvimBridge,
     ui::{
-        input_cursor_screen_pos, nvim_cursor_screen_pos, open_pane_block, ChatLabels, ChatPane,
-        CompletionMenu, ConfirmModalView, HelpOverlay, InputEditMode, InputPane, QuestionModalView,
-        QueueItem, QueuePanel, SearchBar, StatusBar, ToastStack, WelcomeScreen, WhichKeyOverlay,
+        input_cursor_screen_pos, nvim_cursor_screen_pos, open_pane_block, ChatPane, CompletionMenu,
+        ConfirmModalView, HelpOverlay, InputEditMode, InputPane, QuestionModalView, QueueItem,
+        QueuePanel, SearchBar, StatusBar, ToastStack, WelcomeScreen, WhichKeyOverlay,
     },
 };
 
@@ -671,13 +671,6 @@ impl App {
                     search_current: self.ui.search.current,
                     search_regex: self.ui.search.regex.as_ref(),
                     editing_line_range: editing_range,
-                    labels: &ChatLabels {
-                        edit_label_lines: self.chat.edit_labels.clone(),
-                        remove_label_lines: self.chat.remove_labels.clone(),
-                        rerun_label_lines: self.chat.rerun_labels.clone(),
-                        copy_label_lines: self.chat.copy_labels.clone(),
-                        pending_delete_line: None,
-                    },
                     no_nvim: self.nvim.disabled,
                     segment_count: self.chat.segments.len(),
                     auto_scroll_paused,

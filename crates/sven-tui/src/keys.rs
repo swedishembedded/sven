@@ -181,24 +181,7 @@ pub enum Action {
         index: usize,
     },
 
-    /// Click the copy icon on a segment header.
-    SegmentIconCopy {
-        seg_idx: usize,
-    },
-    /// Click the edit icon on a segment header.
-    SegmentIconEdit {
-        seg_idx: usize,
-    },
-    /// Click the delete icon on a segment header (opens confirm modal).
-    SegmentIconDelete {
-        seg_idx: usize,
-    },
-    /// Click the rerun icon on a segment header.
-    SegmentIconRerun {
-        seg_idx: usize,
-    },
-
-    /// Click anywhere in the chat content area that is not an action icon.
+    /// Click anywhere in the chat content area.
     ///
     /// Dispatching this action sets the selection anchor **and**, if the click
     /// falls on a collapsible segment body, cycles its expand level.

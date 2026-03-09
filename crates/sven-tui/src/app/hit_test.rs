@@ -7,20 +7,9 @@
 //! mouse handler should call [`hit_test`] and pattern-match on the result
 //! instead of replicating raw coordinate arithmetic.
 
-use std::collections::HashSet;
-
-use crate::{app::layout_cache::LayoutCache, chat::segment::segment_at_line};
+use crate::app::layout_cache::LayoutCache;
 
 // ── Area types ────────────────────────────────────────────────────────────────
-
-/// Which right-aligned action icon on a segment header line was clicked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SegmentIconAction {
-    Copy,
-    Rerun,
-    Edit,
-    Delete,
-}
 
 /// The logical area of the TUI that a `(col, row)` coordinate falls into.
 ///
@@ -41,13 +30,7 @@ pub enum HitArea {
     /// the top border).
     ChatScrollbar { rel_row: u16 },
 
-    /// One of the four right-aligned action icons on a segment header line.
-    ChatSegmentIcon {
-        seg_idx: usize,
-        action: SegmentIconAction,
-    },
-
-    /// Any other click inside the chat content area (body text, not icon).
+    /// A click inside the chat content area (body text).
     ///
     /// `abs_line` already has `chat.scroll_offset` added, so it is an index
     /// into `chat.lines`.  `inner_col` is 0-based from the left edge of the
@@ -80,24 +63,13 @@ pub enum HitArea {
 /// - `col`,`row` — 0-based terminal coordinates from the mouse event
 /// - `chat_scroll_offset` — current `chat.scroll_offset`
 /// - `total_chat_lines`   — current `chat.lines.len()`
-/// - `segment_line_ranges` — `chat.segment_line_ranges` slice
-/// - `remove_labels`  — `chat.remove_labels` (lines that have a delete icon)
-/// - `copy_labels`    — `chat.copy_labels`
-/// - `edit_labels`    — `chat.edit_labels`
-/// - `rerun_labels`   — `chat.rerun_labels`
 /// - `queue_len`      — number of items in `queue.messages`
-#[allow(clippy::too_many_arguments)]
 pub fn hit_test(
     layout: &LayoutCache,
     col: u16,
     row: u16,
     chat_scroll_offset: u16,
     total_chat_lines: usize,
-    segment_line_ranges: &[(usize, usize)],
-    remove_labels: &HashSet<usize>,
-    copy_labels: &HashSet<usize>,
-    edit_labels: &HashSet<usize>,
-    rerun_labels: &HashSet<usize>,
     queue_len: usize,
 ) -> HitArea {
     // ── Resize borders (checked before pane interiors so a drag that drifts ──
@@ -158,51 +130,8 @@ pub fn hit_test(
             return HitArea::ChatScrollbar { rel_row };
         }
 
-        // Right-aligned segment action icons on header lines.
-        // Layout (9 cols from inner right, scrollbar at col w-1):
-        //   [y] copy   — cols w-9 … w-7  (zone [w-9, w-7))
-        //   [↻] rerun  — cols w-7 … w-5  (zone [w-7, w-5))
-        //   [✎] edit   — cols w-5 … w-3  (zone [w-5, w-3))
-        //   [✕] delete — cols w-3 … w-1  (zone [w-3, w-1))
-        if col != scrollbar_col && remove_labels.contains(&abs_line) {
-            let w = cp.width;
-            let label_start = cp.x + w.saturating_sub(9);
-            let rerun_start = cp.x + w.saturating_sub(7);
-            let edit_start = cp.x + w.saturating_sub(5);
-            let delete_start = cp.x + w.saturating_sub(3);
-            let delete_end = cp.x + w.saturating_sub(1); // exclusive; scrollbar is at w-1
-
-            if col >= label_start {
-                if let Some(seg_idx) = segment_at_line(segment_line_ranges, abs_line) {
-                    let action = if col >= delete_start && col < delete_end {
-                        Some(SegmentIconAction::Delete)
-                    } else if col >= edit_start
-                        && col < delete_start
-                        && edit_labels.contains(&abs_line)
-                    {
-                        Some(SegmentIconAction::Edit)
-                    } else if col >= rerun_start
-                        && col < edit_start
-                        && rerun_labels.contains(&abs_line)
-                    {
-                        Some(SegmentIconAction::Rerun)
-                    } else if col >= label_start
-                        && col < rerun_start
-                        && copy_labels.contains(&abs_line)
-                    {
-                        Some(SegmentIconAction::Copy)
-                    } else {
-                        None
-                    };
-
-                    if let Some(action) = action {
-                        return HitArea::ChatSegmentIcon { seg_idx, action };
-                    }
-                }
-            }
-        }
-
-        // Regular content click (body text, expand/collapse, selection anchor)
+        // Content click (expand/collapse, selection anchor). Segment actions
+        // (yank, edit, rerun, delete) are keyboard-first via y/e/r/x.
         let inner_col = col.saturating_sub(cp.x).min(cp.width.saturating_sub(1));
         return HitArea::ChatContent {
             abs_line,

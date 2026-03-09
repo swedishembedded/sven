@@ -116,6 +116,7 @@ pub fn segment_tool_call_id(seg: &ChatSegment) -> Option<&str> {
 }
 
 /// Return a short single-line preview of a segment for use in dialog messages.
+#[allow(dead_code)]
 pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     const MAX: usize = 60;
     let raw = match seg {

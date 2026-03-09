@@ -21,7 +21,7 @@ use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEvent, MouseEventK
 use ratatui::layout::Rect;
 
 use crate::{
-    app::hit_test::{hit_test, HitArea, SegmentIconAction},
+    app::hit_test::{hit_test, HitArea},
     app::input_state::{is_image_path, InputAttachment},
     app::layout_cache::ResizeDrag,
     app::{App, FocusPane},
@@ -330,11 +330,6 @@ impl App {
             mouse.row,
             self.chat.scroll_offset,
             self.chat.lines.len(),
-            &self.chat.segment_line_ranges,
-            &self.chat.remove_labels,
-            &self.chat.copy_labels,
-            &self.chat.edit_labels,
-            &self.chat.rerun_labels,
             self.queue.messages.len(),
         );
 
@@ -368,16 +363,6 @@ impl App {
             {
                 Some(Action::QueueClick { index })
             }
-
-            (
-                MouseEventKind::Down(MouseButton::Left),
-                HitArea::ChatSegmentIcon { seg_idx, action },
-            ) if self.nvim.disabled => Some(match action {
-                SegmentIconAction::Copy => Action::SegmentIconCopy { seg_idx },
-                SegmentIconAction::Edit => Action::SegmentIconEdit { seg_idx },
-                SegmentIconAction::Delete => Action::SegmentIconDelete { seg_idx },
-                SegmentIconAction::Rerun => Action::SegmentIconRerun { seg_idx },
-            }),
 
             (
                 MouseEventKind::Down(MouseButton::Left),

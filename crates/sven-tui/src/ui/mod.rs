@@ -26,7 +26,7 @@ pub(crate) mod which_key;
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 pub(crate) use chat_list_pane::{build_chat_list_items, ChatListPane};
-pub(crate) use chat_pane::{nvim_cursor_screen_pos, ChatLabels, ChatPane};
+pub(crate) use chat_pane::{nvim_cursor_screen_pos, ChatPane};
 pub(crate) use completion_menu::CompletionMenu;
 pub(crate) use help_overlay::HelpOverlay;
 pub(crate) use input_pane::{input_cursor_screen_pos, InputEditMode, InputPane};

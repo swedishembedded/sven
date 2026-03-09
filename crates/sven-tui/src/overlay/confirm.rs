@@ -24,6 +24,7 @@
 ///
 /// Add variants here for any new confirmable operation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ConfirmedAction {
     /// Remove the chat segment at this index (and its paired segment if any).
     RemoveSegment(usize),
@@ -56,6 +57,7 @@ pub struct ConfirmModal {
 
 impl ConfirmModal {
     /// Create a confirmation dialog with a destructive action.
+    #[allow(dead_code)]
     pub fn new(
         title: impl Into<String>,
         message: impl Into<String>,

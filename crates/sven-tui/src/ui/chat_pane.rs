@@ -22,20 +22,11 @@ use crate::pager::{highlight_match_in_line, tint_match_line};
 
 use super::theme::{open_pane_block, BG};
 
-// ── ChatLabels ────────────────────────────────────────────────────────────────
-
-/// Per-line action label descriptor for the chat pane.
-pub struct ChatLabels {
-    pub edit_label_lines: HashSet<usize>,
-    pub remove_label_lines: HashSet<usize>,
-    pub rerun_label_lines: HashSet<usize>,
-    pub copy_label_lines: HashSet<usize>,
-    pub pending_delete_line: Option<usize>,
-}
-
 // ── ChatPane widget ───────────────────────────────────────────────────────────
 
 /// Scrollable chat pane with open (top+bottom only) borders.
+/// Segment actions (yank, edit, rerun, delete) are keyboard-first: use y/e/r/x
+/// when the chat pane is focused; the focused segment is determined by scroll position.
 pub struct ChatPane<'a> {
     pub lines: &'a StyledLines,
     pub scroll_offset: u16,
@@ -46,7 +37,6 @@ pub struct ChatPane<'a> {
     pub search_current: usize,
     pub search_regex: Option<&'a regex::Regex>,
     pub editing_line_range: Option<(usize, usize)>,
-    pub labels: &'a ChatLabels,
     pub no_nvim: bool,
     /// Total number of conversation segments (for the title counter).
     pub segment_count: usize,
@@ -171,75 +161,6 @@ impl Widget for ChatPane<'_> {
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // ── Action label overlays (no-nvim mode) ──────────────────────────────
-        // Labels: [y] copy  [r] rerun  [e] edit  [x] delete
-        if self.no_nvim && content_width > 10 {
-            let (icon_rerun, icon_edit, icon_delete, icon_copy) = if self.ascii {
-                ("r", "e", "x", "y")
-            } else {
-                ("↻", "✎", "✕", "y")
-            };
-
-            let unavailable = Style::default().fg(Color::Rgb(50, 50, 65));
-            let copy_style = Style::default().fg(Color::Rgb(100, 180, 220));
-            let edit_active = Style::default().fg(Color::Rgb(200, 200, 210));
-            let rerun_active = Style::default()
-                .fg(Color::Rgb(80, 180, 120))
-                .add_modifier(Modifier::DIM);
-            let delete_style = Style::default()
-                .fg(Color::Rgb(180, 70, 70))
-                .add_modifier(Modifier::DIM);
-            let confirm_style = Style::default()
-                .fg(Color::Rgb(220, 180, 60))
-                .add_modifier(Modifier::BOLD);
-
-            // Layout: ... [y] [r] [e] [x]  — 2 chars each + 1 separator
-            // Total: 9 chars from the right edge of content (excludes scrollbar column)
-            let x_copy = inner.x + content_width.saturating_sub(9);
-            let x_rerun = inner.x + content_width.saturating_sub(7);
-            let x_edit = inner.x + content_width.saturating_sub(5);
-            let x_delete = inner.x + content_width.saturating_sub(3);
-
-            for &abs_line in &self.labels.remove_label_lines {
-                if abs_line < self.scroll_offset as usize {
-                    continue;
-                }
-                let vis_row = abs_line - self.scroll_offset as usize;
-                if vis_row >= content_height as usize {
-                    continue;
-                }
-                let y = inner.y + vis_row as u16;
-
-                if self.labels.pending_delete_line == Some(abs_line) {
-                    buf.set_string(x_copy, y, "del?", confirm_style);
-                } else {
-                    let cs = if self.labels.copy_label_lines.contains(&abs_line) {
-                        copy_style
-                    } else {
-                        unavailable
-                    };
-                    let rs = if self.labels.rerun_label_lines.contains(&abs_line) {
-                        rerun_active
-                    } else {
-                        unavailable
-                    };
-                    let es = if self.labels.edit_label_lines.contains(&abs_line) {
-                        edit_active
-                    } else {
-                        unavailable
-                    };
-                    buf.set_string(x_copy, y, icon_copy, cs);
-                    buf[(x_copy + 1, y)].set_symbol("");
-                    buf.set_string(x_rerun, y, icon_rerun, rs);
-                    buf[(x_rerun + 1, y)].set_symbol("");
-                    buf.set_string(x_edit, y, icon_edit, es);
-                    buf[(x_edit + 1, y)].set_symbol("");
-                    buf.set_string(x_delete, y, icon_delete, delete_style);
-                    buf[(x_delete + 1, y)].set_symbol("");
                 }
             }
         }

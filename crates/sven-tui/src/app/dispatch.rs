@@ -10,16 +10,13 @@ use crate::{
     chat::{
         markdown::parse_markdown_to_messages,
         segment::{
-            messages_for_resubmit, segment_at_line, segment_editable_text, segment_short_preview,
-            segment_tool_call_id, ChatSegment,
+            messages_for_resubmit, segment_at_line, segment_editable_text, segment_tool_call_id,
+            ChatSegment,
         },
     },
     commands::{completion::CompletionItem, parse, CommandContext, ParsedCommand},
     keys::Action,
-    overlay::{
-        completion::CompletionOverlay,
-        confirm::{ConfirmModal, ConfirmedAction},
-    },
+    overlay::{completion::CompletionOverlay},
     pager::PagerOverlay,
 };
 
@@ -1191,47 +1188,6 @@ impl App {
                         self.edit.buffer = text;
                         self.ui.focus = FocusPane::Input;
                     }
-                }
-            }
-
-            Action::SegmentIconDelete { seg_idx } => {
-                let preview = segment_short_preview(self.chat.segments.get(seg_idx));
-                self.ui.confirm_modal = Some(ConfirmModal::new(
-                    "Delete message",
-                    format!("Remove this message from the conversation?\n{preview}"),
-                    ConfirmedAction::RemoveSegment(seg_idx),
-                ));
-            }
-
-            Action::SegmentIconEdit { seg_idx } => {
-                if let Some(text) = segment_editable_text(&self.chat.segments, seg_idx) {
-                    self.edit.message_index = Some(seg_idx);
-                    self.edit.cursor = text.len();
-                    self.edit.original_text = Some(text.clone());
-                    self.edit.buffer = text;
-                    self.ui.focus = FocusPane::Input;
-                    self.update_editing_segment_live();
-                    self.rerender_chat().await;
-                }
-            }
-
-            Action::SegmentIconCopy { seg_idx } => {
-                self.ui.confirm_modal = None;
-                let saved = self.chat.focused_segment;
-                self.chat.focused_segment = Some(seg_idx);
-                Box::pin(self.dispatch(Action::CopySegment)).await;
-                if self.chat.focused_segment.is_some() {
-                    self.chat.focused_segment = saved;
-                }
-            }
-
-            Action::SegmentIconRerun { seg_idx } => {
-                self.ui.confirm_modal = None;
-                let saved = self.chat.focused_segment;
-                self.chat.focused_segment = Some(seg_idx);
-                Box::pin(self.dispatch(Action::RerunFromSegment)).await;
-                if self.chat.focused_segment.is_some() {
-                    self.chat.focused_segment = saved;
                 }
             }
 
