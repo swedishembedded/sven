@@ -1292,6 +1292,7 @@ fn render_tool_result_lines(
                     &output_str,
                     is_error,
                     render_width,
+                    expand,
                     display,
                 );
                 // Skip the status header (already rendered above).

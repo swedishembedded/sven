@@ -190,11 +190,16 @@ pub fn render_tool_call_expanded(
 }
 
 /// Render an expanded tool result.
+///
+/// `expand` controls how much output is shown:
+/// - `1` (partial): first `PARTIAL_LINES` lines followed by a "… N more" hint.
+/// - `2` (full): all lines, no truncation.
 pub fn render_tool_result_expanded(
     tool_name: &str,
     output: &str,
     is_error: bool,
     width: u16,
+    expand: u8,
     display: Option<&dyn ToolDisplay>,
 ) -> Vec<Line<'static>> {
     let category = display
@@ -228,22 +233,33 @@ pub fn render_tool_result_expanded(
         ),
     ]));
 
-    // Output body — truncate to a reasonable number of lines.
-    let max_lines = 20usize;
+    // Output body.
+    //   expand == 1 → show first PARTIAL_LINES lines with a "… N more" hint.
+    //   expand >= 2 → show everything so the user can scroll the full result.
+    const PARTIAL_LINES: usize = 20;
     let avail_cols = (width as usize).saturating_sub(2);
     let output_lines: Vec<&str> = output.lines().collect();
     let total = output_lines.len();
-    let to_show = output_lines.iter().take(max_lines);
-    for l in to_show {
+
+    let (to_show_count, show_hint) = if expand >= 2 {
+        (total, false)
+    } else {
+        (total.min(PARTIAL_LINES), total > PARTIAL_LINES)
+    };
+
+    for l in output_lines.iter().take(to_show_count) {
         let display = truncate_to_width(l, avail_cols);
         lines.push(Line::from(Span::styled(
             format!("  {display}"),
             Style::default().fg(TEXT),
         )));
     }
-    if total > max_lines {
+    if show_hint {
         lines.push(Line::from(Span::styled(
-            format!("  … {} more lines", total - max_lines),
+            format!(
+                "  … {} more lines (press Enter again to expand)",
+                total - to_show_count
+            ),
             Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
         )));
     }
