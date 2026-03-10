@@ -123,6 +123,19 @@ impl RolePolicy {
     }
 }
 
+/// Async callback invoked before executing a tool that requires approval.
+///
+/// Implementors bridge from the tool-execution pipeline to an external approval
+/// mechanism.  When Sven runs as an ACP server the implementation calls
+/// `AgentSideConnection::request_permission` so the IDE can allow or deny the
+/// call.  When no requester is wired up, `ToolRegistry` falls back to the
+/// `ApprovalPolicy` declared on the tool itself.
+#[async_trait::async_trait]
+pub trait PermissionRequester: Send + Sync {
+    /// Return `true` to allow the tool call, `false` to deny it.
+    async fn request_permission(&self, call: &crate::ToolCall) -> bool;
+}
+
 /// Convert a simple shell glob pattern to a [`Regex`].
 /// Only `*` (match anything) and `?` (match one char) are supported.
 fn glob_to_regex(pattern: &str) -> Option<Regex> {

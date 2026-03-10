@@ -14,16 +14,19 @@
 //! [`crate::serve_stdio`].
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use agent_client_protocol::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification, Error,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
-    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
+    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
+    PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    Result as AcpResult, SelectedPermissionOutcome, SessionMode, SessionModeId, SessionModeState,
+    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCallUpdate,
+    ToolCallUpdateFields,
 };
-use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
@@ -36,6 +39,10 @@ use tracing::{debug, warn};
 /// (and therefore the whole LocalSet) indefinitely, we time-out and continue
 /// streaming — the IDE will have to cope with the dropped notification.
 const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for the IDE to respond to a `session/request_permission`
+/// request before defaulting to denial.
+const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config};
@@ -53,9 +60,105 @@ const SVEN_VERSION: &str = env!("CARGO_PKG_VERSION");
 // ─── Inter-task messaging ─────────────────────────────────────────────────────
 
 /// Messages sent from the `Agent` trait methods to the background task that
-/// owns the [`AgentSideConnection`] so it can call `conn.session_notification`.
+/// owns the [`AgentSideConnection`] so it can call `conn.session_notification`
+/// or `conn.request_permission`.
 pub enum ConnMessage {
     SessionUpdate(SessionNotification, oneshot::Sender<()>),
+    /// Request IDE permission for a tool call.  The background task calls
+    /// `conn.request_permission(request)` and sends the result back.
+    RequestPermission {
+        request: RequestPermissionRequest,
+        response_tx: oneshot::Sender<RequestPermissionResponse>,
+    },
+}
+
+// ─── AcpPermissionRequester ───────────────────────────────────────────────────
+
+/// Implements [`sven_tools::PermissionRequester`] by forwarding permission
+/// requests to the IDE over ACP via the `session/request_permission` method.
+///
+/// Created per session in [`SvenAcpAgent::new_session`] and passed to
+/// [`AgentBuilder::with_permission_requester`] so that tools with
+/// `ApprovalPolicy::Ask` gate their execution on an explicit IDE approval.
+struct AcpPermissionRequester {
+    session_id: String,
+    conn_tx: mpsc::UnboundedSender<ConnMessage>,
+}
+
+#[async_trait::async_trait]
+impl sven_tools::PermissionRequester for AcpPermissionRequester {
+    async fn request_permission(&self, call: &sven_tools::ToolCall) -> bool {
+        // Clone all borrowed data up-front so the future is 'static and Send.
+        let call_id = call.id.clone();
+        let call_name = call.name.clone();
+        let call_args = call.args.clone();
+        let session_id = self.session_id.clone();
+        let conn_tx = self.conn_tx.clone();
+
+        let tool_call_update = ToolCallUpdate::new(
+            call_id,
+            ToolCallUpdateFields::new()
+                .title(call_name.clone())
+                .raw_input(call_args),
+        );
+
+        let allow_once_id = "allow_once";
+        let reject_once_id = "reject_once";
+
+        let options = vec![
+            PermissionOption::new(allow_once_id, "Allow once", PermissionOptionKind::AllowOnce),
+            PermissionOption::new(reject_once_id, "Reject", PermissionOptionKind::RejectOnce),
+        ];
+
+        let allow_ids: HashSet<String> = options
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.kind,
+                    PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways
+                )
+            })
+            .map(|o| o.option_id.0.to_string())
+            .collect();
+
+        let request = RequestPermissionRequest::new(session_id, tool_call_update, options);
+
+        let (response_tx, response_rx) = oneshot::channel();
+        if conn_tx
+            .send(ConnMessage::RequestPermission {
+                request,
+                response_tx,
+            })
+            .is_err()
+        {
+            warn!(
+                tool = %call_name,
+                "ACP permission request failed: conn_tx closed — denying"
+            );
+            return false;
+        }
+
+        match tokio::time::timeout(PERMISSION_TIMEOUT, response_rx).await {
+            Ok(Ok(response)) => match &response.outcome {
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome {
+                    option_id, ..
+                }) => allow_ids.contains(&option_id.0.to_string()),
+                RequestPermissionOutcome::Cancelled | _ => false,
+            },
+            Ok(Err(_)) => {
+                warn!(tool = %call_name, "ACP permission response channel dropped — denying");
+                false
+            }
+            Err(_) => {
+                warn!(
+                    tool = %call_name,
+                    "ACP permission request timed out after {}s — denying",
+                    PERMISSION_TIMEOUT.as_secs()
+                );
+                false
+            }
+        }
+    }
 }
 
 // ─── Session entry ────────────────────────────────────────────────────────────
@@ -134,8 +237,10 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             "ACP initialize: protocol_version={:?}",
             args.protocol_version
         );
+        let caps = AgentCapabilities::new()
+            .prompt_capabilities(PromptCapabilities::new().embedded_context(true));
         Ok(InitializeResponse::new(args.protocol_version)
-            .agent_capabilities(AgentCapabilities::new())
+            .agent_capabilities(caps)
             .agent_info(
                 agent_client_protocol::Implementation::new("sven", SVEN_VERSION)
                     .title("Sven AI Coding Agent".to_string()),
@@ -172,8 +277,14 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let mut runtime_ctx = RuntimeContext::auto_detect();
         runtime_ctx.project_root = Some(args.cwd.clone());
 
+        let permission_requester = Arc::new(AcpPermissionRequester {
+            session_id: session_id.clone(),
+            conn_tx: self.conn_tx.clone(),
+        });
+
         let agent = AgentBuilder::new(Arc::clone(&self.config))
             .with_runtime_context(runtime_ctx)
+            .with_permission_requester(permission_requester)
             .build(initial_mode, model, profile)
             .await;
 
@@ -203,13 +314,22 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             .get_session(&session_id)
             .ok_or_else(Error::invalid_params)?;
 
-        // Extract text content from the prompt.
+        // Extract text content from the prompt.  Non-text blocks (images, audio,
+        // embedded resources) are logged and skipped; we don't yet advertise
+        // image/audio prompt capabilities to the IDE.
         let text = args
             .prompt
             .into_iter()
             .filter_map(|block| match block {
                 agent_client_protocol::ContentBlock::Text(t) => Some(t.text),
-                _ => None,
+                other => {
+                    debug!(
+                        session = %session_id,
+                        "ACP prompt: dropping non-text ContentBlock variant (not yet supported)"
+                    );
+                    let _ = other;
+                    None
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");

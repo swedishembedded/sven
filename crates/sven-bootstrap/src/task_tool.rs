@@ -41,15 +41,16 @@
 //! single-threaded tokio runtime and a `LocalSet`.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::{
-    Agent as AcpAgent, Client, ClientSideConnection, ContentBlock, InitializeRequest,
-    NewSessionRequest, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, Result as AcpResult,
-    SelectedPermissionOutcome, SessionId as AcpSessionId, SessionModeId, SessionNotification,
-    SessionUpdate, SetSessionModeRequest, ToolCallStatus,
+    Agent as AcpAgent, CancelNotification, Client, ClientSideConnection, ContentBlock,
+    InitializeRequest, NewSessionRequest, PermissionOptionKind, PromptRequest,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    Result as AcpResult, SelectedPermissionOutcome, SessionId as AcpSessionId, SessionModeId,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, StopReason, ToolCallStatus,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -129,6 +130,9 @@ struct SpawnArgs {
     call_id: String,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
+    /// Fires when the parent's tool call is cancelled so `run_acp_session` can
+    /// forward a `session/cancel` to the child before killing its process.
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
 }
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
@@ -137,6 +141,12 @@ pub struct TaskTool {
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     default_model: Option<String>,
+    /// Active cancel senders keyed by `call_id`.  When the parent's tool call
+    /// is dropped (cancelled), we fire the sender so the OS thread sends ACP
+    /// `session/cancel` to the child before killing it.
+    cancel_senders: Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    >,
 }
 
 impl TaskTool {
@@ -149,6 +159,7 @@ impl TaskTool {
             buffer_store,
             tool_event_tx,
             default_model,
+            cancel_senders: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -340,6 +351,18 @@ impl Tool for TaskTool {
             "task: spawning ACP sub-agent"
         );
 
+        // Cancel channel: the receiver travels into the OS thread so it can
+        // forward ACP `session/cancel` to the child when the parent is cancelled.
+        // The sender is stored here and fired when the parent's task is dropped
+        // (via the RAII guard below).
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut senders = self.cancel_senders.lock().await;
+            senders.insert(call.id.clone(), cancel_tx);
+        }
+        let cancel_senders = Arc::clone(&self.cancel_senders);
+        let call_id_for_cleanup = call.id.clone();
+
         let args = SpawnArgs {
             exe,
             prompt,
@@ -351,6 +374,7 @@ impl Tool for TaskTool {
             call_id: call.id.clone(),
             buffer_store: Arc::clone(&self.buffer_store),
             tool_event_tx: self.tool_event_tx.clone(),
+            cancel_rx,
         };
         let depth_for_env = current_depth + 1;
 
@@ -369,9 +393,14 @@ impl Tool for TaskTool {
             let output = rt.block_on(local.run_until(run_acp_session(args, depth_for_env)));
             let _ = result_tx.send(output);
         });
-        result_rx
+        let result = result_rx
             .await
-            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"))
+            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"));
+
+        // Clean up the cancel sender regardless of how the call completed.
+        cancel_senders.lock().await.remove(&call_id_for_cleanup);
+
+        result
     }
 }
 
@@ -389,6 +418,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         call_id,
         buffer_store,
         tool_event_tx,
+        cancel_rx,
     } = args;
 
     // ── Spawn child process ───────────────────────────────────────────────────
@@ -437,7 +467,10 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
 
     // outgoing = writes TO the agent (child stdin)
     // incoming = reads FROM the agent (child stdout)
-    let (conn, io_fut) = ClientSideConnection::new(
+    //
+    // Wrap in Rc so we can share it between the prompt task and the cancel
+    // handler below (both live in the same LocalSet / single-threaded runtime).
+    let (conn_inner, io_fut) = ClientSideConnection::new(
         acp_client,
         child_stdin.compat_write(),
         child_stdout.compat(),
@@ -445,6 +478,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             tokio::task::spawn_local(fut);
         },
     );
+    let conn = Rc::new(conn_inner);
 
     // Drain child stderr in a background task so the pipe never fills up and
     // blocks the child.  We collect the last 4 KB for error reporting.
@@ -530,11 +564,16 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         }
     }
 
+    // Clone the Rc for use in the prompt task.  Both halves live in the same
+    // LocalSet so sharing via Rc is safe (single-threaded cooperative runtime).
+    let conn_for_prompt = Rc::clone(&conn);
+
     // ── Stream prompt with inactivity timeout ─────────────────────────────────
 
-    // Accumulated assistant text.
+    // Accumulated assistant text and stop reason.
     let mut final_text = String::new();
     let mut timed_out = false;
+    let mut stop_reason = StopReason::EndTurn;
 
     use futures::StreamExt as FuturesStreamExt;
 
@@ -542,33 +581,56 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     let prompt_content: Vec<ContentBlock> = vec![ContentBlock::from(prompt.as_str())];
     let prompt_req = PromptRequest::new(acp_session_id.clone(), prompt_content);
 
-    // Spawn prompt as a local task, moving `conn` so the future is 'static.
-    let prompt_task = tokio::task::spawn_local(async move { conn.prompt(prompt_req).await });
+    // Spawn the prompt as a local task.  We use conn_for_prompt (an Rc clone)
+    // rather than moving conn itself so we retain access to conn for cancel below.
+    let prompt_task =
+        tokio::task::spawn_local(async move { conn_for_prompt.prompt(prompt_req).await });
 
     // Process notifications with inactivity timeout.
-    // The prompt task and notification stream run concurrently; we stop when
-    // either the timeout fires or the notification stream closes (which happens
-    // when the ACP io_fut finishes, i.e. the child exits / prompt completes).
+    // Three concurrent branches:
+    //   1. Notification arrives from the child (normal streaming).
+    //   2. Inactivity timeout — send ACP cancel, then kill the child.
+    //   3. Parent-side cancel signal — forward ACP cancel to the child.
+    let mut cancel_rx = cancel_rx;
     loop {
-        match tokio::time::timeout(INACTIVITY_TIMEOUT, notif_rx.next()).await {
-            Ok(Some(notif)) => {
-                let updates = session_update_to_subagent_updates(&notif.update, &mut final_text);
-                for update in updates {
-                    let _ = tool_event_tx
-                        .send(ToolEvent::SubagentEvent {
-                            call_id: call_id.clone(),
-                            handle_id: handle_id.clone(),
-                            update,
-                        })
-                        .await;
+        tokio::select! {
+            notif_result = tokio::time::timeout(INACTIVITY_TIMEOUT, notif_rx.next()) => {
+                match notif_result {
+                    Ok(Some(notif)) => {
+                        let updates = session_update_to_subagent_updates(&notif.update, &mut final_text);
+                        for update in updates {
+                            let _ = tool_event_tx
+                                .send(ToolEvent::SubagentEvent {
+                                    call_id: call_id.clone(),
+                                    handle_id: handle_id.clone(),
+                                    update,
+                                })
+                                .await;
+                        }
+                    }
+                    Ok(None) => {
+                        // Stream closed — the ACP connection has terminated normally.
+                        break;
+                    }
+                    Err(_inactivity) => {
+                        // Gracefully cancel the child before killing it.
+                        let cancel_notif = CancelNotification::new(acp_session_id.clone());
+                        conn.cancel(cancel_notif).await.ok();
+                        timed_out = true;
+                        prompt_task.abort();
+                        break;
+                    }
                 }
             }
-            Ok(None) => {
-                // Stream closed — the ACP connection has terminated normally.
-                break;
-            }
-            Err(_inactivity) => {
-                timed_out = true;
+            _ = &mut cancel_rx => {
+                // Parent's tool call was cancelled — propagate to the child.
+                debug!(
+                    handle = %handle_id,
+                    "task: parent cancelled — forwarding ACP session/cancel to child"
+                );
+                let cancel_notif = CancelNotification::new(acp_session_id.clone());
+                conn.cancel(cancel_notif).await.ok();
+                stop_reason = StopReason::Cancelled;
                 prompt_task.abort();
                 break;
             }
@@ -587,9 +649,17 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         );
     }
 
-    // Drain the prompt task result.
-    if let Ok(Err(e)) = prompt_task.await {
-        warn!("ACP prompt error: {e}");
+    // Drain the prompt task result and extract the stop reason.
+    match prompt_task.await {
+        Ok(Ok(resp)) => {
+            stop_reason = resp.stop_reason;
+        }
+        Ok(Err(e)) => {
+            warn!("ACP prompt error: {e}");
+        }
+        Err(_aborted) => {
+            // Task was aborted (cancel path above already set stop_reason).
+        }
     }
 
     // Clean up child process.
@@ -611,12 +681,43 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         .await;
 
     let status_word = if exit_code == 0 { "success" } else { "failed" };
+    let stop_word = match stop_reason {
+        StopReason::EndTurn => "end_turn",
+        StopReason::MaxTokens => "max_tokens",
+        StopReason::MaxTurnRequests => "max_turn_requests",
+        StopReason::Refusal => "refusal",
+        StopReason::Cancelled => "cancelled",
+        _ => "unknown",
+    };
+
+    if matches!(stop_reason, StopReason::Cancelled) {
+        return ToolOutput::err(
+            &call_id,
+            format!(
+                "Sub-agent was cancelled.\n\
+                 Handle: {handle_id}\n\
+                 Description: {description}"
+            ),
+        );
+    }
+
+    if matches!(stop_reason, StopReason::MaxTokens | StopReason::Refusal) {
+        return ToolOutput::err(
+            &call_id,
+            format!(
+                "Sub-agent stopped early: {stop_word} (exit {exit_code}).\n\
+                 Handle: {handle_id}\n\
+                 Description: {description}\n\n\
+                 Partial result:\n{final_text}"
+            ),
+        );
+    }
 
     if final_text.is_empty() {
         ToolOutput::ok(
             &call_id,
             format!(
-                "Sub-agent completed ({status_word}, exit {exit_code}).\n\
+                "Sub-agent completed ({status_word}, exit {exit_code}, stop={stop_word}).\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\n\
                  (No assistant text produced.)"
@@ -626,7 +727,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         ToolOutput::ok(
             &call_id,
             format!(
-                "Sub-agent completed ({status_word}, exit {exit_code}).\n\
+                "Sub-agent completed ({status_word}, exit {exit_code}, stop={stop_word}).\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\n\
                  --- Result ---\n{final_text}"
@@ -643,17 +744,29 @@ fn session_update_to_subagent_updates(
 ) -> Vec<SubagentUpdate> {
     let mut updates = Vec::new();
     match update {
-        SessionUpdate::AgentMessageChunk(chunk) => {
-            if let ContentBlock::Text(t) = &chunk.content {
+        SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
+            ContentBlock::Text(t) => {
                 final_text.push_str(&t.text);
                 updates.push(SubagentUpdate::TextDelta(t.text.clone()));
             }
-        }
-        SessionUpdate::AgentThoughtChunk(chunk) => {
-            if let ContentBlock::Text(t) = &chunk.content {
+            other => {
+                debug!(
+                    "task: dropping non-text AgentMessageChunk content variant: {:?}",
+                    std::mem::discriminant(other)
+                );
+            }
+        },
+        SessionUpdate::AgentThoughtChunk(chunk) => match &chunk.content {
+            ContentBlock::Text(t) => {
                 updates.push(SubagentUpdate::ThinkingDelta(t.text.clone()));
             }
-        }
+            other => {
+                debug!(
+                    "task: dropping non-text AgentThoughtChunk content variant: {:?}",
+                    std::mem::discriminant(other)
+                );
+            }
+        },
         SessionUpdate::ToolCall(tc) => {
             let id = tc.tool_call_id.to_string();
             let name = tc.title.clone();
@@ -692,6 +805,27 @@ fn session_update_to_subagent_updates(
                 }
                 _ => {}
             }
+        }
+        SessionUpdate::Plan(plan) => {
+            // Serialize the plan to a text delta so the parent TUI can display
+            // the child's todo list without needing a separate SubagentUpdate
+            // variant.  Empty plans (heartbeat pings) are silently dropped.
+            if !plan.entries.is_empty() {
+                let mut text = String::from("[Plan]\n");
+                for entry in &plan.entries {
+                    let status_icon = match entry.status {
+                        agent_client_protocol::PlanEntryStatus::Completed => "✓",
+                        agent_client_protocol::PlanEntryStatus::InProgress => "→",
+                        _ => "○",
+                    };
+                    text.push_str(&format!("  {status_icon} {}\n", entry.content));
+                }
+                updates.push(SubagentUpdate::TextDelta(text));
+            }
+        }
+        SessionUpdate::CurrentModeUpdate(mode_update) => {
+            let mode_text = format!("[Mode: {}]\n", mode_update.current_mode_id.0);
+            updates.push(SubagentUpdate::TextDelta(mode_text));
         }
         _ => {}
     }

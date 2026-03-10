@@ -17,9 +17,12 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification, Error,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
-    SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
+    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
+    PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, Result as AcpResult,
+    SelectedPermissionOutcome, SessionMode, SessionModeId, SessionModeState, SessionNotification,
+    SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCallUpdate,
+    ToolCallUpdateFields,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -51,6 +54,16 @@ enum WsCommand {
     },
     Subscribe {
         session_id: Uuid,
+    },
+    SetMode {
+        session_id: Uuid,
+        mode: String,
+    },
+    /// Approve or reject a pending tool call that the node flagged as needing approval.
+    ApproveToolCall {
+        session_id: Uuid,
+        call_id: String,
+        approved: bool,
     },
 }
 
@@ -175,8 +188,10 @@ impl SvenAcpNodeProxy {
 impl agent_client_protocol::Agent for SvenAcpNodeProxy {
     async fn initialize(&self, args: InitializeRequest) -> AcpResult<InitializeResponse> {
         debug!("ACP node-proxy initialize");
+        let caps = AgentCapabilities::new()
+            .prompt_capabilities(PromptCapabilities::new().embedded_context(true));
         Ok(InitializeResponse::new(args.protocol_version)
-            .agent_capabilities(AgentCapabilities::new())
+            .agent_capabilities(caps)
             .agent_info(
                 agent_client_protocol::Implementation::new("sven-node-proxy", SVEN_VERSION)
                     .title("Sven Node Proxy".to_string()),
@@ -341,9 +356,62 @@ impl agent_client_protocol::Agent for SvenAcpNodeProxy {
                                     }
                                 }
                                 Ok(WsEvent::ToolNeedsApproval { call_id, tool_name, args: tool_args, .. }) => {
-                                    // Auto-approve in proxy mode; permission requests would require
-                                    // bidirectional signalling that is not yet wired.
-                                    warn!("ACP proxy: auto-approving tool {tool_name} ({call_id}) args={tool_args}");
+                                    // Forward the approval request to the IDE via ACP
+                                    // `session/request_permission`.  If the IDE approves, send
+                                    // `ApproveToolCall { approved: true }` back to the node;
+                                    // otherwise send `approved: false`.
+                                    let tool_call_update = ToolCallUpdate::new(
+                                        call_id.clone(),
+                                        ToolCallUpdateFields::new()
+                                            .title(tool_name.clone())
+                                            .raw_input(tool_args),
+                                    );
+                                    let allow_once_id = "allow_once";
+                                    let reject_once_id = "reject_once";
+                                    let options = vec![
+                                        agent_client_protocol::PermissionOption::new(
+                                            allow_once_id,
+                                            "Allow once",
+                                            agent_client_protocol::PermissionOptionKind::AllowOnce,
+                                        ),
+                                        agent_client_protocol::PermissionOption::new(
+                                            reject_once_id,
+                                            "Reject",
+                                            agent_client_protocol::PermissionOptionKind::RejectOnce,
+                                        ),
+                                    ];
+                                    let permission_req = RequestPermissionRequest::new(
+                                        args.session_id.clone(),
+                                        tool_call_update,
+                                        options,
+                                    );
+                                    let (response_tx, response_rx) = oneshot::channel::<RequestPermissionResponse>();
+                                    if self.conn_tx.send(ConnMessage::RequestPermission {
+                                        request: permission_req,
+                                        response_tx,
+                                    }).is_ok() {
+                                        let approved = match tokio::time::timeout(
+                                            Duration::from_secs(60),
+                                            response_rx,
+                                        ).await {
+                                            Ok(Ok(resp)) => matches!(
+                                                resp.outcome,
+                                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome { ref option_id, .. })
+                                                if option_id.0.as_ref() == allow_once_id
+                                            ),
+                                            _ => false,
+                                        };
+                                        let approve_cmd = WsCommand::ApproveToolCall {
+                                            session_id: proxy_session.node_session_id,
+                                            call_id: call_id.clone(),
+                                            approved,
+                                        };
+                                        if let Err(e) = Self::send_ws_command(&mut ws, &approve_cmd).await {
+                                            warn!("ACP proxy: failed to send ApproveToolCall: {e}");
+                                        }
+                                    } else {
+                                        warn!("ACP proxy: conn_tx closed, cannot forward permission request for {tool_name}");
+                                    }
                                 }
                                 Ok(WsEvent::Unknown) => {}
                                 Err(e) => {
@@ -387,9 +455,29 @@ impl agent_client_protocol::Agent for SvenAcpNodeProxy {
 
     async fn set_session_mode(
         &self,
-        _args: SetSessionModeRequest,
+        args: SetSessionModeRequest,
     ) -> AcpResult<SetSessionModeResponse> {
-        // Mode switching is not forwarded to the node in this version.
+        let acp_session_id = args.session_id.to_string();
+        debug!(
+            "ACP node-proxy set_session_mode: session={acp_session_id} mode={:?}",
+            args.mode_id
+        );
+
+        let proxy_session = match self.get_session(&acp_session_id) {
+            Some(s) => s,
+            None => return Err(Error::invalid_params()),
+        };
+
+        let mut ws = self.connect_ws().await?;
+        Self::send_ws_command(
+            &mut ws,
+            &WsCommand::SetMode {
+                session_id: proxy_session.node_session_id,
+                mode: args.mode_id.0.to_string(),
+            },
+        )
+        .await?;
+
         Ok(SetSessionModeResponse::new())
     }
 }

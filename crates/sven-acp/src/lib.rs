@@ -27,7 +27,9 @@ mod node_proxy;
 
 use std::sync::Arc;
 
-use agent_client_protocol::{AgentSideConnection, Client};
+use agent_client_protocol::{
+    AgentSideConnection, Client, RequestPermissionOutcome, RequestPermissionResponse,
+};
 use anyhow::Result;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::debug;
@@ -61,13 +63,26 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
                     tokio::task::spawn_local(fut);
                 });
 
-            // Background task: forward session notifications from the agent to conn.
+            // Background task: forward session updates and permission requests
+            // from the agent to conn.
             tokio::task::spawn_local(async move {
                 while let Some(msg) = conn_rx.recv().await {
                     match msg {
                         ConnMessage::SessionUpdate(notification, ack_tx) => {
                             conn.session_notification(notification).await.ok();
                             ack_tx.send(()).ok();
+                        }
+                        ConnMessage::RequestPermission {
+                            request,
+                            response_tx,
+                        } => {
+                            let response =
+                                conn.request_permission(request).await.unwrap_or_else(|_| {
+                                    RequestPermissionResponse::new(
+                                        RequestPermissionOutcome::Cancelled,
+                                    )
+                                });
+                            response_tx.send(response).ok();
                         }
                     }
                 }
@@ -107,6 +122,18 @@ pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()>
                         ConnMessage::SessionUpdate(notification, ack_tx) => {
                             conn.session_notification(notification).await.ok();
                             ack_tx.send(()).ok();
+                        }
+                        ConnMessage::RequestPermission {
+                            request,
+                            response_tx,
+                        } => {
+                            let response =
+                                conn.request_permission(request).await.unwrap_or_else(|_| {
+                                    RequestPermissionResponse::new(
+                                        RequestPermissionOutcome::Cancelled,
+                                    )
+                                });
+                            response_tx.send(response).ok();
                         }
                     }
                 }

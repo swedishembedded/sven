@@ -6,8 +6,9 @@ use std::sync::{Arc, RwLock};
 
 use sven_config::AgentMode;
 
+use crate::policy::PermissionRequester;
 use crate::tool::ToolDisplayRegistry;
-use crate::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// A tool schema – mirrors sven_model::ToolSchema but keeps tools crate
 /// independent from the model crate.
@@ -80,6 +81,10 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     /// Shared so the TUI can hold a clone for chat rendering without owning the registry.
     display_registry: Arc<RwLock<ToolDisplayRegistry>>,
+    /// Optional permission requester wired up by the ACP server layer.
+    /// When set, tools with `ApprovalPolicy::Ask` are gated behind a
+    /// `session/request_permission` round-trip to the IDE before executing.
+    permission_requester: Option<Arc<dyn PermissionRequester>>,
 }
 
 impl ToolRegistry {
@@ -87,7 +92,17 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
+            permission_requester: None,
         }
+    }
+
+    /// Wire up an IDE-backed permission requester.
+    ///
+    /// After this call, every `execute` invocation on a tool whose
+    /// `default_policy` is [`ApprovalPolicy::Ask`] will block until the IDE
+    /// responds to the `session/request_permission` request.
+    pub fn set_permission_requester(&mut self, requester: Arc<dyn PermissionRequester>) {
+        self.permission_requester = Some(requester);
     }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
@@ -126,10 +141,21 @@ impl ToolRegistry {
     }
 
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        match self.tools.get(&call.name) {
-            Some(tool) => tool.execute(call).await,
-            None => ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
+        let tool = match self.tools.get(&call.name) {
+            Some(t) => Arc::clone(t),
+            None => return ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
+        };
+        if let Some(ref requester) = self.permission_requester {
+            if matches!(tool.default_policy(), ApprovalPolicy::Ask)
+                && !requester.request_permission(call).await
+            {
+                return ToolOutput::err(
+                    &call.id,
+                    format!("tool '{}' was denied by the IDE", call.name),
+                );
+            }
         }
+        tool.execute(call).await
     }
 
     pub fn names(&self) -> Vec<String> {

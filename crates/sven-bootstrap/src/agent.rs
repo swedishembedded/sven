@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_core::Agent;
 use sven_model::ModelProvider;
-use sven_tools::{events::ToolEvent, SharedToolDisplays, SharedTools};
+use sven_tools::{events::ToolEvent, PermissionRequester, SharedToolDisplays, SharedTools};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
@@ -36,6 +36,9 @@ pub struct AgentBuilder {
     /// Optional slot for the tool display registry; set after registry build
     /// so the TUI can render tool call/result summaries with ToolDisplay.
     shared_tool_displays: Option<SharedToolDisplays>,
+    /// Optional IDE-backed permission requester.  When set, tools with
+    /// `ApprovalPolicy::Ask` gate execution on an explicit IDE approval.
+    permission_requester: Option<Arc<dyn PermissionRequester>>,
 }
 
 impl AgentBuilder {
@@ -47,6 +50,7 @@ impl AgentBuilder {
             runtime_ctx: RuntimeContext::empty(),
             shared_tools: None,
             shared_tool_displays: None,
+            permission_requester: None,
         }
     }
 
@@ -71,6 +75,16 @@ impl AgentBuilder {
     /// chat rendering (collapsed tool summary, display name).
     pub fn with_shared_tool_displays(mut self, slot: SharedToolDisplays) -> Self {
         self.shared_tool_displays = Some(slot);
+        self
+    }
+
+    /// Wire up an IDE-backed permission requester.
+    ///
+    /// Tools with [`sven_tools::ApprovalPolicy::Ask`] will call
+    /// `requester.request_permission()` before executing, blocking until the
+    /// IDE approves or denies the call.
+    pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
+        self.permission_requester = Some(requester);
         self
     }
 
@@ -106,13 +120,17 @@ impl AgentBuilder {
 
         // Pass runtime.clone() as sub_agent_runtime so TaskTool sub-agents
         // inherit the parent's project root, AGENTS.md, CI/git context.
-        let registry = build_tool_registry(
+        let mut registry = build_tool_registry(
             &self.config,
             model.clone(),
             profile,
             tool_event_tx,
             runtime.clone(),
         );
+
+        if let Some(req) = self.permission_requester {
+            registry.set_permission_requester(req);
+        }
 
         // Populate the shared tool snapshot so the TUI `/tools` inspector can
         // display all registered tools without accessing the registry directly.
