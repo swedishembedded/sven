@@ -114,6 +114,8 @@ pub enum ToolEvent {
         handle_id: String,
         /// Short human-readable description for the sidebar.
         description: String,
+        /// Full prompt text sent to the subagent; shown as the first user message.
+        prompt: String,
     },
     /// A structured event from a running subagent, streamed over ACP.
     /// The TUI uses these to build a proper conversation view for the subagent session.

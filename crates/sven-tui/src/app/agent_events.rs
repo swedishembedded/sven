@@ -36,7 +36,12 @@ impl App {
             {
                 if let Some(entry) = self.sessions.find_by_buffer_handle(handle_id) {
                     if entry.stored_chat.is_none() {
-                        entry.stored_chat = Some(ChatState::new());
+                        let mut chat = ChatState::new();
+                        if let Some(ref prompt) = entry.initial_prompt.clone() {
+                            chat.segments
+                                .push(ChatSegment::Message(Message::user(prompt)));
+                        }
+                        entry.stored_chat = Some(chat);
                     }
                     if let Some(chat) = &mut entry.stored_chat {
                         apply_subagent_update(chat, update);
@@ -502,6 +507,7 @@ impl App {
             AgentEvent::SubagentStarted {
                 description,
                 handle_id,
+                prompt,
                 ..
             } => {
                 let parent_id = session_id.clone();
@@ -509,6 +515,7 @@ impl App {
                     description,
                     parent_id.clone(),
                     Some(handle_id),
+                    prompt,
                 );
                 self.sessions.add_child_session(parent_id, entry);
             }
@@ -517,7 +524,14 @@ impl App {
             } => {
                 if let Some(entry) = self.sessions.find_by_buffer_handle(&handle_id) {
                     if entry.stored_chat.is_none() {
-                        entry.stored_chat = Some(ChatState::new());
+                        let mut chat = ChatState::new();
+                        // Seed the chat with the user prompt so the subagent view
+                        // shows the initial request as the first message.
+                        if let Some(ref prompt) = entry.initial_prompt.clone() {
+                            chat.segments
+                                .push(ChatSegment::Message(Message::user(prompt)));
+                        }
+                        entry.stored_chat = Some(chat);
                     }
                     if let Some(chat) = &mut entry.stored_chat {
                         apply_subagent_update(chat, &update);

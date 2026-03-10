@@ -328,6 +328,7 @@ impl Tool for TaskTool {
                 call_id: call.id.clone(),
                 handle_id: handle_id.clone(),
                 description: description.clone(),
+                prompt: prompt.clone(),
             })
             .await;
 

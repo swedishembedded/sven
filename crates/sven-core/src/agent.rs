@@ -685,12 +685,14 @@ impl Agent {
                     call_id,
                     handle_id,
                     description,
+                    prompt,
                 } => {
                     let _ = tx
                         .send(AgentEvent::SubagentStarted {
                             call_id,
                             handle_id,
                             description,
+                            prompt,
                         })
                         .await;
                 }

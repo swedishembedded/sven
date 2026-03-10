@@ -85,6 +85,8 @@ pub(crate) struct SessionEntry {
     /// Output buffer handle for subagent sessions (e.g. "buf_0001").
     /// Used to populate the chat view when switching to this subagent session.
     pub buffer_handle: Option<String>,
+    /// The full prompt sent to this subagent; displayed as the first user message.
+    pub initial_prompt: Option<String>,
 
     // ── Agent connection ──────────────────────────────────────────────────────
     /// Sender for submitting requests to this session's background agent task.
@@ -128,6 +130,7 @@ impl SessionEntry {
             session_state: None,
             jsonl_path: None,
             buffer_handle: None,
+            initial_prompt: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -160,6 +163,7 @@ impl SessionEntry {
             session_state: None,
             jsonl_path: None,
             buffer_handle: None,
+            initial_prompt: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -191,6 +195,7 @@ impl SessionEntry {
             session_state: None,
             jsonl_path: None,
             buffer_handle: None,
+            initial_prompt: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -208,6 +213,7 @@ impl SessionEntry {
         title: impl Into<String>,
         parent_id: SessionId,
         buffer_handle: Option<String>,
+        prompt: String,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -226,6 +232,7 @@ impl SessionEntry {
             session_state: None,
             jsonl_path: None,
             buffer_handle,
+            initial_prompt: Some(prompt),
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -492,6 +499,7 @@ impl SessionManager {
                 session_state: None,
                 jsonl_path: None,
                 buffer_handle: None,
+                initial_prompt: None,
                 agent_tx: None,
                 agent_cancel: Arc::new(Mutex::new(None)),
                 busy: false,

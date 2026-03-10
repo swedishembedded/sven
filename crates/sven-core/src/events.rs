@@ -140,6 +140,8 @@ pub enum AgentEvent {
         call_id: String,
         handle_id: String,
         description: String,
+        /// Full prompt sent to the subagent; shown as the first user message in its view.
+        prompt: String,
     },
     /// A structured ACP event streamed from a running subagent.
     /// The TUI uses these to build a proper conversation view for the subagent session.

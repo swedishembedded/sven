@@ -78,9 +78,12 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         }
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {
+            // Note: the **Agent:thinking** anchor is stripped by strip_display_anchors
+            // before ratatui rendering but is required for nvim buffer fold detection.
+            // No leading \n here — stripping the anchor line already leaves one \n gap.
             format!(
-                "\n**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```\n",
-                content
+                "**Agent:thinking**\n{SYM_THINK} **Thought**\n\n{}\n",
+                content.trim_end()
             )
         }
         ChatSegment::TodoUpdate(todos) => format_todos_markdown(todos),
@@ -232,7 +235,7 @@ pub fn collapsed_preview(
         ChatSegment::Thinking { content } => {
             let normalized: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
             let preview = truncate_to_width(&normalized, 80);
-            format!("\n{SYM_THINK} **Thought**  {preview}  {SYM_EXPAND}\n")
+            format!("\n{SYM_THINK} **Thought**  {preview}  {SYM_EXPAND}")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }
