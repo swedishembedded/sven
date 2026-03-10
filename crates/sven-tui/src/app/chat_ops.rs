@@ -30,6 +30,16 @@ use crate::{
     ConversationRecord,
 };
 
+/// Trim trailing empty lines from a string to prevent extra spacing between segments.
+fn trim_trailing_empty_lines(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    let mut trimmed = lines;
+    while trimmed.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        trimmed.pop();
+    }
+    trimmed.join("\n")
+}
+
 /// Number of lines to show in tier-1 (partial) view.
 const PARTIAL_VIEW_LINES: usize = 12;
 
@@ -141,6 +151,9 @@ impl App {
                 strip_display_anchors(&raw)
             };
 
+            // Trim trailing empty lines from the markdown to prevent extra spacing
+            // when segments are concatenated.
+            let s = trim_trailing_empty_lines(&s);
             let lines = render_markdown(&s, render_width, ascii);
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
