@@ -163,6 +163,24 @@ pub enum AcpCommands {
         /// May also be provided via the SVEN_NODE_TOKEN environment variable.
         #[arg(long, env = "SVEN_NODE_TOKEN", value_name = "TOKEN")]
         token: Option<String>,
+
+        /// Override the model used by this ACP server instance.
+        ///
+        /// Accepts a bare model name ("claude-sonnet-4-6") or a
+        /// "provider/model" pair ("anthropic/claude-sonnet-4-6").
+        ///
+        /// The task tool passes the parent agent's current model here so that
+        /// sub-agents automatically inherit the same model.
+        ///
+        /// May also be set via the SVEN_MODEL environment variable.
+        #[arg(long, env = "SVEN_MODEL", value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Override only the provider without changing the model name.
+        ///
+        /// May also be set via the SVEN_PROVIDER environment variable.
+        #[arg(long, env = "SVEN_PROVIDER", value_name = "PROVIDER")]
+        provider: Option<String>,
     },
 }
 

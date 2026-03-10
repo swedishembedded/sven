@@ -599,7 +599,12 @@ async fn run_peer_command(cmd: &PeerCommands) -> anyhow::Result<()> {
 
 async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
     match cmd {
-        AcpCommands::Serve { node_url, token } => {
+        AcpCommands::Serve {
+            node_url,
+            token,
+            model,
+            provider,
+        } => {
             if let Some(url) = node_url {
                 let tok = token.clone().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -608,8 +613,14 @@ async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 })?;
                 sven_acp::serve_stdio_node_proxy(url.clone(), tok).await
             } else {
-                let config = std::sync::Arc::new(sven_config::load(None)?);
-                sven_acp::serve_stdio(config).await
+                let mut config = sven_config::load(None)?;
+                if let Some(ref name) = model {
+                    config.model = sven_model::resolve_model_from_config(&config, name);
+                }
+                if let Some(ref prov) = provider {
+                    config.model.provider = prov.clone();
+                }
+                sven_acp::serve_stdio(std::sync::Arc::new(config)).await
             }
         }
     }
