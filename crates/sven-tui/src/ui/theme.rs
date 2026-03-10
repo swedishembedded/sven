@@ -95,9 +95,10 @@ pub(crate) fn tool_scan(frame: u8, ascii: bool) -> &'static str {
 }
 
 /// Blinking block cursor appended to the end of streaming text.
-/// Alternates between `▌` and a space on each anim frame (6 Hz at 80ms).
+/// Alternates between `▌` and a space on a ~500ms cycle (6 frames on, 6 frames off
+/// at 80ms tick = 480ms per phase, close to the target 500ms).
 pub(crate) fn stream_cursor(frame: u8, ascii: bool) -> &'static str {
-    if frame.is_multiple_of(2) {
+    if frame % 12 < 6 {
         if ascii {
             "_"
         } else {
