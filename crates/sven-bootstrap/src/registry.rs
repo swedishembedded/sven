@@ -225,7 +225,7 @@ fn register_base_tools(
     reg.register(ReadFileTool);
     reg.register(FindFileTool);
     reg.register(WriteTool);
-    reg.register(EditFileTool);
+    reg.register_with_display(EditFileTool);
 
     // ── Search ────────────────────────────────────────────────────────────────
     // grep now supports whole_project=true (replaces search_codebase).
@@ -286,7 +286,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(ReadFileTool);
     reg.register(FindFileTool);
     reg.register(WriteTool);
-    reg.register(EditFileTool);
+    reg.register_with_display(EditFileTool);
 
     // ── Search ────────────────────────────────────────────────────────────────
     reg.register(GrepTool);

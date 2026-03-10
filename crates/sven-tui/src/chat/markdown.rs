@@ -9,21 +9,9 @@ use std::collections::HashMap;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_tools::TodoItem;
-
-/// Metadata for customizing tool display in the UI.
-#[derive(Debug, Clone)]
-pub struct ToolDisplayInfo {
-    /// Human-readable display name for the tool.
-    pub display_name: String,
-    /// Optional field name that contains the "intent" or primary content
-    /// (e.g., "shell_command" for shell tool, "query" for grep).
-    pub intent_field: Option<String>,
-    /// Optional Arc to allow sharing across threads if needed.
-    _phantom: Option<Arc<()>>,
-}
+use sven_tools::{TodoItem, ToolDisplayRegistry};
 
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
@@ -143,7 +131,13 @@ pub fn partial_content(
     format!("{truncated}\n*…{} more lines*\n", lines.len() - max_lines)
 }
 
+/// Optional display registry for tool-specific labels and summaries in the chat view.
+pub type ToolDisplayRegistryRef = Option<Arc<RwLock<ToolDisplayRegistry>>>;
+
 /// Render a single-line collapsed preview for a segment (ratatui-only mode).
+///
+/// When `tool_display_registry` is set, tools that implement [`sven_tools::ToolDisplay`]
+/// use their display name and collapsed summary instead of the generic fallback.
 ///
 /// The preview is a compact, information-dense one-liner:
 /// - Tool call:   `⚙  tool_name  smart_description  duration  ▶`
@@ -155,6 +149,7 @@ pub fn collapsed_preview(
     seg: &ChatSegment,
     tool_args_cache: &HashMap<String, String>,
     tool_durations: &HashMap<String, f32>,
+    tool_display_registry: ToolDisplayRegistryRef,
 ) -> String {
     match seg {
         ChatSegment::Message(m) => match (&m.role, &m.content) {
@@ -166,7 +161,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
@@ -176,7 +171,7 @@ pub fn collapsed_preview(
                 } else {
                     ""
                 };
-                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}")
+                format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (
                 Role::Assistant,
@@ -185,7 +180,25 @@ pub fn collapsed_preview(
                     function,
                 },
             ) => {
-                let summary = tool_display_summary(&function.name, &function.arguments, None);
+                let args_val: serde_json::Value =
+                    serde_json::from_str(&function.arguments).unwrap_or(serde_json::Value::Null);
+                let (label, summary) = tool_display_registry
+                    .as_ref()
+                    .and_then(|r| r.read().ok())
+                    .and_then(|guard| {
+                        guard.get(function.name.as_str()).map(|disp| {
+                            (
+                                disp.display_name().to_string(),
+                                disp.collapsed_summary(&args_val),
+                            )
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            function.name.clone(),
+                            tool_smart_summary(&function.name, &function.arguments),
+                        )
+                    });
                 let summary_part = if summary.is_empty() {
                     String::new()
                 } else {
@@ -195,10 +208,7 @@ pub fn collapsed_preview(
                     .get(tool_call_id)
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
-                format!(
-                    "\n{SYM_TOOL}  {}{summary_part}{duration}  {SYM_EXPAND}",
-                    function.name
-                )
+                format!("\n{SYM_TOOL}  {label}{summary_part}{duration}  {SYM_EXPAND}\n",)
             }
             (
                 Role::Tool,
@@ -211,19 +221,24 @@ pub fn collapsed_preview(
                     .get(tool_call_id)
                     .map(|s| s.as_str())
                     .unwrap_or("tool");
+                let label = tool_display_registry
+                    .as_ref()
+                    .and_then(|r| r.read().ok())
+                    .and_then(|guard| guard.get(tool_name).map(|d| d.display_name().to_string()))
+                    .unwrap_or_else(|| tool_name.to_string());
                 let is_error = content.to_string().starts_with("error:");
                 let sym = if is_error { SYM_ERR } else { SYM_OK };
                 let duration = tool_durations
                     .get(tool_call_id)
                     .map(|s| format!("  {:.1}s", s))
                     .unwrap_or_default();
-                format!("\n{sym}  {tool_name}{duration}  {SYM_EXPAND}")
+                format!("\n{sym}  {label}{duration}  {SYM_EXPAND}\n")
             }
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
             let word_count = content.split_whitespace().count();
-            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}")
+            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}\n")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }
@@ -551,109 +566,6 @@ pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
             String::new()
         }
     }
-}
-
-/// Build a human-readable one-line description of a tool call for the collapsed
-/// tier-0 display using tool display metadata.
-///
-/// This function uses the provided `ToolDisplayInfo` to generate more meaningful
-/// summaries than the generic `tool_smart_summary` function.
-pub fn tool_display_summary(
-    name: &str,
-    args_json: &str,
-    display_info: Option<&ToolDisplayInfo>,
-) -> String {
-    let v: serde_json::Value = match serde_json::from_str(args_json) {
-        Ok(v) => v,
-        Err(_) => return truncate_str(args_json, 55),
-    };
-
-    // If we have display info, use it for custom rendering
-    if let Some(info) = display_info {
-        // Check for intent field first (e.g., shell tool)
-        if let Some(intent_field) = &info.intent_field {
-            if let Some(intent) = v.get(intent_field).and_then(|v| v.as_str()) {
-                if !intent.is_empty() {
-                    return format!("{}: {}", info.display_name, intent);
-                }
-            }
-        }
-
-        // Use the tool-specific collapsed summary logic
-        match name {
-            "shell" => {
-                // Try intent first, then fall back to command
-                if let Some(cmd) = v
-                    .get("shell_command")
-                    .or_else(|| v.get("command"))
-                    .and_then(|v| v.as_str())
-                {
-                    let truncated = if cmd.len() > 50 {
-                        format!("{}…", &cmd[..50])
-                    } else {
-                        cmd.to_string()
-                    };
-                    return format!("{}: {}", info.display_name, truncated);
-                }
-                return info.display_name.clone();
-            }
-            "read_file" | "write_file" | "edit_file" | "delete_file" => {
-                if let Some(path) = v.get("path").and_then(|v| v.as_str()) {
-                    let filename = std::path::Path::new(path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(path);
-                    return format!("{}: {}", info.display_name, filename);
-                }
-            }
-            "grep" => {
-                let pattern = v
-                    .get("pattern")
-                    .or_else(|| v.get("query"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let path = v.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                let path_hint = if path == "." || path.is_empty() {
-                    String::new()
-                } else {
-                    format!(" in {}", shorten_path(path, 2))
-                };
-                return format!("{}:{}{}", info.display_name, path_hint, pattern);
-            }
-            "find_file" => {
-                if let Some(pattern) = v.get("pattern").and_then(|v| v.as_str()) {
-                    return format!("{}: {}", info.display_name, pattern);
-                }
-            }
-            _ => {}
-        }
-
-        // Default: just return the display name
-        return info.display_name.clone();
-    }
-
-    // Fall back to the generic smart summary
-    tool_smart_summary(name, args_json)
-}
-
-/// Build an expanded header for a tool call (tier-1 view).
-///
-/// This shows the command to be executed, e.g., "$ cargo build"
-pub fn tool_expanded_header(_name: &str, args_json: &str) -> String {
-    let v: serde_json::Value = match serde_json::from_str(args_json) {
-        Ok(v) => v,
-        Err(_) => return String::new(),
-    };
-
-    if let Some(cmd) = v
-        .get("shell_command")
-        .or_else(|| v.get("command"))
-        .and_then(|v| v.as_str())
-    {
-        return format!("$ {}", cmd);
-    }
-
-    String::new()
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────

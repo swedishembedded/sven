@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_core::Agent;
 use sven_model::ModelProvider;
-use sven_tools::{events::ToolEvent, OutputBufferStore, SharedTools};
+use sven_tools::{events::ToolEvent, OutputBufferStore, SharedToolDisplays, SharedTools};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
@@ -37,6 +37,9 @@ pub struct AgentBuilder {
     /// Optional shared tool snapshot populated after registry construction so
     /// that the TUI can inspect available tools via `/tools`.
     shared_tools: Option<SharedTools>,
+    /// Optional slot for the tool display registry; set after registry build
+    /// so the TUI can render tool call/result summaries with ToolDisplay.
+    shared_tool_displays: Option<SharedToolDisplays>,
 }
 
 impl AgentBuilder {
@@ -48,6 +51,7 @@ impl AgentBuilder {
             runtime_ctx: RuntimeContext::empty(),
             buffer_store: Arc::new(Mutex::new(OutputBufferStore::new())),
             shared_tools: None,
+            shared_tool_displays: None,
         }
     }
 
@@ -82,6 +86,14 @@ impl AgentBuilder {
     /// cheap `Arc<[ToolSchema]>` snapshot when the `/tools` inspector is opened.
     pub fn with_shared_tools(mut self, shared_tools: SharedTools) -> Self {
         self.shared_tools = Some(shared_tools);
+        self
+    }
+
+    /// Inject a slot that will be filled with the tool display registry after
+    /// the tool registry is built. The TUI holds a clone and reads it for
+    /// chat rendering (collapsed tool summary, display name).
+    pub fn with_shared_tool_displays(mut self, slot: SharedToolDisplays) -> Self {
+        self.shared_tool_displays = Some(slot);
         self
     }
 
@@ -131,6 +143,11 @@ impl AgentBuilder {
         // display all registered tools without accessing the registry directly.
         if let Some(ref st) = self.shared_tools {
             st.set(registry.schemas());
+        }
+        if let Some(ref slot) = self.shared_tool_displays {
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(registry.display_registry());
+            }
         }
 
         // Resolve context window: prefer live probe (actual n_ctx loaded by the

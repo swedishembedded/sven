@@ -16,7 +16,7 @@ use crate::{
         markdown::{
             apply_bar_and_dim, collapsed_preview, format_conversation, parse_markdown_to_messages,
             partial_content, segment_bar_style, segment_to_markdown, strip_display_anchors,
-            SYM_THINK, SYM_TOOL,
+            ToolDisplayRegistryRef, SYM_THINK, SYM_TOOL,
         },
         segment::{
             segment_at_line, segment_editable_text, segment_is_removable, segment_is_rerunnable,
@@ -29,16 +29,6 @@ use crate::{
     ui::theme::{BAR_AGENT, BAR_THINKING},
     ConversationRecord,
 };
-
-/// Trim trailing empty lines from a string to prevent extra spacing between segments.
-fn trim_trailing_empty_lines(s: &str) -> String {
-    let lines: Vec<&str> = s.lines().collect();
-    let mut trimmed = lines;
-    while trimmed.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        trimmed.pop();
-    }
-    trimmed.join("\n")
-}
 
 /// Number of lines to show in tier-1 (partial) view.
 const PARTIAL_VIEW_LINES: usize = 12;
@@ -76,6 +66,11 @@ impl App {
         let tool_start_times = self.agent.tool_start_times.clone();
         let tool_streaming_content = self.chat.tool_streaming_content.clone();
         let anim_frame = self.agent.anim_frame;
+        let tool_display_registry: ToolDisplayRegistryRef = self
+            .shared_tool_displays
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().cloned());
         let segs_len = self.chat.segments.len();
 
         // Track result segments that have been visually merged into a grouped pair
@@ -121,7 +116,13 @@ impl App {
                 // Both the tool call (i) and result (result_idx) are tier-0:
                 // render as a single grouped line.
                 let result_seg = &self.chat.segments[result_idx];
-                make_grouped_preview(seg, result_seg, &self.chat.tool_args, &tool_durations)
+                make_grouped_preview(
+                    seg,
+                    result_seg,
+                    &self.chat.tool_args,
+                    &tool_durations,
+                    tool_display_registry.clone(),
+                )
             } else if expand == 0 {
                 // In-progress tool call: animate with scanning dot.
                 animated_tool_preview(
@@ -130,8 +131,16 @@ impl App {
                     &tool_streaming_content,
                     anim_frame,
                     ascii,
+                    tool_display_registry.clone(),
                 )
-                .unwrap_or_else(|| collapsed_preview(seg, &self.chat.tool_args, &tool_durations))
+                .unwrap_or_else(|| {
+                    collapsed_preview(
+                        seg,
+                        &self.chat.tool_args,
+                        &tool_durations,
+                        tool_display_registry.clone(),
+                    )
+                })
             } else if expand == 1 {
                 // Tier-1: show either live streaming content (for running sub-agents)
                 // or the standard partial content view.
@@ -151,9 +160,6 @@ impl App {
                 strip_display_anchors(&raw)
             };
 
-            // Trim trailing empty lines from the markdown to prevent extra spacing
-            // when segments are concatenated.
-            let s = trim_trailing_empty_lines(&s);
             let lines = render_markdown(&s, render_width, ascii);
             let (bar_style, dim) = segment_bar_style(seg);
             let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
@@ -217,7 +223,7 @@ impl App {
         self.chat.rerun_labels = rerun_labels;
         self.chat.copy_labels = copy_labels;
         // Keep existing highlight if still valid; otherwise set from center (e.g. first load).
-        if self.chat.focused_segment.is_none_or(|i| i >= segs_len) {
+        if self.chat.focused_segment.map_or(true, |i| i >= segs_len) {
             self.recompute_focused_segment();
         }
     }
@@ -484,14 +490,12 @@ impl App {
             };
             tokio::spawn(async move {
                 let result = if let Some(ref path) = yaml_path {
-                    sven_input::save_chat_to_atomic(path, &mut doc)
+                    sven_input::save_chat_to(path, &mut doc)
                 } else {
-                    sven_input::save_chat_atomic(&mut doc)
+                    sven_input::save_chat(&mut doc)
                 };
                 if let Err(e) = result {
-                    tracing::warn!(
-                        "failed to save YAML chat document (concurrent modification?): {e}"
-                    );
+                    tracing::debug!("failed to save YAML chat document: {e}");
                 }
             });
         }
@@ -600,6 +604,7 @@ fn animated_tool_preview(
     tool_streaming_content: &HashMap<String, String>,
     anim_frame: u8,
     ascii: bool,
+    tool_display_registry: ToolDisplayRegistryRef,
 ) -> Option<String> {
     use crate::chat::markdown::tool_smart_summary;
 
@@ -625,7 +630,19 @@ fn animated_tool_preview(
     let elapsed = start.elapsed().as_secs_f32();
     let scan = crate::ui::theme::tool_scan(anim_frame, ascii);
 
-    let summary = tool_smart_summary(name, args);
+    let args_val: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
+    let (label, summary) = tool_display_registry
+        .as_ref()
+        .and_then(|r| r.read().ok())
+        .and_then(|guard| {
+            guard.get(name).map(|disp| {
+                (
+                    disp.display_name().to_string(),
+                    disp.collapsed_summary(&args_val),
+                )
+            })
+        })
+        .unwrap_or_else(|| (name.to_string(), tool_smart_summary(name, args)));
     let summary_part = if summary.is_empty() {
         String::new()
     } else {
@@ -654,7 +671,7 @@ fn animated_tool_preview(
         .unwrap_or_default();
 
     Some(format!(
-        "\n{SYM_TOOL}  {name}{summary_part}{progress_part}  {scan}  {elapsed:.1}s\n"
+        "\n{SYM_TOOL}  {label}{summary_part}{progress_part}  {scan}  {elapsed:.1}s\n"
     ))
 }
 
@@ -689,6 +706,7 @@ fn make_grouped_preview(
     result_seg: &ChatSegment,
     _tool_args: &std::collections::HashMap<String, String>,
     tool_durations: &std::collections::HashMap<String, f32>,
+    tool_display_registry: ToolDisplayRegistryRef,
 ) -> String {
     use crate::chat::markdown::{tool_smart_summary, SYM_ERR, SYM_EXPAND, SYM_OK};
 
@@ -707,6 +725,25 @@ fn make_grouped_preview(
         _ => return String::new(),
     };
 
+    let args_val: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
+    let (label, summary) = tool_display_registry
+        .as_ref()
+        .and_then(|r| r.read().ok())
+        .and_then(|guard| {
+            guard.get(name).map(|disp| {
+                (
+                    disp.display_name().to_string(),
+                    disp.collapsed_summary(&args_val),
+                )
+            })
+        })
+        .unwrap_or_else(|| (name.to_string(), tool_smart_summary(name, args)));
+    let summary_part = if summary.is_empty() {
+        String::new()
+    } else {
+        format!("  {summary}")
+    };
+
     let is_error = match result_seg {
         ChatSegment::Message(m) => match &m.content {
             MessageContent::ToolResult { content, .. } => content.to_string().starts_with("error:"),
@@ -715,19 +752,13 @@ fn make_grouped_preview(
         _ => false,
     };
 
-    let summary = tool_smart_summary(name, args);
-    let summary_part = if summary.is_empty() {
-        String::new()
-    } else {
-        format!("  {summary}")
-    };
     let status_sym = if is_error { SYM_ERR } else { SYM_OK };
     let duration = tool_durations
         .get(call_id)
         .map(|s| format!("  {:.1}s", s))
         .unwrap_or_default();
 
-    format!("\n{SYM_TOOL}  {name}{summary_part}  {status_sym}{duration}  {SYM_EXPAND}\n")
+    format!("\n{SYM_TOOL}  {label}{summary_part}  {status_sym}{duration}  {SYM_EXPAND}\n")
 }
 
 // ── Clipboard via OSC 52 ──────────────────────────────────────────────────────

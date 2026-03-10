@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use sven_config::AgentMode;
 
+use crate::tool::ToolDisplayRegistry;
 use crate::{OutputCategory, Tool, ToolCall, ToolOutput};
 
 /// A tool schema – mirrors sven_model::ToolSchema but keeps tools crate
@@ -39,6 +40,12 @@ pub struct ToolDisplayInfo {
 /// the agent's internals.
 pub type SharedTools = sven_runtime::Shared<ToolSchema>;
 
+/// Slot for the TUI to receive the tool display registry after the agent
+/// is built. The builder sets it once; the TUI reads it when rendering chat.
+pub type SharedToolDisplays = std::sync::Arc<
+    std::sync::Mutex<Option<std::sync::Arc<std::sync::RwLock<ToolDisplayRegistry>>>>,
+>;
+
 /// Central registry holding all available tools.
 ///
 /// `ToolRegistry` is automatically `Sync` because `HashMap<String, Arc<dyn Tool>>`
@@ -46,17 +53,37 @@ pub type SharedTools = sven_runtime::Shared<ToolSchema>;
 /// supertrait bounds (`Tool: Send + Sync`).  No manual `unsafe impl` is needed.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    /// Shared so the TUI can hold a clone for chat rendering without owning the registry.
+    display_registry: Arc<RwLock<ToolDisplayRegistry>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
         }
     }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
         self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    }
+
+    /// Register a tool that also provides display metadata. The same instance
+    /// is used for execution and for TUI display (collapsed summary, display name).
+    pub fn register_with_display(&mut self, tool: impl Tool + crate::tool::ToolDisplay + 'static) {
+        let arc = Arc::new(tool);
+        let name = arc.name().to_string();
+        self.tools
+            .insert(name.clone(), Arc::clone(&arc) as Arc<dyn Tool>);
+        if let Ok(mut disp) = self.display_registry.write() {
+            disp.register_arc(name, arc as Arc<dyn crate::tool::ToolDisplay>);
+        }
+    }
+
+    /// Shared handle to the display registry for TUI rendering (collapsed preview, etc.).
+    pub fn display_registry(&self) -> Arc<RwLock<ToolDisplayRegistry>> {
+        Arc::clone(&self.display_registry)
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {

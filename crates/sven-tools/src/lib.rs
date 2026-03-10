@@ -12,7 +12,7 @@ pub mod tool;
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use policy::{ApprovalPolicy, RolePolicy, ToolPolicy};
-pub use registry::{SharedTools, ToolDisplayInfo, ToolRegistry, ToolSchema};
+pub use registry::{SharedToolDisplays, SharedTools, ToolRegistry, ToolSchema};
 pub use tool::{
     OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
 };

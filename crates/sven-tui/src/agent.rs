@@ -12,7 +12,7 @@ use sven_core::AgentEvent;
 use sven_input::make_title;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
-use sven_tools::{QuestionRequest, SharedTools, TodoItem};
+use sven_tools::{QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 
@@ -45,8 +45,7 @@ pub enum AgentRequest {
     /// Generate a short chat title from the first user message (LLM, low
     /// max_tokens, no tools). Result is sent as `AgentEvent::TitleGenerated`.
     GenerateTitle { user_text: String },
-    /// Request list of connected peers (node-proxy mode only).
-    /// Result is sent as `AgentEvent::PeerList`.
+    /// Request peer list (node-proxy mode); handled by the mux, not the agent task.
     ListPeers,
 }
 
@@ -76,6 +75,8 @@ pub async fn agent_task(
     // Pre-created shared tool snapshot; populated after registry build so the
     // TUI can display available tools via `/tools` without reaching into the agent.
     shared_tools: SharedTools,
+    // Slot for tool display registry; set after registry build for chat rendering.
+    shared_tool_displays: SharedToolDisplays,
     // Pre-created buffer store; the TUI holds a clone to display live status.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) {
@@ -107,6 +108,7 @@ pub async fn agent_task(
         .with_runtime_context(runtime_ctx)
         .with_buffer_store(buffer_store)
         .with_shared_tools(shared_tools)
+        .with_shared_tool_displays(shared_tool_displays)
         .build(mode, model.clone(), profile)
         .await;
 
@@ -259,9 +261,7 @@ pub async fn agent_task(
                 });
             }
             AgentRequest::ListPeers => {
-                // In local agent mode, we do not have access to P2P peers.
-                // Send an empty peer list.
-                let _ = tx.send(AgentEvent::PeerList(Vec::new())).await;
+                // Only relevant in node-proxy mode; local agent ignores.
             }
         }
     }

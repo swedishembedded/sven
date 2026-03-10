@@ -179,7 +179,7 @@ pub trait ToolDisplay: Send + Sync {
 
 /// Registry for looking up display metadata for tools.
 pub struct ToolDisplayRegistry {
-    displays: std::collections::HashMap<String, Box<dyn ToolDisplay>>,
+    displays: std::collections::HashMap<String, std::sync::Arc<dyn ToolDisplay>>,
 }
 
 impl ToolDisplayRegistry {
@@ -190,7 +190,18 @@ impl ToolDisplayRegistry {
     }
 
     pub fn register<T: ToolDisplay + 'static>(&mut self, name: impl Into<String>, display: T) {
-        self.displays.insert(name.into(), Box::new(display));
+        self.displays
+            .insert(name.into(), std::sync::Arc::new(display));
+    }
+
+    /// Register a display by shared reference. Used when the same instance
+    /// is registered as a tool and as a display (e.g. via `ToolRegistry::register_with_display`).
+    pub fn register_arc(
+        &mut self,
+        name: impl Into<String>,
+        display: std::sync::Arc<dyn ToolDisplay>,
+    ) {
+        self.displays.insert(name.into(), display);
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn ToolDisplay> {

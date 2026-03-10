@@ -165,6 +165,9 @@ pub struct App {
     /// registry is built.  Empty in node-proxy mode (tools are fetched live
     /// from the node when `/tools` is opened).
     pub(crate) shared_tools: sven_tools::SharedTools,
+    /// Tool display registry — set by AgentBuilder after the registry is built.
+    /// Used for chat view (collapsed summary, display name) when present.
+    pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
     pub(crate) history_path: Option<PathBuf>,
     pub(crate) jsonl_path: Option<PathBuf>,
     /// Set to `true` after a tool call completes — triggers a terminal-state
@@ -333,6 +336,9 @@ impl App {
             .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
         let shared_tools = sven_tools::SharedTools::empty();
+        let shared_tool_displays = std::sync::Arc::new(std::sync::Mutex::new(
+            None::<std::sync::Arc<std::sync::RwLock<sven_tools::ToolDisplayRegistry>>>,
+        ));
 
         // ── Session manager initialization ────────────────────────────────────
         let (mut session_manager, mut initial_session_entry) = SessionManager::new();
@@ -426,6 +432,7 @@ impl App {
             shared_skills,
             shared_agents,
             shared_tools,
+            shared_tool_displays,
             history_path,
             jsonl_path,
             needs_terminal_recover: false,
@@ -1002,6 +1009,7 @@ impl App {
             let shared_skills_task = self.shared_skills.clone();
             let shared_agents_task = self.shared_agents.clone();
             let shared_tools_task = self.shared_tools.clone();
+            let shared_tool_displays_task = self.shared_tool_displays.clone();
             let buffer_store_task = Arc::clone(&self.buffer_store);
             tokio::spawn(async move {
                 agent_task(
@@ -1015,6 +1023,7 @@ impl App {
                     shared_skills_task,
                     shared_agents_task,
                     shared_tools_task,
+                    shared_tool_displays_task,
                     buffer_store_task,
                 )
                 .await;
@@ -1534,6 +1543,7 @@ impl App {
         let shared_skills = self.shared_skills.clone();
         let shared_agents = self.shared_agents.clone();
         let shared_tools = self.shared_tools.clone();
+        let shared_tool_displays = self.shared_tool_displays.clone();
         let buffer_store = Arc::clone(&self.buffer_store);
 
         tokio::spawn(crate::agent::agent_task(
@@ -1547,6 +1557,7 @@ impl App {
             shared_skills,
             shared_agents,
             shared_tools,
+            shared_tool_displays,
             buffer_store,
         ));
     }
