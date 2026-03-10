@@ -75,7 +75,7 @@ impl ConfirmModal {
             message: message.into(),
             confirm_label: " Confirm ".into(),
             cancel_label: " Cancel ".into(),
-            focused_button: 1, // default focus on Cancel (safer)
+            focused_button: 0, // default focus on Confirm (destructive actions default to Delete)
             action: Some(action),
             border_color: Color::Red,
         }
