@@ -5,7 +5,7 @@
 //! Default MCP-safe tool registry for the sven MCP server.
 //!
 //! Not every sven tool makes sense to expose via MCP.  Tools that require a
-//! live TUI session (`ask_question`, `switch_mode`, `todo_write`), tools that
+//! live TUI session (`ask_question`, `switch_mode`, `todo`), tools that
 //! modify internal agent state (`update_memory`), and tools that need the P2P
 //! stack (`delegate`, `list_peers`) are intentionally omitted.
 //!

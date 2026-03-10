@@ -60,7 +60,27 @@ The token was printed once when the node started.  If you lost it, rotate it:
 sven node regenerate-token
 ```
 
-#### Option B: P2P operator channel (for native/mobile clients)
+#### Option B: Interactive TUI connected to the node
+
+To run the full-screen TUI with the agent backed by a running node (so you get
+`list_peers` and `delegate_task` in-session), set the node URL and token and
+run sven with no subcommand:
+
+```sh
+export SVEN_NODE_TOKEN=<token-shown-at-first-startup>
+export SVEN_NODE_URL=wss://127.0.0.1:18790/ws
+sven
+```
+
+Use the same port your node is listening on (default `18790`). If the node runs
+without TLS (e.g. `insecure_dev_mode: true`), use `ws://` and optionally
+`export SVEN_NODE_INSECURE=1`.
+
+When you open the node’s web terminal (`https://<node>/web`), the node injects
+`SVEN_NODE_URL` and `SVEN_NODE_TOKEN` into that PTY, so the in-browser TUI is
+already connected to the node.
+
+#### Option C: P2P operator channel (for native/mobile clients)
 
 This path is for native applications (e.g. a mobile app) that connect via
 libp2p rather than HTTP.  It uses `sven node authorize` to add a device to

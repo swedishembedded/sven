@@ -9,7 +9,7 @@ pub mod load_skill;
 pub mod memory;
 pub mod read_lints;
 pub mod switch_mode;
-pub mod todo_write;
+pub mod todo;
 pub mod update_memory;
 
 pub use ask_question::AskQuestionTool;
@@ -18,5 +18,5 @@ pub use load_skill::LoadSkillTool;
 pub use memory::MemoryTool;
 pub use read_lints::ReadLintsTool;
 pub use switch_mode::SwitchModeTool;
-pub use todo_write::TodoWriteTool;
+pub use todo::TodoTool;
 pub use update_memory::UpdateMemoryTool;

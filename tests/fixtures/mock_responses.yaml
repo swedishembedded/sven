@@ -128,10 +128,9 @@ responses:
     pattern: "list files"
     tool_calls:
       - id: tc-list
-        tool: list_dir
+        tool: shell
         args:
-          path: /tmp
-          depth: 1
+          shell_command: "ls /tmp"
     after_tool_reply: "Listed /tmp directory. Found the expected files."
 
   # ── Shell execution ─────────────────────────────────────────────────────────
@@ -140,18 +139,18 @@ responses:
     pattern: "run echo"
     tool_calls:
       - id: tc-echo
-        tool: run_terminal_command
+        tool: shell
         args:
-          command: "echo sven_mock_shell_output"
+          shell_command: "echo sven_mock_shell_output"
     after_tool_reply: "Shell command executed. Output contained: sven_mock_shell_output"
 
   - match_type: contains
     pattern: "run ls"
     tool_calls:
       - id: tc-ls
-        tool: run_terminal_command
+        tool: shell
         args:
-          command: "ls /tmp"
+          shell_command: "ls /tmp"
     after_tool_reply: "Directory listing completed successfully."
 
   # ── Multi-step markdown sequences ───────────────────────────────────────────
@@ -211,15 +210,15 @@ responses:
           max_results: 5
     after_tool_reply: "Found Rust source files in the crates directory."
 
-  # ── New tools (run_terminal_command, read_file, edit_file, grep, apply_patch) ─
+  # ── New tools (shell, read_file, edit_file, grep, apply_patch) ─
 
   - match_type: contains
     pattern: "run terminal command"
     tool_calls:
       - id: tc-rtc
-        tool: run_terminal_command
+        tool: shell
         args:
-          command: "echo sven_terminal_output"
+          shell_command: "echo sven_terminal_output"
     after_tool_reply: "Terminal command executed. Output: sven_terminal_output"
 
   - match_type: contains
@@ -256,19 +255,24 @@ responses:
     pattern: "search the codebase"
     tool_calls:
       - id: tc-sc
-        tool: search_codebase
+        tool: grep
         args:
-          query: "ToolRegistry"
+          pattern: "ToolRegistry"
           path: /data/agents/sven/crates/sven-tools/src
+          include: "*.rs"
+          case_sensitive: true
           limit: 5
+          output_mode: "content"
+          context_lines: 0
     after_tool_reply: "Codebase search completed."
 
   - match_type: contains
     pattern: "write todo list"
     tool_calls:
       - id: tc-todo
-        tool: todo_write
+        tool: todo
         args:
+          action: "set"
           todos:
             - id: "1"
               content: "first task"
@@ -282,10 +286,9 @@ responses:
     pattern: "list the directory"
     tool_calls:
       - id: tc-ld
-        tool: list_dir
+        tool: shell
         args:
-          path: /data/agents/sven/crates
-          depth: 1
+          shell_command: "ls /data/agents/sven/crates"
     after_tool_reply: "Directory listing complete."
 
   # ── Headless enhancements test patterns ─────────────────────────────────────
@@ -320,17 +323,19 @@ responses:
     pattern: "start gdb server"
     tool_calls:
       - id: tc-gdb-start
-        tool: gdb_start_server
+        tool: gdb
         args:
-          command: "sleep 30"
+          action: start_server
+          server_command: "sleep 30"
     after_tool_reply: "GDB server started. (Note: mock server uses sleep as placeholder; use gdb_connect to attach.)"
 
   - match_type: contains
     pattern: "connect gdb"
     tool_calls:
       - id: tc-gdb-connect
-        tool: gdb_connect
+        tool: gdb
         args:
+          action: connect
           port: 19998
     after_tool_reply: "GDB connect attempted. Result depends on server availability."
 
@@ -338,8 +343,9 @@ responses:
     pattern: "stop gdb"
     tool_calls:
       - id: tc-gdb-stop
-        tool: gdb_stop
-        args: {}
+        tool: gdb
+        args:
+          action: stop
     after_tool_reply: "GDB session stopped successfully."
 
   - match_type: contains
@@ -387,8 +393,9 @@ responses:
     pattern: "open context file"
     tool_calls:
       - id: tc-ctx-open
-        tool: context_open
+        tool: context
         args:
+          action: open
           path: /data/agents/sven/crates/sven-tools/src/builtin/context/store.rs
     after_tool_reply: "Context file opened successfully. I have a handle for store.rs."
 
@@ -396,8 +403,9 @@ responses:
     pattern: "open context directory"
     tool_calls:
       - id: tc-ctx-open-dir
-        tool: context_open
+        tool: context
         args:
+          action: open
           path: /data/agents/sven/crates/sven-tools/src/builtin/context
           include_pattern: "*.rs"
           recursive: false
@@ -407,8 +415,9 @@ responses:
     pattern: "open context missing path"
     tool_calls:
       - id: tc-ctx-open-missing
-        tool: context_open
+        tool: context
         args:
+          action: open
           path: /tmp/sven_no_such_context_path_xyz_99
     after_tool_reply: "Attempted to open a missing path. The tool reported an error as expected."
 
@@ -416,8 +425,9 @@ responses:
     pattern: "grep context bad handle"
     tool_calls:
       - id: tc-ctx-grep-bad
-        tool: context_grep
+        tool: context
         args:
+          action: grep
           handle: ctx_bad_handle_test_xyz
           pattern: "pub fn"
     after_tool_reply: "Attempted grep with an invalid context handle. Error handled gracefully."
@@ -426,8 +436,9 @@ responses:
     pattern: "read context bad handle"
     tool_calls:
       - id: tc-ctx-read-bad
-        tool: context_read
+        tool: context
         args:
+          action: read
           handle: ctx_bad_handle_test_xyz
           start_line: 1
           end_line: 10
@@ -437,8 +448,9 @@ responses:
     pattern: "query context bad handle"
     tool_calls:
       - id: tc-ctx-query-bad
-        tool: context_query
+        tool: context
         args:
+          action: query
           handle: ctx_bad_handle_test_xyz
           prompt: "Summarise this content: {chunk}"
     after_tool_reply: "Attempted context_query with an invalid handle. Error handled gracefully."
@@ -447,8 +459,9 @@ responses:
     pattern: "reduce context bad handle"
     tool_calls:
       - id: tc-ctx-reduce-bad
-        tool: context_reduce
+        tool: context
         args:
+          action: reduce
           handle: ctx_bad_handle_test_xyz
           prompt: "Synthesise the results above."
     after_tool_reply: "Attempted context_reduce with an invalid handle. Error handled gracefully."

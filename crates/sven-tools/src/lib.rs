@@ -38,7 +38,7 @@ pub use builtin::system::load_skill::LoadSkillTool;
 pub use builtin::system::memory::MemoryTool;
 pub use builtin::system::read_lints::ReadLintsTool;
 pub use builtin::system::switch_mode::SwitchModeTool;
-pub use builtin::system::todo_write::TodoWriteTool;
+pub use builtin::system::todo::TodoTool;
 pub use builtin::system::update_memory::UpdateMemoryTool;
 
 // Terminal tools

@@ -239,7 +239,7 @@ sven has a set of built-in tools it can call to complete tasks:
 | `web_fetch` | Fetch a URL |
 | `web_search` | Search the web |
 | `read_lints` | Read linter diagnostics |
-| `todo_write` | Track tasks in the current session |
+| `todo` | Read or update the task list for the current session (call with no args to read) |
 | `ask_question` | Ask you a clarifying question |
 | `switch_mode` | Change the agent mode mid-session |
 | `gdb_start_server` | Start a GDB server in the background |

@@ -185,7 +185,7 @@ The agent has a rich built-in toolset:
 | **Sub-agents** | `task` — spawn a focused sub-agent for a self-contained subtask |
 | **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
 | **Agent networking** | `list_peers`, `delegate_task` *(node mode only)* |
-| **Session** | `switch_mode`, `todo_write`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
+| **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
 †`ask_question` is only available in interactive TUI sessions.
 
@@ -326,6 +326,10 @@ sven node start [--config .node.yaml]
 # Send a task to the running node from another terminal
 export SVEN_NODE_TOKEN=<token>
 sven node exec "What files are in the current directory?"
+
+# Or run the interactive TUI connected to the node (list_peers, delegate_task)
+export SVEN_NODE_URL=wss://127.0.0.1:18790/ws
+sven
 
 # Pair a mobile/native operator device
 sven node authorize "sven://12D3KooW..."

@@ -71,7 +71,7 @@ impl std::fmt::Display for TodoStatus {
     }
 }
 
-/// A structured todo item managed by the todo_write tool.
+/// A structured todo item managed by the todo tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TodoItem {
     pub id: String,

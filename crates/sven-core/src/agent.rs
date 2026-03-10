@@ -45,7 +45,7 @@ pub struct Agent {
     /// tool-driven mode changes are immediately visible to the agent loop.
     current_mode: Arc<Mutex<AgentMode>>,
     /// Receives `ToolEvent`s emitted by stateful tools (todo updates, mode
-    /// changes).  The paired sender is held by `TodoWriteTool` /
+    /// changes).  The paired sender is held by `TodoTool` /
     /// `SwitchModeTool` inside the registry.
     tool_event_rx: mpsc::Receiver<ToolEvent>,
 }
@@ -57,7 +57,7 @@ impl Agent {
     /// `SwitchModeTool` in `tools`, so that mode changes propagate correctly.
     ///
     /// `tool_event_rx` must be the receiving end of the channel whose sender
-    /// was given to `TodoWriteTool` / `SwitchModeTool`, so that tool events
+    /// was given to `TodoTool` / `SwitchModeTool`, so that tool events
     /// are drained by the agent loop.
     pub fn new(
         model: Arc<dyn sven_model::ModelProvider>,

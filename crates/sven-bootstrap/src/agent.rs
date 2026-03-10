@@ -91,7 +91,7 @@ impl AgentBuilder {
     /// Build the [`Agent`] with the given mode, model, and tool-set profile.
     ///
     /// This method owns the creation of the shared mode lock and tool-event
-    /// channel so that `SwitchModeTool` / `TodoWriteTool` and the agent loop
+    /// channel so that `SwitchModeTool` / `TodoTool` and the agent loop
     /// operate on **the same** instances:
     ///
     /// 1. Creates `mode_lock` (same Arc for both the registry and the Agent).

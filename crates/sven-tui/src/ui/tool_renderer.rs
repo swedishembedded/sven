@@ -550,7 +550,7 @@ fn render_system_tool_call(
     accent: Color,
 ) -> Vec<Line<'static>> {
     match tool_name {
-        "todo_write" | "TodoWrite" => {
+        "todo" => {
             let mut lines: Vec<Line<'static>> = Vec::new();
             if let Some(todos) = args.get("todos").and_then(|v| v.as_array()) {
                 let avail = (width as usize).saturating_sub(6);
@@ -567,7 +567,7 @@ fn render_system_tool_call(
                         .to_string();
                     let (sym, col) = match status.as_str() {
                         "completed" => ("☑", Color::Rgb(80, 200, 120)),
-                        "in_progress" => ("⟳", Color::Rgb(220, 180, 60)),
+                        "in_progress" => ("●", Color::Rgb(220, 180, 60)),
                         "cancelled" => ("✗", TEXT_DIM),
                         _ => ("☐", TEXT_DIM),
                     };

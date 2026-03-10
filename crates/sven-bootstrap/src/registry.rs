@@ -28,7 +28,7 @@ use sven_tools::{
     events::{TodoItem, ToolEvent},
     AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GdbSessionState, GrepTool,
     LoadSkillTool, MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
-    TodoWriteTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -46,7 +46,7 @@ use crate::GdbTool;
 ///
 /// * `mode_lock` — unused after removing `SwitchModeTool`; kept for API compatibility.
 /// * `tool_event_tx` — the sending half of the channel whose receiving end is
-///   passed to `Agent::new()`. `TodoWriteTool` sends events here.
+///   passed to `Agent::new()`. `TodoTool` sends events here.
 ///
 /// The `buffer_store` is now bundled inside the `profile` variants that need it
 /// (`Full`, `Coding`, `SubAgent`).
@@ -133,7 +133,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     if let Some(tx) = p.question_tx {
         reg.register(AskQuestionTool::new_tui(tx));
     }
-    reg.register(TodoWriteTool::new(p.todos, p.tool_event_tx.clone()));
+    reg.register(TodoTool::new(p.todos, p.tool_event_tx.clone()));
 
     reg.register(TaskTool::new(
         Arc::clone(&p.buffer_store),
@@ -171,7 +171,7 @@ fn build_profile_research(
     if let Some(tx) = question_tx {
         reg.register(AskQuestionTool::new_tui(tx));
     }
-    reg.register(TodoWriteTool::new(todos, tool_event_tx.clone()));
+    reg.register(TodoTool::new(todos, tool_event_tx.clone()));
 
     // Task is included for delegation but limited to research mode.
     let buffer_store = Arc::new(Mutex::new(OutputBufferStore::new()));
@@ -207,7 +207,7 @@ fn build_profile_subagent(
 
     // ask_question omitted: sub-agents run headless.
     // TaskTool omitted: prevent unbounded nesting.
-    reg.register(TodoWriteTool::new(todos, tool_event_tx));
+    reg.register(TodoTool::new(todos, tool_event_tx));
 
     reg
 }
@@ -311,7 +311,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
-    reg.register(TodoWriteTool::new(todos, event_tx.clone()));
+    reg.register(TodoTool::new(todos, event_tx.clone()));
 
     reg.register(LoadSkillTool::new(Shared::empty()));
 

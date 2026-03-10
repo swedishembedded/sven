@@ -86,8 +86,8 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
             .map(|q| truncate_summary(&q, 80))
             .unwrap_or_default(),
 
-        // Todo management — fixed label
-        "todo_write" | "TodoWrite" | "todo_read" | "TodoRead" => String::new(),
+        // Todo management
+        "todo" => String::new(),
 
         // Lints
         "ReadLints" | "read_lints" => String::new(),
@@ -132,9 +132,9 @@ pub fn tool_category(name: &str) -> &'static str {
         "grep" | "Grep" | "glob" | "Glob" | "search_codebase" | "SemanticSearch"
         | "semantic_search" | "search_knowledge" | "SearchKnowledge" => "search",
         "web_search" | "WebSearch" | "web_fetch" | "WebFetch" => "web",
-        "todo_write" | "TodoWrite" | "todo_read" | "TodoRead" | "read_lints" | "ReadLints"
-        | "ask_question" | "AskQuestion" | "switch_mode" | "SwitchMode" | "load_skill"
-        | "LoadSkill" | "memory" | "Memory" | "update_memory" | "UpdateMemory" => "system",
+        "todo" | "read_lints" | "ReadLints" | "ask_question" | "AskQuestion" | "switch_mode"
+        | "SwitchMode" | "load_skill" | "LoadSkill" | "memory" | "Memory" | "update_memory"
+        | "UpdateMemory" => "system",
         _ if name.starts_with("gdb") || name.starts_with("Gdb") => "agent",
         _ if name.starts_with("buf_") => "system",
         _ => "",

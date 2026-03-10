@@ -7,7 +7,7 @@
 #   • read_file / edit_file / write tools work end-to-end
 #   • grep / search_codebase return results
 #   • list_dir returns directory entries
-#   • todo_write emits todo events to stderr
+#   • todo emits todo events to stderr
 #   • mode filtering (research/plan/agent)
 
 load helpers
@@ -24,7 +24,7 @@ load helpers
     run_split_output bash -c \
         'echo "run terminal command" | "$BIN" --headless --model mock'
     [[ "${STDERR_OUT}" == *"[tool]"* ]] || \
-    [[ "${STDERR_OUT}" == *"run_terminal_command"* ]] || \
+    [[ "${STDERR_OUT}" == *"shell"* ]] || \
     [[ "${STDERR_OUT}" == *"[tool ok]"* ]] && true
 }
 
@@ -87,15 +87,15 @@ load helpers
     assert_output_contains "listing"
 }
 
-# ── todo_write ────────────────────────────────────────────────────────────────
+# ── todo ──────────────────────────────────────────────────────────────────────
 
-@test "05.10 todo_write emits todo update on stderr" {
+@test "05.10 todo emits todo update on stderr" {
     run_split_output bash -c 'echo "write todo list" | "$BIN" --headless --model mock'
     [ "${EXIT_CODE}" -eq 0 ]
     [[ "${STDERR_OUT}" == *"todo"* ]] || [[ "${STDERR_OUT}" == *"[todos]"* ]] && true
 }
 
-@test "05.11 todo_write does not bleed into stdout" {
+@test "05.11 todo does not bleed into stdout" {
     run bash -c 'echo "write todo list" | "$BIN" --headless --model mock 2>/dev/null'
     refute_output_contains "[todos]"
 }
@@ -155,8 +155,8 @@ load helpers
     assert_output_contains "ok"
 }
 
-@test "05.20 todo_write unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools todo_write 2>&1 | tail -5'
+@test "05.20 todo unit tests pass" {
+    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools builtin::system::todo 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }

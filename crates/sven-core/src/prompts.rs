@@ -144,7 +144,7 @@ mod guidelines {
     }
 
     pub fn workflow_efficiency() -> &'static str {
-        "- Use `todo_write` for multi-step tasks (3+ steps); update silently and mark complete after each step.\n\
+        "- Use `todo` for multi-step tasks (3+ steps): `action=read` (default) to inspect, `action=add` to append, `action=update` with just {id, status} to mark a single item done, `action=set` to replace all. Update silently.\n\
          - Store project-specific conventions with `memory(action=set)`; retrieve with `memory(action=list)` at session start.\n\
          - Batch independent tool calls in parallel to increase efficiency.\n\
          - Before modifying a subsystem, call `memory(action=search_knowledge)` to retrieve any existing knowledge spec.\n\
