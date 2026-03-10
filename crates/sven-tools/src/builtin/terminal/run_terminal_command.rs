@@ -13,7 +13,7 @@ use sven_config::AgentMode;
 
 use crate::builtin::shell::head_tail_truncate;
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct RunTerminalCommandTool {
     pub timeout_secs: u64,
@@ -158,6 +158,21 @@ impl Tool for RunTerminalCommandTool {
             Ok(Err(e)) => ToolOutput::err(&call.id, format!("spawn error: {e}")),
             Err(_) => ToolOutput::err(&call.id, format!("timeout after {timeout}s")),
         }
+    }
+}
+
+impl ToolDisplay for RunTerminalCommandTool {
+    fn display_name(&self) -> &str {
+        "Terminal"
+    }
+    fn icon(&self) -> &str {
+        "▶"
+    }
+    fn category(&self) -> &str {
+        "shell"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("run_terminal_command", args)
     }
 }
 

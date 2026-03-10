@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct ReadLintsTool;
 
@@ -210,6 +210,27 @@ async fn run_ruff(workdir: &str, paths: &[String]) -> String {
             }
         }
         Err(e) => format!("ruff failed: {e}"),
+    }
+}
+
+impl ToolDisplay for ReadLintsTool {
+    fn display_name(&self) -> &str {
+        "Lints"
+    }
+    fn icon(&self) -> &str {
+        "⚠"
+    }
+    fn category(&self) -> &str {
+        "system"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+            if !paths.is_empty() {
+                let first = paths[0].as_str().unwrap_or("");
+                return crate::tool_summary::shorten_path(first, 2);
+            }
+        }
+        String::new()
     }
 }
 

@@ -9,7 +9,7 @@ use tracing::debug;
 
 use crate::params::{opt_bool, opt_str, opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Cached availability of `rg` (ripgrep).  Probed once on first use; the
 /// result never changes during a sven session.
@@ -246,6 +246,21 @@ async fn run_rg(
         ));
     }
     Ok(result)
+}
+
+impl ToolDisplay for GrepTool {
+    fn display_name(&self) -> &str {
+        "Grep"
+    }
+    fn icon(&self) -> &str {
+        "🔍"
+    }
+    fn category(&self) -> &str {
+        "search"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("grep", args)
+    }
 }
 
 #[cfg(test)]

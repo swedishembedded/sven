@@ -12,6 +12,7 @@ use ratatui::{
 };
 
 use super::theme::{border_type, BAR_AGENT, BAR_TOOL, BG_ELEVATED, BORDER_FOCUS, TEXT, TEXT_DIM};
+use super::width_utils::{display_width, fit_to_width, truncate_to_width_exact};
 
 /// All key binding entries, grouped into sections.  Each tuple is `(key, description, is_header)`.
 const BINDINGS: &[(&str, &str, bool)] = &[
@@ -121,12 +122,14 @@ fn render_column(entries: &[(&str, &str, bool)], area: Rect, buf: &mut Buffer) {
                     Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
                 )])
             } else {
-                let key_str: String = key.chars().take(key_width).collect();
-                let desc_avail = (area.width as usize).saturating_sub(key_width + 1);
-                let desc_str: String = desc.chars().take(desc_avail).collect();
+                let key_str = truncate_to_width_exact(key, key_width);
+                // Pad the key column to a consistent display width.
+                let key_padded = format!(" {} ", fit_to_width(&key_str, key_width));
+                let desc_avail = (area.width as usize).saturating_sub(display_width(&key_padded));
+                let desc_str = truncate_to_width_exact(desc, desc_avail);
                 Line::from(vec![
                     Span::styled(
-                        format!(" {key_str:<kw$} ", kw = key_width),
+                        key_padded,
                         Style::default().fg(BAR_TOOL).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(desc_str, Style::default().fg(TEXT)),

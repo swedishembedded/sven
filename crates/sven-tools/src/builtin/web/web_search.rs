@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 #[derive(Default)]
 pub struct WebSearchTool {
@@ -151,6 +151,21 @@ fn urlencoding(s: &str) -> String {
         }
     }
     encoded
+}
+
+impl ToolDisplay for WebSearchTool {
+    fn display_name(&self) -> &str {
+        "WebSearch"
+    }
+    fn icon(&self) -> &str {
+        "🌐"
+    }
+    fn category(&self) -> &str {
+        "web"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("web_search", args)
+    }
 }
 
 #[cfg(test)]

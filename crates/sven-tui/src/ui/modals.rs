@@ -12,6 +12,7 @@ use ratatui::{
 };
 
 use super::theme::border_type;
+use super::width_utils::{display_width, truncate_to_width_exact};
 
 // ── ConfirmModal widget ───────────────────────────────────────────────────────
 
@@ -38,12 +39,7 @@ impl Widget for ConfirmModalView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let bt = border_type(self.ascii);
 
-        let max_line_chars = self
-            .message
-            .lines()
-            .map(|l| l.chars().count())
-            .max()
-            .unwrap_or(0);
+        let max_line_chars = self.message.lines().map(display_width).max().unwrap_or(0);
         let modal_w = (max_line_chars as u16 + 4)
             .clamp(40, 60)
             .min(area.width.saturating_sub(4));
@@ -95,7 +91,7 @@ impl Widget for ConfirmModalView<'_> {
 
         if !self.has_action {
             let lbl = self.cancel_label;
-            let bw = lbl.len() as u16 + 2;
+            let bw = display_width(lbl) as u16 + 2;
             let bx = inner.x + (inner.width.saturating_sub(bw)) / 2;
             Paragraph::new(Line::from(Span::styled(
                 format!("[{lbl}]"),
@@ -107,8 +103,8 @@ impl Widget for ConfirmModalView<'_> {
             return;
         }
 
-        let cw = self.confirm_label.len() as u16 + 2;
-        let xw = self.cancel_label.len() as u16 + 2;
+        let cw = display_width(self.confirm_label) as u16 + 2;
+        let xw = display_width(self.cancel_label) as u16 + 2;
         let gap: u16 = 4;
         let total = cw + gap + xw;
         let bx = inner.x + inner.width.saturating_sub(total) / 2;
@@ -288,7 +284,7 @@ impl QuestionModalView<'_> {
                     .map(|c| c.width().unwrap_or(1))
                     .sum();
                 let number_part = format!("{}. Other: ", q.options.len() + 1);
-                let prefix_cols = 2 + indicator_w + 1 + number_part.len();
+                let prefix_cols = 2 + indicator_w + 1 + display_width(&number_part);
                 let text_before =
                     &self.other_input[..self.other_cursor.min(self.other_input.len())];
                 let cursor_col_offset: usize =
@@ -301,12 +297,11 @@ impl QuestionModalView<'_> {
                     format!("{}. Other (type a custom answer)", q.options.len() + 1)
                 } else {
                     const MAX_PREVIEW: usize = 35;
-                    let preview: String = self.other_input.chars().take(MAX_PREVIEW + 1).collect();
-                    if preview.chars().count() > MAX_PREVIEW {
+                    if display_width(self.other_input) > MAX_PREVIEW {
                         format!(
                             "{}. Other: {}…",
                             q.options.len() + 1,
-                            preview.chars().take(MAX_PREVIEW).collect::<String>()
+                            truncate_to_width_exact(self.other_input, MAX_PREVIEW)
                         )
                     } else {
                         format!("{}. Other: {}", q.options.len() + 1, self.other_input)

@@ -8,6 +8,7 @@ pub(crate) mod params;
 pub mod policy;
 pub mod registry;
 pub mod tool;
+pub mod tool_summary;
 
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
@@ -16,6 +17,7 @@ pub use registry::{SharedToolDisplays, SharedTools, ToolRegistry, ToolSchema};
 pub use tool::{
     OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
 };
+pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};
 
 // File operation tools
 pub use builtin::file::delete_file::DeleteFileTool;

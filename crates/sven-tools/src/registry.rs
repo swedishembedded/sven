@@ -40,11 +40,36 @@ pub struct ToolDisplayInfo {
 /// the agent's internals.
 pub type SharedTools = sven_runtime::Shared<ToolSchema>;
 
-/// Slot for the TUI to receive the tool display registry after the agent
-/// is built. The builder sets it once; the TUI reads it when rendering chat.
-pub type SharedToolDisplays = std::sync::Arc<
-    std::sync::Mutex<Option<std::sync::Arc<std::sync::RwLock<ToolDisplayRegistry>>>>,
->;
+/// Slot for the TUI to receive the tool display registry after the agent is built.
+///
+/// The builder calls [`SharedToolDisplays::set`] **once** at startup; the TUI
+/// holds a cheap clone and calls [`SharedToolDisplays::get`] when rendering.
+/// Using `RwLock` (rather than `Mutex`) allows many concurrent readers.
+#[derive(Clone, Default)]
+pub struct SharedToolDisplays(
+    std::sync::Arc<
+        std::sync::RwLock<Option<std::sync::Arc<std::sync::RwLock<ToolDisplayRegistry>>>>,
+    >,
+);
+
+impl SharedToolDisplays {
+    /// Create an empty (uninitialized) slot.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the registry.  Should be called exactly once, by the agent builder.
+    pub fn set(&self, registry: std::sync::Arc<std::sync::RwLock<ToolDisplayRegistry>>) {
+        if let Ok(mut guard) = self.0.write() {
+            *guard = Some(registry);
+        }
+    }
+
+    /// Return the inner `Arc<RwLock<ToolDisplayRegistry>>`, if set.
+    pub fn get(&self) -> Option<std::sync::Arc<std::sync::RwLock<ToolDisplayRegistry>>> {
+        self.0.read().ok()?.as_ref().cloned()
+    }
+}
 
 /// Central registry holding all available tools.
 ///

@@ -21,6 +21,7 @@ use sven_input::ChatStatus;
 use crate::app::session_manager::SessionEntry;
 
 use super::theme::{BORDER_DIM, BORDER_FOCUS, BORDER_RESIZE, SPINNER_FRAMES, TEXT, TEXT_DIM};
+use super::width_utils::{char_width, truncate_to_width_exact};
 
 /// Data for a single row in the chat list.
 pub struct ChatListItem<'a> {
@@ -180,18 +181,20 @@ impl Widget for ChatListPane<'_> {
             let indent = item.depth.saturating_mul(2);
             let title_x = inner.x + 2 + indent;
             let max_title_width = inner.width.saturating_sub(2 + indent) as usize;
-            let title_chars: Vec<char> = item.title.chars().collect();
-            let display_len = title_chars.len().min(max_title_width);
-            let truncated: String = title_chars[..display_len].iter().collect();
 
-            // Check if we need the ellipsis.
-            let (display_title, needs_ellipsis) =
-                if title_chars.len() > max_title_width && max_title_width > 1 {
-                    let t: String = title_chars[..max_title_width - 1].iter().collect();
-                    (t, true)
-                } else {
-                    (truncated, false)
-                };
+            // Width-aware truncation: reserve 1 col for ellipsis if needed.
+            let full_title = item.title;
+            let (display_title, needs_ellipsis) = if super::width_utils::display_width(full_title)
+                > max_title_width
+                && max_title_width > 1
+            {
+                (
+                    truncate_to_width_exact(full_title, max_title_width.saturating_sub(1)),
+                    true,
+                )
+            } else {
+                (truncate_to_width_exact(full_title, max_title_width), false)
+            };
 
             let mut col_offset = 0u16;
             for ch in display_title.chars() {
@@ -199,7 +202,7 @@ impl Widget for ChatListPane<'_> {
                     cell.set_char(ch);
                     cell.set_style(text_style.bg(bg_color));
                 }
-                col_offset += 1;
+                col_offset += char_width(ch) as u16;
             }
             if needs_ellipsis {
                 let ellipsis_x = title_x + col_offset;

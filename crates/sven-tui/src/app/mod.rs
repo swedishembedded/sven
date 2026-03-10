@@ -336,9 +336,7 @@ impl App {
             .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
         let shared_tools = sven_tools::SharedTools::empty();
-        let shared_tool_displays = std::sync::Arc::new(std::sync::Mutex::new(
-            None::<std::sync::Arc<std::sync::RwLock<sven_tools::ToolDisplayRegistry>>>,
-        ));
+        let shared_tool_displays = sven_tools::SharedToolDisplays::new();
 
         // ── Session manager initialization ────────────────────────────────────
         let (mut session_manager, mut initial_session_entry) = SessionManager::new();
@@ -835,7 +833,6 @@ impl App {
                 .iter()
                 .map(|peer| crate::ui::PeerListItem {
                     name: &peer.name,
-                    peer_id: &peer.peer_id,
                     connected: peer.connected,
                     can_delegate: peer.can_delegate,
                 })
@@ -1367,6 +1364,36 @@ impl App {
                 None
             }
         });
+
+        // If still no chat and this is a subagent session with a buffer handle,
+        // populate chat from the buffer so the user sees the subagent's live output.
+        let target_chat = if target_chat.is_none() {
+            let buffer_handle = self
+                .sessions
+                .get(&target_id)
+                .and_then(|e| e.buffer_handle.clone());
+            if let Some(handle) = buffer_handle {
+                let store = self.buffer_store.lock().await;
+                let content = store.read_all(&handle).unwrap_or_default();
+                drop(store);
+                if !content.is_empty() {
+                    use sven_model::{Message, MessageContent, Role};
+                    let seg = ChatSegment::Message(Message {
+                        role: Role::Assistant,
+                        content: MessageContent::Text(content),
+                    });
+                    let mut chat = ChatState::new();
+                    chat.segments = vec![seg];
+                    Some(chat)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            target_chat
+        };
 
         let old_chat = std::mem::replace(&mut self.chat, target_chat.unwrap_or_default());
         let _ = old_chat; // already saved to session entry

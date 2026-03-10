@@ -8,7 +8,7 @@ use tracing::debug;
 use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct WriteTool;
 
@@ -130,6 +130,21 @@ impl Tool for WriteTool {
                 Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
             }
         }
+    }
+}
+
+impl ToolDisplay for WriteTool {
+    fn display_name(&self) -> &str {
+        "Write"
+    }
+    fn icon(&self) -> &str {
+        "📝"
+    }
+    fn category(&self) -> &str {
+        "file"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("write_file", args)
     }
 }
 

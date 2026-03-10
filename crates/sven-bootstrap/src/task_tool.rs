@@ -312,146 +312,139 @@ impl Tool for TaskTool {
             self.buffer_store.lock().await.set_pid(&handle_id, pid);
         }
 
-        // Launch background reader task.
+        // Stream subprocess output into the buffer, then block until done.
+        // This is safe because each tool call already runs in its own tokio::spawn
+        // task (via ToolSlotManager::spawn_task), so parallel task tool calls
+        // execute concurrently without blocking each other.
         let store_clone = Arc::clone(&self.buffer_store);
         let event_tx_clone = self.tool_event_tx.clone();
         let handle_id_clone = handle_id.clone();
         let call_id = call.id.clone();
 
-        tokio::spawn(async move {
-            let stdout = child.stdout.take().expect("stdout piped");
-            let stderr = child.stderr.take().expect("stderr piped");
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
 
-            // Read stdout and stderr concurrently into the buffer.
-            let store_out = Arc::clone(&store_clone);
-            let hid_out = handle_id_clone.clone();
-            let stdout_task = tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let line_bytes = format!("{}\n", line);
-                    store_out
-                        .lock()
-                        .await
-                        .append(&hid_out, line_bytes.as_bytes());
-                }
-            });
+        // Read stdout and stderr concurrently into the buffer.
+        let store_out = Arc::clone(&store_clone);
+        let hid_out = handle_id_clone.clone();
+        let stdout_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                let line_bytes = format!("{}\n", line);
+                store_out
+                    .lock()
+                    .await
+                    .append(&hid_out, line_bytes.as_bytes());
+            }
+        });
 
-            let store_err = Arc::clone(&store_clone);
-            let hid_err = handle_id_clone.clone();
-            let stderr_task = tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let line_bytes = format!("[stderr] {}\n", line);
-                    store_err
-                        .lock()
-                        .await
-                        .append(&hid_err, line_bytes.as_bytes());
-                }
-            });
+        let store_err = Arc::clone(&store_clone);
+        let hid_err = handle_id_clone.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                let line_bytes = format!("[stderr] {}\n", line);
+                store_err
+                    .lock()
+                    .await
+                    .append(&hid_err, line_bytes.as_bytes());
+            }
+        });
 
-            // Progress ticker: send status snapshots while running.
-            let store_prog = Arc::clone(&store_clone);
-            let hid_prog = handle_id_clone.clone();
-            let call_id_prog = call_id.clone();
-            let event_tx_prog = event_tx_clone.clone();
-            let progress_task = tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(PROGRESS_INTERVAL_MS))
-                        .await;
+        // Progress ticker: send status snapshots while running.
+        let store_prog = Arc::clone(&store_clone);
+        let hid_prog = handle_id_clone.clone();
+        let call_id_prog = call_id.clone();
+        let event_tx_prog = event_tx_clone.clone();
+        let progress_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(PROGRESS_INTERVAL_MS)).await;
 
-                    let (status, tail, lines) = {
-                        let s = store_prog.lock().await;
-                        let meta = match s.metadata(&hid_prog) {
-                            Some(m) => m,
-                            None => break,
-                        };
-                        let done = matches!(
-                            meta.status,
-                            BufferStatus::Finished { .. } | BufferStatus::Failed { .. }
-                        );
-                        let tail = s.tail(&hid_prog, PROGRESS_TAIL_LINES);
-                        (done, tail, meta.total_lines)
+                let (status, tail, lines) = {
+                    let s = store_prog.lock().await;
+                    let meta = match s.metadata(&hid_prog) {
+                        Some(m) => m,
+                        None => break,
                     };
+                    let done = matches!(
+                        meta.status,
+                        BufferStatus::Finished { .. } | BufferStatus::Failed { .. }
+                    );
+                    let tail = s.tail(&hid_prog, PROGRESS_TAIL_LINES);
+                    (done, tail, meta.total_lines)
+                };
 
-                    let message = if tail.is_empty() {
-                        format!("sub-agent running — {} lines", lines)
-                    } else {
-                        format!("[stream_buf:{}]\nlines:{}\n{}", hid_prog, lines, tail)
-                    };
+                let message = if tail.is_empty() {
+                    format!("sub-agent running — {} lines", lines)
+                } else {
+                    format!("[stream_buf:{}]\nlines:{}\n{}", hid_prog, lines, tail)
+                };
 
-                    let _ = event_tx_prog
-                        .send(ToolEvent::Progress {
-                            call_id: call_id_prog.clone(),
-                            message,
-                        })
-                        .await;
+                let _ = event_tx_prog
+                    .send(ToolEvent::Progress {
+                        call_id: call_id_prog.clone(),
+                        message,
+                    })
+                    .await;
 
-                    if status {
-                        break;
-                    }
-                }
-            });
-
-            // Wait for all readers to finish, then wait for the process.
-            let _ = tokio::join!(stdout_task, stderr_task);
-            progress_task.abort();
-
-            let exit_status = child.wait().await;
-            match exit_status {
-                Ok(status) => {
-                    let code = status.code().unwrap_or(-1);
-                    store_clone.lock().await.finish(&handle_id_clone, code);
-
-                    // Final progress event with completion status.
-                    let final_msg = {
-                        let s = store_clone.lock().await;
-                        let meta = s.metadata(&handle_id_clone);
-                        meta.map(|m| {
-                            format!(
-                                "sub-agent finished (exit {code}) — {} lines, {:.1}s",
-                                m.total_lines, m.elapsed_secs
-                            )
-                        })
-                        .unwrap_or_else(|| format!("sub-agent finished (exit {code})"))
-                    };
-                    let _ = event_tx_clone
-                        .send(ToolEvent::Progress {
-                            call_id,
-                            message: final_msg,
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    warn!("task: failed to wait for sub-agent process: {e}");
-                    store_clone
-                        .lock()
-                        .await
-                        .fail(&handle_id_clone, format!("process wait failed: {e}"));
+                if status {
+                    break;
                 }
             }
         });
 
-        // Return handle immediately — the model uses buf_status/buf_read/buf_grep.
-        let json_result = json!({
-            "handle": handle_id,
-            "status": "running",
-            "description": description,
-        });
+        // Wait for all readers to finish, then wait for the process.
+        let _ = tokio::join!(stdout_task, stderr_task);
+        progress_task.abort();
 
+        let exit_status = child.wait().await;
+        let exit_code = match exit_status {
+            Ok(status) => {
+                let code = status.code().unwrap_or(-1);
+                store_clone.lock().await.finish(&handle_id_clone, code);
+                code
+            }
+            Err(e) => {
+                warn!("task: failed to wait for sub-agent process: {e}");
+                store_clone
+                    .lock()
+                    .await
+                    .fail(&handle_id_clone, format!("process wait failed: {e}"));
+                -1
+            }
+        };
+
+        // Build final result: include a tail of the output so the model sees it.
+        let (total_lines, elapsed_secs, output_tail) = {
+            let s = store_clone.lock().await;
+            let meta = s.metadata(&handle_id_clone);
+            let tail = s.tail(&handle_id_clone, 200);
+            meta.map(|m| (m.total_lines, m.elapsed_secs, tail))
+                .unwrap_or((0, 0.0, String::new()))
+        };
+
+        // Send a final progress event so the TUI can update the subagent session.
+        let final_msg = format!(
+            "sub-agent finished (exit {exit_code}) — {total_lines} lines, {elapsed_secs:.1}s"
+        );
+        let _ = event_tx_clone
+            .send(ToolEvent::Progress {
+                call_id,
+                message: final_msg,
+            })
+            .await;
+
+        let status_word = if exit_code == 0 { "success" } else { "failed" };
         ToolOutput::ok(
             &call.id,
             format!(
-                "Sub-agent spawned.\n\n\
+                "Sub-agent completed ({status_word}, exit {exit_code}).\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\
-                 Status: running\n\n\
-                 Use task(action=status, handle=...) to check progress,\n\
-                 task(action=grep, ...) to search output,\n\
-                 task(action=read, ...) to read specific line ranges.\n\n\
-                 Raw JSON: {json_result}",
+                 Lines: {total_lines}, Time: {elapsed_secs:.1}s\n\n\
+                 --- Output (last 200 lines) ---\n{output_tail}",
                 handle_id = handle_id,
                 description = description,
-                json_result = json_result,
             ),
         )
     }

@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::params::{opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart};
 
 /// Default number of lines returned when the caller does not specify a limit.
 /// Kept small to avoid flooding the model context on the first read; the agent
@@ -368,6 +368,21 @@ fn ascend_to_find(path: &str) -> Option<std::path::PathBuf> {
     }
 
     None
+}
+
+impl ToolDisplay for ReadFileTool {
+    fn display_name(&self) -> &str {
+        "Read"
+    }
+    fn icon(&self) -> &str {
+        "📖"
+    }
+    fn category(&self) -> &str {
+        "file"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("read_file", args)
+    }
 }
 
 #[cfg(test)]

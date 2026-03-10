@@ -145,9 +145,7 @@ impl AgentBuilder {
             st.set(registry.schemas());
         }
         if let Some(ref slot) = self.shared_tool_displays {
-            if let Ok(mut guard) = slot.lock() {
-                *guard = Some(registry.display_registry());
-            }
+            slot.set(registry.display_registry());
         }
 
         // Resolve context window: prefer live probe (actual n_ctx loaded by the

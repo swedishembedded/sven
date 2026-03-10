@@ -21,8 +21,10 @@ pub(crate) mod status_bar;
 pub(crate) mod team_picker;
 pub(crate) mod theme;
 pub(crate) mod toast;
+pub(crate) mod tool_renderer;
 pub(crate) mod welcome;
 pub(crate) mod which_key;
+pub(crate) mod width_utils;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
@@ -44,3 +46,8 @@ pub(crate) use theme::pane_block;
 pub(crate) use toast::ToastStack;
 pub(crate) use welcome::WelcomeScreen;
 pub(crate) use which_key::WhichKeyOverlay;
+#[allow(unused_imports)]
+pub(crate) use width_utils::{
+    char_width, col_to_byte_offset, display_width, fit_to_width, truncate_to_width,
+    truncate_to_width_exact,
+};

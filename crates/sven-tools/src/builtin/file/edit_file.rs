@@ -554,16 +554,16 @@ impl ToolDisplay for EditFileTool {
         "Edit"
     }
 
+    fn icon(&self) -> &str {
+        "✏"
+    }
+
+    fn category(&self) -> &str {
+        "file"
+    }
+
     fn collapsed_summary(&self, args: &Value) -> String {
-        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path);
-            format!("Edit: {}", filename)
-        } else {
-            "Edit file".to_string()
-        }
+        crate::tool_summary::tool_smart_summary("str_replace", args)
     }
 
     fn supports_diff(&self) -> bool {

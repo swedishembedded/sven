@@ -301,7 +301,7 @@ impl MarkdownRenderer {
                         // as box-drawing and block elements are treated as 2 wide.
                         // This ensures that lines never exceed the allocated terminal
                         // columns even on terminals that render these chars as 2-wide.
-                        let word_w = unicode_width::UnicodeWidthStr::width_cjk(word);
+                        let word_w = unicode_width::UnicodeWidthStr::width(word);
                         if col + word_w > width && !buf.is_empty() {
                             self.current_spans.push(Span::styled(buf.clone(), style));
                             buf.clear();
@@ -338,7 +338,7 @@ impl MarkdownRenderer {
                     // Divide by the CJK display width of the rule character so the
                     // rule never exceeds wrap_width terminal columns.  '─' (U+2500)
                     // is Ambiguous-width and renders as 2 columns on many terminals.
-                    let rc_w = unicode_width::UnicodeWidthChar::width_cjk(rc)
+                    let rc_w = unicode_width::UnicodeWidthChar::width(rc)
                         .unwrap_or(1)
                         .max(1);
                     let count = self.width / rc_w;
@@ -444,7 +444,7 @@ fn current_col(spans: &[Span<'_>]) -> usize {
     // ambiguous chars count as 2 here too so the column tracking is accurate.
     spans
         .iter()
-        .map(|s| unicode_width::UnicodeWidthStr::width_cjk(s.content.as_ref()))
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
         .sum()
 }
 
@@ -475,7 +475,7 @@ fn plain_code_lines(code: &str, max_width: usize) -> Vec<Line<'static>> {
             for (i, ch) in remaining.char_indices() {
                 // CJK-conservative width: ambiguous chars count as 2 so the
                 // hard-wrapped code line never overflows the terminal column limit.
-                let cw = unicode_width::UnicodeWidthChar::width_cjk(ch).unwrap_or(0);
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                 if col + cw > max_width {
                     byte_end = i;
                     break;
@@ -522,7 +522,7 @@ fn render_table(
     for (row_cells, _) in rows {
         for (i, cell) in row_cells.iter().enumerate() {
             if i < num_cols {
-                let w = unicode_width::UnicodeWidthStr::width_cjk(cell.as_str());
+                let w = unicode_width::UnicodeWidthStr::width(cell.as_str());
                 col_widths[i] = col_widths[i].max(w);
             }
         }
@@ -596,7 +596,7 @@ fn render_table(
                 .get(i)
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            let cell_w = unicode_width::UnicodeWidthStr::width_cjk(cell_text.as_str());
+            let cell_w = unicode_width::UnicodeWidthStr::width(cell_text.as_str());
             let max_w = col_widths[i];
             let align = alignments.get(i).copied().unwrap_or(Alignment::None);
 
@@ -605,7 +605,7 @@ fn render_table(
                 let mut s = String::new();
                 let mut cur = 0usize;
                 for ch in cell_text.chars() {
-                    let cw = unicode_width::UnicodeWidthChar::width_cjk(ch).unwrap_or(0);
+                    let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     if cur + cw > max_w.saturating_sub(1) {
                         s.push('…');
                         break;
@@ -617,7 +617,7 @@ fn render_table(
             } else {
                 cell_text
             };
-            let disp_w = unicode_width::UnicodeWidthStr::width_cjk(display.as_str());
+            let disp_w = unicode_width::UnicodeWidthStr::width(display.as_str());
             let pad = max_w.saturating_sub(disp_w);
             let (lpad, rpad) = match align {
                 Alignment::Center => (pad / 2, pad - pad / 2),

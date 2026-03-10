@@ -13,6 +13,7 @@ use ratatui::{
 use sven_config::AgentMode;
 
 use super::theme::pane_block;
+use super::width_utils::{display_width, truncate_to_width};
 
 /// A single item in the queue panel.
 pub struct QueueItem<'a> {
@@ -76,17 +77,17 @@ impl Widget for QueuePanel<'_> {
                     (None, None) => String::new(),
                 };
 
-                let badge_len = badge.chars().count();
+                let badge_len = display_width(&badge);
                 let max_text = inner.width.saturating_sub(6 + badge_len as u16) as usize;
                 let first_line = item.content.lines().next().unwrap_or("");
-                let preview: String = first_line.chars().take(max_text).collect();
-                let ellipsis =
-                    if first_line.chars().count() > max_text || item.content.contains('\n') {
-                        "…"
-                    } else {
-                        ""
-                    };
-                let text_content = format!(" {preview}{ellipsis}");
+                let needs_ellipsis =
+                    display_width(first_line) > max_text || item.content.contains('\n');
+                let preview = if needs_ellipsis {
+                    truncate_to_width(first_line, max_text)
+                } else {
+                    first_line.to_string()
+                };
+                let text_content = format!(" {preview}");
 
                 let text_span = Span::styled(
                     text_content,

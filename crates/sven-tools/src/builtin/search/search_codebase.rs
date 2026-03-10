@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::params::{opt_bool, opt_str, opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Thin wrapper over `grep` / ripgrep with sensible codebase defaults:
 /// always excludes .git/, target/, node_modules/, dist/, __pycache__/.
@@ -164,6 +164,21 @@ impl Tool for SearchCodebaseTool {
 
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+impl ToolDisplay for SearchCodebaseTool {
+    fn display_name(&self) -> &str {
+        "Search"
+    }
+    fn icon(&self) -> &str {
+        "🧠"
+    }
+    fn category(&self) -> &str {
+        "search"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("semantic_search", args)
+    }
 }
 
 #[cfg(test)]

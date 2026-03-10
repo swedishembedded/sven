@@ -30,6 +30,7 @@ use sven_tools::{format_tools_list, OutputBufferStore, ToolSchema};
 
 use crate::markdown::render_markdown;
 use crate::pager::PagerOverlay;
+use crate::ui::width_utils::truncate_to_width_exact;
 
 // ── InspectorKind ─────────────────────────────────────────────────────────────
 
@@ -183,11 +184,7 @@ fn format_peers_markdown(
             out.push_str(&format!("**{}**", agent.name));
             if !agent.description.is_empty() {
                 let short = agent.description.trim();
-                let preview = if short.len() > 80 {
-                    &short[..80]
-                } else {
-                    short
-                };
+                let preview = truncate_to_width_exact(short, 80);
                 out.push_str(&format!(" — {preview}"));
             }
             let mut flags = Vec::new();

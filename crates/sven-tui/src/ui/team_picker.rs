@@ -18,6 +18,7 @@ use ratatui::{
 use super::theme::{
     border_type, BAR_AGENT, BAR_TOOL, BG_ELEVATED, BORDER_DIM, BORDER_FOCUS, TEXT, TEXT_DIM,
 };
+use super::width_utils::truncate_to_width_exact;
 
 // ── TeamPickerEntry ───────────────────────────────────────────────────────────
 
@@ -191,7 +192,7 @@ impl Widget for TeamPickerOverlay<'_> {
                 let role_span =
                     Span::styled(format!(" [{}]", e.role), Style::default().fg(BORDER_DIM));
                 let task_hint = if let Some(t) = &e.current_task {
-                    let preview: String = t.chars().take(32).collect();
+                    let preview = truncate_to_width_exact(t, 32);
                     Span::styled(format!("  — {preview}"), Style::default().fg(TEXT_DIM))
                 } else {
                     Span::raw("")

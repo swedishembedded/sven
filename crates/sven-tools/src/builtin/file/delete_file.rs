@@ -8,7 +8,7 @@ use tracing::debug;
 use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct DeleteFileTool;
 
@@ -81,6 +81,21 @@ impl Tool for DeleteFileTool {
             Ok(_) => ToolOutput::ok(&call.id, format!("deleted {path}")),
             Err(e) => ToolOutput::err(&call.id, format!("delete error: {e}")),
         }
+    }
+}
+
+impl ToolDisplay for DeleteFileTool {
+    fn display_name(&self) -> &str {
+        "Delete"
+    }
+    fn icon(&self) -> &str {
+        "🗑"
+    }
+    fn category(&self) -> &str {
+        "file"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("delete_file", args)
     }
 }
 

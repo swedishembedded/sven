@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use sven_model::{MessageContent, Role};
 use tracing::debug;
 
@@ -27,6 +28,8 @@ use crate::{
     markdown::render_markdown,
     serialize_jsonl_records,
     ui::theme::{BAR_AGENT, BAR_THINKING},
+    ui::tool_renderer,
+    ui::width_utils::{col_to_byte_offset, display_width, truncate_to_width},
     ConversationRecord,
 };
 
@@ -48,7 +51,7 @@ impl App {
         let mut line_start = 0usize;
         let ascii = self.ascii();
         let bar_char = if ascii { "| " } else { "▌ " };
-        let bar_cols: u16 = unicode_width::UnicodeWidthStr::width_cjk(bar_char) as u16;
+        let bar_cols: u16 = unicode_width::UnicodeWidthStr::width(bar_char) as u16;
         // Reserve space for action labels: ↻ ✎ ✕ y  = 9 chars (+ 1 spare)
         let label_reserve: u16 = if self.nvim.disabled { 10 } else { 0 };
         let effective_width = self
@@ -66,11 +69,7 @@ impl App {
         let tool_start_times = self.agent.tool_start_times.clone();
         let tool_streaming_content = self.chat.tool_streaming_content.clone();
         let anim_frame = self.agent.anim_frame;
-        let tool_display_registry: ToolDisplayRegistryRef = self
-            .shared_tool_displays
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().cloned());
+        let tool_display_registry: ToolDisplayRegistryRef = self.shared_tool_displays.get();
         let segs_len = self.chat.segments.len();
 
         // Track result segments that have been visually merged into a grouped pair
@@ -112,57 +111,80 @@ impl App {
                 .and_then(|id| tool_streaming_content.get(id))
                 .cloned();
 
-            let s = if let Some(result_idx) = paired_result_idx {
-                // Both the tool call (i) and result (result_idx) are tier-0:
-                // render as a single grouped line.
-                let result_seg = &self.chat.segments[result_idx];
-                make_grouped_preview(
-                    seg,
-                    result_seg,
-                    &self.chat.tool_args,
-                    &tool_durations,
-                    tool_display_registry.clone(),
-                )
-            } else if expand == 0 {
-                // In-progress tool call: animate with scanning dot.
-                animated_tool_preview(
-                    seg,
-                    &tool_start_times,
-                    &tool_streaming_content,
-                    anim_frame,
-                    ascii,
-                    tool_display_registry.clone(),
-                )
-                .unwrap_or_else(|| {
-                    collapsed_preview(
+            // Determine if this is a tool call/result segment eligible for rich rendering.
+            let rich_lines_opt = render_segment_rich(
+                seg,
+                paired_result_idx.and_then(|ri| self.chat.segments.get(ri)),
+                expand,
+                &self.chat.tool_args,
+                &tool_durations,
+                &tool_start_times,
+                &tool_streaming_content,
+                anim_frame,
+                ascii,
+                tool_display_registry.clone(),
+                render_width,
+                bar_char,
+            );
+
+            let styled = if let Some(rich) = rich_lines_opt {
+                // Use rich ratatui rendering for tool calls/results.
+                rich
+            } else {
+                let s = if let Some(result_idx) = paired_result_idx {
+                    // Both the tool call (i) and result (result_idx) are tier-0:
+                    // render as a single grouped line.
+                    let result_seg = &self.chat.segments[result_idx];
+                    make_grouped_preview(
                         seg,
+                        result_seg,
                         &self.chat.tool_args,
                         &tool_durations,
                         tool_display_registry.clone(),
                     )
-                })
-            } else if expand == 1 {
-                // Tier-1: show either live streaming content (for running sub-agents)
-                // or the standard partial content view.
-                let raw = if let Some(ref content) = streaming_preview {
-                    format_streaming_preview(seg, &self.chat.tool_args, content, PARTIAL_VIEW_LINES)
+                } else if expand == 0 {
+                    // In-progress tool call: animate with scanning dot.
+                    animated_tool_preview(
+                        seg,
+                        &tool_start_times,
+                        &tool_streaming_content,
+                        anim_frame,
+                        ascii,
+                        tool_display_registry.clone(),
+                    )
+                    .unwrap_or_else(|| {
+                        collapsed_preview(
+                            seg,
+                            &self.chat.tool_args,
+                            &tool_durations,
+                            tool_display_registry.clone(),
+                        )
+                    })
+                } else if expand == 1 {
+                    let raw = if let Some(ref content) = streaming_preview {
+                        format_streaming_preview(
+                            seg,
+                            &self.chat.tool_args,
+                            content,
+                            PARTIAL_VIEW_LINES,
+                        )
+                    } else {
+                        partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
+                    };
+                    strip_display_anchors(&raw)
                 } else {
-                    partial_content(seg, &self.chat.tool_args, PARTIAL_VIEW_LINES)
+                    let raw = if let Some(ref content) = streaming_preview {
+                        format_streaming_preview(seg, &self.chat.tool_args, content, usize::MAX)
+                    } else {
+                        segment_to_markdown(seg, &self.chat.tool_args)
+                    };
+                    strip_display_anchors(&raw)
                 };
-                strip_display_anchors(&raw)
-            } else {
-                // Tier-2: full content or full streaming output.
-                let raw = if let Some(ref content) = streaming_preview {
-                    format_streaming_preview(seg, &self.chat.tool_args, content, usize::MAX)
-                } else {
-                    segment_to_markdown(seg, &self.chat.tool_args)
-                };
-                strip_display_anchors(&raw)
-            };
 
-            let lines = render_markdown(&s, render_width, ascii);
-            let (bar_style, dim) = segment_bar_style(seg);
-            let styled = apply_bar_and_dim(lines, bar_style, dim, bar_char);
+                let lines = render_markdown(&s, render_width, ascii);
+                let (bar_style, dim) = segment_bar_style(seg);
+                apply_bar_and_dim(lines, bar_style, dim, bar_char)
+            };
 
             let n = styled.len();
 
@@ -223,9 +245,15 @@ impl App {
         self.chat.rerun_labels = rerun_labels;
         self.chat.copy_labels = copy_labels;
         // Keep existing highlight if still valid; otherwise set from center (e.g. first load).
-        if self.chat.focused_segment.map_or(true, |i| i >= segs_len) {
+        if self.chat.focused_segment.is_none_or(|i| i >= segs_len) {
             self.recompute_focused_segment();
         }
+    }
+
+    /// If segment `idx` is a ToolCall, return the index of the immediately
+    /// following ToolResult with the same call_id (if any).
+    pub(crate) fn paired_result_for(&self, idx: usize) -> Option<usize> {
+        get_paired_result_idx(&self.chat.segments, idx)
     }
 
     /// Recompute the keyboard-focused segment (highlight) based on the current
@@ -649,7 +677,7 @@ fn animated_tool_preview(
         format!("  {summary}")
     };
 
-    // Show the last non-empty line of streaming progress (capped to 50 chars).
+    // Show the last non-empty line of streaming progress (capped to 50 cols).
     let progress_part = tool_streaming_content
         .get(call_id)
         .and_then(|content| {
@@ -659,13 +687,8 @@ fn animated_tool_preview(
                 .find(|l| !l.trim().is_empty())
                 .map(|line| {
                     let trimmed = line.trim();
-                    let short: String = trimmed.chars().take(50).collect();
-                    let ellipsis = if trimmed.chars().count() > 50 {
-                        "…"
-                    } else {
-                        ""
-                    };
-                    format!("  `{short}{ellipsis}`")
+                    let short = truncate_to_width(trimmed, 50);
+                    format!("  `{short}`")
                 })
         })
         .unwrap_or_default();
@@ -827,6 +850,11 @@ impl App {
 
 /// Extract visible text from a range of rendered chat lines, respecting column
 /// boundaries for the first and last line of the selection.
+///
+/// `start_col` and `end_col` are **display columns** (as reported by hit-testing),
+/// not character or byte indices.  This function converts them to byte offsets
+/// using cumulative unicode display width so that wide characters (emoji, CJK,
+/// special symbols) are handled correctly.
 fn extract_selection_text(
     lines: &crate::markdown::StyledLines,
     start_line: usize,
@@ -844,27 +872,25 @@ fn extract_selection_text(
     for abs_line in start_line..=e_line {
         let line = &lines[abs_line];
         let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        let char_count = line_text.chars().count();
-        let from_col = if abs_line == start_line {
+        let line_width = display_width(&line_text);
+        let from_display_col = if abs_line == start_line {
             start_col as usize
         } else {
             0
         };
-        let to_col = if abs_line == end_line {
-            (end_col as usize).min(char_count)
+        let to_display_col = if abs_line == end_line {
+            (end_col as usize).min(line_width)
         } else {
-            char_count
+            line_width
         };
-        let extracted: String = line_text
-            .chars()
-            .enumerate()
-            .filter(|(i, _)| *i >= from_col && *i < to_col)
-            .map(|(_, c)| c)
-            .collect();
+        // Convert display columns to byte offsets.
+        let from_byte = col_to_byte_offset(&line_text, from_display_col);
+        let to_byte = col_to_byte_offset(&line_text, to_display_col);
+        let extracted = &line_text[from_byte..to_byte];
         if abs_line > start_line {
             result.push('\n');
         }
-        result.push_str(&extracted);
+        result.push_str(extracted);
     }
     // Trim trailing whitespace per line, then overall trailing newlines.
     let trimmed: Vec<String> = result.lines().map(|l| l.trim_end().to_string()).collect();
@@ -946,5 +972,338 @@ fn format_streaming_preview(
             status_suffix,
             tail_lines.join("\n")
         )
+    }
+}
+
+// ── Rich segment rendering ────────────────────────────────────────────────────
+
+/// Try to render a segment using the rich `tool_renderer`, returning `Some(lines)`
+/// if the segment is a tool call or result, `None` to fall back to markdown.
+///
+/// For tool calls/results this completely replaces the markdown pipeline
+/// with styled ratatui lines that use per-tool icons, colours, and layouts.
+#[allow(clippy::too_many_arguments)]
+fn render_segment_rich(
+    seg: &ChatSegment,
+    paired_result: Option<&ChatSegment>,
+    expand: u8,
+    tool_args: &std::collections::HashMap<String, String>,
+    tool_durations: &std::collections::HashMap<String, f32>,
+    _tool_start_times: &std::collections::HashMap<String, std::time::Instant>,
+    _tool_streaming_content: &std::collections::HashMap<String, String>,
+    _anim_frame: u8,
+    _ascii: bool,
+    tool_display_registry: ToolDisplayRegistryRef,
+    render_width: u16,
+    bar_char: &str,
+) -> Option<crate::markdown::StyledLines> {
+    use crate::ui::theme::BAR_TOOL;
+
+    let bar_style = Style::default().fg(BAR_TOOL);
+
+    match seg {
+        // ── Tool call ─────────────────────────────────────────────────────────
+        ChatSegment::Message(m) if m.role == Role::Assistant => {
+            if let MessageContent::ToolCall {
+                tool_call_id,
+                function,
+            } = &m.content
+            {
+                let args_val: serde_json::Value =
+                    serde_json::from_str(&function.arguments).unwrap_or(serde_json::Value::Null);
+                let registry_guard = tool_display_registry.as_ref().and_then(|r| r.read().ok());
+                let display = registry_guard
+                    .as_ref()
+                    .and_then(|g| g.get(function.name.as_str()));
+                let duration = tool_durations.get(tool_call_id.as_str()).copied();
+
+                if expand == 0 {
+                    // ── Tier 0: single collapsed line ─────────────────────────
+                    let spans = if let Some(result_seg) = paired_result {
+                        // Grouped: call + result on one line.
+                        build_grouped_rich_line(
+                            &function.name,
+                            &args_val,
+                            result_seg,
+                            tool_args,
+                            tool_durations,
+                            display,
+                            tool_display_registry.clone(),
+                        )
+                    } else {
+                        let mut spans = tool_renderer::render_tool_call_collapsed(
+                            &function.name,
+                            &args_val,
+                            duration,
+                            display,
+                            render_width as usize,
+                        );
+                        spans.push(Span::raw("  ▶"));
+                        spans
+                    };
+
+                    let mut line_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
+                    line_spans.extend(spans);
+                    return Some(vec![Line::from(line_spans)]);
+                } else {
+                    // ── Tier 1/2: expanded view ───────────────────────────────
+                    let mut raw_lines = tool_renderer::render_tool_call_expanded(
+                        &function.name,
+                        &args_val,
+                        render_width,
+                        display,
+                    );
+                    // Add a header line with the icon + name.
+                    let icon = display
+                        .map(|d| d.icon().to_string())
+                        .unwrap_or_else(|| sven_tools::tool_icon(&function.name).to_string());
+                    let display_name = display
+                        .map(|d| d.display_name().to_string())
+                        .unwrap_or_else(|| function.name.clone());
+                    let accent = tool_renderer_accent(display, &function.name);
+                    let header = Line::from(vec![
+                        Span::styled(bar_char.to_string(), bar_style),
+                        Span::styled(
+                            format!("{icon} "),
+                            Style::default()
+                                .fg(accent)
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            display_name,
+                            Style::default()
+                                .fg(accent)
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                    ]);
+                    let mut result: crate::markdown::StyledLines = vec![header];
+                    for l in raw_lines.drain(..) {
+                        let mut spans = vec![Span::styled(bar_char.to_string(), bar_style)];
+                        spans.extend(l.spans);
+                        result.push(Line::from(spans));
+                    }
+                    // If this has a paired result in tier 1/2, append it.
+                    // Paired results don't need the "Tool Result:" prefix since the
+                    // parent tool call header already provides context.
+                    if let Some(result_seg) = paired_result {
+                        result.extend(render_tool_result_lines(
+                            result_seg,
+                            tool_args,
+                            tool_durations,
+                            tool_display_registry.clone(),
+                            expand,
+                            render_width,
+                            bar_char,
+                            bar_style,
+                            None,
+                        ));
+                    }
+                    return Some(result);
+                }
+            }
+            None
+        }
+
+        // ── Tool result (standalone, not paired) ──────────────────────────────
+        ChatSegment::Message(m) if m.role == Role::Tool => {
+            if let MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } = &m.content
+            {
+                let tool_name = tool_args
+                    .get(tool_call_id.as_str())
+                    .map(|s| s.as_str())
+                    .unwrap_or("tool");
+                let output_str = content.to_string();
+                let is_error = output_str.starts_with("error:");
+                let duration = tool_durations.get(tool_call_id.as_str()).copied();
+                // Standalone results (not grouped with their call) use a "Tool Result: <name>" label.
+                let standalone_label = format!("Tool Result: {tool_name}");
+
+                if expand == 0 {
+                    let registry_guard = tool_display_registry.as_ref().and_then(|r| r.read().ok());
+                    let display = registry_guard.as_ref().and_then(|g| g.get(tool_name));
+                    let mut spans = tool_renderer::render_tool_result_collapsed(
+                        tool_name,
+                        is_error,
+                        duration,
+                        display,
+                        Some(standalone_label.clone()),
+                    );
+                    spans.push(Span::raw("  ▶"));
+                    let mut line_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
+                    line_spans.extend(spans);
+                    return Some(vec![Line::from(line_spans)]);
+                } else {
+                    let lines = render_tool_result_lines(
+                        seg,
+                        tool_args,
+                        tool_durations,
+                        tool_display_registry,
+                        expand,
+                        render_width,
+                        bar_char,
+                        bar_style,
+                        Some(standalone_label),
+                    );
+                    return Some(lines);
+                }
+            }
+            None
+        }
+
+        _ => None,
+    }
+}
+
+/// Build a grouped collapsed line for a call+result pair (both tier 0).
+fn build_grouped_rich_line(
+    tool_name: &str,
+    args: &serde_json::Value,
+    result_seg: &ChatSegment,
+    _tool_args: &std::collections::HashMap<String, String>,
+    tool_durations: &std::collections::HashMap<String, f32>,
+    display: Option<&dyn sven_tools::ToolDisplay>,
+    _tool_display_registry: ToolDisplayRegistryRef,
+) -> Vec<Span<'static>> {
+    use crate::ui::theme::BAR_ERROR;
+    let duration = if let ChatSegment::Message(m) = result_seg {
+        if let MessageContent::ToolResult { tool_call_id, .. } = &m.content {
+            tool_durations.get(tool_call_id.as_str()).copied()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut spans = tool_renderer::render_tool_call_collapsed(
+        tool_name, args, None, // duration shown on result side
+        display, 60,
+    );
+
+    // Append result status.
+    let (is_error, _tool_call_id) = if let ChatSegment::Message(m) = result_seg {
+        if let MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } = &m.content
+        {
+            (
+                content.to_string().starts_with("error:"),
+                tool_call_id.clone(),
+            )
+        } else {
+            (false, String::new())
+        }
+    } else {
+        (false, String::new())
+    };
+
+    let status_sym = if is_error { " ✗" } else { " ✓" };
+    let status_color = if is_error {
+        BAR_ERROR
+    } else {
+        ratatui::style::Color::Rgb(80, 200, 120)
+    };
+    let dur_str = if let Some(d) = duration {
+        format!("  {:.1}s", d)
+    } else {
+        String::new()
+    };
+    spans.push(Span::styled(status_sym, Style::default().fg(status_color)));
+    spans.push(Span::styled(
+        dur_str,
+        Style::default().fg(ratatui::style::Color::Rgb(120, 120, 140)),
+    ));
+    spans.push(Span::raw("  ▶"));
+    spans
+}
+
+/// Render a tool result segment as styled lines with bar prefix.
+#[allow(clippy::too_many_arguments)]
+fn render_tool_result_lines(
+    seg: &ChatSegment,
+    tool_args: &std::collections::HashMap<String, String>,
+    tool_durations: &std::collections::HashMap<String, f32>,
+    tool_display_registry: ToolDisplayRegistryRef,
+    expand: u8,
+    render_width: u16,
+    bar_char: &str,
+    bar_style: Style,
+    label_override: Option<String>,
+) -> crate::markdown::StyledLines {
+    if let ChatSegment::Message(m) = seg {
+        if let MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } = &m.content
+        {
+            let tool_name = tool_args
+                .get(tool_call_id.as_str())
+                .map(|s| s.as_str())
+                .unwrap_or("tool");
+            let registry_guard = tool_display_registry.as_ref().and_then(|r| r.read().ok());
+            let display = registry_guard.as_ref().and_then(|g| g.get(tool_name));
+            let output_str = content.to_string();
+            let is_error = output_str.starts_with("error:");
+            let duration = tool_durations.get(tool_call_id.as_str()).copied();
+
+            // Header: ✓/✗ ToolName  duration
+            let result_spans = {
+                tool_renderer::render_tool_result_collapsed(
+                    tool_name,
+                    is_error,
+                    duration,
+                    display,
+                    label_override,
+                )
+            };
+            let mut header_spans = vec![Span::styled(bar_char.to_string(), bar_style)];
+            header_spans.extend(result_spans);
+            let mut lines: crate::markdown::StyledLines = vec![Line::from(header_spans)];
+
+            if expand >= 1 {
+                // Show output body.
+                let mut body = tool_renderer::render_tool_result_expanded(
+                    tool_name,
+                    &output_str,
+                    is_error,
+                    render_width,
+                    display,
+                );
+                // Skip the status header (already rendered above).
+                if !body.is_empty() {
+                    body.remove(0);
+                }
+                for l in body {
+                    let mut spans = vec![Span::styled(bar_char.to_string(), bar_style)];
+                    spans.extend(l.spans);
+                    lines.push(Line::from(spans));
+                }
+            }
+            return lines;
+        }
+    }
+    vec![]
+}
+
+/// Get the accent colour for a tool from its display entry or name.
+fn tool_renderer_accent(
+    display: Option<&dyn sven_tools::ToolDisplay>,
+    tool_name: &str,
+) -> ratatui::style::Color {
+    let category = display
+        .map(|d| d.category().to_string())
+        .unwrap_or_else(|| sven_tools::tool_category(tool_name).to_string());
+    match category.as_str() {
+        "file" => ratatui::style::Color::Rgb(100, 180, 255),
+        "shell" => ratatui::style::Color::Rgb(120, 220, 130),
+        "search" => ratatui::style::Color::Rgb(180, 140, 255),
+        "web" => ratatui::style::Color::Rgb(80, 200, 220),
+        "system" => ratatui::style::Color::Rgb(200, 160, 60),
+        "agent" => ratatui::style::Color::Rgb(220, 120, 180),
+        _ => crate::ui::theme::BAR_TOOL,
     }
 }

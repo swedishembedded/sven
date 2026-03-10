@@ -8,6 +8,8 @@ use sven_core::{prompts::CollabEvent, CompactionStrategyUsed};
 use sven_model::{Message, MessageContent, Role};
 use sven_tools::TodoItem;
 
+use crate::ui::width_utils::{display_width, truncate_to_width_exact};
+
 /// One entry in the chat display (a concrete message or a display-only note).
 #[derive(Debug, Clone)]
 pub enum ChatSegment {
@@ -143,8 +145,8 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     };
     // Collapse to first line and truncate.
     let first_line = raw.lines().next().unwrap_or("").trim();
-    if first_line.chars().count() > MAX {
-        format!("\"{}…\"", first_line.chars().take(MAX).collect::<String>())
+    if display_width(first_line) > MAX {
+        format!("\"{}…\"", truncate_to_width_exact(first_line, MAX))
     } else {
         format!("\"{first_line}\"")
     }

@@ -160,20 +160,46 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }
 /// Trait for providing display metadata for tools in the TUI.
+///
+/// All methods have sensible defaults.  Implement only what you need.
+///
+/// **Note:** methods must return pure data (strings, booleans).  No ratatui
+/// types here — styling lives in `sven-tui`.
 pub trait ToolDisplay: Send + Sync {
     /// Short display name shown in collapsed view (e.g., "Shell", "Read").
     fn display_name(&self) -> &str;
 
+    /// Single-character (or short) symbol/icon for this tool category.
+    ///
+    /// Shown before the tool name in collapsed view.  Default: `"▶"`.
+    fn icon(&self) -> &str {
+        "▶"
+    }
+
     /// Generate a one-line summary for collapsed view.
     ///
-    /// `args` is the JSON arguments passed to the tool call.
+    /// `args` is the parsed JSON arguments passed to the tool call.
+    /// Return an empty string to show only the display name.
     fn collapsed_summary(&self, _args: &serde_json::Value) -> String {
-        self.display_name().to_string()
+        String::new()
     }
 
     /// Whether this tool supports diff rendering in expanded view.
     fn supports_diff(&self) -> bool {
         false
+    }
+
+    /// Category hint used by the TUI to apply appropriate styling.
+    ///
+    /// - `"file"` — file operations (read/write/edit/delete)
+    /// - `"shell"` — shell/terminal commands
+    /// - `"search"` — search and grep operations
+    /// - `"web"` — web fetch and search
+    /// - `"system"` — todos, lints, mode changes
+    /// - `"agent"` — sub-agent / delegation tools
+    /// - `""` — generic / no category
+    fn category(&self) -> &str {
+        ""
     }
 }
 

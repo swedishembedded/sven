@@ -10,7 +10,7 @@ use tokio::process::Command;
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
+use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Hard byte ceiling for combined stdout + stderr returned to the model.
 /// 20 KB ≈ 5,000 tokens — keeps output well within a 40 K-token context window.
@@ -43,7 +43,8 @@ impl Tool for ShellTool {
 
     fn description(&self) -> &str {
         "Execute a shell command and return stdout + stderr.\n\
-         'command' parameter is required and can be any shell command\n\
+         ALWAYS provide 'description': a short human-readable summary of what this command does\n\
+         (shown to the user in the UI instead of the raw command).\n\
          Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
          preserved with an omission marker in the middle — errors at the end are never lost.\n\
          Prefer non-interactive commands. Avoid commands that require a TTY.\n\
@@ -60,6 +61,10 @@ impl Tool for ShellTool {
         json!({
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Short human-readable description of what this command does (shown to user in UI)"
+                },
                 "shell_command": {
                     "type": "string",
                     "description": "The complete bash one liner shell command to execute."
@@ -73,7 +78,7 @@ impl Tool for ShellTool {
                     "description": "Execution timeout in seconds (optional)"
                 }
             },
-            "required": ["shell_command", "workdir", "timeout_secs"],
+            "required": ["shell_command"],
             "additionalProperties": false
         })
     }
@@ -236,6 +241,18 @@ pub(crate) fn head_tail_truncate(s: &str) -> String {
         omitted_bytes,
         tail.join("\n")
     )
+}
+
+impl ToolDisplay for ShellTool {
+    fn display_name(&self) -> &str {
+        "Shell"
+    }
+    fn category(&self) -> &str {
+        "shell"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("shell", args)
+    }
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

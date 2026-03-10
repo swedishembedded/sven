@@ -14,8 +14,6 @@ pub const CHAT_LIST_DEFAULT_WIDTH: u16 = 32;
 pub const PEERS_PANE_MIN_HEIGHT: u16 = 5;
 pub const PEERS_PANE_MAX_HEIGHT: u16 = 30;
 pub const PEERS_PANE_DEFAULT_HEIGHT: u16 = 12;
-/// Default split ratio between chats and peers in the sidebar (chats gets this %).
-pub const PEERS_SPLIT_RATIO: f32 = 0.65;
 
 /// Which pane border is currently being dragged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,19 +157,6 @@ impl LayoutCache {
         let new_height = row.saturating_sub(sidebar_top);
         self.peers_pane_height_pref =
             new_height.clamp(PEERS_PANE_MIN_HEIGHT, PEERS_PANE_MAX_HEIGHT);
-    }
-
-    /// Grow the peers pane by 2 rows.
-    pub fn peers_pane_grow(&mut self) {
-        self.peers_pane_height_pref = (self.peers_pane_height_pref + 2).min(PEERS_PANE_MAX_HEIGHT);
-    }
-
-    /// Shrink the peers pane by 2 rows.
-    pub fn peers_pane_shrink(&mut self) {
-        self.peers_pane_height_pref = self
-            .peers_pane_height_pref
-            .saturating_sub(2)
-            .max(PEERS_PANE_MIN_HEIGHT);
     }
 
     /// Update the input pane height while dragging.

@@ -266,6 +266,13 @@ impl OutputBufferStore {
         Ok(results)
     }
 
+    /// Return all content from a buffer as a plain string.
+    /// Returns an empty string if the buffer does not exist.
+    pub fn read_all(&self, handle_id: &str) -> Option<String> {
+        let buf = self.buffers.get(handle_id)?;
+        Some(String::from_utf8_lossy(&buf.data).into_owned())
+    }
+
     /// Return the last `n` lines from a buffer as a plain string (for TUI
     /// streaming preview).  Does not include line-number prefixes.
     pub fn tail(&self, handle_id: &str, n: usize) -> String {

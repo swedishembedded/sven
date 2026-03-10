@@ -21,6 +21,7 @@ use crate::markdown::StyledLines;
 use crate::pager::{highlight_match_in_line, tint_match_line};
 
 use super::theme::{open_pane_block, BG};
+use super::width_utils::truncate_to_width_exact;
 
 // ── ChatPane widget ───────────────────────────────────────────────────────────
 
@@ -211,7 +212,7 @@ impl Widget for ChatPane<'_> {
             } else {
                 "↓  New content below  ·  press G to jump to bottom  ↓"
             };
-            let msg_chars: String = msg.chars().take(inner.width as usize).collect();
+            let msg_chars = truncate_to_width_exact(msg, inner.width as usize);
             // Fill the banner row with the highlighted background.
             for col in inner.x..inner.x + inner.width {
                 buf[(col, banner_y)].set_bg(Color::Rgb(60, 45, 0));

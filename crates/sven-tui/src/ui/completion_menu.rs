@@ -15,6 +15,7 @@ use ratatui::{
 use crate::overlay::completion::CompletionOverlay;
 
 use super::theme::border_type;
+use super::width_utils::{display_width, truncate_to_width_exact};
 
 // ── CompletionMenu widget ─────────────────────────────────────────────────────
 
@@ -92,9 +93,8 @@ impl Widget for CompletionMenu<'_> {
             } else {
                 item.display.as_str()
             };
-            let label = raw_label;
             let avail = (inner.width as usize).saturating_sub(1);
-            let label: String = label.chars().take(avail).collect();
+            let label = truncate_to_width_exact(raw_label, avail);
 
             let (fg, bg, modifier) = if selected {
                 (Color::Black, Color::LightCyan, Modifier::BOLD)
@@ -105,7 +105,7 @@ impl Widget for CompletionMenu<'_> {
             let base = Style::default().fg(fg).bg(bg).add_modifier(modifier);
 
             // Pad to fill the row so bg covers the full width.
-            let pad_len = (inner.width as usize).saturating_sub(label.len() + 1);
+            let pad_len = (inner.width as usize).saturating_sub(display_width(&label) + 1);
             let pad = " ".repeat(pad_len);
 
             lines.push(Line::from(vec![
@@ -123,7 +123,7 @@ impl Widget for CompletionMenu<'_> {
             let desc = item.description.as_deref().unwrap_or("");
             if !desc.is_empty() {
                 let avail = inner.width.saturating_sub(2) as usize;
-                let desc_str: String = desc.chars().take(avail).collect();
+                let desc_str = truncate_to_width_exact(desc, avail);
                 Paragraph::new(Line::from(vec![
                     Span::raw(" "),
                     Span::styled(

@@ -15,13 +15,12 @@ use ratatui::{
 };
 
 use super::theme::{BORDER_DIM, BORDER_FOCUS, BORDER_RESIZE, TEXT, TEXT_DIM};
+use super::width_utils::{char_width, display_width, truncate_to_width_exact};
 
 /// Data for a single peer in the peers list.
 pub struct PeerListItem<'a> {
     /// Peer display name.
     pub name: &'a str,
-    /// Peer ID (shortened for display).
-    pub peer_id: &'a str,
     /// Whether this peer is currently connected/active.
     pub connected: bool,
     /// Whether this peer has delegation enabled.
@@ -143,16 +142,15 @@ impl Widget for PeersPane<'_> {
             // ── Name (truncated) ─────────────────────────────────────────────
             let name_x = inner.x + 2;
             let max_name_width = inner.width.saturating_sub(2) as usize;
-            let name_chars: Vec<char> = item.name.chars().collect();
-            let display_len = name_chars.len().min(max_name_width);
-            let truncated: String = name_chars[..display_len].iter().collect();
 
             let (display_name, needs_ellipsis) =
-                if name_chars.len() > max_name_width && max_name_width > 1 {
-                    let t: String = name_chars[..max_name_width - 1].iter().collect();
-                    (t, true)
+                if display_width(item.name) > max_name_width && max_name_width > 1 {
+                    (
+                        truncate_to_width_exact(item.name, max_name_width.saturating_sub(1)),
+                        true,
+                    )
                 } else {
-                    (truncated, false)
+                    (truncate_to_width_exact(item.name, max_name_width), false)
                 };
 
             let mut col_offset = 0u16;
@@ -161,7 +159,7 @@ impl Widget for PeersPane<'_> {
                     cell.set_char(ch);
                     cell.set_style(text_style.bg(bg_color));
                 }
-                col_offset += 1;
+                col_offset += char_width(ch) as u16;
             }
 
             if needs_ellipsis {

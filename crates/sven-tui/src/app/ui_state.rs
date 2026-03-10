@@ -38,6 +38,7 @@ pub enum FocusPane {
 /// Information about a connected peer.
 pub struct PeerInfo {
     pub name: String,
+    #[allow(dead_code)]
     pub peer_id: String,
     pub connected: bool,
     pub can_delegate: bool,

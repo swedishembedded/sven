@@ -1331,6 +1331,18 @@ impl App {
                             let cur = self.chat.effective_expand_level(seg_idx, seg);
                             let next = (cur + 1) % 3;
                             self.chat.expand_level.insert(seg_idx, next);
+                            // When expanding a tool call, also expand the paired result
+                            // to at least tier 1 so it is visible without an extra click.
+                            if next >= 1 {
+                                if let Some(result_idx) = self.paired_result_for(seg_idx) {
+                                    let result_seg = self.chat.segments[result_idx].clone();
+                                    let cur_result =
+                                        self.chat.effective_expand_level(result_idx, &result_seg);
+                                    if cur_result == 0 {
+                                        self.chat.expand_level.insert(result_idx, 1);
+                                    }
+                                }
+                            }
                         }
                         self.build_display_from_segments();
                         self.ui.search.update_matches(&self.chat.lines);

@@ -55,7 +55,7 @@ pub fn wrap_content(content: &str, width: usize, cursor_byte: usize) -> WrapStat
         let ch_width = if ch == '\n' {
             0
         } else {
-            UnicodeWidthChar::width_cjk(ch).unwrap_or(1)
+            UnicodeWidthChar::width(ch).unwrap_or(1)
         };
 
         // Soft-wrap: if adding this non-newline char would exceed `width`,
@@ -138,7 +138,7 @@ pub fn byte_offset_at_row_col(
         let ch_width = if ch == '\n' {
             0
         } else {
-            UnicodeWidthChar::width_cjk(ch).unwrap_or(1)
+            UnicodeWidthChar::width(ch).unwrap_or(1)
         };
         let soft_wrap = width > 0 && ch != '\n' && ch_width > 0 && cur_col + ch_width > width;
         if soft_wrap {
@@ -170,7 +170,7 @@ pub fn byte_offset_at_row_col(
         if col >= target_col {
             break;
         }
-        col += UnicodeWidthChar::width_cjk(ch).unwrap_or(1);
+        col += UnicodeWidthChar::width(ch).unwrap_or(1);
         byte_off += ch.len_utf8();
     }
     byte_off.min(content.len())

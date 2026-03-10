@@ -16,6 +16,7 @@ use sven_tools::{TodoItem, ToolDisplayRegistry};
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
 use crate::ui::theme::{BAR_AGENT, BAR_COMPACT, BAR_ERROR, BAR_THINKING, BAR_TOOL, BAR_USER};
+use crate::ui::width_utils::truncate_to_width;
 
 // ── Symbols ────────────────────────────────────────────────────────────────────
 
@@ -155,22 +156,14 @@ pub fn collapsed_preview(
         ChatSegment::Message(m) => match (&m.role, &m.content) {
             (Role::User, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
-                let preview: String = first.chars().take(80).collect();
-                let ellipsis = if first.chars().count() > 80 || t.contains('\n') {
-                    "…"
-                } else {
-                    ""
-                };
+                let preview = truncate_to_width(first, 80);
+                let ellipsis = "";
                 format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (Role::Assistant, MessageContent::Text(t)) => {
                 let first = t.lines().next().unwrap_or("").trim();
-                let preview: String = first.chars().take(80).collect();
-                let ellipsis = if first.chars().count() > 80 || t.contains('\n') {
-                    "…"
-                } else {
-                    ""
-                };
+                let preview = truncate_to_width(first, 80);
+                let ellipsis = "";
                 format!("\n`{preview}{ellipsis}` {SYM_EXPAND}\n")
             }
             (
@@ -419,13 +412,10 @@ pub(crate) fn message_to_markdown(
 
 /// Return the last `n` non-empty path components joined by `/`.
 ///
-/// `/data/agents/sven/crates/sven-tui/src/chat/markdown.rs`  →  `chat/markdown.rs`
+/// Delegates to `sven_tools::shorten_path`.
+#[allow(dead_code)]
 pub fn shorten_path(path: &str, n: usize) -> String {
-    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() <= n {
-        return path.trim_start_matches('/').to_string();
-    }
-    parts[parts.len() - n..].join("/")
+    sven_tools::shorten_path(path, n)
 }
 
 /// Strip internal anchor/role-prefix lines from a markdown string before
@@ -464,108 +454,19 @@ pub fn strip_display_anchors(md: &str) -> String {
     out
 }
 
-/// Truncate a string to at most `max` Unicode scalar values, appending `…` if trimmed.
+/// Truncate a string to fit within `max` display columns, appending `…` if trimmed.
 fn truncate_str(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
+    truncate_to_width(s, max)
 }
 
 /// Build a human-readable one-line description of a tool call for the collapsed
-/// tier-0 display.  Returns just the *value* that is meaningful for each tool,
-/// without the redundant `key=` prefix.
-///
-/// Examples:
-/// - `read_file {"path":"/data/foo/bar.rs"}` → `foo/bar.rs`
-/// - `shell {"command":"cargo build --release"}` → `cargo build --release`
-/// - `grep {"pattern":"foo","path":"/data/baz"}` → `foo  baz`
+/// tier-0 display.  Delegates to the canonical implementation in `sven-tools`.
 pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
     let v: serde_json::Value = match serde_json::from_str(args_json) {
         Ok(v) => v,
         Err(_) => return truncate_str(args_json, 55),
     };
-
-    let str_field = |key: &str| -> Option<String> {
-        v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
-    };
-
-    match name {
-        // File operations — show last 2 path components for context
-        "read_file" | "write_file" | "str_replace_editor" | "str_replace" | "delete_file"
-        | "Read" | "Write" | "StrReplace" | "Delete" => str_field("path")
-            .map(|p| shorten_path(&p, 2))
-            .unwrap_or_default(),
-
-        // Shell — show the command (truncated)
-        "shell" | "bash" | "Shell" => str_field("command")
-            .map(|c| truncate_str(&c, 55))
-            .unwrap_or_default(),
-
-        // Search — pattern + optional short path
-        "grep" | "search" | "Grep" => {
-            let pattern = str_field("pattern").unwrap_or_default();
-            let path = str_field("path")
-                .or_else(|| str_field("target_directory"))
-                .unwrap_or_default();
-            let path_short = if path.is_empty() {
-                String::new()
-            } else {
-                format!("  {}", shorten_path(&path, 2))
-            };
-            truncate_str(&format!("{pattern}{path_short}"), 55)
-        }
-
-        // Glob — show the pattern
-        "glob" | "Glob" => str_field("glob_pattern")
-            .or_else(|| str_field("pattern"))
-            .map(|p| truncate_str(&p, 55))
-            .unwrap_or_default(),
-
-        // Web operations
-        "web_search" | "WebSearch" => str_field("search_term")
-            .or_else(|| str_field("query"))
-            .map(|q| truncate_str(&q, 55))
-            .unwrap_or_default(),
-        "web_fetch" | "WebFetch" => str_field("url")
-            .map(|u| {
-                // Strip scheme for brevity
-                let stripped = u
-                    .trim_start_matches("https://")
-                    .trim_start_matches("http://");
-                truncate_str(stripped, 55)
-            })
-            .unwrap_or_default(),
-
-        // Semantic / AI search
-        "semantic_search" | "SemanticSearch" => str_field("query")
-            .map(|q| truncate_str(&q, 55))
-            .unwrap_or_default(),
-
-        // Todo management — fixed label
-        "todo_write" | "TodoWrite" | "todo_read" | "TodoRead" => "update todos".to_string(),
-
-        // Lints
-        "ReadLints" | "read_lints" => "check lints".to_string(),
-
-        // Internal buffer/editor tools — opaque IDs add no value
-        _ if name.starts_with("buf_") || name.starts_with("nvim_") => String::new(),
-
-        // Generic fallback: first string value, no key name
-        _ => {
-            if let serde_json::Value::Object(map) = &v {
-                for (_, val) in map.iter() {
-                    if let serde_json::Value::String(s) = val {
-                        return truncate_str(s, 55);
-                    }
-                }
-            }
-            String::new()
-        }
-    }
+    sven_tools::tool_smart_summary(name, &v)
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────

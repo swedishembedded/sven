@@ -116,18 +116,48 @@ impl App {
                     let elapsed = start.elapsed().as_secs_f32();
                     self.chat.tool_durations.insert(call_id.clone(), elapsed);
                 }
-                let seg_idx = self.chat.segments.len();
                 let output_with_error = if is_error {
                     format!("error: {output}")
                 } else {
                     output
                 };
-                self.chat
+                let result_seg =
+                    ChatSegment::Message(Message::tool_result(&call_id, &output_with_error));
+                // Insert the result immediately after the matching tool call so
+                // that get_paired_result_idx() groups them correctly during streaming.
+                let insert_pos = self
+                    .chat
                     .segments
-                    .push(ChatSegment::Message(Message::tool_result(
-                        &call_id,
-                        &output_with_error,
-                    )));
+                    .iter()
+                    .rposition(|seg| {
+                        if let ChatSegment::Message(m) = seg {
+                            if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
+                                return tool_call_id == &call_id;
+                            }
+                        }
+                        false
+                    })
+                    .map(|call_idx| {
+                        // Insert right after the tool call, skipping any already-inserted
+                        // results for the same call (shouldn't happen, but be safe).
+                        call_idx + 1
+                    });
+                let seg_idx = if let Some(pos) = insert_pos {
+                    // Shift expand_level indices >= pos up by 1 to keep them aligned.
+                    let shifted: std::collections::HashMap<usize, u8> = self
+                        .chat
+                        .expand_level
+                        .drain()
+                        .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
+                        .collect();
+                    self.chat.expand_level = shifted;
+                    self.chat.segments.insert(pos, result_seg);
+                    pos
+                } else {
+                    let idx = self.chat.segments.len();
+                    self.chat.segments.push(result_seg);
+                    idx
+                };
                 let _ = seg_idx;
                 // Signal the run-loop to check and restore terminal state.
                 self.needs_terminal_recover = true;
@@ -429,11 +459,16 @@ impl App {
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
             }
-            AgentEvent::SubagentStarted { description, .. } => {
+            AgentEvent::SubagentStarted {
+                description,
+                handle_id,
+                ..
+            } => {
                 let parent_id = session_id.clone();
                 let entry = crate::app::session_manager::SessionEntry::new_subagent(
                     description,
                     parent_id.clone(),
+                    Some(handle_id),
                 );
                 self.sessions.add_child_session(parent_id, entry);
             }

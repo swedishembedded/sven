@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens — fits comfortably within a 40 K-token context window.
@@ -110,6 +110,21 @@ async fn fetch_url(url: &str, max_chars: usize) -> anyhow::Result<String> {
 /// Convert HTML to plain text using html2text.
 fn html_to_text(html: &str) -> String {
     html2text::from_read(html.as_bytes(), 100)
+}
+
+impl ToolDisplay for WebFetchTool {
+    fn display_name(&self) -> &str {
+        "WebFetch"
+    }
+    fn icon(&self) -> &str {
+        "🔗"
+    }
+    fn category(&self) -> &str {
+        "web"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        crate::tool_summary::tool_smart_summary("web_fetch", args)
+    }
 }
 
 #[cfg(test)]

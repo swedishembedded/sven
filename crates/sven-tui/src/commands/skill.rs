@@ -25,17 +25,19 @@ use std::path::PathBuf;
 use sven_runtime::{AgentInfo, SkillInfo};
 
 use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+use crate::ui::width_utils::{display_width, truncate_to_width_exact};
 
 const MAX_DESCRIPTION_LEN: usize = 100;
 
 fn truncate_description(s: &str, max: usize) -> String {
     let trimmed = s.trim();
-    if trimmed.chars().count() <= max {
+    if display_width(trimmed) <= max {
         trimmed.to_string()
     } else {
-        let mut result: String = trimmed.chars().take(max.saturating_sub(1)).collect();
-        result.push('…');
-        result
+        format!(
+            "{}…",
+            truncate_to_width_exact(trimmed, max.saturating_sub(1))
+        )
     }
 }
 

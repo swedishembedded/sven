@@ -81,6 +81,11 @@ pub(crate) struct SessionEntry {
     /// JSONL log path for this session (None for TUI-created sessions that use YAML).
     pub jsonl_path: Option<std::path::PathBuf>,
 
+    // ── Subagent buffer handle ────────────────────────────────────────────────
+    /// Output buffer handle for subagent sessions (e.g. "buf_0001").
+    /// Used to populate the chat view when switching to this subagent session.
+    pub buffer_handle: Option<String>,
+
     // ── Agent connection ──────────────────────────────────────────────────────
     /// Sender for submitting requests to this session's background agent task.
     pub agent_tx: Option<mpsc::Sender<AgentRequest>>,
@@ -122,6 +127,7 @@ impl SessionEntry {
             stored_queue: None,
             session_state: None,
             jsonl_path: None,
+            buffer_handle: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -153,6 +159,7 @@ impl SessionEntry {
             stored_queue: None,
             session_state: None,
             jsonl_path: None,
+            buffer_handle: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -183,6 +190,7 @@ impl SessionEntry {
             stored_queue: None,
             session_state: None,
             jsonl_path: None,
+            buffer_handle: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -196,7 +204,11 @@ impl SessionEntry {
     }
 
     /// Create a new session entry for a subagent task (child of another session).
-    pub fn new_subagent(title: impl Into<String>, parent_id: SessionId) -> Self {
+    pub fn new_subagent(
+        title: impl Into<String>,
+        parent_id: SessionId,
+        buffer_handle: Option<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: SessionId::new(),
@@ -213,6 +225,7 @@ impl SessionEntry {
             stored_queue: None,
             session_state: None,
             jsonl_path: None,
+            buffer_handle,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -478,6 +491,7 @@ impl SessionManager {
                 stored_queue: None,
                 session_state: None,
                 jsonl_path: None,
+                buffer_handle: None,
                 agent_tx: None,
                 agent_cancel: Arc::new(Mutex::new(None)),
                 busy: false,
@@ -536,7 +550,12 @@ impl SessionManager {
     /// Move the given session to the top of the display order (after activation).
     /// Only affects roots; children stay under their parent.
     pub fn promote_to_top(&mut self, id: &SessionId) {
-        if self.entries.get(id).and_then(|e| e.parent_id.as_ref()).is_none() {
+        if self
+            .entries
+            .get(id)
+            .and_then(|e| e.parent_id.as_ref())
+            .is_none()
+        {
             self.display_order.retain(|x| x != id);
             self.display_order.insert(0, id.clone());
         }

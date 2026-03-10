@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::markdown::StyledLines;
+use crate::ui::width_utils::display_width;
 
 /// What the pager wants the app to do after handling a key.
 pub enum PagerAction {
@@ -199,7 +200,7 @@ impl PagerOverlay {
         // ── Header ────────────────────────────────────────────────────────────
         let dash = if ascii { "-" } else { "╌" };
         let title_text = format!(" {} ", self.title);
-        let half_w = (area.width as usize / 2).saturating_sub(title_text.len() / 2 + 1);
+        let half_w = (area.width as usize / 2).saturating_sub(display_width(&title_text) / 2 + 1);
         let fill = dash.repeat(half_w);
         let header = Line::from(vec![
             Span::styled(fill.clone(), Style::default().fg(Color::DarkGray)),
@@ -257,7 +258,7 @@ impl PagerOverlay {
 
         let sep_char = if ascii { "-" } else { "─" };
         let pct_str = format!(" {percent}% ");
-        let sep_width = area.width.saturating_sub(pct_str.len() as u16) as usize;
+        let sep_width = area.width.saturating_sub(display_width(&pct_str) as u16) as usize;
         let sep_fill = sep_char.repeat(sep_width);
         let sep_line = Line::from(vec![
             Span::styled(sep_fill, Style::default().fg(Color::DarkGray)),

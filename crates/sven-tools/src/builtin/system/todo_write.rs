@@ -10,7 +10,7 @@ use tracing::debug;
 
 use crate::events::{TodoItem, TodoStatus, ToolEvent};
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 pub struct TodoWriteTool {
     todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -131,6 +131,27 @@ fn format_todos(items: &[TodoItem]) -> String {
         .map(|t| format!("{} [{}] {}", t.status.icon(), t.id, t.content))
         .collect();
     format!("Todos updated:\n{}", lines.join("\n"))
+}
+
+impl ToolDisplay for TodoWriteTool {
+    fn display_name(&self) -> &str {
+        "Todos"
+    }
+    fn icon(&self) -> &str {
+        "☑"
+    }
+    fn category(&self) -> &str {
+        "system"
+    }
+    fn collapsed_summary(&self, args: &serde_json::Value) -> String {
+        // Show count of todos being updated.
+        if let Some(todos) = args.get("todos").and_then(|v| v.as_array()) {
+            let n = todos.len();
+            format!("{n} item{}", if n == 1 { "" } else { "s" })
+        } else {
+            String::new()
+        }
+    }
 }
 
 #[cfg(test)]
