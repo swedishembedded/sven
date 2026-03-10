@@ -10,6 +10,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use sven_model::{MessageContent, Role};
 use tracing::debug;
+use ratatui::style::Modifier;
 
 use crate::{
     app::App,
@@ -209,41 +210,58 @@ impl App {
             ranges.push((line_start, line_start + n));
             line_start += n;
         }
+    
+            if self.chat.streaming_buffer.is_empty() {
+                return;
+            }
 
-        if !self.chat.streaming_buffer.is_empty() {
-            let (s, bar_color) = if self.chat.streaming_is_thinking {
+            if self.chat.streaming_is_thinking {
                 // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
                 let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
-                let normalized: String = self
-                    .chat
-                    .streaming_buffer
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let preview = truncate_to_width(&normalized, 80);
-                let sep = if self.chat.segments.is_empty() {
-                    ""
-                } else {
-                    "\n"
-                };
-                let text = format!("{sep}{SYM_THINK} **Seasoning**  {dot}  `{preview}`");
-                (text, Some(Style::default().fg(BAR_THINKING)))
-            } else {
-                // Blinking ▌ cursor shows the stream is live.
-                let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
-                let sep = if self.chat.segments.is_empty() {
-                    ""
-                } else {
-                    "\n"
-                };
-                let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
-                (text, Some(Style::default().fg(BAR_AGENT)))
-            };
-            let lines = render_markdown(&s, render_width, ascii);
-            let styled = apply_bar_and_dim(lines, bar_color, false, bar_char);
-            all_lines.extend(styled);
-        }
+                let sep = if self.chat.segments.is_empty() { "" } else { "\n" };
+                // Show "Seasoning" heading with scanning dot, then streaming thought below
+                // (no backticks, no 80-char clip - stream full thought in real-time)
+                let header = format!("{sep}{SYM_THINK} **Seasoning**  {dot}\n");
+                let header_lines = render_markdown(&header, render_width, ascii);
+                let header_styled = apply_bar_and_dim(
+                    header_lines,
+                    Some(Style::default().fg(BAR_THINKING)),
+                    false,
+                    bar_char,
+                );
+                // Render thinking content on next line, styled with DIM modifier
+                let thinking = format!("{}\n", self.chat.streaming_buffer);
+                let thinking_lines = render_markdown(&thinking, render_width, ascii);
+                let dim_thinking: Vec<Line> = thinking_lines
+                    .into_iter()
+                    .map(|mut line| {
+                        for span in &mut line.spans {
+                            span.style = span.style.add_modifier(Modifier::DIM);
+                        }
+                        line
+                    })
+                    .collect();
+                let thinking_styled = apply_bar_and_dim(
+                    dim_thinking,
+                    Some(Style::default().fg(BAR_THINKING)),
+                    false,
+                    bar_char,
+                );
+                // Combine header and thinking content
+                let mut combined = header_styled;
+                combined.extend(thinking_styled);
+                all_lines.extend(combined);
+                return;
+            }
 
+            // Blinking ▌ cursor shows the stream is live.
+            let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
+            let sep = if self.chat.segments.is_empty() { "" } else { "\n" };
+            let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
+            let lines = render_markdown(&text, render_width, ascii);
+            let styled = apply_bar_and_dim(lines, Some(Style::default().fg(BAR_AGENT)), false, bar_char);
+            all_lines.extend(styled);
+    
         self.chat.lines = all_lines;
         self.chat.segment_line_ranges = ranges;
         self.chat.edit_labels = edit_labels;
