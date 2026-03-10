@@ -230,8 +230,9 @@ pub fn collapsed_preview(
             _ => segment_to_markdown(seg, tool_args_cache),
         },
         ChatSegment::Thinking { content } => {
-            let word_count = content.split_whitespace().count();
-            format!("\n{SYM_THINK}  Thinking  ~{word_count} words  {SYM_EXPAND}\n")
+            let normalized: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let preview = truncate_to_width(&normalized, 80);
+            format!("\n{SYM_THINK}  {preview}  {SYM_EXPAND}\n")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }

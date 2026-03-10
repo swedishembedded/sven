@@ -214,7 +214,13 @@ impl App {
             let (s, bar_color) = if self.chat.streaming_is_thinking {
                 // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
                 let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
-                let preview = first_words(&self.chat.streaming_buffer, 8);
+                let normalized: String = self
+                    .chat
+                    .streaming_buffer
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let preview = truncate_to_width(&normalized, 80);
                 let sep = if self.chat.segments.is_empty() {
                     ""
                 } else {
@@ -898,14 +904,6 @@ fn extract_selection_text(
 }
 
 // ── Streaming helpers ─────────────────────────────────────────────────────────
-
-/// Extract the first N whitespace-separated words from text.
-fn first_words(text: &str, n: usize) -> String {
-    text.split_whitespace()
-        .take(n)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
 
 /// Extract the tool-call ID from a segment, if it is an in-progress tool call.
 fn extract_call_id(seg: &ChatSegment) -> Option<&str> {
