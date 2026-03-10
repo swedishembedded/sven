@@ -24,13 +24,15 @@ an embedded Neovim buffer with `--nvim`.
 
 Reads instructions from stdin or a markdown file, writes clean text to stdout,
 and exits with a meaningful code. Designed to compose with other tools via
-pipes.
+pipes.  With a positional prompt and piped stdin (e.g. `cmd | sven "fix these errors"`),
+stdin is appended to the prompt with a blank line as one user message.  Workflow
+parsing (multi-step `##` sections) applies only when using `-f`/`--file`.
 
 ```sh
 # Pipe a task
 echo "Summarise the project" | sven
 
-# Multi-step workflow file
+# Multi-step workflow file (only -f uses ## steps)
 sven --file plan.md
 
 # Chain agents: plan → implement
@@ -293,7 +295,9 @@ Set with `--mode` or cycle live in the TUI with `F4`.
 ## CI / pipeline mode
 
 When stdin is not a TTY, or when `--headless` is passed, sven enters headless
-mode:
+mode.  **Workflow structure (H1, `##` steps) applies only when you use
+`-f`/`--file`**; piped stdin is never parsed as a workflow (it is one plain-text
+message or conversation/JSONL).  When using a workflow file:
 
 - The first `#` H1 heading is the conversation title.
 - Text between H1 and the first `##` is appended to the system prompt.

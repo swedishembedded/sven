@@ -92,6 +92,10 @@ pub struct CiOptions {
     pub input: String,
     /// Extra prompt prepended before the first step (from positional CLI args)
     pub extra_prompt: Option<String>,
+    /// When true, input was read from a workflow file (`-f`/`--file`); workflow
+    /// parsing (## steps, preamble, frontmatter) applies.  When false, input
+    /// is from stdin or empty — no workflow parsing, plain/text is one step.
+    pub input_from_file: bool,
     /// Absolute path to the project root (auto-detected from `.git`).
     pub project_root: Option<PathBuf>,
     /// Output format for stdout.
@@ -251,11 +255,41 @@ impl CiRunner {
             (Vec::new(), None)
         };
 
-        // ── Parse workflow (title, preamble, steps) ──────────────────────────
-        let workflow = parse_workflow(markdown_body);
+        // ── Parse workflow only when input came from a file (-f/--file) ───────
+        // Stdin is never treated as workflow markdown; only explicit workflow
+        // files get ## steps, preamble, and H1 title.
+        let workflow = if opts.input_from_file {
+            Some(parse_workflow(markdown_body))
+        } else {
+            None
+        };
 
-        // Frontmatter title takes priority over H1; H1 is the fallback.
-        let title = frontmatter.title.or(workflow.title);
+        // Frontmatter title takes priority over H1; H1 is the fallback (file only).
+        let title = frontmatter
+            .title
+            .or(workflow.as_ref().and_then(|w| w.title.clone()));
+
+        // Workflow preamble → system prompt (only when input was from a workflow file).
+        // Computed before building the queue so we can use workflow.as_ref() (queue consumes it).
+        let workflow_system_prompt_append = if opts.input_from_file
+            && !opts.input.trim().is_empty()
+            && !is_conversation_input
+            && !is_jsonl_input
+            && !is_json_summary_input
+        {
+            workflow
+                .as_ref()
+                .and_then(|w| w.system_prompt_append.clone())
+        } else {
+            None
+        };
+        let combined_append = match (
+            workflow_system_prompt_append,
+            opts.append_system_prompt.clone(),
+        ) {
+            (Some(p), Some(a)) => Some(format!("{p}\n\n{a}")),
+            (p, a) => p.or(a),
+        };
 
         // ── Build step queue ─────────────────────────────────────────────────
         let mut queue: StepQueue = if opts.input.trim().is_empty() {
@@ -267,9 +301,7 @@ impl CiRunner {
                 options: Default::default(),
             }])
         } else if is_conversation_input || is_jsonl_input || is_json_summary_input {
-            // Piped conversation/JSONL/JSON-summary: the workflow parser would
-            // misread the section headings (or JSON braces) as step labels, so
-            // we bypass it entirely.
+            // Piped conversation/JSONL/JSON-summary: do not treat as workflow.
             //
             // Step content priority:
             //   1. CLI positional prompt   (explicit task for the new turn)
@@ -304,8 +336,9 @@ impl CiRunner {
                     std::process::exit(EXIT_VALIDATION_ERROR);
                 }
             }
-        } else {
-            let mut q = workflow.steps;
+        } else if let Some(w) = workflow {
+            // Workflow file: use parsed ## steps and optional CLI prompt prepend.
+            let mut q = w.steps;
             if let Some(prompt) = &opts.extra_prompt {
                 let mut prepended = StepQueue::from(vec![Step {
                     label: None,
@@ -319,29 +352,14 @@ impl CiRunner {
             } else {
                 q
             }
-        };
-
-        // ── Merge workflow preamble into system prompt ────────────────────────
-        // Document preamble (text between H1 and first ##) goes first, then
-        // any CLI --append-system-prompt, so the document's own context is
-        // always present at the top of the appended block.
-        // Skip preamble when input is empty or conversation format (no useful
-        // preamble exists in those cases).
-        let workflow_system_prompt_append = if opts.input.trim().is_empty()
-            || is_conversation_input
-            || is_jsonl_input
-            || is_json_summary_input
-        {
-            None
         } else {
-            workflow.system_prompt_append
-        };
-        let combined_append = match (
-            workflow_system_prompt_append,
-            opts.append_system_prompt.clone(),
-        ) {
-            (Some(p), Some(a)) => Some(format!("{p}\n\n{a}")),
-            (p, a) => p.or(a),
+            // Stdin (no -f): plain text as a single step; no workflow parsing.
+            let content = markdown_body.trim().to_string();
+            StepQueue::from(vec![Step {
+                label: None,
+                content,
+                options: Default::default(),
+            }])
         };
 
         let total = queue.len();

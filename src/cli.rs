@@ -675,7 +675,9 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Optional initial prompt or task description
+    /// Optional initial prompt or task description.
+    /// When stdin is piped and a prompt is given, stdin is appended to the prompt
+    /// with a blank line and sent as one user message (e.g. `cmd | sven "fix these errors"`).
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 
@@ -691,7 +693,9 @@ pub struct Cli {
     #[arg(long, short = 'M', env = "SVEN_MODEL")]
     pub model: Option<String>,
 
-    /// Path to a markdown file to use as input (CI mode)
+    /// Path to a markdown workflow file (CI mode).
+    /// Workflow structure (H1, preamble, `##` steps) is only applied when using
+    /// this flag; stdin is never parsed as a workflow.
     #[arg(long, short = 'f')]
     pub file: Option<PathBuf>,
 

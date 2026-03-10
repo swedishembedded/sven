@@ -113,7 +113,9 @@ sven opens the TUI, pre-fills the prompt, and submits it immediately.
 Sven runs headlessly — without a TUI — in two situations:
 
 - **Piped stdin**: when stdin is not a terminal, sven auto-detects this and
-  skips the TUI automatically.
+  skips the TUI automatically.  If you also pass a positional prompt (e.g.
+  `cmd | sven "fix these errors"`), stdin is appended to the prompt with a
+  blank line and sent as one user message.
 - **`--headless` flag**: required when invoking sven directly from a terminal
   prompt without piping, so that sven writes its response to stdout instead of
   opening the interactive TUI.

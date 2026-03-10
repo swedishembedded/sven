@@ -1256,6 +1256,7 @@ async fn run_as_teammate(
                     model_override: None,
                     input: String::new(),
                     extra_prompt: Some(prompt),
+                    input_from_file: false,
                     project_root: project_root.clone(),
                     output_format: OutputFormat::Compact,
                     artifacts_dir: None,
@@ -1438,11 +1439,14 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     let load_chat = cli.effective_load_chat().cloned();
     let output_chat = cli.effective_output_chat().cloned();
 
+    let input_from_file = cli.file.is_some() && !file_is_jsonl;
+
     let opts = CiOptions {
         mode: cli.mode,
         model_override: cli.model,
         input,
         extra_prompt,
+        input_from_file,
         project_root,
         output_format,
         artifacts_dir: cli.artifacts_dir,

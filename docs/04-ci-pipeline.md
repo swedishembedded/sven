@@ -97,6 +97,11 @@ sven --headless --output-format compact \
 
 ## Workflow Files
 
+**Workflow structure (H1, preamble, `##` steps) applies only when you pass a
+file with `-f`/`--file`.**  When input comes from stdin (e.g. a pipe), it is
+never parsed as a workflow; it is treated as conversation/JSONL or as a single
+plain-text user message.
+
 Workflow files are plain markdown with a defined structure:
 
 | Element | Meaning |

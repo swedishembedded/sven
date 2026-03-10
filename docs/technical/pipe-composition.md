@@ -16,7 +16,7 @@ detection rules in priority order:
 |----------|---------------------|----------------|
 | 1 | Every non-empty line starts with `{` | **JSONL conversation** — produced by `--output-jsonl` |
 | 2 | Any line is exactly `## User`, `## Sven`, `## Tool`, or `## Tool Result` | **Conversation markdown** — produced by `--output-format conversation` (default) |
-| 3 | Everything else | **Workflow / plain text** — H2 sections become steps; no `##` sections → single step with the full text as body |
+| 3 | Everything else | **Plain text** — treated as a single user message (one step). Workflow parsing (## steps, preamble) is **not** used for stdin; it only applies when using `-f`/`--file` with a workflow file. |
 
 The rules are mutually exclusive and checked top-down.
 
@@ -39,9 +39,11 @@ The rules are mutually exclusive and checked top-down.
 
 ## Step content resolution for piped input
 
-When conversation markdown or JSONL is piped in, sven bypasses the workflow
-parser entirely (to avoid misreading `## Sven` as a step label).  The step
-content for the new turn is resolved in this order:
+Stdin is **never** parsed as a workflow (no `##` step headings, no preamble).
+Workflow structure applies only when you pass a workflow file with `-f`/`--file`.
+
+When conversation markdown or JSONL is piped in, sven uses that format to seed
+history and resolve the new turn.  The step content for the new turn is resolved in this order:
 
 ```
 CLI positional prompt   →   piped pending user turn   →   hard error
@@ -66,10 +68,12 @@ find . -name '*.rs' | sven 'count lines in each file and sort by size'
 git diff HEAD~1 | sven 'write a commit message for these changes'
 ```
 
-The piped content is plain text (no `## User`/`## Sven` markers) so it is
-treated as a single workflow step.  The CLI argument is the task; stdin is
-the data.  This mirrors `grep`, `sed`, and `awk`: CLI arguments specify the
-operation, the pipe carries the data.
+The piped content is plain text (no `## User`/`## Sven` markers).  When you
+provide both a positional prompt and stdin, sven **combines them into a single
+user message**: the prompt, a blank line, then the stdin content.  So
+`cmd | sven "fix these errors"` sends one message: "fix these errors" followed
+by the command output.  This mirrors `grep`, `sed`, and `awk`: CLI arguments
+specify the operation, the pipe carries the data.
 
 ### Pattern 2 — Context seed with explicit task
 
@@ -206,8 +210,8 @@ Stderr lines use structured `[sven:tag]` prefixes:
 |-----------|-----------|----------------|
 | Conversation piped, no CLI prompt, no pending user turn | `2` | `[sven:error] Piped conversation has no pending task.` |
 | JSONL piped, no CLI prompt, no pending user turn | `2` | `[sven:error] Piped JSONL has no pending task.` |
-| Piped conversation fails to parse | warning + fallback to workflow | `[sven:warn] Failed to parse piped input as conversation (…)` |
-| Piped JSONL fails to parse | warning + fallback to workflow | `[sven:warn] Failed to parse piped input as JSONL (…)` |
+| Piped conversation fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as conversation (…)` |
+| Piped JSONL fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as JSONL (…)` |
 
 The error message for the "no pending task" case also prints an example
 showing how to fix it:
@@ -273,9 +277,9 @@ The detection and routing live in `crates/sven-ci/src/runner.rs`:
 
 - `is_conversation_format(s)` — scans lines for reserved H2 headings
 - `is_jsonl_format(s)` — checks up to 10 non-empty lines for `{` prefix
-- Detection order: JSONL → conversation → workflow (first match wins)
+- Detection order: JSONL → conversation → plain text (first match wins). Workflow parsing (## steps) runs only when input was read from a file (`-f`/`--file`); stdin is always either conversation, JSONL, or a single plain-text step.
 - Both conversation and JSONL parsers return `(history, pending_user_input)`
-- Step content = `extra_prompt` OR `pending_user_input` OR exit(2)
+- Step content = `extra_prompt` OR `pending_user_input` OR exit(2). When stdin is plain text and a CLI prompt is given, the CLI merges them (prompt + blank line + stdin) before the runner sees input, so the runner gets one step.
 
 The 91 unit tests in `crates/sven-ci/src/tests.rs` cover every detection
 branch, the priority chain, round-trips, tool-call preservation, thinking
