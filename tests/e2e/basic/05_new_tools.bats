@@ -132,31 +132,31 @@ load helpers
 # ── Direct tool unit tests via cargo test ─────────────────────────────────────
 
 @test "05.16 edit_file unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools edit_file 2>&1 | tail -5'
+    run bash -c 'cd "${_REPO_ROOT}" && cargo test -p sven-tools edit_file 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }
 
 @test "05.17 apply_patch unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools apply_patch 2>&1 | tail -5'
+    run bash -c 'cd "${_REPO_ROOT}" && cargo test -p sven-tools apply_patch 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }
 
 @test "05.18 grep unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools builtin::grep 2>&1 | tail -5'
+    run bash -c 'cd "${_REPO_ROOT}" && cargo test -p sven-tools builtin::grep 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }
 
 @test "05.19 switch_mode unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools switch_mode 2>&1 | tail -5'
+    run bash -c 'cd "${_REPO_ROOT}" && cargo test -p sven-tools switch_mode 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }
 
 @test "05.20 todo unit tests pass" {
-    run bash -c 'cd "${_REPO_ROOT}" && CARGO_HOME=/tmp/cargo_home cargo test -p sven-tools builtin::system::todo 2>&1 | tail -5'
+    run bash -c 'cd "${_REPO_ROOT}" && cargo test -p sven-tools builtin::system::todo 2>&1 | tail -5'
     [ "${status}" -eq 0 ]
     assert_output_contains "ok"
 }
