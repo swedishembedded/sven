@@ -51,21 +51,30 @@ pub const SE_YELLOW: Color = Color::Rgb(230, 180, 40);
 /// streaming delta — speed reflects how fast the model is generating tokens.
 pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// 12-frame scanning dot for in-progress tool calls.
-/// Mirrors the classic "scanning light" on embedded test equipment.
-pub(crate) const TOOL_SCAN: [&str; 12] = [
-    "●·········",
-    "·●········",
-    "··●·······",
-    "···●······",
-    "····●·····",
-    "·····●····",
-    "······●···",
-    "·······●··",
-    "········●·",
-    "·········●",
-    "········●·",
-    "·······●··",
+/// 20-frame sinusoidal scanning dot for in-progress tool calls.
+/// Dot moves left→right→left in a smooth sine wave pattern.
+/// At 80ms per frame, one full cycle takes ~1.6 seconds.
+pub(crate) const TOOL_SCAN: [&str; 20] = [
+    "●···········",
+    "·●··········",
+    "··●·········",
+    "···●········",
+    "····●·······",
+    "·····●······",
+    "······●·····",
+    "·······●····",
+    "········●···",
+    "·········●··",
+    "··········●·",
+    "·········●··",
+    "········●···",
+    "·······●····",
+    "······●·····",
+    "·····●······",
+    "····●·······",
+    "···●········",
+    "··●·········",
+    "·●··········",
 ];
 
 /// Return the braille spinner character for `frame` (event-driven, status bar).
@@ -84,14 +93,14 @@ pub(crate) fn spinner_char(frame: u8, ascii: bool) -> &'static str {
 /// Return the scanning dot frame for in-progress tool calls.
 pub(crate) fn tool_scan(frame: u8, ascii: bool) -> &'static str {
     if ascii {
-        return match frame % 4 {
+        return match frame % 5 {
             0 => "[.   ]",
             1 => "[ .  ]",
             2 => "[  . ]",
             _ => "[   .]",
         };
     }
-    TOOL_SCAN[(frame % 12) as usize]
+    TOOL_SCAN[(frame % 20) as usize]
 }
 
 /// Blinking block cursor appended to the end of streaming text.
