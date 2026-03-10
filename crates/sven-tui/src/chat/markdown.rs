@@ -79,8 +79,8 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {
             format!(
-                "**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```",
-                content.trim_start()
+                "\n**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```\n",
+                content
             )
         }
         ChatSegment::TodoUpdate(todos) => format_todos_markdown(todos),
@@ -232,7 +232,7 @@ pub fn collapsed_preview(
         ChatSegment::Thinking { content } => {
             let normalized: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
             let preview = truncate_to_width(&normalized, 80);
-            format!("\n{SYM_THINK}  {preview}  {SYM_EXPAND}\n")
+            format!("\n{SYM_THINK} **Thought**  {preview}  {SYM_EXPAND}\n")
         }
         _ => segment_to_markdown(seg, tool_args_cache),
     }

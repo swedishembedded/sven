@@ -107,10 +107,15 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // These events signal prompt completion; the caller handles them separately.
         AgentEvent::TurnComplete | AgentEvent::Aborted { .. } => None,
 
+        // ToolProgress fires while a long-running tool is executing.  Forward
+        // it as an empty Plan heartbeat so the parent ACP client receives a
+        // notification and its inactivity timer is reset — without causing any
+        // visible change in the subagent chat view.
+        AgentEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
+
         // The remaining events have no ACP representation at this time.
         AgentEvent::TokenUsage { .. }
         | AgentEvent::ContextCompacted { .. }
-        | AgentEvent::ToolProgress { .. }
         | AgentEvent::Question { .. }
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)

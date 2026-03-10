@@ -41,11 +41,8 @@
 //! single-threaded tokio runtime and a `LocalSet`.
 
 use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::Duration;
 
 use agent_client_protocol::{
     Agent as AcpAgent, Client, ClientSideConnection, ContentBlock, InitializeRequest,
@@ -75,17 +72,12 @@ const MAX_DEPTH: u32 = 3;
 /// Environment variable used to track nesting depth across processes.
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 
-/// How long the subagent can be silent before we kill it (3 minutes).
-const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(180);
-
-// ── Millisecond timestamp helper ──────────────────────────────────────────────
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
+/// How long the subagent can be silent before we kill it (10 minutes).
+///
+/// `AgentEvent::ToolProgress` is forwarded as a heartbeat notification so the
+/// timer is reset during long tool calls (builds, shell commands, etc.).  This
+/// value is a final safety net for genuinely hung agents.
+const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
 
 // ── ACP client handler ────────────────────────────────────────────────────────
 
@@ -94,7 +86,6 @@ fn now_ms() -> u64 {
 /// - Auto-approves tool permission requests so subagents run unattended.
 struct AcpTaskClient {
     notification_tx: futures::channel::mpsc::UnboundedSender<SessionNotification>,
-    last_activity_ms: Arc<AtomicU64>,
 }
 
 #[async_trait(?Send)]
@@ -103,8 +94,6 @@ impl Client for AcpTaskClient {
         &self,
         args: RequestPermissionRequest,
     ) -> AcpResult<RequestPermissionResponse> {
-        self.last_activity_ms.store(now_ms(), Ordering::Relaxed);
-
         // Auto-approve: prefer AllowOnce, else first option, else cancelled.
         let chosen_id = args
             .options
@@ -122,7 +111,6 @@ impl Client for AcpTaskClient {
     }
 
     async fn session_notification(&self, args: SessionNotification) -> AcpResult<()> {
-        self.last_activity_ms.store(now_ms(), Ordering::Relaxed);
         let _ = self.notification_tx.unbounded_send(args);
         Ok(())
     }
@@ -442,11 +430,8 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     // !Send and we run inside a LocalSet.
     let (notif_tx, mut notif_rx) = futures::channel::mpsc::unbounded::<SessionNotification>();
 
-    let last_activity_ms = Arc::new(AtomicU64::new(now_ms()));
-
     let acp_client = AcpTaskClient {
         notification_tx: notif_tx,
-        last_activity_ms: Arc::clone(&last_activity_ms),
     };
 
     // outgoing = writes TO the agent (child stdin)
@@ -591,13 +576,13 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
 
     if timed_out {
         let _ = child.kill().await;
-        buffer_store
-            .lock()
-            .await
-            .fail(&handle_id, "inactivity timeout after 3 minutes".to_string());
+        buffer_store.lock().await.fail(
+            &handle_id,
+            "inactivity timeout after 10 minutes".to_string(),
+        );
         return ToolOutput::err(
             &call_id,
-            "sub-agent timed out after 3 minutes of inactivity",
+            "sub-agent timed out after 10 minutes of inactivity",
         );
     }
 
