@@ -1,17 +1,3 @@
-const CHIP_LOGO = [
-  '    ╷    ╷    ╷    ╷   ',
-  ' ╔══╧════╧════╧════╧══╗',
-  ' ║   ╔════╗  ╔════╗   ║',
-  '─╢   ║    ║  ║    ║   ╟─',
-  '─╢   ╚════╝  ╚════╝   ╟─',
-  '─╢                    ╟─',
-  '─╢   ╔════╗  ╔════╗   ╟─',
-  '─╢   ║    ║  ║    ║   ╟─',
-  ' ║   ╚════╝  ╚════╝   ║',
-  ' ╚══╤════╤════╤════╤══╝',
-  '    ╵    ╵    ╵    ╵   ',
-]
-
 const CONVERSATION = [
   { role: 'user', text: '❯ sven' },
   { role: 'info', text: ' ⬡ sven ' },
@@ -29,39 +15,6 @@ const CONVERSATION = [
   { role: 'space', text: '' },
   { role: 'agent', text: '   Shall I fix all three? [y/n] ▌' },
 ]
-
-function ChipLine({ line }: { line: string }) {
-  const isPinLine = line.startsWith('─╢') || line.startsWith('─')
-  const isYellow = !isPinLine || line.includes('╔') || line.includes('╚') || line.includes('╟')
-
-  if (isPinLine) {
-    return (
-      <span>
-        <span style={{ color: '#e6b428' }}>─╢</span>
-        <span style={{ color: '#3c78dc' }}>{line.slice(2, -2)}</span>
-        <span style={{ color: '#e6b428' }}>╟─</span>
-      </span>
-    )
-  }
-
-  const hasBlue = line.includes('╔════╗') || line.includes('╚════╝')
-  if (hasBlue && !line.startsWith('    ')) {
-    const parts = line.split(/(╔════╗|╚════╝)/g)
-    return (
-      <span>
-        {parts.map((part, i) =>
-          part === '╔════╗' || part === '╚════╝' ? (
-            <span key={i} style={{ color: '#3c78dc' }}>{part}</span>
-          ) : (
-            <span key={i} style={{ color: isYellow ? '#e6b428' : '#aaaaaa' }}>{part}</span>
-          )
-        )}
-      </span>
-    )
-  }
-
-  return <span style={{ color: '#888' }}>{line}</span>
-}
 
 function ConvLine({ role, text }: { role: string; text: string }) {
   if (role === 'space') return <div className="h-1" />
@@ -105,18 +58,19 @@ export default function TerminalMockup() {
 
       {/* Content */}
       <div className="flex flex-col md:flex-row" style={{ minHeight: '360px' }}>
-        {/* Left: chip logo pane */}
+        {/* Left: chip logo pane (QFP package PNG for consistent monospace look on mobile) */}
         <div
           className="flex flex-col items-center justify-center px-6 py-6 border-b md:border-b-0 md:border-r border-bg-border flex-shrink-0"
           style={{ minWidth: '240px', background: '#0a0a0f' }}
         >
-          <div className="text-xs leading-5 select-none whitespace-pre" style={{ fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace' }}>
-            {CHIP_LOGO.map((line, i) => (
-              <div key={i}>
-                <ChipLine line={line} />
-              </div>
-            ))}
-          </div>
+          <img
+            src="/hero-chip.png"
+            alt="sven"
+            width={140}
+            height={140}
+            className="select-none"
+            style={{ objectFit: 'contain' }}
+          />
           <div className="mt-3 font-mono text-xs" style={{ color: '#555568' }}>
             sven
           </div>
