@@ -429,6 +429,176 @@ pub fn save_chat_to(path: &Path, doc: &mut ChatDocument) -> Result<()> {
         .with_context(|| format!("writing chat document to {}", path.display()))
 }
 
+// ── Atomic save with modification detection ───────────────────────────────────
+
+/// Error returned when the file was modified after we read it but before we
+/// tried to write, indicating a concurrent modification.
+#[derive(Debug, thiserror::Error)]
+#[error("file was modified by another process")]
+pub struct FileModifiedError;
+
+impl From<anyhow::Error> for FileModifiedError {
+    fn from(_: anyhow::Error) -> Self {
+        FileModifiedError
+    }
+}
+/// Save a `ChatDocument` atomically, checking for concurrent modifications.
+///
+/// Atomicity is enforced by the kernel:
+/// 1. Prepare new content and write it to a temp file.
+/// 2. Take an exclusive `flock` on a lock file (same directory as the chat file).
+/// 3. While holding the lock, check that the target file is unchanged (ino/mtime).
+/// 4. Replace the target with the temp file via a single `rename()` (atomic on POSIX).
+/// 5. Release the lock.
+///
+/// The lock ensures no other writer can change the file between our check and
+/// rename, so we never overwrite a file that has changed.
+///
+/// Returns `Err(FileModifiedError)` if the file was modified by another
+/// process after we read it.
+pub fn save_chat_atomic(doc: &mut ChatDocument) -> Result<(), FileModifiedError> {
+    let dir = ensure_chat_dir().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let path = dir.join(format!("{}.yaml", doc.id));
+    save_chat_to_atomic(&path, doc)
+}
+
+/// Save a `ChatDocument` to a specific path atomically, checking for concurrent
+/// modifications. See [`save_chat_atomic`] for details.
+pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), FileModifiedError> {
+    use std::os::unix::fs::MetadataExt;
+
+    doc.touch();
+    let content = serialize_chat_document(doc).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Snapshot of target metadata before we prepare the write (no lock yet)
+    let initial_metadata = match std::fs::metadata(path) {
+        Ok(m) => Some((m.ino(), m.mtime())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(FileModifiedError),
+    };
+
+    // Write to a temporary file in the same directory (rename must be same fs)
+    let temp_path = path.with_extension("yaml.tmp");
+    std::fs::write(&temp_path, &content).map_err(|_| FileModifiedError)?;
+
+    // From here on, check and replace must be atomic: hold exclusive lock so
+    // no other writer can change the file between our stat and rename.
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let lock_path = path.with_extension("lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+            .map_err(|_| FileModifiedError)?;
+        let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
+        if ret != 0 {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(FileModifiedError);
+        }
+        let _guard = LockGuard(lock_file);
+        // With lock held: we are the only writer; target cannot change until we unlock.
+        if let Some((initial_ino, initial_mtime)) = initial_metadata {
+            match std::fs::metadata(path) {
+                Ok(m) => {
+                    if m.ino() != initial_ino || m.mtime() != initial_mtime {
+                        let _ = std::fs::remove_file(&temp_path);
+                        return Err(FileModifiedError);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // File was deleted while we held lock (another process with lock removed it)
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(FileModifiedError);
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(FileModifiedError);
+                }
+            }
+        }
+        std::fs::rename(&temp_path, path).map_err(|_| FileModifiedError)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Some((initial_ino, initial_mtime)) = initial_metadata {
+            match std::fs::metadata(path) {
+                Ok(m) => {
+                    if m.ino() != initial_ino || m.mtime() != initial_mtime {
+                        let _ = std::fs::remove_file(&temp_path);
+                        return Err(FileModifiedError);
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        std::fs::rename(&temp_path, path).map_err(|_| FileModifiedError)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+struct LockGuard(std::fs::File);
+
+#[cfg(unix)]
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+/// Load a `ChatDocument` along with its file metadata for later atomic write
+/// verification. The metadata can be passed to [`save_chat_with_metadata`] to
+/// detect concurrent modifications.
+pub fn load_chat_with_metadata(id: &SessionId) -> Result<(ChatDocument, FileMetadata)> {
+    let path = chat_path(id);
+    load_chat_from_with_metadata(&path)
+}
+
+/// Load a `ChatDocument` from an explicit file path along with its metadata.
+pub fn load_chat_from_with_metadata(path: &Path) -> Result<(ChatDocument, FileMetadata)> {
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("reading chat document metadata {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("reading chat document {}", path.display()))?;
+    let doc = parse_chat_document(&content)
+        .with_context(|| format!("parsing chat document {}", path.display()))?;
+    Ok((doc, FileMetadata::from(metadata)))
+}
+
+/// File metadata used for detecting concurrent modifications.
+#[derive(Debug, Clone)]
+pub struct FileMetadata {
+    inode: u64,
+    mtime: i64,
+}
+
+impl FileMetadata {
+    /// Check if the file has been modified since this metadata was captured.
+    pub fn is_modified(&self, path: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(path) {
+            Ok(m) => m.ino() != self.inode || m.mtime() != self.mtime,
+            Err(_) => true, // File doesn't exist or can't be read = modified
+        }
+    }
+}
+
+impl From<std::fs::Metadata> for FileMetadata {
+    fn from(m: std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            inode: m.ino(),
+            mtime: m.mtime(),
+        }
+    }
+}
+
 /// Load a `ChatDocument` from its canonical path using the session ID.
 pub fn load_chat(id: &SessionId) -> Result<ChatDocument> {
     let path = chat_path(id);

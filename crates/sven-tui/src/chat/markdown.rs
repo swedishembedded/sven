@@ -540,6 +540,109 @@ pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
     }
 }
 
+/// Build a human-readable one-line description of a tool call for the collapsed
+/// tier-0 display using tool display metadata.
+///
+/// This function uses the provided `ToolDisplayInfo` to generate more meaningful
+/// summaries than the generic `tool_smart_summary` function.
+pub fn tool_display_summary(
+    name: &str,
+    args_json: &str,
+    display_info: Option<&ToolDisplayInfo>,
+) -> String {
+    let v: serde_json::Value = match serde_json::from_str(args_json) {
+        Ok(v) => v,
+        Err(_) => return truncate_str(args_json, 55),
+    };
+
+    // If we have display info, use it for custom rendering
+    if let Some(info) = display_info {
+        // Check for intent field first (e.g., shell tool)
+        if let Some(intent_field) = &info.intent_field {
+            if let Some(intent) = v.get(intent_field).and_then(|v| v.as_str()) {
+                if !intent.is_empty() {
+                    return format!("{}: {}", info.display_name, intent);
+                }
+            }
+        }
+
+        // Use the tool-specific collapsed summary logic
+        match name {
+            "shell" => {
+                // Try intent first, then fall back to command
+                if let Some(cmd) = v
+                    .get("shell_command")
+                    .or_else(|| v.get("command"))
+                    .and_then(|v| v.as_str())
+                {
+                    let truncated = if cmd.len() > 50 {
+                        format!("{}…", &cmd[..50])
+                    } else {
+                        cmd.to_string()
+                    };
+                    return format!("{}: {}", info.display_name, truncated);
+                }
+                return info.display_name.clone();
+            }
+            "read_file" | "write_file" | "edit_file" | "delete_file" => {
+                if let Some(path) = v.get("path").and_then(|v| v.as_str()) {
+                    let filename = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(path);
+                    return format!("{}: {}", info.display_name, filename);
+                }
+            }
+            "grep" => {
+                let pattern = v
+                    .get("pattern")
+                    .or_else(|| v.get("query"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let path = v.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                let path_hint = if path == "." || path.is_empty() {
+                    String::new()
+                } else {
+                    format!(" in {}", shorten_path(path, 2));
+                };
+                return format!("{}:{}{}", info.display_name, path_hint, pattern);
+            }
+            "find_file" => {
+                if let Some(pattern) = v.get("pattern").and_then(|v| v.as_str()) {
+                    return format!("{}: {}", info.display_name, pattern);
+                }
+            }
+            _ => {}
+        }
+
+        // Default: just return the display name
+        return info.display_name.clone();
+    }
+
+    // Fall back to the generic smart summary
+    tool_smart_summary(name, args_json)
+}
+
+/// Build an expanded header for a tool call (tier-1 view).
+///
+/// This shows the command to be executed, e.g., "$ cargo build"
+pub fn tool_expanded_header(name: &str, args_json: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(args_json) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+
+    if let Some(cmd) = v
+        .get("shell_command")
+        .or_else(|| v.get("command"))
+        .and_then(|v| v.as_str())
+    {
+        return format!("$ {}", cmd);
+    }
+
+    String::new()
+}
+
 // ── Parse helpers ─────────────────────────────────────────────────────────────
 
 /// Parse a markdown buffer back into structured `Message`s for resubmit.

@@ -10,9 +10,10 @@ mod queue;
 
 pub use chat_document::{
     chat_dir, chat_path, ensure_chat_dir, json_str_to_yaml, list_chats, load_chat, load_chat_from,
-    parse_chat_document, records_to_turns, save_chat, save_chat_to, serialize_chat_document,
+    load_chat_from_with_metadata, load_chat_with_metadata, parse_chat_document, records_to_turns,
+    save_chat, save_chat_atomic, save_chat_to, save_chat_to_atomic, serialize_chat_document,
     turns_to_messages, turns_to_records, yaml_to_json_str, ChatDocument, ChatEntry, ChatStatus,
-    SessionId, TurnRecord,
+    FileMetadata, FileModifiedError, SessionId, TurnRecord,
 };
 pub use conversation::{
     parse_conversation, parse_jsonl_conversation, parse_jsonl_full, serialize_conversation,

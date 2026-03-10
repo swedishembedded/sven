@@ -84,8 +84,17 @@ pub(crate) struct SessionEntry {
     pub busy: bool,
     /// Which tool this session is currently running (if busy).
     pub current_tool: Option<String>,
-    /// Latest token usage for display in the chat list spinner.
+    /// Context window usage for the last turn (0-100 %), relative to the
+    /// usable input budget (max_tokens - max_output_tokens).
     pub context_pct: u8,
+    /// Current context window size in tokens (latest turn's prompt size).
+    pub total_context_tokens: u32,
+    /// Context window fill percentage derived from total_context_tokens.
+    pub total_context_pct: u8,
+    /// Cumulative output tokens across all completed turns in this session.
+    pub total_output_tokens: u32,
+    /// Cache-hit rate for the last turn (0-100 %).
+    pub cache_hit_pct: u8,
 }
 
 impl SessionEntry {
@@ -111,6 +120,10 @@ impl SessionEntry {
             busy: false,
             current_tool: None,
             context_pct: 0,
+            total_context_tokens: 0,
+            total_context_pct: 0,
+            total_output_tokens: 0,
+            cache_hit_pct: 0,
         }
     }
 
@@ -137,6 +150,10 @@ impl SessionEntry {
             busy: false,
             current_tool: None,
             context_pct: 0,
+            total_context_tokens: 0,
+            total_context_pct: 0,
+            total_output_tokens: 0,
+            cache_hit_pct: 0,
         }
     }
 
@@ -162,6 +179,10 @@ impl SessionEntry {
             busy: false,
             current_tool: None,
             context_pct: 0,
+            total_context_tokens: 0,
+            total_context_pct: 0,
+            total_output_tokens: 0,
+            cache_hit_pct: 0,
         }
     }
 
@@ -381,6 +402,10 @@ impl SessionManager {
                 busy: false,
                 current_tool: None,
                 context_pct: 0,
+                total_context_tokens: 0,
+                total_context_pct: 0,
+                total_output_tokens: 0,
+                cache_hit_pct: 0,
             };
             self.display_order.push(id.clone());
             self.entries.insert(id, session_entry);

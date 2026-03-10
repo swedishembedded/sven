@@ -1395,15 +1395,31 @@ impl App {
         // If the target session has no agent yet, spawn one.
         if target_tx.is_none() {
             self.spawn_agent_for_active_session().await;
-            // New agent is idle; clear busy state so the chat list doesn't show
-            // a spinner on the session we just switched to (avoids ghost spinner
-            // when clicking list items while another session's change was in progress).
+            // New agent is idle; clear busy state so the chat list doesn't show a
+            // spinner on the session we just switched to (avoids ghost spinner when
+            // clicking list items while another session's change was in progress).
+            // Still restore token metrics from the target session.
             self.agent.busy = false;
             self.agent.current_tool = None;
+            if let Some(entry) = self.sessions.get(&target_id) {
+                self.agent.total_context_tokens = entry.total_context_tokens;
+                self.agent.total_context_pct = entry.total_context_pct;
+                self.agent.total_output_tokens = entry.total_output_tokens;
+                self.agent.cache_hit_pct = entry.cache_hit_pct;
+                self.agent.context_pct = entry.context_pct;
+                self.agent.current_tool = entry.current_tool.clone();
+            }
         } else {
             self.agent.tx = target_tx;
             self.agent.cancel = target_cancel;
             self.agent.busy = target_busy;
+            // Restore token-related fields from the target session.
+            if let Some(entry) = self.sessions.get(&target_id) {
+                self.agent.total_context_tokens = entry.total_context_tokens;
+                self.agent.total_context_pct = entry.total_context_pct;
+                self.agent.total_output_tokens = entry.total_output_tokens;
+                self.agent.cache_hit_pct = entry.cache_hit_pct;
+            }
         }
 
         // Update chat title, yaml path, and jsonl path.
@@ -1463,6 +1479,11 @@ impl App {
             entry.busy = self.agent.busy;
             entry.current_tool = self.agent.current_tool.clone();
             entry.title = self.chat_title.clone();
+            entry.context_pct = self.agent.context_pct;
+            entry.total_context_tokens = self.agent.total_context_tokens;
+            entry.total_context_pct = self.agent.total_context_pct;
+            entry.total_output_tokens = self.agent.total_output_tokens;
+            entry.cache_hit_pct = self.agent.cache_hit_pct;
             entry.updated_at = chrono::Utc::now();
         }
     }

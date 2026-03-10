@@ -484,12 +484,14 @@ impl App {
             };
             tokio::spawn(async move {
                 let result = if let Some(ref path) = yaml_path {
-                    sven_input::save_chat_to(path, &mut doc)
+                    sven_input::save_chat_to_atomic(path, &mut doc)
                 } else {
-                    sven_input::save_chat(&mut doc)
+                    sven_input::save_chat_atomic(&mut doc)
                 };
                 if let Err(e) = result {
-                    tracing::debug!("failed to save YAML chat document: {e}");
+                    tracing::warn!(
+                        "failed to save YAML chat document (concurrent modification?): {e}"
+                    );
                 }
             });
         }
