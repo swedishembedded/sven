@@ -682,6 +682,19 @@ impl Agent {
                         })
                         .await;
                 }
+                ToolEvent::SubagentEvent {
+                    call_id,
+                    handle_id,
+                    update,
+                } => {
+                    let _ = tx
+                        .send(AgentEvent::SubagentEvent {
+                            call_id,
+                            handle_id,
+                            update,
+                        })
+                        .await;
+                }
             }
         }
     }

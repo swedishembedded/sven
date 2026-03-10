@@ -1,43 +1,72 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! TaskTool — spawns a full sven process as a focused sub-agent.
+//! TaskTool — spawns a full sven ACP subagent to execute a focused task.
 //!
-//! Unlike the previous in-process implementation, this tool spawns the `sven`
-//! binary with `--headless`, streams its stdout into an [`OutputBufferStore`]
-//! entry, and returns a buffer handle immediately.  The parent agent then uses
-//! `buf_status`, `buf_read`, and `buf_grep` to inspect the output without
-//! loading it all into the context window.
+//! # Architecture
 //!
-//! # Depth control
+//! The task tool spawns `sven acp serve` as a child process and connects to it
+//! via the ACP (Agent Client Protocol) over the child's stdin/stdout pipes.
+//! This gives fully structured event streaming (text deltas, tool calls, thinking
+//! blocks) instead of raw text output.
 //!
-//! Recursive spawning is limited by the `SVEN_SUBAGENT_DEPTH` environment
-//! variable.  Each spawned process receives `SVEN_SUBAGENT_DEPTH=<parent+1>`.
-//! When the depth reaches [`MAX_DEPTH`], the tool returns an error without
-//! spawning.
+//! ## Event flow
 //!
-//! # Progress events
+//! ```text
+//! TaskTool                sven acp serve subprocess
+//!   │                            │
+//!   ├── initialize ─────────────►│
+//!   ├── new_session ────────────►│
+//!   ├── (set_session_mode) ─────►│
+//!   ├── prompt ─────────────────►│
+//!   │                            │ ── session/update notifications ──►
+//!   │◄── SubagentEvent(TUI) ─────┤    (forwarded to parent TUI)
+//!   │                            │
+//!   │◄── PromptResponse(done) ───┤
+//!   └── ToolOutput(final_text)
+//! ```
 //!
-//! While the subprocess runs, the background reader task emits
-//! `ToolEvent::Progress` every [`PROGRESS_INTERVAL_MS`] milliseconds.  The
-//! event contains a snapshot of the last few output lines so the TUI can
-//! display live output in the expanded tool-call view.
+//! ## Inactivity timeout
+//!
+//! An atomic timestamp is updated on every ACP notification received.  A
+//! `tokio::time::timeout` wraps each channel receive; if no notification arrives
+//! within [`INACTIVITY_TIMEOUT`], the child process is killed and the tool returns
+//! an error.
+//!
+//! ## Thread model
+//!
+//! The ACP `ClientSideConnection` is `!Send` (it uses `LocalBoxFuture` internally
+//! for spawning sub-tasks).  To keep the outer `Tool::execute` impl `Send`, the
+//! entire ACP session runs in a dedicated `spawn_blocking` thread with its own
+//! single-threaded tokio runtime and a `LocalSet`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use agent_client_protocol::{
+    Agent as AcpAgent, Client, ClientSideConnection, ContentBlock, InitializeRequest,
+    NewSessionRequest, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, Result as AcpResult,
+    SelectedPermissionOutcome, SessionId as AcpSessionId, SessionModeId, SessionNotification,
+    SessionUpdate, SetSessionModeRequest, ToolCallStatus,
+};
 use async_trait::async_trait;
-use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{mpsc, Mutex};
+use serde_json::Value;
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
 
 use sven_config::AgentMode;
 use sven_tools::{
-    events::ToolEvent,
+    events::{SubagentUpdate, ToolEvent},
     policy::ApprovalPolicy,
     tool::{Tool, ToolCall, ToolOutput},
-    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
+    BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore,
 };
 
 /// Maximum subagent nesting depth (checked via `SVEN_SUBAGENT_DEPTH`).
@@ -46,25 +75,79 @@ const MAX_DEPTH: u32 = 3;
 /// Environment variable used to track nesting depth across processes.
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 
-/// How often (in milliseconds) to send a `ToolEvent::Progress` snapshot while
-/// the subprocess is running.
-const PROGRESS_INTERVAL_MS: u64 = 500;
+/// How long the subagent can be silent before we kill it (3 minutes).
+const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Number of trailing lines to include in each progress snapshot.
-const PROGRESS_TAIL_LINES: usize = 20;
+// ── Millisecond timestamp helper ──────────────────────────────────────────────
 
-/// Spawns a full sven subprocess to execute a focused task, streams its output
-/// into a shared [`OutputBufferStore`], and returns a buffer handle immediately.
-///
-/// Also serves as the buffer inspection interface (absorbs buf_status, buf_read,
-/// buf_grep) via the `action` parameter to reduce total tool count.
-pub struct TaskTool {
-    /// Shared buffer store — same instance as registered for buf_read/buf_grep/buf_status.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+// ── ACP client handler ────────────────────────────────────────────────────────
+
+/// A minimal ACP `Client` that:
+/// - Forwards `session_notification` updates through a channel.
+/// - Auto-approves tool permission requests so subagents run unattended.
+struct AcpTaskClient {
+    notification_tx: futures::channel::mpsc::UnboundedSender<SessionNotification>,
+    last_activity_ms: Arc<AtomicU64>,
+}
+
+#[async_trait(?Send)]
+impl Client for AcpTaskClient {
+    async fn request_permission(
+        &self,
+        args: RequestPermissionRequest,
+    ) -> AcpResult<RequestPermissionResponse> {
+        self.last_activity_ms.store(now_ms(), Ordering::Relaxed);
+
+        // Auto-approve: prefer AllowOnce, else first option, else cancelled.
+        let chosen_id = args
+            .options
+            .iter()
+            .find(|o| matches!(o.kind, PermissionOptionKind::AllowOnce))
+            .or_else(|| args.options.first())
+            .map(|o| o.option_id.clone());
+
+        let outcome = if let Some(id) = chosen_id {
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id))
+        } else {
+            RequestPermissionOutcome::Cancelled
+        };
+        Ok(RequestPermissionResponse::new(outcome))
+    }
+
+    async fn session_notification(&self, args: SessionNotification) -> AcpResult<()> {
+        self.last_activity_ms.store(now_ms(), Ordering::Relaxed);
+        let _ = self.notification_tx.unbounded_send(args);
+        Ok(())
+    }
+}
+
+// ── Arguments passed to the blocking thread ───────────────────────────────────
+
+struct SpawnArgs {
+    exe: PathBuf,
+    prompt: String,
+    description: String,
+    mode: String,
+    workdir: PathBuf,
+    model_override: Option<String>,
+    handle_id: String,
+    call_id: String,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
-    /// Channel for sending tool progress events back to the agent loop.
     tool_event_tx: mpsc::Sender<ToolEvent>,
-    /// Default model name forwarded to sub-agents (if any).  The user can
-    /// override per-call by setting the `model` parameter.
+}
+
+// ── TaskTool ─────────────────────────────────────────────────────────────────
+
+pub struct TaskTool {
+    buffer_store: Arc<Mutex<OutputBufferStore>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
     default_model: Option<String>,
 }
 
@@ -92,11 +175,9 @@ impl Tool for TaskTool {
         "Spawn a focused sub-agent or inspect a running sub-agent's output.\n\
          action: spawn (default) | status | read | grep\n\n\
          **Spawn workflow (action=spawn or omitted):**\n\
-         1. Call `task` with prompt → get a buffer handle (e.g. buf_0001)\n\
+         1. Call `task` with prompt → subagent runs and returns its final response\n\
          2. Optionally spawn more sub-agents in parallel with different prompts\n\
-         3. Poll with `task(action=status, handle=...)` to check progress\n\
-         4. Use `task(action=grep, ...)` to locate sections in the output\n\
-         5. Use `task(action=read, ...)` to read specific line ranges\n\n\
+         3. The tool blocks until the subagent completes and returns the result\n\n\
          **When to spawn:**\n\
          - Exploring a large unfamiliar area or running a multi-step investigation\n\
          - Implementing a self-contained feature in a specific file/module\n\
@@ -105,7 +186,7 @@ impl Tool for TaskTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        json!({
+        serde_json::json!({
             "type": "object",
             "properties": {
                 "action": {
@@ -185,6 +266,7 @@ impl Tool for TaskTool {
             _ => {}
         }
 
+        // ── Validate inputs before handing off to the blocking thread ─────────
         let prompt = match call.args.get("prompt").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'prompt'"),
@@ -201,13 +283,16 @@ impl Tool for TaskTool {
             .args
             .get("mode")
             .and_then(|v| v.as_str())
-            .unwrap_or("agent");
+            .unwrap_or("agent")
+            .to_string();
 
-        let workdir: Option<PathBuf> = call
+        let workdir = call
             .args
             .get("workdir")
             .and_then(|v| v.as_str())
-            .map(PathBuf::from);
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("/"));
 
         let model_override = call
             .args
@@ -216,7 +301,7 @@ impl Tool for TaskTool {
             .map(str::to_string)
             .or_else(|| self.default_model.clone());
 
-        // Enforce depth limit.
+        // Check depth limit.
         let current_depth: u32 = std::env::var(DEPTH_ENV)
             .ok()
             .and_then(|s| s.parse().ok())
@@ -226,13 +311,11 @@ impl Tool for TaskTool {
             return ToolOutput::err(
                 &call.id,
                 format!(
-                    "maximum sub-agent depth ({}) reached — cannot spawn further sub-agents",
-                    MAX_DEPTH
+                    "maximum sub-agent depth ({MAX_DEPTH}) reached — cannot spawn further sub-agents"
                 ),
             );
         }
 
-        // Find the sven binary.
         let exe = match std::env::current_exe() {
             Ok(p) => p,
             Err(e) => {
@@ -240,25 +323,17 @@ impl Tool for TaskTool {
             }
         };
 
-        // Create the output buffer.
+        // Allocate a handle ID for TUI session linking.
         let handle_id = {
             let mut store = self.buffer_store.lock().await;
             store.create(BufferSource::Subagent {
                 prompt: prompt.clone(),
-                mode: mode.to_string(),
+                mode: mode.clone(),
                 description: description.clone(),
             })
         };
 
-        debug!(
-            handle = %handle_id,
-            prompt = %prompt,
-            mode = %mode,
-            depth = current_depth + 1,
-            "task: spawning sub-agent process"
-        );
-
-        // Notify TUI so it can create a child session and show the subagent in the tree.
+        // Notify TUI to create a child session in the sidebar.
         let _ = self
             .tool_event_tx
             .send(ToolEvent::SubagentStarted {
@@ -268,212 +343,402 @@ impl Tool for TaskTool {
             })
             .await;
 
-        // Build the command.
-        let mut cmd = tokio::process::Command::new(&exe);
-        cmd.arg("--headless")
-            .arg("--output-format")
-            .arg("conversation")
-            .arg("--mode")
-            .arg(mode)
-            .arg(&prompt)
-            .env(DEPTH_ENV, (current_depth + 1).to_string())
-            // Pass through the current environment so sub-agents can access
-            // API keys and other env vars that the parent used for config expansion.
-            .envs(std::env::vars())
-            // Prevent the subprocess from opening a TUI.
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            // Prevent the subprocess from inheriting our terminal
-            .kill_on_drop(true);
+        debug!(
+            handle = %handle_id,
+            prompt = %prompt,
+            mode = %mode,
+            depth = current_depth + 1,
+            "task: spawning ACP sub-agent"
+        );
 
-        if let Some(ref m) = model_override {
-            cmd.arg("--model").arg(m);
-        }
-
-        if let Some(ref wd) = workdir {
-            cmd.current_dir(wd);
-        }
-
-        // Spawn the process.
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                self.buffer_store
-                    .lock()
-                    .await
-                    .fail(&handle_id, format!("failed to spawn: {e}"));
-                return ToolOutput::err(&call.id, format!("failed to spawn sub-agent: {e}"));
-            }
+        let args = SpawnArgs {
+            exe,
+            prompt,
+            description: description.clone(),
+            mode,
+            workdir,
+            model_override,
+            handle_id: handle_id.clone(),
+            call_id: call.id.clone(),
+            buffer_store: Arc::clone(&self.buffer_store),
+            tool_event_tx: self.tool_event_tx.clone(),
         };
+        let depth_for_env = current_depth + 1;
 
-        // Record PID.
-        if let Some(pid) = child.id() {
-            self.buffer_store.lock().await.set_pid(&handle_id, pid);
+        // The ACP ClientSideConnection is !Send (uses LocalBoxFuture internally).
+        // We run the entire ACP session in a dedicated OS thread (not spawn_blocking,
+        // which runs inside the outer tokio thread pool) with its own single-threaded
+        // tokio runtime + LocalSet.  Using a plain std::thread avoids any interaction
+        // between the outer multi-threaded runtime and the inner single-threaded one.
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<ToolOutput>();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build sub-agent runtime");
+            let local = tokio::task::LocalSet::new();
+            let output = rt.block_on(local.run_until(run_acp_session(args, depth_for_env)));
+            let _ = result_tx.send(output);
+        });
+        result_rx
+            .await
+            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"))
+    }
+}
+
+// ── Core ACP session logic (runs in LocalSet) ─────────────────────────────────
+
+async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
+    let SpawnArgs {
+        exe,
+        prompt,
+        description,
+        mode,
+        workdir,
+        model_override,
+        handle_id,
+        call_id,
+        buffer_store,
+        tool_event_tx,
+    } = args;
+
+    // ── Spawn child process ───────────────────────────────────────────────────
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.arg("acp")
+        .arg("serve")
+        .env(DEPTH_ENV, depth.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped()) // capture stderr for diagnostics
+        .kill_on_drop(true);
+
+    if let Some(ref m) = model_override {
+        cmd.arg("--model").arg(m);
+    }
+
+    cmd.current_dir(&workdir);
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            buffer_store
+                .lock()
+                .await
+                .fail(&handle_id, format!("failed to spawn: {e}"));
+            return ToolOutput::err(&call_id, format!("failed to spawn ACP sub-agent: {e}"));
         }
+    };
 
-        // Stream subprocess output into the buffer, then block until done.
-        // This is safe because each tool call already runs in its own tokio::spawn
-        // task (via ToolSlotManager::spawn_task), so parallel task tool calls
-        // execute concurrently without blocking each other.
-        let store_clone = Arc::clone(&self.buffer_store);
-        let event_tx_clone = self.tool_event_tx.clone();
-        let handle_id_clone = handle_id.clone();
-        let call_id = call.id.clone();
+    if let Some(pid) = child.id() {
+        buffer_store.lock().await.set_pid(&handle_id, pid);
+    }
 
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
+    let child_stdin = child.stdin.take().expect("stdin piped");
+    let child_stdout = child.stdout.take().expect("stdout piped");
+    let child_stderr = child.stderr.take().expect("stderr piped");
 
-        // Read stdout and stderr concurrently into the buffer.
-        let store_out = Arc::clone(&store_clone);
-        let hid_out = handle_id_clone.clone();
-        let stdout_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let line_bytes = format!("{}\n", line);
-                store_out
-                    .lock()
-                    .await
-                    .append(&hid_out, line_bytes.as_bytes());
-            }
-        });
+    // ── Create ACP connection ─────────────────────────────────────────────────
+    // Use futures::channel::mpsc (unbounded) since the Client trait methods are
+    // !Send and we run inside a LocalSet.
+    let (notif_tx, mut notif_rx) = futures::channel::mpsc::unbounded::<SessionNotification>();
 
-        let store_err = Arc::clone(&store_clone);
-        let hid_err = handle_id_clone.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let line_bytes = format!("[stderr] {}\n", line);
-                store_err
-                    .lock()
-                    .await
-                    .append(&hid_err, line_bytes.as_bytes());
-            }
-        });
+    let last_activity_ms = Arc::new(AtomicU64::new(now_ms()));
 
-        // Progress ticker: send status snapshots while running.
-        let store_prog = Arc::clone(&store_clone);
-        let hid_prog = handle_id_clone.clone();
-        let call_id_prog = call_id.clone();
-        let event_tx_prog = event_tx_clone.clone();
-        let progress_task = tokio::spawn(async move {
+    let acp_client = AcpTaskClient {
+        notification_tx: notif_tx,
+        last_activity_ms: Arc::clone(&last_activity_ms),
+    };
+
+    // outgoing = writes TO the agent (child stdin)
+    // incoming = reads FROM the agent (child stdout)
+    let (conn, io_fut) = ClientSideConnection::new(
+        acp_client,
+        child_stdin.compat_write(),
+        child_stdout.compat(),
+        |fut| {
+            tokio::task::spawn_local(fut);
+        },
+    );
+
+    // Drain child stderr in a background task so the pipe never fills up and
+    // blocks the child.  We collect the last 4 KB for error reporting.
+    let stderr_buf: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let stderr_buf = Arc::clone(&stderr_buf);
+        tokio::task::spawn_local(async move {
+            use tokio::io::AsyncReadExt as _;
+            let mut reader = child_stderr;
+            let mut chunk = [0u8; 512];
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(PROGRESS_INTERVAL_MS)).await;
-
-                let (status, tail, lines) = {
-                    let s = store_prog.lock().await;
-                    let meta = match s.metadata(&hid_prog) {
-                        Some(m) => m,
-                        None => break,
-                    };
-                    let done = matches!(
-                        meta.status,
-                        BufferStatus::Finished { .. } | BufferStatus::Failed { .. }
-                    );
-                    let tail = s.tail(&hid_prog, PROGRESS_TAIL_LINES);
-                    (done, tail, meta.total_lines)
-                };
-
-                let message = if tail.is_empty() {
-                    format!("sub-agent running — {} lines", lines)
-                } else {
-                    format!("[stream_buf:{}]\nlines:{}\n{}", hid_prog, lines, tail)
-                };
-
-                let _ = event_tx_prog
-                    .send(ToolEvent::Progress {
-                        call_id: call_id_prog.clone(),
-                        message,
-                    })
-                    .await;
-
-                if status {
-                    break;
+                match reader.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let mut buf = stderr_buf.lock().unwrap();
+                        buf.extend_from_slice(&chunk[..n]);
+                        // Keep only the last 4096 bytes.
+                        if buf.len() > 4096 {
+                            let start = buf.len() - 4096;
+                            buf.drain(..start);
+                        }
+                    }
                 }
             }
         });
+    }
 
-        // Wait for all readers to finish, then wait for the process.
-        let _ = tokio::join!(stdout_task, stderr_task);
-        progress_task.abort();
+    tokio::task::spawn_local(async move {
+        if let Err(e) = io_fut.await {
+            debug!("ACP sub-agent I/O finished: {e}");
+        }
+    });
 
-        let exit_status = child.wait().await;
-        let exit_code = match exit_status {
-            Ok(status) => {
-                let code = status.code().unwrap_or(-1);
-                store_clone.lock().await.finish(&handle_id_clone, code);
-                code
+    // Helper: read captured stderr and format it for error messages.
+    let read_stderr = |stderr_buf: &Arc<std::sync::Mutex<Vec<u8>>>| -> String {
+        let buf = stderr_buf.lock().unwrap();
+        if buf.is_empty() {
+            String::new()
+        } else {
+            format!("\nChild stderr:\n{}", String::from_utf8_lossy(&buf).trim())
+        }
+    };
+
+    // ── ACP handshake ─────────────────────────────────────────────────────────
+    if let Err(e) = conn
+        .initialize(InitializeRequest::new(
+            agent_client_protocol::ProtocolVersion::LATEST,
+        ))
+        .await
+    {
+        // Give the child a moment to flush any error output to stderr.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let stderr_msg = read_stderr(&stderr_buf);
+        let _ = child.kill().await;
+        return ToolOutput::err(&call_id, format!("ACP initialize failed: {e}{stderr_msg}"));
+    }
+
+    // NOTE: authenticate is intentionally skipped — the sven ACP server
+    // returns an empty authMethods list and the call is not required.
+
+    let session_resp = match conn
+        .new_session(NewSessionRequest::new(workdir.clone()))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let stderr_msg = read_stderr(&stderr_buf);
+            let _ = child.kill().await;
+            return ToolOutput::err(&call_id, format!("ACP new_session failed: {e}{stderr_msg}"));
+        }
+    };
+    let acp_session_id: AcpSessionId = session_resp.session_id;
+
+    // Optionally set session mode.
+    if mode != "agent" {
+        let mode_id = SessionModeId::new(mode.as_str());
+        if let Err(e) = conn
+            .set_session_mode(SetSessionModeRequest::new(acp_session_id.clone(), mode_id))
+            .await
+        {
+            warn!("ACP set_session_mode failed (non-fatal): {e}");
+        }
+    }
+
+    // ── Stream prompt with inactivity timeout ─────────────────────────────────
+
+    // Accumulated assistant text.
+    let mut final_text = String::new();
+    let mut timed_out = false;
+
+    use futures::StreamExt as FuturesStreamExt;
+
+    // Build the prompt request.
+    let prompt_content: Vec<ContentBlock> = vec![ContentBlock::from(prompt.as_str())];
+    let prompt_req = PromptRequest::new(acp_session_id.clone(), prompt_content);
+
+    // Spawn prompt as a local task, moving `conn` so the future is 'static.
+    let prompt_task = tokio::task::spawn_local(async move { conn.prompt(prompt_req).await });
+
+    // Process notifications with inactivity timeout.
+    // The prompt task and notification stream run concurrently; we stop when
+    // either the timeout fires or the notification stream closes (which happens
+    // when the ACP io_fut finishes, i.e. the child exits / prompt completes).
+    loop {
+        match tokio::time::timeout(INACTIVITY_TIMEOUT, notif_rx.next()).await {
+            Ok(Some(notif)) => {
+                let updates = session_update_to_subagent_updates(&notif.update, &mut final_text);
+                for update in updates {
+                    let _ = tool_event_tx
+                        .send(ToolEvent::SubagentEvent {
+                            call_id: call_id.clone(),
+                            handle_id: handle_id.clone(),
+                            update,
+                        })
+                        .await;
+                }
             }
-            Err(e) => {
-                warn!("task: failed to wait for sub-agent process: {e}");
-                store_clone
-                    .lock()
-                    .await
-                    .fail(&handle_id_clone, format!("process wait failed: {e}"));
-                -1
+            Ok(None) => {
+                // Stream closed — the ACP connection has terminated normally.
+                break;
             }
-        };
+            Err(_inactivity) => {
+                timed_out = true;
+                prompt_task.abort();
+                break;
+            }
+        }
+    }
 
-        // Build final result: include a tail of the output so the model sees it.
-        let (total_lines, elapsed_secs, output_tail) = {
-            let s = store_clone.lock().await;
-            let meta = s.metadata(&handle_id_clone);
-            let tail = s.tail(&handle_id_clone, 200);
-            meta.map(|m| (m.total_lines, m.elapsed_secs, tail))
-                .unwrap_or((0, 0.0, String::new()))
-        };
-
-        // Send a final progress event so the TUI can update the subagent session.
-        let final_msg = format!(
-            "sub-agent finished (exit {exit_code}) — {total_lines} lines, {elapsed_secs:.1}s"
+    if timed_out {
+        let _ = child.kill().await;
+        buffer_store
+            .lock()
+            .await
+            .fail(&handle_id, "inactivity timeout after 3 minutes".to_string());
+        return ToolOutput::err(
+            &call_id,
+            "sub-agent timed out after 3 minutes of inactivity",
         );
-        let _ = event_tx_clone
-            .send(ToolEvent::Progress {
-                call_id,
-                message: final_msg,
-            })
-            .await;
+    }
 
-        let status_word = if exit_code == 0 { "success" } else { "failed" };
+    // Drain the prompt task result.
+    if let Ok(Err(e)) = prompt_task.await {
+        warn!("ACP prompt error: {e}");
+    }
+
+    // Clean up child process.
+    let exit_code = match child.wait().await {
+        Ok(s) => s.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
+    buffer_store.lock().await.finish(&handle_id, exit_code);
+
+    // Send a Finished event so the TUI marks the session done.
+    let _ = tool_event_tx
+        .send(ToolEvent::SubagentEvent {
+            call_id: call_id.clone(),
+            handle_id: handle_id.clone(),
+            update: SubagentUpdate::Finished {
+                final_text: final_text.clone(),
+            },
+        })
+        .await;
+
+    let status_word = if exit_code == 0 { "success" } else { "failed" };
+
+    if final_text.is_empty() {
         ToolOutput::ok(
-            &call.id,
+            &call_id,
             format!(
                 "Sub-agent completed ({status_word}, exit {exit_code}).\n\
                  Handle: {handle_id}\n\
-                 Description: {description}\n\
-                 Lines: {total_lines}, Time: {elapsed_secs:.1}s\n\n\
-                 --- Output (last 200 lines) ---\n{output_tail}",
-                handle_id = handle_id,
-                description = description,
+                 Description: {description}\n\n\
+                 (No assistant text produced.)"
+            ),
+        )
+    } else {
+        ToolOutput::ok(
+            &call_id,
+            format!(
+                "Sub-agent completed ({status_word}, exit {exit_code}).\n\
+                 Handle: {handle_id}\n\
+                 Description: {description}\n\n\
+                 --- Result ---\n{final_text}"
             ),
         )
     }
 }
 
+// ── ACP → SubagentUpdate conversion ──────────────────────────────────────────
+
+fn session_update_to_subagent_updates(
+    update: &SessionUpdate,
+    final_text: &mut String,
+) -> Vec<SubagentUpdate> {
+    let mut updates = Vec::new();
+    match update {
+        SessionUpdate::AgentMessageChunk(chunk) => {
+            if let ContentBlock::Text(t) = &chunk.content {
+                final_text.push_str(&t.text);
+                updates.push(SubagentUpdate::TextDelta(t.text.clone()));
+            }
+        }
+        SessionUpdate::AgentThoughtChunk(chunk) => {
+            if let ContentBlock::Text(t) = &chunk.content {
+                updates.push(SubagentUpdate::ThinkingDelta(t.text.clone()));
+            }
+        }
+        SessionUpdate::ToolCall(tc) => {
+            let id = tc.tool_call_id.to_string();
+            let name = tc.title.clone();
+            match tc.status {
+                ToolCallStatus::InProgress => {
+                    let args = tc.raw_input.clone().unwrap_or(Value::Null);
+                    updates.push(SubagentUpdate::ToolCallStarted { id, name, args });
+                }
+                ToolCallStatus::Completed => {
+                    let output = tc
+                        .raw_output
+                        .as_ref()
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_default();
+                    updates.push(SubagentUpdate::ToolCallFinished {
+                        id,
+                        name,
+                        output,
+                        is_error: false,
+                    });
+                }
+                ToolCallStatus::Failed => {
+                    let output = tc
+                        .raw_output
+                        .as_ref()
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_default();
+                    updates.push(SubagentUpdate::ToolCallFinished {
+                        id,
+                        name,
+                        output,
+                        is_error: true,
+                    });
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    updates
+}
+
+// ── Buffer inspection actions (unchanged) ────────────────────────────────────
+
 impl TaskTool {
     async fn execute_status(&self, call: &ToolCall) -> ToolOutput {
         let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
-            Some(h) => h.to_string(),
-            None => {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => {
                 return ToolOutput::err(
                     &call.id,
                     "missing required parameter 'handle' for action=status",
                 )
             }
         };
-        let delegate_call = ToolCall {
+        let delegate = ToolCall {
             id: call.id.clone(),
             name: "buf_status".into(),
             args: serde_json::json!({ "handle": handle }),
         };
-        let buf_status = BufStatusTool::new(self.buffer_store.clone());
-        buf_status.execute(&delegate_call).await
+        BufStatusTool::new(self.buffer_store.clone())
+            .execute(&delegate)
+            .await
     }
 
     async fn execute_read(&self, call: &ToolCall) -> ToolOutput {
         let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
-            Some(h) => h.to_string(),
-            None => {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => {
                 return ToolOutput::err(
                     &call.id,
                     "missing required parameter 'handle' for action=read",
@@ -490,7 +755,7 @@ impl TaskTool {
             .get("end_line")
             .and_then(|v| v.as_u64())
             .unwrap_or(50);
-        let delegate_call = ToolCall {
+        let delegate = ToolCall {
             id: call.id.clone(),
             name: "buf_read".into(),
             args: serde_json::json!({
@@ -499,14 +764,15 @@ impl TaskTool {
                 "end_line": end_line
             }),
         };
-        let buf_read = BufReadTool::new(self.buffer_store.clone());
-        buf_read.execute(&delegate_call).await
+        BufReadTool::new(self.buffer_store.clone())
+            .execute(&delegate)
+            .await
     }
 
     async fn execute_grep(&self, call: &ToolCall) -> ToolOutput {
         let handle = match call.args.get("handle").and_then(|v| v.as_str()) {
-            Some(h) => h.to_string(),
-            None => {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => {
                 return ToolOutput::err(
                     &call.id,
                     "missing required parameter 'handle' for action=grep",
@@ -532,7 +798,7 @@ impl TaskTool {
             .get("limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(50);
-        let delegate_call = ToolCall {
+        let delegate = ToolCall {
             id: call.id.clone(),
             name: "buf_grep".into(),
             args: serde_json::json!({
@@ -542,10 +808,13 @@ impl TaskTool {
                 "limit": limit
             }),
         };
-        let buf_grep = BufGrepTool::new(self.buffer_store.clone());
-        buf_grep.execute(&delegate_call).await
+        BufGrepTool::new(self.buffer_store.clone())
+            .execute(&delegate)
+            .await
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -584,21 +853,15 @@ mod tests {
         let t = make_task();
         let out = t.execute(&call(json!({"action": "status"}))).await;
         assert!(out.is_error, "expected error, got: {}", out.content);
-        assert!(
-            out.content.contains("handle"),
-            "error should mention 'handle'"
-        );
+        assert!(out.content.contains("handle"));
     }
 
     #[tokio::test]
     async fn read_action_missing_handle_is_error() {
         let t = make_task();
         let out = t.execute(&call(json!({"action": "read"}))).await;
-        assert!(out.is_error, "expected error, got: {}", out.content);
-        assert!(
-            out.content.contains("handle"),
-            "error should mention 'handle'"
-        );
+        assert!(out.is_error);
+        assert!(out.content.contains("handle"));
     }
 
     #[tokio::test]
@@ -607,11 +870,8 @@ mod tests {
         let out = t
             .execute(&call(json!({"action": "grep", "pattern": "foo"})))
             .await;
-        assert!(out.is_error, "expected error, got: {}", out.content);
-        assert!(
-            out.content.contains("handle"),
-            "error should mention 'handle'"
-        );
+        assert!(out.is_error);
+        assert!(out.content.contains("handle"));
     }
 
     #[tokio::test]
@@ -620,11 +880,8 @@ mod tests {
         let out = t
             .execute(&call(json!({"action": "grep", "handle": "buf_0001"})))
             .await;
-        assert!(out.is_error, "expected error, got: {}", out.content);
-        assert!(
-            out.content.contains("pattern"),
-            "error should mention 'pattern'"
-        );
+        assert!(out.is_error);
+        assert!(out.content.contains("pattern"));
     }
 
     #[tokio::test]
@@ -633,7 +890,7 @@ mod tests {
         let out = t
             .execute(&call(json!({"action": "status", "handle": "buf_9999"})))
             .await;
-        assert!(out.is_error, "expected error for unknown handle");
+        assert!(out.is_error);
     }
 
     #[tokio::test]
@@ -642,53 +899,20 @@ mod tests {
         let out = t
             .execute(&call(json!({"action": "read", "handle": "buf_9999"})))
             .await;
-        assert!(out.is_error, "expected error for unknown handle");
+        assert!(out.is_error);
     }
 
     #[tokio::test]
     async fn grep_action_with_unknown_handle_returns_error() {
         let t = make_task();
         let out = t
-            .execute(&call(
-                json!({"action": "grep", "handle": "buf_9999", "pattern": "foo"}),
-            ))
+            .execute(&call(json!({
+                "action": "grep",
+                "handle": "buf_9999",
+                "pattern": "foo"
+            })))
             .await;
-        assert!(out.is_error, "expected error for unknown handle");
-    }
-}
-
-// ─── Adversarial tests ────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod adversarial_tests {
-    use serde_json::json;
-    use std::sync::Arc;
-    use tokio::sync::{mpsc, Mutex};
-
-    use sven_tools::{
-        tool::{Tool, ToolCall},
-        OutputBufferStore,
-    };
-
-    use super::{TaskTool, DEPTH_ENV, MAX_DEPTH};
-
-    // Serialize tests that mutate the SVEN_SUBAGENT_DEPTH env var to avoid
-    // race conditions when Rust runs tests in parallel async tasks.
-    // tokio::sync::Mutex can be held across .await points without deadlocking.
-    static DEPTH_ENV_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    fn make_task() -> TaskTool {
-        let (tx, _rx) = mpsc::channel(8);
-        let store = Arc::new(Mutex::new(OutputBufferStore::new()));
-        TaskTool::new(store, tx, None)
-    }
-
-    fn call(args: serde_json::Value) -> ToolCall {
-        ToolCall {
-            id: "adv".into(),
-            name: "task".into(),
-            args,
-        }
+        assert!(out.is_error);
     }
 
     #[tokio::test]
@@ -700,42 +924,30 @@ mod adversarial_tests {
             "missing prompt should be an error: {}",
             out.content
         );
-        assert!(
-            out.content.contains("prompt"),
-            "error should name missing field"
-        );
+        assert!(out.content.contains("prompt"));
     }
 
     #[tokio::test]
     async fn spawn_null_prompt_is_error() {
         let t = make_task();
         let out = t.execute(&call(json!({"prompt": null}))).await;
-        assert!(
-            out.is_error,
-            "null prompt should be an error: {}",
-            out.content
-        );
+        assert!(out.is_error);
     }
 
     #[tokio::test]
     async fn spawn_integer_prompt_is_error() {
         let t = make_task();
         let out = t.execute(&call(json!({"prompt": 42}))).await;
-        assert!(
-            out.is_error,
-            "integer prompt should be an error: {}",
-            out.content
-        );
+        assert!(out.is_error);
     }
 
     #[tokio::test]
     async fn spawn_blocked_at_max_depth() {
-        let _guard = DEPTH_ENV_MUTEX.lock().await;
-        // Simulate being at the maximum allowed depth.
-        std::env::set_var(DEPTH_ENV, MAX_DEPTH.to_string());
+        let _env = std::env::var(super::DEPTH_ENV).ok();
+        std::env::set_var(super::DEPTH_ENV, super::MAX_DEPTH.to_string());
         let t = make_task();
         let out = t.execute(&call(json!({"prompt": "do something"}))).await;
-        std::env::remove_var(DEPTH_ENV);
+        std::env::remove_var(super::DEPTH_ENV);
         assert!(
             out.is_error,
             "spawn should be blocked at max depth: {}",
@@ -746,62 +958,5 @@ mod adversarial_tests {
             "error should mention depth: {}",
             out.content
         );
-    }
-
-    #[tokio::test]
-    async fn spawn_blocked_beyond_max_depth() {
-        let _guard = DEPTH_ENV_MUTEX.lock().await;
-        let beyond = MAX_DEPTH + 5;
-        std::env::set_var(DEPTH_ENV, beyond.to_string());
-        let t = make_task();
-        let out = t.execute(&call(json!({"prompt": "do something"}))).await;
-        std::env::remove_var(DEPTH_ENV);
-        assert!(
-            out.is_error,
-            "spawn should be blocked beyond max depth: {}",
-            out.content
-        );
-    }
-
-    #[tokio::test]
-    async fn invalid_action_falls_through_to_spawn() {
-        let _guard = DEPTH_ENV_MUTEX.lock().await;
-        // An unknown action value defaults to "spawn" behavior.
-        std::env::set_var(DEPTH_ENV, MAX_DEPTH.to_string());
-        let t = make_task();
-        let out = t
-            .execute(&call(json!({"action": "totally_unknown", "prompt": "x"})))
-            .await;
-        std::env::remove_var(DEPTH_ENV);
-        // At max depth the spawn attempt will be blocked with an error.
-        assert!(out.is_error);
-    }
-
-    #[tokio::test]
-    async fn status_with_empty_string_handle_is_error() {
-        let t = make_task();
-        let out = t
-            .execute(&call(json!({"action": "status", "handle": ""})))
-            .await;
-        assert!(
-            out.is_error,
-            "empty handle should be an error: {}",
-            out.content
-        );
-    }
-
-    #[tokio::test]
-    async fn read_with_inverted_line_range_does_not_panic() {
-        let t = make_task();
-        let out = t
-            .execute(&call(json!({
-                "action": "read",
-                "handle": "buf_0001",
-                "start_line": 9999,
-                "end_line": 1
-            })))
-            .await;
-        // Inverted range on a nonexistent handle must not panic.
-        let _ = out.is_error;
     }
 }

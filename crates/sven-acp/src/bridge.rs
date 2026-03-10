@@ -117,6 +117,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         | AgentEvent::TitleGenerated(_)
         | AgentEvent::DelegateSummary { .. }
         | AgentEvent::SubagentStarted { .. }
+        | AgentEvent::SubagentEvent { .. }
         | AgentEvent::PeerList(_) => None,
     }
 }

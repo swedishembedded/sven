@@ -1,7 +1,38 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use serde_json::Value;
 use sven_config::AgentMode;
+
+/// A structured event streamed from a subagent over ACP.
+///
+/// This is a sven-native mirror of ACP `SessionUpdate` variants, kept
+/// dependency-free so `sven-tools` does not need to depend on the ACP crate.
+#[derive(Debug, Clone)]
+pub enum SubagentUpdate {
+    /// A chunk of assistant text (streamed).
+    TextDelta(String),
+    /// A chunk of thinking/reasoning text (streamed).
+    ThinkingDelta(String),
+    /// The subagent started a tool call.
+    ToolCallStarted {
+        id: String,
+        name: String,
+        args: Value,
+    },
+    /// A subagent tool call completed.
+    ToolCallFinished {
+        id: String,
+        name: String,
+        output: String,
+        is_error: bool,
+    },
+    /// The subagent's turn is complete; `final_text` is the accumulated
+    /// assistant response that the parent agent should use as the task result.
+    Finished { final_text: String },
+    /// The subagent timed out or terminated with an error.
+    Failed { reason: String },
+}
 
 /// The lifecycle state of a [`TodoItem`].
 ///
@@ -83,5 +114,15 @@ pub enum ToolEvent {
         handle_id: String,
         /// Short human-readable description for the sidebar.
         description: String,
+    },
+    /// A structured event from a running subagent, streamed over ACP.
+    /// The TUI uses these to build a proper conversation view for the subagent session.
+    SubagentEvent {
+        /// Tool-call ID of the spawning `task` call (matches `ToolCallStarted`).
+        call_id: String,
+        /// Buffer handle identifying which subagent session this belongs to.
+        handle_id: String,
+        /// The structured event payload.
+        update: SubagentUpdate,
     },
 }

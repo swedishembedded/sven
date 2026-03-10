@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use sven_config::AgentMode;
-use sven_tools::{events::TodoItem, ToolCall};
+use sven_tools::{
+    events::{SubagentUpdate, TodoItem},
+    ToolCall,
+};
 
 /// Information about a connected peer (node proxy / list_peers).
 #[derive(Debug, Clone)]
@@ -137,6 +140,16 @@ pub enum AgentEvent {
         call_id: String,
         handle_id: String,
         description: String,
+    },
+    /// A structured ACP event streamed from a running subagent.
+    /// The TUI uses these to build a proper conversation view for the subagent session.
+    SubagentEvent {
+        /// Tool-call ID of the spawning `task` call (matches `ToolCallStarted`).
+        call_id: String,
+        /// Buffer handle identifying which subagent session this belongs to.
+        handle_id: String,
+        /// The structured event payload.
+        update: SubagentUpdate,
     },
     /// List of peers (from node proxy / list_peers).
     PeerList(Vec<PeerInfo>),

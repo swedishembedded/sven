@@ -25,6 +25,7 @@
 /// | JSONL                  | (none) + pending | History seeded, step = pending user    |
 /// | JSONL                  | (none) + no pending | Error exit                         |
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use sven_input::{
         parse_conversation, parse_jsonl_full, parse_workflow, serialize_conversation_turn,

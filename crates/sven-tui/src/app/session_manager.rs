@@ -605,6 +605,14 @@ impl SessionManager {
         }
     }
 
+    /// Find the first session entry whose `buffer_handle` matches `handle`.
+    /// Used to route `SubagentEvent` updates to the correct child session.
+    pub fn find_by_buffer_handle(&mut self, handle: &str) -> Option<&mut SessionEntry> {
+        self.entries
+            .values_mut()
+            .find(|e| e.buffer_handle.as_deref() == Some(handle))
+    }
+
     /// Update the title of a session.
     pub fn set_title(&mut self, id: &SessionId, title: String) {
         if let Some(entry) = self.entries.get_mut(id) {

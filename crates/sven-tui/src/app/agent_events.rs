@@ -7,10 +7,11 @@ use std::time::Instant;
 
 use sven_core::AgentEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_tools::events::SubagentUpdate;
 use sven_tools::QuestionRequest;
 
 use crate::{
-    app::{App, FocusPane},
+    app::{chat_state::ChatState, App, FocusPane},
     chat::segment::{messages_for_resubmit, ChatSegment},
     overlay::question::QuestionModal,
 };
@@ -25,6 +26,45 @@ impl App {
     ) -> bool {
         // Route events for background sessions to their stored state.
         if session_id != self.sessions.active_id {
+            // Always route SubagentEvent to the child session, even when the
+            // parent session is in the background.
+            if let AgentEvent::SubagentEvent {
+                ref handle_id,
+                ref update,
+                ..
+            } = event
+            {
+                if let Some(entry) = self.sessions.find_by_buffer_handle(handle_id) {
+                    if entry.stored_chat.is_none() {
+                        entry.stored_chat = Some(ChatState::new());
+                    }
+                    if let Some(chat) = &mut entry.stored_chat {
+                        apply_subagent_update(chat, update);
+                    }
+                    match update {
+                        SubagentUpdate::ToolCallStarted { name, .. } => {
+                            entry.busy = true;
+                            entry.current_tool = Some(name.clone());
+                        }
+                        SubagentUpdate::ToolCallFinished { .. } => {
+                            entry.current_tool = None;
+                        }
+                        SubagentUpdate::Finished { .. } => {
+                            entry.busy = false;
+                            entry.current_tool = None;
+                            entry.status = sven_input::ChatStatus::Completed;
+                        }
+                        SubagentUpdate::Failed { .. } => {
+                            entry.busy = false;
+                            entry.current_tool = None;
+                        }
+                        _ => {}
+                    }
+                }
+                // SubagentEvents don't affect the parent session entry's busy state,
+                // so fall through to apply_background_event which will ignore them.
+            }
+
             if let Some(entry) = self.sessions.get_mut(&session_id) {
                 entry.apply_background_event(&event);
             }
@@ -472,6 +512,38 @@ impl App {
                 );
                 self.sessions.add_child_session(parent_id, entry);
             }
+            AgentEvent::SubagentEvent {
+                handle_id, update, ..
+            } => {
+                if let Some(entry) = self.sessions.find_by_buffer_handle(&handle_id) {
+                    if entry.stored_chat.is_none() {
+                        entry.stored_chat = Some(ChatState::new());
+                    }
+                    if let Some(chat) = &mut entry.stored_chat {
+                        apply_subagent_update(chat, &update);
+                    }
+                    // Keep the entry's busy/current_tool status in sync.
+                    match &update {
+                        SubagentUpdate::ToolCallStarted { name, .. } => {
+                            entry.busy = true;
+                            entry.current_tool = Some(name.clone());
+                        }
+                        SubagentUpdate::ToolCallFinished { .. } => {
+                            entry.current_tool = None;
+                        }
+                        SubagentUpdate::Finished { .. } => {
+                            entry.busy = false;
+                            entry.current_tool = None;
+                            entry.status = sven_input::ChatStatus::Completed;
+                        }
+                        SubagentUpdate::Failed { .. } => {
+                            entry.busy = false;
+                            entry.current_tool = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
         false
@@ -483,5 +555,84 @@ impl App {
         tracing::debug!(id = %req.id, count = req.questions.len(), "question request received");
         self.ui.question_modal = Some(QuestionModal::new(req.questions, req.answer_tx));
         self.ui.focus = FocusPane::Input;
+    }
+}
+
+// ── Subagent event → ChatState update ────────────────────────────────────────
+
+/// Apply a `SubagentUpdate` event to a background session's `ChatState`.
+///
+/// This builds a proper conversation view for subagent sessions:
+/// - Streamed text accumulates in `streaming_buffer` (flushed on turn boundaries)
+/// - Tool calls / results become `ChatSegment::Message` nodes
+/// - The `Finished` and `Failed` events finalise the chat
+fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
+    match update {
+        SubagentUpdate::TextDelta(t) => {
+            chat.streaming_is_thinking = false;
+            chat.streaming_buffer.push_str(t);
+        }
+        SubagentUpdate::ThinkingDelta(t) => {
+            chat.streaming_is_thinking = true;
+            chat.streaming_buffer.push_str(t);
+        }
+        SubagentUpdate::ToolCallStarted { id, name, args } => {
+            // Flush any accumulated assistant text before the tool call.
+            flush_streaming_buffer(chat);
+            chat.tool_args.insert(id.clone(), name.clone());
+            chat.segments.push(ChatSegment::Message(Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: id.clone(),
+                    function: FunctionCall {
+                        name: name.clone(),
+                        arguments: args.to_string(),
+                    },
+                },
+            }));
+        }
+        SubagentUpdate::ToolCallFinished {
+            id,
+            output,
+            is_error,
+            ..
+        } => {
+            let output_with_error = if *is_error {
+                format!("error: {output}")
+            } else {
+                output.clone()
+            };
+            chat.segments
+                .push(ChatSegment::Message(Message::tool_result(
+                    id,
+                    &output_with_error,
+                )));
+        }
+        SubagentUpdate::Finished { .. } => {
+            // Flush remaining streamed text as the final assistant message.
+            flush_streaming_buffer(chat);
+            chat.streaming_is_thinking = false;
+        }
+        SubagentUpdate::Failed { reason } => {
+            flush_streaming_buffer(chat);
+            chat.segments.push(ChatSegment::Error(reason.clone()));
+            chat.streaming_is_thinking = false;
+        }
+    }
+}
+
+/// Flush `chat.streaming_buffer` into a new assistant `ChatSegment::Message`,
+/// then clear the buffer.  No-op if the buffer is empty.
+fn flush_streaming_buffer(chat: &mut ChatState) {
+    if !chat.streaming_buffer.is_empty() {
+        let text = std::mem::take(&mut chat.streaming_buffer);
+        // If streaming_is_thinking, wrap as a thinking block.
+        if chat.streaming_is_thinking {
+            chat.segments.push(ChatSegment::Thinking { content: text });
+        } else {
+            chat.segments
+                .push(ChatSegment::Message(Message::assistant(&text)));
+        }
+        chat.streaming_is_thinking = false;
     }
 }

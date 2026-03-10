@@ -1365,8 +1365,10 @@ impl App {
             }
         });
 
-        // If still no chat and this is a subagent session with a buffer handle,
-        // populate chat from the buffer so the user sees the subagent's live output.
+        // Subagent sessions get their stored_chat populated via SubagentEvent updates
+        // (ACP-based subagents).  As a fallback for legacy subagent sessions that
+        // pre-date the ACP rewrite, read the raw buffer content.  This path should
+        // rarely be needed in practice.
         let target_chat = if target_chat.is_none() {
             let buffer_handle = self
                 .sessions

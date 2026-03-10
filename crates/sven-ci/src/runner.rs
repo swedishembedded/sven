@@ -1518,6 +1518,7 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         | AgentEvent::TitleGenerated(_)
         | AgentEvent::DelegateSummary { .. }
         | AgentEvent::SubagentStarted { .. }
+        | AgentEvent::SubagentEvent { .. }
         | AgentEvent::PeerList(_) => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {

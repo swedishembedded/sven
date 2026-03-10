@@ -309,6 +309,41 @@ fn render_file_tool_call(
         }
     }
 
+    // For edit_file, render the unified diff with colorized +/- lines.
+    if tool_name == "edit_file" {
+        if let Some(diff) = args.get("diff").and_then(|v| v.as_str()) {
+            let avail = (width as usize).saturating_sub(4);
+            const MAX_DIFF_LINES: usize = 30;
+            let total_lines = diff.lines().count();
+            for line in diff.lines().take(MAX_DIFF_LINES) {
+                let (prefix, color) = if line.starts_with('+') && !line.starts_with("+++") {
+                    ("+", Color::Rgb(80, 200, 100))
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    ("-", Color::Rgb(220, 100, 100))
+                } else if line.starts_with("@@") {
+                    ("@", Color::Rgb(100, 160, 255))
+                } else if line.starts_with("+++") || line.starts_with("---") {
+                    (" ", Color::Rgb(180, 140, 255))
+                } else {
+                    (" ", TEXT_DIM)
+                };
+                let _ = prefix; // prefix is encoded in the line itself
+                let s = truncate_to_width(line, avail);
+                lines.push(Line::from(Span::styled(
+                    format!("  {s}"),
+                    Style::default().fg(color),
+                )));
+            }
+            if total_lines > MAX_DIFF_LINES {
+                let remaining = total_lines - MAX_DIFF_LINES;
+                lines.push(Line::from(Span::styled(
+                    format!("  … {remaining} more lines"),
+                    Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+    }
+
     // offset / limit for reads
     if let Some(offset) = args.get("offset").and_then(|v| v.as_i64()) {
         let limit = args.get("limit").and_then(|v| v.as_i64());
@@ -586,5 +621,97 @@ fn render_generic_tool_call(
             truncate_to_width(&args.to_string(), avail),
             Style::default().fg(accent),
         ))]
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+    use serde_json::json;
+
+    use super::render_file_tool_call;
+
+    #[test]
+    fn edit_file_diff_renders_colored_lines() {
+        let diff = "\
+--- a/foo.rs\n\
++++ b/foo.rs\n\
+@@ -1,3 +1,3 @@\n\
+ context\n\
+-removed line\n\
++added line\n\
+ context\n\
+";
+        let args = json!({ "path": "foo.rs", "diff": diff });
+        let lines = render_file_tool_call("edit_file", &args, 80, Color::Cyan);
+
+        // There must be at least one line for the path header and diff content.
+        assert!(!lines.is_empty(), "should render at least 1 line");
+
+        let content: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        // Verify that diff prefix lines are present.
+        assert!(
+            content.iter().any(|s| s.contains("@@")),
+            "should contain hunk header: {content:?}"
+        );
+        assert!(
+            content.iter().any(|s| s.contains("-removed line")),
+            "should contain removed line: {content:?}"
+        );
+        assert!(
+            content.iter().any(|s| s.contains("+added line")),
+            "should contain added line: {content:?}"
+        );
+    }
+
+    #[test]
+    fn edit_file_diff_truncates_long_diffs() {
+        // Create a diff with more than 30 lines.
+        let mut diff = String::from("@@ -1,40 +1,40 @@\n");
+        for i in 0..35 {
+            diff.push_str(&format!("+added line {i}\n"));
+        }
+        let args = json!({ "path": "big.rs", "diff": diff });
+        let lines = render_file_tool_call("edit_file", &args, 80, Color::Cyan);
+
+        // Should have at most 30 diff lines plus path + truncation message + hunk header.
+        let content: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        assert!(
+            content.iter().any(|s| s.contains("more lines")),
+            "should show truncation indicator: {content:?}"
+        );
+    }
+
+    #[test]
+    fn edit_file_without_diff_falls_through_to_generic() {
+        // A path-only call should still render the path line.
+        let args = json!({ "path": "src/main.rs" });
+        let lines = render_file_tool_call("edit_file", &args, 80, Color::Yellow);
+        assert!(!lines.is_empty(), "should produce at least a path line");
+        let content: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref().to_string()))
+            .collect();
+        assert!(content.contains("main.rs"), "path should appear: {content}");
     }
 }
