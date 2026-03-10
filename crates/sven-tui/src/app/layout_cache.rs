@@ -151,10 +151,10 @@ impl LayoutCache {
     /// Update the peers pane height while dragging.
     /// `row` is the current mouse row.
     pub fn drag_peers_pane_height(&mut self, row: u16) {
-        // Top edge of the peers pane = peers_pane.y.
-        // The new height is peers_pane.y - row (distance from top of sidebar to mouse).
-        let sidebar_top = self.chat_list_pane.y;
-        let new_height = row.saturating_sub(sidebar_top);
+        // The peers pane occupies the bottom of the sidebar.  Its height is
+        // the distance from the drag row down to the bottom of the sidebar.
+        let sidebar_bottom = self.chat_list_pane.y + self.chat_list_pane.height;
+        let new_height = sidebar_bottom.saturating_sub(row);
         self.peers_pane_height_pref =
             new_height.clamp(PEERS_PANE_MIN_HEIGHT, PEERS_PANE_MAX_HEIGHT);
     }

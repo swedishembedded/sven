@@ -392,14 +392,14 @@ pub fn map_key(
         KeyCode::Char(c) if in_input && plain => Some(Action::InputChar(c)),
 
         // ── Chat pane ─────────────────────────────────────────────────────────
-        // When chat has focus: j/k move highlight, Enter shows help; otherwise j/k scroll.
+        // When chat has focus: j/k move highlight, Enter edits; otherwise j/k scroll.
         KeyCode::Up | KeyCode::Char('k') if !in_input && plain && in_chat_pane => {
             Some(Action::ChatHighlightUp)
         }
         KeyCode::Down | KeyCode::Char('j') if !in_input && plain && in_chat_pane => {
             Some(Action::ChatHighlightDown)
         }
-        KeyCode::Enter if !in_input && plain && in_chat_pane => Some(Action::ShowChatHelp),
+        KeyCode::Enter if !in_input && plain && in_chat_pane => Some(Action::EditMessageAtCursor),
         KeyCode::Up | KeyCode::Char('k') if !in_input && plain => Some(Action::ScrollUp),
         KeyCode::Down | KeyCode::Char('j') if !in_input && plain => Some(Action::ScrollDown),
         KeyCode::Char('K') if !in_input => Some(Action::ScrollUp),
@@ -413,6 +413,9 @@ pub fn map_key(
         KeyCode::Char('/') if !in_input && plain => Some(Action::SearchOpen),
         KeyCode::Char('n') if !in_input && plain => Some(Action::SearchNextMatch),
         KeyCode::Char('N') if !in_input => Some(Action::SearchPrevMatch),
+
+        // Help
+        KeyCode::Char('?') if !in_input => Some(Action::ShowChatHelp),
 
         // Edit / delete / copy focused segment
         KeyCode::Char('e') if !in_input && plain => Some(Action::EditMessageAtCursor),
@@ -788,10 +791,19 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_chat_pane_shows_help() {
+    fn enter_in_chat_pane_edits_message() {
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(
             mk(ev, false, false, false, false, false, true),
+            Some(Action::EditMessageAtCursor)
+        );
+    }
+
+    #[test]
+    fn question_mark_shows_chat_help() {
+        let ev = key(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, false, false, false),
             Some(Action::ShowChatHelp)
         );
     }

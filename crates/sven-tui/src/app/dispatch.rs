@@ -25,10 +25,9 @@ use crate::{
 const CHAT_HELP_MESSAGE: &str = "\
 Navigation
   j / k       Move highlight down / up
-  Enter       Show this help
 
 Actions (apply to the highlighted message)
-  e           Edit message
+  e / Enter   Edit message
   y           Copy segment to clipboard
   Y           Copy all to clipboard
   x           Remove segment
@@ -42,7 +41,8 @@ Scrolling
 Other
   /           Search
   q           Focus queue panel
-  Space       Toggle delegate summary";
+  Space       Toggle delegate summary
+  ?           Show this help";
 
 impl App {
     // ── Action dispatcher ─────────────────────────────────────────────────────

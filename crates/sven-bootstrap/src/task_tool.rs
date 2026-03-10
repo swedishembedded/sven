@@ -86,7 +86,6 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
 /// After the agent finishes its turn it may need a moment to flush buffers and
 /// perform cleanup.  We give it this window before reaching for SIGKILL so that
 /// the exit code is meaningful and stderr is fully captured.
-const CHILD_EXIT_GRACE: Duration = Duration::from_secs(5);
 
 // ── ACP client handler ────────────────────────────────────────────────────────
 
@@ -603,8 +602,8 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     //   4. Parent-side cancel signal — forward ACP cancel to the child.
     //
     // Branch 2 is the primary completion path.  We do NOT wait for the child
-    // process to exit before returning the result; instead we give it a short
-    // grace window after the PromptResponse arrives (see CHILD_EXIT_GRACE).
+    // process to exit before returning the result; the child is killed after
+    // the result is assembled (ACP server processes do not self-terminate).
     let mut cancel_rx = cancel_rx;
     let mut prompt_done = false;
     loop {
@@ -718,22 +717,18 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         }
     }
 
-    // Give the child a short grace window to exit cleanly on its own now that
-    // the turn is complete.  After CHILD_EXIT_GRACE we force-kill it.
-    let exit_code = match tokio::time::timeout(CHILD_EXIT_GRACE, child.wait()).await {
-        Ok(Ok(status)) => status.code().unwrap_or(-1),
-        Ok(Err(_)) => -1,
-        Err(_grace_expired) => {
-            debug!(
-                handle = %handle_id,
-                "task: child did not exit within grace period, killing"
-            );
-            let _ = child.kill().await;
-            match child.wait().await {
-                Ok(s) => s.code().unwrap_or(-1),
-                Err(_) => -1,
-            }
-        }
+    // The ACP server process does not exit on its own after finishing a single
+    // prompt turn — it waits for further requests.  Kill it now that we have
+    // the result, then reap the zombie so no fd leaks occur.
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    // Derive a conventional exit code from the stop reason rather than from
+    // the (always non-zero) OS exit status of a killed process.
+    let exit_code: i32 = match stop_reason {
+        StopReason::EndTurn => 0,
+        StopReason::Cancelled => 130, // SIGINT convention
+        _ => 1,
     };
     buffer_store.lock().await.finish(&handle_id, exit_code);
 
@@ -773,7 +768,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         return ToolOutput::err(
             &call_id,
             format!(
-                "Sub-agent stopped early: {stop_word} (exit {exit_code}).\n\
+                "Sub-agent stopped early: {stop_word}.\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\n\
                  Partial result:\n{final_text}"
@@ -785,7 +780,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         ToolOutput::ok(
             &call_id,
             format!(
-                "Sub-agent completed ({status_word}, exit {exit_code}, stop={stop_word}).\n\
+                "Sub-agent completed ({status_word}, stop={stop_word}).\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\n\
                  (No assistant text produced.)"
@@ -795,7 +790,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         ToolOutput::ok(
             &call_id,
             format!(
-                "Sub-agent completed ({status_word}, exit {exit_code}, stop={stop_word}).\n\
+                "Sub-agent completed ({status_word}, stop={stop_word}).\n\
                  Handle: {handle_id}\n\
                  Description: {description}\n\n\
                  --- Result ---\n{final_text}"
