@@ -79,8 +79,8 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {
             format!(
-                "\n**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```\n",
-                content
+                "**Agent:thinking**\n{SYM_THINK} **Thought**\n```\n{}\n```",
+                content.trim_start()
             )
         }
         ChatSegment::TodoUpdate(todos) => format_todos_markdown(todos),
