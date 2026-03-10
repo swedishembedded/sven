@@ -110,7 +110,7 @@ export default function TerminalMockup() {
           className="flex flex-col items-center justify-center px-6 py-6 border-b md:border-b-0 md:border-r border-bg-border flex-shrink-0"
           style={{ minWidth: '240px', background: '#0a0a0f' }}
         >
-          <div className="font-mono text-xs leading-5 select-none whitespace-pre">
+          <div className="text-xs leading-5 select-none whitespace-pre" style={{ fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace' }}>
             {CHIP_LOGO.map((line, i) => (
               <div key={i}>
                 <ChipLine line={line} />

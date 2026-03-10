@@ -33,7 +33,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
-        mono: ['"SF Mono"', '"Fira Code"', '"Fira Mono"', '"Roboto Mono"', 'Consolas', 'monospace'],
+        mono: ['"JetBrains Mono"', '"SF Mono"', '"Fira Code"', '"Fira Mono"', '"Roboto Mono"', 'Consolas', 'monospace'],
       },
       animation: {
         'pulse-dot': 'pulseDot 2s ease-in-out infinite',
