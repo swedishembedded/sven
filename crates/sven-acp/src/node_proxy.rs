@@ -23,6 +23,7 @@ use agent_client_protocol::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::{
     connect_async_tls_with_config,
@@ -110,6 +111,9 @@ struct ProxySession {
 
 const SVEN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Notification ack timeout — mirrors the same constant in `agent.rs`.
+const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// ACP agent implementation that proxies all requests to a running `sven node`.
 ///
 /// `!Send` due to `RefCell`.
@@ -141,7 +145,7 @@ impl SvenAcpNodeProxy {
             .send(ConnMessage::SessionUpdate(notification, ack_tx))
             .is_ok()
         {
-            let _ = ack_rx.await;
+            let _ = tokio::time::timeout(NOTIFY_ACK_TIMEOUT, ack_rx).await;
         }
     }
 

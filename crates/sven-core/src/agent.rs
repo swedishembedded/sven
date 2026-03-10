@@ -4,6 +4,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Maximum time to wait for the next SSE chunk from a model API before
+/// treating the connection as stale and returning an error.
+///
+/// LLM streaming connections occasionally stall mid-response (TCP half-open,
+/// API-side hang, network blip) without emitting an error or closing the
+/// stream.  Without a per-chunk timeout the agent loop would block forever.
+///
+/// 120 seconds is conservative — even the slowest reasoning models emit at
+/// least one token well within this window.  The agent loop propagates the
+/// error back to the caller, which can retry if appropriate.
+const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
+
 use anyhow::Context;
 use futures::StreamExt;
 use tokio::sync::{mpsc, Mutex};
@@ -814,8 +826,25 @@ impl Agent {
         // event to consumers (CI runner, TUI) once the thinking block ends.
         let mut thinking_buf = String::new();
 
-        while let Some(event) = stream.next().await {
-            match event? {
+        loop {
+            // Enforce a per-chunk idle timeout.  If the model API stalls —
+            // TCP half-open, API-side hang, network blip — without closing the
+            // stream, `stream.next()` would block indefinitely.  The timeout
+            // converts a silent stall into an explicit error so the agent loop
+            // (and the ACP serve path) can surface it rather than hanging.
+            let maybe_event = tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next())
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "model stream idle for >{} s — stale connection",
+                        STREAM_CHUNK_TIMEOUT.as_secs()
+                    )
+                })?;
+            let event = match maybe_event {
+                None => break,
+                Some(e) => e?,
+            };
+            match event {
                 ResponseEvent::MaxTokens => {}
                 ResponseEvent::ThinkingDelta(delta) => {
                     thinking_buf.push_str(&delta);

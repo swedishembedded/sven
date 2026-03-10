@@ -97,7 +97,7 @@ impl AnthropicProvider {
             cache_conversation,
             cache_images,
             cache_tool_results,
-            client: reqwest::Client::new(),
+            client: crate::build_http_client(),
         }
     }
 }

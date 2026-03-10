@@ -50,7 +50,7 @@ impl GoogleProvider {
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into()),
             max_tokens: max_tokens.unwrap_or(8192),
             temperature: temperature.unwrap_or(0.2),
-            client: reqwest::Client::new(),
+            client: crate::build_http_client(),
         }
     }
 }
@@ -513,7 +513,7 @@ mod tests {
         );
         let parts = message_to_gemini_parts(&msg, &HashMap::new());
         // Should have functionResponse + 1 inline_data part
-        assert!(!parts.is_empty());
+        assert!(parts.len() >= 1);
         let resp_output = &parts[0]["functionResponse"]["response"]["output"];
         assert_eq!(
             resp_output, "[see attached images]",

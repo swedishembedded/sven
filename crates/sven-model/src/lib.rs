@@ -29,7 +29,32 @@ use async_trait::async_trait;
 use futures::Stream;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
 use std::pin::Pin;
+use std::time::Duration;
 use sven_config::ModelConfig;
+
+// ── Shared HTTP client factory ────────────────────────────────────────────────
+
+/// Build a [`reqwest::Client`] that is safe for long-lived SSE streaming.
+///
+/// All model providers share these settings:
+///
+/// * **TCP keepalive (30 s)** — causes the OS to probe a silent connection
+///   after 30 seconds of inactivity.  This detects half-open TCP connections
+///   (the remote end disappeared without a FIN/RST) and surfaces them as I/O
+///   errors so the streaming loop can recover rather than hanging indefinitely.
+/// * **Connect timeout (30 s)** — prevents indefinite blocking if the API
+///   endpoint is unreachable or DNS resolution stalls.
+///
+/// No total request timeout is set because SSE streaming responses legitimately
+/// run for minutes (or hours for long agentic tasks).  The per-chunk idle
+/// timeout is enforced separately in the agent's streaming loop.
+pub(crate) fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .tcp_keepalive(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .expect("failed to build HTTP client")
+}
 
 // ── ConfigBoundedProvider ─────────────────────────────────────────────────────
 

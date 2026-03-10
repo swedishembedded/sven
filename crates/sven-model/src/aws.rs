@@ -58,7 +58,7 @@ impl BedrockProvider {
             region,
             max_tokens: max_tokens.unwrap_or(4096),
             temperature: temperature.unwrap_or(0.2),
-            client: reqwest::Client::new(),
+            client: crate::build_http_client(),
         }
     }
 }

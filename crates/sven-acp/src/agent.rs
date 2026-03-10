@@ -23,8 +23,19 @@ use agent_client_protocol::{
     PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
     SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
+
+/// How long `send_notification` waits for the I/O background task to flush a
+/// `session/update` notification before giving up.
+///
+/// The background task calls `conn.session_notification(...).await`, which
+/// writes to stdout.  If the IDE stops reading stdout the write stalls and
+/// the ack never arrives.  Rather than blocking the entire `prompt()` future
+/// (and therefore the whole LocalSet) indefinitely, we time-out and continue
+/// streaming — the IDE will have to cope with the dropped notification.
+const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config};
@@ -86,7 +97,9 @@ impl SvenAcpAgent {
     }
 
     /// Send one `session/update` notification to the client via the background
-    /// task.  Blocks until the notification has been dispatched.
+    /// task.  Waits for the notification to be dispatched, but gives up after
+    /// [`NOTIFY_ACK_TIMEOUT`] to avoid stalling `prompt()` when the IDE stops
+    /// draining stdout.
     async fn send_notification(&self, notification: SessionNotification) {
         let (ack_tx, ack_rx) = oneshot::channel();
         if self
@@ -94,7 +107,7 @@ impl SvenAcpAgent {
             .send(ConnMessage::SessionUpdate(notification, ack_tx))
             .is_ok()
         {
-            let _ = ack_rx.await;
+            let _ = tokio::time::timeout(NOTIFY_ACK_TIMEOUT, ack_rx).await;
         }
     }
 
