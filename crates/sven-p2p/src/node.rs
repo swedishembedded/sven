@@ -1347,10 +1347,30 @@ impl NodeState {
             // Relay dial failure (relay may be temporarily down).
             // The relay_poll background timer will retry automatically.
             tracing::debug!("Relay {peer_id:?} unreachable: {error}");
+        } else if matches!(error, DialError::DialPeerConditionFalse(_)) {
+            // Peer is already connected or a dial is in progress; the
+            // PeerCondition::Disconnected guard fired.  This is expected when
+            // both sides race to dial each other simultaneously — log at debug.
+            tracing::debug!(
+                "Dial to {peer_id:?} skipped (peer already connected or dialing): {error}"
+            );
         } else {
             // Transient error to an app peer — remove from dialed so the next
             // peer poll can attempt a fresh dial if the peer is still in git.
-            tracing::warn!("Connection error to {peer_id:?}: {error}");
+            //
+            // "Handshake failed" errors can occur during the simultaneous-dial
+            // race window (before PeerCondition::Disconnected fires) when both
+            // nodes start dialing each other at the same instant and libp2p
+            // deduplicates the connections by dropping one mid-handshake.
+            // Downgrade these to debug since the surviving connection is healthy.
+            let error_str = error.to_string();
+            if error_str.contains("Handshake") || error_str.contains("connection closed") {
+                tracing::debug!(
+                    "Connection error to {peer_id:?} (likely simultaneous-dial race): {error}"
+                );
+            } else {
+                tracing::warn!("Connection error to {peer_id:?}: {error}");
+            }
             if let Some(pid) = peer_id {
                 self.dialed.remove(&pid);
             }
@@ -1778,8 +1798,12 @@ impl NodeState {
                 "direct"
             };
             tracing::info!("Dialing {} ({})", info.peer_id, via);
-            if let Err(e) = swarm.dial(info.relay_addr) {
-                tracing::warn!("dial failed: {e}");
+            let opts = DialOpts::peer_id(info.peer_id)
+                .condition(PeerCondition::Disconnected)
+                .addresses(vec![info.relay_addr])
+                .build();
+            if let Err(e) = swarm.dial(opts) {
+                tracing::debug!("dial {} skipped or failed: {e}", info.peer_id);
                 self.dialed.remove(&info.peer_id);
             }
         }

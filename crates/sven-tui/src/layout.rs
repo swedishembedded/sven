@@ -63,8 +63,8 @@ impl AppLayout {
             let sidebar_area = Rect::new(
                 chat_list_pane.x,
                 chat_list_pane.y,
-                chat_list_pane.x + chat_list_pane.width,
-                chat_list_pane.y + chat_list_pane.height,
+                chat_list_pane.width,
+                chat_list_pane.height,
             );
             let vert = Layout::default()
                 .direction(Direction::Vertical)

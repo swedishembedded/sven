@@ -178,13 +178,12 @@ impl App {
                 // ── Pane border resize (stateful drag; spans multiple events) ─
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // Check peers split border first (within sidebar).
-                        if self.layout.on_peers_split_border(mouse.column, mouse.row) {
-                            self.layout.resize_drag = Some(ResizeDrag::PeersSplit);
-                            return false;
-                        }
                         if self.layout.on_chat_list_border(mouse.column, mouse.row) {
                             self.layout.resize_drag = Some(ResizeDrag::ChatListWidth);
+                            return false;
+                        }
+                        if self.layout.on_peers_split_border(mouse.column, mouse.row) {
+                            self.layout.resize_drag = Some(ResizeDrag::PeersSplit);
                             return false;
                         }
                         if self.layout.on_input_border(mouse.column, mouse.row) {
@@ -193,12 +192,12 @@ impl App {
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => match self.layout.resize_drag {
-                        Some(ResizeDrag::PeersSplit) => {
-                            self.layout.drag_peers_pane_height(mouse.row);
-                            return false;
-                        }
                         Some(ResizeDrag::ChatListWidth) => {
                             self.layout.drag_chat_list_width(mouse.column);
+                            return false;
+                        }
+                        Some(ResizeDrag::PeersSplit) => {
+                            self.layout.drag_peers_pane_height(mouse.row);
                             return false;
                         }
                         Some(ResizeDrag::InputHeight) => {
@@ -255,6 +254,8 @@ impl App {
                 self.layout.chat_pane = layout.chat_pane;
                 self.layout.input_pane = layout.input_pane;
                 self.layout.queue_pane = layout.queue_pane;
+                self.layout.chat_list_pane = layout.chat_list_pane;
+                self.layout.peers_pane = layout.peers_pane;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let chat_width = layout.chat_pane.width.saturating_sub(2);
                     let chat_height = layout.chat_inner_height();

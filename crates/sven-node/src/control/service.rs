@@ -73,9 +73,11 @@ use uuid::Uuid;
 
 use sven_config::AgentMode;
 use sven_core::{Agent, AgentEvent};
+use sven_p2p::P2pHandle;
 
 use super::protocol::{
-    ControlCommand, ControlEvent, SessionInfo, SessionState, WebDeviceFilter, WebDeviceSummary,
+    ControlCommand, ControlEvent, PeerListEntry, SessionInfo, SessionState, WebDeviceFilter,
+    WebDeviceSummary,
 };
 use crate::web::auth::devices::{DeviceRegistry, DeviceStatus};
 
@@ -176,6 +178,8 @@ pub struct ControlService {
     ///
     /// `None` for the test stub (which uses a mock agent with no P2P tools).
     node_session_depth: Option<crate::tools::SessionDepthHandle>,
+    /// Handle to the P2P node — present only when the node is running with P2P enabled.
+    p2p: Option<P2pHandle>,
 }
 
 impl ControlService {
@@ -245,6 +249,7 @@ impl ControlService {
             web_devices: None,
             web_approval_tx: None,
             node_session_depth: node_session_depth.into(),
+            p2p: None,
         };
 
         (svc, handle)
@@ -260,6 +265,13 @@ impl ControlService {
     ) {
         self.web_devices = Some(registry);
         self.web_approval_tx = Some(approval_tx);
+    }
+
+    /// Attach the P2P handle to enable `ListPeers` commands.
+    ///
+    /// Call this after constructing the service but before calling `run()`.
+    pub fn set_p2p(&mut self, p2p: P2pHandle) {
+        self.p2p = Some(p2p);
     }
 
     /// Run the service event loop. Blocks until the command channel closes.
@@ -360,6 +372,23 @@ impl ControlService {
             ControlCommand::Subscribe { .. } | ControlCommand::Unsubscribe { .. } => {
                 // Handled at the transport layer (subscribe/unsubscribe the
                 // broadcast receiver); nothing to do in the service itself.
+            }
+
+            ControlCommand::ListPeers => {
+                let peers = match &self.p2p {
+                    Some(p2p) => p2p
+                        .all_peers()
+                        .into_iter()
+                        .map(|(_peer_id, card)| PeerListEntry {
+                            name: card.name.clone(),
+                            peer_id: card.peer_id.clone(),
+                            connected: true,
+                            can_delegate: card.capabilities.contains(&"delegate".to_string()),
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+                self.broadcast(ControlEvent::PeerList { peers });
             }
 
             // ── Web device management ─────────────────────────────────────────

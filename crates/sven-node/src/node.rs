@@ -357,6 +357,9 @@ pub async fn run(
         service.set_web_devices(ws.auth.devices.clone(), ws.auth.approval_tx.clone());
     }
 
+    // Wire the P2P handle so that `ListPeers` commands are handled.
+    service.set_p2p(p2p_handle.clone());
+
     tokio::spawn(service.run());
 
     // ── Inbound task executor loop ────────────────────────────────────────────

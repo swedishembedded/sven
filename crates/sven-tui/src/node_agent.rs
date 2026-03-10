@@ -59,6 +59,7 @@ enum Cmd {
         call_id: String,
     },
     ListTools,
+    ListPeers,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,8 +117,20 @@ enum Evt {
     ToolList {
         tools: Vec<NodeToolInfo>,
     },
+    PeerList {
+        peers: Vec<NodePeerInfo>,
+    },
     #[serde(other)]
     Unknown,
+}
+
+/// A peer entry as returned by the node's `ListPeers` response.
+#[derive(Debug, Deserialize)]
+struct NodePeerInfo {
+    name: String,
+    peer_id: String,
+    connected: bool,
+    can_delegate: bool,
 }
 
 /// Tool schema as returned by the node's `ListTools` response.
@@ -232,7 +245,36 @@ pub async fn node_agent_task(
                 continue;
             }
             AgentRequest::ListPeers => {
-                // ListPeers is handled elsewhere; no content to submit.
+                if send_cmd(&ws_out_tx, &Cmd::ListPeers).is_err() {
+                    let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
+                    break;
+                }
+                // Read WS messages briefly until we receive the PeerList response.
+                let timeout = tokio::time::Duration::from_secs(5);
+                let _ = tokio::time::timeout(timeout, async {
+                    loop {
+                        let msg = match ws_stream.next().await {
+                            Some(Ok(m)) => m,
+                            _ => break,
+                        };
+                        let text = match msg {
+                            tungstenite::Message::Text(t) => t,
+                            tungstenite::Message::Close(_) => break,
+                            _ => continue,
+                        };
+                        let evt: Evt = match serde_json::from_str(&text) {
+                            Ok(e) => e,
+                            Err(_) => continue,
+                        };
+                        let is_peer_list = matches!(evt, Evt::PeerList { .. });
+                        handle_event(evt, &tx, &ws_out_tx, Uuid::nil(), &mut String::new()).await;
+                        if is_peer_list {
+                            break;
+                        }
+                    }
+                })
+                .await
+                .ok();
                 continue;
             }
         };
@@ -492,6 +534,18 @@ async fn handle_event(
         }
         // ToolList is only consumed by fetch_node_tools; ignore it here.
         Evt::ToolList { .. } | Evt::Unknown => {}
+        Evt::PeerList { peers } => {
+            let peer_infos = peers
+                .into_iter()
+                .map(|p| sven_core::PeerInfo {
+                    name: p.name,
+                    peer_id: p.peer_id,
+                    connected: p.connected,
+                    can_delegate: p.can_delegate,
+                })
+                .collect();
+            let _ = tx.send(AgentEvent::PeerList(peer_infos)).await;
+        }
     }
     false
 }

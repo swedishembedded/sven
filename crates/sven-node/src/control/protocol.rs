@@ -122,6 +122,11 @@ pub enum ControlCommand {
 
     /// List registered web browser devices.
     WebDeviceList { filter: WebDeviceFilter },
+
+    /// Request the current list of connected peers.
+    ///
+    /// The node responds with a [`ControlEvent::PeerList`] broadcast.
+    ListPeers,
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -212,9 +217,26 @@ pub enum ControlEvent {
 
     /// Error response for a web device management command.
     WebDeviceError { message: String },
+
+    // ── Peer management events ────────────────────────────────────────────────
+    /// Response to [`ControlCommand::ListPeers`].
+    PeerList { peers: Vec<PeerListEntry> },
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
+
+/// A connected peer entry returned in [`ControlEvent::PeerList`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerListEntry {
+    /// Human-readable name from the peer's agent card.
+    pub name: String,
+    /// Libp2p peer ID as a string.
+    pub peer_id: String,
+    /// Whether the peer is currently connected.
+    pub connected: bool,
+    /// Whether the peer can accept delegated tasks.
+    pub can_delegate: bool,
+}
 
 /// Lifecycle state of an agent session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

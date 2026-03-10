@@ -558,6 +558,13 @@ impl App {
                     }
                 }
             }
+            AgentEvent::PeerList(peers) => {
+                self.ui.peers = peers;
+                self.ui.peers_selected = self
+                    .ui
+                    .peers_selected
+                    .min(self.ui.peers.len().saturating_sub(1));
+            }
             _ => {}
         }
         false
