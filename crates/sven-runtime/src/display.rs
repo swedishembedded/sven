@@ -10,6 +10,52 @@ use std::collections::BTreeMap;
 
 use crate::{AgentInfo, SkillInfo};
 
+// ── Generic grouped-list formatter ────────────────────────────────────────────
+
+/// Format a slice of items as a grouped markdown list.
+///
+/// Items are grouped by the string returned by `group_fn`, then sorted
+/// alphabetically within each group.  `format_entry` produces the markdown
+/// text for each item (should end with `\n\n`).  The section header uses
+/// `title` and the total count.
+///
+/// This is the shared engine behind `format_skills_tree`, `format_agents_list`,
+/// and `format_tools_list` (in `sven-tools`) — all three share the same
+/// `BTreeMap` grouping + `## Title (N total)\n### ns\n` skeleton.
+pub fn format_grouped_list<T, G, F>(
+    items: &[T],
+    title: &str,
+    empty_label: &str,
+    group_fn: G,
+    sort_key_fn: impl Fn(&T) -> String,
+    format_entry: F,
+) -> String
+where
+    G: Fn(&T) -> String,
+    F: Fn(&T) -> String,
+{
+    if items.is_empty() {
+        return format!("## {title}\n\n_{empty_label}_\n");
+    }
+
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, item) in items.iter().enumerate() {
+        groups.entry(group_fn(item)).or_default().push(i);
+    }
+
+    let mut out = format!("## {title} ({} total)\n", items.len());
+
+    for (ns, mut indices) in groups {
+        indices.sort_by_key(|&i| sort_key_fn(&items[i]));
+        out.push_str(&format!("\n### {ns}\n\n"));
+        for i in indices {
+            out.push_str(&format_entry(&items[i]));
+        }
+    }
+
+    out
+}
+
 // ── Skills ────────────────────────────────────────────────────────────────────
 
 /// Format a slice of [`SkillInfo`] as a hierarchical markdown tree.
@@ -37,37 +83,25 @@ use crate::{AgentInfo, SkillInfo};
 /// /data/.cursor/skills/sven/plan/SKILL.md
 /// ```
 pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
-    if skills.is_empty() {
-        return "## Skills\n\n_No skills discovered._\n".to_string();
-    }
-
-    // Group by top-level namespace (part before first '/').
-    let mut groups: BTreeMap<String, Vec<&SkillInfo>> = BTreeMap::new();
-    for skill in skills {
-        let ns = skill
-            .command
-            .split('/')
-            .next()
-            .unwrap_or(&skill.command)
-            .to_string();
-        groups.entry(ns).or_default().push(skill);
-    }
-
-    let mut out = format!("## Skills ({} total)\n", skills.len());
-
-    for (ns, mut group) in groups {
-        group.sort_by(|a, b| a.command.cmp(&b.command));
-        out.push_str(&format!("\n### {ns}\n\n"));
-
-        for skill in group {
-            // Heading line: command — description
-            out.push_str(&format!("**{}**", skill.command));
+    format_grouped_list(
+        skills,
+        "Skills",
+        "No skills discovered.",
+        |s| {
+            s.command
+                .split('/')
+                .next()
+                .unwrap_or(&s.command)
+                .to_string()
+        },
+        |s| s.command.clone(),
+        |skill| {
+            let mut entry = format!("**{}**", skill.command);
             if !skill.description.is_empty() {
-                out.push_str(&format!(" — {}", skill.description.trim()));
+                entry.push_str(&format!(" — {}", skill.description.trim()));
             }
-            out.push('\n');
+            entry.push('\n');
 
-            // Meta line: version + flags
             let mut meta: Vec<String> = Vec::new();
             if let Some(ref v) = skill.version {
                 meta.push(format!("`{v}`"));
@@ -87,15 +121,13 @@ pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
                 }
             }
             if !meta.is_empty() {
-                out.push_str(&format!("{}  \n", meta.join("  ")));
+                entry.push_str(&format!("{}  \n", meta.join("  ")));
             }
 
-            // Clickable path — full absolute path, one per line.
-            out.push_str(&format!("{}\n\n", skill.skill_md_path.display()));
-        }
-    }
-
-    out
+            entry.push_str(&format!("{}\n\n", skill.skill_md_path.display()));
+            entry
+        },
+    )
 }
 
 // ── Agents ────────────────────────────────────────────────────────────────────
@@ -116,45 +148,42 @@ pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
 /// /data/.cursor/agents/security-auditor.md
 /// ```
 pub fn format_agents_list(agents: &[AgentInfo]) -> String {
-    if agents.is_empty() {
-        return "## Subagents\n\n_No subagents discovered._\n".to_string();
-    }
+    // Agents are not grouped by namespace — use a single flat group.
+    format_grouped_list(
+        agents,
+        "Subagents",
+        "No subagents discovered.",
+        |_| "all".to_string(),
+        |a| a.name.clone(),
+        |agent| {
+            let mut entry = format!("**{}**", agent.name);
+            if !agent.description.is_empty() {
+                entry.push_str(&format!(" — {}", agent.description.trim()));
+            }
+            entry.push('\n');
 
-    let mut out = format!("## Subagents ({} total)\n\n", agents.len());
+            let mut meta: Vec<String> = Vec::new();
+            if let Some(ref model) = agent.model {
+                meta.push(format!("Model: {model}"));
+            }
+            if agent.readonly {
+                meta.push("[readonly]".to_string());
+            }
+            if agent.is_background {
+                meta.push("[background]".to_string());
+            }
+            if !meta.is_empty() {
+                entry.push_str(&format!("{}  \n", meta.join("  ")));
+            }
 
-    for agent in agents {
-        // Name — description
-        out.push_str(&format!("**{}**", agent.name));
-        if !agent.description.is_empty() {
-            out.push_str(&format!(" — {}", agent.description.trim()));
-        }
-        out.push('\n');
+            if !agent.knowledge.is_empty() {
+                entry.push_str(&format!("Knowledge: {}  \n", agent.knowledge.join(", ")));
+            }
 
-        // Meta line
-        let mut meta: Vec<String> = Vec::new();
-        if let Some(ref model) = agent.model {
-            meta.push(format!("Model: {model}"));
-        }
-        if agent.readonly {
-            meta.push("[readonly]".to_string());
-        }
-        if agent.is_background {
-            meta.push("[background]".to_string());
-        }
-        if !meta.is_empty() {
-            out.push_str(&format!("{}  \n", meta.join("  ")));
-        }
-
-        // Knowledge docs
-        if !agent.knowledge.is_empty() {
-            out.push_str(&format!("Knowledge: {}  \n", agent.knowledge.join(", ")));
-        }
-
-        // Full path
-        out.push_str(&format!("{}\n\n", agent.agent_md_path.display()));
-    }
-
-    out
+            entry.push_str(&format!("{}\n\n", agent.agent_md_path.display()));
+            entry
+        },
+    )
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -169,7 +198,11 @@ mod tests {
     fn make_skill(command: &str, description: &str, path: &str) -> SkillInfo {
         SkillInfo {
             command: command.to_string(),
-            name: command.split('/').last().unwrap_or(command).to_string(),
+            name: command
+                .split('/')
+                .next_back()
+                .unwrap_or(command)
+                .to_string(),
             description: description.to_string(),
             version: None,
             skill_md_path: PathBuf::from(path),

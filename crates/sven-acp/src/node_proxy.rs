@@ -21,15 +21,11 @@ use agent_client_protocol::{
     PromptResponse, Result as AcpResult, SessionMode, SessionModeId, SessionModeState,
     SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::{
-    connect_async_tls_with_config,
-    tungstenite::{client::IntoClientRequest, protocol::Message as WsMessage},
-    Connector,
-};
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -157,51 +153,17 @@ impl SvenAcpNodeProxy {
         ]
     }
 
-    /// Open an authenticated WebSocket connection to the node.
-    async fn connect_ws(
-        &self,
-    ) -> AcpResult<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    > {
-        let mut req = self
-            .ws_url
-            .as_str()
-            .into_client_request()
-            .map_err(|_| Error::internal_error())?;
-
-        req.headers_mut().insert(
-            "Authorization",
-            format!("Bearer {}", self.token).parse().map_err(
-                |_: tokio_tungstenite::tungstenite::http::header::InvalidHeaderValue| {
-                    Error::internal_error()
-                },
-            )?,
-        );
-
-        // Accept self-signed certs (node uses a local CA by default).
-        let tls_cfg = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAny))
-            .with_no_client_auth();
-        let connector = Connector::Rustls(Arc::new(tls_cfg));
-
-        let (ws, _) = connect_async_tls_with_config(req, None, false, Some(connector))
+    async fn connect_ws(&self) -> AcpResult<sven_node_client::NodeWsStream> {
+        sven_node_client::connect(&self.ws_url, &self.token)
             .await
-            .map_err(|_| Error::internal_error())?;
-
-        Ok(ws)
+            .map_err(|_| Error::internal_error())
     }
 
     async fn send_ws_command(
-        ws: &mut tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
+        ws: &mut sven_node_client::NodeWsStream,
         cmd: &WsCommand,
     ) -> AcpResult<()> {
-        let json = serde_json::to_string(cmd).map_err(|_| Error::internal_error())?;
-        ws.send(WsMessage::Text(json))
+        sven_node_client::send_json(ws, cmd)
             .await
             .map_err(|_| Error::internal_error())
     }
@@ -429,57 +391,5 @@ impl agent_client_protocol::Agent for SvenAcpNodeProxy {
     ) -> AcpResult<SetSessionModeResponse> {
         // Mode switching is not forwarded to the node in this version.
         Ok(SetSessionModeResponse::new())
-    }
-}
-
-// ─── TLS: Accept-all verifier (node uses local CA) ────────────────────────────
-
-#[derive(Debug)]
-struct AcceptAny;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAny {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer,
-        _intermediates: &[rustls::pki_types::CertificateDer],
-        _server_name: &rustls::pki_types::ServerName,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer,
-        dh_params: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dh_params,
-            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
-        )
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer,
-        dh_params: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dh_params,
-            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
-        )
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
     }
 }

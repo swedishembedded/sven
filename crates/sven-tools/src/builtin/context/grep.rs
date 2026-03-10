@@ -16,7 +16,7 @@ use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 use super::store::ContextStore;
 
 pub struct ContextGrepTool {
-    pub store: Arc<Mutex<ContextStore>>,
+    pub(crate) store: Arc<Mutex<ContextStore>>,
 }
 
 impl ContextGrepTool {
@@ -140,7 +140,11 @@ impl Tool for ContextGrepTool {
                 let mut lines: Vec<String> = Vec::new();
                 lines.push(format!("{} match(es) for '{}':\n", matches.len(), pattern));
                 for m in &matches {
-                    let file_display = m.file.display().to_string();
+                    let file_display = m
+                        .file
+                        .as_deref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
                     for ctx in &m.context_before {
                         lines.push(format!("  {} | {}", m.line_number, ctx));
                     }

@@ -5,6 +5,7 @@ pub mod buffer;
 pub mod context;
 pub mod file;
 pub mod gdb;
+pub mod grep_match;
 pub mod knowledge;
 pub mod search;
 pub mod shell;

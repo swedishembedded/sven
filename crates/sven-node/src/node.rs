@@ -491,6 +491,7 @@ pub async fn run(
 /// arrive when the semaphore is exhausted are rejected immediately with a
 /// `TaskStatus::Failed` response rather than queued, protecting against
 /// resource exhaustion by a flooding peer.
+#[allow(clippy::too_many_arguments)]
 async fn run_task_executor(
     mut event_rx: tokio::sync::broadcast::Receiver<P2pEvent>,
     p2p: P2pHandle,

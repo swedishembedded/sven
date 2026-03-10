@@ -156,3 +156,160 @@ pub enum AgentEvent {
     /// List of peers (from node proxy / list_peers).
     PeerList(Vec<PeerInfo>),
 }
+
+/// Visitor trait for [`AgentEvent`].
+///
+/// Consumers (CI runner, TUI, ACP bridge) that need to react to agent events
+/// implement this trait and override only the variants they care about.
+/// Every method has a default no-op implementation so new event variants can
+/// be added to [`AgentEvent`] without breaking all existing consumers at once.
+///
+/// The trait is deliberately **synchronous** — async consumers (e.g. the TUI)
+/// use it as a documentation contract and handle events in their own async
+/// match blocks.
+pub trait AgentEventVisitor {
+    fn on_text_delta(&mut self, _delta: &str) {}
+    fn on_text_complete(&mut self, _text: &str) {}
+    fn on_thinking_delta(&mut self, _delta: &str) {}
+    fn on_thinking_complete(&mut self, _content: &str) {}
+    fn on_tool_call_started(&mut self, _call: &sven_tools::ToolCall) {}
+    fn on_tool_call_finished(
+        &mut self,
+        _call_id: &str,
+        _tool_name: &str,
+        _output: &str,
+        _is_error: bool,
+    ) {
+    }
+    fn on_context_compacted(
+        &mut self,
+        _tokens_before: usize,
+        _tokens_after: usize,
+        _strategy: &CompactionStrategyUsed,
+        _turn: u32,
+    ) {
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn on_token_usage(
+        &mut self,
+        _input: u32,
+        _output: u32,
+        _cache_read: u32,
+        _cache_write: u32,
+        _cache_read_total: u32,
+        _cache_write_total: u32,
+        _max_tokens: usize,
+        _max_output_tokens: usize,
+    ) {
+    }
+    fn on_turn_complete(&mut self) {}
+    fn on_aborted(&mut self, _partial_text: &str) {}
+    fn on_error(&mut self, _message: &str) {}
+    fn on_tool_progress(&mut self, _call_id: &str, _message: &str) {}
+    fn on_todo_update(&mut self, _todos: &[sven_tools::events::TodoItem]) {}
+    fn on_mode_changed(&mut self, _mode: &sven_config::AgentMode) {}
+    fn on_question(&mut self, _id: &str, _questions: &[String]) {}
+    fn on_question_answer(&mut self, _id: &str, _answer: &str) {}
+    fn on_title_generated(&mut self, _title: &str) {}
+    fn on_collab_event(&mut self, _event: &crate::prompts::CollabEvent) {}
+    fn on_delegate_summary(
+        &mut self,
+        _to_name: &str,
+        _task_title: &str,
+        _duration_ms: u64,
+        _status: &str,
+        _result_preview: &str,
+    ) {
+    }
+    fn on_subagent_started(
+        &mut self,
+        _call_id: &str,
+        _handle_id: &str,
+        _description: &str,
+        _prompt: &str,
+    ) {
+    }
+    fn on_subagent_event(
+        &mut self,
+        _call_id: &str,
+        _handle_id: &str,
+        _update: &sven_tools::events::SubagentUpdate,
+    ) {
+    }
+    fn on_peer_list(&mut self, _peers: &[PeerInfo]) {}
+
+    /// Dispatch an [`AgentEvent`] to the appropriate visitor method.
+    fn visit(&mut self, event: &AgentEvent) {
+        match event {
+            AgentEvent::TextDelta(d) => self.on_text_delta(d),
+            AgentEvent::TextComplete(t) => self.on_text_complete(t),
+            AgentEvent::ThinkingDelta(d) => self.on_thinking_delta(d),
+            AgentEvent::ThinkingComplete(c) => self.on_thinking_complete(c),
+            AgentEvent::ToolCallStarted(tc) => self.on_tool_call_started(tc),
+            AgentEvent::ToolCallFinished {
+                call_id,
+                tool_name,
+                output,
+                is_error,
+            } => self.on_tool_call_finished(call_id, tool_name, output, *is_error),
+            AgentEvent::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy,
+                turn,
+            } => self.on_context_compacted(*tokens_before, *tokens_after, strategy, *turn),
+            AgentEvent::TokenUsage {
+                input,
+                output,
+                cache_read,
+                cache_write,
+                cache_read_total,
+                cache_write_total,
+                max_tokens,
+                max_output_tokens,
+            } => self.on_token_usage(
+                *input,
+                *output,
+                *cache_read,
+                *cache_write,
+                *cache_read_total,
+                *cache_write_total,
+                *max_tokens,
+                *max_output_tokens,
+            ),
+            AgentEvent::TurnComplete => self.on_turn_complete(),
+            AgentEvent::Aborted { partial_text } => self.on_aborted(partial_text),
+            AgentEvent::Error(m) => self.on_error(m),
+            AgentEvent::ToolProgress { call_id, message } => {
+                self.on_tool_progress(call_id, message)
+            }
+            AgentEvent::TodoUpdate(todos) => self.on_todo_update(todos),
+            AgentEvent::ModeChanged(mode) => self.on_mode_changed(mode),
+            AgentEvent::Question { id, questions } => self.on_question(id, questions),
+            AgentEvent::QuestionAnswer { id, answer } => self.on_question_answer(id, answer),
+            AgentEvent::TitleGenerated(t) => self.on_title_generated(t),
+            AgentEvent::CollabEvent(e) => self.on_collab_event(e),
+            AgentEvent::DelegateSummary {
+                to_name,
+                task_title,
+                duration_ms,
+                status,
+                result_preview,
+            } => {
+                self.on_delegate_summary(to_name, task_title, *duration_ms, status, result_preview)
+            }
+            AgentEvent::SubagentStarted {
+                call_id,
+                handle_id,
+                description,
+                prompt,
+            } => self.on_subagent_started(call_id, handle_id, description, prompt),
+            AgentEvent::SubagentEvent {
+                call_id,
+                handle_id,
+                update,
+            } => self.on_subagent_event(call_id, handle_id, update),
+            AgentEvent::PeerList(peers) => self.on_peer_list(peers),
+        }
+    }
+}

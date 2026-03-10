@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_config::{AgentMode, Config};
+use sven_config::Config;
 use sven_model::ModelProvider;
 use sven_runtime::Shared;
 use sven_tools::{
@@ -47,22 +47,22 @@ use crate::GdbTool;
 /// * `mode_lock` — unused after removing `SwitchModeTool`; kept for API compatibility.
 /// * `tool_event_tx` — the sending half of the channel whose receiving end is
 ///   passed to `Agent::new()`. `TodoWriteTool` sends events here.
-/// * `buffer_store` — shared [`OutputBufferStore`] for the extended `task` tool.
+///
+/// The `buffer_store` is now bundled inside the `profile` variants that need it
+/// (`Full`, `Coding`, `SubAgent`).
 pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
     profile: ToolSetProfile,
-    mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     sub_agent_runtime: AgentRuntimeContext,
-    buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> ToolRegistry {
-    // mode_lock is no longer forwarded to a tool (SwitchModeTool removed).
-    // Accepted for API compatibility with existing callers.
-    let _ = mode_lock;
-
     match profile {
-        ToolSetProfile::Full { question_tx, todos } => build_profile_full(FullProfileParams {
+        ToolSetProfile::Full {
+            question_tx,
+            todos,
+            buffer_store,
+        } => build_profile_full(FullProfileParams {
             cfg,
             model,
             question_tx,
@@ -72,7 +72,11 @@ pub fn build_tool_registry(
             buffer_store,
             include_gdb_context: true,
         }),
-        ToolSetProfile::Coding { question_tx, todos } => build_profile_full(FullProfileParams {
+        ToolSetProfile::Coding {
+            question_tx,
+            todos,
+            buffer_store,
+        } => build_profile_full(FullProfileParams {
             cfg,
             model,
             question_tx,
@@ -85,7 +89,10 @@ pub fn build_tool_registry(
         ToolSetProfile::Research { question_tx, todos } => {
             build_profile_research(cfg, question_tx, todos, tool_event_tx, &sub_agent_runtime)
         }
-        ToolSetProfile::SubAgent { todos } => build_profile_subagent(
+        ToolSetProfile::SubAgent {
+            todos,
+            buffer_store,
+        } => build_profile_subagent(
             cfg,
             model,
             todos,

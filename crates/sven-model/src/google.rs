@@ -513,7 +513,7 @@ mod tests {
         );
         let parts = message_to_gemini_parts(&msg, &HashMap::new());
         // Should have functionResponse + 1 inline_data part
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
         let resp_output = &parts[0]["functionResponse"]["response"]["output"];
         assert_eq!(
             resp_output, "[see attached images]",

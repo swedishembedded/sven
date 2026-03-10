@@ -178,6 +178,50 @@ mod guidelines {
     }
 }
 
+// ─── Shared budgeted-section helper ──────────────────────────────────────────
+
+/// Fit a list of pre-formatted XML entries within `max_chars`.
+///
+/// Returns `(fitted_entries, truncation_note)` where `truncation_note` is
+/// non-empty when some entries were omitted.  `section_name` is used in the
+/// note (e.g. `"Skills"` → `"⚠ Skills truncated: showing N of M."`).
+///
+/// This is the shared engine behind `build_agents_section` and
+/// `build_knowledge_section`, both of which use the same fit-within-budget
+/// logic.
+fn fit_entries_to_budget<'a>(
+    entries: &'a [String],
+    total_items: usize,
+    max_chars: usize,
+    section_name: &str,
+) -> (&'a [String], String) {
+    let mut used = 0usize;
+    let fitted_count = entries
+        .iter()
+        .take_while(|e| {
+            let next = used + e.len();
+            if next <= max_chars {
+                used = next;
+                true
+            } else {
+                false
+            }
+        })
+        .count();
+
+    let fitted = &entries[..fitted_count];
+    let truncation_note = if fitted_count < entries.len() {
+        format!(
+            "\n⚠ {section_name} truncated: showing {} of {}.",
+            fitted_count, total_items
+        )
+    } else {
+        String::new()
+    };
+
+    (fitted, truncation_note)
+}
+
 // ─── Skills section ───────────────────────────────────────────────────────────
 
 /// Maximum total characters for the `<available_skills>` block in the system
@@ -239,20 +283,13 @@ pub fn build_skills_section(skills: &[SkillInfo]) -> String {
     // Walk forward through candidate entries, accumulating size, and stop once the
     // budget would be exceeded.  Skills are bounded in practice (< a few hundred),
     // so a linear scan is both correct and efficient.
-    let mut used = 0usize;
-    let fitted_count = candidate_entries
-        .iter()
-        .take_while(|e| {
-            let next = used + e.len();
-            if next <= remaining_budget {
-                used = next;
-                true
-            } else {
-                false
-            }
-        })
-        .count();
-    let fitted_entries = &candidate_entries[..fitted_count];
+    let (fitted_entries, _) = fit_entries_to_budget(
+        &candidate_entries,
+        candidate_entries.len(),
+        remaining_budget,
+        "",
+    );
+    let fitted_count = fitted_entries.len();
 
     let all_entries: Vec<&str> = always_entries
         .iter()
@@ -320,35 +357,12 @@ pub fn build_agents_section(agents: &[AgentInfo]) -> String {
         })
         .collect();
 
-    // Fit entries within budget.
-    let mut used = 0usize;
-    let fitted_count = entries
-        .iter()
-        .take_while(|e| {
-            let next = used + e.len();
-            if next <= MAX_AGENTS_PROMPT_CHARS {
-                used = next;
-                true
-            } else {
-                false
-            }
-        })
-        .count();
+    let (fitted, truncation_note) =
+        fit_entries_to_budget(&entries, agents.len(), MAX_AGENTS_PROMPT_CHARS, "Agents");
 
-    if fitted_count == 0 {
+    if fitted.is_empty() {
         return String::new();
     }
-
-    let fitted = &entries[..fitted_count];
-    let truncation_note = if fitted_count < entries.len() {
-        format!(
-            "\n⚠ Agents truncated: showing {} of {}.",
-            fitted_count,
-            agents.len()
-        )
-    } else {
-        String::new()
-    };
 
     format!(
         "## Subagents\n\n\
@@ -535,35 +549,16 @@ pub fn build_knowledge_section(knowledge: &[KnowledgeInfo]) -> String {
         })
         .collect();
 
-    // Fit within budget.
-    let mut used = 0usize;
-    let fitted_count = entries
-        .iter()
-        .take_while(|e| {
-            let next = used + e.len();
-            if next <= MAX_KNOWLEDGE_PROMPT_CHARS {
-                used = next;
-                true
-            } else {
-                false
-            }
-        })
-        .count();
+    let (fitted, truncation_note) = fit_entries_to_budget(
+        &entries,
+        knowledge.len(),
+        MAX_KNOWLEDGE_PROMPT_CHARS,
+        "Knowledge base",
+    );
 
-    if fitted_count == 0 {
+    if fitted.is_empty() {
         return String::new();
     }
-
-    let fitted = &entries[..fitted_count];
-    let truncation_note = if fitted_count < entries.len() {
-        format!(
-            "\n⚠ Knowledge base truncated: showing {} of {}.",
-            fitted_count,
-            knowledge.len()
-        )
-    } else {
-        String::new()
-    };
 
     format!(
         "## Knowledge Base\n\n\

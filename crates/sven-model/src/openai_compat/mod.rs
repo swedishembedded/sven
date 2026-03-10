@@ -17,6 +17,17 @@
 //! This module is `pub(crate)` — direct construction is handled in
 //! `sven_model::from_config`.
 
+mod request;
+mod stream;
+
+pub(crate) use request::build_openai_messages;
+pub(crate) use stream::drain_complete_sse_lines_bytes;
+
+#[cfg(test)]
+pub(crate) use stream::drain_complete_sse_lines;
+#[cfg(test)]
+use stream::parse_sse_chunk_test as parse_sse_chunk;
+
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -26,9 +37,8 @@ use tracing::debug;
 use crate::{
     catalog::{static_catalog, ModelCatalogEntry},
     provider::ResponseStream,
-    CompletionRequest, ResponseEvent, Role,
+    CompletionRequest, ResponseEvent,
 };
-
 /// How to send the API key in HTTP requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStyle {
@@ -469,285 +479,6 @@ impl crate::ModelProvider for OpenAICompatProvider {
 
         Ok(Box::pin(event_stream))
     }
-}
-
-/// Parse a single complete SSE `data:` line into a [`ResponseEvent`].
-///
-/// Returns `None` for empty lines, comment lines, or unparseable data.
-fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<ResponseEvent>> {
-    let data = line.strip_prefix("data: ")?.trim();
-    if data.is_empty() {
-        return None;
-    }
-    if data == "[DONE]" {
-        return Some(Ok(ResponseEvent::Done));
-    }
-    let v: Value = serde_json::from_str(data).ok()?;
-    Some(parse_sse_chunk(&v))
-}
-
-/// Drain all complete `\n`-terminated SSE lines from a raw-byte buffer.
-///
-/// Any trailing incomplete line is left in `buf`.  Because `\n` (0x0A) never
-/// appears inside a multi-byte UTF-8 continuation byte, every slice ending at
-/// a `\n` position is guaranteed to be complete UTF-8.  This is the canonical
-/// implementation; `drain_complete_sse_lines` (the `&mut String` variant below)
-/// delegates here so that tests can continue to use the simpler `String` API.
-pub(crate) fn drain_complete_sse_lines_bytes(
-    buf: &mut Vec<u8>,
-) -> Vec<anyhow::Result<ResponseEvent>> {
-    let mut events = Vec::new();
-    while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
-        let line_bytes: Vec<u8> = buf.drain(..=nl_pos).collect();
-        // Safe: the slice ends at a '\n' byte boundary, so it is valid UTF-8.
-        let line = String::from_utf8_lossy(&line_bytes)
-            .trim_end_matches(['\r', '\n'])
-            .to_string();
-        if let Some(ev) = parse_sse_data_line(&line) {
-            events.push(ev);
-        }
-    }
-    events
-}
-
-/// Drain all complete `\n`-terminated SSE lines from `buf`.
-///
-/// Any trailing incomplete line (bytes not yet terminated by `\n`) is left
-/// in `buf` so it can be extended by the next TCP chunk.  This is necessary
-/// because a single SSE event may be split across multiple TCP packets.
-///
-/// Used by tests only; production code calls `drain_complete_sse_lines_bytes`.
-#[cfg(test)]
-pub(crate) fn drain_complete_sse_lines(buf: &mut String) -> Vec<anyhow::Result<ResponseEvent>> {
-    let mut byte_buf = std::mem::take(buf).into_bytes();
-    let events = drain_complete_sse_lines_bytes(&mut byte_buf);
-    *buf = String::from_utf8(byte_buf).unwrap_or_default();
-    events
-}
-
-fn role_str(r: &Role) -> &'static str {
-    match r {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
-    }
-}
-
-fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
-    // Usage-only chunk (emitted when stream_options.include_usage = true)
-    if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-        // OpenAI reports cached tokens in prompt_tokens_details.cached_tokens.
-        // DeepSeek V3 reports them as prompt_cache_hit_tokens on the root
-        // usage object.  We try OpenAI format first, then fall back to
-        // DeepSeek's format so both providers are covered without extra
-        // provider-specific dispatch.
-        let cache_read_tokens = usage
-            .get("prompt_tokens_details")
-            .and_then(|d| d.get("cached_tokens"))
-            .and_then(|t| t.as_u64())
-            .or_else(|| {
-                usage
-                    .get("prompt_cache_hit_tokens")
-                    .and_then(|t| t.as_u64())
-            })
-            .unwrap_or(0) as u32;
-        return Ok(ResponseEvent::Usage {
-            input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens,
-            cache_write_tokens: 0,
-        });
-    }
-
-    // llama.cpp performance metrics (top-level `timings` object)
-    // These arrive in the final SSE chunk with finish_reason=stop and provide
-    // cache hit counts and generation speed that are incredibly useful for CI
-    // debugging.  We convert them into a Usage event so the CI runner can emit
-    // them as `[sven:tokens]` trace output.
-    if let Some(timings) = v.get("timings") {
-        let cache_n = timings["cache_n"].as_u64().unwrap_or(0) as u32;
-        let prompt_n = timings["prompt_n"].as_u64().unwrap_or(0) as u32;
-        let predicted_n = timings["predicted_n"].as_u64().unwrap_or(0) as u32;
-
-        // llama.cpp reports cache hits + fresh tokens separately; combine them
-        // into input_tokens for consistency with standard Usage reporting.
-        return Ok(ResponseEvent::Usage {
-            input_tokens: cache_n + prompt_n,
-            output_tokens: predicted_n,
-            cache_read_tokens: cache_n,
-            cache_write_tokens: 0,
-        });
-    }
-
-    let choice = &v["choices"][0];
-
-    // finish_reason=length means the model hit its output-token limit.
-    // Emit MaxTokens so the agent knows any pending tool-call arguments
-    // are truncated.  The [DONE] sentinel that follows will emit Done.
-    if choice["finish_reason"].as_str() == Some("length") {
-        return Ok(ResponseEvent::MaxTokens);
-    }
-
-    let delta = &choice["delta"];
-
-    // Tool call delta — OpenAI may send multiple parallel tool calls in one
-    // chunk, each identified by an "index" field.  We only emit the first
-    // element here because each SSE chunk carries exactly one tool-call delta
-    // in practice; the index routes accumulation in the agent.
-    if let Some(tool_calls) = delta.get("tool_calls") {
-        if let Some(tc) = tool_calls.get(0) {
-            let index = tc["index"].as_u64().unwrap_or(0) as u32;
-            let id = tc["id"].as_str().unwrap_or("").to_string();
-            let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-            let args = tc["function"]["arguments"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            return Ok(ResponseEvent::ToolCall {
-                index,
-                id,
-                name,
-                arguments: args,
-            });
-        }
-    }
-
-    // Thinking delta — two common field names for chain-of-thought reasoning:
-    //   • `reasoning_content` — llama.cpp, Qwen3, DeepSeek-R1, xAI Grok-3-mini
-    //   • `reasoning`         — OpenRouter (and some other aggregators)
-    // Both carry the same semantics: readable CoT text that arrived before the
-    // final answer.  Prefer `reasoning_content`; fall back to `reasoning`.
-    let thinking_text = delta
-        .get("reasoning_content")
-        .and_then(|c| c.as_str())
-        .or_else(|| delta.get("reasoning").and_then(|c| c.as_str()));
-    if let Some(thinking) = thinking_text {
-        if !thinking.is_empty() {
-            return Ok(ResponseEvent::ThinkingDelta(thinking.to_string()));
-        }
-    }
-
-    // Text delta
-    if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
-        return Ok(ResponseEvent::TextDelta(text.to_string()));
-    }
-
-    Ok(ResponseEvent::TextDelta(String::new()))
-}
-
-/// Convert a slice of [`Message`]s into the OpenAI wire-format JSON array.
-///
-/// Extracted as a free function so it can be unit-tested without making HTTP
-/// requests.
-///
-/// **Parallel tool call coalescing**: OpenAI requires that all tool calls from
-/// one assistant turn appear inside a *single* assistant message as a
-/// `tool_calls` array.  Sven stores each tool call as a separate
-/// `MessageContent::ToolCall` entry internally (easier to work with), so this
-/// function merges consecutive `ToolCall` messages into one JSON object before
-/// sending them to the API.
-pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
-    use crate::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
-
-    fn tool_call_to_json(tool_call_id: &str, function: &crate::FunctionCall) -> Value {
-        json!({
-            "id": tool_call_id,
-            "type": "function",
-            "function": {
-                "name": function.name,
-                "arguments": function.arguments,
-            }
-        })
-    }
-
-    fn tool_result_to_json(tool_call_id: &str, content: &ToolResultContent) -> Value {
-        let wire_content: Value = match content {
-            ToolResultContent::Text(t) => json!(t),
-            ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                let arr: Vec<Value> = parts
-                    .iter()
-                    .map(|p| match p {
-                        ToolContentPart::Text { text } => json!({ "type": "text", "text": text }),
-                        ToolContentPart::Image { image_url } => json!({
-                            "type": "image_url",
-                            "image_url": { "url": image_url },
-                        }),
-                    })
-                    .collect();
-                json!(arr)
-            }
-            ToolResultContent::Parts(_) => json!(""),
-        };
-        json!({ "role": "tool", "tool_call_id": tool_call_id, "content": wire_content })
-    }
-
-    let mut result: Vec<Value> = Vec::with_capacity(messages.len());
-    let mut i = 0;
-
-    while i < messages.len() {
-        let m = &messages[i];
-
-        // Merge consecutive ToolCall messages into one assistant message so
-        // the wire format satisfies OpenAI's parallel-tool-call contract.
-        if let MessageContent::ToolCall {
-            tool_call_id,
-            function,
-        } = &m.content
-        {
-            let mut calls = vec![tool_call_to_json(tool_call_id, function)];
-            i += 1;
-            while i < messages.len() {
-                if let MessageContent::ToolCall {
-                    tool_call_id,
-                    function,
-                } = &messages[i].content
-                {
-                    calls.push(tool_call_to_json(tool_call_id, function));
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            result.push(json!({ "role": "assistant", "tool_calls": calls }));
-            continue;
-        }
-
-        let v = match &m.content {
-            MessageContent::Text(t) => json!({
-                "role": role_str(&m.role),
-                "content": t,
-            }),
-            MessageContent::ContentParts(parts) if !parts.is_empty() => {
-                let content: Vec<Value> = parts
-                    .iter()
-                    .map(|p| match p {
-                        ContentPart::Text { text } => json!({ "type": "text", "text": text }),
-                        ContentPart::Image { image_url, detail } => {
-                            let mut img_obj = json!({ "url": image_url });
-                            if let Some(d) = detail {
-                                img_obj["detail"] = json!(d);
-                            }
-                            json!({ "type": "image_url", "image_url": img_obj })
-                        }
-                    })
-                    .collect();
-                json!({ "role": role_str(&m.role), "content": content })
-            }
-            MessageContent::ContentParts(_) => {
-                json!({ "role": role_str(&m.role), "content": "" })
-            }
-            MessageContent::ToolCall { .. } => unreachable!("handled above"),
-            MessageContent::ToolResult {
-                tool_call_id,
-                content,
-            } => tool_result_to_json(tool_call_id, content),
-        };
-        result.push(v);
-        i += 1;
-    }
-
-    result
 }
 
 #[cfg(test)]

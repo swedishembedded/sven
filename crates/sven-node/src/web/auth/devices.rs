@@ -322,7 +322,6 @@ pub fn default_devices_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     // Registering a device and checking status.
     // We can't easily unit-test WebAuthn credentials (they require a ceremony),

@@ -29,7 +29,7 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
@@ -40,12 +40,8 @@ use rmcp::{
     ErrorData as McpError,
 };
 use serde::{Deserialize, Serialize};
-use tokio_tungstenite::{
-    connect_async_tls_with_config,
-    tungstenite::{client::IntoClientRequest, protocol::Message as WsMessage},
-    Connector,
-};
-use tracing::{debug, warn};
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tracing::warn;
 use uuid::Uuid;
 
 // ── Wire types (mirrors sven-node control protocol) ───────────────────────────
@@ -91,48 +87,6 @@ struct WsToolSchemaInfo {
 
 // ── NodeProxyServer ───────────────────────────────────────────────────────────
 
-// ── TLS: accept any certificate (token provides auth) ────────────────────────
-
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &[rustls::pki_types::CertificateDer<'_>],
-        _: &rustls::pki_types::ServerName<'_>,
-        _: &[u8],
-        _: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 /// MCP `ServerHandler` that proxies every tool call to a live `sven node`.
 ///
 /// Construct via [`NodeProxyServer::new`] and start the MCP stdio server with
@@ -153,42 +107,8 @@ impl NodeProxyServer {
         }
     }
 
-    /// Open an authenticated WebSocket connection to the node.
-    async fn connect(
-        &self,
-    ) -> Result<
-        tokio_tungstenite::WebSocketStream<
-            impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-        >,
-    > {
-        let mut request = self
-            .ws_url
-            .as_str()
-            .into_client_request()
-            .context("invalid WebSocket URL")?;
-
-        request.headers_mut().insert(
-            "Authorization",
-            format!("Bearer {}", self.token)
-                .parse()
-                .context("invalid token header value")?,
-        );
-
-        // Accept self-signed certs — the token is the auth mechanism.
-        let connector = Connector::Rustls(Arc::new(
-            rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-                .with_no_client_auth(),
-        ));
-
-        let (stream, response) =
-            connect_async_tls_with_config(request, None, false, Some(connector))
-                .await
-                .context("WebSocket connect failed")?;
-
-        debug!(status = %response.status(), "connected to sven node");
-        Ok(stream)
+    async fn connect(&self) -> Result<sven_node_client::NodeWsStream> {
+        sven_node_client::connect(&self.ws_url, &self.token).await
     }
 
     /// Send a [`WsCommand`] and collect the first matching [`WsEvent`].
@@ -197,9 +117,7 @@ impl NodeProxyServer {
         F: FnMut(&WsEvent) -> bool,
     {
         let mut ws = self.connect().await?;
-
-        let json = serde_json::to_string(&cmd)?;
-        ws.send(WsMessage::Text(json)).await?;
+        sven_node_client::send_json(&mut ws, &cmd).await?;
 
         while let Some(msg) = ws.next().await {
             let msg: WsMessage = msg.context("WebSocket read error")?;

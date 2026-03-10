@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use sven_model::Message;
 
-use crate::{parse_conversation, serialize_conversation, ParsedConversation};
+use crate::{parse_conversation, serialize_conversation, ConversationFile};
 
 // ─── Directory ───────────────────────────────────────────────────────────────
 
@@ -218,7 +218,7 @@ pub fn resolve(id: &str) -> Result<PathBuf> {
 
 /// Loads and parses a conversation by ID.  Returns both the parsed conversation
 /// and the resolved file path (needed for subsequent saves).
-pub fn load(id: &str) -> Result<(ParsedConversation, PathBuf)> {
+pub fn load(id: &str) -> Result<(ConversationFile, PathBuf)> {
     let path = resolve(id)?;
     let content = fs::read_to_string(&path)
         .with_context(|| format!("reading conversation file {}", path.display()))?;

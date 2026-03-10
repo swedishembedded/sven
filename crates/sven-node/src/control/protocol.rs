@@ -241,6 +241,16 @@ pub struct ToolSchemaInfo {
     pub parameters: serde_json::Value,
 }
 
+impl From<sven_tools::ToolSchema> for ToolSchemaInfo {
+    fn from(s: sven_tools::ToolSchema) -> Self {
+        Self {
+            name: s.name,
+            description: s.description,
+            parameters: s.parameters,
+        }
+    }
+}
+
 /// Summary of a session returned by `ListSessions`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {

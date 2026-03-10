@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use sven_bootstrap::{AgentBuilder, OutputBufferStore, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_input::make_title;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
-use sven_tools::{QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
+use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 
@@ -93,6 +93,7 @@ pub async fn agent_task(
     let profile = ToolSetProfile::Full {
         question_tx: Some(question_tx),
         todos,
+        buffer_store: Arc::clone(&buffer_store),
     };
 
     // Build a RuntimeContext that uses the caller-provided SharedSkills and
@@ -106,7 +107,6 @@ pub async fn agent_task(
 
     let mut agent = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
-        .with_buffer_store(buffer_store)
         .with_shared_tools(shared_tools)
         .with_shared_tool_displays(shared_tool_displays)
         .build(mode, model.clone(), profile)

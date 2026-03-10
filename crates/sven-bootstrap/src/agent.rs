@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_core::Agent;
 use sven_model::ModelProvider;
-use sven_tools::{events::ToolEvent, OutputBufferStore, SharedToolDisplays, SharedTools};
+use sven_tools::{events::ToolEvent, SharedToolDisplays, SharedTools};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
@@ -30,10 +30,6 @@ use crate::registry::build_tool_registry;
 pub struct AgentBuilder {
     config: Arc<Config>,
     runtime_ctx: RuntimeContext,
-    /// Shared buffer store for streaming subagent output.  Created by the
-    /// builder and exposed via [`AgentBuilder::buffer_store`] so that callers
-    /// (e.g. the TUI) can hold a reference for live rendering.
-    buffer_store: Arc<Mutex<OutputBufferStore>>,
     /// Optional shared tool snapshot populated after registry construction so
     /// that the TUI can inspect available tools via `/tools`.
     shared_tools: Option<SharedTools>,
@@ -49,7 +45,6 @@ impl AgentBuilder {
         Self {
             config,
             runtime_ctx: RuntimeContext::empty(),
-            buffer_store: Arc::new(Mutex::new(OutputBufferStore::new())),
             shared_tools: None,
             shared_tool_displays: None,
         }
@@ -59,24 +54,6 @@ impl AgentBuilder {
     pub fn with_runtime_context(mut self, ctx: RuntimeContext) -> Self {
         self.runtime_ctx = ctx;
         self
-    }
-
-    /// Inject a pre-created [`OutputBufferStore`] handle.
-    ///
-    /// Use this when the caller (e.g. the TUI) needs to hold a reference to
-    /// the same store that the agent tools will write to, so that it can
-    /// display live buffer status without going through the agent event channel.
-    pub fn with_buffer_store(mut self, store: Arc<Mutex<OutputBufferStore>>) -> Self {
-        self.buffer_store = store;
-        self
-    }
-
-    /// Return a clone of the shared [`OutputBufferStore`] handle.
-    ///
-    /// Call this **before** or **after** `build()` to get a reference that can
-    /// be polled by the TUI for live streaming display.
-    pub fn buffer_store(&self) -> Arc<Mutex<OutputBufferStore>> {
-        Arc::clone(&self.buffer_store)
     }
 
     /// Inject a [`SharedTools`] handle that will be populated after the tool
@@ -133,10 +110,8 @@ impl AgentBuilder {
             &self.config,
             model.clone(),
             profile,
-            mode_lock.clone(),
             tool_event_tx,
             runtime.clone(),
-            Arc::clone(&self.buffer_store),
         );
 
         // Populate the shared tool snapshot so the TUI `/tools` inspector can

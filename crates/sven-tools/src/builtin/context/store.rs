@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
+pub use crate::builtin::grep_match::GrepMatch;
+
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 /// Summary statistics for a single file within a directory handle.
@@ -610,18 +612,6 @@ impl ContextStore {
     }
 }
 
-// ─── A single grep match ──────────────────────────────────────────────────────
-
-/// One match returned by [`ContextStore::grep`].
-#[derive(Debug, Clone)]
-pub struct GrepMatch {
-    pub file: PathBuf,
-    pub line_number: usize,
-    pub line: String,
-    pub context_before: Vec<String>,
-    pub context_after: Vec<String>,
-}
-
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 /// Build a line-start byte index from a memory map.
@@ -754,7 +744,7 @@ fn grep_file(
         };
 
         results.push(GrepMatch {
-            file: path.to_path_buf(),
+            file: Some(path.to_path_buf()),
             line_number: i + 1,
             line: line_text,
             context_before: ctx_before,

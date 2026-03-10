@@ -64,9 +64,22 @@ impl TurnMetadata {
     }
 }
 
-/// Parsed representation of a conversation markdown file.
+/// Parsed representation of a persisted conversation markdown file.
+///
+/// # Layering note
+///
+/// The three related conversation concepts in sven are:
+///
+/// | Type | Crate | Role |
+/// |------|-------|------|
+/// | `ConversationFile` | `sven-input` | **Persisted format** — a `.md` or `.jsonl` file parsed into messages.  Read-only snapshot; no live session state. |
+/// | `Session` | `sven-core` | **Runtime state** — the active in-progress agent session with mutable message history, event channels, and tool state. |
+/// | `SessionManager` | `sven-tui` | **TUI multi-session UI state** — owns a list of live `Session`s and tracks which one is focused in the TUI. |
+///
+/// `ConversationFile` is produced by `parse_conversation` / `parse_jsonl_conversation` and
+/// consumed by the CI runner and TUI history loader to seed an agent's initial context.
 #[derive(Debug, Default)]
-pub struct ParsedConversation {
+pub struct ConversationFile {
     /// Optional H1 title of the conversation.
     pub title: Option<String>,
     /// All complete turns that form the conversation history.
@@ -153,7 +166,7 @@ pub enum ParseError {
 ///
 /// If the file ends with a `## User` section, it is returned as `pending_user_input`
 /// and not included in `history`.
-pub fn parse_conversation(markdown: &str) -> Result<ParsedConversation, ParseError> {
+pub fn parse_conversation(markdown: &str) -> Result<ConversationFile, ParseError> {
     let (title, sections) = split_sections(markdown);
     convert_sections_to_conversation(title, sections)
 }
@@ -217,11 +230,11 @@ fn split_sections(markdown: &str) -> (Option<String>, Vec<Section>) {
     (title, sections)
 }
 
-/// Convert a list of sections into a `ParsedConversation`.
+/// Convert a list of sections into a `ConversationFile`.
 fn convert_sections_to_conversation(
     title: Option<String>,
     sections: Vec<Section>,
-) -> Result<ParsedConversation, ParseError> {
+) -> Result<ConversationFile, ParseError> {
     let mut history: Vec<Message> = Vec::new();
     let mut pending_tool_call_id: Option<String> = None;
     let mut iter = sections.into_iter().peekable();
@@ -238,7 +251,7 @@ fn convert_sections_to_conversation(
                 // we'll handle it after the loop.
                 if iter.peek().is_none() {
                     // Last section — treat as pending input
-                    return Ok(ParsedConversation {
+                    return Ok(ConversationFile {
                         title,
                         history,
                         pending_user_input: Some(content.to_string().trim().to_string()),
@@ -280,7 +293,7 @@ fn convert_sections_to_conversation(
         }
     }
 
-    Ok(ParsedConversation {
+    Ok(ConversationFile {
         title,
         history,
         pending_user_input: None,
@@ -398,7 +411,7 @@ fn extract_code_block_content(content: &str) -> String {
 ///
 /// System messages in the file are skipped during history reconstruction;
 /// they are re-injected by the agent at runtime.
-pub fn parse_jsonl_conversation(content: &str) -> Result<ParsedConversation, ParseError> {
+pub fn parse_jsonl_conversation(content: &str) -> Result<ConversationFile, ParseError> {
     let mut messages: Vec<Message> = Vec::new();
 
     for (line_no, line) in content.lines().enumerate() {
@@ -433,7 +446,7 @@ pub fn parse_jsonl_conversation(content: &str) -> Result<ParsedConversation, Par
         _ => (messages, None),
     };
 
-    Ok(ParsedConversation {
+    Ok(ConversationFile {
         title: None,
         history,
         pending_user_input,

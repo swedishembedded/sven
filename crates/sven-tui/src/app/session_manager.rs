@@ -369,7 +369,16 @@ impl SessionEntry {
 
 // ── SessionManager ────────────────────────────────────────────────────────────
 
-/// Manages all chat sessions and the shared agent-event multiplexer.
+/// TUI multi-session UI state — the **session manager** that owns the set of active
+/// [`sven_core::Session`]s and tracks which one is focused in the sidebar.
+///
+/// # Layering note
+///
+/// | Type | Crate | Role |
+/// |------|-------|------|
+/// | [`SessionManager`] | `sven-tui` | **TUI UI state** — tree of active sessions with sidebar selection and agent-event multiplexing. |
+/// | `sven_core::Session` | `sven-core` | **Runtime state** — one live agent session with mutable message history and token accounting. |
+/// | `ConversationFile` | `sven-input` | **Persisted format** — a parsed `.md`/`.jsonl` snapshot used to seed session history on load. |
 ///
 /// The sidebar is a tree: roots are in `display_order`; children are in
 /// `children`. Use [`SessionManager::tree_rows`] to get a flat list for

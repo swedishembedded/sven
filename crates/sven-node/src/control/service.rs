@@ -193,7 +193,7 @@ impl ControlService {
         let mut registry = ToolRegistry::new();
         registry.register(ReadFileTool);
 
-        let model = sven_model::MockProvider::default();
+        let model = sven_model::MockProvider;
         let config = std::sync::Arc::new(sven_config::AgentConfig::default());
         let mode = std::sync::Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
         let (_, tool_rx) = tokio::sync::mpsc::channel(1);
@@ -323,11 +323,7 @@ impl ControlService {
                 let tools_info = tools
                     .schemas()
                     .into_iter()
-                    .map(|s| super::protocol::ToolSchemaInfo {
-                        name: s.name,
-                        description: s.description,
-                        parameters: s.parameters,
-                    })
+                    .map(super::protocol::ToolSchemaInfo::from)
                     .collect();
                 self.broadcast(ControlEvent::ToolList { tools: tools_info });
             }
@@ -643,6 +639,57 @@ impl ControlService {
     }
 }
 
+// ── AgentEvent → ControlEvent bridge ─────────────────────────────────────────
+
+fn agent_event_to_control(ev: AgentEvent, session_id: Uuid) -> Option<ControlEvent> {
+    match ev {
+        AgentEvent::TextDelta(delta) => Some(ControlEvent::OutputDelta {
+            session_id,
+            delta,
+            role: "assistant".to_string(),
+        }),
+        AgentEvent::TextComplete(text) => Some(ControlEvent::OutputComplete {
+            session_id,
+            text,
+            role: "assistant".to_string(),
+        }),
+        AgentEvent::ThinkingDelta(delta) => Some(ControlEvent::OutputDelta {
+            session_id,
+            delta,
+            role: "thinking".to_string(),
+        }),
+        AgentEvent::ThinkingComplete(text) => Some(ControlEvent::OutputComplete {
+            session_id,
+            text,
+            role: "thinking".to_string(),
+        }),
+        AgentEvent::ToolCallStarted(tc) => Some(ControlEvent::ToolCall {
+            session_id,
+            call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            args: tc.args.clone(),
+        }),
+        AgentEvent::ToolCallFinished {
+            call_id,
+            tool_name: _,
+            output,
+            is_error,
+        } => Some(ControlEvent::ToolResult {
+            session_id,
+            call_id,
+            output,
+            is_error,
+        }),
+        AgentEvent::Error(msg) => Some(ControlEvent::AgentError {
+            session_id: Some(session_id),
+            message: msg,
+        }),
+        // TurnComplete, TokenUsage, ContextCompacted etc. are not forwarded
+        // to operators — they're internal agent bookkeeping.
+        _ => None,
+    }
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -849,56 +896,5 @@ mod tests {
             }
             other => panic!("expected SessionList, got {other:?}"),
         }
-    }
-}
-
-// ── AgentEvent → ControlEvent bridge ─────────────────────────────────────────
-
-fn agent_event_to_control(ev: AgentEvent, session_id: Uuid) -> Option<ControlEvent> {
-    match ev {
-        AgentEvent::TextDelta(delta) => Some(ControlEvent::OutputDelta {
-            session_id,
-            delta,
-            role: "assistant".to_string(),
-        }),
-        AgentEvent::TextComplete(text) => Some(ControlEvent::OutputComplete {
-            session_id,
-            text,
-            role: "assistant".to_string(),
-        }),
-        AgentEvent::ThinkingDelta(delta) => Some(ControlEvent::OutputDelta {
-            session_id,
-            delta,
-            role: "thinking".to_string(),
-        }),
-        AgentEvent::ThinkingComplete(text) => Some(ControlEvent::OutputComplete {
-            session_id,
-            text,
-            role: "thinking".to_string(),
-        }),
-        AgentEvent::ToolCallStarted(tc) => Some(ControlEvent::ToolCall {
-            session_id,
-            call_id: tc.id.clone(),
-            tool_name: tc.name.clone(),
-            args: tc.args.clone(),
-        }),
-        AgentEvent::ToolCallFinished {
-            call_id,
-            tool_name: _,
-            output,
-            is_error,
-        } => Some(ControlEvent::ToolResult {
-            session_id,
-            call_id,
-            output,
-            is_error,
-        }),
-        AgentEvent::Error(msg) => Some(ControlEvent::AgentError {
-            session_id: Some(session_id),
-            message: msg,
-        }),
-        // TurnComplete, TokenUsage, ContextCompacted etc. are not forwarded
-        // to operators — they're internal agent bookkeeping.
-        _ => None,
     }
 }

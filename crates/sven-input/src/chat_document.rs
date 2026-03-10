@@ -491,6 +491,7 @@ pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), Fi
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)
             .map_err(|_| FileModifiedError)?;
         let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };

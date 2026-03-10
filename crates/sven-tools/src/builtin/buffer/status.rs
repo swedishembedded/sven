@@ -15,7 +15,7 @@ use crate::tool::{Tool, ToolCall, ToolOutput};
 use super::store::{BufferStatus, OutputBufferStore};
 
 pub struct BufStatusTool {
-    pub store: Arc<Mutex<OutputBufferStore>>,
+    pub(crate) store: Arc<Mutex<OutputBufferStore>>,
 }
 
 impl BufStatusTool {

@@ -1,0 +1,15 @@
+[package]
+name    = "sven-node-client"
+version = "0.1.0"
+edition = "2021"
+description = "Shared WebSocket client for connecting to a sven node"
+
+[dependencies]
+anyhow           = { workspace = true }
+futures-util     = { version = "0.3", default-features = false, features = ["sink", "std"] }
+rustls           = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+tokio            = { workspace = true }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tracing          = { workspace = true }

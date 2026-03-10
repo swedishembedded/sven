@@ -18,8 +18,8 @@ pub use chat_document::{
 pub use conversation::{
     parse_conversation, parse_jsonl_conversation, parse_jsonl_full, serialize_conversation,
     serialize_conversation_turn, serialize_conversation_turn_with_metadata,
-    serialize_jsonl_conversation_turn, serialize_jsonl_records, ConversationRecord,
-    ParsedConversation, ParsedJsonlConversation, TurnMetadata,
+    serialize_jsonl_conversation_turn, serialize_jsonl_records, ConversationFile,
+    ConversationRecord, ParsedJsonlConversation, TurnMetadata,
 };
 pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
 pub use history::make_title;

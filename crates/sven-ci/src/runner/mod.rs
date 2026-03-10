@@ -1,6 +1,19 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+
+mod event;
+mod helpers;
+
+use event::{emit_record, handle_event, StepState};
+pub(crate) use helpers::{
+    is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
+};
+use helpers::{
+    json_output_to_string, normalize_label, parse_agent_mode, sanitize_cache_key,
+    write_conversation_artifact, write_step_artifact,
+};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,10 +28,9 @@ use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_input::{
     history, parse_conversation, parse_frontmatter, parse_jsonl_full, parse_workflow,
-    serialize_conversation_turn, serialize_jsonl_records, ConversationRecord,
-    ParsedJsonlConversation, Step, StepQueue,
+    serialize_jsonl_records, ConversationRecord, ParsedJsonlConversation, Step, StepQueue,
 };
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::{Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
 use sven_tools::events::TodoItem;
 
@@ -66,19 +78,19 @@ pub enum OutputFormat {
 
 // ── JSON output types ─────────────────────────────────────────────────────────
 
-struct JsonOutput {
-    title: Option<String>,
-    steps: Vec<JsonStep>,
+pub(super) struct JsonOutput {
+    pub title: Option<String>,
+    pub steps: Vec<JsonStep>,
 }
 
-struct JsonStep {
-    index: usize,
-    label: Option<String>,
-    user_input: String,
-    agent_response: String,
-    tools_used: Vec<String>,
-    duration_ms: u64,
-    success: bool,
+pub(super) struct JsonStep {
+    pub index: usize,
+    pub label: Option<String>,
+    pub user_input: String,
+    pub agent_response: String,
+    pub tools_used: Vec<String>,
+    pub duration_ms: u64,
+    pub success: bool,
 }
 
 // ── Options ───────────────────────────────────────────────────────────────────
@@ -544,10 +556,12 @@ impl CiRunner {
         // AgentBuilder::build() so that SwitchModeTool and the agent loop
         // share the same instances.  Only caller-owned state lives here.
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
+        let buffer_store = Arc::new(Mutex::new(sven_tools::OutputBufferStore::new()));
 
         let profile = ToolSetProfile::Full {
             question_tx: None,
             todos,
+            buffer_store,
         };
 
         let mut agent = AgentBuilder::new(self.config.clone())
@@ -1219,554 +1233,3 @@ impl CiRunner {
         Ok(())
     }
 }
-
-// ── Event handler ─────────────────────────────────────────────────────────────
-
-/// Push a `ConversationRecord` and, when `output_format` is `Jsonl`, also
-/// stream the serialized line to stdout immediately.  This is the single place
-/// that ensures JSONL output is consistent across all code paths.
-fn emit_record(
-    records: &mut Vec<ConversationRecord>,
-    record: ConversationRecord,
-    output_format: OutputFormat,
-) {
-    if output_format == OutputFormat::Jsonl {
-        match serde_json::to_string(&record) {
-            Ok(line) => write_stdout(&format!("{line}\n")),
-            Err(e) => write_stderr(&format!(
-                "[sven:warn] Failed to serialize JSONL record: {e}"
-            )),
-        }
-    }
-    records.push(record);
-}
-
-/// Per-step mutable state threaded through the event handler.
-struct StepState<'a> {
-    response_text: &'a mut String,
-    tools_used: &'a mut Vec<String>,
-    failed: &'a mut bool,
-    collected: &'a mut Vec<Message>,
-    jsonl_records: &'a mut Vec<ConversationRecord>,
-    consecutive_tool_errors: &'a mut u32,
-    trace_level: u8,
-    output_format: OutputFormat,
-    sven_header_emitted: &'a mut bool,
-    /// Running total of non-cached input tokens across the whole session.
-    session_input_total: &'a mut u32,
-    /// Running total of output tokens across the whole session.
-    session_output_total: &'a mut u32,
-    /// Accumulates `true` when any tool call returns an error (non-fatal).
-    any_tool_errors: &'a mut bool,
-    /// Running total of tokens used across all steps (input + output).
-    run_total_tokens: &'a mut u64,
-    /// Optional token budget cap; when exceeded the runner exits with code 4.
-    max_tokens_budget: Option<u64>,
-}
-
-/// Process a single agent event: write diagnostics to stderr, collect
-/// messages into `collected` and `jsonl_records`, and track response text / tool usage.
-fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
-    let response_text = &mut *s.response_text;
-    let tools_used = &mut *s.tools_used;
-    let failed = &mut *s.failed;
-    let collected = &mut *s.collected;
-    let jsonl_records = &mut *s.jsonl_records;
-    let consecutive_tool_errors = &mut *s.consecutive_tool_errors;
-    let trace_level = s.trace_level;
-    let output_format = s.output_format;
-    let sven_header_emitted = &mut *s.sven_header_emitted;
-    match event {
-        AgentEvent::TextDelta(delta) => {
-            response_text.push_str(&delta);
-            // Stream to stdout in real-time for conversation format.
-            if output_format == OutputFormat::Conversation {
-                if !*sven_header_emitted {
-                    write_stdout("## Sven\n");
-                    *sven_header_emitted = true;
-                }
-                write_stdout(&delta);
-            }
-        }
-        AgentEvent::TextComplete(text) => {
-            if !text.is_empty() {
-                collected.push(Message::assistant(&text));
-                emit_record(
-                    jsonl_records,
-                    ConversationRecord::Message(Message::assistant(&text)),
-                    output_format,
-                );
-                // Ensure trailing newline after streamed text in conversation format
-                if output_format == OutputFormat::Conversation && *sven_header_emitted {
-                    if !text.ends_with('\n') {
-                        write_stdout("\n\n");
-                    } else {
-                        write_stdout("\n");
-                    }
-                    *sven_header_emitted = false;
-                }
-            }
-        }
-        AgentEvent::ToolCallStarted(tc) => {
-            write_stderr(&format!(
-                "[sven:tool:call] id=\"{}\" name=\"{}\" args={}",
-                tc.id,
-                tc.name,
-                serde_json::to_string(&tc.args).unwrap_or_default()
-            ));
-            tools_used.push(tc.name.clone());
-            let args_str = serde_json::to_string(&tc.args).unwrap_or_default();
-            let msg = Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: tc.id.clone(),
-                    function: FunctionCall {
-                        name: tc.name.clone(),
-                        arguments: args_str.clone(),
-                    },
-                },
-            };
-            // Stream tool call section to stdout in conversation format
-            if output_format == OutputFormat::Conversation {
-                // Ensure any open Sven text section is closed first
-                if *sven_header_emitted {
-                    write_stdout("\n\n");
-                    *sven_header_emitted = false;
-                }
-                let args_value: serde_json::Value =
-                    serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
-                let envelope = serde_json::json!({
-                    "tool_call_id": tc.id,
-                    "name": tc.name,
-                    "args": args_value,
-                });
-                let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
-                write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
-            }
-            collected.push(msg.clone());
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Message(msg),
-                output_format,
-            );
-        }
-        AgentEvent::ToolCallFinished {
-            call_id,
-            tool_name,
-            is_error,
-            output,
-        } => {
-            if is_error {
-                write_stderr(&format!(
-                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=false output={output:?}"
-                ));
-                *consecutive_tool_errors += 1;
-                *s.any_tool_errors = true;
-            } else {
-                let output_snippet = if trace_level >= 1 && !output.is_empty() {
-                    const LIMIT: usize = 1500;
-                    let preview: String = output.chars().take(LIMIT).collect();
-                    if output.chars().count() > LIMIT {
-                        format!(
-                            " output={:?}...[+{} chars]",
-                            preview,
-                            output.chars().count() - LIMIT
-                        )
-                    } else {
-                        format!(" output={output:?}")
-                    }
-                } else {
-                    String::new()
-                };
-                write_stderr(&format!(
-                    "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=true size={}{}",
-                    output.len(),
-                    output_snippet
-                ));
-                *consecutive_tool_errors = 0;
-            }
-            // Stream tool result section to stdout in conversation format
-            if output_format == OutputFormat::Conversation {
-                write_stdout(&format!("## Tool Result\n```\n{output}\n```\n\n"));
-            }
-            let msg = Message::tool_result(&call_id, &output);
-            collected.push(msg.clone());
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Message(msg),
-                output_format,
-            );
-        }
-        AgentEvent::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy,
-            turn,
-        } => {
-            let turn_note = if turn > 0 {
-                format!(" (tool round {turn})")
-            } else {
-                String::new()
-            };
-            write_stderr(&format!(
-                "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
-            ));
-            emit_record(
-                jsonl_records,
-                ConversationRecord::ContextCompacted {
-                    tokens_before,
-                    tokens_after,
-                    strategy: Some(strategy.to_string()),
-                    turn: Some(turn),
-                },
-                output_format,
-            );
-        }
-        AgentEvent::Error(msg) => {
-            write_stderr(&format!("[sven:agent:error] {msg}"));
-            *failed = true;
-        }
-        AgentEvent::TodoUpdate(todos) => {
-            let lines: Vec<String> = todos
-                .iter()
-                .map(|t| {
-                    let icon = t.status.icon();
-                    format!("  {icon} [{}] {}", t.id, t.content)
-                })
-                .collect();
-            write_stderr(&format!("[sven:todos]\n{}", lines.join("\n")));
-        }
-        AgentEvent::ModeChanged(mode) => {
-            write_stderr(&format!("[sven:mode:changed] now in {mode} mode"));
-        }
-        AgentEvent::Question { questions, .. } => {
-            write_stderr(&format!("[sven:questions] {}", questions.join(" | ")));
-        }
-        AgentEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-        } => {
-            *s.session_input_total += input;
-            *s.session_output_total += output;
-            *s.run_total_tokens += (input + output) as u64;
-            if let Some(budget) = s.max_tokens_budget {
-                if budget > 0 && *s.run_total_tokens >= budget {
-                    write_stderr(&format!(
-                        "[sven:error] Token budget exhausted: {} tokens used (budget: {}). Stopping.",
-                        s.run_total_tokens, budget
-                    ));
-                    std::process::exit(EXIT_BUDGET_EXHAUSTED);
-                }
-            }
-            let total_ctx = input + cache_read + cache_write;
-            let input_budget = if max_output_tokens > 0 {
-                max_tokens.saturating_sub(max_output_tokens)
-            } else {
-                max_tokens
-            };
-            let ctx_pct = if input_budget > 0 {
-                ((total_ctx as u64 * 100) / input_budget as u64).min(100) as u32
-            } else {
-                0
-            };
-            let ctx_cache = if total_ctx > 0 {
-                cache_read * 100 / total_ctx
-            } else {
-                0
-            };
-            let mut line = format!("[sven:tokens] input={input} output={output}");
-            if cache_read > 0 || cache_write > 0 {
-                line.push_str(&format!(
-                    " cache_read={cache_read} cache_write={cache_write}"
-                ));
-            }
-            if input_budget > 0 {
-                line.push_str(&format!(" ctx_pct={ctx_pct} ctx_cache={ctx_cache}"));
-            }
-            line.push_str(&format!(
-                " input_total={} output_total={}",
-                s.session_input_total, s.session_output_total
-            ));
-            if cache_read_total > 0 || cache_write_total > 0 {
-                line.push_str(&format!(
-                    " cache_read_total={cache_read_total} cache_write_total={cache_write_total}"
-                ));
-            }
-            write_stderr(&line);
-        }
-        AgentEvent::ThinkingDelta(_) => {}
-        AgentEvent::ThinkingComplete(content) => {
-            write_stderr(&format!("[sven:thinking] {content}"));
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Thinking { content },
-                output_format,
-            );
-        }
-        AgentEvent::ToolProgress { message, .. } => {
-            write_stderr(&format!("[sven:progress] {message}"));
-        }
-        AgentEvent::TurnComplete
-        | AgentEvent::QuestionAnswer { .. }
-        | AgentEvent::CollabEvent(_)
-        | AgentEvent::TitleGenerated(_)
-        | AgentEvent::DelegateSummary { .. }
-        | AgentEvent::SubagentStarted { .. }
-        | AgentEvent::SubagentEvent { .. }
-        | AgentEvent::PeerList(_) => {}
-        AgentEvent::Aborted { partial_text } => {
-            if !partial_text.is_empty() {
-                write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
-                let msg = Message::assistant(&partial_text);
-                collected.push(msg.clone());
-                emit_record(
-                    jsonl_records,
-                    ConversationRecord::Message(msg),
-                    output_format,
-                );
-            } else {
-                write_stderr("[sven:agent:aborted]");
-            }
-        }
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Return true if the markdown string looks like conversation-format output
-/// (produced by `--output-format conversation`), containing recognised H2
-/// section headings at line start.
-///
-/// This is used to detect when a prior sven run is piped into the next one so
-/// the runner can parse the input as conversation history rather than as a
-/// workflow, which would misinterpret `## Sven` as a workflow step label.
-pub(crate) fn is_conversation_format(s: &str) -> bool {
-    s.lines().any(|line| {
-        let t = line.trim_end();
-        matches!(t, "## User" | "## Sven" | "## Tool" | "## Tool Result")
-    })
-}
-
-/// Return true if the input looks like a JSONL conversation stream: every
-/// non-empty line must start with `{`.
-///
-/// Used to detect when `--output-format jsonl` output from a prior sven run is
-/// piped into the next instance.  We inspect at most the first 10 non-empty
-/// lines to keep detection fast on large streams.
-pub(crate) fn is_jsonl_format(s: &str) -> bool {
-    let mut checked = 0usize;
-    for line in s.lines() {
-        let t = line.trim();
-        if t.is_empty() {
-            continue;
-        }
-        if !t.starts_with('{') {
-            return false;
-        }
-        checked += 1;
-        if checked >= 10 {
-            break;
-        }
-    }
-    checked > 0
-}
-
-/// Return true if the input looks like the JSON summary produced by
-/// `--output-format json`: a single JSON object containing a `"steps"` array.
-///
-/// Used to detect when the output of a prior `sven --output-format json` run
-/// is piped into the next instance so we can reconstruct conversation history
-/// from the step data instead of treating the JSON as a workflow.
-pub(crate) fn is_json_summary_format(s: &str) -> bool {
-    let trimmed = s.trim();
-    if !trimmed.starts_with('{') {
-        return false;
-    }
-    // Quick structural check before deserializing the full object.
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        v.get("steps").and_then(|s| s.as_array()).is_some()
-    } else {
-        false
-    }
-}
-
-/// Reconstruct a flat user/assistant `Message` history from the JSON summary
-/// format produced by `--output-format json`.
-///
-/// Each step contributes a `user` message (`user_input`) followed by an
-/// `assistant` message (`agent_response`).  Steps that have an empty
-/// `agent_response` (e.g. failed steps) contribute only the user message.
-pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
-    let v: serde_json::Value = serde_json::from_str(s.trim())?;
-    let steps = v
-        .get("steps")
-        .and_then(|s| s.as_array())
-        .ok_or_else(|| anyhow::anyhow!("JSON summary missing 'steps' array"))?;
-
-    let mut history = Vec::new();
-    for step in steps {
-        if let Some(user_input) = step.get("user_input").and_then(|u| u.as_str()) {
-            if !user_input.is_empty() {
-                history.push(Message::user(user_input));
-            }
-        }
-        if let Some(agent_response) = step.get("agent_response").and_then(|a| a.as_str()) {
-            if !agent_response.is_empty() {
-                history.push(Message::assistant(agent_response));
-            }
-        }
-    }
-    Ok(history)
-}
-
-// ── Artifacts ─────────────────────────────────────────────────────────────────
-
-fn write_step_artifact(dir: &std::path::Path, idx: usize, label: &str, messages: &[Message]) {
-    let safe_label = label
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let filename = format!("{:02}-{}.md", idx, safe_label);
-    let path = dir.join(&filename);
-
-    let content = serialize_conversation_turn(messages);
-    if let Err(e) = std::fs::write(&path, &content) {
-        write_stderr(&format!(
-            "[sven:warn] Could not write step artifact {}: {e}",
-            path.display()
-        ));
-    }
-}
-
-fn write_conversation_artifact(dir: &std::path::Path, messages: &[Message]) {
-    let path = dir.join("conversation.md");
-    let content = serialize_conversation_turn(messages);
-    if let Err(e) = std::fs::write(&path, &content) {
-        write_stderr(&format!(
-            "[sven:warn] Could not write conversation artifact: {e}"
-        ));
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn json_output_to_string(out: &JsonOutput) -> String {
-    let steps: Vec<serde_json::Value> = out
-        .steps
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "index": s.index,
-                "label": s.label,
-                "user_input": s.user_input,
-                "agent_response": s.agent_response,
-                "tools_used": s.tools_used,
-                "duration_ms": s.duration_ms,
-                "success": s.success,
-            })
-        })
-        .collect();
-
-    let obj = serde_json::json!({
-        "title": out.title,
-        "steps": steps,
-    });
-
-    serde_json::to_string_pretty(&obj)
-        .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"))
-}
-
-fn parse_agent_mode(s: &str) -> Option<AgentMode> {
-    match s.trim() {
-        "research" => Some(AgentMode::Research),
-        "plan" => Some(AgentMode::Plan),
-        "agent" => Some(AgentMode::Agent),
-        _ => None,
-    }
-}
-
-/// Sanitize a `cache_key` value into a safe filesystem component.
-///
-/// Only alphanumerics, hyphens, and underscores are kept; everything else
-/// becomes `_`.  This prevents path traversal (e.g. `../../etc/passwd`) from
-/// landing outside `.sven/cache/`.
-fn sanitize_cache_key(key: &str) -> String {
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-/// Normalise a step label into a snake_case identifier suitable for use as a
-/// template variable key.
-///
-/// ```text
-/// "Gather Information" → "gather_information"
-/// "Step 01: List Files" → "step_01_list_files"
-/// "(unlabelled)" → "unlabelled"
-/// ```
-fn normalize_label(label: &str) -> String {
-    let mut result = String::new();
-    let mut last_was_sep = true; // start true to avoid leading underscore
-    for c in label.chars() {
-        if c.is_alphanumeric() {
-            for lc in c.to_lowercase() {
-                result.push(lc);
-            }
-            last_was_sep = false;
-        } else if !last_was_sep {
-            result.push('_');
-            last_was_sep = true;
-        }
-    }
-    // Trim trailing underscore
-    if result.ends_with('_') {
-        result.pop();
-    }
-    result
-}
-
-#[cfg(test)]
-mod normalize_tests {
-    use super::normalize_label;
-
-    #[test]
-    fn spaces_become_underscores() {
-        assert_eq!(normalize_label("Gather Information"), "gather_information");
-    }
-
-    #[test]
-    fn numbers_preserved() {
-        assert_eq!(normalize_label("Step 01: List Files"), "step_01_list_files");
-    }
-
-    #[test]
-    fn parens_stripped() {
-        assert_eq!(normalize_label("(unlabelled)"), "unlabelled");
-    }
-
-    #[test]
-    fn already_snake_case() {
-        assert_eq!(normalize_label("my_step"), "my_step");
-    }
-}
-
-// resolve_model_cfg has been moved to sven_model::resolve_model_cfg.
-// resolve_model_from_config (config-aware variant) lives at sven_model::resolve_model_from_config.

@@ -162,9 +162,11 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             };
 
         let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(vec![]));
+        let buffer_store = Arc::new(Mutex::new(sven_tools::OutputBufferStore::new()));
         let profile = ToolSetProfile::Full {
             question_tx: None,
             todos: todos.clone(),
+            buffer_store,
         };
 
         let mut runtime_ctx = RuntimeContext::auto_detect();

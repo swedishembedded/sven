@@ -7,6 +7,8 @@ use std::time::Instant;
 
 use ratatui::style::Color;
 
+use sven_core::PeerInfo;
+
 use crate::{
     chat::search::SearchState,
     overlay::{completion::CompletionOverlay, confirm::ConfirmModal, question::QuestionModal},
@@ -33,16 +35,6 @@ pub enum FocusPane {
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-
-/// A brief notification shown in the bottom-right corner.
-/// Information about a connected peer.
-pub struct PeerInfo {
-    pub name: String,
-    #[allow(dead_code)]
-    pub peer_id: String,
-    pub connected: bool,
-    pub can_delegate: bool,
-}
 
 /// A brief notification shown in the bottom-right corner.
 pub struct Toast {
@@ -188,12 +180,20 @@ impl UiState {
         if self.team_picker_entries.is_empty() {
             return None;
         }
+        // When at lead (no remote peer selected), advance from the local entry's
+        // position so the next step lands on the first remote peer.
         let current = self
             .team_picker_entries
             .iter()
             .position(|e| Some(e.peer_id.as_str()) == self.active_session_peer.as_deref())
             .map(|i| i + 1)
-            .unwrap_or(0);
+            .unwrap_or_else(|| {
+                self.team_picker_entries
+                    .iter()
+                    .position(|e| e.is_local)
+                    .map(|i| i + 1)
+                    .unwrap_or(1)
+            });
 
         let next_idx = current % self.team_picker_entries.len();
         let peer_id = self.team_picker_entries[next_idx].peer_id.clone();

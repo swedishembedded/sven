@@ -77,6 +77,7 @@ pub struct TeamContext {
 ///
 /// Returns both the built [`Agent`] and the [`SessionDepthHandle`] so the
 /// caller can reset the per-peer depth map at the start of each new user turn.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_node_agent(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
@@ -91,6 +92,7 @@ pub async fn build_node_agent(
     let profile = ToolSetProfile::Full {
         question_tx: None,
         todos,
+        buffer_store: Arc::clone(&buffer_store),
     };
 
     let delegation_context: DelegationContextHandle = Arc::new(Mutex::new(None));
@@ -109,7 +111,6 @@ pub async fn build_node_agent(
         config,
         model,
         profile,
-        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -133,6 +134,7 @@ pub async fn build_node_agent(
 /// `task_depth` and `task_chain` are taken directly from the inbound
 /// [`TaskRequest`] wire fields and baked into the agent's `DelegateTool` at
 /// construction time.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_task_agent(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
@@ -145,7 +147,10 @@ pub async fn build_task_agent(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
     let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-    let profile = ToolSetProfile::SubAgent { todos };
+    let profile = ToolSetProfile::SubAgent {
+        todos,
+        buffer_store: Arc::clone(&buffer_store),
+    };
 
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
@@ -169,7 +174,6 @@ pub async fn build_task_agent(
         config,
         model,
         profile,
-        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -200,7 +204,10 @@ pub async fn build_task_agent_with_runtime(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
     let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-    let profile = ToolSetProfile::SubAgent { todos };
+    let profile = ToolSetProfile::SubAgent {
+        todos,
+        buffer_store: Arc::clone(&buffer_store),
+    };
 
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
@@ -220,7 +227,6 @@ pub async fn build_task_agent_with_runtime(
         config,
         model,
         profile,
-        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -250,7 +256,10 @@ pub async fn build_room_reactive_agent(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
 ) -> anyhow::Result<Agent> {
     let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-    let profile = ToolSetProfile::SubAgent { todos };
+    let profile = ToolSetProfile::SubAgent {
+        todos,
+        buffer_store: Arc::clone(&buffer_store),
+    };
 
     let delegation_context: DelegationContextHandle =
         Arc::new(Mutex::new(Some(DelegationContext {
@@ -270,7 +279,6 @@ pub async fn build_room_reactive_agent(
         config,
         model,
         profile,
-        buffer_store,
         p2p_handle,
         agent_card,
         rooms,
@@ -298,7 +306,6 @@ async fn build_node_agent_inner(
     config: &Arc<Config>,
     model: Arc<dyn sven_model::ModelProvider>,
     profile: ToolSetProfile,
-    buffer_store: Arc<Mutex<OutputBufferStore>>,
     p2p_handle: P2pHandle,
     agent_card: AgentCard,
     rooms: Vec<String>,
@@ -316,10 +323,8 @@ async fn build_node_agent_inner(
         config,
         model.clone(),
         profile,
-        mode.clone(),
         tool_tx.clone(),
         agent_runtime.clone(),
-        buffer_store,
     );
 
     // Layer 2: P2P routing and collaboration tools.

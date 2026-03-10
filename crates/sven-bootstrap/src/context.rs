@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use sven_core::AgentRuntimeContext;
 use sven_runtime::{CiContext, GitContext, SharedAgents, SharedKnowledge, SharedSkills};
-use sven_tools::{events::TodoItem, QuestionRequest};
+use sven_tools::{events::TodoItem, OutputBufferStore, QuestionRequest};
 
 // ─── RuntimeContext ───────────────────────────────────────────────────────────
 
@@ -140,6 +140,7 @@ pub enum ToolSetProfile {
     Full {
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
 
     /// Coding profile (default — no GDB, no context). 12 tools.
@@ -149,6 +150,7 @@ pub enum ToolSetProfile {
     Coding {
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
 
     /// Research profile (read-only, no write tools). 8 tools.
@@ -164,7 +166,10 @@ pub enum ToolSetProfile {
     ///
     /// Prevents unbounded nesting. Sub-agents should not spawn further
     /// sub-agents or interrupt the user with questions.
-    SubAgent { todos: Arc<Mutex<Vec<TodoItem>>> },
+    SubAgent {
+        todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
+    },
 }
 
 impl ToolSetProfile {
@@ -181,9 +186,13 @@ impl ToolSetProfile {
         project_root: Option<&std::path::Path>,
         question_tx: Option<mpsc::Sender<QuestionRequest>>,
         todos: Arc<Mutex<Vec<TodoItem>>>,
+        buffer_store: Arc<Mutex<OutputBufferStore>>,
     ) -> Self {
         if is_sub_agent {
-            return ToolSetProfile::SubAgent { todos };
+            return ToolSetProfile::SubAgent {
+                todos,
+                buffer_store,
+            };
         }
 
         if mode == sven_config::AgentMode::Research {
@@ -191,10 +200,18 @@ impl ToolSetProfile {
         }
 
         if has_gdb_config(project_root) {
-            return ToolSetProfile::Full { question_tx, todos };
+            return ToolSetProfile::Full {
+                question_tx,
+                todos,
+                buffer_store,
+            };
         }
 
-        ToolSetProfile::Coding { question_tx, todos }
+        ToolSetProfile::Coding {
+            question_tx,
+            todos,
+            buffer_store,
+        }
     }
 
     /// Returns a short name for the profile (for logging/display).
@@ -254,11 +271,16 @@ mod tests {
 
     use sven_config::AgentMode;
     use sven_tools::events::TodoItem;
+    use sven_tools::OutputBufferStore;
 
     use super::{has_gdb_config, ToolSetProfile};
 
     fn todos() -> Arc<Mutex<Vec<TodoItem>>> {
         Arc::new(Mutex::new(vec![]))
+    }
+
+    fn buffer_store() -> Arc<Mutex<OutputBufferStore>> {
+        Arc::new(Mutex::new(OutputBufferStore::new()))
     }
 
     // ── has_gdb_config ────────────────────────────────────────────────────────
@@ -304,13 +326,21 @@ mod tests {
 
     #[test]
     fn detect_sub_agent_returns_subagent_profile() {
-        let profile = ToolSetProfile::detect(true, AgentMode::Agent, None, None, todos());
+        let profile =
+            ToolSetProfile::detect(true, AgentMode::Agent, None, None, todos(), buffer_store());
         assert_eq!(profile.name(), "subagent");
     }
 
     #[test]
     fn detect_research_mode_returns_research_profile() {
-        let profile = ToolSetProfile::detect(false, AgentMode::Research, None, None, todos());
+        let profile = ToolSetProfile::detect(
+            false,
+            AgentMode::Research,
+            None,
+            None,
+            todos(),
+            buffer_store(),
+        );
         assert_eq!(profile.name(), "research");
     }
 
@@ -318,22 +348,41 @@ mod tests {
     fn detect_with_gdb_config_returns_full_profile() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".gdbinit"), "").unwrap();
-        let profile =
-            ToolSetProfile::detect(false, AgentMode::Agent, Some(dir.path()), None, todos());
+        let profile = ToolSetProfile::detect(
+            false,
+            AgentMode::Agent,
+            Some(dir.path()),
+            None,
+            todos(),
+            buffer_store(),
+        );
         assert_eq!(profile.name(), "full");
     }
 
     #[test]
     fn detect_default_returns_coding_profile() {
         let dir = tempfile::tempdir().unwrap();
-        let profile =
-            ToolSetProfile::detect(false, AgentMode::Agent, Some(dir.path()), None, todos());
+        let profile = ToolSetProfile::detect(
+            false,
+            AgentMode::Agent,
+            Some(dir.path()),
+            None,
+            todos(),
+            buffer_store(),
+        );
         assert_eq!(profile.name(), "coding");
     }
 
     #[test]
     fn detect_sub_agent_takes_priority_over_research_mode() {
-        let profile = ToolSetProfile::detect(true, AgentMode::Research, None, None, todos());
+        let profile = ToolSetProfile::detect(
+            true,
+            AgentMode::Research,
+            None,
+            None,
+            todos(),
+            buffer_store(),
+        );
         assert_eq!(
             profile.name(),
             "subagent",

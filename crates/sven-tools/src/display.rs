@@ -7,8 +7,6 @@
 //! library.  Consumed by the TUI inspector (`/tools`) and usable in tests or
 //! CLI output.
 
-use std::collections::BTreeMap;
-
 use crate::registry::ToolSchema;
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
@@ -34,36 +32,19 @@ use crate::registry::ToolSchema;
 /// Parameters: 3
 /// ```
 pub fn format_tools_list(tools: &[ToolSchema]) -> String {
-    if tools.is_empty() {
-        return "## Tools\n\n_No tools registered._\n".to_string();
-    }
-
-    // Group by first segment (part before the first `_`).
-    let mut groups: BTreeMap<String, Vec<&ToolSchema>> = BTreeMap::new();
-    for tool in tools {
-        let ns = tool
-            .name
-            .split('_')
-            .next()
-            .unwrap_or(&tool.name)
-            .to_string();
-        groups.entry(ns).or_default().push(tool);
-    }
-
-    let mut out = format!("## Tools ({} total)\n", tools.len());
-
-    for (ns, mut group) in groups {
-        group.sort_by(|a, b| a.name.cmp(&b.name));
-        out.push_str(&format!("\n### {ns}\n\n"));
-
-        for tool in group {
-            out.push_str(&format!("**{}**", tool.name));
+    sven_runtime::format_grouped_list(
+        tools,
+        "Tools",
+        "No tools registered.",
+        |t| t.name.split('_').next().unwrap_or(&t.name).to_string(),
+        |t| t.name.clone(),
+        |tool| {
+            let mut entry = format!("**{}**", tool.name);
             if !tool.description.is_empty() {
-                out.push_str(&format!(" — {}", tool.description.trim()));
+                entry.push_str(&format!(" — {}", tool.description.trim()));
             }
-            out.push('\n');
+            entry.push('\n');
 
-            // Count parameters from the JSON Schema `properties` object.
             let param_count = tool
                 .parameters
                 .get("properties")
@@ -71,13 +52,12 @@ pub fn format_tools_list(tools: &[ToolSchema]) -> String {
                 .map(|o| o.len())
                 .unwrap_or(0);
             if param_count > 0 {
-                out.push_str(&format!("Parameters: {param_count}  \n"));
+                entry.push_str(&format!("Parameters: {param_count}  \n"));
             }
-            out.push('\n');
-        }
-    }
-
-    out
+            entry.push('\n');
+            entry
+        },
+    )
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

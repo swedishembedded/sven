@@ -14,6 +14,7 @@ members = [
     "crates/sven-tui",
     "crates/sven-p2p",
     "crates/sven-node",
+    "crates/sven-node-client",
     "crates/sven-mcp",
     "crates/sven-acp",
     "crates/sven-team",

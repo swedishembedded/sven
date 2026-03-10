@@ -458,17 +458,12 @@ pub fn strip_display_anchors(md: &str) -> String {
     out
 }
 
-/// Truncate a string to fit within `max` display columns, appending `…` if trimmed.
-fn truncate_str(s: &str, max: usize) -> String {
-    truncate_to_width(s, max)
-}
-
 /// Build a human-readable one-line description of a tool call for the collapsed
 /// tier-0 display.  Delegates to the canonical implementation in `sven-tools`.
 pub fn tool_smart_summary(name: &str, args_json: &str) -> String {
     let v: serde_json::Value = match serde_json::from_str(args_json) {
         Ok(v) => v,
-        Err(_) => return truncate_str(args_json, 55),
+        Err(_) => return truncate_to_width(args_json, 55),
     };
     sven_tools::tool_smart_summary(name, &v)
 }

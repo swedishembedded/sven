@@ -16,7 +16,7 @@ use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 use super::store::ContextStore;
 
 pub struct ContextOpenTool {
-    pub store: Arc<Mutex<ContextStore>>,
+    pub(crate) store: Arc<Mutex<ContextStore>>,
 }
 
 impl ContextOpenTool {

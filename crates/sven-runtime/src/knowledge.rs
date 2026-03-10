@@ -269,7 +269,7 @@ pub fn check_knowledge_drift(
                 "--",
                 pattern,
             ];
-            if let Some(output) = crate::run_git_timed_pub(&args, project_root) {
+            if let Some(output) = crate::git::run_git_timed_pub(&args, project_root) {
                 let files: Vec<String> = output
                     .lines()
                     .map(str::trim)

@@ -22,6 +22,8 @@ use std::time::Instant;
 
 use regex::Regex;
 
+pub use crate::builtin::grep_match::GrepMatch;
+
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 /// What process created this buffer.
@@ -62,15 +64,6 @@ impl BufferStatus {
     }
 }
 
-/// One regex match returned by [`OutputBufferStore::grep`].
-#[derive(Debug, Clone)]
-pub struct GrepMatch {
-    pub line_number: usize,
-    pub line: String,
-    pub context_before: Vec<String>,
-    pub context_after: Vec<String>,
-}
-
 /// Summary metadata for a buffer handle.
 #[derive(Debug, Clone)]
 pub struct BufferMetadata {
@@ -86,9 +79,9 @@ pub struct BufferMetadata {
 /// A single growing output buffer backed by an in-memory `Vec<u8>`.
 pub struct OutputBuffer {
     /// Accumulated raw bytes from the subprocess stdout (and stderr mixed in).
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Byte offset of the start of each line (0-indexed).
-    pub line_index: Vec<usize>,
+    pub(crate) line_index: Vec<usize>,
     pub status: BufferStatus,
     pub created_at: Instant,
     pub source: BufferSource,
@@ -397,6 +390,7 @@ fn grep_buffer(
         };
 
         results.push(GrepMatch {
+            file: None,
             line_number: i + 1,
             line: line_text,
             context_before: ctx_before,

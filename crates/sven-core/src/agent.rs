@@ -732,11 +732,7 @@ impl Agent {
             self.tools
                 .schemas_for_mode(mode)
                 .into_iter()
-                .map(|s| sven_model::ToolSchema {
-                    name: s.name,
-                    description: s.description,
-                    parameters: s.parameters,
-                })
+                .map(tool_schema_to_model)
                 .collect()
         } else {
             vec![]
@@ -1386,4 +1382,17 @@ fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
 
     let cleaned = invoke_re.replace_all(text, "").trim().to_string();
     (cleaned, tool_calls)
+}
+
+/// Convert a [`sven_tools::ToolSchema`] to its [`sven_model::ToolSchema`] equivalent.
+///
+/// Both types share the same fields; this conversion bridges the tool-registry
+/// representation to the model-API representation without introducing a direct
+/// dependency between `sven-tools` and `sven-model`.
+fn tool_schema_to_model(s: sven_tools::ToolSchema) -> sven_model::ToolSchema {
+    sven_model::ToolSchema {
+        name: s.name,
+        description: s.description,
+        parameters: s.parameters,
+    }
 }

@@ -442,7 +442,7 @@ mod store_tests {
         );
         // Matches should come from multiple different files.
         let unique_files: std::collections::HashSet<_> =
-            matches.iter().map(|m| m.file.clone()).collect();
+            matches.iter().filter_map(|m| m.file.clone()).collect();
         assert!(
             unique_files.len() >= 3,
             "expected matches in at least 3 files, got {} unique files",
