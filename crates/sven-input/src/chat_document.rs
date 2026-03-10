@@ -509,9 +509,7 @@ pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), Fi
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // File was deleted while we held lock (another process with lock removed it)
-                    let _ = std::fs::remove_file(&temp_path);
-                    return Err(FileModifiedError);
+                    // File was deleted; we're (re)creating it, not overwriting
                 }
                 Err(_) => {
                     let _ = std::fs::remove_file(&temp_path);
