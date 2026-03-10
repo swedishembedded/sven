@@ -80,6 +80,14 @@ const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 /// value is a final safety net for genuinely hung agents.
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// How long to wait for the child process to exit cleanly after the
+/// `PromptResponse` has been received before forcibly killing it.
+///
+/// After the agent finishes its turn it may need a moment to flush buffers and
+/// perform cleanup.  We give it this window before reaching for SIGKILL so that
+/// the exit code is meaningful and stderr is fully captured.
+const CHILD_EXIT_GRACE: Duration = Duration::from_secs(5);
+
 // ── ACP client handler ────────────────────────────────────────────────────────
 
 /// A minimal ACP `Client` that:
@@ -583,15 +591,22 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
 
     // Spawn the prompt as a local task.  We use conn_for_prompt (an Rc clone)
     // rather than moving conn itself so we retain access to conn for cancel below.
-    let prompt_task =
+    let mut prompt_task =
         tokio::task::spawn_local(async move { conn_for_prompt.prompt(prompt_req).await });
 
     // Process notifications with inactivity timeout.
-    // Three concurrent branches:
+    // Four concurrent branches:
     //   1. Notification arrives from the child (normal streaming).
-    //   2. Inactivity timeout — send ACP cancel, then kill the child.
-    //   3. Parent-side cancel signal — forward ACP cancel to the child.
+    //   2. PromptResponse received — agent turn is complete; drain buffered
+    //      notifications and proceed to clean up.
+    //   3. Inactivity timeout — send ACP cancel, then kill the child.
+    //   4. Parent-side cancel signal — forward ACP cancel to the child.
+    //
+    // Branch 2 is the primary completion path.  We do NOT wait for the child
+    // process to exit before returning the result; instead we give it a short
+    // grace window after the PromptResponse arrives (see CHILD_EXIT_GRACE).
     let mut cancel_rx = cancel_rx;
+    let mut prompt_done = false;
     loop {
         tokio::select! {
             notif_result = tokio::time::timeout(INACTIVITY_TIMEOUT, notif_rx.next()) => {
@@ -609,7 +624,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
                         }
                     }
                     Ok(None) => {
-                        // Stream closed — the ACP connection has terminated normally.
+                        // Notification stream closed (child exited or io_fut ended).
                         break;
                     }
                     Err(_inactivity) => {
@@ -621,6 +636,43 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
                         break;
                     }
                 }
+            }
+            result = &mut prompt_task, if !prompt_done => {
+                // The agent finished its turn — the PromptResponse has arrived.
+                // Extract the stop reason and mark prompt as done.
+                match result {
+                    Ok(Ok(resp)) => {
+                        stop_reason = resp.stop_reason;
+                    }
+                    Ok(Err(e)) => {
+                        warn!("ACP prompt error: {e}");
+                    }
+                    Err(_aborted) => {
+                        // Task aborted via the cancel branch; stop_reason already set.
+                    }
+                }
+                prompt_done = true;
+
+                // Drain any notifications that were buffered in the channel
+                // *before* the PromptResponse arrived (the protocol guarantees
+                // all session/update messages precede the response, but they
+                // may still be sitting unread in the mpsc buffer).
+                while let Ok(notif) = notif_rx.try_recv() {
+                    let updates = session_update_to_subagent_updates(&notif.update, &mut final_text);
+                    for update in updates {
+                        // Use try_send to avoid blocking; if the receiver is
+                        // full, drop the update — the final result already
+                        // captures the accumulated text.
+                        let _ = tool_event_tx.try_send(ToolEvent::SubagentEvent {
+                            call_id: call_id.clone(),
+                            handle_id: handle_id.clone(),
+                            update,
+                        });
+                    }
+                }
+
+                // We have the final result; stop waiting for more notifications.
+                break;
             }
             _ = &mut cancel_rx => {
                 // Parent's tool call was cancelled — propagate to the child.
@@ -649,23 +701,39 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         );
     }
 
-    // Drain the prompt task result and extract the stop reason.
-    match prompt_task.await {
-        Ok(Ok(resp)) => {
-            stop_reason = resp.stop_reason;
-        }
-        Ok(Err(e)) => {
-            warn!("ACP prompt error: {e}");
-        }
-        Err(_aborted) => {
-            // Task was aborted (cancel path above already set stop_reason).
+    // If the prompt task is still running (notification stream closed before
+    // PromptResponse arrived — unusual but possible on abrupt child exit),
+    // abort it and log a warning.
+    if !prompt_done {
+        match tokio::time::timeout(Duration::from_millis(200), &mut prompt_task).await {
+            Ok(Ok(Ok(resp))) => {
+                stop_reason = resp.stop_reason;
+            }
+            Ok(Ok(Err(e))) => {
+                warn!("ACP prompt error after stream close: {e}");
+            }
+            _ => {
+                prompt_task.abort();
+            }
         }
     }
 
-    // Clean up child process.
-    let exit_code = match child.wait().await {
-        Ok(s) => s.code().unwrap_or(-1),
-        Err(_) => -1,
+    // Give the child a short grace window to exit cleanly on its own now that
+    // the turn is complete.  After CHILD_EXIT_GRACE we force-kill it.
+    let exit_code = match tokio::time::timeout(CHILD_EXIT_GRACE, child.wait()).await {
+        Ok(Ok(status)) => status.code().unwrap_or(-1),
+        Ok(Err(_)) => -1,
+        Err(_grace_expired) => {
+            debug!(
+                handle = %handle_id,
+                "task: child did not exit within grace period, killing"
+            );
+            let _ = child.kill().await;
+            match child.wait().await {
+                Ok(s) => s.code().unwrap_or(-1),
+                Err(_) => -1,
+            }
+        }
     };
     buffer_store.lock().await.finish(&handle_id, exit_code);
 
