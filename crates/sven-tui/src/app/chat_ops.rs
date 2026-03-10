@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use sven_model::{MessageContent, Role};
 use tracing::debug;
-use ratatui::style::Modifier;
 
 use crate::{
     app::App,
@@ -210,15 +210,16 @@ impl App {
             ranges.push((line_start, line_start + n));
             line_start += n;
         }
-    
-            if self.chat.streaming_buffer.is_empty() {
-                return;
-            }
 
+        if !self.chat.streaming_buffer.is_empty() {
             if self.chat.streaming_is_thinking {
                 // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
                 let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
-                let sep = if self.chat.segments.is_empty() { "" } else { "\n" };
+                let sep = if self.chat.segments.is_empty() {
+                    ""
+                } else {
+                    "\n"
+                };
                 // Show "Seasoning" heading with scanning dot, then streaming thought below
                 // (no backticks, no 80-char clip - stream full thought in real-time)
                 let header = format!("{sep}{SYM_THINK} **Seasoning**  {dot}\n");
@@ -247,21 +248,25 @@ impl App {
                     false,
                     bar_char,
                 );
-                // Combine header and thinking content
                 let mut combined = header_styled;
                 combined.extend(thinking_styled);
                 all_lines.extend(combined);
-                return;
+            } else {
+                // Blinking ▌ cursor shows the stream is live.
+                let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
+                let sep = if self.chat.segments.is_empty() {
+                    ""
+                } else {
+                    "\n"
+                };
+                let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
+                let lines = render_markdown(&text, render_width, ascii);
+                let styled =
+                    apply_bar_and_dim(lines, Some(Style::default().fg(BAR_AGENT)), false, bar_char);
+                all_lines.extend(styled);
             }
+        }
 
-            // Blinking ▌ cursor shows the stream is live.
-            let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
-            let sep = if self.chat.segments.is_empty() { "" } else { "\n" };
-            let text = format!("{sep}**Agent:** {}{}", self.chat.streaming_buffer, cursor);
-            let lines = render_markdown(&text, render_width, ascii);
-            let styled = apply_bar_and_dim(lines, Some(Style::default().fg(BAR_AGENT)), false, bar_char);
-            all_lines.extend(styled);
-    
         self.chat.lines = all_lines;
         self.chat.segment_line_ranges = ranges;
         self.chat.edit_labels = edit_labels;
