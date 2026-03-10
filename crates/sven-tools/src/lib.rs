@@ -12,8 +12,10 @@ pub mod tool;
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use policy::{ApprovalPolicy, RolePolicy, ToolPolicy};
-pub use registry::{SharedTools, ToolRegistry, ToolSchema};
-pub use tool::{OutputCategory, Tool, ToolCall, ToolOutput, ToolOutputPart};
+pub use registry::{SharedTools, ToolDisplayInfo, ToolRegistry, ToolSchema};
+pub use tool::{
+    OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
+};
 
 // File operation tools
 pub use builtin::file::delete_file::DeleteFileTool;

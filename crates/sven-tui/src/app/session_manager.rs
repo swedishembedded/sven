@@ -44,9 +44,15 @@ use crate::{
 /// When a session is the **active** one, `App.chat` and `App.agent` hold its
 /// live state.  When the session is in the **background**, its state is stored
 /// here and synced from background agent events.
+///
+/// Sessions can form a tree: root sessions have `parent_id: None` and appear
+/// at the top level in the Chats sidebar; subagent task sessions have
+/// `parent_id: Some(parent)` and are shown as children under that parent.
 pub(crate) struct SessionEntry {
     // ── Identity & metadata ───────────────────────────────────────────────────
     pub id: SessionId,
+    /// Parent session ID when this is a subagent task conversation; `None` for roots.
+    pub parent_id: Option<SessionId>,
     pub title: String,
     pub status: ChatStatus,
     /// Path to the `.yaml` file backing this session, or `None` for transient sessions.
@@ -103,6 +109,7 @@ impl SessionEntry {
     pub fn from_document(doc: &ChatDocument) -> Self {
         Self {
             id: doc.id.clone(),
+            parent_id: None,
             title: doc.title.clone(),
             status: doc.status,
             yaml_path: Some(sven_input::chat_path(&doc.id)),
@@ -133,6 +140,7 @@ impl SessionEntry {
     pub fn from_document_into(doc: &ChatDocument, id: SessionId) -> Self {
         Self {
             id,
+            parent_id: None,
             title: doc.title.clone(),
             status: doc.status,
             yaml_path: None, // set separately via initial_yaml_path
@@ -162,6 +170,37 @@ impl SessionEntry {
         let now = Utc::now();
         Self {
             id: SessionId::new(),
+            parent_id: None,
+            title: title.into(),
+            status: ChatStatus::Active,
+            yaml_path: None,
+            created_at: now,
+            updated_at: now,
+            stored_chat: None,
+            stored_input_buffer: None,
+            stored_input_cursor: None,
+            stored_input_attachments: None,
+            stored_queue: None,
+            session_state: None,
+            jsonl_path: None,
+            agent_tx: None,
+            agent_cancel: Arc::new(Mutex::new(None)),
+            busy: false,
+            current_tool: None,
+            context_pct: 0,
+            total_context_tokens: 0,
+            total_context_pct: 0,
+            total_output_tokens: 0,
+            cache_hit_pct: 0,
+        }
+    }
+
+    /// Create a new session entry for a subagent task (child of another session).
+    pub fn new_subagent(title: impl Into<String>, parent_id: SessionId) -> Self {
+        let now = Utc::now();
+        Self {
+            id: SessionId::new(),
+            parent_id: Some(parent_id),
             title: title.into(),
             status: ChatStatus::Active,
             yaml_path: None,
@@ -311,18 +350,24 @@ impl SessionEntry {
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 /// Manages all chat sessions and the shared agent-event multiplexer.
+///
+/// The sidebar is a tree: roots are in `display_order`; children are in
+/// `children`. Use [`SessionManager::tree_rows`] to get a flat list for
+/// rendering and keyboard navigation.
 pub(crate) struct SessionManager {
     /// All session entries (active + background).
     pub entries: HashMap<SessionId, SessionEntry>,
-    /// Display order for the sidebar (most recent first).
+    /// Display order for the sidebar — root session IDs only (most recent first).
     pub display_order: Vec<SessionId>,
+    /// Child session IDs per parent (order = creation order).
+    pub children: HashMap<SessionId, Vec<SessionId>>,
     /// The session that owns `App.chat` and `App.agent`.
     pub active_id: SessionId,
     /// Shared receiver for events from all agent tasks (tagged with session IDs).
     pub multi_event_rx: mpsc::Receiver<(SessionId, AgentEvent)>,
     /// Shared sender — cloned into forwarding tasks when spawning agents.
     pub multi_event_tx: mpsc::Sender<(SessionId, AgentEvent)>,
-    /// Which entry is highlighted in the sidebar (may differ from active_id).
+    /// Which row is highlighted in the sidebar (index into tree_rows(); may differ from active_id).
     pub list_selected: usize,
 }
 
@@ -336,6 +381,7 @@ impl SessionManager {
         let mgr = Self {
             entries: HashMap::new(),
             display_order: vec![active_id.clone()],
+            children: HashMap::new(),
             active_id,
             multi_event_rx: multi_rx,
             multi_event_tx: multi_tx,
@@ -344,16 +390,50 @@ impl SessionManager {
         (mgr, initial)
     }
 
+    /// Flat list of (session_id, depth) for sidebar: roots first (depth 0), then
+    /// each root’s children (depth 1). Used for rendering and list_selected index.
+    pub fn tree_rows(&self) -> Vec<(SessionId, u16)> {
+        let mut rows = Vec::new();
+        for root_id in &self.display_order {
+            if self.entries.contains_key(root_id) {
+                rows.push((root_id.clone(), 0));
+                if let Some(ids) = self.children.get(root_id) {
+                    for child_id in ids {
+                        if self.entries.contains_key(child_id) {
+                            rows.push((child_id.clone(), 1));
+                        }
+                    }
+                }
+            }
+        }
+        rows
+    }
+
     /// Register an entry in the manager (used when the entry is first created or loaded).
+    /// Root entries (parent_id None) are added to display_order; child entries are not.
     pub fn register(&mut self, entry: SessionEntry) {
         let id = entry.id.clone();
-        if !self.display_order.contains(&id) {
+        let parent_id = entry.parent_id.clone();
+        if let Some(pid) = &parent_id {
+            self.children
+                .entry(pid.clone())
+                .or_default()
+                .push(id.clone());
+        } else if !self.display_order.contains(&id) {
             self.display_order.insert(0, id.clone());
         }
         self.entries.insert(id, entry);
     }
 
-    /// Create a new blank session, register it, and return its ID.
+    /// Add a child session under the given parent (e.g. subagent task). Does not
+    /// add the child to display_order.
+    pub fn add_child_session(&mut self, parent_id: SessionId, entry: SessionEntry) {
+        let id = entry.id.clone();
+        self.children.entry(parent_id).or_default().push(id.clone());
+        self.entries.insert(id, entry);
+    }
+
+    /// Create a new blank session, register it as a root, and return its ID.
     pub fn create_session(&mut self, title: impl Into<String>) -> SessionId {
         let entry = SessionEntry::new_blank(title);
         let id = entry.id.clone();
@@ -385,6 +465,7 @@ impl SessionManager {
             }
             let session_entry = SessionEntry {
                 id: id.clone(),
+                parent_id: None,
                 title: chat_entry.title,
                 status: chat_entry.status,
                 yaml_path: Some(chat_entry.path),
@@ -429,35 +510,36 @@ impl SessionManager {
             .any(|e| e.id != self.active_id && e.busy)
     }
 
-    /// Select the previous (older) entry in the sidebar.
+    /// Select the previous row in the sidebar (tree order).
     pub fn select_prev(&mut self) {
         if self.list_selected > 0 {
             self.list_selected -= 1;
         }
     }
 
-    /// Select the next (newer) entry in the sidebar.
+    /// Select the next row in the sidebar (tree order).
     pub fn select_next(&mut self) {
-        if !self.display_order.is_empty() && self.list_selected < self.display_order.len() - 1 {
+        let rows = self.tree_rows();
+        if !rows.is_empty() && self.list_selected < rows.len() - 1 {
             self.list_selected += 1;
         }
     }
 
     /// Set `list_selected` to the index of the active session in the sidebar.
     pub fn sync_list_selection_to_active(&mut self) {
-        if let Some(idx) = self
-            .display_order
-            .iter()
-            .position(|id| id == &self.active_id)
-        {
+        let rows = self.tree_rows();
+        if let Some(idx) = rows.iter().position(|(id, _)| id == &self.active_id) {
             self.list_selected = idx;
         }
     }
 
     /// Move the given session to the top of the display order (after activation).
+    /// Only affects roots; children stay under their parent.
     pub fn promote_to_top(&mut self, id: &SessionId) {
-        self.display_order.retain(|x| x != id);
-        self.display_order.insert(0, id.clone());
+        if self.entries.get(id).and_then(|e| e.parent_id.as_ref()).is_none() {
+            self.display_order.retain(|x| x != id);
+            self.display_order.insert(0, id.clone());
+        }
         self.sync_list_selection_to_active();
     }
 
@@ -469,17 +551,30 @@ impl SessionManager {
     }
 
     /// Remove a session from the manager and delete its YAML file.
+    /// If the session has children, they are removed too (but they have no YAML).
     pub fn delete(&mut self, id: &SessionId) -> bool {
         if *id == self.active_id {
             return false; // can't delete the active session
         }
         if let Some(entry) = self.entries.remove(id) {
-            self.display_order.retain(|x| x != id);
-            // Clamp list_selected after removal.
-            if self.list_selected >= self.display_order.len() && !self.display_order.is_empty() {
-                self.list_selected = self.display_order.len() - 1;
+            if entry.parent_id.is_some() {
+                if let Some(pid) = &entry.parent_id {
+                    if let Some(sibs) = self.children.get_mut(pid) {
+                        sibs.retain(|x| x != id);
+                    }
+                }
+            } else {
+                self.display_order.retain(|x| x != id);
             }
-            // Delete the YAML file.
+            // Remove any children (collect first so we don't hold refs during delete).
+            let child_ids: Vec<SessionId> = self.children.remove(id).unwrap_or_default();
+            for cid in child_ids {
+                let _ = self.delete(&cid);
+            }
+            let rows = self.tree_rows();
+            if !rows.is_empty() && self.list_selected >= rows.len() {
+                self.list_selected = rows.len() - 1;
+            }
             if let Some(path) = entry.yaml_path {
                 if let Err(e) = std::fs::remove_file(&path) {
                     tracing::warn!(path = %path.display(), "failed to delete chat file: {e}");

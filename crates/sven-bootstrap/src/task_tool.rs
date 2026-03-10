@@ -258,6 +258,16 @@ impl Tool for TaskTool {
             "task: spawning sub-agent process"
         );
 
+        // Notify TUI so it can create a child session and show the subagent in the tree.
+        let _ = self
+            .tool_event_tx
+            .send(ToolEvent::SubagentStarted {
+                call_id: call.id.clone(),
+                handle_id: handle_id.clone(),
+                description: description.clone(),
+            })
+            .await;
+
         // Build the command.
         let mut cmd = tokio::process::Command::new(&exe);
         cmd.arg("--headless")

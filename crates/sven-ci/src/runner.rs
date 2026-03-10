@@ -1498,8 +1498,9 @@ fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         | AgentEvent::QuestionAnswer { .. }
         | AgentEvent::CollabEvent(_)
         | AgentEvent::TitleGenerated(_)
-        | AgentEvent::PeerList(_)
-        | AgentEvent::DelegateSummary { .. } => {}
+        | AgentEvent::DelegateSummary { .. }
+        | AgentEvent::SubagentStarted { .. }
+        | AgentEvent::PeerList(_) => {}
         AgentEvent::Aborted { partial_text } => {
             if !partial_text.is_empty() {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));

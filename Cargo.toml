@@ -62,6 +62,7 @@ base64       = "0.22"
 similar      = "2"
 rmcp         = { version = "0.15", default-features = false }
 memmap2      = "0.9"
+notify       = "7"
 
 [package]
 name    = "sven"

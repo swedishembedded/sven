@@ -34,6 +34,8 @@ pub struct ChatListItem<'a> {
     pub is_active: bool,
     /// Animation frame counter for the spinner.
     pub anim_frame: u8,
+    /// Tree depth: 0 = root, 1 = subagent child.
+    pub depth: u16,
 }
 
 /// Right-side chat list pane widget.
@@ -174,9 +176,10 @@ impl Widget for ChatListPane<'_> {
                 cell.set_style(icon_style.bg(bg_color));
             }
 
-            // ── Title (truncated) ─────────────────────────────────────────────
-            let title_x = inner.x + 2;
-            let max_title_width = inner.width.saturating_sub(2) as usize;
+            // ── Indent for tree depth ──────────────────────────────────────────
+            let indent = item.depth.saturating_mul(2);
+            let title_x = inner.x + 2 + indent;
+            let max_title_width = inner.width.saturating_sub(2 + indent) as usize;
             let title_chars: Vec<char> = item.title.chars().collect();
             let display_len = title_chars.len().min(max_title_width);
             let truncated: String = title_chars[..display_len].iter().collect();
@@ -226,28 +229,32 @@ impl Widget for ChatListPane<'_> {
     }
 }
 
-/// Build a `ChatListItem` slice from session manager data for rendering.
+/// Build a `ChatListItem` slice from session manager tree for rendering.
 ///
-/// `active_busy` is the live busy state of the currently active session
-/// (`App::agent.busy`).  `SessionEntry::busy` for the active session can be
-/// stale (it is only flushed by `save_active_to_session_entry`), so we
-/// override it here to avoid ghost spinners.
+/// `tree_rows` is the flat list of (session_id, depth) from
+/// `SessionManager::tree_rows()`. `entries` is the session map to look up
+/// each entry. `active_busy` is the live busy state of the currently active
+/// session; we override the active entry's busy flag to avoid ghost spinners.
 pub fn build_chat_list_items<'a>(
-    entries: impl Iterator<Item = &'a SessionEntry>,
+    tree_rows: &'a [(sven_input::SessionId, u16)],
+    entries: &'a std::collections::HashMap<sven_input::SessionId, SessionEntry>,
     active_id: &sven_input::SessionId,
     anim_frame: u8,
     active_busy: bool,
 ) -> Vec<ChatListItem<'a>> {
-    entries
-        .map(|entry| {
-            let is_active = &entry.id == active_id;
-            ChatListItem {
-                title: &entry.title,
+    tree_rows
+        .iter()
+        .filter_map(|(id, depth)| {
+            let entry = entries.get(id)?;
+            let is_active = id == active_id;
+            Some(ChatListItem {
+                title: entry.title.as_str(),
                 status: entry.status,
                 busy: if is_active { active_busy } else { entry.busy },
                 is_active,
                 anim_frame,
-            }
+                depth: *depth,
+            })
         })
         .collect()
 }

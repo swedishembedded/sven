@@ -797,11 +797,10 @@ impl App {
 
         // ── Chat list pane (right side) ───────────────────────────────────────
         if self.layout.chat_list_visible && layout.chat_list_pane.width > 0 {
+            let tree_rows = self.sessions.tree_rows();
             let items = crate::ui::build_chat_list_items(
-                self.sessions
-                    .display_order
-                    .iter()
-                    .filter_map(|id| self.sessions.get(id)),
+                &tree_rows,
+                &self.sessions.entries,
                 &self.sessions.active_id,
                 self.agent.anim_frame,
                 self.agent.busy,

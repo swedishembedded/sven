@@ -17,6 +17,17 @@ pub struct ToolSchema {
     pub parameters: serde_json::Value,
 }
 
+/// Display metadata for a tool, used by the TUI for custom rendering.
+#[derive(Debug, Clone)]
+pub struct ToolDisplayInfo {
+    /// The display name shown in collapsed view (e.g., "Shell", "Read").
+    pub display_name: String,
+    /// Whether this tool supports diff rendering in expanded view.
+    pub supports_diff: bool,
+    /// The name of the field that contains the "intent" description.
+    pub intent_field: Option<String>,
+}
+
 /// Shared, atomically-replaceable snapshot of the agent's tool registry.
 ///
 /// Works exactly like [`sven_runtime::SharedSkills`] and

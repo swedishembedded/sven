@@ -139,7 +139,8 @@ mod guidelines {
         "- Make sure all the code you generate is production quality and follows good separation of concerns and clean code principles.\n\
          - NEVER create new files proactively unless explicitly requested. Do not create 'summary' md files unless requested.\n\
          - Write tests when adding new functionality.\n\
-         - Preserve existing code structure and coding style patterns."
+         - Preserve existing code structure and coding style patterns.\n\
+         - After completing a task, compile or build the component you changed (e.g. cargo build, make) to verify it works; fix any issues."
     }
 
     pub fn workflow_efficiency() -> &'static str {
@@ -151,10 +152,12 @@ mod guidelines {
     }
 
     pub fn task_delegation() -> &'static str {
-        "- Use `task` to spawn focused sub-agents for isolated, well-defined sub-tasks that benefit from a fresh context window.\n\
+        "- ALWAYS spin up subagents when a task can be split into larger chunks and parallelized: \
+         use the `task` tool to spawn multiple sub-agents in parallel for independent sub-tasks in the same turn.\n\
+         - Use `task` for isolated, well-defined sub-tasks that benefit from a fresh context window.\n\
          - Good candidates: exploring a large unfamiliar codebase area; running a multi-step investigation; \
-         implementing a self-contained feature; running tests and analysing failures.\n\
-         - You can spawn multiple sub-agents in parallel by calling `task` multiple times in the same turn.\n\
+         implementing a self-contained feature; running tests and analysing failures; any work that naturally \
+         decomposes into independent chunks (e.g. multiple files, modules, or search targets).\n\
          - `task` returns a buffer handle immediately (e.g. `buf_0001`). Use `task(action=status)` to poll, \
          `task(action=grep)` to search output, `task(action=read)` to inspect specific line ranges.\n\
          - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool calls.\n\
@@ -657,6 +660,8 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
              your progress clearly.\n\
              Keep in mind the following:
              - Maximize parallel tool calls.\n\
+             - When a task can be split into larger chunks and parallelized, always spin up \
+             subagents via the `task` tool (multiple tasks in one turn when sub-tasks are independent).\n\
              - Always complete all todos before completing your turn.\n\
              - Always complete the task requested by the user before completion your turn."
         }

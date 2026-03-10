@@ -15,7 +15,7 @@
 /// | (empty)                | "task"      | Single step with "task"                     |
 /// | (empty)                | (none)      | Single step with "" (empty, model handles)  |
 /// | plain text             | (none)      | Single step with plain text (workflow fallback) |
-/// | plain text             | "task"      | Step "task" prepended; plain text is second |
+/// | plain text             | "task"      | Single step: "task" + blank line + plain text (merged in CLI) |
 /// | workflow markdown      | (none)      | Steps from ## sections                      |
 /// | workflow markdown      | "task"      | "task" prepended, then ## sections          |
 /// | conversation markdown  | "task2"     | History seeded, single step "task2"         |

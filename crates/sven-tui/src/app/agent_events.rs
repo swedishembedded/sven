@@ -211,22 +211,6 @@ impl App {
                     self.chat_title = title;
                 }
             }
-            AgentEvent::PeerList(peers) => {
-                // Update the peers list in UI state.
-                self.ui.peers = peers
-                    .into_iter()
-                    .map(|p| crate::app::ui_state::PeerInfo {
-                        name: p.name,
-                        peer_id: p.peer_id,
-                        connected: p.connected,
-                        can_delegate: p.can_delegate,
-                    })
-                    .collect();
-                // Reset selection if out of bounds.
-                if self.ui.peers_selected >= self.ui.peers.len() {
-                    self.ui.peers_selected = self.ui.peers.len().saturating_sub(1);
-                }
-            }
             AgentEvent::TurnComplete => {
                 // Fallback only in node-proxy mode (we never send GenerateTitle there).
                 // Local agent always gets TitleGenerated from the title task (LLM or heuristic).
@@ -444,6 +428,14 @@ impl App {
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
+            }
+            AgentEvent::SubagentStarted { description, .. } => {
+                let parent_id = session_id.clone();
+                let entry = crate::app::session_manager::SessionEntry::new_subagent(
+                    description,
+                    parent_id.clone(),
+                );
+                self.sessions.add_child_session(parent_id, entry);
             }
             _ => {}
         }

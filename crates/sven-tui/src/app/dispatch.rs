@@ -83,11 +83,7 @@ impl App {
                     self.ui.focus = FocusPane::Chat;
                     self.recompute_focused_segment();
                 }
-                FocusPane::Chat | FocusPane::ChatList => {}
-                FocusPane::Peers => {
-                    // Navigate from peers to chat list.
-                    self.ui.focus = FocusPane::ChatList;
-                }
+                FocusPane::Chat | FocusPane::ChatList | FocusPane::Peers => {}
             },
             Action::NavDown => match self.ui.focus {
                 FocusPane::Chat | FocusPane::ChatList => {
@@ -103,11 +99,7 @@ impl App {
                 FocusPane::Queue => {
                     self.ui.focus = FocusPane::Input;
                 }
-                FocusPane::Input => {}
-                FocusPane::Peers => {
-                    // Navigate from peers to chat list.
-                    self.ui.focus = FocusPane::ChatList;
-                }
+                FocusPane::Input | FocusPane::Peers => {}
             },
             Action::NavLeft => {
                 if self.ui.focus == FocusPane::ChatList {
@@ -116,7 +108,7 @@ impl App {
                 }
             }
             Action::NavRight => {
-                if self.ui.focus != FocusPane::ChatList && self.ui.focus != FocusPane::Peers {
+                if self.ui.focus != FocusPane::ChatList {
                     if !self.layout.chat_list_visible {
                         self.layout.chat_list_visible = true;
                     }
@@ -1174,9 +1166,9 @@ impl App {
             Action::ChatListActivate => {
                 if let Some(id) = self
                     .sessions
-                    .display_order
+                    .tree_rows()
                     .get(self.sessions.list_selected)
-                    .cloned()
+                    .map(|(id, _)| id.clone())
                 {
                     if id != self.sessions.active_id {
                         self.switch_session(id).await;
@@ -1192,9 +1184,9 @@ impl App {
             Action::DeleteChat => {
                 if let Some(id) = self
                     .sessions
-                    .display_order
+                    .tree_rows()
                     .get(self.sessions.list_selected)
-                    .cloned()
+                    .map(|(id, _)| id.clone())
                 {
                     let title = self
                         .sessions
@@ -1220,9 +1212,9 @@ impl App {
             Action::ArchiveChat => {
                 if let Some(id) = self
                     .sessions
-                    .display_order
+                    .tree_rows()
                     .get(self.sessions.list_selected)
-                    .cloned()
+                    .map(|(id, _)| id.clone())
                 {
                     self.sessions.archive(&id);
                     // Save the updated status to disk.
@@ -1255,15 +1247,14 @@ impl App {
             Action::ChatListClick { inner_row } => {
                 // `inner_row` is the 0-based visual row; add the scroll offset
                 // that was in effect at render time to get the item index.
-                // We use the focus state *before* changing it so the offset
-                // matches what the user saw.
                 let scroll_offset = self.chat_list_scroll_offset();
-                let max_idx = self.sessions.display_order.len().saturating_sub(1);
+                let rows = self.sessions.tree_rows();
+                let max_idx = rows.len().saturating_sub(1);
                 let actual_idx = (inner_row + scroll_offset).min(max_idx);
                 self.sessions.list_selected = actual_idx;
-                if let Some(id) = self.sessions.display_order.get(actual_idx).cloned() {
-                    if id != self.sessions.active_id {
-                        self.switch_session(id).await;
+                if let Some((id, _)) = rows.get(actual_idx) {
+                    if *id != self.sessions.active_id {
+                        self.switch_session(id.clone()).await;
                     }
                 }
                 self.ui.focus = FocusPane::Input;

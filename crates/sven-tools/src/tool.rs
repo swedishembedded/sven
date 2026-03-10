@@ -159,6 +159,50 @@ pub trait Tool: Send + Sync {
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }
+/// Trait for providing display metadata for tools in the TUI.
+pub trait ToolDisplay: Send + Sync {
+    /// Short display name shown in collapsed view (e.g., "Shell", "Read").
+    fn display_name(&self) -> &str;
+
+    /// Generate a one-line summary for collapsed view.
+    ///
+    /// `args` is the JSON arguments passed to the tool call.
+    fn collapsed_summary(&self, _args: &serde_json::Value) -> String {
+        self.display_name().to_string()
+    }
+
+    /// Whether this tool supports diff rendering in expanded view.
+    fn supports_diff(&self) -> bool {
+        false
+    }
+}
+
+/// Registry for looking up display metadata for tools.
+pub struct ToolDisplayRegistry {
+    displays: std::collections::HashMap<String, Box<dyn ToolDisplay>>,
+}
+
+impl ToolDisplayRegistry {
+    pub fn new() -> Self {
+        Self {
+            displays: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn register<T: ToolDisplay + 'static>(&mut self, name: impl Into<String>, display: T) {
+        self.displays.insert(name.into(), Box::new(display));
+    }
+
+    pub fn get(&self, name: &str) -> Option<&dyn ToolDisplay> {
+        self.displays.get(name).map(|b| b.as_ref())
+    }
+}
+
+impl Default for ToolDisplayRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@ use tracing::debug;
 use sven_config::AgentMode;
 
 use crate::policy::ApprovalPolicy;
-use crate::tool::{Tool, ToolCall, ToolOutput};
+use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Minimum similarity ratio (0–1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
@@ -433,6 +433,9 @@ impl Tool for EditFileTool {
     fn description(&self) -> &str {
         "Edit a file by applying unified diff hunks.\n\
          \n\
+         REQUIRED: You MUST include hunk markers (lines starting with @@) in the diff.\n\
+         Without at least one @@ line the tool will fail. Do not send raw replacements.\n\
+         \n\
          DIFF FORMAT\n\
          Each hunk starts with @@ (line numbers are optional hints, not required):\n\
            @@ -OLD_LINE,COUNT +NEW_LINE,COUNT @@\n\
@@ -442,6 +445,7 @@ impl Tool for EditFileTool {
             context line\n\
          \n\
          Rules:\n\
+         • Every change block MUST begin with an @@ hunk header line.\n\
          • Include 2–3 unchanged context lines before and after every change.\n\
          • Context lines must match the file content exactly (indentation\n\
            differences are corrected automatically).\n\
@@ -469,8 +473,7 @@ impl Tool for EditFileTool {
                 },
                 "diff": {
                     "type": "string",
-                    "description": "Unified diff hunks to apply. Each hunk starts with @@. \
-                                    Include 2–3 context lines around every change."
+                    "description": "Unified diff with hunk markers. REQUIRED: must contain at least one line starting with @@ (e.g. @@ -1,3 +1,4 @@). Without @@ hunk markers the call will fail. Each hunk starts with @@; include 2–3 context lines around every change."
                 }
             },
             "required": ["path", "diff"],
@@ -543,6 +546,28 @@ impl Tool for EditFileTool {
             Ok(_) => ToolOutput::ok(&call.id, "Edit successfully applied"),
             Err(e) => ToolOutput::err(&call.id, format!("Write failed: {e}")),
         }
+    }
+}
+
+impl ToolDisplay for EditFileTool {
+    fn display_name(&self) -> &str {
+        "Edit"
+    }
+
+    fn collapsed_summary(&self, args: &Value) -> String {
+        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            format!("Edit: {}", filename)
+        } else {
+            "Edit file".to_string()
+        }
+    }
+
+    fn supports_diff(&self) -> bool {
+        true
     }
 }
 

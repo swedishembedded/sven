@@ -1379,7 +1379,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     // ── Read workflow input ──────────────────────────────────────────────────
     // When --file points to a .jsonl, there is no separate workflow file;
     // we read from stdin (or use an empty input) for the new prompt.
-    let input = if file_is_jsonl {
+    // When stdin is piped and a positional prompt is given (e.g. `cmd | sven "fix these errors"`),
+    // we append stdin to the prompt with a blank line and pass that as the single user message.
+    let (input, extra_prompt) = if file_is_jsonl {
         // The file is a JSONL conversation, not a workflow.  New workflow
         // input (if any) comes from stdin.
         if !is_stdin_tty() {
@@ -1387,21 +1389,30 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             io::stdin()
                 .read_to_string(&mut buf)
                 .context("reading stdin")?;
-            buf
+            (buf, cli.prompt.clone())
         } else {
-            String::new()
+            (String::new(), cli.prompt.clone())
         }
     } else if let Some(path) = &cli.file {
-        std::fs::read_to_string(path)
-            .with_context(|| format!("reading input file {}", path.display()))?
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("reading input file {}", path.display()))?;
+        (content, cli.prompt.clone())
     } else if !is_stdin_tty() {
         let mut buf = String::new();
         io::stdin()
             .read_to_string(&mut buf)
             .context("reading stdin")?;
-        buf
+        let stdin_content = buf;
+        if let Some(ref prompt) = cli.prompt {
+            (
+                format!("{}\n\n{}", prompt.trim(), stdin_content.trim()),
+                None,
+            )
+        } else {
+            (stdin_content, cli.prompt.clone())
+        }
     } else {
-        String::new()
+        (String::new(), cli.prompt.clone())
     };
 
     // ── Parse template variables ──────────────────────────────────────────────
@@ -1431,7 +1442,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         mode: cli.mode,
         model_override: cli.model,
         input,
-        extra_prompt: cli.prompt,
+        extra_prompt,
         project_root,
         output_format,
         artifacts_dir: cli.artifacts_dir,

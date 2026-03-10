@@ -75,4 +75,13 @@ pub enum ToolEvent {
         /// First meaningful line of the result, shown collapsed.
         result_preview: String,
     },
+    /// A subagent was started via the task tool; the TUI can create a child session.
+    SubagentStarted {
+        /// Tool-call ID for the spawn (matches `ToolCallStarted`).
+        call_id: String,
+        /// Buffer handle for the subagent output (e.g. `buf_0001`).
+        handle_id: String,
+        /// Short human-readable description for the sidebar.
+        description: String,
+    },
 }

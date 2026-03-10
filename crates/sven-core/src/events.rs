@@ -4,6 +4,15 @@
 use sven_config::AgentMode;
 use sven_tools::{events::TodoItem, ToolCall};
 
+/// Information about a connected peer (node proxy / list_peers).
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub name: String,
+    pub peer_id: String,
+    pub connected: bool,
+    pub can_delegate: bool,
+}
+
 /// Which compaction strategy was executed when `ContextCompacted` fired.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompactionStrategyUsed {
@@ -123,15 +132,12 @@ pub enum AgentEvent {
         status: String,
         result_preview: String,
     },
-    /// List of connected peers (node-proxy mode).
+    /// A subagent was started via the task tool; the TUI creates a child session.
+    SubagentStarted {
+        call_id: String,
+        handle_id: String,
+        description: String,
+    },
+    /// List of peers (from node proxy / list_peers).
     PeerList(Vec<PeerInfo>),
-}
-
-/// Information about a connected peer.
-#[derive(Debug, Clone)]
-pub struct PeerInfo {
-    pub name: String,
-    pub peer_id: String,
-    pub connected: bool,
-    pub can_delegate: bool,
 }

@@ -9,8 +9,21 @@ use std::collections::HashMap;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::sync::Arc;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::TodoItem;
+
+/// Metadata for customizing tool display in the UI.
+#[derive(Debug, Clone)]
+pub struct ToolDisplayInfo {
+    /// Human-readable display name for the tool.
+    pub display_name: String,
+    /// Optional field name that contains the "intent" or primary content
+    /// (e.g., "shell_command" for shell tool, "query" for grep).
+    pub intent_field: Option<String>,
+    /// Optional Arc to allow sharing across threads if needed.
+    _phantom: Option<Arc<()>>,
+}
 
 use crate::chat::segment::ChatSegment;
 use crate::markdown::StyledLines;
@@ -172,7 +185,7 @@ pub fn collapsed_preview(
                     function,
                 },
             ) => {
-                let summary = tool_smart_summary(&function.name, &function.arguments);
+                let summary = tool_display_summary(&function.name, &function.arguments, None);
                 let summary_part = if summary.is_empty() {
                     String::new()
                 } else {
@@ -603,7 +616,7 @@ pub fn tool_display_summary(
                 let path_hint = if path == "." || path.is_empty() {
                     String::new()
                 } else {
-                    format!(" in {}", shorten_path(path, 2));
+                    format!(" in {}", shorten_path(path, 2))
                 };
                 return format!("{}:{}{}", info.display_name, path_hint, pattern);
             }
@@ -626,7 +639,7 @@ pub fn tool_display_summary(
 /// Build an expanded header for a tool call (tier-1 view).
 ///
 /// This shows the command to be executed, e.g., "$ cargo build"
-pub fn tool_expanded_header(name: &str, args_json: &str) -> String {
+pub fn tool_expanded_header(_name: &str, args_json: &str) -> String {
     let v: serde_json::Value = match serde_json::from_str(args_json) {
         Ok(v) => v,
         Err(_) => return String::new(),
