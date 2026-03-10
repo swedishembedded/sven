@@ -1415,14 +1415,11 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             .read_to_string(&mut buf)
             .context("reading stdin")?;
         let stdin_content = buf;
-        if let Some(ref prompt) = cli.prompt {
-            (
-                format!("{}\n\n{}", prompt.trim(), stdin_content.trim()),
-                None,
-            )
-        } else {
-            (stdin_content, cli.prompt.clone())
-        }
+        // Keep positional prompt as extra_prompt so the runner can use it when
+        // stdin is a piped conversation (e.g. `sven 'plan' | sven 'summarize'`).
+        // The runner merges it into the step for plain-text stdin, or uses it as
+        // the new task for conversation/JSONL input.
+        (stdin_content, cli.prompt.clone())
     } else {
         (String::new(), cli.prompt.clone())
     };

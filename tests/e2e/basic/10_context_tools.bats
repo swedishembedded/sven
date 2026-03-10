@@ -55,8 +55,9 @@ load helpers
 @test "10.07 context_open tool activity appears on stderr" {
     run_split_output bash -c 'echo "open context file" | "$BIN" --headless --model mock'
     [ "${EXIT_CODE}" -eq 0 ]
-    # Tool invocation must be reported on stderr (not swallowed)
+    # Tool invocation must be reported on stderr (compound tool name is "context")
     [[ "${STDERR_OUT}" == *"context_open"* ]] || \
+    [[ "${STDERR_OUT}" == *"context"* ]] || \
     [[ "${STDERR_OUT}" == *"[tool]"* ]] || \
     [[ "${STDERR_OUT}" == *"[tool ok]"* ]]
 }
@@ -117,6 +118,7 @@ load helpers
     run_split_output bash -c 'echo "grep context bad handle" | "$BIN" --headless --model mock'
     [ "${EXIT_CODE}" -eq 0 ] || [ "${EXIT_CODE}" -eq 3 ]
     [[ "${STDERR_OUT}" == *"context_grep"* ]] || \
+    [[ "${STDERR_OUT}" == *"context"* ]] || \
     [[ "${STDERR_OUT}" == *"[tool"* ]]
 }
 

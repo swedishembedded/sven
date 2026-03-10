@@ -366,7 +366,14 @@ impl CiRunner {
             }
         } else {
             // Stdin (no -f): plain text as a single step; no workflow parsing.
-            let content = markdown_body.trim().to_string();
+            // If a positional prompt was also supplied (e.g. `echo "data" | sven "analyse"`),
+            // prepend it so both the context and the task appear in the same user message.
+            let body = markdown_body.trim().to_string();
+            let content = match &opts.extra_prompt {
+                Some(p) if !body.is_empty() => format!("{}\n\n{}", p.trim(), body),
+                Some(p) => p.trim().to_string(),
+                None => body,
+            };
             StepQueue::from(vec![Step {
                 label: None,
                 content,
