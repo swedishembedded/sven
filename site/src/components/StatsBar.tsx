@@ -3,10 +3,10 @@ import { useInView } from 'framer-motion'
 import { useRef } from 'react'
 
 const STATS = [
-  { value: '35+', label: 'Model Providers', sub: 'OpenAI, Anthropic, Ollama & more' },
-  { value: '1', label: 'Single Binary', sub: 'TUI, headless, and node in one' },
-  { value: '0', label: 'Runtime Dependencies', sub: 'Pure Rust, ships ready to run' },
-  { value: '∞', label: 'Workflow Scale', sub: 'From one-liners to full CI pipelines' },
+  { value: '35+', label: 'AI Models', sub: 'OpenAI, Anthropic, Ollama & more — no lock-in' },
+  { value: '1', label: 'Binary', sub: 'TUI, headless, CI, and P2P node in one' },
+  { value: '0', label: 'Context Switches', sub: 'Entire dev lifecycle in one session' },
+  { value: '0', label: 'Runtime Dependencies', sub: 'Pure Rust, install and run immediately' },
 ]
 
 export default function StatsBar() {

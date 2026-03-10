@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background -->
+  <rect width="32" height="32" rx="6" fill="#0a0a0f"/>
+  <!-- Chip body -->
+  <rect x="9" y="9" width="14" height="14" rx="1.5" stroke="#e6b428" stroke-width="1.2" fill="#0d1a2e"/>
+  <!-- Inner die -->
+  <rect x="12" y="12" width="8" height="8" rx="0.5" stroke="#3c78dc" stroke-width="0.8" fill="none"/>
+  <!-- Top pins -->
+  <line x1="13" y1="9" x2="13" y2="6" stroke="#e6b428" stroke-width="1"/>
+  <line x1="16" y1="9" x2="16" y2="6" stroke="#e6b428" stroke-width="1"/>
+  <line x1="19" y1="9" x2="19" y2="6" stroke="#e6b428" stroke-width="1"/>
+  <!-- Bottom pins -->
+  <line x1="13" y1="23" x2="13" y2="26" stroke="#e6b428" stroke-width="1"/>
+  <line x1="16" y1="23" x2="16" y2="26" stroke="#e6b428" stroke-width="1"/>
+  <line x1="19" y1="23" x2="19" y2="26" stroke="#e6b428" stroke-width="1"/>
+  <!-- Left pins -->
+  <line x1="9" y1="13" x2="6" y2="13" stroke="#e6b428" stroke-width="1"/>
+  <line x1="9" y1="16" x2="6" y2="16" stroke="#e6b428" stroke-width="1"/>
+  <line x1="9" y1="19" x2="6" y2="19" stroke="#e6b428" stroke-width="1"/>
+  <!-- Right pins -->
+  <line x1="23" y1="13" x2="26" y2="13" stroke="#e6b428" stroke-width="1"/>
+  <line x1="23" y1="16" x2="26" y2="16" stroke="#e6b428" stroke-width="1"/>
+  <line x1="23" y1="19" x2="26" y2="19" stroke="#e6b428" stroke-width="1"/>
+</svg>

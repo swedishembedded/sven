@@ -30,7 +30,7 @@ export default function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Logo size="md" className="mb-4" />
             <p className="text-sm text-text-secondary leading-relaxed mb-5 max-w-xs">
-              A keyboard-driven AI coding agent for the terminal. Built with Rust by{' '}
+              Stay in the zone. Ship everything. Built with Rust by{' '}
               <a
                 href="https://swedishembedded.com"
                 target="_blank"

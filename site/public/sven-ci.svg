@@ -1,73 +1,88 @@
 <svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
 <rect width="800" height="500" fill="#0f1117"/>
-<rect x="0" y="0" width="800" height="22" fill="#0b1c12"/>
-<rect x="0" y="22" width="800" height="1" fill="#1a3020"/>
-<circle cx="10" cy="11" r="6" fill="#f0c040"/>
-<text x="20" y="15" font-family="monospace" font-size="11" fill="#2dd4bf" font-weight="bold">sven</text>
-<text x="50" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<!-- Top status bar — green accent for CI/pipeline theme -->
+<rect x="0" y="0" width="800" height="22" fill="#08100a"/>
+<rect x="0" y="22" width="800" height="1" fill="#0f2a14"/>
+<circle cx="10" cy="11" r="5" fill="#4ade80"/>
+<text x="20" y="15" font-family="monospace" font-size="11" fill="#4ade80" font-weight="bold">sven</text>
+<text x="50" y="15" font-family="monospace" font-size="11" fill="#1a3020">|</text>
 <text x="58" y="15" font-family="monospace" font-size="11" fill="#e8a030">anthropic/claude-sonnet-4-5</text>
-<text x="240" y="15" font-family="monospace" font-size="11" fill="#445566">|</text>
+<text x="240" y="15" font-family="monospace" font-size="11" fill="#1a3020">|</text>
 <text x="248" y="15" font-family="monospace" font-size="11" fill="#4ade80">headless</text>
-<text x="304" y="15" font-family="monospace" font-size="11" fill="#445566">| ctx [</text>
-<text x="350" y="15" font-family="monospace" font-size="11" fill="#2dd4bf">=========</text>
-<text x="404" y="15" font-family="monospace" font-size="11" fill="#445566">-----------------------------------------------------------------------</text>
-<text x="830" y="15" font-family="monospace" font-size="11" fill="#445566">] 12%</text>
-<text x="630" y="15" font-family="monospace" font-size="11" fill="#334455">ci-detected  exit:0</text>
-<rect x="0" y="23" width="800" height="20" fill="#111118"/>
-<rect x="0" y="43" width="800" height="1" fill="#1a1a2c"/>
-<text x="12" y="37" font-family="monospace" font-size="10" fill="#2dd4bf">Chat</text>
-<text x="38" y="37" font-family="monospace" font-size="10" fill="#445566"></text>
+<text x="304" y="15" font-family="monospace" font-size="11" fill="#1a3020">| ctx [</text>
+<text x="350" y="15" font-family="monospace" font-size="11" fill="#4ade80">=========</text>
+<text x="404" y="15" font-family="monospace" font-size="11" fill="#1a3020">-----------------------------------------------------------------------</text>
+<text x="620" y="15" font-family="monospace" font-size="11" fill="#0f2010">ci:github-actions  exit:pending</text>
+
+<!-- Tab bar -->
+<rect x="0" y="23" width="800" height="20" fill="#090e0a"/>
+<rect x="0" y="43" width="800" height="1" fill="#0f2a14"/>
+<text x="12" y="37" font-family="monospace" font-size="10" fill="#4ade80">Output</text>
+<text x="55" y="37" font-family="monospace" font-size="10" fill="#1a3020"> · headless · github-actions detected · review.md · PR #248</text>
+
+<!-- Content -->
 <rect x="0" y="44" width="800" height="396" fill="#0f1117"/>
-<text x="12" y="60" font-family="monospace" font-size="10" fill="#445566">&#182;  sven --headless --file review.md --var pr_number=248</text>
-<text x="12" y="82" font-family="monospace" font-size="10" fill="#2dd4bf">## Step 1/4  Understand the change</text>
-<text x="12" y="99" font-family="monospace" font-size="10" fill="#5a6878">Agent:thinking</text>
-<text x="115" y="99" font-family="monospace" font-size="10" fill="#f0c040">&#9670;</text>
-<text x="129" y="99" font-family="monospace" font-size="10" fill="#445566">Thought</text>
-<text x="187" y="99" font-family="monospace" font-size="10" fill="#5a7060">&quot;Reading the diff for PR #248...&quot;</text>
-<text x="740" y="99" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
-<text x="12" y="116" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_01</text>
-<text x="156" y="116" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;run_terminal_command</text>
-<text x="312" y="116" font-family="monospace" font-size="10" fill="#7a8898"> `git diff origin/main HEAD -- .`</text>
-<text x="510" y="116" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
-<text x="578" y="116" font-family="monospace" font-size="10" fill="#5a9878">&quot;3 files, +213 -89, auth refactor&quot;</text>
-<text x="730" y="116" font-family="monospace" font-size="10" fill="#445566">0.8s</text>
-<text x="760" y="116" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
-<text x="12" y="133" font-family="monospace" font-size="10" fill="#9aa5b8">  Summary: JWT migration in src/auth/ - replaced HMAC tokens with RS256.</text>
-<text x="12" y="155" font-family="monospace" font-size="10" fill="#2dd4bf">## Step 2/4  Security check</text>
-<text x="12" y="172" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_02</text>
-<text x="156" y="172" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;search_codebase</text>
-<text x="282" y="172" font-family="monospace" font-size="10" fill="#7a8898"> pattern="password|secret|token" path=src/</text>
-<text x="534" y="172" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
-<text x="602" y="172" font-family="monospace" font-size="10" fill="#5a9878">&quot;0 hardcoded secrets&quot;</text>
-<text x="730" y="172" font-family="monospace" font-size="10" fill="#445566">0.3s</text>
-<text x="760" y="172" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
-<text x="12" y="189" font-family="monospace" font-size="10" fill="#e8a030">  &#9888; Missing input validation on user_id (src/api/users.rs:112)</text>
-<text x="12" y="211" font-family="monospace" font-size="10" fill="#2dd4bf">## Step 3/4  Test coverage</text>
-<text x="12" y="228" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_03</text>
-<text x="156" y="228" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;run_terminal_command</text>
-<text x="312" y="228" font-family="monospace" font-size="10" fill="#7a8898"> `cargo tarpaulin --out Json 2>&amp;1`</text>
-<text x="540" y="228" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
-<text x="608" y="228" font-family="monospace" font-size="10" fill="#5a9878">&quot;src/auth/jwt.rs: 67% (target 80%)&quot;</text>
-<text x="730" y="228" font-family="monospace" font-size="10" fill="#445566">8.2s</text>
-<text x="760" y="228" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
-<text x="12" y="250" font-family="monospace" font-size="10" fill="#2dd4bf">## Step 4/4  Output</text>
-<text x="12" y="267" font-family="monospace" font-size="10" fill="#5a6878">Agent:tool_call:toolu_04</text>
-<text x="156" y="267" font-family="monospace" font-size="10" fill="#e8a030"> &#9881;write_file</text>
-<text x="252" y="267" font-family="monospace" font-size="10" fill="#7a8898"> path=review-output.md</text>
-<text x="384" y="267" font-family="monospace" font-size="10" fill="#445566"> &#8594; &#10003;</text>
-<text x="452" y="267" font-family="monospace" font-size="10" fill="#5a9878">&quot;847 bytes written&quot;</text>
-<text x="730" y="267" font-family="monospace" font-size="10" fill="#445566">0.1s</text>
-<text x="760" y="267" font-family="monospace" font-size="10" fill="#2dd4bf">&#9658;</text>
-<rect x="12" y="285" width="776" height="1" fill="#1a1a2c"/>
-<text x="12" y="301" font-family="monospace" font-size="10" fill="#445566">Security: 8/10  Coverage: 7/10  Overall: 7.5/10</text>
-<text x="12" y="316" font-family="monospace" font-size="10" fill="#4ade80">&#10003; PASS  exit code: 0  elapsed: 14.8s</text>
-<rect x="0" y="440" width="800" height="1" fill="#1a3020"/>
-<rect x="0" y="441" width="800" height="34" fill="#0a0e14"/>
-<text x="8" y="453" font-family="monospace" font-size="10" fill="#2dd4bf">Input</text>
-<line x1="46" y1="452" x2="792" y2="452" stroke="#1a1a2c" stroke-width="1"/>
+
+<text x="12" y="62" font-family="monospace" font-size="10" fill="#1a3020">¶  sven --headless --file review.md --var pr_number=248</text>
+
+<text x="12" y="82" font-family="monospace" font-size="10" fill="#4ade80">## Step 1/4  Understand the change</text>
+
+<text x="12" y="99" font-family="monospace" font-size="10" fill="#5a6878">thinking</text>
+<text x="64" y="99" font-family="monospace" font-size="10" fill="#4ade80">◆</text>
+<text x="78" y="99" font-family="monospace" font-size="10" fill="#1a3020">"Reading diff for PR #248..."</text>
+
+<text x="12" y="117" font-family="monospace" font-size="10" fill="#e8a030">⚙ run_terminal_command</text>
+<text x="180" y="117" font-family="monospace" font-size="10" fill="#4a6040"> git diff origin/main HEAD -- .</text>
+<text x="468" y="117" font-family="monospace" font-size="10" fill="#1a3020">→ ✓</text>
+<text x="498" y="117" font-family="monospace" font-size="10" fill="#3a6040">"3 files  +213 -89"</text>
+<text x="720" y="117" font-family="monospace" font-size="10" fill="#1a3020">0.8s</text>
+
+<text x="12" y="134" font-family="monospace" font-size="10" fill="#9aa5b8">  JWT migration in src/auth/ — replaced HMAC-SHA256 with RS256.</text>
+
+<text x="12" y="154" font-family="monospace" font-size="10" fill="#4ade80">## Step 2/4  Security check</text>
+
+<text x="12" y="171" font-family="monospace" font-size="10" fill="#e8a030">⚙ search_codebase</text>
+<text x="150" y="171" font-family="monospace" font-size="10" fill="#4a6040"> pattern="secret|password|token" path=src/</text>
+<text x="486" y="171" font-family="monospace" font-size="10" fill="#1a3020">→ ✓</text>
+<text x="516" y="171" font-family="monospace" font-size="10" fill="#3a6040">"0 hardcoded secrets"</text>
+<text x="720" y="171" font-family="monospace" font-size="10" fill="#1a3020">0.3s</text>
+
+<text x="12" y="188" font-family="monospace" font-size="10" fill="#e8a030">  ⚠ Missing input validation on user_id  (src/api/users.rs:112)</text>
+
+<text x="12" y="208" font-family="monospace" font-size="10" fill="#4ade80">## Step 3/4  Test coverage</text>
+
+<text x="12" y="225" font-family="monospace" font-size="10" fill="#e8a030">⚙ run_terminal_command</text>
+<text x="180" y="225" font-family="monospace" font-size="10" fill="#4a6040"> cargo tarpaulin --out Json 2&gt;&amp;1</text>
+<text x="468" y="225" font-family="monospace" font-size="10" fill="#1a3020">→ ✓</text>
+<text x="498" y="225" font-family="monospace" font-size="10" fill="#3a6040">"jwt.rs: 67% (target 80%)"</text>
+<text x="720" y="225" font-family="monospace" font-size="10" fill="#1a3020">8.2s</text>
+
+<text x="12" y="242" font-family="monospace" font-size="10" fill="#e8a030">  ⚠ Coverage below threshold: src/auth/jwt.rs  67% &lt; 80%</text>
+
+<text x="12" y="262" font-family="monospace" font-size="10" fill="#4ade80">## Step 4/4  Write report</text>
+
+<text x="12" y="279" font-family="monospace" font-size="10" fill="#e8a030">⚙ write_file</text>
+<text x="96" y="279" font-family="monospace" font-size="10" fill="#4a6040"> path=review-output.md</text>
+<text x="264" y="279" font-family="monospace" font-size="10" fill="#1a3020">                     → ✓</text>
+<text x="498" y="279" font-family="monospace" font-size="10" fill="#3a6040">"1.1 KB written"</text>
+<text x="720" y="279" font-family="monospace" font-size="10" fill="#1a3020">0.1s</text>
+
+<line x1="12" y1="297" x2="788" y2="297" stroke="#0f2a14" stroke-width="1"/>
+
+<text x="12" y="314" font-family="monospace" font-size="10" fill="#9aa5b8">  Security:  8/10   No hardcoded secrets · validate user_id (medium)</text>
+<text x="12" y="330" font-family="monospace" font-size="10" fill="#9aa5b8">  Coverage:  7/10   jwt.rs below threshold — add token expiry tests</text>
+<text x="12" y="346" font-family="monospace" font-size="10" fill="#9aa5b8">  Overall:   7.5/10</text>
+
+<text x="12" y="368" font-family="monospace" font-size="10" fill="#4ade80">✓ PASS   exit code: 0   elapsed: 14.8s   4 steps completed</text>
+
+<!-- Input -->
+<rect x="0" y="440" width="800" height="1" fill="#0f2a14"/>
+<rect x="0" y="441" width="800" height="34" fill="#08100a"/>
+<text x="8" y="453" font-family="monospace" font-size="10" fill="#4ade80">Output</text>
+<line x1="52" y1="452" x2="792" y2="452" stroke="#0f2a14" stroke-width="1"/>
 <text x="8" y="468" font-family="monospace" font-size="10" fill="#22d3ee"> &gt; </text>
-<text x="34" y="468" font-family="monospace" font-size="10" fill="#445566">workflow complete - 0 errors  (Enter to continue)</text>
-<rect x="0" y="475" width="800" height="1" fill="#1a1a2c"/>
-<rect x="0" y="476" width="800" height="24" fill="#0a0e14"/>
-<text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#334455">Enter:send  headless  ci-detected  4 steps</text>
+<text x="32" y="468" font-family="monospace" font-size="10" fill="#1a3020">workflow complete — 0 errors  (Enter to continue)</text>
+<rect x="0" y="475" width="800" height="1" fill="#0f2a14"/>
+<rect x="0" y="476" width="800" height="24" fill="#08100a"/>
+<text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#0f2010">headless · github-actions · 4 steps · exit:0</text>
 </svg>

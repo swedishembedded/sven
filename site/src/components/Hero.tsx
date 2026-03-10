@@ -1,7 +1,24 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import TerminalMockup from './TerminalMockup'
 
+function useLatestVersion(): string {
+  const [version, setVersion] = useState<string>('latest')
+  useEffect(() => {
+    fetch('https://api.github.com/repos/swedishembedded/sven/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { tag_name?: string } | null) => {
+        if (data?.tag_name) setVersion(data.tag_name)
+      })
+      .catch(() => {})
+  }, [])
+  return version
+}
+
 export default function Hero() {
+  const latestVersion = useLatestVersion()
   return (
     <section className="relative min-h-screen flex flex-col justify-center overflow-hidden pt-16">
       {/* Background glow */}
@@ -34,7 +51,7 @@ export default function Hero() {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-status-green animate-pulse-dot" />
               Open source
-              <span className="text-accent-blue ml-1">{__LATEST_VERSION__}</span>
+              <span className="text-accent-blue ml-1">{latestVersion}</span>
             </motion.div>
 
             <motion.h1
@@ -43,7 +60,7 @@ export default function Hero() {
               transition={{ duration: 0.55, delay: 0.05 }}
               className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-text-primary leading-[1.1] tracking-tight mb-6"
             >
-              The AI coding agent that{' '}
+              The AI agent your terminal{' '}
               <span
                 style={{
                   background: 'linear-gradient(135deg, #5b8dee 0%, #8ab4f8 100%)',
@@ -52,7 +69,7 @@ export default function Hero() {
                   backgroundClip: 'text',
                 }}
               >
-                lives in your terminal.
+                has been waiting for.
               </span>
             </motion.h1>
 
@@ -62,9 +79,9 @@ export default function Hero() {
               transition={{ duration: 0.55, delay: 0.1 }}
               className="text-lg sm:text-xl text-text-secondary leading-relaxed mb-10 max-w-xl"
             >
-              Give Sven a task in plain English. It reads your code, runs commands, writes
-              files, debugs hardware, and delegates to other agents — all from a{' '}
-              <span className="text-text-primary font-medium">single binary</span>.
+              Research, code, debug hardware, run CI pipelines, and delegate to other agents
+              — without leaving your terminal.{' '}
+              <span className="text-text-primary font-medium">One binary. Zero context switches.</span>
             </motion.p>
 
             <motion.div

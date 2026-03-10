@@ -15,19 +15,19 @@ const FEATURES: Feature[] = [
     icon: <TerminalIcon />,
     title: 'Terminal-First TUI',
     description:
-      'Full-screen keyboard-driven interface with vim-style navigation, live streaming output, and real-time tool visibility. No browser. No Electron. Just your terminal.',
+      'A full-screen, keyboard-driven interface that stays out of your way. Vim-style navigation, live streaming output, three operating modes. No browser, no Electron — just your terminal.',
   },
   {
     icon: <PipeIcon />,
     title: 'Headless & CI-Ready',
     description:
-      'Reads from stdin, writes clean text to stdout, exits with meaningful codes. Pipe it, script it, schedule it. Runs identically in CI without changing a single line.',
+      'The same session you run locally runs identically in CI. Reads from stdin, writes to stdout, exits with meaningful codes. No changes required when you move from laptop to pipeline.',
   },
   {
     icon: <ChipIcon />,
     title: 'Native GDB Integration',
     description:
-      'The first AI agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers — entirely autonomously.',
+      'The first AI agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers — all from the same session where you wrote the code.',
     tag: 'Industry First',
     tagColor: '#e6b428',
   },
@@ -35,7 +35,7 @@ const FEATURES: Feature[] = [
     icon: <NetworkIcon />,
     title: 'Agent-to-Agent P2P',
     description:
-      'Agents discover each other via mDNS on your LAN or over the internet through a relay. Delegate subtasks and assemble results — no central server required.',
+      'Spin up multiple agents, have them discover each other via mDNS, and delegate subtasks. One agent coordinates, others execute — no central server, no config required.',
     tag: 'Unique',
     tagColor: '#5b8dee',
   },
@@ -43,13 +43,13 @@ const FEATURES: Feature[] = [
     icon: <WorkflowIcon />,
     title: 'Markdown Workflows',
     description:
-      'Define multi-step pipelines in plain Markdown with YAML frontmatter, template variables, and per-step configuration. Version-control your automation.',
+      'Write multi-step automation in plain Markdown. H2 headings become steps, YAML frontmatter controls behavior, and template variables make workflows reusable. Version-control your process.',
   },
   {
     icon: <ProvidersIcon />,
     title: '35+ Model Providers',
     description:
-      'OpenAI, Anthropic, Google, Azure, AWS Bedrock, Groq, Ollama, and more. Switch providers with a single config line. No lock-in.',
+      'OpenAI, Anthropic, Google, Azure, AWS Bedrock, Groq, Ollama, and more. One config line to switch. No rewiring your workflow, no new tools to learn.',
   },
 ]
 
@@ -67,11 +67,12 @@ export default function FeatureGrid() {
           transition={{ duration: 0.55 }}
           className="text-center mb-16"
         >
-          <p className="text-xs font-mono uppercase tracking-widest text-accent-blue mb-4">Everything you need</p>
-          <h2 className="section-heading mb-4">Built for engineers who live in the terminal.</h2>
+          <p className="text-xs font-mono uppercase tracking-widest text-accent-blue mb-4">One session. Entire lifecycle.</p>
+          <h2 className="section-heading mb-4">Everything happens here.</h2>
           <p className="section-subheading max-w-2xl mx-auto">
-            Sven combines a polished interactive experience with rock-solid headless automation — in
-            one binary that installs in seconds and requires no configuration to get started.
+            Stop bouncing between browser tabs, your IDE, a debugger, CI dashboards, and team chat.
+            Sven collapses the entire development lifecycle into a single terminal session — and
+            ships as one binary with no configuration required.
           </p>
         </motion.div>
 
