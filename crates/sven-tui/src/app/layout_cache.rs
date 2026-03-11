@@ -102,7 +102,10 @@ impl SplitPrefs {
     /// `MouseDown` (`click_row − border_row`).
     pub fn drag_peers_pane_height(&mut self, row: u16, anchor: i16, layout: &LayoutCache) {
         let adjusted = (row as i16 - anchor).max(0) as u16;
-        let sidebar_bottom = layout.chat_list_pane.y + layout.chat_list_pane.height;
+        // `chat_list_pane` is only the upper (Chats) half of the sidebar after
+        // the split, so its bottom edge equals the border row, not the sidebar
+        // bottom.  Use the peers pane's own bottom edge instead.
+        let sidebar_bottom = layout.peers_pane.y + layout.peers_pane.height;
         let new_height = sidebar_bottom.saturating_sub(adjusted);
         self.peers_pane_height = new_height.clamp(PEERS_PANE_MIN_HEIGHT, PEERS_PANE_MAX_HEIGHT);
     }
