@@ -175,6 +175,33 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
     // can take ownership without cross-arm borrow issues.
     let key = || resolve_api_key(cfg);
 
+    // For the openrouter provider, convert the convenience key
+    // `auto_router_allowed_models` in driver_options into the `plugins`
+    // structure expected by the OpenRouter Auto Router API:
+    //
+    //   plugins: [{ id: "auto-router", allowed_models: [...] }]
+    //
+    // This lets users write:
+    //   driver_options:
+    //     auto_router_allowed_models: ["anthropic/*", "openai/gpt-5.1"]
+    //
+    // instead of the full nested plugins object.  A raw `plugins` key in
+    // driver_options is passed through unchanged (no conversion).
+    let driver_options = if cfg.provider == "openrouter" {
+        let mut opts = cfg.driver_options.clone();
+        if let Some(allowed) = opts.get("auto_router_allowed_models").cloned() {
+            if let Some(map) = opts.as_object_mut() {
+                map.remove("auto_router_allowed_models");
+                map.entry("plugins").or_insert_with(
+                    || serde_json::json!([{ "id": "auto-router", "allowed_models": allowed }]),
+                );
+            }
+        }
+        opts
+    } else {
+        cfg.driver_options.clone()
+    };
+
     // Resolve the output token limit sent to the provider API:
     //   1. cfg.max_output_tokens  — explicit per-request output cap
     //   2. cfg.max_tokens         — backward compat: total used as output cap
@@ -286,7 +313,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                     ("X-Title".into(), "sven".into()),
                 ],
                 AuthStyle::Bearer,
-                cfg.driver_options.clone(),
+                driver_options,
             ))),
             "litellm" => {
                 let b = cfg.base_url.as_deref().ok_or_else(|| {

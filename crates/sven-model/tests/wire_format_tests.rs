@@ -1174,3 +1174,189 @@ async fn non_openrouter_provider_does_not_send_prompt_cache_key() {
         "Non-OpenRouter providers must not receive prompt_cache_key in the body"
     );
 }
+
+// ── OpenRouter Google Gemini prompt caching ───────────────────────────────────
+
+/// `google/*` models via OpenRouter must have the system message rewritten as a
+/// content-block array with `cache_control` on the stable prefix, mirroring the
+/// Anthropic treatment.  OpenRouter routes only the *last* breakpoint to Gemini,
+/// so placing the marker here (and on the last user message) caches the whole
+/// context in one shot.
+#[tokio::test]
+async fn openrouter_gemini_system_prompt_rewritten_with_cache_control() {
+    let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"ok"}}]}"#]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+
+    let cfg = ModelConfig {
+        provider: "openrouter".into(),
+        name: "google/gemini-2.5-pro".into(),
+        api_key: Some("sk-or-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/api/v1")),
+        ..ModelConfig::default()
+    };
+
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider
+        .complete(CompletionRequest {
+            messages: vec![
+                Message::system("you are a helpful assistant"),
+                Message::user("what is the capital of France?"),
+            ],
+            stream: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+
+    let req = req_rx.await.unwrap();
+    let msgs = req.body["messages"].as_array().unwrap();
+
+    let sys = &msgs[0];
+    assert_eq!(sys["role"], "system");
+    let content = sys["content"]
+        .as_array()
+        .expect("system content must be an array of blocks");
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(
+        content[0]["cache_control"]["type"], "ephemeral",
+        "stable system prompt block must carry cache_control"
+    );
+    assert!(
+        content[0]["cache_control"].get("ttl").is_none(),
+        "default TTL must be 5 min (no ttl key)"
+    );
+}
+
+/// `google/*` models via OpenRouter must have the last user message rewritten as
+/// a content-block array with `cache_control` so that the full conversation
+/// history up to that point is cached by Gemini's implicit-caching layer.
+#[tokio::test]
+async fn openrouter_gemini_last_user_message_gets_cache_control() {
+    let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"ok"}}]}"#]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+
+    let cfg = ModelConfig {
+        provider: "openrouter".into(),
+        name: "google/gemini-2.5-flash".into(),
+        api_key: Some("sk-or-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/api/v1")),
+        ..ModelConfig::default()
+    };
+
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider
+        .complete(CompletionRequest {
+            messages: vec![
+                Message::system("you are a helpful assistant"),
+                Message::user("first question"),
+            ],
+            stream: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+
+    let req = req_rx.await.unwrap();
+    let msgs = req.body["messages"].as_array().unwrap();
+
+    // Walk backwards to find the last user message
+    let user_msg = msgs
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .expect("must have a user message");
+    let content = user_msg["content"]
+        .as_array()
+        .expect("last user message content must be a content-block array");
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(
+        content[0]["cache_control"]["type"], "ephemeral",
+        "last user message must carry cache_control"
+    );
+}
+
+/// `google/*` models via OpenRouter must NOT receive the `anthropic-beta` header.
+#[tokio::test]
+async fn openrouter_gemini_does_not_send_anthropic_beta_header() {
+    let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"ok"}}]}"#]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+
+    let cfg = ModelConfig {
+        provider: "openrouter".into(),
+        name: "google/gemini-2.5-pro".into(),
+        api_key: Some("sk-or-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/api/v1")),
+        ..ModelConfig::default()
+    };
+
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider
+        .complete(CompletionRequest {
+            messages: vec![Message::user("hello")],
+            stream: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+
+    let req = req_rx.await.unwrap();
+    assert!(
+        req.headers.get("anthropic-beta").is_none(),
+        "Gemini routing must NOT send the anthropic-beta header, got: {:?}",
+        req.headers.get("anthropic-beta")
+    );
+}
+
+/// `google/*` models via OpenRouter must mark the last tool with `cache_control`
+/// so that the tools array is included in the cached prefix.
+#[tokio::test]
+async fn openrouter_gemini_last_tool_gets_cache_control() {
+    let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"ok"}}]}"#]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+
+    let cfg = ModelConfig {
+        provider: "openrouter".into(),
+        name: "google/gemini-2.5-pro".into(),
+        api_key: Some("sk-or-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/api/v1")),
+        ..ModelConfig::default()
+    };
+
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider
+        .complete(CompletionRequest {
+            messages: vec![Message::user("hello")],
+            tools: vec![
+                ToolSchema {
+                    name: "tool_a".into(),
+                    description: "first tool".into(),
+                    parameters: serde_json::json!({"type":"object","properties":{}}),
+                },
+                ToolSchema {
+                    name: "tool_b".into(),
+                    description: "last tool".into(),
+                    parameters: serde_json::json!({"type":"object","properties":{}}),
+                },
+            ],
+            stream: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+
+    let req = req_rx.await.unwrap();
+    let tools = req.body["tools"].as_array().expect("tools must be present");
+    assert_eq!(tools.len(), 2);
+    assert!(
+        tools[0]["function"].get("cache_control").is_none(),
+        "first tool must NOT have cache_control"
+    );
+    assert_eq!(
+        tools[1]["function"]["cache_control"]["type"], "ephemeral",
+        "last tool must have cache_control"
+    );
+}

@@ -177,9 +177,11 @@ impl Tool for TaskTool {
          2. Optionally spawn more sub-agents in parallel with different prompts\n\
          3. The tool blocks until the subagent completes and returns the result\n\n\
          **When to spawn:**\n\
-         - Exploring a large unfamiliar area or running a multi-step investigation\n\
-         - Implementing a self-contained feature in a specific file/module\n\
-         - Running tests, build output, or analyses in parallel\n\n\
+         - Exploration and research of large unfamiliar areas.\n\
+         - Tasks that searching through a lot of context but we are only interested in the final findings. \n\
+         **Important:**\n\
+         - Do not use for anything you can easily do with shell.\n\
+         - Do not spawn tasks for simple single step commands.\n\
          Sub-agents have access to all standard tools. Maximum nesting depth is 3."
     }
 

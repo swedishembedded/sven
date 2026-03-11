@@ -425,8 +425,8 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            provider: "openai".into(),
-            name: "gpt-4o".into(),
+            provider: "openrouter".into(),
+            name: "openrouter/auto".into(),
             // api_key_env is intentionally None here.  resolve_api_key() falls
             // through to the driver registry, which already knows the canonical
             // env-var name for each provider (OPENAI_API_KEY, ANTHROPIC_API_KEY,
@@ -810,15 +810,16 @@ mod tests {
     // ── Defaults ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn config_default_model_provider_is_openai() {
+    fn config_default_model_provider_is_openrouter() {
         let c = Config::default();
-        assert_eq!(c.model.provider, "openai");
+        assert_eq!(c.model.provider, "openrouter");
     }
 
     #[test]
-    fn config_default_model_name_is_gpt4o() {
+    fn config_default_model_is_openrouter_auto() {
         let c = Config::default();
-        assert_eq!(c.model.name, "gpt-4o");
+        assert_eq!(c.model.provider, "openrouter");
+        assert_eq!(c.model.name, "openrouter/auto");
     }
 
     #[test]
@@ -1035,7 +1036,7 @@ mod tests {
         let c = Config::default();
         let yaml_str = serde_yaml::to_string(&c).unwrap();
         assert!(yaml_str.contains("provider"));
-        assert!(yaml_str.contains("openai"));
+        assert!(yaml_str.contains("openrouter"));
     }
 
     #[test]

@@ -317,19 +317,29 @@ impl crate::ModelProvider for OpenAICompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        // When routing to an Anthropic model via OpenRouter, OpenRouter passes
-        // through Anthropic's content-block format including `cache_control`
-        // markers.  Using this format separates the stable system-prompt prefix
-        // (cached) from the volatile git/CI context (not cached), which allows
-        // Anthropic's prompt-caching layer to actually activate.  With plain
-        // text appending the entire system message changes every turn and
-        // nothing gets cached.
+        // When routing to an Anthropic or Google Gemini model via OpenRouter,
+        // OpenRouter passes through content-block `cache_control` markers to
+        // the underlying provider.  Using content blocks lets us separate the
+        // stable system-prompt prefix (cached) from the volatile git/CI context
+        // (not cached), so the provider's prompt-caching layer can activate.
+        // With plain text appending, the entire system message changes every
+        // turn and nothing gets cached.
+        //
+        // Both Anthropic and Gemini use the same `cache_control` wire format.
+        // For Gemini, OpenRouter uses only the *last* breakpoint in the request;
+        // the last user-message marker therefore covers the whole preceding
+        // context (system + tools + conversation history).  Marking the system
+        // prompt and tools as well is harmless — Gemini ignores all but the
+        // last — and keeps the two code paths identical.
         let use_anthropic_cache =
             self.driver_name == "openrouter" && self.model.starts_with("anthropic/");
+        let use_gemini_cache =
+            self.driver_name == "openrouter" && self.model.starts_with("google/");
+        let use_block_cache = use_anthropic_cache || use_gemini_cache;
 
-        // Build the messages array.  For the Anthropic-via-OpenRouter path we
-        // use content blocks so that the stable prefix can carry cache_control.
-        let messages: Vec<Value> = if use_anthropic_cache {
+        // Build the messages array.  For Anthropic/Gemini-via-OpenRouter we use
+        // content blocks so that the stable prefix can carry cache_control.
+        let messages: Vec<Value> = if use_block_cache {
             // Build messages without merging the dynamic suffix; it will be
             // handled below as a separate uncached system content block.
             build_openai_messages(&req.messages)
@@ -352,7 +362,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
             build_openai_messages(&req.messages)
         };
 
-        let tools: Vec<Value> = if use_anthropic_cache && !req.tools.is_empty() {
+        let tools: Vec<Value> = if use_block_cache && !req.tools.is_empty() {
             // Mark the last tool definition with cache_control so the full
             // tools array is cached as a stable prefix.
             let last = req.tools.len() - 1;
@@ -444,18 +454,24 @@ impl crate::ModelProvider for OpenAICompatProvider {
             }
         }
 
-        // For Anthropic models via OpenRouter, rewrite the system message as
-        // an array of content blocks so that:
+        // For Anthropic and Google Gemini models via OpenRouter, rewrite the
+        // system message as an array of content blocks so that:
         //   • Block 1 — the stable system prompt gets `cache_control` and is
-        //     cached by Anthropic's prompt-caching layer across turns.
+        //     cached by the provider's prompt-caching layer across turns.
         //   • Block 2 — the volatile git/CI context is a separate block WITHOUT
         //     `cache_control` so it never pollutes the cached prefix.
         //
-        // OpenRouter passes `cache_control` through to the underlying Anthropic
-        // (or Bedrock) provider transparently.  Without this split the whole
-        // system message changes on every turn (due to the dynamic suffix) and
-        // `native_tokens_cached` stays at zero.
-        if use_anthropic_cache {
+        // OpenRouter passes `cache_control` through to the underlying provider
+        // (Anthropic, Bedrock, or Gemini) transparently.  Without this split
+        // the whole system message changes on every turn (due to the dynamic
+        // suffix) and no tokens are cached.
+        //
+        // Gemini note: OpenRouter uses only the *last* `cache_control` marker
+        // in the request body when routing to Gemini.  Placing markers on the
+        // system prompt, tools, and the last user message is still correct —
+        // the last one (user message) covers everything before it, caching the
+        // full system prompt + tools + conversation history in one shot.
+        if use_block_cache {
             if let Some(msgs) = body["messages"].as_array_mut() {
                 if let Some(first) = msgs.first_mut() {
                     if first["role"].as_str() == Some("system") {
@@ -552,7 +568,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
         }
         // For Anthropic models via OpenRouter, opt in to the prompt-caching
         // beta so that the cache_control markers we added above are honoured.
-        // This header is a no-op for non-Anthropic routes.
+        // Gemini does not require this header; the markers are always active.
         if use_anthropic_cache {
             http_req = http_req.header("anthropic-beta", "prompt-caching-2024-07-31");
         }
@@ -881,6 +897,36 @@ mod tests {
                     output_tokens: 40,
                     cache_read_tokens: 150,
                     ..
+                }
+            ),
+            "unexpected event: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_usage_event_with_cache_write_tokens() {
+        // OpenRouter reports both cache reads and cache writes in
+        // prompt_tokens_details (non-zero cache_write_tokens on the first turn
+        // when Anthropic / Gemini cache entries are being written).
+        let v = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 5000,
+                "completion_tokens": 80,
+                "prompt_tokens_details": {
+                    "cached_tokens": 0,
+                    "cache_write_tokens": 4800,
+                }
+            }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(
+            matches!(
+                ev,
+                ResponseEvent::Usage {
+                    input_tokens: 5000,
+                    output_tokens: 80,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 4800,
                 }
             ),
             "unexpected event: {ev:?}"

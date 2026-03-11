@@ -69,13 +69,12 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage-only chunk (emitted when stream_options.include_usage = true)
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-        // OpenAI reports cached tokens in prompt_tokens_details.cached_tokens.
-        // DeepSeek V3 reports them as prompt_cache_hit_tokens on the root
-        // usage object.  We try OpenAI format first, then fall back to
-        // DeepSeek's format so both providers are covered without extra
-        // provider-specific dispatch.
-        let cache_read_tokens = usage
-            .get("prompt_tokens_details")
+        // OpenAI/OpenRouter reports cached tokens in
+        // prompt_tokens_details.cached_tokens.  DeepSeek V3 uses the root-level
+        // prompt_cache_hit_tokens field instead.  We try the nested format
+        // first and fall back to DeepSeek's flat format.
+        let prompt_tokens_details = usage.get("prompt_tokens_details");
+        let cache_read_tokens = prompt_tokens_details
             .and_then(|d| d.get("cached_tokens"))
             .and_then(|t| t.as_u64())
             .or_else(|| {
@@ -84,11 +83,18 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
                     .and_then(|t| t.as_u64())
             })
             .unwrap_or(0) as u32;
+        // OpenRouter reports cache write tokens in
+        // prompt_tokens_details.cache_write_tokens (non-zero when a new cache
+        // entry was written, e.g. first Anthropic or Gemini turn).
+        let cache_write_tokens = prompt_tokens_details
+            .and_then(|d| d.get("cache_write_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
-            cache_write_tokens: 0,
+            cache_write_tokens,
         });
     }
 

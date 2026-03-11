@@ -1146,6 +1146,31 @@ models:
 
   # ── OpenRouter (popular gateway models) ───────────────────────────────────────
   # OpenRouter uses dot notation for model version numbers (4.6, 3.5, etc.)
+  - id: openrouter/auto
+    name: OpenRouter Auto (Auto Router)
+    provider: openrouter
+    context_window: 200000
+    max_output_tokens: 128000
+    description: >
+      Automatically selects the best model for each prompt via OpenRouter's
+      Auto Router (powered by NotDiamond).  The actual model used is reported
+      in the response metadata.  Restrict the candidate pool by setting
+      auto_router_allowed_models in driver_options, e.g.:
+        driver_options:
+          auto_router_allowed_models: ["anthropic/*", "openai/gpt-5.1"]
+
+  - id: openrouter/free
+    name: OpenRouter Free (Free Models Router)
+    provider: openrouter
+    context_window: 128000
+    max_output_tokens: 8192
+    description: >
+      Routes to a randomly selected free model on OpenRouter.  The router
+      filters for models that support the features your request needs (vision,
+      tool calling, structured outputs, etc.) and picks one at random.  Actual
+      model used is reported in the response metadata.  Zero cost — no charge
+      for the router or for the selected free model.
+
   - id: anthropic/claude-opus-4.6
     name: Claude Opus 4.6 (OpenRouter)
     provider: openrouter
