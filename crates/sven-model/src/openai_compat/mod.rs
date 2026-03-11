@@ -317,10 +317,26 @@ impl crate::ModelProvider for OpenAICompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
-        // Merge dynamic suffix into the system message before serialization.
-        // OpenAI has a single "system" message; there is no separate uncached
-        // block concept, so we simply append the volatile context to the text.
-        let messages: Vec<Value> = if let Some(suffix) = &req.system_dynamic_suffix {
+        // When routing to an Anthropic model via OpenRouter, OpenRouter passes
+        // through Anthropic's content-block format including `cache_control`
+        // markers.  Using this format separates the stable system-prompt prefix
+        // (cached) from the volatile git/CI context (not cached), which allows
+        // Anthropic's prompt-caching layer to actually activate.  With plain
+        // text appending the entire system message changes every turn and
+        // nothing gets cached.
+        let use_anthropic_cache =
+            self.driver_name == "openrouter" && self.model.starts_with("anthropic/");
+
+        // Build the messages array.  For the Anthropic-via-OpenRouter path we
+        // use content blocks so that the stable prefix can carry cache_control.
+        let messages: Vec<Value> = if use_anthropic_cache {
+            // Build messages without merging the dynamic suffix; it will be
+            // handled below as a separate uncached system content block.
+            build_openai_messages(&req.messages)
+        } else if let Some(suffix) = &req.system_dynamic_suffix {
+            // Standard path: merge dynamic suffix into the system message text.
+            // OpenAI has a single "system" message; there is no separate
+            // uncached block concept.
             let mut msgs = req.messages.clone();
             if let Some(sys) = msgs.first_mut() {
                 if sys.role == crate::Role::System {
@@ -336,20 +352,51 @@ impl crate::ModelProvider for OpenAICompatProvider {
             build_openai_messages(&req.messages)
         };
 
-        let tools: Vec<Value> = req
-            .tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
+        let tools: Vec<Value> = if use_anthropic_cache && !req.tools.is_empty() {
+            // Mark the last tool definition with cache_control so the full
+            // tools array is cached as a stable prefix.
+            let last = req.tools.len() - 1;
+            req.tools
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    if i == last {
+                        json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description,
+                                "parameters": t.parameters,
+                                "cache_control": { "type": "ephemeral" },
+                            }
+                        })
+                    } else {
+                        json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description,
+                                "parameters": t.parameters,
+                            }
+                        })
                     }
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            req.tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
+                })
+                .collect()
+        };
 
         // OpenAI's API now uses "max_completion_tokens" for newer models (gpt-5, o1, etc.)
         // Other providers still use "max_tokens"
@@ -394,6 +441,65 @@ impl crate::ModelProvider for OpenAICompatProvider {
         if self.driver_name == "openrouter" {
             if let Some(key) = &req.cache_key {
                 body["prompt_cache_key"] = json!(key);
+            }
+        }
+
+        // For Anthropic models via OpenRouter, rewrite the system message as
+        // an array of content blocks so that:
+        //   • Block 1 — the stable system prompt gets `cache_control` and is
+        //     cached by Anthropic's prompt-caching layer across turns.
+        //   • Block 2 — the volatile git/CI context is a separate block WITHOUT
+        //     `cache_control` so it never pollutes the cached prefix.
+        //
+        // OpenRouter passes `cache_control` through to the underlying Anthropic
+        // (or Bedrock) provider transparently.  Without this split the whole
+        // system message changes on every turn (due to the dynamic suffix) and
+        // `native_tokens_cached` stays at zero.
+        if use_anthropic_cache {
+            if let Some(msgs) = body["messages"].as_array_mut() {
+                if let Some(first) = msgs.first_mut() {
+                    if first["role"].as_str() == Some("system") {
+                        let stable_text = first["content"].as_str().unwrap_or("").to_string();
+                        let mut system_blocks: Vec<Value> = Vec::new();
+                        if !stable_text.is_empty() {
+                            system_blocks.push(json!({
+                                "type": "text",
+                                "text": stable_text,
+                                "cache_control": { "type": "ephemeral" },
+                            }));
+                        }
+                        if let Some(dynamic) = &req.system_dynamic_suffix {
+                            if !dynamic.trim().is_empty() {
+                                system_blocks.push(json!({
+                                    "type": "text",
+                                    "text": dynamic,
+                                }));
+                            }
+                        }
+                        if !system_blocks.is_empty() {
+                            first["content"] = json!(system_blocks);
+                        }
+                    }
+                }
+
+                // Also mark the last user message with cache_control so
+                // Anthropic incrementally caches the conversation history.
+                // Walk backwards to find the last user message.
+                for msg in msgs.iter_mut().rev() {
+                    if msg["role"].as_str() == Some("user") {
+                        let content = msg["content"].clone();
+                        let text = match content.as_str() {
+                            Some(t) => t.to_string(),
+                            None => break,
+                        };
+                        msg["content"] = json!([{
+                            "type": "text",
+                            "text": text,
+                            "cache_control": { "type": "ephemeral" },
+                        }]);
+                        break;
+                    }
+                }
             }
         }
 
@@ -443,6 +549,12 @@ impl crate::ModelProvider for OpenAICompatProvider {
         };
         for (name, val) in &self.extra_headers {
             http_req = http_req.header(name.as_str(), val.as_str());
+        }
+        // For Anthropic models via OpenRouter, opt in to the prompt-caching
+        // beta so that the cache_control markers we added above are honoured.
+        // This header is a no-op for non-Anthropic routes.
+        if use_anthropic_cache {
+            http_req = http_req.header("anthropic-beta", "prompt-caching-2024-07-31");
         }
 
         let resp = http_req
