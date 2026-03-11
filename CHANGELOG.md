@@ -7,55 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(No changes yet.)
+
+## [1.7.3] - 2026-03-11
+
 ### Added
-- **Multi-session TUI**: run several conversations simultaneously without
-  restarting sven. A collapsible chat list sidebar (toggle with `Ctrl+B`)
-  shows all open sessions with live status indicators. Press `n` to create a
-  new session, `Enter` to switch, `d` to delete, `a` to archive.
-- **Background sessions**: switching away from a session with an active agent
-  does not interrupt it. A spinner in the sidebar shows which sessions are
-  still running. Background events are buffered and displayed when you return.
-- **YAML-based persistence**: every session is automatically saved to
-  `~/.config/sven/history/<id>.yaml` and restored on next launch; last active
-  session is restored on startup.
-- Per-session model and mode: each chat remembers its own `/model` and `/mode`
-  settings; changes in one session do not affect others.
-- Mouse drag to resize the chat list sidebar.
-- **Inspector overlay**: view skills, subagents, peers, and context in a
-  dedicated overlay; `/tools` inspector with node-proxy support.
-- **Parallel tool slots** (sven-core): streaming dispatch with multiple
-  concurrent tool slots.
-- Vim-style pane navigation (e.g. focus chat list / main pane).
+- **Compound system tools**: built-in tools consolidated into action-dispatched
+  compound tools for cleaner tool surface and fewer tool slots.
 
 ### Fixed
-- `/new` was clearing the active chat in-place instead of creating a new
-  session. It now creates a proper new session visible in the sidebar, with its
-  own isolated agent task (old agent events no longer bleed into the new chat).
-- `/model` and `/mode` state was global across sessions; switching sessions
-  would carry the staged model or mode override into the new chat. Each session
-  now saves and restores its own model/mode state independently.
-- Queued messages and `abort_pending` were not cleared when creating a new
-  session, causing the old session's queue to be sent to the new session's agent.
-- Active message-edit state (`e` key) was not cleared on new session creation.
-- JSONL log path was not tracked per-session; history writes after a session
-  switch could land in the wrong session's file.
-- State leakage when creating new sessions (input, queue, edit state and
-  agent state now isolated per chat session).
-- Chat list click could trigger segment actions in the wrong session; mouse
-  routing is now centralized with HitArea hit-test.
-- Duplicate agent spawned on initial session; duplicate no longer created.
-- Message loss on exit; session state is saved so messages are not dropped.
-- `wait_for_message` could drop replies when a peer responded before the
-  waiter registered.
-- Neovim double-response bug; inspector and pager UX improved.
-- TodoUpdate segment ordering in tool output.
-- Chat pane selection and scrollbar ghost/stuck rendering.
+- Live timestamp removed from stable system prompt to avoid unnecessary prompt
+  churn and improve caching.
+- Model and mode transitions now apply immediately in the TUI instead of
+  waiting for the next user message.
+- OpenRouter: Anthropic prompt caching enabled for Anthropic models.
+- `switch_model` takes effect in the next model turn (correct staging behavior).
+- Mode upgrades from within a conversation are now allowed (tools no longer
+  block mode changes).
+- Grey-on-grey rendering artifacts in pager and chat view eliminated.
+- Command prompt for `/command` is loaded from disk on each run so edits are
+  picked up without restart.
+- Modifier+click on chat content is ignored so the terminal can open links.
+- OpenSSL cross-compilation for macOS and Linux aarch64 in CI.
+
+## [1.7.2] - 2026-03-11
+
+### Fixed
+- E2E tests: replaced hardcoded local paths and forward `context_open` args in CI.
+
+## [1.7.1] - 2026-03-11
+
+### Fixed
+- Clippy: remove empty line after doc comment in `task_tool.rs`.
+- CI: centralize build commands via Makefile and fix macOS OpenSSL cross-compilation.
+
+## [1.7.0] - 2026-03-10
+
+### Added
+- **ACP (Agent Client Protocol)**: full protocol compliance across server and
+  client roles; `--model`/`--provider` for `acp serve`, model inheritance.
+- **Unified todo tool**: replaces `todo_write` with a single tool supporting
+  read/add/update/set actions.
+- **Chat tree view**: subagent sessions shown as children in the TUI.
+- **ToolDisplay trait**: chat view tool labels and summaries use shared display logic.
+- **LLM-generated chat titles** and delete-active-chat; animation updates.
+- **Compound tools**: 42 built-in tools consolidated into 14 compound tools.
+- **P2P peers pane** in TUI; keyboard-first segment actions (per-line icons removed).
+- Website: overhauled copy, SEO, and section SVGs; logo and hero font (JetBrains Mono).
+- Comprehensive adversarial test suite (64 Rust + 25 Bats tests).
+
+### Fixed
+- Peers pane resize drag, peer list population, and P2P dial noise.
+- Subagent exit code, chat pane keybindings, peers-split drag direction.
+- Full tool result shown at expand level 2 in TUI.
+- Task tool returns result immediately when PromptResponse arrives.
+- Thought block display and subagent user message.
+- Subagent inactivity timeout during long tool calls (bootstrap).
+- Chat display and welcome screen after streaming refactor.
+- Tool rendering, shell intent, subagent blocking, and character width (CJK ambiguous).
+- Chat title race so LLM-generated title is used when available.
+- Merge positional prompt with stdin in CI runner (not in main); workflow only for `-f`.
+- File deletion (sven-input); trailing empty lines in segments; delete as default button.
+- Build errors: `From<anyhow::Error>` for `FileModifiedError`, `ToolDisplayInfo` export.
+- Pre-commit runs clippy only on staged files.
 
 ### Changed
-- Chat document formatting improved (sven-input).
-- Mouse routing refactored to centralize hit-testing (HitArea).
-- Inspector overlay: removed dead `kind` field.
-- Documentation for parallel tool slots and multi-session TUI.
+- Streaming seasoning/thinking shown without backticks in gray dim text; thinking
+  content preview instead of word count; tool scan animation sinusoidal;
+  streaming cursor blink ~500ms; timeouts to prevent indefinite hangs.
+- ACP used for subagent communication with structured streaming.
+- Refactor: eliminate duplication and decouple crate architecture.
+
+## [1.6.0] - 2026-03-09
+
+### Added
+- **Multi-session TUI**: run several conversations simultaneously without
+  restarting sven. Collapsible chat list sidebar (toggle with `Ctrl+B`) with
+  live status; `n` new session, `Enter` switch, `d` delete, `a` archive.
+- **Background sessions**: switching away does not interrupt the agent; spinner
+  shows running sessions; events buffered when you return.
+- **YAML persistence**: sessions saved to `~/.config/sven/history/<id>.yaml`,
+  restored on launch; last active session restored on startup.
+- Per-session model and mode; mouse drag to resize chat list sidebar.
+- **Inspector overlay**: skills, subagents, peers, context; `/tools` inspector
+  with node-proxy support.
+- **Parallel tool slots** (sven-core): streaming dispatch with multiple
+  concurrent tool slots.
+- Vim-style pane navigation (focus chat list / main pane).
+
+### Fixed
+- `/new` now creates a proper new session in the sidebar with isolated agent
+  (no bleed from old session).
+- Per-session `/model` and `/mode` state; queued messages and `abort_pending`
+  cleared on new session; message-edit state cleared on new session.
+- JSONL log path tracked per-session; state leakage on new sessions fixed
+  (input, queue, edit state, agent state isolated).
+- Chat list click no longer triggers wrong session’s segment actions (HitArea
+  hit-test); duplicate agent on initial session removed; message loss on exit
+  fixed (session state saved).
+- `wait_for_message` no longer drops replies when peer responds before waiter
+  registers.
+- Neovim double-response bug; inspector and pager UX improved.
+- TodoUpdate segment ordering in tool output; chat pane selection and
+  scrollbar ghost/stuck rendering.
+
+### Changed
+- Chat document formatting (sven-input); mouse routing centralized (HitArea);
+  inspector overlay dead `kind` field removed; docs for parallel tool slots and
+  multi-session TUI.
+
+## [1.5.0] - 2026-03-09
+
+### Added
+- **Team orchestration** in sven-node with layered tool architecture (sven-team
+  crate + TUI).
+
+### Fixed
+- Team tool confusion that caused the model to duplicate work and misuse APIs.
+- Teammate task execution and node restart resilience.
+
+## [1.4.0] - 2026-03-08
+
+### Added
+- **ACP (Agent Client Protocol) server** for IDE integration (e.g. Zed).
+- **Agent team orchestration** (sven-team crate + TUI); multi-agent orchestration
+  roadmap.
+- Site: install script at install route; install action and package updates.
+
+### Fixed
+- ACP bridge: drop TextComplete/ThinkingComplete to prevent double output.
+- Chat view display and find_file glob matching; subagent model wiring.
+- Team picker keys through dispatch and missing key bindings.
+- Clippy lints; pre-commit fails on format changes.
+- CI and installation route fixes.
+
+### Changed
+- Docs: Zed ACP config snippet (`agent_servers`, not `assistant.provider`);
+  README mentions ACP IDE integration.
 
 ## [1.3.2] - 2026-03-07
 
@@ -179,6 +267,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
+[1.7.3]: https://github.com/bosun-ai/sven/releases/tag/v1.7.3
+[1.7.2]: https://github.com/bosun-ai/sven/releases/tag/v1.7.2
+[1.7.1]: https://github.com/bosun-ai/sven/releases/tag/v1.7.1
+[1.7.0]: https://github.com/bosun-ai/sven/releases/tag/v1.7.0
+[1.6.0]: https://github.com/bosun-ai/sven/releases/tag/v1.6.0
 [1.5.0]: https://github.com/bosun-ai/sven/releases/tag/v1.5.0
 [1.4.0]: https://github.com/bosun-ai/sven/releases/tag/v1.4.0
 [1.3.2]: https://github.com/bosun-ai/sven/releases/tag/v1.3.2
