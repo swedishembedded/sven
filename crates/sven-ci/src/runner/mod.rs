@@ -1154,10 +1154,7 @@ impl CiRunner {
             let mut doc = sven_input::ChatDocument {
                 id: sven_input::SessionId::new(),
                 title: doc_title,
-                model: Some(format!(
-                    "{}/{}",
-                    self.config.model.provider, self.config.model.name
-                )),
+                model: Some(format!("{}/{}", model_cfg.provider, model_cfg.name)),
                 mode: Some(opts.mode.to_string()),
                 status: sven_input::ChatStatus::Completed,
                 created_at: chrono::Utc::now(),
