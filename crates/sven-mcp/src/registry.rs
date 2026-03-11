@@ -13,7 +13,7 @@
 //! and work without any running sven node or TUI.
 
 use sven_tools::{
-    DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ListDirTool, ReadFileTool, ReadImageTool,
+    DeleteFileTool, EditFileTool, FindFileTool, GrepTool, ReadFileTool, ReadImageTool,
     ReadLintsTool, RunTerminalCommandTool, SearchCodebaseTool, ShellTool, ToolRegistry,
     WebFetchTool, WebSearchTool, WriteTool,
 };
@@ -28,7 +28,6 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
     "edit_file",
     "find_file",
     "grep",
-    "list_dir",
     "read_file",
     "read_image",
     "read_lints",
@@ -81,9 +80,6 @@ pub fn build_mcp_registry(
     }
     if allow("grep") {
         reg.register(GrepTool);
-    }
-    if allow("list_dir") {
-        reg.register(ListDirTool);
     }
     if allow("read_file") {
         reg.register(ReadFileTool);

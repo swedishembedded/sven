@@ -124,6 +124,7 @@ impl AgentBuilder {
             &self.config,
             model.clone(),
             profile,
+            mode_lock.clone(),
             tool_event_tx,
             runtime.clone(),
         );

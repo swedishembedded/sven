@@ -652,6 +652,9 @@ impl Agent {
                     }
                     let _ = tx.send(AgentEvent::ModeChanged(new_mode)).await;
                 }
+                ToolEvent::ModelChanged(model_str) => {
+                    let _ = tx.send(AgentEvent::ModelChanged(model_str)).await;
+                }
                 ToolEvent::Progress { call_id, message } => {
                     let _ = tx.send(AgentEvent::ToolProgress { call_id, message }).await;
                 }

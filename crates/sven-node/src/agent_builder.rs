@@ -323,6 +323,7 @@ async fn build_node_agent_inner(
         config,
         model.clone(),
         profile,
+        mode.clone(),
         tool_tx.clone(),
         agent_runtime.clone(),
     );

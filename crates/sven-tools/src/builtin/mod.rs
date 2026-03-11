@@ -108,12 +108,6 @@ mod output_category_tests {
     }
 
     #[test]
-    fn list_dir_is_generic() {
-        let t = super::system::list_dir::ListDirTool;
-        assert_eq!(t.output_category(), OutputCategory::Generic);
-    }
-
-    #[test]
     fn edit_file_is_generic() {
         let t = super::file::edit_file::EditFileTool;
         assert_eq!(t.output_category(), OutputCategory::Generic);

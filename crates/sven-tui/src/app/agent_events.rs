@@ -478,6 +478,10 @@ impl App {
             AgentEvent::ModeChanged(mode) => {
                 self.session.mode = mode;
             }
+            AgentEvent::ModelChanged(model_str) => {
+                let resolved = sven_model::resolve_model_from_config(&self.config, &model_str);
+                self.session.stage_model(resolved);
+            }
             AgentEvent::CollabEvent(ev) => {
                 self.chat.segments.push(ChatSegment::CollabEvent(ev));
                 self.save_history_async();

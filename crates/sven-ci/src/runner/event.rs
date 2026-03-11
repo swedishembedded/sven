@@ -227,6 +227,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         AgentEvent::ModeChanged(mode) => {
             write_stderr(&format!("[sven:mode:changed] now in {mode} mode"));
         }
+        AgentEvent::ModelChanged(model) => {
+            write_stderr(&format!("[sven:model:changed] switching to {model}"));
+        }
         AgentEvent::Question { questions, .. } => {
             write_stderr(&format!("[sven:questions] {}", questions.join(" | ")));
         }

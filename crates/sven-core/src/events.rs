@@ -118,6 +118,11 @@ pub enum AgentEvent {
     TodoUpdate(Vec<TodoItem>),
     /// The agent mode was changed
     ModeChanged(AgentMode),
+    /// The active model was changed by the agent tool.
+    /// The string is a resolved `"provider/id"` identifier
+    /// (e.g. `"anthropic/claude-opus-4-6"`).
+    /// The TUI/CI runner should apply this for subsequent submissions.
+    ModelChanged(String),
     /// The agent is asking the user a question (id links to QuestionAnswer)
     Question { id: String, questions: Vec<String> },
     /// Answer to a previous Question event
@@ -208,6 +213,7 @@ pub trait AgentEventVisitor {
     fn on_tool_progress(&mut self, _call_id: &str, _message: &str) {}
     fn on_todo_update(&mut self, _todos: &[sven_tools::events::TodoItem]) {}
     fn on_mode_changed(&mut self, _mode: &sven_config::AgentMode) {}
+    fn on_model_changed(&mut self, _model: &str) {}
     fn on_question(&mut self, _id: &str, _questions: &[String]) {}
     fn on_question_answer(&mut self, _id: &str, _answer: &str) {}
     fn on_title_generated(&mut self, _title: &str) {}
@@ -285,6 +291,7 @@ pub trait AgentEventVisitor {
             }
             AgentEvent::TodoUpdate(todos) => self.on_todo_update(todos),
             AgentEvent::ModeChanged(mode) => self.on_mode_changed(mode),
+            AgentEvent::ModelChanged(model) => self.on_model_changed(model),
             AgentEvent::Question { id, questions } => self.on_question(id, questions),
             AgentEvent::QuestionAnswer { id, answer } => self.on_question_answer(id, answer),
             AgentEvent::TitleGenerated(t) => self.on_title_generated(t),

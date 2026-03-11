@@ -3,26 +3,25 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Compound `memory` tool that consolidates persistent KV memory and project
 //! knowledge into a single action-dispatched interface.
-//!
-//! Replaces three separate tools (`update_memory`, `list_knowledge`,
-//! `search_knowledge`) with one unified tool, reducing the model's
-//! tool-selection surface area.
+
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use sven_runtime::SharedKnowledge;
+use tracing::debug;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
-use super::update_memory::UpdateMemoryTool;
 use crate::builtin::{
     knowledge::list_knowledge::ListKnowledgeTool, search::search_knowledge::SearchKnowledgeTool,
 };
 
 /// Compound memory tool — persistent KV store and project knowledge in one.
 pub struct MemoryTool {
-    memory: UpdateMemoryTool,
+    /// Path override for the memory file (falls back to ~/.config/sven/memory.json)
+    memory_file: Option<String>,
     list_knowledge: ListKnowledgeTool,
     search_knowledge: SearchKnowledgeTool,
 }
@@ -30,12 +29,22 @@ pub struct MemoryTool {
 impl MemoryTool {
     pub fn new(memory_file: Option<String>, knowledge: SharedKnowledge) -> Self {
         Self {
-            memory: UpdateMemoryTool { memory_file },
+            memory_file,
             list_knowledge: ListKnowledgeTool {
                 knowledge: knowledge.clone(),
             },
             search_knowledge: SearchKnowledgeTool { knowledge },
         }
+    }
+
+    fn memory_path(&self) -> String {
+        if let Some(path) = &self.memory_file {
+            return path.clone();
+        }
+        let home = dirs::home_dir()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/tmp".to_string());
+        format!("{home}/.config/sven/memory.json")
     }
 }
 
@@ -96,20 +105,61 @@ impl Tool for MemoryTool {
             None => return ToolOutput::err(&call.id, "missing required parameter 'action'"),
         };
 
+        debug!(action = %action, "memory tool");
+
+        let path = self.memory_path();
+
         match action.as_str() {
-            "set" | "get" | "delete" | "list" => {
-                // Remap 'action' → 'operation' for the UpdateMemoryTool delegate.
-                let mut args = call.args.clone();
-                if let Some(obj) = args.as_object_mut() {
-                    let action_val = obj.remove("action").unwrap_or(json!("list"));
-                    obj.insert("operation".to_string(), action_val);
-                }
-                let delegate_call = ToolCall {
-                    id: call.id.clone(),
-                    name: "update_memory".into(),
-                    args,
+            "set" => {
+                let key = match call.args.get("key").and_then(|v| v.as_str()) {
+                    Some(k) => k.to_string(),
+                    None => return ToolOutput::err(&call.id, "missing 'key' for set"),
                 };
-                self.memory.execute(&delegate_call).await
+                let value = match call.args.get("value").and_then(|v| v.as_str()) {
+                    Some(v) => v.to_string(),
+                    None => return ToolOutput::err(&call.id, "missing 'value' for set"),
+                };
+                let mut store = load_store(&path).await;
+                store.insert(key.clone(), value);
+                match save_store(&path, &store).await {
+                    Ok(_) => ToolOutput::ok(&call.id, format!("set {key}")),
+                    Err(e) => ToolOutput::err(&call.id, format!("save error: {e}")),
+                }
+            }
+            "get" => {
+                let key = match call.args.get("key").and_then(|v| v.as_str()) {
+                    Some(k) => k.to_string(),
+                    None => return ToolOutput::err(&call.id, "missing 'key' for get"),
+                };
+                let store = load_store(&path).await;
+                match store.get(&key) {
+                    Some(v) => ToolOutput::ok(&call.id, v.clone()),
+                    None => ToolOutput::err(&call.id, format!("key not found: {key}")),
+                }
+            }
+            "delete" => {
+                let key = match call.args.get("key").and_then(|v| v.as_str()) {
+                    Some(k) => k.to_string(),
+                    None => return ToolOutput::err(&call.id, "missing 'key' for delete"),
+                };
+                let mut store = load_store(&path).await;
+                if store.remove(&key).is_none() {
+                    return ToolOutput::err(&call.id, format!("key not found: {key}"));
+                }
+                match save_store(&path, &store).await {
+                    Ok(_) => ToolOutput::ok(&call.id, format!("deleted {key}")),
+                    Err(e) => ToolOutput::err(&call.id, format!("save error: {e}")),
+                }
+            }
+            "list" => {
+                let store = load_store(&path).await;
+                if store.is_empty() {
+                    ToolOutput::ok(&call.id, "(no keys stored)")
+                } else {
+                    let mut keys: Vec<&str> = store.keys().map(String::as_str).collect();
+                    keys.sort();
+                    ToolOutput::ok(&call.id, keys.join("\n"))
+                }
             }
             "list_knowledge" => {
                 let delegate_call = ToolCall {
@@ -147,6 +197,24 @@ impl Tool for MemoryTool {
     }
 }
 
+async fn load_store(path: &str) -> HashMap<String, String> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+async fn save_store(path: &str, store: &HashMap<String, String>) -> anyhow::Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+    let json = serde_json::to_string_pretty(store)?;
+    tokio::fs::write(path, json).await?;
+    Ok(())
+}
+
 // ─── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -162,10 +230,7 @@ mod tests {
         static CTR: AtomicU32 = AtomicU32::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
         MemoryTool::new(
-            Some(format!(
-                "/tmp/sven_memory_compound_{}_{n}.json",
-                std::process::id()
-            )),
+            Some(format!("/tmp/sven_memory_{}_{n}.json", std::process::id())),
             SharedKnowledge::empty(),
         )
     }
@@ -203,7 +268,7 @@ mod tests {
     #[tokio::test]
     async fn set_and_get_round_trip() {
         let t = make_tool();
-        let path = t.memory.memory_file.clone().unwrap();
+        let path = t.memory_path();
 
         t.execute(&call(
             json!({"action": "set", "key": "proj", "value": "sven"}),
@@ -219,9 +284,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_key() {
+        let t = make_tool();
+        let path = t.memory_path();
+
+        t.execute(&call(json!({"action": "set", "key": "x", "value": "1"})))
+            .await;
+        t.execute(&call(json!({"action": "delete", "key": "x"})))
+            .await;
+        let out = t.execute(&call(json!({"action": "get", "key": "x"}))).await;
+        assert!(out.is_error);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
     async fn list_returns_keys() {
         let t = make_tool();
-        let path = t.memory.memory_file.clone().unwrap();
+        let path = t.memory_path();
 
         t.execute(&call(json!({"action": "set", "key": "a", "value": "1"})))
             .await;

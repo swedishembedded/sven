@@ -33,13 +33,11 @@ pub use builtin::search::search_knowledge::SearchKnowledgeTool;
 
 // System tools
 pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionRequest};
-pub use builtin::system::list_dir::ListDirTool;
-pub use builtin::system::load_skill::LoadSkillTool;
 pub use builtin::system::memory::MemoryTool;
 pub use builtin::system::read_lints::ReadLintsTool;
-pub use builtin::system::switch_mode::SwitchModeTool;
+pub use builtin::system::skill::SkillTool;
+pub use builtin::system::system::SystemTool;
 pub use builtin::system::todo::TodoTool;
-pub use builtin::system::update_memory::UpdateMemoryTool;
 
 // Terminal tools
 pub use builtin::terminal::run_terminal_command::RunTerminalCommandTool;

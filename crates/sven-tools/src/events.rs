@@ -85,6 +85,10 @@ pub struct TodoItem {
 pub enum ToolEvent {
     TodoUpdate(Vec<TodoItem>),
     ModeChanged(AgentMode),
+    /// The active model should change for subsequent turns.
+    /// The string is a resolved `"provider/id"` identifier
+    /// (e.g. `"anthropic/claude-opus-4-6"`).
+    ModelChanged(String),
     /// Real-time progress update from a long-running tool.
     /// Forwarded immediately to the UI so the spinner reflects current activity.
     Progress {

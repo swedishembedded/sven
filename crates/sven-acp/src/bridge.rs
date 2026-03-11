@@ -123,6 +123,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         | AgentEvent::DelegateSummary { .. }
         | AgentEvent::SubagentStarted { .. }
         | AgentEvent::SubagentEvent { .. }
+        | AgentEvent::ModelChanged(_)
         | AgentEvent::PeerList(_) => None,
     }
 }

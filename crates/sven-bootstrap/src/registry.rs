@@ -21,13 +21,13 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 
-use sven_config::Config;
+use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_runtime::Shared;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
     AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GdbSessionState, GrepTool,
-    LoadSkillTool, MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
+    MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool,
     TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
@@ -44,9 +44,10 @@ use crate::GdbTool;
 ///
 /// ### Shared-state parameters
 ///
-/// * `mode_lock` — unused after removing `SwitchModeTool`; kept for API compatibility.
+/// * `mode_lock` — shared with the agent loop; `SystemTool` holds a clone so
+///   that mode changes are immediately visible to the agent.
 /// * `tool_event_tx` — the sending half of the channel whose receiving end is
-///   passed to `Agent::new()`. `TodoTool` sends events here.
+///   passed to `Agent::new()`. `TodoTool` / `SystemTool` send events here.
 ///
 /// The `buffer_store` is now bundled inside the `profile` variants that need it
 /// (`Full`, `Coding`, `SubAgent`).
@@ -54,6 +55,7 @@ pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
     profile: ToolSetProfile,
+    mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     sub_agent_runtime: AgentRuntimeContext,
 ) -> ToolRegistry {
@@ -65,6 +67,7 @@ pub fn build_tool_registry(
         } => build_profile_full(FullProfileParams {
             cfg,
             model,
+            mode_lock,
             question_tx,
             todos,
             tool_event_tx,
@@ -79,6 +82,7 @@ pub fn build_tool_registry(
         } => build_profile_full(FullProfileParams {
             cfg,
             model,
+            mode_lock,
             question_tx,
             todos,
             tool_event_tx,
@@ -86,15 +90,21 @@ pub fn build_tool_registry(
             buffer_store,
             include_gdb_context: false,
         }),
-        ToolSetProfile::Research { question_tx, todos } => {
-            build_profile_research(cfg, question_tx, todos, tool_event_tx, &sub_agent_runtime)
-        }
+        ToolSetProfile::Research { question_tx, todos } => build_profile_research(
+            cfg,
+            mode_lock,
+            question_tx,
+            todos,
+            tool_event_tx,
+            &sub_agent_runtime,
+        ),
         ToolSetProfile::SubAgent {
             todos,
             buffer_store,
         } => build_profile_subagent(
             cfg,
             model,
+            mode_lock,
             todos,
             tool_event_tx,
             &sub_agent_runtime,
@@ -107,6 +117,7 @@ pub fn build_tool_registry(
 struct FullProfileParams<'a> {
     cfg: &'a Config,
     model: Arc<dyn ModelProvider>,
+    mode_lock: Arc<Mutex<AgentMode>>,
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
@@ -124,6 +135,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
         &mut reg,
         p.cfg,
         p.model,
+        p.mode_lock,
         p.tool_event_tx.clone(),
         p.runtime,
         Arc::clone(&p.buffer_store),
@@ -147,6 +159,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 /// Research profile: read-only, no write tools, no task spawning.
 fn build_profile_research(
     cfg: &Config,
+    mode_lock: Arc<Mutex<AgentMode>>,
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
@@ -166,7 +179,8 @@ fn build_profile_research(
         cfg.tools.memory.memory_file.clone(),
         runtime.knowledge.clone(),
     ));
-    reg.register(LoadSkillTool::new(runtime.skills.clone()));
+    reg.register(SkillTool::new(runtime.skills.clone()));
+    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone()));
 
     if let Some(tx) = question_tx {
         reg.register(AskQuestionTool::new_tui(tx));
@@ -188,6 +202,7 @@ fn build_profile_research(
 fn build_profile_subagent(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
+    mode_lock: Arc<Mutex<AgentMode>>,
     todos: Arc<Mutex<Vec<TodoItem>>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
@@ -199,6 +214,7 @@ fn build_profile_subagent(
         &mut reg,
         cfg,
         model,
+        mode_lock,
         tool_event_tx.clone(),
         runtime,
         buffer_store,
@@ -222,6 +238,7 @@ fn register_base_tools(
     reg: &mut ToolRegistry,
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
+    mode_lock: Arc<Mutex<AgentMode>>,
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
@@ -258,7 +275,10 @@ fn register_base_tools(
     ));
 
     // ── Skills ────────────────────────────────────────────────────────────────
-    reg.register(LoadSkillTool::new(runtime.skills.clone()));
+    reg.register(SkillTool::new(runtime.skills.clone()));
+
+    // ── System (mode + model switching) ──────────────────────────────────────
+    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone()));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
     if include_full {
@@ -313,7 +333,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
     reg.register(TodoTool::new(todos, event_tx.clone()));
 
-    reg.register(LoadSkillTool::new(Shared::empty()));
+    reg.register(SkillTool::new(Shared::empty()));
 
     // ── Memory ────────────────────────────────────────────────────────────────
     let knowledge = Shared::empty();
