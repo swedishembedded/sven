@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use sven_config::{AgentMode, Config};
-use sven_core::Agent;
+use sven_core::{Agent, ModelResolver};
 use sven_model::ModelProvider;
 use sven_tools::{events::ToolEvent, PermissionRequester, SharedToolDisplays, SharedTools};
 
@@ -154,7 +154,17 @@ impl AgentBuilder {
                 .unwrap_or(128_000) as usize,
         };
 
-        Agent::new(
+        // Build a resolver closure so the agent can switch models mid-turn
+        // when the `switch_model` tool fires.  The closure captures the full
+        // config and resolves the fuzzy model string to a live provider.
+        let resolver_config = Arc::clone(&self.config);
+        let model_resolver: ModelResolver = Arc::new(move |model_str: &str| {
+            let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
+            let provider = sven_model::from_config(&model_cfg)?;
+            Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
+        });
+
+        Agent::new_with_resolver(
             model,
             Arc::new(registry),
             Arc::new(self.config.agent.clone()),
@@ -162,6 +172,7 @@ impl AgentBuilder {
             mode_lock,
             tool_event_rx,
             context_window,
+            Some(model_resolver),
         )
     }
 }

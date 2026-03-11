@@ -11,10 +11,10 @@ use std::time::Duration;
 /// API-side hang, network blip) without emitting an error or closing the
 /// stream.  Without a per-chunk timeout the agent loop would block forever.
 ///
-/// 120 seconds is conservative — even the slowest reasoning models emit at
-/// least one token well within this window.  The agent loop propagates the
-/// error back to the caller, which can retry if appropriate.
-const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
+/// 5 minutes allows slow reasoning models and large plan/tool-call generation
+/// to complete; the agent loop propagates the error back to the caller, which
+/// can retry if appropriate.
+const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(300);
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -34,6 +34,12 @@ use crate::{
     tool_slots::ToolSlotManager,
 };
 
+/// Callback that resolves a model string (e.g. `"anthropic/claude-opus"`) to a
+/// live `ModelProvider`.  Provided by the bootstrap layer so that `sven-core`
+/// can switch models mid-turn without depending on the full `sven-config::Config`.
+pub type ModelResolver =
+    Arc<dyn Fn(&str) -> anyhow::Result<Arc<dyn sven_model::ModelProvider>> + Send + Sync>;
+
 /// The core agent.  Owns a session and drives the model ↔ tool loop.
 pub struct Agent {
     session: Session,
@@ -48,6 +54,13 @@ pub struct Agent {
     /// changes).  The paired sender is held by `TodoTool` /
     /// `SwitchModeTool` inside the registry.
     tool_event_rx: mpsc::Receiver<ToolEvent>,
+    /// Resolver supplied by the bootstrap layer; used to instantiate a new
+    /// `ModelProvider` when the model tool emits `ToolEvent::ModelChanged`.
+    model_resolver: Option<ModelResolver>,
+    /// New model resolved from a `switch_model` tool call.  Applied at the
+    /// start of the next loop iteration so the full conversation is replayed
+    /// against the new model before the next user message.
+    pending_model: Option<Arc<dyn sven_model::ModelProvider>>,
 }
 
 impl Agent {
@@ -68,6 +81,30 @@ impl Agent {
         tool_event_rx: mpsc::Receiver<ToolEvent>,
         max_context_tokens: usize,
     ) -> Self {
+        Self::new_with_resolver(
+            model,
+            tools,
+            config,
+            runtime,
+            mode_lock,
+            tool_event_rx,
+            max_context_tokens,
+            None,
+        )
+    }
+
+    /// Like [`new`] but accepts an optional [`ModelResolver`] that enables
+    /// mid-turn model switching via the `switch_model` tool.
+    pub fn new_with_resolver(
+        model: Arc<dyn sven_model::ModelProvider>,
+        tools: Arc<ToolRegistry>,
+        config: Arc<AgentConfig>,
+        runtime: AgentRuntimeContext,
+        mode_lock: Arc<Mutex<AgentMode>>,
+        tool_event_rx: mpsc::Receiver<ToolEvent>,
+        max_context_tokens: usize,
+        model_resolver: Option<ModelResolver>,
+    ) -> Self {
         let max_output_tokens = model
             .config_max_output_tokens()
             .or_else(|| model.catalog_max_output_tokens())
@@ -87,6 +124,8 @@ impl Agent {
             runtime,
             current_mode: mode_lock,
             tool_event_rx,
+            model_resolver,
+            pending_model: None,
         }
     }
 
@@ -345,6 +384,10 @@ impl Agent {
                 break;
             }
 
+            // Apply any model switch requested by the previous tool round so
+            // the upcoming call goes to the new model with the full history.
+            self.apply_pending_model();
+
             let mode = *self.current_mode.lock().await;
             // Update schema overhead for accurate budget calculations.
             self.session.schema_overhead = self.estimate_schema_overhead(mode);
@@ -513,6 +556,9 @@ impl Agent {
                 break;
             }
 
+            // Apply any model switch requested by the previous tool round.
+            self.apply_pending_model();
+
             let mode = *self.current_mode.lock().await;
             // Update schema overhead so the budget gate and calibration are
             // accurate for this turn's actual request size.
@@ -653,6 +699,24 @@ impl Agent {
                     let _ = tx.send(AgentEvent::ModeChanged(new_mode)).await;
                 }
                 ToolEvent::ModelChanged(model_str) => {
+                    // Resolve the new model immediately so the NEXT loop
+                    // iteration (after the current tool results are pushed)
+                    // uses it rather than waiting for the next user message.
+                    if let Some(ref resolver) = self.model_resolver {
+                        match resolver(&model_str) {
+                            Ok(new_model) => {
+                                self.pending_model = Some(new_model);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    model = %model_str,
+                                    error = %e,
+                                    "switch_model: failed to resolve model; \
+                                     will fall back to TUI-side staging"
+                                );
+                            }
+                        }
+                    }
                     let _ = tx.send(AgentEvent::ModelChanged(model_str)).await;
                 }
                 ToolEvent::Progress { call_id, message } => {
@@ -713,6 +777,14 @@ impl Agent {
                         .await;
                 }
             }
+        }
+    }
+
+    /// If a model switch was requested via `switch_model` during the previous
+    /// tool round, apply it now so the next `stream_one_turn` uses the new model.
+    fn apply_pending_model(&mut self) {
+        if let Some(new_model) = self.pending_model.take() {
+            self.set_model(new_model);
         }
     }
 
