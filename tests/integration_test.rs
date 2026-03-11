@@ -85,7 +85,7 @@ fn workflow_parsing_h1_is_title_not_step() {
 #[test]
 fn config_defaults_are_valid() {
     let cfg = Config::default();
-    assert_eq!(cfg.model.provider, "openai");
+    assert_eq!(cfg.model.provider, "openrouter");
     assert!(cfg.agent.max_tool_rounds > 0);
     assert!(cfg.agent.compaction_threshold > 0.0);
 }
