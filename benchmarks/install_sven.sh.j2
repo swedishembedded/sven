@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Install the sven binary inside the Harbor evaluation container.
+#
+# The binary has already been uploaded to {{ sven_bin_path }} by
+# SvenInstalledAgent.setup() before this script runs.
+#
+# It is a statically-linked musl binary (built with make benchmark/build)
+# so it has no runtime dependencies and runs in any Linux container.
+
+set -euo pipefail
+
+SVEN_BIN="{{ sven_bin_path }}"
+
+chmod 755 "$SVEN_BIN"
+ln -sf "$SVEN_BIN" /usr/local/bin/sven
+
+if ! sven --version; then
+    echo "ERROR: sven --version failed" >&2
+    if command -v file >/dev/null 2>&1; then
+        file "$SVEN_BIN" >&2
+    fi
+    exit 1
+fi

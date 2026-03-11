@@ -23,7 +23,8 @@ REPO    := swedishembedded/sven
         release/build release/publish release/tag \
         release/patch release/minor release/major \
         _require-cargo-release \
-        site/build site/publish site/serve
+        site/build site/publish site/serve \
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report
 
 all: build
 
@@ -46,6 +47,81 @@ tests/e2e/basic: build
 
 ## tests/e2e – run all end-to-end test suites (requires bats-core)
 tests/e2e: tests/e2e/basic
+
+# ── Benchmark targets ─────────────────────────────────────────────────────────
+# Run sven against Terminal-Bench 2.0 via Harbor and generate a Markdown report.
+#
+# Prerequisites:
+#   pip install -r benchmarks/requirements.txt   (installs harbor + jinja2)
+#   OPENROUTER_API_KEY                           (required for the default free model)
+#   ANTHROPIC_API_KEY / OPENAI_API_KEY / …       (whichever key the model needs)
+#
+# Override options:
+#   MODEL                – model string (default: openrouter/openrouter/free)
+#                          e.g.: make benchmark MODEL=anthropic/claude-sonnet-4-6
+#   HARBOR_CONCURRENCY   – parallel Harbor workers (default: 4)
+#   SVEN_BENCH_TIMEOUT   – per-task timeout in seconds (default: 1800)
+#   HARBOR_FLAGS         – any extra flags passed verbatim to 'harbor run'
+
+HARBOR_CONCURRENCY  ?= 4
+SVEN_BENCH_TIMEOUT  ?= 1800
+HARBOR_FLAGS        ?=
+MUSL_TARGET         := x86_64-unknown-linux-musl
+SVEN_BIN_PATH       := $(CURDIR)/target/$(MUSL_TARGET)/release/sven
+MODEL               ?= openrouter/openrouter/free
+
+## benchmark/build        – build a static musl binary for use inside benchmark containers
+benchmark/build:
+	@if ! rustup target list --installed | grep -q "$(MUSL_TARGET)"; then \
+	    echo "Adding Rust target $(MUSL_TARGET)..."; \
+	    sudo -E env PATH=$$PATH rustup target add $(MUSL_TARGET); \
+	fi
+	@if ! command -v musl-gcc >/dev/null 2>&1; then \
+	    echo "musl-gcc not found. Installing musl-tools..."; \
+	    sudo apt-get install -y musl-tools; \
+	fi
+	$(CARGO) build --release --target $(MUSL_TARGET) $(CARGO_FLAGS)
+	@echo "Static binary: $(SVEN_BIN_PATH)"
+	@file $(SVEN_BIN_PATH)
+
+## benchmark              – build static binary, run all benchmarks, generate report
+benchmark: benchmark/build benchmark/terminal-bench
+	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
+	@echo ""
+	@echo "Report written to target/benchmark/report.md"
+	@echo "Preview:"; echo ""; head -40 target/benchmark/report.md
+
+## benchmark/terminal-bench – run Terminal-Bench 2.0 via Harbor (requires harbor)
+benchmark/terminal-bench: benchmark/build
+	@command -v harbor >/dev/null 2>&1 || { \
+	    echo "harbor not found."; \
+	    echo "Install it with: pip install -r benchmarks/requirements.txt"; \
+	    exit 1; }
+	@mkdir -p target/benchmark
+	@# Create a 'docker' shim that calls 'sudo docker', placed first on PATH
+	@# so Harbor's hardcoded "docker compose ..." invocations go through sudo.
+	@mkdir -p target/benchmark/.bin
+	@printf '#!/bin/sh\nexec sudo -E docker "$$@"\n' > target/benchmark/.bin/docker
+	@chmod +x target/benchmark/.bin/docker
+	PATH=$(CURDIR)/target/benchmark/.bin:$$PATH \
+	SVEN_BIN_PATH=$(SVEN_BIN_PATH) \
+	SVEN_BENCH_TIMEOUT=$(SVEN_BENCH_TIMEOUT) \
+	SVEN_MODEL=$(MODEL) \
+	harbor run \
+	    -d terminal-bench@2.0 \
+	    --agent-import-path benchmarks.sven_agent:SvenInstalledAgent \
+	    -o target/benchmark/terminal-bench \
+	    -n $(HARBOR_CONCURRENCY) \
+	    -k 1 \
+	    $(HARBOR_FLAGS)
+
+## benchmark/report        – regenerate report from existing result files
+benchmark/report:
+	@[ -d target/benchmark ] || { \
+	    echo "No benchmark results found. Run 'make benchmark' first."; \
+	    exit 1; }
+	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
+	@cat target/benchmark/report.md
 
 ## deb       – build a Debian package (output in target/debian/)
 deb: release
@@ -141,7 +217,7 @@ p2p-test:
 ## clean     – remove build artefacts
 clean:
 	$(CARGO) clean
-	rm -rf target/debian target/debian-staging target/completions target/docs $(DIST)
+	rm -rf target/debian target/debian-staging target/completions target/docs target/benchmark $(DIST)
 
 ## help      – show this message
 help:
