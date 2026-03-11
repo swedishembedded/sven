@@ -170,10 +170,17 @@ impl Tool for ContextTool {
                         )
                     }
                 };
+                let mut open_args = json!({ "path": path });
+                if let Some(pat) = call.args.get("include_pattern") {
+                    open_args["include_pattern"] = pat.clone();
+                }
+                if let Some(rec) = call.args.get("recursive") {
+                    open_args["recursive"] = rec.clone();
+                }
                 let delegate_call = ToolCall {
                     id: call.id.clone(),
                     name: "context_open".into(),
-                    args: json!({ "path": path }),
+                    args: open_args,
                 };
                 self.open.execute(&delegate_call).await
             }

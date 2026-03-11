@@ -206,7 +206,7 @@ responses:
         tool: find_file
         args:
           pattern: "*.rs"
-          root: /data/agents/sven/crates
+          root: /usr/lib
           max_results: 5
     after_tool_reply: "Found Rust source files in the crates directory."
 
@@ -247,7 +247,7 @@ responses:
         tool: grep
         args:
           pattern: "sven"
-          path: /data/agents/sven/crates/sven-tools/src/lib.rs
+          path: /etc/os-release
           limit: 5
     after_tool_reply: "Grep completed. Found matching lines."
 
@@ -258,7 +258,7 @@ responses:
         tool: grep
         args:
           pattern: "ToolRegistry"
-          path: /data/agents/sven/crates/sven-tools/src
+          path: /etc
           include: "*.rs"
           case_sensitive: true
           limit: 5
@@ -288,7 +288,7 @@ responses:
       - id: tc-ld
         tool: shell
         args:
-          shell_command: "ls /data/agents/sven/crates"
+          shell_command: "ls /tmp"
     after_tool_reply: "Directory listing complete."
 
   # ── Headless enhancements test patterns ─────────────────────────────────────
@@ -396,7 +396,7 @@ responses:
         tool: context
         args:
           action: open
-          path: /data/agents/sven/crates/sven-tools/src/builtin/context/store.rs
+          path: /etc/os-release
     after_tool_reply: "Context file opened successfully. I have a handle for store.rs."
 
   - match_type: contains
@@ -406,8 +406,8 @@ responses:
         tool: context
         args:
           action: open
-          path: /data/agents/sven/crates/sven-tools/src/builtin/context
-          include_pattern: "*.rs"
+          path: /etc
+          include_pattern: "hostname"
           recursive: false
     after_tool_reply: "Directory context opened. I have a handle for the context module source files."
 
