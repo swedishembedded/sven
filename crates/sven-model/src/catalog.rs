@@ -4,6 +4,7 @@
 //! Model catalog: static metadata for known models, with optional live refresh.
 
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 /// Input modalities supported by a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,20 +53,36 @@ struct CatalogFile {
     models: Vec<ModelCatalogEntry>,
 }
 
+/// Return a reference to the parsed catalog, initialising it on the first call.
+///
+/// The 1300-line `models.yaml` is parsed exactly once using [`OnceLock`] and
+/// the result is kept alive for the process lifetime.  Subsequent calls return
+/// a pointer to the same allocation with no YAML parsing overhead.
+fn catalog_ref() -> &'static [ModelCatalogEntry] {
+    static CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let yaml = include_str!("../models.yaml");
+        let file: CatalogFile =
+            serde_yaml::from_str(yaml).expect("bundled models.yaml must be valid");
+        file.models
+    })
+}
+
 /// Return all entries from the bundled static catalog.
+///
+/// The underlying YAML is parsed at most once per process (see [`catalog_ref`]).
+/// Returns a cloned `Vec` so callers can take ownership without lifetime issues.
 pub fn static_catalog() -> Vec<ModelCatalogEntry> {
-    let yaml = include_str!("../models.yaml");
-    let catalog: CatalogFile =
-        serde_yaml::from_str(yaml).expect("bundled models.yaml must be valid");
-    catalog.models
+    catalog_ref().to_vec()
 }
 
 /// Look up a single model by provider and id (or name).
 /// Returns `None` if not found in the static catalog.
 pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
-    static_catalog()
-        .into_iter()
+    catalog_ref()
+        .iter()
         .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
+        .cloned()
 }
 
 /// Look up a model by bare model name (without provider prefix).
@@ -77,29 +94,36 @@ pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
 /// `"gpt-4o"`) should be resolved against the catalog provider rather than
 /// inheriting the custom `base_url` from the user's config.
 pub fn lookup_by_model_name(model_name: &str) -> Option<ModelCatalogEntry> {
-    static_catalog()
-        .into_iter()
+    catalog_ref()
+        .iter()
         .find(|e| e.id == model_name || e.name == model_name)
+        .cloned()
 }
 
 /// Return `true` if the model supports image input, defaulting to `false` when
 /// the model is not found in the catalog.
 pub fn supports_images(provider: &str, model_id: &str) -> bool {
-    lookup(provider, model_id)
+    catalog_ref()
+        .iter()
+        .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
         .map(|e| e.supports_images())
         .unwrap_or(false)
 }
 
 /// Look up the context window for a model.  Falls back to `default` if not in catalog.
 pub fn context_window(provider: &str, model_id: &str, default: u32) -> u32 {
-    lookup(provider, model_id)
+    catalog_ref()
+        .iter()
+        .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
         .map(|e| e.context_window)
         .unwrap_or(default)
 }
 
 /// Look up the max output tokens for a model.  Falls back to `default` if not in catalog.
 pub fn max_output_tokens(provider: &str, model_id: &str, default: u32) -> u32 {
-    lookup(provider, model_id)
+    catalog_ref()
+        .iter()
+        .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
         .map(|e| e.max_output_tokens)
         .unwrap_or(default)
 }
