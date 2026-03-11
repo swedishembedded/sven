@@ -41,7 +41,18 @@ pub fn format_tools_list(tools: &[ToolSchema]) -> String {
         |tool| {
             let mut entry = format!("**{}**", tool.name);
             if !tool.description.is_empty() {
-                entry.push_str(&format!(" — {}", tool.description.trim()));
+                // Use only the first line of multi-line descriptions and
+                // escape `|` so that tool descriptions with pipe characters
+                // (e.g. compound tools listing their actions) are never
+                // misinterpreted as markdown table syntax.
+                let first_line = tool
+                    .description
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .replace('|', "\\|");
+                entry.push_str(&format!(" — {first_line}"));
             }
             entry.push('\n');
 

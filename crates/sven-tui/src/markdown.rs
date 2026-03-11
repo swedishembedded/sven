@@ -318,7 +318,10 @@ impl MarkdownRenderer {
 
                 // ── Inline code ───────────────────────────────────────────────
                 Event::Code(t) => {
-                    let style = Style::default().fg(Color::Yellow).bg(Color::Black);
+                    // No explicit background: inherits from the parent widget
+                    // (chat pane or pager) so inline code never creates a
+                    // contrasting black box on non-black backgrounds.
+                    let style = Style::default().fg(Color::Yellow);
                     self.current_spans
                         .push(Span::styled(format!("`{t}`"), style));
                 }

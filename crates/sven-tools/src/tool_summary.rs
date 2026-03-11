@@ -134,7 +134,7 @@ pub fn tool_category(name: &str) -> &'static str {
         "web_search" | "WebSearch" | "web_fetch" | "WebFetch" => "web",
         "todo" | "read_lints" | "ReadLints" | "ask_question" | "AskQuestion" | "switch_mode"
         | "SwitchMode" | "load_skill" | "LoadSkill" | "memory" | "Memory" | "update_memory"
-        | "UpdateMemory" => "system",
+        | "UpdateMemory" | "system" | "System" | "skill" | "Skill" => "system",
         _ if name.starts_with("gdb") || name.starts_with("Gdb") => "agent",
         _ if name.starts_with("buf_") => "system",
         _ => "",

@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::markdown::StyledLines;
+use crate::ui::theme::BG_ELEVATED;
 use crate::ui::width_utils::display_width;
 
 /// What the pager wants the app to do after handling a key.
@@ -244,7 +245,10 @@ impl PagerOverlay {
             })
             .collect();
 
-        frame.render_widget(Paragraph::new(visible_lines), content_area);
+        frame.render_widget(
+            Paragraph::new(visible_lines).style(Style::default().bg(BG_ELEVATED)),
+            content_area,
+        );
 
         // ── Footer separator with scroll percentage ───────────────────────────
         let total = self.lines.len();
