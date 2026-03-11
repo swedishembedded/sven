@@ -957,7 +957,9 @@ impl Agent {
                     // Update the running calibration factor using the provider's
                     // actual input token count.  This corrects the chars/4
                     // approximation for the current workload and model.
-                    let actual_input = input_tokens + cache_read_tokens;
+                    // input_tokens is fresh-only; add cache_read and cache_write
+                    // to get the true total context size sent to the model.
+                    let actual_input = input_tokens + cache_read_tokens + cache_write_tokens;
                     if actual_input > 0 {
                         let estimated = self.session.token_count + self.session.schema_overhead;
                         self.session.update_calibration(actual_input, estimated);

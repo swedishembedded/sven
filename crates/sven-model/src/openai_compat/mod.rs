@@ -889,11 +889,12 @@ mod tests {
             }
         });
         let ev = parse_sse_chunk(&v).unwrap();
+        // input_tokens must be fresh-only (200 total − 150 cached = 50).
         assert!(
             matches!(
                 ev,
                 ResponseEvent::Usage {
-                    input_tokens: 200,
+                    input_tokens: 50,
                     output_tokens: 40,
                     cache_read_tokens: 150,
                     ..
@@ -919,11 +920,12 @@ mod tests {
             }
         });
         let ev = parse_sse_chunk(&v).unwrap();
+        // input_tokens must be fresh-only (5000 total − 0 cache_read − 4800 cache_write = 200).
         assert!(
             matches!(
                 ev,
                 ResponseEvent::Usage {
-                    input_tokens: 5000,
+                    input_tokens: 200,
                     output_tokens: 80,
                     cache_read_tokens: 0,
                     cache_write_tokens: 4800,
@@ -1272,11 +1274,12 @@ mod tests {
             }
         });
         let ev = parse_sse_chunk(&v).unwrap();
+        // input_tokens must be fresh-only (500 total − 400 cached = 100).
         assert!(
             matches!(
                 ev,
                 ResponseEvent::Usage {
-                    input_tokens: 500,
+                    input_tokens: 100,
                     output_tokens: 30,
                     cache_read_tokens: 400,
                     ..
@@ -1459,7 +1462,7 @@ mod tests {
             matches!(
                 &ev,
                 ResponseEvent::Usage {
-                    input_tokens: 41,      // cache_n + prompt_n
+                    input_tokens: 1,       // prompt_n (fresh only)
                     output_tokens: 60,     // predicted_n
                     cache_read_tokens: 40, // cache_n
                     ..

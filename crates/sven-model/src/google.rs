@@ -323,10 +323,13 @@ fn message_to_gemini_parts(
 fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     // Usage metadata
     if let Some(meta) = v.get("usageMetadata") {
-        // Google Gemini reports cached tokens in cachedContentTokenCount
+        // Google Gemini reports cached tokens in cachedContentTokenCount.
+        // `promptTokenCount` is the grand total (fresh + cached); subtract to
+        // get fresh-only so that total_ctx = input + cache_read is not inflated.
         let cache_read_tokens = meta["cachedContentTokenCount"].as_u64().unwrap_or(0) as u32;
+        let prompt_total = meta["promptTokenCount"].as_u64().unwrap_or(0) as u32;
         return Ok(ResponseEvent::Usage {
-            input_tokens: meta["promptTokenCount"].as_u64().unwrap_or(0) as u32,
+            input_tokens: prompt_total.saturating_sub(cache_read_tokens),
             output_tokens: meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
             cache_write_tokens: 0,

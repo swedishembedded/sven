@@ -90,8 +90,16 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             .and_then(|d| d.get("cache_write_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0) as u32;
+        // OpenAI/DeepSeek/OpenRouter report `prompt_tokens` as the grand total
+        // (fresh + cache_read + cache_write).  The ResponseEvent::Usage contract
+        // requires `input_tokens` to be fresh-only so that callers can compute
+        // total_ctx = input + cache_read + cache_write without double-counting.
+        let prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0) as u32;
+        let fresh_input = prompt_tokens
+            .saturating_sub(cache_read_tokens)
+            .saturating_sub(cache_write_tokens);
         return Ok(ResponseEvent::Usage {
-            input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+            input_tokens: fresh_input,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
             cache_write_tokens,
@@ -108,10 +116,10 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         let prompt_n = timings["prompt_n"].as_u64().unwrap_or(0) as u32;
         let predicted_n = timings["predicted_n"].as_u64().unwrap_or(0) as u32;
 
-        // llama.cpp reports cache hits + fresh tokens separately; combine them
-        // into input_tokens for consistency with standard Usage reporting.
+        // llama.cpp reports cache hits and fresh tokens separately.
+        // `prompt_n` is the fresh-only count; `cache_n` goes into cache_read_tokens.
         return Ok(ResponseEvent::Usage {
-            input_tokens: cache_n + prompt_n,
+            input_tokens: prompt_n,
             output_tokens: predicted_n,
             cache_read_tokens: cache_n,
             cache_write_tokens: 0,
