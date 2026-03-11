@@ -80,18 +80,10 @@ const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 /// value is a final safety net for genuinely hung agents.
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// How long to wait for the child process to exit cleanly after the
-/// `PromptResponse` has been received before forcibly killing it.
+/// Minimal ACP `Client` for subagent task execution.
 ///
-/// After the agent finishes its turn it may need a moment to flush buffers and
-/// perform cleanup.  We give it this window before reaching for SIGKILL so that
-/// the exit code is meaningful and stderr is fully captured.
-
-// ── ACP client handler ────────────────────────────────────────────────────────
-
-/// A minimal ACP `Client` that:
-/// - Forwards `session_notification` updates through a channel.
-/// - Auto-approves tool permission requests so subagents run unattended.
+/// Forwards `session_notification` updates through a channel and auto-approves
+/// tool permission requests so subagents run unattended.
 struct AcpTaskClient {
     notification_tx: futures::channel::mpsc::UnboundedSender<SessionNotification>,
 }
