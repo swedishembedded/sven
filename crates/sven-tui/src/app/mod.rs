@@ -51,7 +51,7 @@ use crate::{
 pub(crate) use agent_conn::AgentConn;
 pub(crate) use chat_state::ChatState;
 pub(crate) use input_state::{EditState, InputState};
-pub(crate) use layout_cache::LayoutCache;
+pub(crate) use layout_cache::{LayoutCache, SplitPrefs};
 pub(crate) use nvim_state::NvimState;
 pub(crate) use queue_state::QueueState;
 pub(crate) use session_manager::{SessionEntry, SessionManager};
@@ -185,6 +185,7 @@ pub struct App {
     pub(crate) ui: UiState,
     pub(crate) agent: AgentConn,
     pub(crate) nvim: NvimState,
+    pub(crate) prefs: SplitPrefs,
     pub(crate) layout: LayoutCache,
     /// Multi-session manager — holds all chat sessions and the shared event mux.
     pub(crate) sessions: SessionManager,
@@ -442,6 +443,7 @@ impl App {
             ui: UiState::new(),
             agent: AgentConn::new(),
             nvim: NvimState::new(opts.no_nvim),
+            prefs: SplitPrefs::new(),
             layout: LayoutCache::new(),
             sessions: session_manager,
             yaml_path: initial_yaml_path,
@@ -560,15 +562,15 @@ impl App {
         let text_lines = wrap.lines.len().max(1) as u16;
         let attach_rows = self.input.attachments.len() as u16;
         let desired_input_height = (text_lines + attach_rows + 2) // +2 for top/bottom borders
-            .max(self.layout.input_height_pref)
+            .max(self.prefs.input_height)
             .min(max_input_height);
         let layout = AppLayout::new(
             frame,
             self.ui.search.active,
             self.queue.messages.len(),
             desired_input_height,
-            self.layout.effective_chat_list_width(),
-            self.layout.effective_peers_pane_height(),
+            self.prefs.effective_chat_list_width(),
+            self.prefs.effective_peers_pane_height(),
         );
         // Clean up expired toasts every frame.
         self.ui.prune_toasts();
@@ -739,8 +741,10 @@ impl App {
                 ascii,
                 edit_mode,
                 attachments: &self.input.attachments,
-                is_resizing: self.layout.resize_drag
-                    == Some(crate::app::layout_cache::ResizeDrag::InputHeight),
+                is_resizing: matches!(
+                    self.layout.resize_drag,
+                    Some(crate::app::layout_cache::ResizeDrag::InputHeight { .. })
+                ),
             },
             layout.input_pane,
         );
@@ -789,7 +793,7 @@ impl App {
         }
 
         // ── Chat list pane (right side) ───────────────────────────────────────
-        if self.layout.chat_list_visible && layout.chat_list_pane.width > 0 {
+        if self.prefs.chat_list_visible && layout.chat_list_pane.width > 0 {
             let tree_rows = self.sessions.tree_rows();
             let items = crate::ui::build_chat_list_items(
                 &tree_rows,
@@ -807,8 +811,10 @@ impl App {
                     focused: cl_focused,
                     ascii,
                     scroll_offset: chat_list_scroll_offset,
-                    is_resizing: self.layout.resize_drag
-                        == Some(crate::app::layout_cache::ResizeDrag::ChatListWidth),
+                    is_resizing: matches!(
+                        self.layout.resize_drag,
+                        Some(crate::app::layout_cache::ResizeDrag::ChatListWidth { .. })
+                    ),
                 },
                 layout.chat_list_pane,
             );
@@ -834,8 +840,10 @@ impl App {
                     focused: peers_focused,
                     ascii,
                     scroll_offset: peers_scroll_offset,
-                    is_resizing: self.layout.resize_drag
-                        == Some(crate::app::layout_cache::ResizeDrag::PeersSplit),
+                    is_resizing: matches!(
+                        self.layout.resize_drag,
+                        Some(crate::app::layout_cache::ResizeDrag::PeersSplit { .. })
+                    ),
                 },
                 layout.peers_pane,
             );
@@ -1045,9 +1053,9 @@ impl App {
                     Rect::new(0, 0, size.width, size.height),
                     false,
                     self.queue.messages.len(),
-                    self.layout.input_height_pref,
-                    self.layout.effective_chat_list_width(),
-                    self.layout.effective_peers_pane_height(),
+                    self.prefs.input_height,
+                    self.prefs.effective_chat_list_width(),
+                    self.prefs.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
             }
@@ -1060,9 +1068,9 @@ impl App {
                     Rect::new(0, 0, size.width, size.height),
                     false,
                     0,
-                    self.layout.input_height_pref,
-                    self.layout.effective_chat_list_width(),
-                    self.layout.effective_peers_pane_height(),
+                    self.prefs.input_height,
+                    self.prefs.effective_chat_list_width(),
+                    self.prefs.effective_peers_pane_height(),
                 );
                 (
                     layout.chat_pane.width.saturating_sub(2),
@@ -1155,15 +1163,15 @@ impl App {
                 let attach_rows = self.input.attachments.len() as u16;
                 let max_input_height = (size.height / 2).max(3);
                 let desired_input_height = (text_lines + attach_rows + 2)
-                    .max(self.layout.input_height_pref)
+                    .max(self.prefs.input_height)
                     .min(max_input_height);
                 let layout = AppLayout::compute(
                     Rect::new(0, 0, size.width, size.height),
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
-                    self.layout.effective_chat_list_width(),
-                    self.layout.effective_peers_pane_height(),
+                    self.prefs.effective_chat_list_width(),
+                    self.prefs.effective_peers_pane_height(),
                 );
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 let max_scroll =

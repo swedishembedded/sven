@@ -46,6 +46,10 @@ pub enum HitArea {
     /// The vertical resize border between the chat-list and main content.
     ChatListBorder,
 
+    /// The horizontal resize border between the chats and peers panes in the
+    /// sidebar.
+    PeersSplitBorder,
+
     /// The horizontal resize border above the input pane.
     InputBorder,
 
@@ -74,28 +78,47 @@ pub fn hit_test(
 ) -> HitArea {
     // ── Resize borders (checked before pane interiors so a drag that drifts ──
     // ── into a pane still registers as a border hit) ──────────────────────────
-    if layout.on_chat_list_border(col, row) {
-        return HitArea::ChatListBorder;
+
+    // Vertical border: left edge of the chat list sidebar (±1 col hit-zone).
+    let cl = layout.chat_list_pane;
+    if cl.width > 0 {
+        let border_col = cl.x;
+        if col >= border_col.saturating_sub(1) && col <= border_col + 1 {
+            return HitArea::ChatListBorder;
+        }
     }
-    if layout.on_input_border(col, row) {
-        return HitArea::InputBorder;
+
+    // Horizontal border: top edge of the input pane (row-1..row hit-zone).
+    let ip = layout.input_pane;
+    if ip.height > 0 {
+        let border_row = ip.y;
+        if row >= border_row.saturating_sub(1) && row <= border_row {
+            return HitArea::InputBorder;
+        }
+    }
+
+    // Horizontal border: top edge of the peers pane within the sidebar
+    // (±1 row hit-zone, constrained to sidebar columns).
+    let pp = layout.peers_pane;
+    if pp.height > 0 && cl.height > 0 {
+        let border_row = pp.y;
+        if row >= border_row.saturating_sub(1)
+            && row <= border_row + 1
+            && col >= cl.x
+            && col < cl.x + cl.width
+        {
+            return HitArea::PeersSplitBorder;
+        }
     }
 
     // ── Chat-list sidebar ─────────────────────────────────────────────────────
-    let cl = layout.chat_list_pane;
-    if layout.chat_list_visible
-        && cl.width > 0
-        && col >= cl.x
-        && col < cl.x + cl.width
-        && row >= cl.y
-        && row < cl.y + cl.height
+    if cl.width > 0 && col >= cl.x && col < cl.x + cl.width && row >= cl.y && row < cl.y + cl.height
     {
         let inner_row = (row as usize).saturating_sub((cl.y + 1) as usize);
         return HitArea::ChatList { inner_row };
     }
 
     // ── Input pane ────────────────────────────────────────────────────────────
-    let ip = layout.input_pane;
     if row >= ip.y && row < ip.y + ip.height {
         return HitArea::InputPane;
     }

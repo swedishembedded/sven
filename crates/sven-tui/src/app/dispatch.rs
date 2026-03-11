@@ -109,8 +109,8 @@ impl App {
             }
             Action::NavRight => {
                 if self.ui.focus != FocusPane::ChatList {
-                    if !self.layout.chat_list_visible {
-                        self.layout.chat_list_visible = true;
+                    if !self.prefs.chat_list_visible {
+                        self.prefs.chat_list_visible = true;
                     }
                     self.ui.focus = FocusPane::ChatList;
                     self.sessions.sync_list_selection_to_active();
@@ -905,11 +905,11 @@ impl App {
             }
 
             Action::ResizeInputGrow => {
-                self.layout.input_height_pref = (self.layout.input_height_pref + 1).min(20);
+                self.prefs.input_height = (self.prefs.input_height + 1).min(20);
             }
 
             Action::ResizeInputShrink => {
-                self.layout.input_height_pref = (self.layout.input_height_pref - 1).max(3);
+                self.prefs.input_height = (self.prefs.input_height - 1).max(3);
             }
 
             Action::Submit => {
@@ -1139,17 +1139,17 @@ impl App {
 
             // ── Chat list sidebar actions ─────────────────────────────────────
             Action::ToggleChatList => {
-                self.layout.chat_list_visible = !self.layout.chat_list_visible;
+                self.prefs.chat_list_visible = !self.prefs.chat_list_visible;
                 // When hiding, move focus away from the now-invisible pane.
-                if !self.layout.chat_list_visible && self.ui.focus == FocusPane::ChatList {
+                if !self.prefs.chat_list_visible && self.ui.focus == FocusPane::ChatList {
                     self.ui.focus = FocusPane::Input;
                 }
             }
 
             Action::FocusChatList => {
-                if !self.layout.chat_list_visible {
+                if !self.prefs.chat_list_visible {
                     // Show the pane first, then focus it.
-                    self.layout.chat_list_visible = true;
+                    self.prefs.chat_list_visible = true;
                 }
                 self.ui.focus = FocusPane::ChatList;
                 self.sessions.sync_list_selection_to_active();
@@ -1236,11 +1236,11 @@ impl App {
             }
 
             Action::ResizeChatListGrow => {
-                self.layout.chat_list_grow();
+                self.prefs.chat_list_grow();
             }
 
             Action::ResizeChatListShrink => {
-                self.layout.chat_list_shrink();
+                self.prefs.chat_list_shrink();
             }
 
             // ── Mouse-originated actions ──────────────────────────────────────

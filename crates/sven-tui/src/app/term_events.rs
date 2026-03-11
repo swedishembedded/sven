@@ -11,8 +11,8 @@
 //!
 //! The only direct mutations allowed here are:
 //!  1. `self.ui.show_help = false` (single-field clear, no logic)
-//!  2. `self.layout.resize_drag` — border-drag state machine that spans
-//!     multiple events and cannot be expressed as a single `Action`.
+//!  2. `self.layout.resize_drag` and `self.prefs.*` — border-drag state machine
+//!     that spans multiple events and cannot be expressed as a single `Action`.
 //!  3. `self.ui.pending_nav` — transient key-prefix flag.
 //!
 //! Everything else goes through `mouse_to_action()` → `dispatch()`.
@@ -176,32 +176,66 @@ impl App {
                 }
 
                 // ── Pane border resize (stateful drag; spans multiple events) ─
+                //
+                // All border hit detection goes through `hit_test` — the single
+                // authoritative path.  The anchor offset recorded on `Down`
+                // keeps the border locked to the exact grab point during `Drag`.
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        if self.layout.on_chat_list_border(mouse.column, mouse.row) {
-                            self.layout.resize_drag = Some(ResizeDrag::ChatListWidth);
-                            return false;
-                        }
-                        if self.layout.on_peers_split_border(mouse.column, mouse.row) {
-                            self.layout.resize_drag = Some(ResizeDrag::PeersSplit);
-                            return false;
-                        }
-                        if self.layout.on_input_border(mouse.column, mouse.row) {
-                            self.layout.resize_drag = Some(ResizeDrag::InputHeight);
-                            return false;
+                        let hit = hit_test(
+                            &self.layout,
+                            mouse.column,
+                            mouse.row,
+                            self.chat.scroll_offset,
+                            self.chat.lines.len(),
+                            self.queue.messages.len(),
+                        );
+                        match hit {
+                            HitArea::ChatListBorder => {
+                                let anchor =
+                                    mouse.column as i16 - self.layout.chat_list_pane.x as i16;
+                                self.layout.resize_drag = Some(ResizeDrag::ChatListWidth {
+                                    anchor_offset: anchor,
+                                });
+                                return false;
+                            }
+                            HitArea::PeersSplitBorder => {
+                                let anchor = mouse.row as i16 - self.layout.peers_pane.y as i16;
+                                self.layout.resize_drag = Some(ResizeDrag::PeersSplit {
+                                    anchor_offset: anchor,
+                                });
+                                return false;
+                            }
+                            HitArea::InputBorder => {
+                                let anchor = mouse.row as i16 - self.layout.input_pane.y as i16;
+                                self.layout.resize_drag = Some(ResizeDrag::InputHeight {
+                                    anchor_offset: anchor,
+                                });
+                                return false;
+                            }
+                            _ => {}
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => match self.layout.resize_drag {
-                        Some(ResizeDrag::ChatListWidth) => {
-                            self.layout.drag_chat_list_width(mouse.column);
+                        Some(ResizeDrag::ChatListWidth { anchor_offset }) => {
+                            self.prefs.drag_chat_list_width(
+                                mouse.column,
+                                anchor_offset,
+                                &self.layout,
+                            );
                             return false;
                         }
-                        Some(ResizeDrag::PeersSplit) => {
-                            self.layout.drag_peers_pane_height(mouse.row);
+                        Some(ResizeDrag::PeersSplit { anchor_offset }) => {
+                            self.prefs.drag_peers_pane_height(
+                                mouse.row,
+                                anchor_offset,
+                                &self.layout,
+                            );
                             return false;
                         }
-                        Some(ResizeDrag::InputHeight) => {
-                            self.layout.drag_input_height(mouse.row);
+                        Some(ResizeDrag::InputHeight { anchor_offset }) => {
+                            self.prefs
+                                .drag_input_height(mouse.row, anchor_offset, &self.layout);
                             return false;
                         }
                         None => {}
@@ -235,15 +269,15 @@ impl App {
                 let attach_rows = self.input.attachments.len() as u16;
                 let max_input_height = (height / 2).max(3);
                 let desired_input_height = (text_lines + attach_rows + 2)
-                    .max(self.layout.input_height_pref)
+                    .max(self.prefs.input_height)
                     .min(max_input_height);
                 let layout = AppLayout::compute(
                     Rect::new(0, 0, width, height),
                     self.ui.search.active,
                     self.queue.messages.len(),
                     desired_input_height,
-                    self.layout.effective_chat_list_width(),
-                    self.layout.effective_peers_pane_height(),
+                    self.prefs.effective_chat_list_width(),
+                    self.prefs.effective_peers_pane_height(),
                 );
                 // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
