@@ -92,6 +92,7 @@ pub fn build_tool_registry(
         }),
         ToolSetProfile::Research { question_tx, todos } => build_profile_research(
             cfg,
+            model,
             mode_lock,
             question_tx,
             todos,
@@ -131,6 +132,9 @@ struct FullProfileParams<'a> {
 fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
 
+    // Capture the model identity before p.model is moved into register_base_tools.
+    let model_id = format!("{}/{}", p.model.name(), p.model.model_name());
+
     register_base_tools(
         &mut reg,
         p.cfg,
@@ -150,7 +154,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     reg.register(TaskTool::new(
         Arc::clone(&p.buffer_store),
         p.tool_event_tx,
-        Some(format!("{}/{}", p.cfg.model.provider, p.cfg.model.name)),
+        Some(model_id),
     ));
 
     reg
@@ -159,6 +163,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 /// Research profile: read-only, no write tools, no task spawning.
 fn build_profile_research(
     cfg: &Config,
+    model: Arc<dyn sven_model::ModelProvider>,
     mode_lock: Arc<Mutex<AgentMode>>,
     question_tx: Option<mpsc::Sender<QuestionRequest>>,
     todos: Arc<Mutex<Vec<TodoItem>>>,
@@ -192,7 +197,7 @@ fn build_profile_research(
     reg.register(TaskTool::new(
         buffer_store,
         tool_event_tx,
-        Some(format!("{}/{}", cfg.model.provider, cfg.model.name)),
+        Some(format!("{}/{}", model.name(), model.model_name())),
     ));
 
     reg
