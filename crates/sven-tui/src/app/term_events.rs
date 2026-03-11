@@ -383,10 +383,19 @@ impl App {
                     abs_line,
                     inner_col,
                 },
-            ) if self.nvim.disabled => Some(Action::ChatContentClick {
-                abs_line,
-                inner_col,
-            }),
+            ) if self.nvim.disabled => {
+                // Only handle plain clicks; modifier+click (e.g. Ctrl+Click to open
+                // a link in the parent terminal) must not collapse/expand the message.
+                use crossterm::event::KeyModifiers;
+                if mouse.modifiers != KeyModifiers::NONE {
+                    None
+                } else {
+                    Some(Action::ChatContentClick {
+                        abs_line,
+                        inner_col,
+                    })
+                }
+            }
 
             // Clicks outside chat content clear any active selection.
             (MouseEventKind::Down(MouseButton::Left), _) if self.nvim.disabled => {
