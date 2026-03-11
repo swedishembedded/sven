@@ -1,7 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use chrono::Local;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -614,21 +613,20 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         return custom.to_string();
     }
 
-    // Enhanced agent identity highlighting Sven's unique features
+    // Agent identity — fully static so this block is stable across turns
+    // and can be cached by Anthropic's prompt-caching layer.
+    // Volatile context (git branch, CI env, working directory) is injected
+    // separately via system_dynamic_suffix and never touches this block.
     let agent_identity = format!(
         "You are Sven, a specialized AI coding agent built for professional software engineering.\n\n\
          Operating Mode: `{mode}`\n\n\
-         Current date and time: `{current_date_time}`\n\n\
-         Current working directory: `{current_working_directory}`\n\
          Core Capabilities:\n\
          - Multi-mode operation (Research, Plan, Agent) with dynamic mode switching\n\
          - Persistent memory across sessions via `update_memory` tool\n\
          - Integrated debugging support with GDB tools\n\
          - Markdown-driven workflows with frontmatter configuration\n\
          - Comprehensive linting and test integration\n\
-         - Full CI/CD pipeline integration and awareness",
-        current_date_time = Local::now().format("%Y-%m-%d %H:%M:%S"),
-        current_working_directory = std::env::current_dir().unwrap().display());
+         - Full CI/CD pipeline integration and awareness");
 
     let mode_instructions = match mode {
         AgentMode::Research => {
