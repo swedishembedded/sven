@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(No changes yet.)
+### Added
+- **OpenRouter Auto & Free routers**: `openrouter/auto` and `openrouter/free`
+  are now registered in the model catalog and resolvable via `--model
+  openrouter/auto` / `--model openrouter/free`. `openrouter/auto` is now the
+  default out-of-the-box model, replacing `openai/gpt-4o`, giving users with
+  `OPENROUTER_API_KEY` intelligent automatic model selection with no
+  configuration required. A new `auto_router_allowed_models` convenience key in
+  `driver_options` is automatically converted to the nested `plugins` structure
+  the OpenRouter Auto Router API expects.
+
+### Fixed
+- **TUI drag/resize**: overhauled into a single unified system — `SplitPrefs`
+  extracted from `LayoutCache` to hold durable user-controlled split dimensions;
+  `anchor_offset` added to `ResizeDrag` variants so borders lock to the cursor's
+  grab point instead of jumping on first contact; `PeersSplitBorder` added to
+  `HitArea` and all hit detection unified through a single `hit_test()` path.
+- **Peers-split border drag direction**: drag used the wrong reference rect
+  (`chat_list_pane` bottom instead of `peers_pane` bottom), causing the border
+  to snap to its minimum position on any upward drag. Fixed to use
+  `peers_pane.y + peers_pane.height` as the true sidebar bottom.
+
+### Changed
+- **Model catalog**: `models.yaml` is now parsed exactly once per process via a
+  `OnceLock`-backed `catalog_ref()`; all lookup functions iterate the cached
+  slice instead of cloning the full `Vec` on every call.
+- **Model provider**: `check_api_key_requirement` and
+  `transform_openrouter_options` extracted as private helpers in `lib.rs` to
+  reduce the length of `from_config` and keep each concern in its own function.
 
 ## [1.7.3] - 2026-03-11
 
