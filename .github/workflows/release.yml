@@ -29,9 +29,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y bats
 
-      - name: Build debug binary
-        run: cargo build
-
       - name: Run basic e2e tests
         run: make tests/e2e/basic
 
@@ -44,8 +41,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release binary
-        run: cargo build --release
+      - name: Release build
+        run: make release
 
       - name: Generate shell completions
         run: |
@@ -127,14 +124,19 @@ jobs:
           path: dist/
 
   # ── macOS universal binary ────────────────────────────────────────────────────
-  # OPENSSL_VENDORED=1 builds OpenSSL from source; needed because the macOS
-  # runners do not ship a system OpenSSL that satisfies webauthn-attestation-ca.
+  # Two-step strategy for OpenSSL:
+  #   • aarch64 (native on Apple Silicon runners): use Homebrew OpenSSL so we
+  #     avoid a from-source compile on the hot path.
+  #   • x86_64 (cross-compiled from aarch64): Homebrew only ships arm64 bottles,
+  #     so pkg-config cannot locate a usable library. OPENSSL_VENDORED=1 +
+  #     OPENSSL_NO_PKG_CONFIG=1 tells openssl-sys to compile OpenSSL from its
+  #     bundled source for the x86_64 target, bypassing pkg-config entirely.
+  # The Rust cache key includes "openssl-v1" so that any run whose cache was
+  # built before vendoring was introduced gets a clean rebuild.
   build-macos:
     name: macOS (universal) [experimental]
     runs-on: macos-latest
     continue-on-error: true
-    env:
-      OPENSSL_VENDORED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -142,11 +144,26 @@ jobs:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: openssl-v1
+
+      - name: Install OpenSSL (Homebrew)
+        run: brew install openssl@3
 
       - name: Build x86_64
+        env:
+          # Homebrew only ships arm64 bottles; for x86_64 cross-compilation
+          # vendor OpenSSL from source and disable pkg-config entirely.
+          OPENSSL_VENDORED: "1"
+          OPENSSL_NO_PKG_CONFIG: "1"
         run: cargo build --release --target x86_64-apple-darwin
 
       - name: Build aarch64
+        env:
+          # Use the Homebrew-installed arm64 OpenSSL directly.
+          OPENSSL_DIR: /opt/homebrew/opt/openssl@3
+          OPENSSL_NO_PKG_CONFIG: "1"
+          OPENSSL_STATIC: "1"
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Create universal binary
