@@ -1,13 +1,11 @@
 # Cross.toml — configuration for `cross` (Docker-based cross-compilation).
 #
-# We use OPENSSL_VENDORED=1 so that openssl-sys compiles OpenSSL 3.x from
-# source inside the cross container (the default cross image ships OpenSSL
-# 1.0.2, which is rejected by webauthn-attestation-ca).  The env passthrough
-# makes the host variable visible inside the Docker container; `perl` is
-# required by OpenSSL's ./Configure script.
+# OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
+# sven-node/Cargo.toml, so openssl-sys always compiles OpenSSL from its bundled
+# source (openssl-src).  The default cross image does not have `perl`, which is
+# required by OpenSSL's ./Configure script, so we install it in pre-build.
 
 [target.aarch64-unknown-linux-gnu]
-env.passthrough = ["OPENSSL_VENDORED"]
 pre-build = [
     "apt-get update && apt-get install -y --no-install-recommends perl",
 ]

@@ -72,17 +72,15 @@ jobs:
 
   # ── Linux aarch64 ────────────────────────────────────────────────────────────
   # Cross-compiles via `cross` (Docker-based), reuses completions from x86 job.
-  # OPENSSL_VENDORED=1 is forwarded into the cross container via Cross.toml so
-  # openssl-sys compiles OpenSSL 3.x from source (the default cross image ships
-  # OpenSSL 1.0.2 which webauthn-attestation-ca rejects).
+  # OpenSSL is vendored via the `openssl/vendored` Cargo feature in sven-node;
+  # Cross.toml installs `perl` in the cross container (required by OpenSSL's
+  # ./Configure script during the vendored source build).
   # continue-on-error: the x86_64 release is never blocked by an aarch64 failure.
   build-linux-aarch64:
     name: Linux aarch64 [experimental]
     runs-on: ubuntu-latest
     needs: build-linux-x86_64
     continue-on-error: true
-    env:
-      OPENSSL_VENDORED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -124,15 +122,13 @@ jobs:
           path: dist/
 
   # ── macOS universal binary ────────────────────────────────────────────────────
-  # Two-step strategy for OpenSSL:
-  #   • aarch64 (native on Apple Silicon runners): use Homebrew OpenSSL so we
-  #     avoid a from-source compile on the hot path.
-  #   • x86_64 (cross-compiled from aarch64): Homebrew only ships arm64 bottles,
-  #     so pkg-config cannot locate a usable library. OPENSSL_VENDORED=1 +
-  #     OPENSSL_NO_PKG_CONFIG=1 tells openssl-sys to compile OpenSSL from its
-  #     bundled source for the x86_64 target, bypassing pkg-config entirely.
-  # The Rust cache key includes "openssl-v1" so that any run whose cache was
-  # built before vendoring was introduced gets a clean rebuild.
+  # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
+  # sven-node/Cargo.toml (which owns the webauthn-rs dependency).  Cargo feature
+  # unification propagates `vendored` to the single openssl-sys compile unit, so
+  # OpenSSL is always built from source — no system library or Homebrew bottle
+  # required.  This is the only reliable strategy when cross-compiling from the
+  # Apple Silicon (aarch64) macos-latest runner to x86_64, because Homebrew does
+  # not ship x86_64 bottles on that architecture.
   build-macos:
     name: macOS (universal) [experimental]
     runs-on: macos-latest
@@ -144,26 +140,11 @@ jobs:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          key: openssl-v1
-
-      - name: Install OpenSSL (Homebrew)
-        run: brew install openssl@3
 
       - name: Build x86_64
-        env:
-          # Homebrew only ships arm64 bottles; for x86_64 cross-compilation
-          # vendor OpenSSL from source and disable pkg-config entirely.
-          OPENSSL_VENDORED: "1"
-          OPENSSL_NO_PKG_CONFIG: "1"
         run: cargo build --release --target x86_64-apple-darwin
 
       - name: Build aarch64
-        env:
-          # Use the Homebrew-installed arm64 OpenSSL directly.
-          OPENSSL_DIR: /opt/homebrew/opt/openssl@3
-          OPENSSL_NO_PKG_CONFIG: "1"
-          OPENSSL_STATIC: "1"
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Create universal binary

@@ -23,11 +23,15 @@ dashmap          = "6"
 url              = "2"
 async-stream     = "0.3"
 
-# ── TLS — pure Rust, no OpenSSL ───────────────────────────────────────────────
+# ── TLS ───────────────────────────────────────────────────────────────────────
 rustls-pemfile = "2"
 # rcgen 0.13 generates ECDSA P-256 certs (default key type).
 rcgen         = { version = "0.13", features = ["pem"] }
 time          = { version = "0.3", features = ["serde"] }
+# webauthn-rs-core and webauthn-attestation-ca transitively require openssl-sys.
+# The `vendored` feature bundles OpenSSL source (via openssl-src) so it compiles
+# from scratch on any platform — no system OpenSSL needed in CI or cross-builds.
+openssl       = { version = "0.10", features = ["vendored"] }
 
 # ── Rate limiting — GCRA algorithm, production-grade ─────────────────────────
 governor      = "0.6"
