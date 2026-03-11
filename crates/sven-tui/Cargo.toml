@@ -34,3 +34,6 @@ rustls      = { workspace = true }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 notify       = { workspace = true }
+
+[dev-dependencies]
+tempfile     = { workspace = true }

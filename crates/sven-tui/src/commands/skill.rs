@@ -20,6 +20,7 @@
 //! /sven/plan analyse task  → send sven/plan content + "Task: analyse task"
 //! ```
 
+use std::fs;
 use std::path::PathBuf;
 
 use sven_runtime::{AgentInfo, SkillInfo};
@@ -43,21 +44,18 @@ fn truncate_description(s: &str, max: usize) -> String {
 
 // ── SkillCommand ──────────────────────────────────────────────────────────────
 
-/// A slash command backed by a `SKILL.md` file.
+/// A slash command backed by a command `.md` file.
 ///
-/// Injecting the skill content into the conversation is intentionally cheap:
-/// only the parent skill's SKILL.md body is sent.  The body instructs the
-/// model to call `load_skill(<command>)` for each step when needed — sub-skill
-/// bodies are never pre-loaded.  This keeps token usage proportional to what
-/// the current task actually requires.
+/// Content is read from disk on each execution so that edits to the file
+/// are picked up without re-running discovery or refreshing the registry.
 pub struct SkillCommand {
     /// Sanitized command path (e.g. `"sven_plan"` for a skill at `"sven/plan"`
     /// — but since we preserve `/`, this is `"sven/plan"`).
     pub name: String,
     /// One-line description (truncated to 100 chars).
     pub description: String,
-    /// Full SKILL.md body, cached at discovery time.
-    pub content: String,
+    /// Absolute path to the command .md file; read in [`execute`] each time.
+    pub source_path: PathBuf,
     /// Absolute path to the skill directory (for future script resolution).
     #[allow(dead_code)]
     pub skill_dir: PathBuf,
@@ -82,8 +80,20 @@ impl SlashCommand for SkillCommand {
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {
+        let content = match fs::read_to_string(&self.source_path) {
+            Ok(s) => s,
+            Err(e) => {
+                return CommandResult {
+                    message_to_send: Some(format!(
+                        "Error: Failed to read command file {}: {e}",
+                        self.source_path.display()
+                    )),
+                    ..Default::default()
+                };
+            }
+        };
         CommandResult {
-            message_to_send: Some(build_content_message(&self.content, &args)),
+            message_to_send: Some(build_content_message(&content, &args)),
             ..Default::default()
         }
     }
@@ -135,7 +145,7 @@ pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> 
         result.push(SkillCommand {
             name: unique_name,
             description: truncate_description(&cmd.description, MAX_DESCRIPTION_LEN),
-            content: cmd.content.clone(),
+            source_path: cmd.skill_md_path.clone(),
             skill_dir: cmd.skill_dir.clone(),
         });
     }
@@ -256,13 +266,19 @@ mod tests {
     use sven_config::Config;
     use sven_runtime::AgentInfo;
 
-    fn make_cmd(name: &str, description: &str, content: &str) -> SkillCommand {
-        SkillCommand {
+    /// Build a SkillCommand that reads content from a temp file (so execute() loads from disk).
+    /// Returns the temp dir so the caller keeps it alive for the duration of the test.
+    fn make_cmd(name: &str, description: &str, content: &str) -> (SkillCommand, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cmd.md");
+        std::fs::write(&path, content).unwrap();
+        let cmd = SkillCommand {
             name: name.to_string(),
             description: truncate_description(description, MAX_DESCRIPTION_LEN),
-            content: content.to_string(),
-            skill_dir: PathBuf::from("/tmp"),
-        }
+            source_path: path.to_path_buf(),
+            skill_dir: dir.path().to_path_buf(),
+        };
+        (cmd, dir)
     }
 
     fn ctx() -> CommandContext {
@@ -290,7 +306,7 @@ mod tests {
 
     #[test]
     fn execute_no_args_returns_content() {
-        let cmd = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
+        let (cmd, _guard) = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
         let result = cmd.execute(vec![]);
         assert_eq!(
             result.message_to_send.as_deref(),
@@ -303,7 +319,7 @@ mod tests {
 
     #[test]
     fn execute_with_task_appends_task() {
-        let cmd = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
+        let (cmd, _guard) = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
         let result = cmd.execute(vec!["fix the CI".to_string()]);
         let msg = result.message_to_send.unwrap();
         assert!(msg.contains("## Instructions"));
@@ -312,7 +328,7 @@ mod tests {
 
     #[test]
     fn execute_multi_word_task_joined() {
-        let cmd = make_cmd("deploy", "Deploy.", "Deploy content.");
+        let (cmd, _guard) = make_cmd("deploy", "Deploy.", "Deploy content.");
         let result = cmd.execute(vec![
             "push".to_string(),
             "to".to_string(),
@@ -326,21 +342,21 @@ mod tests {
 
     #[test]
     fn execute_whitespace_only_args_treated_as_no_task() {
-        let cmd = make_cmd("deploy", "Deploy.", "Deploy content.");
+        let (cmd, _guard) = make_cmd("deploy", "Deploy.", "Deploy content.");
         let result = cmd.execute(vec!["  ".to_string()]);
         assert_eq!(result.message_to_send.as_deref(), Some("Deploy content."));
     }
 
     #[test]
     fn complete_returns_empty() {
-        let cmd = make_cmd("test", "Test.", "body");
+        let (cmd, _guard) = make_cmd("test", "Test.", "body");
         assert!(cmd.complete(0, "partial", &ctx()).is_empty());
     }
 
     #[test]
     fn description_truncated_to_100_chars() {
         let long_desc = "x".repeat(120);
-        let cmd = make_cmd("cmd", &long_desc, "body");
+        let (cmd, _guard) = make_cmd("cmd", &long_desc, "body");
         assert!(cmd.description.chars().count() <= MAX_DESCRIPTION_LEN);
     }
 
