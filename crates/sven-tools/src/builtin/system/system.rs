@@ -5,7 +5,7 @@
 //! model switching into a single action-dispatched interface.
 //!
 //! Actions:
-//! - `switch_mode`  — downgrade the agent's operating mode (agent → plan → research).
+//! - `switch_mode`  — switch the agent's operating mode in any direction.
 //! - `switch_model` — change the active LLM using an fzf-style fuzzy search string.
 
 use std::sync::Arc;
@@ -55,21 +55,8 @@ impl SystemTool {
 
         debug!(from = ?current, to = ?target, "system tool switch_mode");
 
-        let is_downgrade = match (current, target) {
-            (AgentMode::Agent, AgentMode::Plan) => true,
-            (AgentMode::Agent, AgentMode::Research) => true,
-            (AgentMode::Plan, AgentMode::Research) => true,
-            (from, to) if from == to => {
-                return ToolOutput::ok(&call.id, format!("already in {mode_str} mode"));
-            }
-            _ => false,
-        };
-
-        if !is_downgrade {
-            return ToolOutput::err(
-                &call.id,
-                format!("cannot switch from {current} to {target}: upgrading modes is not allowed"),
-            );
+        if current == target {
+            return ToolOutput::ok(&call.id, format!("already in {mode_str} mode"));
         }
 
         *mode_guard = target;
@@ -135,12 +122,12 @@ impl Tool for SystemTool {
     fn description(&self) -> &str {
         "Agent system controls: operating mode and model switching.\n\
          action: switch_mode | switch_model\n\n\
-         switch_mode: Downgrade operating mode (agent → plan → research). \
-         Upgrading requires the user to request it. \
-         Switch proactively: use plan for complex tasks before coding, research before exploring.\n\n\
+         switch_mode: Switch operating mode freely in any direction \
+         (research ↔ plan ↔ agent). Use plan before complex coding tasks, \
+         research before exploring. Upgrade to agent when ready to act.\n\n\
          switch_model: Switch the active LLM using a short fuzzy search string \
          (e.g. \"claude-opus\", \"gpt4o\", \"gemini-flash\"). \
-         The best catalog match is selected and applied for subsequent turns."
+         The best catalog match is selected and applied for the next turn."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -296,19 +283,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn research_cannot_upgrade_to_agent() {
-        let (tool, _current, _rx) = make_tool(AgentMode::Research);
+    async fn research_can_upgrade_to_agent() {
+        let (tool, current, _rx) = make_tool(AgentMode::Research);
         let out = tool.execute(&mode_call("agent")).await;
-        assert!(out.is_error);
-        assert!(out.content.contains("not allowed"));
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(*current.lock().await, AgentMode::Agent);
     }
 
     #[tokio::test]
-    async fn plan_cannot_upgrade_to_agent() {
-        let (tool, _current, _rx) = make_tool(AgentMode::Plan);
+    async fn plan_can_upgrade_to_agent() {
+        let (tool, current, _rx) = make_tool(AgentMode::Plan);
         let out = tool.execute(&mode_call("agent")).await;
-        assert!(out.is_error);
-        assert!(out.content.contains("not allowed"));
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(*current.lock().await, AgentMode::Agent);
+    }
+
+    #[tokio::test]
+    async fn research_can_upgrade_to_plan() {
+        let (tool, current, _rx) = make_tool(AgentMode::Research);
+        let out = tool.execute(&mode_call("plan")).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(*current.lock().await, AgentMode::Plan);
     }
 
     #[tokio::test]
