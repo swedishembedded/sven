@@ -3,14 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Session-level state: model and mode transitions.
 //!
-//! Previously five parallel fields on `App` tracked the active model:
-//! `effective_model_name`, `effective_model_cfg`, `pending_model_override`,
-//! `pending_model_display`, and `pending_mode_override`.  Any mutation that
-//! touched one but missed another caused a visible bug (wrong model in
-//! completions, stale status-bar display, override reverting unexpectedly).
-//!
-//! `SessionState` is the single source of truth for all of these.  All
-//! transitions go through its methods; the fields themselves are `pub` for
+//! `SessionState` is the single source of truth for the active model and mode.
+//! All transitions go through its methods; the fields themselves are `pub` for
 //! read access only (no direct mutation outside this module is expected).
 
 use sven_config::{AgentMode, ModelConfig};
@@ -18,14 +12,17 @@ use sven_config::{AgentMode, ModelConfig};
 /// Unified session state: active model/mode plus staged transitions.
 #[derive(Clone)]
 pub struct SessionState {
-    /// Config for the currently active model (what the agent is using).
+    /// Config for the currently active model (what the agent will use).
     pub model_cfg: ModelConfig,
     /// Cached `"{provider}/{name}"` string for status-bar display.
+    /// Updated immediately when `/model` is issued so the bar reflects the
+    /// switch without waiting for the next message to be sent.
     pub model_display: String,
     /// Model staged for the next message (set by `/model` command).
     ///
-    /// Also immediately reflected in `model_cfg` so that completions highlight
-    /// the staged model as `(current)` without waiting for a message send.
+    /// `model_display` and `model_cfg` are updated immediately so the status
+    /// bar and completion context reflect the choice right away.  This field
+    /// retains the config so `consume_staged()` can forward it to the agent.
     pub staged_model: Option<ModelConfig>,
     /// Mode staged for the next message (set by `/mode` command).
     pub staged_mode: Option<AgentMode>,
@@ -45,18 +42,24 @@ impl SessionState {
         }
     }
 
-    /// Stage a model to take effect with the next sent message.
+    /// Switch the active model.
     ///
-    /// Also updates `model_cfg` immediately so completions reflect the staged
-    /// model as the active one (avoids the need for a separate "completion context"
-    /// field).
+    /// Updates `model_display` and `model_cfg` immediately so the status bar
+    /// and completion list reflect the new model right away.  The config is
+    /// also stored in `staged_model` so `consume_staged()` can forward it to
+    /// the background agent task with the next submitted message.
     pub fn stage_model(&mut self, cfg: ModelConfig) {
+        self.model_display = format!("{}/{}", cfg.provider, cfg.name);
         self.model_cfg = cfg.clone();
         self.staged_model = Some(cfg);
     }
 
-    /// Stage a mode to take effect with the next sent message.
+    /// Switch the active mode.
+    ///
+    /// Updates `mode` immediately for display and stores in `staged_mode` so
+    /// `consume_staged()` can forward it to the agent with the next message.
     pub fn stage_mode(&mut self, mode: AgentMode) {
+        self.mode = mode;
         self.staged_mode = Some(mode);
     }
 
@@ -85,25 +88,14 @@ impl SessionState {
         };
     }
 
-    /// Consume any staged overrides and promote the staged model to baseline.
+    /// Consume any staged overrides and return them for embedding into the
+    /// next `QueuedMessage`.
     ///
-    /// Called when a message is about to be sent.  Promotes the staged model
-    /// to `model_display` (so the status bar reflects the switch before the
-    /// agent turn completes), then returns the staged `(model, mode)` pair for
-    /// embedding into the `QueuedMessage`.
+    /// `model_display`, `model_cfg`, and `mode` are already up to date (set
+    /// by `stage_model` / `stage_mode`), so this only clears the staged fields
+    /// and returns the configs for the agent task.
     pub fn consume_staged(&mut self) -> (Option<ModelConfig>, Option<AgentMode>) {
-        if let Some(ref cfg) = self.staged_model {
-            self.model_display = format!("{}/{}", cfg.provider, cfg.name);
-        }
         (self.staged_model.take(), self.staged_mode.take())
-    }
-
-    /// Label for the "next: …" hint shown in the status bar when a model
-    /// override is staged but not yet sent.
-    pub fn staged_model_label(&self) -> Option<String> {
-        self.staged_model
-            .as_ref()
-            .map(|c| format!("{}/{}", c.provider, c.name))
     }
 }
 
@@ -130,35 +122,45 @@ mod tests {
     }
 
     #[test]
-    fn stage_model_updates_model_cfg_for_completions() {
+    fn stage_model_updates_display_and_cfg_immediately() {
         let mut s = SessionState::new(mock_cfg("openai", "gpt-4o"), AgentMode::Agent);
         s.stage_model(mock_cfg("anthropic", "claude-opus-4-6"));
-        // model_cfg updated immediately for completions
+        // Both model_cfg and model_display updated immediately
         assert_eq!(s.model_cfg.provider, "anthropic");
-        // model_display NOT yet updated (still shows baseline)
-        assert_eq!(s.model_display, "openai/gpt-4o");
-        // staged_model set
+        assert_eq!(s.model_display, "anthropic/claude-opus-4-6");
+        // staged_model set so agent gets it on next message
         assert_eq!(s.staged_model.as_ref().unwrap().provider, "anthropic");
-        // staged label visible for status bar "next: …" hint
-        assert_eq!(
-            s.staged_model_label().as_deref(),
-            Some("anthropic/claude-opus-4-6")
-        );
     }
 
     #[test]
-    fn consume_staged_promotes_display_and_clears_staged() {
+    fn stage_mode_updates_mode_immediately() {
+        let mut s = SessionState::new(mock_cfg("openai", "gpt-4o"), AgentMode::Agent);
+        s.stage_mode(AgentMode::Research);
+        assert_eq!(s.mode, AgentMode::Research);
+        assert_eq!(s.staged_mode, Some(AgentMode::Research));
+    }
+
+    #[test]
+    fn consume_staged_clears_staged_and_returns_configs() {
         let mut s = SessionState::new(mock_cfg("openai", "gpt-4o"), AgentMode::Agent);
         s.stage_model(mock_cfg("anthropic", "claude-opus-4-6"));
         s.stage_mode(AgentMode::Research);
 
+        // display/mode already updated by stage_*
+        assert_eq!(s.model_display, "anthropic/claude-opus-4-6");
+        assert_eq!(s.mode, AgentMode::Research);
+
         let (model, mode) = s.consume_staged();
 
-        assert_eq!(s.model_display, "anthropic/claude-opus-4-6");
+        // staged fields cleared
         assert!(s.staged_model.is_none());
         assert!(s.staged_mode.is_none());
+        // returned values carry the configs for the agent
         assert_eq!(model.unwrap().provider, "anthropic");
         assert_eq!(mode, Some(AgentMode::Research));
+        // display/mode unchanged after consume
+        assert_eq!(s.model_display, "anthropic/claude-opus-4-6");
+        assert_eq!(s.mode, AgentMode::Research);
     }
 
     #[test]

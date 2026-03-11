@@ -217,9 +217,6 @@ impl App {
 
                         if let Some(mode) = result.mode_override {
                             self.session.stage_mode(mode);
-                            if !self.agent.busy {
-                                self.session.mode = mode;
-                            }
                         }
                     }
 

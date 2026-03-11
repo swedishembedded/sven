@@ -7,7 +7,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -35,8 +35,6 @@ pub struct StatusBar<'a> {
     pub cache_hit_pct: u8,
     pub agent_busy: bool,
     pub current_tool: Option<&'a str>,
-    pub pending_model: Option<&'a str>,
-    pub pending_mode: Option<AgentMode>,
     pub ascii: bool,
     /// Which pane currently has keyboard focus.
     pub focus: FocusPane,
@@ -143,23 +141,6 @@ impl Widget for StatusBar<'_> {
             Span::raw("")
         };
 
-        // Staged model/mode override notification.
-        let pending_span: Span<'static> = match (self.pending_model, self.pending_mode) {
-            (Some(m), Some(pm)) => Span::styled(
-                format!("  next: {m} [{pm}]"),
-                Style::default().fg(Color::Rgb(180, 100, 220)),
-            ),
-            (Some(m), None) => Span::styled(
-                format!("  next: {m}"),
-                Style::default().fg(Color::Rgb(180, 100, 220)),
-            ),
-            (None, Some(pm)) => Span::styled(
-                format!("  next: [{pm}]"),
-                Style::default().fg(Color::Rgb(180, 100, 220)),
-            ),
-            (None, None) => Span::raw(""),
-        };
-
         // ── Context-sensitive hint (right side) ───────────────────────────────
         // Show only the most relevant hint for the current state.
         let hint: &str = if self.in_search {
@@ -232,7 +213,6 @@ impl Widget for StatusBar<'_> {
             Span::styled(ctx_pct_str, ctx_style(self.context_pct)),
             token_span,
             tool_span,
-            pending_span,
             team_span,
         ];
 

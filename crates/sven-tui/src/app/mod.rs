@@ -574,21 +574,11 @@ impl App {
         self.ui.prune_toasts();
 
         // ── Status bar ────────────────────────────────────────────────────────
-        // In node-proxy mode the node owns model/mode; show "node" as the
-        // model label and suppress any staged-override hints.
-        let (status_model_name, status_pending_model, status_pending_mode) = if self.is_node_proxy {
-            ("node", None, None)
+        // In node-proxy mode the node owns model/mode; show "node" as model label.
+        let status_model_name: &str = if self.is_node_proxy {
+            "node"
         } else {
-            let pending = self.session.staged_model_label().as_deref().map(|s| {
-                // SAFETY: model_display lives in session which lives in self
-                // which outlives this frame closure.
-                unsafe { std::mem::transmute::<&str, &str>(s) }
-            });
-            (
-                &self.session.model_display as &str,
-                pending,
-                self.session.staged_mode,
-            )
+            &self.session.model_display
         };
         let in_edit = self.edit.active();
 
@@ -623,8 +613,6 @@ impl App {
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
                 current_tool: self.agent.current_tool.as_deref(),
-                pending_model: status_pending_model,
-                pending_mode: status_pending_mode,
                 ascii,
                 focus: self.ui.focus,
                 spinner_frame: self.agent.spinner_frame,
