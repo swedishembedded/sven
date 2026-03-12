@@ -74,10 +74,7 @@ use sven_tools::{
     BufGrepTool, BufReadTool, BufStatusTool, BufferSource, OutputBufferStore,
 };
 
-/// Maximum subagent nesting depth (checked via `SVEN_SUBAGENT_DEPTH`).
-const MAX_DEPTH: u32 = 2;
-
-/// Environment variable used to track nesting depth across processes.
+/// Environment variable set when running as a subagent (depth 0).
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 
 /// How long the subagent can be silent before we kill it (10 minutes).
@@ -203,7 +200,7 @@ impl Tool for TaskTool {
          - Do not use for anything you can easily do with shell.\n\
          - Do not spawn tasks for simple single step commands.\n\
          - Do not spawn tasks for exploring single files or anything that you can readily do directly. \n\
-         Sub-agents have access to all standard tools. Maximum nesting depth is 3."
+         Sub-agents have access to all standard tools. Sub-agents cannot spawn further sub-agents."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -427,19 +424,9 @@ impl Tool for TaskTool {
             .map(str::to_string)
             .or_else(|| self.default_model.clone());
 
-        // Check depth limit.
-        let current_depth: u32 = std::env::var(DEPTH_ENV)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-
-        if current_depth >= MAX_DEPTH {
-            return ToolOutput::err(
-                &call.id,
-                format!(
-                    "maximum sub-agent depth ({MAX_DEPTH}) reached — cannot spawn further sub-agents"
-                ),
-            );
+        // Subagents (DEPTH_ENV set) cannot spawn further sub-agents.
+        if std::env::var(DEPTH_ENV).is_ok() {
+            return ToolOutput::err(&call.id, "sub-agents cannot spawn further sub-agents");
         }
 
         let exe = match std::env::current_exe() {
@@ -474,7 +461,6 @@ impl Tool for TaskTool {
             handle = %handle_id,
             prompt = %prompt,
             mode = %mode,
-            depth = current_depth + 1,
             "task: spawning ACP sub-agent"
         );
 
@@ -497,7 +483,8 @@ impl Tool for TaskTool {
             tool_event_tx: self.tool_event_tx.clone(),
             cancel_rx,
         };
-        let depth_for_env = current_depth + 1;
+        // Subagents always run with depth 0.
+        let depth_for_env = 0u32;
 
         // The ACP ClientSideConnection is !Send (uses LocalBoxFuture internally).
         // We run the entire ACP session in a dedicated OS thread with its own
@@ -1143,20 +1130,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_blocked_at_max_depth() {
+    async fn spawn_blocked_when_subagent() {
         let _env = std::env::var(super::DEPTH_ENV).ok();
-        std::env::set_var(super::DEPTH_ENV, super::MAX_DEPTH.to_string());
+        std::env::set_var(super::DEPTH_ENV, "0");
         let t = make_task();
         let out = t.execute(&call(json!({"prompt": "do something"}))).await;
         std::env::remove_var(super::DEPTH_ENV);
         assert!(
             out.is_error,
-            "spawn should be blocked at max depth: {}",
+            "spawn should be blocked when running as subagent: {}",
             out.content
         );
         assert!(
-            out.content.contains("depth") || out.content.contains("maximum"),
-            "error should mention depth: {}",
+            out.content.contains("sub-agent") || out.content.contains("spawn"),
+            "error should mention sub-agent: {}",
             out.content
         );
     }

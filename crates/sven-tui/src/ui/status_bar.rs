@@ -131,7 +131,7 @@ impl Widget for StatusBar<'_> {
             };
             // Always show "out:" label when we have input tokens, even if 0.
             let out_label = if out_str.is_empty() {
-                "out: 0"
+                "0"
             } else {
                 out_str.as_str()
             };

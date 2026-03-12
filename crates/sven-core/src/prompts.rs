@@ -160,7 +160,7 @@ mod guidelines {
          - `task` returns a buffer handle immediately (e.g. `buf_0001`). Use `task(action=status)` to poll, \
          `task(action=grep)` to search output, `task(action=read)` to inspect specific line ranges.\n\
          - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool calls.\n\
-         - Sub-agents cannot spawn further sub-agents (depth limit of 3 is enforced automatically)."
+         - Sub-agents cannot spawn further sub-agents."
     }
 
     pub fn error_handling() -> &'static str {
