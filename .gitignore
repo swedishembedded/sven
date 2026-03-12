@@ -8,6 +8,9 @@
 .cargo/
 Cargo.lock
 
+# Python cache
+__pycache__
+
 # Generated shell completions (produced by `make deb` / `make release`)
 /target/completions/
 
