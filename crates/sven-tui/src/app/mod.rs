@@ -348,7 +348,7 @@ impl App {
                 SessionEntry::from_document_into(doc, initial_session_entry.id.clone());
         }
         let active_session_id = initial_session_entry.id.clone();
-        let mut initial_yaml_path = opts
+        let initial_yaml_path = opts
             .output_chat_path
             .clone()
             .or_else(|| opts.chat_path.clone())
@@ -364,58 +364,12 @@ impl App {
         // Load previously saved sessions from disk into the sidebar.
         session_manager.load_from_disk();
 
-        // ── Auto-restore: switch to the most recent session on fresh startup ──
-        // When starting without an explicit --chat / JSONL / --resume and with
-        // no pre-loaded content, automatically activate the most recently updated
-        // session from disk so the user sees their last conversation instead of
-        // a blank chat pane.
-        let mut auto_restore_title: Option<String> = None;
-        // `history_path` is Some iff --resume was supplied (initial_history was Some).
-        if loaded_doc.is_none()
-            && opts.chat_path.is_none()
-            && history_path.is_none()
-            && chat.segments.is_empty()
-        {
-            let blank_id = session_manager.active_id.clone();
-            let recent = session_manager
-                .display_order
-                .iter()
-                .filter(|id| **id != blank_id)
-                .find_map(|id| {
-                    let entry = session_manager.entries.get(id)?;
-                    let yaml_path = entry.yaml_path.clone()?;
-                    Some((id.clone(), yaml_path, entry.title.clone()))
-                });
-
-            if let Some((disk_id, disk_yaml_path, disk_title)) = recent {
-                let segs = std::fs::read_to_string(&disk_yaml_path)
-                    .ok()
-                    .and_then(|s| sven_input::parse_chat_document(&s).ok())
-                    .map(|doc| {
-                        sven_input::turns_to_messages(&doc.turns)
-                            .into_iter()
-                            .filter(|m| m.role != sven_model::Role::System)
-                            .map(ChatSegment::Message)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-
-                if !segs.is_empty() {
-                    // Remove the unused blank initial session and activate the disk one.
-                    session_manager.entries.remove(&blank_id);
-                    session_manager.display_order.retain(|id| *id != blank_id);
-                    session_manager.active_id = disk_id.clone();
-                    session_manager.promote_to_top(&disk_id);
-
-                    chat.segments = segs;
-                    initial_yaml_path = Some(disk_yaml_path);
-                    auto_restore_title = Some(disk_title);
-                }
-            }
-        }
-
-        let chat_title = auto_restore_title
-            .or_else(|| loaded_doc.map(|d| d.title))
+        // Do not auto-restore the most recent session on fresh startup.
+        // Start with a clean, new chat buffer. The first user message will
+        // create a new chat entry as usual.
+        let chat_title = loaded_doc
+            .as_ref()
+            .map(|d| d.title.clone())
             .unwrap_or_else(|| "New chat".to_string());
 
         let mut app = Self {

@@ -75,7 +75,7 @@ use sven_tools::{
 };
 
 /// Maximum subagent nesting depth (checked via `SVEN_SUBAGENT_DEPTH`).
-const MAX_DEPTH: u32 = 3;
+const MAX_DEPTH: u32 = 2;
 
 /// Environment variable used to track nesting depth across processes.
 const DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
@@ -202,6 +202,7 @@ impl Tool for TaskTool {
          **Important:**\n\
          - Do not use for anything you can easily do with shell.\n\
          - Do not spawn tasks for simple single step commands.\n\
+         - Do not spawn tasks for exploring single files or anything that you can readily do directly. \n\
          Sub-agents have access to all standard tools. Maximum nesting depth is 3."
     }
 

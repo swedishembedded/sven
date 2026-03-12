@@ -156,26 +156,62 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
 /// matching `ToolResult`.  Such interleaved messages violate the API's
 /// structural invariant and cause 400 errors.
 ///
+/// Also removes dangling `ToolCall` messages that have no corresponding
+/// `ToolResult`.  This can happen when a provider error (e.g. 402 Payment
+/// Required) occurs mid-stream after a `ToolCallStarted` event has been
+/// recorded in `chat.segments` but before the tool finishes and a
+/// `ToolCallFinished` / `ToolResult` segment is added.  Sending such a
+/// dangling `ToolCall` to the provider on the next user submission causes a
+/// 400 "No tool output found" error.
+///
+/// Uses a two-pass algorithm so that messages appearing *after* a dangling
+/// ToolCall (e.g. a follow-up "Please continue" from the user) are kept,
+/// while messages sandwiched between a paired ToolCall and its ToolResult are
+/// correctly dropped.
+///
 /// This is a defensive safeguard.  The primary fix is that `TodoUpdate` events
 /// now produce a `ChatSegment::TodoUpdate` (display-only) instead of a
 /// `ChatSegment::Message`, so they are never included here at all.
 fn sanitize_tool_groups(messages: Vec<Message>) -> Vec<Message> {
     use std::collections::HashSet;
+
+    // Pass 1: determine which ToolCall IDs actually have a matching ToolResult.
+    // Only these are "paired"; all others are "dangling" and will be skipped.
+    let mut has_result: HashSet<String> = HashSet::new();
+    for msg in &messages {
+        if let MessageContent::ToolResult { tool_call_id, .. } = &msg.content {
+            has_result.insert(tool_call_id.clone());
+        }
+    }
+
+    // Pass 2: build the output.
+    // - Dangling ToolCalls (no matching result) are skipped.
+    // - Messages that fall between a *paired* ToolCall and its ToolResult are
+    //   dropped (they would violate the API's ordering requirement).
+    // - Everything else is kept — including user messages that come *after* a
+    //   dangling ToolCall, which must not be lost.
     let mut out: Vec<Message> = Vec::with_capacity(messages.len());
-    let mut pending_call_ids: HashSet<String> = HashSet::new();
+    let mut pending_paired: HashSet<String> = HashSet::new();
 
     for msg in messages {
         match &msg.content {
             MessageContent::ToolCall { tool_call_id, .. } => {
-                pending_call_ids.insert(tool_call_id.clone());
-                out.push(msg);
+                if has_result.contains(tool_call_id) {
+                    pending_paired.insert(tool_call_id.clone());
+                    out.push(msg);
+                } else {
+                    tracing::warn!(
+                        %tool_call_id,
+                        "removing dangling ToolCall with no ToolResult to satisfy API invariant"
+                    );
+                }
             }
             MessageContent::ToolResult { tool_call_id, .. } => {
-                pending_call_ids.remove(tool_call_id);
+                pending_paired.remove(tool_call_id);
                 out.push(msg);
             }
             _ => {
-                if !pending_call_ids.is_empty() {
+                if !pending_paired.is_empty() {
                     tracing::warn!(
                         role = ?msg.role,
                         "dropping message between ToolCall and ToolResult to satisfy API invariant"
@@ -186,6 +222,7 @@ fn sanitize_tool_groups(messages: Vec<Message>) -> Vec<Message> {
             }
         }
     }
+
     out
 }
 
@@ -195,7 +232,8 @@ fn sanitize_tool_groups(messages: Vec<Message>) -> Vec<Message> {
 ///
 /// The returned list is passed through [`sanitize_tool_groups`] to remove any
 /// messages that ended up between a `ToolCall` and its `ToolResult` (e.g. due
-/// to a partial abort mid-tool).
+/// to a partial abort mid-tool), and to strip dangling `ToolCall` messages
+/// that have no corresponding `ToolResult`.
 pub fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
     let raw: Vec<Message> = segments
         .iter()
@@ -205,4 +243,121 @@ pub fn messages_for_resubmit(segments: &[ChatSegment]) -> Vec<Message> {
         })
         .collect();
     sanitize_tool_groups(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use sven_model::{FunctionCall, MessageContent, Role};
+
+    use super::*;
+
+    fn tool_call_msg(id: &str) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.to_string(),
+                function: FunctionCall {
+                    name: "some_tool".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            },
+        }
+    }
+
+    fn tool_result_msg(id: &str) -> Message {
+        Message::tool_result(id, "ok")
+    }
+
+    fn user_msg(text: &str) -> Message {
+        Message::user(text)
+    }
+
+    fn assistant_msg(text: &str) -> Message {
+        Message::assistant(text)
+    }
+
+    /// A single dangling ToolCall (no ToolResult) must be removed so that
+    /// the next submission does not trigger a provider 400 "No tool output
+    /// found" error.  This is the exact scenario described in the bug: a
+    /// provider error (e.g. 402) interrupts the turn mid-stream after
+    /// ToolCallStarted was recorded but before ToolCallFinished fires.
+    #[test]
+    fn dangling_tool_call_is_removed() {
+        let messages = vec![
+            user_msg("do something"),
+            tool_call_msg("call_1"),
+            // No ToolResult for call_1 — simulates the mid-stream error case.
+        ];
+        let out = sanitize_tool_groups(messages);
+        assert_eq!(out.len(), 1, "only the user message should survive");
+        assert!(matches!(out[0].content, MessageContent::Text(_)));
+    }
+
+    /// A complete ToolCall + ToolResult pair must be preserved intact.
+    #[test]
+    fn complete_tool_pair_is_kept() {
+        let messages = vec![
+            user_msg("do something"),
+            tool_call_msg("call_1"),
+            tool_result_msg("call_1"),
+            assistant_msg("done"),
+        ];
+        let out = sanitize_tool_groups(messages.clone());
+        assert_eq!(out.len(), 4);
+    }
+
+    /// Multiple ToolCalls in one turn where only some have results.  The
+    /// dangling ones (no ToolResult) must be stripped; the paired ones stay.
+    #[test]
+    fn partial_tool_group_strips_only_dangling_calls() {
+        let messages = vec![
+            user_msg("parallel tools"),
+            tool_call_msg("call_a"),
+            tool_call_msg("call_b"), // no result — dangling
+            tool_result_msg("call_a"),
+        ];
+        let out = sanitize_tool_groups(messages);
+        // call_b and its (absent) result should be gone; call_a pair survives.
+        let ids: Vec<_> = out
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolCall { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(!ids.contains(&"call_b"), "dangling call_b must be removed");
+        assert!(ids.contains(&"call_a"), "complete call_a pair must be kept");
+    }
+
+    /// A user message typed after an error that left a dangling ToolCall must
+    /// not be dropped.  This is the "Please continue" scenario.
+    #[test]
+    fn user_message_after_dangling_tool_call_is_kept() {
+        let messages = vec![
+            user_msg("original request"),
+            tool_call_msg("call_orphan"),
+            // No ToolResult — error occurred before tool finished.
+            user_msg("Please continue"),
+        ];
+        let out = sanitize_tool_groups(messages);
+        let user_texts: Vec<_> = out
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::Text(t) if m.role == Role::User => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            user_texts.contains(&"Please continue"),
+            "the follow-up user message must survive"
+        );
+        assert!(
+            !out.iter().any(|m| matches!(
+                &m.content,
+                MessageContent::ToolCall { tool_call_id, .. } if tool_call_id == "call_orphan"
+            )),
+            "the dangling ToolCall must be removed"
+        );
+    }
 }

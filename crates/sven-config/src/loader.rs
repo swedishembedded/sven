@@ -85,18 +85,21 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
 
     // When no model has been explicitly configured, auto-select the best
     // available provider based on the API keys present in the environment.
-    // Priority: Anthropic > OpenAI (both are excellent; Anthropic is ranked
-    // first because claude-sonnet-4-6 is the recommended default).
+    // Priority: OpenRouter > Anthropic > OpenAI.  OpenRouter is checked first
+    // because `openrouter/auto` is the recommended default — it routes to the
+    // best available model automatically.
     if !has_model_config {
-        if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        if std::env::var("OPENROUTER_API_KEY").is_ok() {
+            // Keep the struct defaults: provider="openrouter", name="openrouter/auto".
+        } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
             config.model.provider = "anthropic".into();
             config.model.name = "claude-sonnet-4-6".into();
         } else if std::env::var("OPENAI_API_KEY").is_ok() {
             config.model.provider = "openai".into();
             config.model.name = "gpt-5.2".into();
         }
-        // If neither key is available the defaults remain, and from_config()
-        // will produce a clear error when the provider is actually invoked.
+        // If no key is available the defaults remain (openrouter/auto), and
+        // from_config() will produce a clear error when actually invoked.
     }
 
     // If model.provider references a named provider, expand it into a full
@@ -737,5 +740,27 @@ model:
             .unwrap();
         }
         let _ = load(Some(f.path()));
+    }
+
+    #[test]
+    fn load_auto_detection_priority_openrouter_wins() {
+        // We must be careful with env vars in parallel tests, but this is
+        // the only test that sets these specific keys.
+        std::env::set_var("OPENROUTER_API_KEY", "sk-or-v1-test");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
+
+        // No config file -> auto-detection runs.
+        let cfg = load(None).unwrap();
+        assert_eq!(cfg.model.provider, "openrouter");
+        assert_eq!(cfg.model.name, "openrouter/auto");
+
+        // Now remove OpenRouter; Anthropic should win.
+        std::env::remove_var("OPENROUTER_API_KEY");
+        let cfg = load(None).unwrap();
+        assert_eq!(cfg.model.provider, "anthropic");
+        assert_eq!(cfg.model.name, "claude-sonnet-4-6");
+
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("OPENROUTER_API_KEY");
     }
 }

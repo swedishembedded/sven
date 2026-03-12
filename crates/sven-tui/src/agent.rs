@@ -49,6 +49,63 @@ pub enum AgentRequest {
     ListPeers,
 }
 
+/// Lightweight helper to generate a title from a given model configuration.
+/// Returns None if the title could not be generated.
+async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Option<String> {
+    // A modest token budget to keep titles short.
+    const TITLE_MAX_TOKENS: u32 = 50;
+
+    let title_model = match sven_model::from_config(cfg) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!(provider = %cfg.provider, model = %cfg.name, error = %e, "title model init failed");
+            return None;
+        }
+    };
+
+    let req = CompletionRequest {
+        messages: vec![
+            Message::system(
+                "Generate a very short conversation title (3-5 words, no quotes). Reply with only the title.",
+            ),
+            Message::user(user_text.trim()),
+        ],
+        tools: vec![],
+        stream: true,
+        system_dynamic_suffix: None,
+        cache_key: None,
+        max_output_tokens_override: Some(TITLE_MAX_TOKENS),
+    };
+
+    match title_model.complete(req).await {
+        Ok(mut stream) => {
+            let mut text = String::new();
+            while let Some(ev) = stream.next().await {
+                match ev {
+                    Ok(ResponseEvent::TextDelta(d)) => text.push_str(&d),
+                    Ok(ResponseEvent::Done | ResponseEvent::MaxTokens) => break,
+                    Ok(ResponseEvent::ThinkingDelta(_)) => (),
+                    Err(e) => {
+                        warn!(error = %e, "title generation stream error");
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+            let t = text.trim().trim_matches('"').trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "title generation request failed");
+            None
+        }
+    }
+}
+
 /// Background task that owns the `Agent` and forwards events back to the TUI.
 ///
 /// The startup model is passed as an already-resolved `ModelConfig` (the TUI
@@ -208,54 +265,24 @@ pub async fn agent_task(
                 let cfg = current_model_cfg.clone();
                 let event_tx = tx.clone();
                 tokio::spawn(async move {
-                    const TITLE_MAX_TOKENS: u32 = 20;
-                    let title = match sven_model::from_config(&cfg) {
-                        Ok(title_model) => {
-                            let req = CompletionRequest {
-                                messages: vec![
-                                    Message::system(
-                                        "Generate a very short conversation title (few words, no quotes). Reply with only the title.",
-                                    ),
-                                    Message::user(user_text.trim()),
-                                ],
-                                tools: vec![],
-                                stream: true,
-                                system_dynamic_suffix: None,
-                                cache_key: None,
-                                max_output_tokens_override: Some(TITLE_MAX_TOKENS),
-                            };
-                            match title_model.complete(req).await {
-                                Ok(mut stream) => {
-                                    let mut text = String::new();
-                                    while let Some(ev) = stream.next().await {
-                                        match ev {
-                                            Ok(ResponseEvent::TextDelta(d)) => text.push_str(&d),
-                                            Ok(ResponseEvent::Done | ResponseEvent::MaxTokens) => {
-                                                break
-                                            }
-                                            Ok(ResponseEvent::ThinkingDelta(_)) => {}
-                                            _ => {}
-                                        }
-                                    }
-                                    let t = text.trim().trim_matches('"');
-                                    if t.is_empty() {
-                                        None
-                                    } else {
-                                        Some(t.to_string())
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, "title generation failed");
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "title model init failed");
-                            None
-                        }
+                    // 1) Try OpenRouter Free model first (cheap path)
+                    let openrouter_title = {
+                        let mut free_cfg = cfg.clone();
+                        free_cfg.provider = "openrouter".to_string();
+                        free_cfg.name = "openrouter/free".to_string();
+                        free_cfg.base_url = None;
+                        generate_title_with_config(&free_cfg, &user_text).await
                     };
-                    // Always send a title so the TUI doesn't race with TurnComplete fallback.
+
+                    // 2) Fallback to current model
+                    let title = if openrouter_title.is_some() {
+                        openrouter_title
+                    } else {
+                        // OpenRouter free failed; try the user's configured model
+                        generate_title_with_config(&cfg, &user_text).await
+                    };
+
+                    // 3) Final title with heuristic fallback
                     let final_title = title.unwrap_or_else(|| make_title(&user_text));
                     let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;
                 });
