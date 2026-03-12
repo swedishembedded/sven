@@ -29,7 +29,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use sven_core::AgentEvent;
-use sven_input::{ChatDocument, ChatStatus, SessionId};
+use sven_input::{ChatDocument, ChatEntry, ChatStatus, SessionId};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -298,6 +298,7 @@ impl SessionEntry {
             status: self.status,
             created_at: self.created_at,
             updated_at: Utc::now(),
+            parent_id: self.parent_id.clone(),
             turns,
         }
     }
@@ -572,7 +573,8 @@ impl SessionManager {
     /// Load sessions from disk into the manager (without making any active).
     ///
     /// Sessions are inserted at the end of the display order (older entries
-    /// pushed down), sorted by updated_at descending.
+    /// pushed down), sorted by updated_at descending. Subagent sessions
+    /// (with parent_id) are restored as children under their parent.
     pub fn load_from_disk(&mut self) {
         let mut entries = match sven_input::list_chats(Some(50)) {
             Ok(e) => e,
@@ -584,9 +586,13 @@ impl SessionManager {
         // Sort newest first; already sorted by list_chats but re-sort to be safe.
         entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        for chat_entry in entries {
+        // Separate roots and children; register roots first so parents exist
+        // when we add children. Orphan children (parent not loaded) become roots.
+        let (roots, children): (Vec<_>, Vec<_>) =
+            entries.into_iter().partition(|e| e.parent_id.is_none());
+
+        for chat_entry in roots.into_iter().rev() {
             let id = chat_entry.id.clone();
-            // Don't overwrite the active session or any already-registered entry.
             if self.entries.contains_key(&id) {
                 continue;
             }
@@ -596,9 +602,9 @@ impl SessionManager {
                 title: chat_entry.title,
                 status: chat_entry.status,
                 yaml_path: Some(chat_entry.path),
-                created_at: chat_entry.updated_at, // best available approximation
+                created_at: chat_entry.updated_at,
                 updated_at: chat_entry.updated_at,
-                stored_chat: None, // lazy-loaded when activated
+                stored_chat: None,
                 stored_input_buffer: None,
                 stored_input_cursor: None,
                 stored_input_attachments: None,
@@ -617,8 +623,96 @@ impl SessionManager {
                 total_output_tokens: 0,
                 cache_hit_pct: 0,
             };
-            self.display_order.push(id.clone());
-            self.entries.insert(id, session_entry);
+            self.register(session_entry);
+        }
+
+        // Register children in topological order so each parent exists before its child.
+        // Iterate until all are registered; orphan children (parent not loaded) become roots.
+        let mut pending: Vec<ChatEntry> = children;
+        let mut prev_len = usize::MAX;
+        while prev_len != pending.len() {
+            prev_len = pending.len();
+            let mut remaining = Vec::new();
+            for chat_entry in pending {
+                let id = chat_entry.id.clone();
+                if self.entries.contains_key(&id) {
+                    continue;
+                }
+                let parent_id = chat_entry
+                    .parent_id
+                    .as_ref()
+                    .filter(|pid| self.entries.contains_key(pid))
+                    .cloned();
+
+                if parent_id.is_some() {
+                    let session_entry = SessionEntry {
+                        id: id.clone(),
+                        parent_id: parent_id.clone(),
+                        title: chat_entry.title,
+                        status: chat_entry.status,
+                        yaml_path: Some(chat_entry.path),
+                        created_at: chat_entry.updated_at,
+                        updated_at: chat_entry.updated_at,
+                        stored_chat: None,
+                        stored_input_buffer: None,
+                        stored_input_cursor: None,
+                        stored_input_attachments: None,
+                        stored_queue: None,
+                        session_state: None,
+                        jsonl_path: None,
+                        buffer_handle: None,
+                        initial_prompt: None,
+                        agent_tx: None,
+                        agent_cancel: Arc::new(Mutex::new(None)),
+                        busy: false,
+                        current_tool: None,
+                        context_pct: 0,
+                        total_context_tokens: 0,
+                        total_context_pct: 0,
+                        total_output_tokens: 0,
+                        cache_hit_pct: 0,
+                    };
+                    self.register(session_entry);
+                } else {
+                    remaining.push(chat_entry);
+                }
+            }
+            pending = remaining;
+        }
+        // Remaining orphans: parent not in loaded set; register as roots.
+        for chat_entry in pending {
+            let id = chat_entry.id.clone();
+            if self.entries.contains_key(&id) {
+                continue;
+            }
+            let session_entry = SessionEntry {
+                id: id.clone(),
+                parent_id: None,
+                title: chat_entry.title,
+                status: chat_entry.status,
+                yaml_path: Some(chat_entry.path),
+                created_at: chat_entry.updated_at,
+                updated_at: chat_entry.updated_at,
+                stored_chat: None,
+                stored_input_buffer: None,
+                stored_input_cursor: None,
+                stored_input_attachments: None,
+                stored_queue: None,
+                session_state: None,
+                jsonl_path: None,
+                buffer_handle: None,
+                initial_prompt: None,
+                agent_tx: None,
+                agent_cancel: Arc::new(Mutex::new(None)),
+                busy: false,
+                current_tool: None,
+                context_pct: 0,
+                total_context_tokens: 0,
+                total_context_pct: 0,
+                total_output_tokens: 0,
+                cache_hit_pct: 0,
+            };
+            self.register(session_entry);
         }
     }
 

@@ -364,6 +364,9 @@ impl App {
         // Load previously saved sessions from disk into the sidebar.
         session_manager.load_from_disk();
 
+        // Ensure the new chat created at startup stays at the top of the list.
+        session_manager.promote_to_top(&active_session_id);
+
         // Do not auto-restore the most recent session on fresh startup.
         // Start with a clean, new chat buffer. The first user message will
         // create a new chat entry as usual.

@@ -156,6 +156,9 @@ pub struct ChatDocument {
     pub created_at: DateTime<Utc>,
     /// When this document was last saved (UTC).
     pub updated_at: DateTime<Utc>,
+    /// Parent session ID when this is a subagent task conversation; `None` for roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<SessionId>,
     /// All turns in conversation order.
     #[serde(default)]
     pub turns: Vec<TurnRecord>,
@@ -173,6 +176,7 @@ impl ChatDocument {
             status: ChatStatus::Active,
             created_at: now,
             updated_at: now,
+            parent_id: None,
             turns: Vec::new(),
         }
     }
@@ -630,6 +634,8 @@ pub struct ChatEntry {
     pub updated_at: DateTime<Utc>,
     /// Session status.
     pub status: ChatStatus,
+    /// Parent session ID when this is a subagent task; `None` for roots.
+    pub parent_id: Option<SessionId>,
 }
 
 /// List all chat documents in the chat directory, most recently updated first.
@@ -664,6 +670,7 @@ pub fn list_chats(limit: Option<usize>) -> Result<Vec<ChatEntry>> {
                     turns,
                     updated_at: doc.updated_at,
                     status: doc.status,
+                    parent_id: doc.parent_id,
                 });
             }
             None => {

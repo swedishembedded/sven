@@ -449,13 +449,14 @@ impl App {
         } else {
             let turns = sven_input::records_to_turns(&records);
             sven_input::ChatDocument {
-                id: active_id,
+                id: active_id.clone(),
                 title: self.chat_title.clone(),
                 model,
                 mode,
                 status: sven_input::ChatStatus::Active,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
+                parent_id: None,
                 turns,
             }
         };
@@ -463,7 +464,15 @@ impl App {
         let result = if let Some(ref path) = yaml_path {
             sven_input::save_chat_to(path, &mut doc)
         } else {
-            sven_input::save_chat(&mut doc)
+            let path = sven_input::chat_path(&doc.id);
+            let r = sven_input::save_chat_to(&path, &mut doc);
+            if r.is_ok() {
+                if let Some(entry) = self.sessions.get_mut(&active_id) {
+                    entry.yaml_path = Some(path.clone());
+                }
+                self.yaml_path = Some(path);
+            }
+            r
         };
         if let Err(e) = result {
             tracing::debug!("failed to save YAML chat document on exit: {e}");
@@ -525,7 +534,7 @@ impl App {
 
         // Save as YAML chat document, preserving the original created_at timestamp.
         {
-            let yaml_path = self.yaml_path.clone();
+            let mut yaml_path = self.yaml_path.clone();
             let model = Some(self.session.model_display.clone());
             let mode = Some(self.session.mode.to_string());
             let active_id = self.sessions.active_id.clone();
@@ -535,18 +544,28 @@ impl App {
                 // Fallback for the rare case where the active entry isn't found.
                 let turns = sven_input::records_to_turns(&records);
                 sven_input::ChatDocument {
-                    id: active_id,
+                    id: active_id.clone(),
                     title: self.chat_title.clone(),
                     model,
                     mode,
                     status: sven_input::ChatStatus::Active,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
+                    parent_id: None,
                     turns,
                 }
             };
+            if yaml_path.is_none() {
+                let path = sven_input::chat_path(&doc.id);
+                yaml_path = Some(path.clone());
+                if let Some(entry) = self.sessions.get_mut(&active_id) {
+                    entry.yaml_path = Some(path.clone());
+                }
+                self.yaml_path = Some(path);
+            }
+            let path_for_save = yaml_path.clone();
             tokio::spawn(async move {
-                let result = if let Some(ref path) = yaml_path {
+                let result = if let Some(ref path) = path_for_save {
                     sven_input::save_chat_to(path, &mut doc)
                 } else {
                     sven_input::save_chat(&mut doc)

@@ -1159,6 +1159,7 @@ impl CiRunner {
                 status: sven_input::ChatStatus::Completed,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
+                parent_id: None,
                 turns,
             };
             if let Err(e) = sven_input::save_chat_to(chat_out_path, &mut doc) {
