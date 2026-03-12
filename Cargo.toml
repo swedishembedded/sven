@@ -67,7 +67,7 @@ notify       = "7"
 
 [package]
 name    = "sven"
-version = "1.7.3"
+version = "1.7.4"
 edition = "2021"
 description = "A CLI and CI AI coding agent"
 license = "Apache-2.0"
