@@ -1721,13 +1721,21 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     result
 }
 
+/// Environment variable set by task_tool when spawning a subagent.
+/// When set, stdout is reserved for ACP; we suppress all tracing to avoid
+/// any accidental pollution of the protocol stream.
+const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
+
 fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
     // In TUI mode tracing output written to stderr corrupts the ratatui
-    // display.  We suppress all logging unless the caller opts in:
+    // display.  When running as a subagent (SVEN_SUBAGENT_DEPTH set), stdout
+    // is reserved for ACP and must not be polluted by any printouts.
+    // We suppress all logging unless the caller opts in:
     //   • Set SVEN_LOG_FILE=/path/to/file  → logs go to that file (any mode)
     //   • Set RUST_LOG=...                 → respects the env filter
     //   • Pass --verbose (-v)              → enables debug/trace (headless only)
-    if is_tui {
+    let is_subagent = std::env::var(SUBAGENT_DEPTH_ENV).is_ok();
+    if is_tui || is_subagent {
         // Check for an explicit log file — advanced debugging only.
         if let Ok(log_path) = std::env::var("SVEN_LOG_FILE") {
             use std::sync::Mutex;
@@ -1750,7 +1758,8 @@ fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
                 return;
             }
         }
-        // No log file: suppress all output so the TUI is not corrupted.
+        // No log file: suppress all output so the TUI is not corrupted,
+        // or so the subagent's stdout (ACP) is not polluted.
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::filter::LevelFilter::OFF)
             .try_init();
