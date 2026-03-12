@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use agent_client_protocol::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification, Error,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
-    PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
+    ErrorCode, InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
+    PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     Result as AcpResult, SelectedPermissionOutcome, SessionMode, SessionModeId, SessionModeState,
     SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCallUpdate,
@@ -352,13 +352,25 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         });
 
         // Bridge AgentEvents to ACP session/update notifications.
-        let stop_reason = loop {
+        // When the agent returns Err without sending TurnComplete/Aborted/Error,
+        // the channel closes (None). We must treat that as failure so the task
+        // tool does not report success with empty content.
+        let mut stop_reason = None::<StopReason>;
+        let mut agent_error = None::<String>;
+
+        loop {
             match event_rx.recv().await {
                 Some(AgentEvent::TurnComplete) => {
-                    break StopReason::EndTurn;
+                    stop_reason = Some(StopReason::EndTurn);
+                    break;
                 }
                 Some(AgentEvent::Aborted { .. }) => {
-                    break StopReason::Cancelled;
+                    stop_reason = Some(StopReason::Cancelled);
+                    break;
+                }
+                Some(AgentEvent::Error(msg)) => {
+                    agent_error = Some(msg);
+                    break;
                 }
                 Some(event) => {
                     if let Some(update) = agent_event_to_session_update(&event) {
@@ -368,14 +380,45 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                     }
                 }
                 None => {
-                    break StopReason::EndTurn;
+                    // Channel closed without a terminal event — agent may have
+                    // returned Err. Await the task to confirm and surface failure.
+                    break;
+                }
+            }
+        }
+
+        if let Some(msg) = agent_error {
+            warn!(session = %session_id, error = %msg, "ACP prompt: agent reported error");
+            let _ = task.await;
+            return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
+        }
+
+        let stop_reason = match stop_reason {
+            Some(r) => {
+                let _ = task.await;
+                r
+            }
+            None => {
+                // Channel closed (None). The agent task may have failed.
+                match task.await {
+                    Ok(Ok(())) => StopReason::EndTurn,
+                    Ok(Err(e)) => {
+                        warn!(session = %session_id, error = %e, "ACP prompt: agent task failed");
+                        return Err(Error::new(
+                            i32::from(ErrorCode::InternalError),
+                            e.to_string(),
+                        ));
+                    }
+                    Err(e) => {
+                        warn!(session = %session_id, error = %e, "ACP prompt: agent task join failed");
+                        return Err(Error::new(
+                            i32::from(ErrorCode::InternalError),
+                            e.to_string(),
+                        ));
+                    }
                 }
             }
         };
-
-        if let Err(e) = task.await {
-            warn!("ACP agent task error: {e:?}");
-        }
 
         Ok(PromptResponse::new(stop_reason))
     }

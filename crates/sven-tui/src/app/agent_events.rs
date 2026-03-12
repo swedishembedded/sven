@@ -34,6 +34,7 @@ impl App {
                 ..
             } = event
             {
+                let active_id = self.sessions.active_id.clone();
                 if let Some(entry) = self.sessions.find_by_buffer_handle(handle_id) {
                     if entry.stored_chat.is_none() {
                         let mut chat = ChatState::new();
@@ -65,6 +66,27 @@ impl App {
                         }
                         _ => {}
                     }
+                    // If the user is currently viewing this subagent's chat, sync the
+                    // update to the displayed state so streaming content appears and
+                    // the spinner stops when the subagent finishes.
+                    if entry.id == active_id {
+                        apply_subagent_update(&mut self.chat, update);
+                        if matches!(
+                            update,
+                            SubagentUpdate::Finished { .. } | SubagentUpdate::Failed { .. }
+                        ) {
+                            self.agent.busy = false;
+                            self.agent.current_tool = None;
+                            self.agent.spinner_frame = 0;
+                            self.agent.streaming_tokens = 0;
+                        }
+                        self.rerender_chat().await;
+                        self.scroll_to_bottom();
+                        self.nvim_scroll_to_bottom().await;
+                        if let Some(pager) = &mut self.ui.pager {
+                            pager.set_lines(self.chat.lines.clone());
+                        }
+                    }
                 }
                 // SubagentEvents don't affect the parent session entry's busy state,
                 // so fall through to apply_background_event which will ignore them.
@@ -80,6 +102,11 @@ impl App {
             return false;
         }
 
+        // Invariant: from here on, session_id == self.sessions.active_id. Only the
+        // session that originated the event may receive its content. We must never
+        // add tool results, delegate summaries, or any other segment to the
+        // currently focused chat (self.chat) unless this event came from that
+        // session — which is guaranteed here.
         match event {
             AgentEvent::TextDelta(delta) => {
                 self.chat.streaming_is_thinking = false;

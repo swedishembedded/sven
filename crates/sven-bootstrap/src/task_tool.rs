@@ -698,6 +698,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     let mut final_text = String::new();
     let mut timed_out = false;
     let mut stop_reason = StopReason::EndTurn;
+    let mut prompt_error: Option<String> = None;
     let mut cancel_rx = cancel_rx;
 
     // Five concurrent branches (checked in biased order):
@@ -720,9 +721,14 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
 
             result = &mut prompt_task => {
                 match result {
-                    Ok(Ok(resp)) => { stop_reason = resp.stop_reason; }
-                    Ok(Err(e))   => { warn!("ACP prompt error: {e}"); }
-                    Err(_)       => {} // aborted via cancel branch
+                    Ok(Ok(resp)) => {
+                        stop_reason = resp.stop_reason;
+                    }
+                    Ok(Err(e)) => {
+                        warn!(handle = %handle_id, "ACP prompt failed: {e}");
+                        prompt_error = Some(e.to_string());
+                    }
+                    Err(_) => {} // aborted via cancel branch
                 }
                 break;
             }
@@ -811,6 +817,8 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             .lock()
             .await
             .fail(&handle_id, "cancelled".to_string());
+    } else if let Some(ref msg) = prompt_error {
+        buffer_store.lock().await.fail(&handle_id, msg.clone());
     } else {
         buffer_store.lock().await.finish(&handle_id, exit_code);
     }
@@ -833,6 +841,17 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         return ToolOutput::err(
             &call_id,
             "sub-agent timed out after 10 minutes of inactivity",
+        );
+    }
+
+    if let Some(msg) = prompt_error {
+        return ToolOutput::err(
+            &call_id,
+            format!(
+                "sub-agent failed: {msg}\n\
+                 Handle: {handle_id}\n\
+                 Description: {description}"
+            ),
         );
     }
 

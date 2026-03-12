@@ -195,7 +195,10 @@ impl Agent {
         // injection, and user message push — only the final loop call differs.
         let mode = *self.current_mode.lock().await;
 
-        self.ensure_fits_budget(&tx, mode, 0).await?;
+        if let Err(e) = self.ensure_fits_budget(&tx, mode, 0).await {
+            let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+            return Err(e);
+        }
 
         if self.session.messages.is_empty() {
             self.session.push(self.system_message(mode));
@@ -244,7 +247,10 @@ impl Agent {
         let mode = *self.current_mode.lock().await;
 
         // Proactive compaction before adding the new user message.
-        self.ensure_fits_budget(&tx, mode, 0).await?;
+        if let Err(e) = self.ensure_fits_budget(&tx, mode, 0).await {
+            let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+            return Err(e);
+        }
 
         // Inject system message if this is the first turn.
         if self.session.messages.is_empty() {
@@ -268,7 +274,10 @@ impl Agent {
         let mode = *self.current_mode.lock().await;
 
         // Proactive compaction before adding the new user message.
-        self.ensure_fits_budget(&tx, mode, 0).await?;
+        if let Err(e) = self.ensure_fits_budget(&tx, mode, 0).await {
+            let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+            return Err(e);
+        }
 
         if self.session.messages.is_empty() {
             self.session.push(self.system_message(mode));
@@ -316,7 +325,10 @@ impl Agent {
         self.session.replace_messages(msgs);
 
         // Proactive compaction after loading the (potentially large) history.
-        self.ensure_fits_budget(&tx, mode, 0).await?;
+        if let Err(e) = self.ensure_fits_budget(&tx, mode, 0).await {
+            let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+            return Err(e);
+        }
 
         self.session.push(Message::user(new_user_content));
         self.run_agentic_loop(tx).await
@@ -408,7 +420,10 @@ impl Agent {
                     let _ = tx.send(AgentEvent::Aborted { partial_text }).await;
                     return Ok(());
                 }
-                Some(Err(e)) => return Err(e),
+                Some(Err(e)) => {
+                    let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+                    return Err(e);
+                }
                 Some(Ok(t)) => t,
             };
 
@@ -518,7 +533,10 @@ impl Agent {
             }
 
             // Mid-loop budget gate.
-            self.ensure_fits_budget(&tx, mode, rounds).await?;
+            if let Err(e) = self.ensure_fits_budget(&tx, mode, rounds).await {
+                let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+                return Err(e);
+            }
         }
 
         Ok(())
@@ -669,7 +687,10 @@ impl Agent {
             // whether the session now exceeds the compaction threshold.
             // This prevents a single large tool output from causing a hard
             // failure on the next model call.
-            self.ensure_fits_budget(&tx, mode, rounds).await?;
+            if let Err(e) = self.ensure_fits_budget(&tx, mode, rounds).await {
+                let _ = tx.send(AgentEvent::Error(format!("{:#}", e))).await;
+                return Err(e);
+            }
         }
 
         Ok(())

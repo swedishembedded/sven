@@ -304,10 +304,15 @@ impl SessionEntry {
 
     /// Apply a background agent event to this entry's stored state.
     ///
-    /// Only metadata (busy, current_tool) is updated — we don't rebuild
-    /// `StyledLines` for inactive sessions since that's expensive and invisible.
+    /// Segment-producing events (ToolCallFinished, DelegateSummary, etc.) are
+    /// pushed to this session's `stored_chat` so that when the user switches
+    /// back, the conversation is complete. This ensures tool results and other
+    /// content are never shown in the wrong chat view — they are always stored
+    /// on the session that originated the event.
     pub fn apply_background_event(&mut self, event: &AgentEvent) {
         use sven_core::AgentEvent as Ev;
+        use sven_model::MessageContent;
+
         match event {
             Ev::TextDelta(_) | Ev::ThinkingDelta(_) => {
                 self.busy = true;
@@ -327,9 +332,48 @@ impl SessionEntry {
                 self.current_tool = Some(tc.name.clone());
                 self.updated_at = Utc::now();
             }
-            Ev::ToolCallFinished { tool_name, .. } => {
+            Ev::ToolCallFinished {
+                call_id,
+                tool_name,
+                output,
+                is_error,
+                ..
+            } => {
                 if self.current_tool.as_deref() == Some(tool_name.as_str()) {
                     self.current_tool = None;
+                }
+                if let Some(chat) = &mut self.stored_chat {
+                    let output_with_error = if *is_error {
+                        format!("error: {output}")
+                    } else {
+                        output.clone()
+                    };
+                    let result_seg = crate::chat::segment::ChatSegment::Message(
+                        sven_model::Message::tool_result(call_id, &output_with_error),
+                    );
+                    let insert_pos = chat
+                        .segments
+                        .iter()
+                        .rposition(|seg| {
+                            if let crate::chat::segment::ChatSegment::Message(m) = seg {
+                                if let MessageContent::ToolCall { tool_call_id, .. } = &m.content {
+                                    return tool_call_id == call_id;
+                                }
+                            }
+                            false
+                        })
+                        .map(|call_idx| call_idx + 1);
+                    if let Some(pos) = insert_pos {
+                        let shifted: std::collections::HashMap<usize, u8> = chat
+                            .expand_level
+                            .drain()
+                            .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
+                            .collect();
+                        chat.expand_level = shifted;
+                        chat.segments.insert(pos, result_seg);
+                    } else {
+                        chat.segments.push(result_seg);
+                    }
                 }
             }
             Ev::TurnComplete => {
@@ -342,9 +386,13 @@ impl SessionEntry {
                 self.busy = false;
                 self.current_tool = None;
             }
-            Ev::Error(_) => {
+            Ev::Error(msg) => {
                 self.busy = false;
                 self.current_tool = None;
+                if let Some(chat) = &mut self.stored_chat {
+                    chat.segments
+                        .push(crate::chat::segment::ChatSegment::Error(msg.clone()));
+                }
             }
             Ev::TokenUsage {
                 input,
@@ -361,7 +409,57 @@ impl SessionEntry {
                         ((prompt as f64 / input_budget as f64) * 100.0).clamp(0.0, 100.0) as u8;
                 }
             }
-            // Display-only events: no stored-state update needed.
+            Ev::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy,
+                turn,
+            } => {
+                if let Some(chat) = &mut self.stored_chat {
+                    chat.segments
+                        .push(crate::chat::segment::ChatSegment::ContextCompacted {
+                            tokens_before: *tokens_before,
+                            tokens_after: *tokens_after,
+                            strategy: strategy.clone(),
+                            turn: *turn,
+                        });
+                }
+            }
+            Ev::ThinkingComplete(content) => {
+                if let Some(chat) = &mut self.stored_chat {
+                    chat.segments
+                        .push(crate::chat::segment::ChatSegment::Thinking {
+                            content: content.clone(),
+                        });
+                }
+            }
+            Ev::CollabEvent(ev) => {
+                if let Some(chat) = &mut self.stored_chat {
+                    chat.segments
+                        .push(crate::chat::segment::ChatSegment::CollabEvent(ev.clone()));
+                }
+            }
+            Ev::DelegateSummary {
+                to_name,
+                task_title,
+                duration_ms,
+                status,
+                result_preview,
+            } => {
+                if let Some(chat) = &mut self.stored_chat {
+                    chat.segments
+                        .push(crate::chat::segment::ChatSegment::DelegateSummary {
+                            to_name: to_name.clone(),
+                            task_title: task_title.clone(),
+                            duration_ms: *duration_ms,
+                            status: status.clone(),
+                            result_preview: result_preview.clone(),
+                            expanded: false,
+                            inner: vec![],
+                        });
+                }
+            }
+            // Display-only or metadata-only: no stored segment.
             _ => {}
         }
     }
