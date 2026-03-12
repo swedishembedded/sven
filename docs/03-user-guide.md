@@ -289,7 +289,7 @@ hints in this order:
 4. `platformio.ini` — reads `debug_server` or `debug_tool`
 5. `CMakeLists.txt` / `Cargo.toml` — matches MCU family names (STM32, AT32, NRF, …)
 
-If discovery fails, sven asks you to supply the command explicitly.
+If discovery fails, sven asks the user for the target device name.
 
 **Example session**
 
@@ -297,7 +297,7 @@ If discovery fails, sven asks you to supply the command explicitly.
 User: Flash and debug my firmware. The device is an AT32F435RMT7.
 
 Agent calls:
-  gdb_start_server {"command": "JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331"}
+  gdb_start_server {"target": "AT32F435RMT7"}
   gdb_connect      {"executable": "build/firmware.elf"}
   gdb_command      {"command": "load"}
   gdb_command      {"command": "break main"}

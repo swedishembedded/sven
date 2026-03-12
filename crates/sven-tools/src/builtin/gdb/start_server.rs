@@ -93,9 +93,10 @@ impl Tool for GdbStartServerTool {
 
     fn description(&self) -> &str {
         "Start a GDB debug server in the background (e.g., JLinkGDBServer, OpenOCD, pyocd). \
-         If no command is provided, the agent will try to discover the correct command from \
-         project files such as .gdbinit, .vscode/launch.json, debugging/launch.json, \
-         openocd.cfg, or platformio.ini. \
+         Provide the target device name via `target` (e.g. 'STM32F407VG') or a full `command`. \
+         If neither is given, the agent attempts to discover the command from project files \
+         (.gdbinit, .vscode/launch.json, debugging/launch.json, openocd.cfg, platformio.ini). \
+         If discovery also fails, the tool will instruct you to ask the user for the target name. \
          Use gdb_connect after this to attach gdb-multiarch to the running server. \
          Only call this once per session; use gdb_stop to shut everything down. \
          If a zombie server is already listening on the target port from a previous session, \
@@ -109,8 +110,14 @@ impl Tool for GdbStartServerTool {
                 "command": {
                     "type": "string",
                     "description": "Full GDB server command to run \
-                        (e.g., 'JLinkGDBServer -device AT32F435RMT7 -if SWD -speed 4000 -port 2331'). \
-                        If omitted the agent discovers the command automatically."
+                        (e.g., 'JLinkGDBServer -device <TARGET> -if SWD -speed 4000 -port 2331'). \
+                        If omitted, the command is built from `target` or discovered automatically."
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Target device/chip name (e.g. 'STM32F407VG', 'nRF52840_xxAA'). \
+                        Used to build a default JLinkGDBServer command when `command` is not provided. \
+                        Ask the user for this value if it is not known."
                 },
                 "force": {
                     "type": "boolean",
@@ -119,7 +126,7 @@ impl Tool for GdbStartServerTool {
                         server running. Default: false."
                 }
             },
-            "required": ["command", "force"],
+            "required": [],
             "additionalProperties": false
         })
     }
@@ -159,15 +166,18 @@ impl Tool for GdbStartServerTool {
         // Determine command to run.
         let command = if let Some(cmd) = call.args.get("command").and_then(|v| v.as_str()) {
             cmd.to_string()
+        } else if let Some(target) = call.args.get("target").and_then(|v| v.as_str()) {
+            format!("JLinkGDBServer -device {target} -if SWD -speed 4000 -port 2331")
         } else {
             match discover_gdb_server_command().await {
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => {
                     return ToolOutput::err(
                         &call.id,
-                        "Could not discover a GDB server command from project files. \
-                     Please provide the 'command' argument explicitly, e.g.: \
-                     JLinkGDBServer -device <DEVICE> -if SWD -speed 4000 -port 2331",
+                        "Could not discover a GDB server command from project files, and no \
+                         target device was specified. Ask the user what device or chip they \
+                         are debugging (e.g. 'STM32F407VG', 'nRF52840_xxAA') and call \
+                         gdb_start_server again with the `target` argument.",
                     )
                 }
                 Err(e) => return ToolOutput::err(&call.id, format!("Discovery error: {e}")),
@@ -303,6 +313,7 @@ impl Tool for GdbStartServerTool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tempfile;
 
     use super::*;
     use crate::tool::ToolCall;
@@ -333,6 +344,45 @@ mod tests {
         let out = t.execute(&call(json!({"command": "false"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("exited immediately"));
+    }
+
+    #[tokio::test]
+    async fn target_parameter_builds_jlink_command() {
+        let t = make_tool();
+        let out = t.execute(&call(json!({"target": "STM32F407VG"}))).await;
+        // Regardless of whether the port is occupied or the binary is missing,
+        // the `target` path must never produce the "ask the user" message —
+        // that error is only for the case where no target/command was given at all.
+        assert!(
+            !out.content.contains("Ask the user"),
+            "target was ignored; got: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn no_command_no_target_no_discovery_tells_model_to_ask_user() {
+        // Run in an empty temp dir so discovery returns None.
+        let original_dir = std::env::current_dir().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let t = make_tool();
+        let out = t.execute(&call(json!({}))).await;
+
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("Ask the user"),
+            "expected prompt to ask user, got: {}",
+            out.content
+        );
+        assert!(
+            out.content.contains("target"),
+            "expected mention of `target` arg, got: {}",
+            out.content
+        );
     }
 
     #[tokio::test]
