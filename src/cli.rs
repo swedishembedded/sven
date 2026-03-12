@@ -1090,6 +1090,7 @@ impl Cli {
     ///
     /// Headless is triggered by any of:
     /// - `--headless` flag
+    /// - positional prompt (e.g. `sven "something"` — one-shot prompt implies headless)
     /// - stdin is not a terminal (piped input, e.g. `echo "task" | sven`)
     /// - stdout is not a terminal (piped output, e.g. `sven 'hi' | sven 'follow up'`)
     ///
@@ -1097,7 +1098,10 @@ impl Cli {
     /// a TTY stdin but a piped stdout.  Without this check it would try to start
     /// the full TUI and write escape codes into the pipe, causing it to hang.
     pub fn is_headless(&self) -> bool {
-        self.headless || !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal()
+        self.headless
+            || self.prompt.is_some()
+            || !std::io::stdin().is_terminal()
+            || !std::io::stdout().is_terminal()
     }
 
     /// Resolve the effective JSONL input path: --load-jsonl takes priority, then --jsonl.
