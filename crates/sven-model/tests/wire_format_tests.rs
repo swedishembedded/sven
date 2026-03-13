@@ -205,6 +205,7 @@ async fn openai_compat_formats_tools_correctly() {
             "properties": { "cmd": { "type": "string" } },
             "required": ["cmd"],
         }),
+        ..Default::default()
     };
     let mut stream = provider
         .complete(CompletionRequest {
@@ -306,6 +307,7 @@ async fn openai_compat_tool_call_events_collected() {
                 name: "shell".into(),
                 description: "runs shell commands".into(),
                 parameters: serde_json::json!({"type":"object"}),
+                ..Default::default()
             }],
             stream: true,
             ..Default::default()
@@ -521,6 +523,7 @@ async fn anthropic_tools_use_input_schema_not_parameters() {
                 name: "shell".into(),
                 description: "run commands".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"cmd":{"type":"string"}}}),
+                ..Default::default()
             }],
             stream: true,
             ..Default::default()
@@ -567,11 +570,13 @@ async fn anthropic_cache_tools_adds_cache_control_to_last_tool() {
                     name: "read_file".into(),
                     description: "read a file".into(),
                     parameters: serde_json::json!({"type":"object"}),
+                    ..Default::default()
                 },
                 ToolSchema {
                     name: "shell".into(),
                     description: "run commands".into(),
                     parameters: serde_json::json!({"type":"object"}),
+                    ..Default::default()
                 },
             ],
             stream: true,
@@ -632,6 +637,7 @@ async fn anthropic_cache_tools_with_extended_ttl_adds_1h_cache_control() {
                 name: "shell".into(),
                 description: "run commands".into(),
                 parameters: serde_json::json!({"type":"object"}),
+                ..Default::default()
             }],
             stream: true,
             ..Default::default()
@@ -991,6 +997,7 @@ async fn anthropic_cache_respects_4_breakpoint_budget() {
                 name: "shell".into(),
                 description: "run".into(),
                 parameters: serde_json::json!({"type":"object"}),
+                ..Default::default()
             }],
             stream: true,
             ..Default::default()
@@ -1334,11 +1341,13 @@ async fn openrouter_gemini_last_tool_gets_cache_control() {
                     name: "tool_a".into(),
                     description: "first tool".into(),
                     parameters: serde_json::json!({"type":"object","properties":{}}),
+                    ..Default::default()
                 },
                 ToolSchema {
                     name: "tool_b".into(),
                     description: "last tool".into(),
                     parameters: serde_json::json!({"type":"object","properties":{}}),
+                    ..Default::default()
                 },
             ],
             stream: true,

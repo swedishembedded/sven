@@ -26,6 +26,7 @@ pub use context_query::{
 };
 pub use context_tool::ContextTool;
 pub use registry::{build_cli_tool_registry, build_tool_registry};
+pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 
 // Re-export compound tools from sven-tools for convenience.

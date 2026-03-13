@@ -16,6 +16,7 @@ members = [
     "crates/sven-node",
     "crates/sven-node-client",
     "crates/sven-mcp",
+    "crates/sven-mcp-client",
     "crates/sven-acp",
     "crates/sven-team",
 ]

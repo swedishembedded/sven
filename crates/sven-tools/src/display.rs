@@ -32,43 +32,67 @@ use crate::registry::ToolSchema;
 /// Parameters: 3
 /// ```
 pub fn format_tools_list(tools: &[ToolSchema]) -> String {
-    sven_runtime::format_grouped_list(
-        tools,
-        "Tools",
-        "No tools registered.",
-        |t| t.name.split('_').next().unwrap_or(&t.name).to_string(),
-        |t| t.name.clone(),
-        |tool| {
-            let mut entry = format!("**{}**", tool.name);
-            if !tool.description.is_empty() {
-                // Use only the first line of multi-line descriptions and
-                // escape `|` so that tool descriptions with pipe characters
-                // (e.g. compound tools listing their actions) are never
-                // misinterpreted as markdown table syntax.
-                let first_line = tool
-                    .description
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .replace('|', "\\|");
-                entry.push_str(&format!(" — {first_line}"));
-            }
-            entry.push('\n');
+    let core: Vec<&ToolSchema> = tools.iter().filter(|t| !t.is_mcp).collect();
+    let mcp: Vec<&ToolSchema> = tools.iter().filter(|t| t.is_mcp).collect();
 
-            let param_count = tool
-                .parameters
-                .get("properties")
-                .and_then(|p| p.as_object())
-                .map(|o| o.len())
-                .unwrap_or(0);
-            if param_count > 0 {
-                entry.push_str(&format!("Parameters: {param_count}  \n"));
-            }
-            entry.push('\n');
-            entry
-        },
-    )
+    let mut out = format!("## Tools ({} total)\n\n", tools.len());
+
+    // ── Core tools ────────────────────────────────────────────────────────────
+    if !core.is_empty() {
+        out.push_str(&format!("### Built-in tools ({})\n\n", core.len()));
+        out.push_str(&format_tool_entries(&core));
+    }
+
+    // ── MCP tools grouped by server name ─────────────────────────────────────
+    if !mcp.is_empty() {
+        // Group by server prefix (before the first `-`).
+        let mut by_server: std::collections::BTreeMap<String, Vec<&ToolSchema>> =
+            std::collections::BTreeMap::new();
+        for t in &mcp {
+            let server = t.name.split('-').next().unwrap_or(&t.name).to_string();
+            by_server.entry(server).or_default().push(t);
+        }
+        for (server, group) in &by_server {
+            out.push_str(&format!("### MCP: {} ({} tools)\n\n", server, group.len()));
+            out.push_str(&format_tool_entries(group));
+        }
+    }
+
+    if tools.is_empty() {
+        return "## Tools\n\nNo tools registered.\n".to_string();
+    }
+
+    out
+}
+
+fn format_tool_entry(tool: &ToolSchema) -> String {
+    let mut entry = format!("**{}**", tool.name);
+    if !tool.description.is_empty() {
+        let first_line = tool
+            .description
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .replace('|', "\\|");
+        entry.push_str(&format!(" — {first_line}"));
+    }
+    entry.push('\n');
+    let param_count = tool
+        .parameters
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|o| o.len())
+        .unwrap_or(0);
+    if param_count > 0 {
+        entry.push_str(&format!("Parameters: {param_count}  \n"));
+    }
+    entry.push('\n');
+    entry
+}
+
+fn format_tool_entries(tools: &[&ToolSchema]) -> String {
+    tools.iter().map(|t| format_tool_entry(t)).collect()
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -84,6 +108,7 @@ mod tests {
             name: name.to_string(),
             description: description.to_string(),
             parameters: params,
+            is_mcp: false,
         }
     }
 
@@ -94,19 +119,41 @@ mod tests {
     }
 
     #[test]
-    fn tools_grouped_by_prefix() {
+    fn tools_listed_in_builtin_section() {
         let tools = vec![
             make_tool("buf_read", "Read buffer", json!({"properties": {}})),
             make_tool("buf_grep", "Grep buffer", json!({"properties": {}})),
             make_tool("run_command", "Run a command", json!({"properties": {}})),
         ];
         let out = format_tools_list(&tools);
-        assert!(out.contains("### buf"));
-        assert!(out.contains("### run"));
+        assert!(out.contains("Built-in tools (3)"));
         assert!(out.contains("**buf_read**"));
         assert!(out.contains("**buf_grep**"));
         assert!(out.contains("**run_command**"));
         assert!(out.contains("3 total"));
+    }
+
+    #[test]
+    fn mcp_tools_grouped_by_server() {
+        let tools = vec![
+            make_tool("read_file", "Read a file", json!({})),
+            ToolSchema {
+                name: "github-create_issue".to_string(),
+                description: "Create a GitHub issue".to_string(),
+                parameters: json!({}),
+                is_mcp: true,
+            },
+            ToolSchema {
+                name: "github-list_repos".to_string(),
+                description: "List GitHub repos".to_string(),
+                parameters: json!({}),
+                is_mcp: true,
+            },
+        ];
+        let out = format_tools_list(&tools);
+        assert!(out.contains("MCP: github (2 tools)"));
+        assert!(out.contains("**github-create_issue**"));
+        assert!(out.contains("**github-list_repos**"));
     }
 
     #[test]

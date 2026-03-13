@@ -10,9 +10,11 @@
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
 
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, ModelResolver};
+use sven_mcp_client::{McpManager, McpTool};
 use sven_model::ModelProvider;
 use sven_tools::{events::ToolEvent, PermissionRequester, SharedToolDisplays, SharedTools};
 
@@ -92,7 +94,20 @@ impl AgentBuilder {
     ///
     /// This method owns the creation of the shared mode lock and tool-event
     /// channel so that `SwitchModeTool` / `TodoTool` and the agent loop
-    /// operate on **the same** instances:
+    /// operate on **the same** instances.
+    pub async fn build(
+        self,
+        mode: AgentMode,
+        model: Arc<dyn ModelProvider>,
+        profile: ToolSetProfile,
+    ) -> Agent {
+        let (agent, _mcp) = self.build_with_mcp(mode, model, profile).await;
+        agent
+    }
+
+    /// Like [`build`] but also returns the [`McpManager`] so callers that
+    /// need to expose server status (e.g. the TUI `/mcp` inspector) can hold
+    /// on to it.
     ///
     /// 1. Creates `mode_lock` (same Arc for both the registry and the Agent).
     /// 2. Creates `(tool_event_tx, tool_event_rx)` (tx → tools, rx → Agent).
@@ -100,12 +115,12 @@ impl AgentBuilder {
     /// 4. Builds a [`ToolRegistry`] via `build_tool_registry`.
     /// 5. Probes the provider for the actual context window (`GET /props`).
     /// 6. Constructs `Agent::new(...)`.
-    pub async fn build(
+    pub async fn build_with_mcp(
         self,
         mode: AgentMode,
         model: Arc<dyn ModelProvider>,
         profile: ToolSetProfile,
-    ) -> Agent {
+    ) -> (Agent, Arc<McpManager>) {
         // Shared mode lock: SwitchModeTool holds a clone; the agent owns it.
         let mode_lock = Arc::new(Mutex::new(mode));
         // Shared event channel: tools send, agent drains.
@@ -118,8 +133,10 @@ impl AgentBuilder {
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
 
-        // Pass runtime.clone() as sub_agent_runtime so TaskTool sub-agents
-        // inherit the parent's project root, AGENTS.md, CI/git context.
+        let (mcp_event_tx, _mcp_event_rx) = mpsc::channel::<sven_mcp_client::McpEvent>(64);
+        let mcp_manager = McpManager::new(self.config.mcp_servers.clone(), mcp_event_tx);
+        mcp_manager.connect_all().await;
+
         let mut registry = build_tool_registry(
             &self.config,
             model.clone(),
@@ -128,6 +145,17 @@ impl AgentBuilder {
             tool_event_tx,
             runtime.clone(),
         );
+
+        // Register MCP tools after core tools so that the Anthropic provider
+        // can place BP1 after core tools and BP2 after MCP tools.
+        let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
+        if !mcp_tools.is_empty() {
+            for tool in mcp_tools {
+                registry.register(tool);
+            }
+        } else if !self.config.mcp_servers.is_empty() {
+            warn!("No MCP tools available yet (servers may still be connecting)");
+        }
 
         if let Some(req) = self.permission_requester {
             registry.set_permission_requester(req);
@@ -164,7 +192,7 @@ impl AgentBuilder {
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
         });
 
-        Agent::new_with_resolver(
+        let agent = Agent::new_with_resolver(
             model,
             Arc::new(registry),
             Arc::new(self.config.agent.clone()),
@@ -173,6 +201,8 @@ impl AgentBuilder {
             tool_event_rx,
             context_window,
             Some(model_resolver),
-        )
+        );
+
+        (agent, mcp_manager)
     }
 }

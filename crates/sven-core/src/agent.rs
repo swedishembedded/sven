@@ -797,6 +797,12 @@ impl Agent {
                         })
                         .await;
                 }
+                ToolEvent::McpServerAdded { name, config: _ } => {
+                    tracing::info!(server = %name, "MCP server added via system tool");
+                }
+                ToolEvent::McpServerRemoved(name) => {
+                    tracing::info!(server = %name, "MCP server removed via system tool");
+                }
             }
         }
     }
@@ -824,15 +830,14 @@ impl Agent {
         mode: AgentMode,
         with_tools: bool,
     ) -> anyhow::Result<(String, ToolSlotManager, bool)> {
-        let tools: Vec<sven_model::ToolSchema> = if with_tools {
-            self.tools
-                .schemas_for_mode(mode)
-                .into_iter()
-                .map(tool_schema_to_model)
-                .collect()
+        let raw_schemas = if with_tools {
+            self.tools.schemas_for_mode(mode)
         } else {
             vec![]
         };
+        let core_tool_count = raw_schemas.iter().filter(|s| !s.is_mcp).count();
+        let tools: Vec<sven_model::ToolSchema> =
+            raw_schemas.into_iter().map(tool_schema_to_model).collect();
 
         // Strip image content when the current model does not support images.
         let modalities = self.model.input_modalities();
@@ -853,6 +858,7 @@ impl Agent {
             // an explicit cache key (e.g. OpenRouter's prompt_cache_key).
             cache_key: Some(self.session.id.clone()),
             max_output_tokens_override: None,
+            core_tool_count,
         };
 
         let mut stream = match self.model.complete(req).await {
@@ -901,6 +907,7 @@ impl Agent {
                         system_dynamic_suffix: self.dynamic_context(),
                         cache_key: Some(self.session.id.clone()),
                         max_output_tokens_override: None,
+                        core_tool_count,
                     };
                     self.model
                         .complete(req2)
@@ -1494,5 +1501,6 @@ fn tool_schema_to_model(s: sven_tools::ToolSchema) -> sven_model::ToolSchema {
         name: s.name,
         description: s.description,
         parameters: s.parameters,
+        is_mcp: s.is_mcp,
     }
 }

@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use chrono::Local;
+use sven_mcp_client::ServerStatusSummary;
 use sven_runtime::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
 };
@@ -42,6 +43,7 @@ pub enum InspectorKind {
     Peers,
     Context,
     Tools,
+    Mcp,
 }
 
 impl InspectorKind {
@@ -53,6 +55,7 @@ impl InspectorKind {
             InspectorKind::Peers => "PEERS",
             InspectorKind::Context => "CONTEXT",
             InspectorKind::Tools => "TOOLS",
+            InspectorKind::Mcp => "MCP SERVERS",
         }
     }
 }
@@ -157,6 +160,15 @@ impl InspectorOverlay {
         let lines = render_markdown(&md, 0, ascii);
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Tools.title()),
+        }
+    }
+
+    /// Build the MCP servers inspector from a list of server status summaries.
+    pub fn for_mcp(statuses: &[ServerStatusSummary], ascii: bool) -> Self {
+        let md = format_mcp_markdown(statuses);
+        let lines = render_markdown(&md, 0, ascii);
+        Self {
+            pager: PagerOverlay::with_title(lines, InspectorKind::Mcp.title()),
         }
     }
 }
@@ -346,6 +358,61 @@ fn format_context_markdown(
             out.push('\n');
         }
     }
+
+    out
+}
+
+/// Render the MCP server list as markdown for the inspector.
+fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
+    let mut out = String::from("## MCP Servers\n\n");
+
+    if statuses.is_empty() {
+        out.push_str(
+            "_No MCP servers configured._\n\n\
+             Add servers to your `sven.yaml` config under `mcp_servers:`, \
+             or use the `system` tool with `add_mcp_server`.\n\n\
+             **Example config:**\n\
+             ```yaml\n\
+             mcp_servers:\n\
+               github:\n\
+                 command: npx\n\
+                 args: [-y, \"@modelcontextprotocol/server-github\"]\n\
+                 env:\n\
+                   GITHUB_PERSONAL_ACCESS_TOKEN: \"<token>\"\n\
+             ```\n",
+        );
+        return out;
+    }
+
+    out.push_str("| Server | Status | Tools | Prompts |\n");
+    out.push_str("|--------|--------|-------|---------|\n");
+
+    for s in statuses {
+        let icon = s.status_icon();
+        let status = s.status.label();
+        let detail = match &s.status {
+            sven_mcp_client::ServerStatus::Failed { error } => {
+                format!(" ({})", truncate_to_width_exact(error, 40))
+            }
+            sven_mcp_client::ServerStatus::Reconnecting { attempts } => {
+                format!(" (attempt {attempts})")
+            }
+            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+                " — run `/mcp auth <name>`".to_string()
+            }
+            _ => String::new(),
+        };
+        out.push_str(&format!(
+            "| **{}** | {} {} {}{} | {} | {} |\n",
+            s.name, icon, status, detail, "", s.tool_count, s.prompt_count,
+        ));
+    }
+
+    out.push_str("\n**Commands:**\n");
+    out.push_str("- `/mcp list` — list all servers\n");
+    out.push_str("- `/mcp enable <name>` — enable a server\n");
+    out.push_str("- `/mcp disable <name>` — disable a server\n");
+    out.push_str("- `/mcp auth <name>` — authenticate with OAuth\n");
 
     out
 }

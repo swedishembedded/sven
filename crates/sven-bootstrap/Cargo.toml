@@ -4,11 +4,12 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-sven-config  = { path = "../sven-config" }
-sven-model   = { path = "../sven-model" }
-sven-tools   = { path = "../sven-tools" }
-sven-core    = { path = "../sven-core" }
-sven-runtime = { path = "../sven-runtime" }
+sven-config      = { path = "../sven-config" }
+sven-model       = { path = "../sven-model" }
+sven-tools       = { path = "../sven-tools" }
+sven-core        = { path = "../sven-core" }
+sven-runtime     = { path = "../sven-runtime" }
+sven-mcp-client  = { path = "../sven-mcp-client" }
 anyhow       = { workspace = true }
 async-trait  = { workspace = true }
 futures      = { workspace = true }

@@ -48,6 +48,24 @@ pub struct AnthropicProvider {
 /// prompt length for Sonnet-class models (~1 024 tokens × 4 chars/token).
 const TOOL_RESULT_CACHE_CHARS: usize = 4096;
 
+/// Recursively sort JSON object keys so that equal schemas always produce
+/// the same byte representation, giving Anthropic's cache a stable prefix.
+fn canonicalize_json(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => {
+            let mut sorted: serde_json::Map<String, Value> = serde_json::Map::new();
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for k in keys {
+                sorted.insert(k.clone(), canonicalize_json(&map[k]));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(canonicalize_json).collect()),
+        other => other.clone(),
+    }
+}
+
 impl AnthropicProvider {
     pub fn new(
         model: String,
@@ -185,26 +203,46 @@ impl crate::ModelProvider for AnthropicProvider {
             }
         }
 
-        // Tools — optionally mark the last definition with cache_control so
-        // Anthropic caches the entire tools array as a prefix.
+        // Tools — optionally mark definitions with cache_control breakpoints.
+        //
+        // Dual-breakpoint strategy (when MCP tools are present):
+        //   BP1: last core tool     → stable; rarely changes
+        //   BP2: last MCP tool (=last tool overall) → changes when MCP toggled
+        //
+        // This preserves the core-tools cache when MCP servers are added/removed
+        // while still getting a cache hit for the MCP section between turns.
+        //
+        // Single-breakpoint strategy (no MCP tools):
+        //   BP: last tool — existing behaviour.
         let tools: Vec<Value> = if !req.tools.is_empty() && self.cache_tools {
-            let last = req.tools.len() - 1;
+            let last_idx = req.tools.len() - 1;
+            // BP1 = last core tool index (when there are both core and MCP tools).
+            let bp1: Option<usize> =
+                if req.core_tool_count > 0 && req.core_tool_count < req.tools.len() {
+                    Some(req.core_tool_count - 1)
+                } else {
+                    None
+                };
+
             req.tools
                 .iter()
                 .enumerate()
                 .map(|(i, t)| {
-                    if i == last {
+                    // Canonical (deterministic) key ordering in input_schema.
+                    let schema = canonicalize_json(&t.parameters);
+                    let needs_bp = (i == last_idx) || (bp1 == Some(i));
+                    if needs_bp {
                         json!({
                             "name": t.name,
                             "description": t.description,
-                            "input_schema": t.parameters,
+                            "input_schema": schema,
                             "cache_control": cache_ctrl,
                         })
                     } else {
                         json!({
                             "name": t.name,
                             "description": t.description,
-                            "input_schema": t.parameters,
+                            "input_schema": schema,
                         })
                     }
                 })
@@ -213,10 +251,11 @@ impl crate::ModelProvider for AnthropicProvider {
             req.tools
                 .iter()
                 .map(|t| {
+                    let schema = canonicalize_json(&t.parameters);
                     json!({
                         "name": t.name,
                         "description": t.description,
-                        "input_schema": t.parameters,
+                        "input_schema": schema,
                     })
                 })
                 .collect()

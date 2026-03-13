@@ -54,6 +54,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::inspect::PeersCommand));
         reg.register(Arc::new(builtin::inspect::ContextCommand));
         reg.register(Arc::new(builtin::inspect::ToolsCommand));
+        reg.register(Arc::new(builtin::inspect::McpCommand));
         reg
     }
 
@@ -109,14 +110,17 @@ impl CommandRegistry {
         }
     }
 
-    /// Query registered MCP servers for available prompts and register each
-    /// prompt as a slash command.
+    /// Query the `McpManager` for available prompts and register each as a
+    /// slash command `/<server>/<prompt>`.
     ///
-    /// **Currently a stub** — returns without registering anything.
-    /// Will be implemented when MCP integration is added.
+    /// Should be called once after the `McpManager` has finished connecting.
+    /// Re-calling is safe: existing commands with the same name are replaced.
     #[allow(dead_code)]
-    pub async fn discover_mcp_prompts(&mut self) {
-        let commands = super::mcp::discover_mcp_prompts().await;
+    pub async fn register_mcp_prompts(
+        &mut self,
+        manager: &std::sync::Arc<sven_mcp_client::McpManager>,
+    ) {
+        let commands = super::mcp::discover_mcp_prompts(manager).await;
         for cmd in commands {
             self.register(Arc::new(cmd));
         }

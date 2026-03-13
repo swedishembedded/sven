@@ -18,7 +18,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build release test tests/e2e tests/e2e/basic deb clean help fmt check docs docs-pdf \
+.PHONY: all build release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -123,8 +123,16 @@ benchmark/report:
 	@python3 benchmarks/report.py target/benchmark > target/benchmark/report.md
 	@cat target/benchmark/report.md
 
-## deb       – build a Debian package (output in target/debian/)
-deb: release
+# ── Debian package targets ─────────────────────────────────────────────────────
+## deb         – build optimised release Debian package (default; output in target/debian/)
+deb: deb/release
+
+## deb/debug   – build debug Debian package (no optimizations, fast build)
+deb/debug: build
+	@bash scripts/build-deb.sh --binary target/debug/sven --out-dir $(DEB_OUT)
+
+## deb/release – build fully optimised release Debian package
+deb/release: release
 	@if command -v cargo-deb >/dev/null 2>&1; then \
 		echo "Using cargo-deb..."; \
 		mkdir -p target/completions; \

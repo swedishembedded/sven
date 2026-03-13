@@ -31,6 +31,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use sven_bootstrap::OutputBufferStore;
+use sven_mcp_client::McpManager;
 
 use crate::{
     agent::{agent_task, AgentRequest},
@@ -165,6 +166,15 @@ pub struct App {
     /// registry is built.  Empty in node-proxy mode (tools are fetched live
     /// from the node when `/tools` is opened).
     pub(crate) shared_tools: sven_tools::SharedTools,
+    /// MCP manager — populated in local mode after the agent is built.
+    /// `None` in node-proxy mode.  Used by `/mcp` to display server status.
+    pub(crate) mcp_manager: Option<Arc<McpManager>>,
+    /// MCP prompt slash commands, keyed by command name.
+    ///
+    /// Populated after the McpManager connects and prompts are discovered.
+    /// Checked alongside `command_registry` during slash command dispatch.
+    pub(crate) mcp_prompt_commands:
+        std::collections::HashMap<String, Arc<dyn crate::commands::SlashCommand>>,
     /// Tool display registry — set by AgentBuilder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
@@ -389,6 +399,8 @@ impl App {
             shared_agents,
             shared_tools,
             shared_tool_displays,
+            mcp_manager: None,
+            mcp_prompt_commands: std::collections::HashMap::new(),
             history_path,
             jsonl_path,
             needs_terminal_recover: false,
@@ -964,6 +976,7 @@ impl App {
             let shared_tools_task = self.shared_tools.clone();
             let shared_tool_displays_task = self.shared_tool_displays.clone();
             let buffer_store_task = Arc::clone(&self.buffer_store);
+            let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<Arc<McpManager>>();
             tokio::spawn(async move {
                 agent_task(
                     cfg,
@@ -978,9 +991,20 @@ impl App {
                     shared_tools_task,
                     shared_tool_displays_task,
                     buffer_store_task,
+                    Some(mcp_tx),
                 )
                 .await;
             });
+            // Receive the McpManager from the agent task; also discover any
+            // prompts already available and register them as slash commands.
+            if let Ok(mgr) = mcp_rx.await {
+                let prompt_commands = crate::commands::mcp::discover_mcp_prompts(&mgr).await;
+                for cmd in prompt_commands {
+                    let cmd: Arc<dyn crate::commands::SlashCommand> = Arc::new(cmd);
+                    self.mcp_prompt_commands.insert(cmd.name().to_string(), cmd);
+                }
+                self.mcp_manager = Some(mgr);
+            }
         }
 
         // In node-proxy mode, request the initial peer list.
@@ -1547,6 +1571,7 @@ impl App {
             shared_tools,
             shared_tool_displays,
             buffer_store,
+            None, // mcp_manager_tx — not needed for sub-session restarts
         ));
     }
 

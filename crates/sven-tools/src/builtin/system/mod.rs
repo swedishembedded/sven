@@ -7,6 +7,7 @@ pub mod ask_question;
 pub mod memory;
 pub mod read_lints;
 pub mod skill;
+#[allow(clippy::module_inception)]
 pub mod system;
 pub mod todo;
 

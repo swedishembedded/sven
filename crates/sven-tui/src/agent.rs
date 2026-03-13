@@ -6,14 +6,14 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::{AgentBuilder, McpManager, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_input::make_title;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
 /// Request sent from the TUI to the background agent task.
@@ -75,6 +75,7 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
         system_dynamic_suffix: None,
         cache_key: None,
         max_output_tokens_override: Some(TITLE_MAX_TOKENS),
+        core_tool_count: 0,
     };
 
     match title_model.complete(req).await {
@@ -136,6 +137,8 @@ pub async fn agent_task(
     shared_tool_displays: SharedToolDisplays,
     // Pre-created buffer store; the TUI holds a clone to display live status.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
+    // Optional one-shot channel to deliver the McpManager to the TUI after build.
+    mcp_manager_tx: Option<oneshot::Sender<Arc<McpManager>>>,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> =
         match sven_model::from_config(&startup_model_cfg) {
@@ -162,12 +165,16 @@ pub async fn agent_task(
         ctx
     };
 
-    let mut agent = AgentBuilder::new(config.clone())
+    let (mut agent, mcp_manager) = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
         .with_shared_tools(shared_tools)
         .with_shared_tool_displays(shared_tool_displays)
-        .build(mode, model.clone(), profile)
+        .build_with_mcp(mode, model.clone(), profile)
         .await;
+
+    if let Some(tx_mcp) = mcp_manager_tx {
+        let _ = tx_mcp.send(mcp_manager);
+    }
 
     // Model/mode overrides are applied permanently: no revert after the turn.
     let _ = mode;

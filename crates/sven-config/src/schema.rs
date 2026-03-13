@@ -1,6 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Serde default helper — returns `true`.
@@ -10,6 +12,117 @@ use serde::{Deserialize, Serialize};
 /// to `bool::default()` (i.e. `false`), so a named function is required.
 fn default_true() -> bool {
     true
+}
+
+/// Transport configuration for an MCP server.
+///
+/// Supports stdio (subprocess) and HTTP (streamable HTTP / SSE) transports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpTransport {
+    /// Run an MCP server as a child process communicating over stdin/stdout.
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
+    /// Connect to an HTTP-based MCP server (Streamable HTTP or SSE).
+    Http {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
+impl Default for McpTransport {
+    fn default() -> Self {
+        McpTransport::Stdio {
+            command: String::new(),
+            args: vec![],
+        }
+    }
+}
+
+/// OAuth configuration for an MCP server that requires OAuth 2.0 authentication.
+///
+/// When present, sven will use the OAuth PKCE flow to obtain tokens.  Tokens
+/// are cached in `~/.config/sven/mcp-credentials.json` and refreshed
+/// automatically before expiry.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpOAuthConfig {
+    /// OAuth scopes to request during authorization.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Pre-registered OAuth client ID.  If absent, dynamic client registration
+    /// is attempted (per RFC 7591).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// Pre-registered OAuth client secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+fn default_mcp_timeout() -> u64 {
+    30
+}
+
+/// Configuration for a single external MCP server.
+///
+/// MCP servers extend sven with additional tools, prompts, and resources.
+/// Each server is identified by its key in the `mcp_servers` map; that key
+/// is used as the tool prefix (e.g. server `"github"` → tool `"github-list_repos"`).
+///
+/// Example YAML:
+/// ```yaml
+/// mcp_servers:
+///   github:
+///     transport:
+///       type: stdio
+///       command: npx
+///       args: ["-y", "@modelcontextprotocol/server-github"]
+///     env:
+///       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+///     enabled: true
+///
+///   atlassian:
+///     transport:
+///       type: http
+///       url: "https://mcp.atlassian.com/v2"
+///     oauth:
+///       scopes: ["read:jira-work", "read:confluence-content.all"]
+///     enabled: true
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Transport to use for this MCP server.
+    pub transport: McpTransport,
+    /// Whether this MCP server is active.  Disabled servers are not connected
+    /// and their tools are not available to the agent.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Environment variables to pass to a stdio MCP server subprocess.
+    /// Values support `${VAR}` and `${VAR:-default}` expansion.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// OAuth configuration.  Required for HTTP servers that use OAuth 2.0.
+    /// For servers that use a static bearer token, set it in `headers` instead.
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
+    /// Request timeout in seconds.
+    #[serde(default = "default_mcp_timeout")]
+    pub timeout_secs: u64,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            transport: McpTransport::default(),
+            enabled: true,
+            env: HashMap::new(),
+            oauth: None,
+            timeout_secs: default_mcp_timeout(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,6 +183,17 @@ pub struct Config {
     /// ```
     #[serde(default)]
     pub providers: std::collections::HashMap<String, ProviderEntry>,
+
+    /// External MCP (Model Context Protocol) servers.
+    ///
+    /// Each entry is keyed by a short identifier used as the tool prefix.
+    /// For example, a server named `"github"` exposes tools as `"github-list_repos"`.
+    ///
+    /// Config layers are merged: later files override earlier ones.  When sven
+    /// adds an MCP server via the `system` tool, it writes to the nearest
+    /// `.sven/config.yaml` (the last override layer).
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 /// Per-model parameter overrides nested under a [`ProviderEntry`].

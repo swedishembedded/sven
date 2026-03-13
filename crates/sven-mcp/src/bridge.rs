@@ -108,6 +108,7 @@ mod tests {
             name: name.to_string(),
             description: desc.to_string(),
             parameters: params,
+            is_mcp: false,
         }
     }
 

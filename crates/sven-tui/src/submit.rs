@@ -41,6 +41,8 @@
 //!   Replaces the agent's conversation history, appends the new user message,
 //!   and runs the agentic loop.
 
+use std::sync::Arc;
+
 use sven_model::Message;
 
 use crate::{
@@ -61,7 +63,26 @@ impl App {
                 current_model_provider: self.session.model_cfg.provider.clone(),
                 current_model_name: self.session.model_cfg.name.clone(),
             };
-            match dispatch_command(text, &self.command_registry, &ctx) {
+            // Try main registry first; fall back to MCP-prompt commands.
+            let dispatch_result =
+                dispatch_command(text, &self.command_registry, &ctx).or_else(|| {
+                    use crate::commands::parser::{parse, tokenise, ParsedCommand};
+                    let parsed = parse(text);
+                    let (cmd_name, cmd_args) = match &parsed {
+                        ParsedCommand::Complete { command, args } => {
+                            (command.clone(), args.clone())
+                        }
+                        ParsedCommand::PartialCommand { partial } => (partial.clone(), vec![]),
+                        ParsedCommand::CompletingArgs { command, .. } => {
+                            let all = tokenise(&text[1..]);
+                            (command.clone(), all.into_iter().skip(1).collect())
+                        }
+                        ParsedCommand::NotCommand => return None,
+                    };
+                    let cmd = self.mcp_prompt_commands.get(&cmd_name)?;
+                    Some((cmd_name, cmd.execute(cmd_args)))
+                });
+            match dispatch_result {
                 Some((_name, result)) => {
                     if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
                         return true;
@@ -93,6 +114,15 @@ impl App {
                         result.immediate_action,
                         Some(ImmediateAction::RefreshSkills)
                     ) {
+                        // Re-apply MCP config diff so changed/added/removed servers
+                        // are updated without disrupting unchanged connections.
+                        if let Some(ref mgr) = self.mcp_manager {
+                            let new_mcp_cfg = self.config.mcp_servers.clone();
+                            let mgr = Arc::clone(mgr);
+                            tokio::spawn(async move {
+                                mgr.update_config(new_mcp_cfg).await;
+                            });
+                        }
                         // Skills are rescanned lazily; a simple toast acknowledgement is sufficient.
                         self.ui
                             .push_toast(crate::app::ui_state::Toast::info("Skills refreshed"));
@@ -167,6 +197,14 @@ impl App {
                                     self.shared_tools.get().to_vec()
                                 };
                                 InspectorOverlay::for_tools(&tools, is_node, ascii)
+                            }
+                            InspectorKind::Mcp => {
+                                let statuses = if let Some(ref mgr) = self.mcp_manager {
+                                    mgr.server_statuses().await
+                                } else {
+                                    vec![]
+                                };
+                                InspectorOverlay::for_mcp(&statuses, ascii)
                             }
                         };
                         self.ui.inspector = Some(inspector);

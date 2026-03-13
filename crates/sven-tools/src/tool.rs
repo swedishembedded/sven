@@ -156,6 +156,16 @@ pub trait Tool: Send + Sync {
     fn output_category(&self) -> OutputCategory {
         OutputCategory::Generic
     }
+    /// Whether this tool comes from an external MCP server.
+    ///
+    /// MCP tools are placed after core tools in the prompt and get their own
+    /// cache breakpoint so that toggling MCP servers only invalidates the MCP
+    /// section of the prompt cache (not the stable core tools section).
+    ///
+    /// Built-in tools always return `false`.  [`McpTool`] returns `true`.
+    fn is_mcp(&self) -> bool {
+        false
+    }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;
 }

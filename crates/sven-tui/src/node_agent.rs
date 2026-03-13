@@ -421,6 +421,7 @@ pub async fn fetch_node_tools(url: &str, token: &str, insecure: bool) -> Vec<Too
                         name: t.name,
                         description: t.description,
                         parameters: t.parameters,
+                        is_mcp: false,
                     })
                     .collect::<Vec<_>>();
             }

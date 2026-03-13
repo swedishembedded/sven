@@ -150,6 +150,7 @@ impl DriverTestHarness {
                 "properties": {},
                 "required": [],
             }),
+            is_mcp: false,
         };
 
         let req = CompletionRequest {

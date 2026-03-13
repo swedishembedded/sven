@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde_json::Value;
-use sven_config::AgentMode;
+use sven_config::{AgentMode, McpServerConfig};
 
 /// A structured event streamed from a subagent over ACP.
 ///
@@ -133,4 +133,19 @@ pub enum ToolEvent {
         /// The structured event payload.
         update: SubagentUpdate,
     },
+    /// An MCP server was added or re-enabled via the `system` tool.
+    ///
+    /// The TUI / agent loop should connect the new server and re-register its
+    /// tools with the `ToolRegistry`.
+    McpServerAdded {
+        /// The server name (used as tool prefix, e.g. `"github"`).
+        name: String,
+        /// Full server configuration.
+        config: McpServerConfig,
+    },
+    /// An MCP server was removed or disabled via the `system` tool.
+    ///
+    /// The TUI / agent loop should disconnect the server and unregister its
+    /// tools from the `ToolRegistry`.
+    McpServerRemoved(String),
 }

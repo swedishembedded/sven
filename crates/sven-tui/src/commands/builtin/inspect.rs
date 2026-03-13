@@ -179,3 +179,52 @@ impl SlashCommand for ToolsCommand {
         }
     }
 }
+
+// ── /mcp ──────────────────────────────────────────────────────────────────────
+
+/// Open the MCP servers inspector.
+///
+/// Without arguments: opens the full-screen server status view.
+/// With subcommands: `list`, `enable <name>`, `disable <name>`, `auth <name>`.
+pub struct McpCommand;
+
+impl SlashCommand for McpCommand {
+    fn name(&self) -> &str {
+        "mcp"
+    }
+
+    fn description(&self) -> &str {
+        "Show and manage MCP servers. Usage: /mcp [list|enable|disable|auth] [name]"
+    }
+
+    fn complete(
+        &self,
+        arg_index: usize,
+        partial: &str,
+        _ctx: &CommandContext,
+    ) -> Vec<CompletionItem> {
+        if arg_index == 0 {
+            ["list", "enable", "disable", "auth"]
+                .iter()
+                .filter(|s| s.starts_with(partial))
+                .map(|s| CompletionItem {
+                    value: s.to_string(),
+                    display: s.to_string(),
+                    description: None,
+                    score: 0,
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    fn execute(&self, _args: Vec<String>) -> CommandResult {
+        CommandResult {
+            immediate_action: Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Mcp,
+            }),
+            ..Default::default()
+        }
+    }
+}

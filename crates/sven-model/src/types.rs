@@ -344,12 +344,22 @@ pub struct FunctionCall {
 }
 
 /// A tool schema provided to the model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolSchema {
     pub name: String,
     pub description: String,
     /// JSON Schema of the parameters object
     pub parameters: serde_json::Value,
+    /// Whether this tool came from an external MCP server.
+    ///
+    /// When `true`, the Anthropic provider places a cache breakpoint after the
+    /// last core tool AND after the last MCP tool.  This preserves the core
+    /// tools cache (BP1) when MCP servers change, while only invalidating the
+    /// cheaper MCP section (BP2).
+    ///
+    /// Not serialized in the API request; stripped before sending.
+    #[serde(skip, default)]
+    pub is_mcp: bool,
 }
 
 /// Request sent to a model provider.
@@ -379,6 +389,13 @@ pub struct CompletionRequest {
     /// title generation). When set, providers use this instead of their
     /// configured default for this request only.
     pub max_output_tokens_override: Option<u32>,
+    /// Number of "core" (non-MCP) tools at the start of `tools`.
+    ///
+    /// When > 0 and `tools.len() > core_tool_count`, the Anthropic provider
+    /// places a cache breakpoint after `tools[core_tool_count - 1]` (BP1) and
+    /// another after `tools.last()` (BP2).  When 0, only one breakpoint is
+    /// placed at the end of the entire tools list (existing behavior).
+    pub core_tool_count: usize,
 }
 
 /// A single streamed event from the model.
@@ -615,6 +632,7 @@ mod tests {
             name: "my_tool".into(),
             description: "desc".into(),
             parameters: serde_json::json!({ "type": "object" }),
+            ..Default::default()
         };
         let json = serde_json::to_string(&ts).unwrap();
         assert!(json.contains("my_tool"));

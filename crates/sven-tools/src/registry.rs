@@ -17,6 +17,12 @@ pub struct ToolSchema {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    /// Whether this tool comes from an external MCP server.
+    ///
+    /// MCP tools are placed after core tools in the prompt and get their own
+    /// Anthropic cache breakpoint (BP2) so that toggling servers only
+    /// invalidates the MCP section, not the stable core tools section (BP1).
+    pub is_mcp: bool,
 }
 
 /// Display metadata for a tool, used by the TUI for custom rendering.
@@ -185,19 +191,36 @@ impl ToolRegistry {
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// Build a sorted schema list, keeping only tools that satisfy `predicate`.
+    ///
+    /// Core tools (non-MCP) are listed first, sorted by name.
+    /// MCP tools follow, also sorted by name.
+    /// This ordering ensures stable cache breakpoints: BP1 = end of core tools,
+    /// BP2 = end of MCP tools.
     fn schemas_filtered(&self, predicate: impl Fn(&Arc<dyn Tool>) -> bool) -> Vec<ToolSchema> {
-        let mut schemas: Vec<ToolSchema> = self
-            .tools
-            .values()
-            .filter(|t| predicate(t))
-            .map(|t| ToolSchema {
+        let mut core: Vec<ToolSchema> = Vec::new();
+        let mut mcp: Vec<ToolSchema> = Vec::new();
+
+        for t in self.tools.values() {
+            if !predicate(t) {
+                continue;
+            }
+            let schema = ToolSchema {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 parameters: t.parameters_schema(),
-            })
-            .collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        schemas
+                is_mcp: t.is_mcp(),
+            };
+            if t.is_mcp() {
+                mcp.push(schema);
+            } else {
+                core.push(schema);
+            }
+        }
+
+        core.sort_by(|a, b| a.name.cmp(&b.name));
+        mcp.sort_by(|a, b| a.name.cmp(&b.name));
+        core.extend(mcp);
+        core
     }
 }
 
