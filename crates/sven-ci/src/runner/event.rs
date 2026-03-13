@@ -242,6 +242,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             cache_write_total,
             max_tokens,
             max_output_tokens,
+            cost_usd: _,
         } => {
             *s.session_input_total += input;
             *s.session_output_total += output;

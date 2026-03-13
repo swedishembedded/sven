@@ -361,6 +361,7 @@ impl crate::ModelProvider for BedrockProvider {
                 output_tokens: usage["outputTokens"].as_u64().unwrap_or(0) as u32,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
+                cost_usd: None,
             }));
         }
 

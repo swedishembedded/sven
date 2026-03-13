@@ -996,6 +996,13 @@ fn session_update_to_subagent_updates(
             let mode_text = format!("[Mode: {}]\n", mode_update.current_mode_id.0);
             updates.push(SubagentUpdate::TextDelta(mode_text));
         }
+        SessionUpdate::UsageUpdate(usage) => {
+            if let Some(ref cost) = usage.cost {
+                updates.push(SubagentUpdate::TokenUsage {
+                    cost_usd: cost.amount,
+                });
+            }
+        }
         _ => {}
     }
 

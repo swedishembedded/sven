@@ -442,6 +442,7 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                     output_tokens: usage["output_tokens"].as_u64().unwrap_or(0) as u32,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
+                    cost_usd: None,
                 });
             }
             Ok(ResponseEvent::TextDelta(String::new()))
@@ -456,6 +457,7 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
                         as u32,
                     cache_write_tokens: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
                         as u32,
+                    cost_usd: None,
                 });
             }
             Ok(ResponseEvent::TextDelta(String::new()))

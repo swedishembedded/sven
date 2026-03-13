@@ -106,6 +106,8 @@ pub(crate) struct SessionEntry {
     pub total_context_pct: u8,
     /// Cumulative output tokens across all completed turns in this session.
     pub total_output_tokens: u32,
+    /// Cumulative cost in USD from API responses (e.g. OpenRouter usage.cost).
+    pub total_cost_usd: f64,
     /// Cache-hit rate for the last turn (0-100 %).
     pub cache_hit_pct: u8,
 }
@@ -139,6 +141,7 @@ impl SessionEntry {
             total_context_tokens: 0,
             total_context_pct: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             cache_hit_pct: 0,
         }
     }
@@ -172,6 +175,7 @@ impl SessionEntry {
             total_context_tokens: 0,
             total_context_pct: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             cache_hit_pct: 0,
         }
     }
@@ -204,6 +208,7 @@ impl SessionEntry {
             total_context_tokens: 0,
             total_context_pct: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             cache_hit_pct: 0,
         }
     }
@@ -241,6 +246,7 @@ impl SessionEntry {
             total_context_tokens: 0,
             total_context_pct: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             cache_hit_pct: 0,
         }
     }
@@ -397,10 +403,12 @@ impl SessionEntry {
             }
             Ev::TokenUsage {
                 input,
+                output,
                 cache_read,
                 cache_write,
                 max_tokens,
                 max_output_tokens,
+                cost_usd,
                 ..
             } => {
                 if *max_tokens > 0 {
@@ -408,6 +416,12 @@ impl SessionEntry {
                     let prompt = *input + *cache_read + *cache_write;
                     self.context_pct =
                         ((prompt as f64 / input_budget as f64) * 100.0).clamp(0.0, 100.0) as u8;
+                }
+                if *output > 0 {
+                    self.total_output_tokens = self.total_output_tokens.saturating_add(*output);
+                }
+                if let Some(c) = cost_usd {
+                    self.total_cost_usd += c;
                 }
             }
             Ev::ContextCompacted {
@@ -621,6 +635,7 @@ impl SessionManager {
                 total_context_tokens: 0,
                 total_context_pct: 0,
                 total_output_tokens: 0,
+                total_cost_usd: 0.0,
                 cache_hit_pct: 0,
             };
             self.register(session_entry);
@@ -670,6 +685,7 @@ impl SessionManager {
                         total_context_tokens: 0,
                         total_context_pct: 0,
                         total_output_tokens: 0,
+                        total_cost_usd: 0.0,
                         cache_hit_pct: 0,
                     };
                     self.register(session_entry);
@@ -710,6 +726,7 @@ impl SessionManager {
                 total_context_tokens: 0,
                 total_context_pct: 0,
                 total_output_tokens: 0,
+                total_cost_usd: 0.0,
                 cache_hit_pct: 0,
             };
             self.register(session_entry);
@@ -724,6 +741,21 @@ impl SessionManager {
     /// Get a mutable reference to a session entry.
     pub fn get_mut(&mut self, id: &SessionId) -> Option<&mut SessionEntry> {
         self.entries.get_mut(id)
+    }
+
+    /// Total cost in USD for the given session including all subagent descendants.
+    pub fn total_cost_including_children(&self, id: &SessionId) -> f64 {
+        let mut total = self
+            .entries
+            .get(id)
+            .map(|e| e.total_cost_usd)
+            .unwrap_or(0.0);
+        if let Some(child_ids) = self.children.get(id) {
+            for cid in child_ids {
+                total += self.total_cost_including_children(cid);
+            }
+        }
+        total
     }
 
     /// True if any background session's agent task is currently busy.

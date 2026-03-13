@@ -98,11 +98,17 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         let fresh_input = prompt_tokens
             .saturating_sub(cache_read_tokens)
             .saturating_sub(cache_write_tokens);
+        // OpenRouter returns usage.cost; some providers use total_cost.
+        let cost_usd = usage
+            .get("cost")
+            .and_then(|v| v.as_f64())
+            .or_else(|| usage.get("total_cost").and_then(|v| v.as_f64()));
         return Ok(ResponseEvent::Usage {
             input_tokens: fresh_input,
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
             cache_write_tokens,
+            cost_usd,
         });
     }
 
@@ -123,6 +129,7 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             output_tokens: predicted_n,
             cache_read_tokens: cache_n,
             cache_write_tokens: 0,
+            cost_usd: None,
         });
     }
 

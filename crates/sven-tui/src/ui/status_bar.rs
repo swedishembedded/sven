@@ -32,6 +32,8 @@ pub struct StatusBar<'a> {
     pub total_context_tokens: u32,
     /// Cumulative output tokens across all completed turns in this session.
     pub total_output_tokens: u32,
+    /// Total cost in USD from API responses (including subagent descendants).
+    pub total_cost_usd: f64,
     pub cache_hit_pct: u8,
     pub agent_busy: bool,
     pub current_tool: Option<&'a str>,
@@ -129,13 +131,18 @@ impl Widget for StatusBar<'_> {
             } else {
                 String::new()
             };
+            let cost_str = if self.total_cost_usd > 0.0 {
+                format!(" ${:.4}", self.total_cost_usd)
+            } else {
+                String::new()
+            };
             // Always show "out:" label when we have input tokens, even if 0.
             let out_label = if out_str.is_empty() {
                 "0"
             } else {
                 out_str.as_str()
             };
-            let label = format!("  in: {in_str} out: {out_label}{cache_str}");
+            let label = format!("  in: {in_str} out: {out_label}{cache_str}{cost_str}");
             Span::styled(label, Style::default().fg(TEXT_DIM))
         } else {
             Span::raw("")

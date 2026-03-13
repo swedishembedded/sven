@@ -95,6 +95,8 @@ pub enum AgentEvent {
         /// The model's maximum output tokens per completion.  Zero means unknown.
         /// The usable input budget is `max_tokens − max_output_tokens`.
         max_output_tokens: usize,
+        /// Cost in USD when reported by the API (e.g. OpenRouter).
+        cost_usd: Option<f64>,
     },
     /// The agent has finished processing the current user turn
     TurnComplete,
@@ -273,6 +275,7 @@ pub trait AgentEventVisitor {
                 cache_write_total,
                 max_tokens,
                 max_output_tokens,
+                cost_usd: _,
             } => self.on_token_usage(
                 *input,
                 *output,

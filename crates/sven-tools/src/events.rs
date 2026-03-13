@@ -32,6 +32,8 @@ pub enum SubagentUpdate {
     Finished { final_text: String },
     /// The subagent timed out or terminated with an error.
     Failed { reason: String },
+    /// Token usage / cost from the subagent (when API reports it, e.g. OpenRouter).
+    TokenUsage { cost_usd: f64 },
 }
 
 /// The lifecycle state of a [`TodoItem`].

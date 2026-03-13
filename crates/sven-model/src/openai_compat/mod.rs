@@ -929,6 +929,7 @@ mod tests {
                     output_tokens: 80,
                     cache_read_tokens: 0,
                     cache_write_tokens: 4800,
+                    cost_usd: None,
                 }
             ),
             "unexpected event: {ev:?}"

@@ -569,6 +569,9 @@ impl App {
                 total_context_pct: self.agent.total_context_pct,
                 total_context_tokens: self.agent.total_context_tokens,
                 total_output_tokens: self.agent.total_output_tokens,
+                total_cost_usd: self
+                    .sessions
+                    .total_cost_including_children(&self.sessions.active_id),
                 cache_hit_pct: self.agent.cache_hit_pct,
                 agent_busy: self.agent.busy,
                 current_tool: self.agent.current_tool.as_deref(),
@@ -1395,6 +1398,7 @@ impl App {
                 self.agent.total_context_tokens = entry.total_context_tokens;
                 self.agent.total_context_pct = entry.total_context_pct;
                 self.agent.total_output_tokens = entry.total_output_tokens;
+                self.agent.total_cost_usd = entry.total_cost_usd;
                 self.agent.cache_hit_pct = entry.cache_hit_pct;
                 self.agent.context_pct = entry.context_pct;
                 self.agent.current_tool = entry.current_tool.clone();
@@ -1408,6 +1412,7 @@ impl App {
                 self.agent.total_context_tokens = entry.total_context_tokens;
                 self.agent.total_context_pct = entry.total_context_pct;
                 self.agent.total_output_tokens = entry.total_output_tokens;
+                self.agent.total_cost_usd = entry.total_cost_usd;
                 self.agent.cache_hit_pct = entry.cache_hit_pct;
             }
         }
@@ -1473,6 +1478,7 @@ impl App {
             entry.total_context_tokens = self.agent.total_context_tokens;
             entry.total_context_pct = self.agent.total_context_pct;
             entry.total_output_tokens = self.agent.total_output_tokens;
+            entry.total_cost_usd = self.agent.total_cost_usd;
             entry.cache_hit_pct = self.agent.cache_hit_pct;
             entry.updated_at = chrono::Utc::now();
         }

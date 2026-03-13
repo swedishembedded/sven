@@ -8,9 +8,9 @@
 //! unit-tested trivially.
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, CurrentModeUpdate, Plan, PlanEntry, PlanEntryPriority,
+    ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Plan, PlanEntry, PlanEntryPriority,
     PlanEntryStatus, SessionModeId, SessionUpdate, ToolCall as AcpToolCall, ToolCallStatus,
-    ToolKind,
+    ToolKind, UsageUpdate,
 };
 use sven_config::AgentMode;
 use sven_core::AgentEvent;
@@ -113,8 +113,15 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
         // visible change in the subagent chat view.
         AgentEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 
+        // When the API reports cost (e.g. OpenRouter), forward to parent via UsageUpdate.
+        AgentEvent::TokenUsage {
+            cost_usd: Some(c), ..
+        } => Some(SessionUpdate::UsageUpdate(
+            UsageUpdate::new(0, 0).cost(Cost::new(*c, "USD")),
+        )),
+
         // The remaining events have no ACP representation at this time.
-        AgentEvent::TokenUsage { .. }
+        AgentEvent::TokenUsage { cost_usd: None, .. }
         | AgentEvent::ContextCompacted { .. }
         | AgentEvent::Question { .. }
         | AgentEvent::QuestionAnswer { .. }

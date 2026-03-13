@@ -41,6 +41,8 @@ pub(crate) struct AgentConn {
     pub output_tokens: u32,
     /// True cumulative output tokens across all completed turns in this session.
     pub total_output_tokens: u32,
+    /// Cumulative cost in USD from API responses (e.g. OpenRouter usage.cost).
+    pub total_cost_usd: f64,
     /// Cache-hit rate for the last turn (0–100 %).
     pub cache_hit_pct: u8,
     /// Live approximate output token count for the current turn (chars/4).
@@ -76,6 +78,7 @@ impl AgentConn {
             max_output_tokens: 0,
             output_tokens: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             cache_hit_pct: 0,
             streaming_tokens: 0,
             spinner_frame: 0,

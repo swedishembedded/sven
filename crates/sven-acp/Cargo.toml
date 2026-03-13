@@ -20,7 +20,7 @@ tracing          = { workspace = true }
 uuid             = { workspace = true }
 async-trait      = { workspace = true }
 futures          = { workspace = true }
-agent-client-protocol = "0.10"
+agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"] }
 sven-node-client = { path = "../sven-node-client" }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tokio-util       = { version = "0.7", features = ["compat"] }

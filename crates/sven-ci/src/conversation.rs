@@ -370,6 +370,7 @@ fn collect_event_full(event: AgentEvent, records: &mut Vec<ConversationRecord>, 
             cache_write_total,
             max_tokens,
             max_output_tokens,
+            cost_usd: _,
         } => {
             let line = format_token_usage_line(
                 input,

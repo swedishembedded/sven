@@ -64,6 +64,9 @@ impl App {
                             entry.busy = false;
                             entry.current_tool = None;
                         }
+                        SubagentUpdate::TokenUsage { cost_usd } => {
+                            entry.total_cost_usd += cost_usd;
+                        }
                         _ => {}
                     }
                     // If the user is currently viewing this subagent's chat, sync the
@@ -71,6 +74,9 @@ impl App {
                     // the spinner stops when the subagent finishes.
                     if entry.id == active_id {
                         apply_subagent_update(&mut self.chat, update);
+                        if let SubagentUpdate::TokenUsage { cost_usd } = update {
+                            self.agent.total_cost_usd += cost_usd;
+                        }
                         if matches!(
                             update,
                             SubagentUpdate::Finished { .. } | SubagentUpdate::Failed { .. }
@@ -263,6 +269,7 @@ impl App {
                 cache_write,
                 max_tokens,
                 max_output_tokens,
+                cost_usd,
                 ..
             } => {
                 // Input side: update when provider reports prompt token counts.
@@ -305,6 +312,9 @@ impl App {
                     self.agent.output_tokens += output;
                     // Discard the streaming estimate once the exact count is in.
                     self.agent.streaming_tokens = 0;
+                }
+                if let Some(c) = cost_usd {
+                    self.agent.total_cost_usd += c;
                 }
             }
             AgentEvent::TitleGenerated(title) => {
@@ -585,6 +595,9 @@ impl App {
                             entry.busy = false;
                             entry.current_tool = None;
                         }
+                        SubagentUpdate::TokenUsage { cost_usd } => {
+                            entry.total_cost_usd += cost_usd;
+                        }
                         _ => {}
                     }
                 }
@@ -669,6 +682,9 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
             flush_streaming_buffer(chat);
             chat.segments.push(ChatSegment::Error(reason.clone()));
             chat.streaming_is_thinking = false;
+        }
+        SubagentUpdate::TokenUsage { .. } => {
+            // Cost is tracked in SessionEntry.total_cost_usd, not in chat.
         }
     }
 }

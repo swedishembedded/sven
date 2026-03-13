@@ -234,6 +234,7 @@ fn text_events(text: &str, thinking: Option<&str>) -> Vec<anyhow::Result<Respons
         output_tokens: text.len() as u32 / 4 + 1,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
+        cost_usd: None,
     }));
     events.push(Ok(ResponseEvent::Done));
     events

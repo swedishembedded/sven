@@ -333,6 +333,7 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
             output_tokens: meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens,
             cache_write_tokens: 0,
+            cost_usd: None,
         });
     }
 

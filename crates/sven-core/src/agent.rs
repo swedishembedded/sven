@@ -972,6 +972,7 @@ impl Agent {
                     output_tokens,
                     cache_read_tokens,
                     cache_write_tokens,
+                    cost_usd,
                 } => {
                     self.session
                         .add_cache_usage(cache_read_tokens, cache_write_tokens);
@@ -995,6 +996,7 @@ impl Agent {
                             cache_write_total: self.session.cache_write_total,
                             max_tokens: self.session.max_tokens,
                             max_output_tokens: self.session.max_output_tokens,
+                            cost_usd,
                         })
                         .await;
                 }

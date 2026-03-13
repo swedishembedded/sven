@@ -412,6 +412,8 @@ pub enum ResponseEvent {
         cache_read_tokens: u32,
         /// Tokens written into the provider's prompt cache (write/creation).
         cache_write_tokens: u32,
+        /// Cost in USD when reported by the API (e.g. OpenRouter `usage.cost`).
+        cost_usd: Option<f64>,
     },
     /// The stream finished normally
     Done,
