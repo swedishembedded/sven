@@ -1257,7 +1257,9 @@ impl App {
                         self.switch_session(id.clone()).await;
                     }
                 }
-                self.ui.focus = FocusPane::Input;
+                // Focus the chat list so it accepts input keys (k/j, Enter, etc.)
+                // just as when switching via Ctrl+w h / Ctrl+w l.
+                self.ui.focus = FocusPane::ChatList;
             }
 
             Action::ChatScrollbarClick { rel_row } => {
