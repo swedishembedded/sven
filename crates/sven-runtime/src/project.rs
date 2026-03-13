@@ -134,6 +134,13 @@ const MAX_CONTEXT_FILE_BYTES: usize = 16 * 1024;
 /// 2. `AGENTS.md`          — standard agent instructions
 /// 3. `CLAUDE.md`          — Claude Code project file
 pub fn load_project_context_file(project_root: &Path) -> Option<String> {
+    load_project_context_file_with_path(project_root).map(|(_, content)| content)
+}
+
+/// Like [`load_project_context_file`] but also returns the path of the loaded file.
+pub fn load_project_context_file_with_path(
+    project_root: &Path,
+) -> Option<(std::path::PathBuf, String)> {
     let candidates = [
         project_root.join(".sven").join("context.md"),
         project_root.join("AGENTS.md"),
@@ -159,14 +166,15 @@ pub fn load_project_context_file(project_root: &Path) -> Option<String> {
                     continue;
                 }
 
-                return Some(if truncated {
+                let content = if truncated {
                     format!(
                         "{content}\n\n*(Context file truncated at {} bytes)*",
                         MAX_CONTEXT_FILE_BYTES
                     )
                 } else {
                     content
-                });
+                };
+                return Some((path.clone(), content));
             }
         }
     }

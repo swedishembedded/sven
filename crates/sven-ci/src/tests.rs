@@ -132,16 +132,12 @@ mod tests {
 
     #[test]
     fn sven_stdout_with_step_label_detected_as_conversation() {
-        // The CI runner emits: "## (unlabelled)\n\n## User\n<content>\n\n## Sven\n..."
-        // The step-label line is an Unknown H2 and must not block detection.
-        let md = concat!(
-            "## (unlabelled)\n\n",
-            "## User\nhi\n\n",
-            "## Sven\nHello!\n",
-        );
+        // The CI runner emits: "## User\n<content>\n\n## Sven\n..." for unlabelled steps.
+        // Labelled steps emit "## <label>\n\n## User\n<content>\n\n## Sven\n..."
+        let md = concat!("## User\nhi\n\n", "## Sven\nHello!\n",);
         assert!(
             is_conv(md),
-            "sven's own step-label prefix must not prevent conversation detection"
+            "sven's output must be detected as conversation format"
         );
     }
 
@@ -305,7 +301,6 @@ mod tests {
     fn pipe_sven_to_sven_without_prompt_has_no_pending() {
         // Simulated output of `echo "hi" | sven --output-format conversation`
         let sven_stdout = concat!(
-            "## (unlabelled)\n\n",
             "## User\nhi\n\n",
             "## Sven\nHello! How can I assist you today?\n",
         );
@@ -326,11 +321,7 @@ mod tests {
     /// Expected: history is seeded, step content = CLI prompt.
     #[test]
     fn pipe_sven_to_sven_with_cli_prompt_uses_prompt_as_step() {
-        let sven_stdout = concat!(
-            "## (unlabelled)\n\n",
-            "## User\ntask1\n\n",
-            "## Sven\nResult of task1.\n",
-        );
+        let sven_stdout = concat!("## User\ntask1\n\n", "## Sven\nResult of task1.\n",);
         // Simulate what the runner does when extra_prompt is provided:
         // parse conversation, use extra_prompt as step content.
         let conv = parse_conversation(sven_stdout).unwrap();

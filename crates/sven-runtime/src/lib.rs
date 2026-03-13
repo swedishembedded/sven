@@ -32,7 +32,8 @@ pub use knowledge::{
 
 pub mod project;
 pub use project::{
-    find_project_root, find_workspace_root, load_project_context_file, resolve_auto_log_path,
+    find_project_root, find_workspace_root, load_project_context_file,
+    load_project_context_file_with_path, resolve_auto_log_path,
 };
 
 pub mod git;

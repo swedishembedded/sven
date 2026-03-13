@@ -104,6 +104,11 @@ impl ConversationRunner {
             sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
+        write_stderr(&format!(
+            "[sven:settings] model={} mode={}",
+            model_cfg.name, opts.mode
+        ));
+
         // Build metadata for turn annotation
         let turn_metadata = TurnMetadata {
             provider: Some(model_cfg.provider.clone()),

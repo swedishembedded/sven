@@ -430,6 +430,11 @@ impl CiRunner {
             sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
 
+        write_stderr(&format!(
+            "[sven:settings] model={} mode={}",
+            model_cfg.name, opts.mode
+        ));
+
         // (turn_metadata removed — Conversation output now streams in real-time;
         // no post-step metadata serialization needed)
 
@@ -449,6 +454,18 @@ impl CiRunner {
             .and_then(|w| sven_runtime::format_drift_warnings(&w));
         let knowledge = sven_runtime::SharedKnowledge::new(knowledge_items);
 
+        let project_context = opts
+            .project_root
+            .as_ref()
+            .and_then(|r| sven_runtime::load_project_context_file_with_path(r));
+
+        if let Some((path, _)) = &project_context {
+            write_progress(&format!(
+                "[sven:info] Project context file loaded from {}",
+                path.display()
+            ));
+        }
+
         let mut runtime_ctx = RuntimeContext {
             project_root: opts.project_root.clone(),
             git_context: opts
@@ -456,10 +473,7 @@ impl CiRunner {
                 .as_ref()
                 .map(|r| sven_runtime::collect_git_context(r)),
             ci_context: Some(ci_ctx),
-            project_context_file: opts
-                .project_root
-                .as_ref()
-                .and_then(|r| sven_runtime::load_project_context_file(r)),
+            project_context_file: project_context.map(|(_, content)| content),
             append_system_prompt: combined_append,
             system_prompt_override: None,
             skills,
@@ -467,10 +481,6 @@ impl CiRunner {
             knowledge,
             knowledge_drift_note,
         };
-
-        if runtime_ctx.project_context_file.is_some() {
-            write_progress("[sven:info] Project context file loaded");
-        }
 
         // ── --system-prompt-file override ────────────────────────────────────
         if let Some(sp_file) = &opts.system_prompt_file {
@@ -830,10 +840,14 @@ impl CiRunner {
             // Resolve step timeout
             let step_timeout_secs = step.options.timeout_secs.or(global_step_timeout_secs);
 
-            write_progress(&format!(
-                "[sven:step:start] {}/{} label=\"{}\"",
-                step_idx, total, label
-            ));
+            if let Some(l) = step.label.as_deref() {
+                write_progress(&format!(
+                    "[sven:step:start] {}/{} label=\"{}\"",
+                    step_idx, total, l
+                ));
+            } else {
+                write_progress(&format!("[sven:step:start] {}/{}", step_idx, total));
+            }
 
             let step_start = Instant::now();
 
@@ -857,9 +871,13 @@ impl CiRunner {
                 opts.output_format,
             );
 
-            // In streaming conversation format emit step label and ## User section now
+            // In streaming conversation format emit step label (if any) and ## User section
             if opts.output_format == OutputFormat::Conversation {
-                write_stdout(&format!("## {label}\n\n## User\n{step_content}\n\n"));
+                if step.label.as_deref().is_some_and(|l| !l.is_empty()) {
+                    write_stdout(&format!("## {label}\n\n## User\n{step_content}\n\n"));
+                } else {
+                    write_stdout(&format!("## User\n{step_content}\n\n"));
+                }
             }
 
             // Per-step output accumulators — declared here so both the cache-hit
@@ -1095,16 +1113,28 @@ impl CiRunner {
 
             // ── Progress report ──────────────────────────────────────────────
             let cache_suffix = if cache_hit { " (cached)" } else { "" };
-            write_progress(&format!(
-                "[sven:step:complete] {}/{} label=\"{}\" duration_ms={} tools={} success={}{}",
-                step_idx,
-                total,
-                label,
-                step_duration_ms,
-                tools_used.len(),
-                !failed,
-                cache_suffix
-            ));
+            if let Some(l) = step.label.as_deref() {
+                write_progress(&format!(
+                    "[sven:step:complete] {}/{} label=\"{}\" duration_ms={} tools={} success={}{}",
+                    step_idx,
+                    total,
+                    l,
+                    step_duration_ms,
+                    tools_used.len(),
+                    !failed,
+                    cache_suffix
+                ));
+            } else {
+                write_progress(&format!(
+                    "[sven:step:complete] {}/{} duration_ms={} tools={} success={}{}",
+                    step_idx,
+                    total,
+                    step_duration_ms,
+                    tools_used.len(),
+                    !failed,
+                    cache_suffix
+                ));
+            }
 
             if failed {
                 write_stderr(&format!(
