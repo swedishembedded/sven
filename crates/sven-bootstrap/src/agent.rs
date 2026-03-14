@@ -41,11 +41,14 @@ pub struct AgentBuilder {
     /// Optional IDE-backed permission requester.  When set, tools with
     /// `ApprovalPolicy::Ask` gate execution on an explicit IDE approval.
     permission_requester: Option<Arc<dyn PermissionRequester>>,
+    /// When false (headless/CI), MCP OAuth flows are never triggered.
+    allow_interactive_oauth: bool,
 }
 
 impl AgentBuilder {
     /// Create a builder with the given configuration.
     /// Runtime context defaults to empty (no project/git/CI detection).
+    /// OAuth flows are allowed by default (interactive TUI).
     pub fn new(config: Arc<Config>) -> Self {
         Self {
             config,
@@ -53,7 +56,17 @@ impl AgentBuilder {
             shared_tools: None,
             shared_tool_displays: None,
             permission_requester: None,
+            allow_interactive_oauth: true,
         }
+    }
+
+    /// Disable interactive OAuth flows for headless/CI/batch runs.
+    /// When false, MCP servers requiring OAuth will stay in NeedsAuth state
+    /// instead of opening a browser. Pre-authenticate in an interactive
+    /// session before running batch.
+    pub fn with_allow_interactive_oauth(mut self, allow: bool) -> Self {
+        self.allow_interactive_oauth = allow;
+        self
     }
 
     /// Set the runtime context (project root, git, CI environment).
@@ -137,7 +150,11 @@ impl AgentBuilder {
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
 
         let (mcp_event_tx, mcp_event_rx) = mpsc::channel::<sven_mcp_client::McpEvent>(64);
-        let mcp_manager = McpManager::new(self.config.mcp_servers.clone(), mcp_event_tx);
+        let mcp_manager = McpManager::new(
+            self.config.mcp_servers.clone(),
+            mcp_event_tx,
+            self.allow_interactive_oauth,
+        );
         mcp_manager.connect_all().await;
         mcp_manager.start_background_tasks();
 

@@ -94,13 +94,20 @@ pub struct McpManager {
     store: Arc<CredentialsStore>,
     http_client: reqwest::Client,
     event_tx: mpsc::Sender<McpEvent>,
+    /// When false (headless/CI mode), never trigger interactive OAuth flows.
+    /// Batch runs must complete without user interaction.
+    allow_interactive_oauth: bool,
 }
 
 impl McpManager {
     /// Create a new manager with the given initial config.
+    ///
+    /// Set `allow_interactive_oauth` to `false` for headless, batch, or CI runs
+    /// so that OAuth flows (browser open, user login) are never triggered.
     pub fn new(
         config: HashMap<String, McpServerConfig>,
         event_tx: mpsc::Sender<McpEvent>,
+        allow_interactive_oauth: bool,
     ) -> Arc<Self> {
         let http_client = reqwest::Client::builder().build().unwrap_or_default();
 
@@ -110,6 +117,7 @@ impl McpManager {
             store: Arc::new(CredentialsStore::with_default_path()),
             http_client,
             event_tx,
+            allow_interactive_oauth,
         })
     }
 
@@ -344,7 +352,7 @@ impl McpManager {
                 }
             }
 
-            if has_oauth_config {
+            if has_oauth_config && this.allow_interactive_oauth {
                 let _ = this
                     .event_tx
                     .send(McpEvent::AuthStarted {
@@ -384,6 +392,22 @@ impl McpManager {
                             .await;
                     }
                 }
+            } else if has_oauth_config && !this.allow_interactive_oauth {
+                // Headless/CI mode: never trigger interactive OAuth. Emit AuthRequired
+                // so the run can fail fast; batch flows must not block on user input.
+                {
+                    let mut servers = this.servers.write().await;
+                    if let Some(state) = servers.get_mut(&name_owned) {
+                        state.auth_in_progress = false;
+                    }
+                }
+                let _ = this
+                    .event_tx
+                    .send(McpEvent::AuthRequired {
+                        server: name_owned,
+                        auth_url,
+                    })
+                    .await;
             } else {
                 // Manual auth required — user must run `/mcp auth <name>`.
                 let _ = this
@@ -613,6 +637,12 @@ impl McpManager {
         server: &str,
         www_authenticate: Option<&str>,
     ) -> Result<String> {
+        if !self.allow_interactive_oauth {
+            anyhow::bail!(
+                "OAuth flow cannot run in headless/CI mode. \
+                 Pre-authenticate in an interactive session before running batch."
+            );
+        }
         let cfg = self.server_config(server).await?;
 
         let url = match &cfg.transport {

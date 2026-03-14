@@ -129,6 +129,7 @@ impl ConversationRunner {
         };
 
         let mut agent = AgentBuilder::new(self.config.clone())
+            .with_allow_interactive_oauth(false)
             .build(opts.mode, model.clone(), profile)
             .await;
 
