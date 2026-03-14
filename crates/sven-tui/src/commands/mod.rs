@@ -95,6 +95,10 @@ pub enum ImmediateAction {
     OpenInspector {
         kind: InspectorKind,
     },
+    /// Run OAuth authentication flow for an MCP server.
+    McpAuth {
+        server: String,
+    },
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -520,6 +524,44 @@ mod dispatch_tests {
             result.immediate_action,
             Some(ImmediateAction::OpenInspector {
                 kind: InspectorKind::Context
+            })
+        ));
+    }
+
+    // ── /mcp ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn mcp_auth_triggers_mcp_auth_action() {
+        let (name, result) = try_dispatch("/mcp auth atlassian-mcp", &registry()).unwrap();
+        assert_eq!(name, "mcp");
+        assert!(
+            matches!(
+                result.immediate_action,
+                Some(ImmediateAction::McpAuth { ref server }) if server == "atlassian-mcp"
+            ),
+            "expected McpAuth with server atlassian-mcp"
+        );
+    }
+
+    #[test]
+    fn mcp_without_args_opens_inspector() {
+        let (name, result) = try_dispatch("/mcp", &registry()).unwrap();
+        assert_eq!(name, "mcp");
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Mcp
+            })
+        ));
+    }
+
+    #[test]
+    fn mcp_list_opens_inspector() {
+        let (_, result) = try_dispatch("/mcp list", &registry()).unwrap();
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::OpenInspector {
+                kind: InspectorKind::Mcp
             })
         ));
     }

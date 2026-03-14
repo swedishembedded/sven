@@ -30,13 +30,15 @@
 //!
 //! 1. Server returns HTTP 401 with `WWW-Authenticate: Bearer …`.
 //! 2. Call `discover_oauth_info()` to resolve the authorization server and scopes.
-//! 3. Generate a PKCE code verifier and code challenge.
-//! 4. Build the authorization URL and open it in the user's browser.
-//! 5. Start a local HTTP callback server on `127.0.0.1:19876`.
-//! 6. Wait for the callback with `?code=...&state=...`.
-//! 7. Exchange the authorization code for tokens via `POST /token`.
-//! 8. Persist tokens to `~/.config/sven/mcp-credentials.json`.
-//! 9. Before each request, check token expiry and refresh if needed.
+//! 3. If the server advertises a registration endpoint and no client_id is configured,
+//!    perform Dynamic Client Registration (RFC 7591) to obtain a client_id.
+//! 4. Generate a PKCE code verifier and code challenge.
+//! 5. **Start the local callback server first** (bind to 127.0.0.1:19876).
+//! 6. Build the authorization URL and open it in the user's browser.
+//! 7. Wait for the redirect callback with `?code=...&state=...`.
+//! 8. Exchange the authorization code for tokens via `POST /token`.
+//! 9. Persist tokens to `~/.config/sven/mcp-credentials.json`.
+//! 10. Before each request, check token expiry and refresh if needed.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -508,11 +510,15 @@ impl OAuthContext {
 
 /// Run the full OAuth PKCE flow using pre-discovered OAuth information.
 ///
-/// 1. Builds the authorization URL from `discovery`.
-/// 2. Opens the user's browser (via `xdg-open` or `open`).
-/// 3. Waits for the callback on `127.0.0.1:19876`.
-/// 4. Exchanges the code for tokens.
-/// 5. Persists tokens to the credential store.
+/// 1. If no client_id is configured and the server supports Dynamic Client
+///    Registration (RFC 7591), registers to obtain a client_id.
+/// 2. Builds the authorization URL from `discovery`.
+/// 3. **Starts the callback server first** so it is listening before the user
+///    is redirected (avoids race where redirect arrives before we're ready).
+/// 4. Opens the user's browser (via `xdg-open` or `open`).
+/// 5. Waits for the callback on `127.0.0.1:19876`.
+/// 6. Exchanges the code for tokens.
+/// 7. Persists tokens to the credential store.
 ///
 /// Returns the stored tokens on success.
 pub async fn run_oauth_flow(
@@ -525,6 +531,25 @@ pub async fn run_oauth_flow(
 ) -> Result<StoredTokens> {
     let metadata = discovery.auth_server_metadata;
     let scopes = discovery.scopes;
+
+    // Try Dynamic Client Registration when no client_id is configured and the
+    // server advertises a registration endpoint (per MCP spec §Authorization).
+    let client_id = if client_id.is_some() {
+        client_id
+    } else if let Some(ref reg_url) = metadata.registration_endpoint {
+        match register_client(client, reg_url).await {
+            Ok(reg) => {
+                info!(client_id = %reg.client_id, "Dynamic client registration succeeded");
+                Some(reg.client_id)
+            }
+            Err(e) => {
+                warn!(error = %e, "Dynamic client registration failed, falling back to default client_id");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let code_verifier = generate_code_verifier();
     let state = generate_state();
@@ -542,11 +567,10 @@ pub async fn run_oauth_flow(
     let auth_url = ctx.authorization_url(&scopes)?;
     info!(url = %auth_url, "Opening browser for MCP OAuth authentication");
 
-    // Best-effort browser open (will fail in headless/CI but the URL is logged).
-    open_browser(&auth_url);
-
-    // Wait for the callback.
-    let (code, received_state) = wait_for_callback(CALLBACK_TIMEOUT_SECS).await?;
+    // Start callback server BEFORE opening browser so we're listening when the
+    // auth server redirects (user may already be logged in and redirect immediately).
+    let (code, received_state) =
+        wait_for_callback_with_browser_open(CALLBACK_TIMEOUT_SECS, &auth_url).await?;
 
     if received_state != state {
         return Err(anyhow!(
@@ -597,15 +621,93 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 
+// ── Dynamic Client Registration (RFC 7591) ────────────────────────────────────
+
+/// Client registration request metadata (RFC 7591 §2).
+#[derive(Debug, Serialize)]
+struct ClientRegistrationRequest {
+    redirect_uris: Vec<String>,
+    client_name: String,
+    token_endpoint_auth_method: String,
+    grant_types: Vec<String>,
+    response_types: Vec<String>,
+    code_challenge_method: String,
+}
+
+/// Client registration response (RFC 7591 §3.2.1).
+#[derive(Debug, Deserialize)]
+struct ClientRegistrationResponse {
+    client_id: String,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
+/// Register a public OAuth client via Dynamic Client Registration (RFC 7591).
+async fn register_client(
+    client: &reqwest::Client,
+    registration_endpoint: &str,
+) -> Result<ClientRegistrationResponse> {
+    let redirect_uri = OAuthContext::callback_uri();
+    // Register both 127.0.0.1 and localhost; some servers treat them differently.
+    let redirect_uris = vec![
+        redirect_uri.clone(),
+        redirect_uri.replace("127.0.0.1", "localhost"),
+    ];
+    let req = ClientRegistrationRequest {
+        redirect_uris,
+        client_name: "Sven".to_string(),
+        token_endpoint_auth_method: "none".to_string(),
+        grant_types: vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ],
+        response_types: vec!["code".to_string()],
+        code_challenge_method: "S256".to_string(),
+    };
+
+    let resp = client
+        .post(registration_endpoint)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .header("MCP-Protocol-Version", "2024-11-05")
+        .json(&req)
+        .send()
+        .await
+        .context("Dynamic Client Registration request failed")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "Dynamic Client Registration failed: {} {}",
+            status,
+            body
+        ));
+    }
+
+    resp.json()
+        .await
+        .context("parse Dynamic Client Registration response")
+}
+
 // ── Callback server ───────────────────────────────────────────────────────────
 
 /// Wait for the OAuth callback and return `(code, state)`.
-async fn wait_for_callback(timeout_secs: u64) -> Result<(String, String)> {
+///
+/// Binds the callback server **before** opening the browser so we're listening
+/// when the auth server redirects (avoids race if user is already logged in).
+async fn wait_for_callback_with_browser_open(
+    timeout_secs: u64,
+    auth_url: &str,
+) -> Result<(String, String)> {
     let listener = TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}"))
         .await
         .with_context(|| format!("bind OAuth callback server on port {CALLBACK_PORT}"))?;
 
-    info!("OAuth callback server listening on 127.0.0.1:{CALLBACK_PORT}");
+    info!("OAuth callback server listening on 127.0.0.1:{CALLBACK_PORT}, opening browser");
+
+    // Open browser only after we're listening for the redirect.
+    open_browser(auth_url);
 
     let accept_fut = async {
         loop {
@@ -656,7 +758,7 @@ async fn wait_for_callback(timeout_secs: u64) -> Result<(String, String)> {
 
     tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), accept_fut)
         .await
-        .map_err(|_| anyhow!("OAuth callback timed out after {timeout_secs}s"))?
+        .map_err(|_| anyhow!("OAuth callback timed out after {timeout_secs}s. Complete the login in your browser and ensure you are redirected back to this application."))?
 }
 
 fn parse_callback_query(query: &str) -> Option<(String, String)> {

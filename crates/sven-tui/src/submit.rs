@@ -156,6 +156,35 @@ impl App {
                         return false;
                     }
 
+                    if let Some(ImmediateAction::McpAuth { ref server }) = result.immediate_action {
+                        if let Some(ref mgr) = self.mcp_manager {
+                            let mgr = Arc::clone(mgr);
+                            let server = server.clone();
+                            if let Some(ref toast_tx) = self.toast_tx {
+                                let toast_tx = toast_tx.clone();
+                                tokio::spawn(async move {
+                                    match mgr.authenticate(&server).await {
+                                        Ok(msg) => {
+                                            let _ = toast_tx
+                                                .send(crate::app::ui_state::Toast::success(msg));
+                                        }
+                                        Err(e) => {
+                                            let _ =
+                                                toast_tx.send(crate::app::ui_state::Toast::error(
+                                                    format!("OAuth failed: {e}"),
+                                                ));
+                                        }
+                                    }
+                                });
+                            }
+                        } else {
+                            self.ui.push_toast(crate::app::ui_state::Toast::error(
+                                "MCP auth is not available in node-proxy mode",
+                            ));
+                        }
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::OpenInspector { ref kind }) =
                         result.immediate_action
                     {

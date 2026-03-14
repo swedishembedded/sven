@@ -201,11 +201,24 @@ impl SlashCommand for McpCommand {
         &self,
         arg_index: usize,
         partial: &str,
-        _ctx: &CommandContext,
+        ctx: &CommandContext,
     ) -> Vec<CompletionItem> {
         if arg_index == 0 {
             ["list", "enable", "disable", "auth"]
                 .iter()
+                .filter(|s| s.starts_with(partial))
+                .map(|s| CompletionItem {
+                    value: s.to_string(),
+                    display: s.to_string(),
+                    description: None,
+                    score: 0,
+                })
+                .collect()
+        } else if arg_index == 1 {
+            // Complete server names for auth, enable, disable
+            let servers: Vec<&str> = ctx.config.mcp_servers.keys().map(String::as_str).collect();
+            servers
+                .into_iter()
                 .filter(|s| s.starts_with(partial))
                 .map(|s| CompletionItem {
                     value: s.to_string(),
@@ -219,12 +232,23 @@ impl SlashCommand for McpCommand {
         }
     }
 
-    fn execute(&self, _args: Vec<String>) -> CommandResult {
-        CommandResult {
-            immediate_action: Some(ImmediateAction::OpenInspector {
-                kind: InspectorKind::Mcp,
-            }),
-            ..Default::default()
+    fn execute(&self, args: Vec<String>) -> CommandResult {
+        let sub = args.first().map(String::as_str).unwrap_or("");
+        let server = args.get(1).cloned().unwrap_or_default();
+
+        match (sub, server.as_str()) {
+            ("auth", name) if !name.is_empty() => CommandResult {
+                immediate_action: Some(ImmediateAction::McpAuth {
+                    server: name.to_string(),
+                }),
+                ..Default::default()
+            },
+            _ => CommandResult {
+                immediate_action: Some(ImmediateAction::OpenInspector {
+                    kind: InspectorKind::Mcp,
+                }),
+                ..Default::default()
+            },
         }
     }
 }

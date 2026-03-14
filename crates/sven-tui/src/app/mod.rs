@@ -207,6 +207,9 @@ pub struct App {
     /// requests from all sessions are routed through the single `question_rx`
     /// in `run()`.  `None` before `run()` is called (e.g. in tests).
     pub(crate) question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    /// Sender for toast notifications from background tasks (e.g. OAuth auth).
+    /// `None` before `run()` is called.
+    pub(crate) toast_tx: Option<mpsc::Sender<ui_state::Toast>>,
 }
 
 impl App {
@@ -418,6 +421,7 @@ impl App {
             yaml_path: initial_yaml_path,
             chat_title,
             question_tx: None,
+            toast_tx: None,
         };
 
         for qm in opts.initial_queue {
@@ -923,6 +927,8 @@ impl App {
         let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(4);
+        let (toast_tx, mut toast_rx) = mpsc::channel::<ui_state::Toast>(32);
+        self.toast_tx = Some(toast_tx);
 
         // Store the sender so that agents spawned for new/switched-to sessions
         // all route their questions through the same handler in the run loop.
@@ -1237,6 +1243,9 @@ impl App {
                 }
                 Some(req) = question_rx.recv() => {
                     self.handle_question_request(req);
+                }
+                Some(toast) = toast_rx.recv() => {
+                    self.ui.push_toast(toast);
                 }
                 _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
                     // Advance the clock-driven animation frame and rebuild the
