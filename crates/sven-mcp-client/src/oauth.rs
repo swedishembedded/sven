@@ -3,18 +3,40 @@
 // SPDX-License-Identifier: Apache-2.0
 //! OAuth 2.0 PKCE flow for MCP servers that require authentication.
 //!
-//! Implements RFC 7636 (PKCE) and RFC 8414 (OAuth 2.0 Server Metadata).
+//! Implements the full MCP Authorization spec scope-discovery strategy:
+//!
+//! - RFC 7636 (PKCE)
+//! - RFC 8414 (OAuth 2.0 Authorization Server Metadata)
+//! - RFC 9728 (OAuth 2.0 Protected Resource Metadata)
+//!
+//! # Scope discovery (per MCP spec §Authorization)
+//!
+//! Scopes are discovered automatically – you do **not** need to configure them:
+//!
+//! 1. `scope` parameter in the `WWW-Authenticate` header of a 401 response.
+//! 2. `scopes_supported` in the Protected Resource Metadata document
+//!    (`/.well-known/oauth-protected-resource` on the MCP server, or the URL
+//!    pointed to by `resource_metadata` in the `WWW-Authenticate` header).
+//! 3. Omit the `scope` parameter entirely if neither source is available.
+//!
+//! # Authorization server discovery
+//!
+//! 1. `resource_metadata` URL in `WWW-Authenticate` → fetch PRM →
+//!    `authorization_servers[0]` → fetch OAuth server metadata.
+//! 2. Try `/.well-known/oauth-protected-resource` on the server URL → same.
+//! 3. Fall back to `/.well-known/oauth-authorization-server` on the server URL.
 //!
 //! # Flow
 //!
-//! 1. Discover the authorization server via `.well-known/oauth-authorization-server`.
-//! 2. Generate a PKCE code verifier and code challenge.
-//! 3. Build the authorization URL and open it in the user's browser.
-//! 4. Start a local HTTP callback server on `127.0.0.1:19876`.
-//! 5. Wait for the callback with `?code=...&state=...`.
-//! 6. Exchange the authorization code for tokens via `POST /token`.
-//! 7. Persist tokens to `~/.config/sven/mcp-credentials.json`.
-//! 8. Before each request, check token expiry and refresh if needed.
+//! 1. Server returns HTTP 401 with `WWW-Authenticate: Bearer …`.
+//! 2. Call `discover_oauth_info()` to resolve the authorization server and scopes.
+//! 3. Generate a PKCE code verifier and code challenge.
+//! 4. Build the authorization URL and open it in the user's browser.
+//! 5. Start a local HTTP callback server on `127.0.0.1:19876`.
+//! 6. Wait for the callback with `?code=...&state=...`.
+//! 7. Exchange the authorization code for tokens via `POST /token`.
+//! 8. Persist tokens to `~/.config/sven/mcp-credentials.json`.
+//! 9. Before each request, check token expiry and refresh if needed.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -205,6 +227,219 @@ pub async fn discover_oauth_metadata(
     ))
 }
 
+// ── Protected Resource Metadata (RFC 9728) ────────────────────────────────────
+
+/// OAuth 2.0 Protected Resource Metadata (RFC 9728).
+///
+/// Served at `/.well-known/oauth-protected-resource` on the MCP server (or at
+/// the URL named in a `resource_metadata` parameter of a `WWW-Authenticate`
+/// header).  The most relevant fields for MCP scope discovery are
+/// `authorization_servers` and `scopes_supported`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProtectedResourceMetadata {
+    /// The protected resource identifier URI.
+    pub resource: String,
+    /// List of OAuth 2.0 authorization server issuer URLs that protect this resource.
+    pub authorization_servers: Option<Vec<String>>,
+    /// OAuth 2.0 scope values that this server supports.
+    pub scopes_supported: Option<Vec<String>>,
+    /// Bearer token methods supported.
+    pub bearer_methods_supported: Option<Vec<String>>,
+}
+
+/// Fetch Protected Resource Metadata from an explicit URL.
+pub async fn fetch_protected_resource_metadata(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<ProtectedResourceMetadata> {
+    debug!(url = %url, "fetching Protected Resource Metadata");
+    let resp = client
+        .get(url)
+        .header("MCP-Protocol-Version", "2024-11-05")
+        .send()
+        .await
+        .context("fetch Protected Resource Metadata")?;
+    if !resp.status().is_success() {
+        return Err(anyhow!(
+            "Protected Resource Metadata request failed: {}",
+            resp.status()
+        ));
+    }
+    resp.json()
+        .await
+        .context("parse Protected Resource Metadata")
+}
+
+/// Try to discover Protected Resource Metadata from the well-known endpoint of
+/// the MCP server.
+///
+/// Tries `/.well-known/oauth-protected-resource` at the server's origin.
+/// Returns `None` (not an error) when the document is simply absent.
+pub async fn discover_protected_resource_metadata(
+    client: &reqwest::Client,
+    server_url: &str,
+) -> Option<ProtectedResourceMetadata> {
+    let url = Url::parse(server_url).ok()?;
+    let base = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+    let port_suffix = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let well_known = format!("{base}{port_suffix}/.well-known/oauth-protected-resource");
+
+    debug!(url = %well_known, "trying Protected Resource Metadata endpoint");
+    let resp = client
+        .get(&well_known)
+        .header("MCP-Protocol-Version", "2024-11-05")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json().await.ok()
+}
+
+// ── WWW-Authenticate parsing ───────────────────────────────────────────────────
+
+/// Parsed fields from a `Bearer` `WWW-Authenticate` challenge.
+///
+/// Example header:
+/// ```text
+/// WWW-Authenticate: Bearer realm="mcp",
+///   resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource",
+///   scope="read write"
+/// ```
+#[derive(Debug, Default)]
+pub struct WwwAuthenticate {
+    /// `realm` – usually the authorization server URL or a human-readable name.
+    pub realm: Option<String>,
+    /// `resource_metadata` – URL of the RFC 9728 Protected Resource Metadata document.
+    pub resource_metadata: Option<String>,
+    /// `scope` – space-separated required scopes.
+    pub scope: Option<String>,
+    /// `error` – set when the token was rejected.
+    pub error: Option<String>,
+}
+
+/// Parse a `WWW-Authenticate` header value into its `Bearer` parameters.
+///
+/// Handles both quoted and unquoted parameter values; ignores unknown fields.
+pub fn parse_www_authenticate(header: &str) -> WwwAuthenticate {
+    let mut result = WwwAuthenticate::default();
+
+    // Strip optional "Bearer " prefix (case-insensitive)
+    let rest = header
+        .trim()
+        .strip_prefix("Bearer ")
+        .or_else(|| header.trim().strip_prefix("bearer "))
+        .unwrap_or(header.trim());
+
+    // Split on commas, trim each token, parse key=value pairs.
+    for part in rest.split(',') {
+        let part = part.trim();
+        let Some((key, raw_value)) = part.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = raw_value.trim().trim_matches('"').to_string();
+
+        match key.as_str() {
+            "realm" => result.realm = Some(value),
+            "resource_metadata" => result.resource_metadata = Some(value),
+            "scope" => result.scope = Some(value),
+            "error" => result.error = Some(value),
+            _ => {}
+        }
+    }
+
+    result
+}
+
+// ── Unified MCP OAuth discovery ───────────────────────────────────────────────
+
+/// All information needed to execute an OAuth PKCE flow, discovered from the
+/// MCP server rather than requiring manual configuration.
+pub struct OAuthDiscovery {
+    /// OAuth authorization server metadata (endpoints, methods supported, …).
+    pub auth_server_metadata: OAuthServerMetadata,
+    /// Scopes to request.  Empty means "omit the `scope` parameter".
+    pub scopes: Vec<String>,
+}
+
+/// Discover OAuth information for an MCP server using the full MCP
+/// Authorization spec priority chain.
+///
+/// # Priority order
+///
+/// **Authorization server:**
+/// 1. `resource_metadata` URL in `www_authenticate` → fetch PRM →
+///    `authorization_servers[0]` → fetch OAuth server metadata.
+/// 2. Try `/.well-known/oauth-protected-resource` on `server_url` → same.
+/// 3. Fall back to `/.well-known/oauth-authorization-server` on `server_url`.
+///
+/// **Scopes** (per MCP spec §"Scope Selection Strategy"):
+/// 1. `config_scopes` if non-empty (user explicitly configured them).
+/// 2. `scope` from `www_authenticate` header.
+/// 3. `scopes_supported` from Protected Resource Metadata.
+/// 4. Omit scope parameter (empty Vec).
+pub async fn discover_oauth_info(
+    client: &reqwest::Client,
+    server_url: &str,
+    www_authenticate: Option<&str>,
+    config_scopes: &[String],
+) -> Result<OAuthDiscovery> {
+    let parsed_www = www_authenticate.map(parse_www_authenticate);
+
+    // Step 1: resolve the Protected Resource Metadata.
+    let prm: Option<ProtectedResourceMetadata> = {
+        if let Some(prm_url) = parsed_www
+            .as_ref()
+            .and_then(|w| w.resource_metadata.as_deref())
+        {
+            fetch_protected_resource_metadata(client, prm_url)
+                .await
+                .ok()
+                .or_else(|| {
+                    debug!(url = %prm_url, "PRM fetch failed, falling back");
+                    None
+                })
+        } else {
+            discover_protected_resource_metadata(client, server_url).await
+        }
+    };
+
+    // Step 2: resolve the authorization server base URL.
+    let auth_server_base: String = prm
+        .as_ref()
+        .and_then(|p| p.authorization_servers.as_ref())
+        .and_then(|s| s.first())
+        .cloned()
+        .unwrap_or_else(|| server_url.to_string());
+
+    // Step 3: fetch OAuth authorization server metadata.
+    let auth_server_metadata = discover_oauth_metadata(client, &auth_server_base).await?;
+
+    // Step 4: determine scopes.
+    let scopes = if !config_scopes.is_empty() {
+        config_scopes.to_vec()
+    } else if let Some(scope_str) = parsed_www.as_ref().and_then(|w| w.scope.as_deref()) {
+        scope_str.split_whitespace().map(str::to_string).collect()
+    } else if let Some(prm_scopes) = prm.as_ref().and_then(|p| p.scopes_supported.as_ref()) {
+        prm_scopes.clone()
+    } else {
+        vec![]
+    };
+
+    debug!(
+        auth_server = %auth_server_metadata.authorization_endpoint,
+        scopes = ?scopes,
+        "OAuth discovery complete"
+    );
+
+    Ok(OAuthDiscovery {
+        auth_server_metadata,
+        scopes,
+    })
+}
+
 // ── PKCE ──────────────────────────────────────────────────────────────────────
 
 /// Generate a PKCE code verifier (random 32-byte, base64url-encoded).
@@ -271,25 +506,25 @@ impl OAuthContext {
     }
 }
 
-/// Run the full OAuth PKCE flow:
+/// Run the full OAuth PKCE flow using pre-discovered OAuth information.
 ///
-/// 1. Discovers OAuth metadata.
-/// 2. Builds the authorization URL.
-/// 3. Opens the user's browser (via `xdg-open` or `open`).
-/// 4. Waits for the callback on `127.0.0.1:19876`.
-/// 5. Exchanges the code for tokens.
-/// 6. Persists tokens.
+/// 1. Builds the authorization URL from `discovery`.
+/// 2. Opens the user's browser (via `xdg-open` or `open`).
+/// 3. Waits for the callback on `127.0.0.1:19876`.
+/// 4. Exchanges the code for tokens.
+/// 5. Persists tokens to the credential store.
 ///
 /// Returns the stored tokens on success.
 pub async fn run_oauth_flow(
     client: &reqwest::Client,
     server_name: &str,
     server_url: &str,
-    scopes: &[String],
+    discovery: OAuthDiscovery,
     client_id: Option<String>,
     store: &CredentialsStore,
 ) -> Result<StoredTokens> {
-    let metadata = discover_oauth_metadata(client, server_url).await?;
+    let metadata = discovery.auth_server_metadata;
+    let scopes = discovery.scopes;
 
     let code_verifier = generate_code_verifier();
     let state = generate_state();
@@ -304,7 +539,7 @@ pub async fn run_oauth_flow(
         client_id: client_id.clone(),
     };
 
-    let auth_url = ctx.authorization_url(scopes)?;
+    let auth_url = ctx.authorization_url(&scopes)?;
     info!(url = %auth_url, "Opening browser for MCP OAuth authentication");
 
     // Best-effort browser open (will fail in headless/CI but the URL is logged).

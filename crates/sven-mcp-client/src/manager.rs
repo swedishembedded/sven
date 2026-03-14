@@ -22,8 +22,8 @@ use sven_tools::Tool as _;
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::client::McpConnection;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
-use crate::oauth::{ensure_fresh, run_oauth_flow, CredentialsStore};
-use crate::transport::{AuthState, HttpTransport, StdioTransport, Transport};
+use crate::oauth::{discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore};
+use crate::transport::{AuthState, HttpTransport, StdioTransport, Transport, UnauthorizedError};
 
 // ── McpEvent ──────────────────────────────────────────────────────────────────
 
@@ -184,24 +184,74 @@ impl McpManager {
                 Ok(())
             }
             Err(e) => {
-                let error_str = e.to_string();
-                // Check if this is an auth requirement.
-                if error_str.contains("HTTP 401") || error_str.contains("authentication") {
-                    let mut servers = self.servers.write().await;
-                    let state = servers
-                        .entry(name.to_string())
-                        .or_insert_with(ServerState::new);
-                    state.health.status = ServerStatus::NeedsAuth {
-                        auth_url: String::new(),
+                // Check if this is a 401 – use the UnauthorizedError to extract
+                // the WWW-Authenticate header and run proper OAuth discovery.
+                if let Some(unauth) = e.downcast_ref::<UnauthorizedError>() {
+                    let www_auth = unauth.www_authenticate.clone();
+                    let server_url = match &cfg.transport {
+                        McpTransport::Http { url, .. } => url.clone(),
+                        _ => String::new(),
                     };
+
+                    // Run discovery to get the real authorization URL.
+                    let config_scopes = cfg
+                        .oauth
+                        .as_ref()
+                        .map(|o| o.scopes.as_slice())
+                        .unwrap_or(&[]);
+                    let auth_url = if !server_url.is_empty() {
+                        match discover_oauth_info(
+                            &self.http_client,
+                            &server_url,
+                            www_auth.as_deref(),
+                            config_scopes,
+                        )
+                        .await
+                        {
+                            Ok(discovery) => {
+                                // Build the auth URL from discovered metadata.
+                                let client_id =
+                                    cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
+                                let code_verifier = crate::oauth::generate_code_verifier();
+                                let state_token = crate::oauth::generate_state();
+                                let redirect_uri = crate::oauth::OAuthContext::callback_uri();
+                                let ctx = crate::oauth::OAuthContext {
+                                    code_verifier,
+                                    state: state_token,
+                                    server_url: server_url.clone(),
+                                    metadata: discovery.auth_server_metadata,
+                                    redirect_uri,
+                                    client_id,
+                                };
+                                ctx.authorization_url(&discovery.scopes).unwrap_or_default()
+                            }
+                            Err(disc_err) => {
+                                warn!(server = %name, error = %disc_err, "OAuth discovery failed");
+                                String::new()
+                            }
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    {
+                        let mut servers = self.servers.write().await;
+                        let state = servers
+                            .entry(name.to_string())
+                            .or_insert_with(ServerState::new);
+                        state.health.status = ServerStatus::NeedsAuth {
+                            auth_url: auth_url.clone(),
+                        };
+                    }
                     let _ = self
                         .event_tx
                         .send(McpEvent::AuthRequired {
                             server: name.to_string(),
-                            auth_url: String::new(),
+                            auth_url,
                         })
                         .await;
                 } else {
+                    let error_str = e.to_string();
                     let mut servers = self.servers.write().await;
                     let state = servers
                         .entry(name.to_string())
@@ -211,7 +261,7 @@ impl McpManager {
                         .event_tx
                         .send(McpEvent::ServerFailed {
                             name: name.to_string(),
-                            error: error_str.clone(),
+                            error: error_str,
                         })
                         .await;
                 }
@@ -437,15 +487,14 @@ impl McpManager {
     /// Start the OAuth flow for an HTTP server.
     ///
     /// Returns the authorization URL that the user should open in a browser.
-    /// For TUI operation, this URL is displayed in a notification.
+    /// Build and return the OAuth authorization URL for `server`, running the
+    /// full MCP discovery chain to find the authorization server and scopes.
+    ///
+    /// Sets the server status to `NeedsAuth { auth_url }` so the TUI can
+    /// display it.  The user should visit the URL and then call `authenticate()`
+    /// (or `/mcp auth <server>`) to complete the flow.
     pub async fn start_oauth(self: &Arc<Self>, server: &str) -> Result<String> {
-        let cfg = {
-            let guard = self.config.read().await;
-            guard
-                .get(server)
-                .cloned()
-                .with_context(|| format!("no config for server {server}"))?
-        };
+        let cfg = self.server_config(server).await?;
 
         let url = match &cfg.transport {
             McpTransport::Http { url, .. } => url.clone(),
@@ -456,12 +505,14 @@ impl McpManager {
             }
         };
 
-        let oauth_cfg = cfg.oauth.as_ref();
-        let scopes = oauth_cfg.map(|o| o.scopes.clone()).unwrap_or_default();
-        let client_id = oauth_cfg.and_then(|o| o.client_id.clone());
+        let config_scopes = cfg
+            .oauth
+            .as_ref()
+            .map(|o| o.scopes.as_slice())
+            .unwrap_or(&[]);
+        let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
 
-        // Discover metadata and build the URL.
-        let metadata = crate::oauth::discover_oauth_metadata(&self.http_client, &url).await?;
+        let discovery = discover_oauth_info(&self.http_client, &url, None, config_scopes).await?;
 
         let code_verifier = crate::oauth::generate_code_verifier();
         let state = crate::oauth::generate_state();
@@ -471,14 +522,13 @@ impl McpManager {
             code_verifier,
             state: state.clone(),
             server_url: url.clone(),
-            metadata,
+            metadata: discovery.auth_server_metadata,
             redirect_uri,
             client_id,
         };
 
-        let auth_url = ctx.authorization_url(&scopes)?;
+        let auth_url = ctx.authorization_url(&discovery.scopes)?;
 
-        // Store the pending auth context.
         {
             let mut servers = self.servers.write().await;
             let server_state = servers
@@ -492,16 +542,15 @@ impl McpManager {
         Ok(auth_url)
     }
 
-    /// Complete OAuth by running the full interactive flow (opens browser, waits
-    /// for callback).  Suitable for calling from a dedicated OAuth command.
+    /// Run the full interactive OAuth PKCE flow (opens browser, waits for
+    /// callback) for `server`.
+    ///
+    /// Scopes and the authorization server are discovered automatically via the
+    /// MCP Authorization spec discovery chain (RFC 9728 / RFC 8414).
+    /// Configuring `oauth.scopes` is optional — leave it empty and scopes will
+    /// be discovered from the server.
     pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<String> {
-        let cfg = {
-            let guard = self.config.read().await;
-            guard
-                .get(server)
-                .cloned()
-                .with_context(|| format!("no config for server {server}"))?
-        };
+        let cfg = self.server_config(server).await?;
 
         let url = match &cfg.transport {
             McpTransport::Http { url, .. } => url.clone(),
@@ -512,15 +561,20 @@ impl McpManager {
             }
         };
 
-        let oauth_cfg = cfg.oauth.as_ref();
-        let scopes = oauth_cfg.map(|o| o.scopes.clone()).unwrap_or_default();
-        let client_id = oauth_cfg.and_then(|o| o.client_id.clone());
+        let config_scopes = cfg
+            .oauth
+            .as_ref()
+            .map(|o| o.scopes.as_slice())
+            .unwrap_or(&[]);
+        let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
+
+        let discovery = discover_oauth_info(&self.http_client, &url, None, config_scopes).await?;
 
         let tokens = run_oauth_flow(
             &self.http_client,
             server,
             &url,
-            &scopes,
+            discovery,
             client_id,
             &self.store,
         )
@@ -539,6 +593,16 @@ impl McpManager {
             "Authenticated as {}",
             tokens.access_token.chars().take(8).collect::<String>()
         ))
+    }
+
+    /// Look up the config for a named server.
+    async fn server_config(&self, server: &str) -> Result<McpServerConfig> {
+        self.config
+            .read()
+            .await
+            .get(server)
+            .cloned()
+            .with_context(|| format!("no config for server {server}"))
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

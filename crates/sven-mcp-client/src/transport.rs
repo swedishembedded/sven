@@ -25,6 +25,32 @@ use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 /// Timeout applied to each MCP request/response exchange.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+// ── UnauthorizedError ─────────────────────────────────────────────────────────
+
+/// Error returned when an MCP HTTP server responds with HTTP 401.
+///
+/// Carries the raw `WWW-Authenticate` header value so callers can run the full
+/// MCP OAuth discovery chain (RFC 9728 / RFC 8414) without any extra round trip.
+#[derive(Debug)]
+pub struct UnauthorizedError {
+    /// The MCP server URL that rejected the request.
+    pub url: String,
+    /// Raw `WWW-Authenticate` response header, if the server sent one.
+    pub www_authenticate: Option<String>,
+}
+
+impl std::fmt::Display for UnauthorizedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MCP server requires authentication (HTTP 401): {}",
+            self.url
+        )
+    }
+}
+
+impl std::error::Error for UnauthorizedError {}
+
 // ── StdioTransport ────────────────────────────────────────────────────────────
 
 /// MCP transport over a stdio subprocess.
@@ -299,10 +325,15 @@ impl HttpTransport {
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(anyhow!(
-                "MCP server requires authentication (HTTP 401): {}",
-                self.url
-            ));
+            let www_authenticate = resp
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            return Err(anyhow::Error::new(UnauthorizedError {
+                url: self.url.clone(),
+                www_authenticate,
+            }));
         }
 
         if !status.is_success() {

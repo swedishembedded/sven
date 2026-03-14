@@ -34,4 +34,5 @@ pub mod transport;
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::{McpEvent, McpManager};
-pub use oauth::{CredentialsStore, StoredTokens};
+pub use oauth::{CredentialsStore, OAuthDiscovery, StoredTokens};
+pub use transport::UnauthorizedError;

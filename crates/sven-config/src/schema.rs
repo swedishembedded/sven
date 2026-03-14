@@ -45,19 +45,40 @@ impl Default for McpTransport {
 
 /// OAuth configuration for an MCP server that requires OAuth 2.0 authentication.
 ///
-/// When present, sven will use the OAuth PKCE flow to obtain tokens.  Tokens
-/// are cached in `~/.config/sven/mcp-credentials.json` and refreshed
+/// When present, sven will use the OAuth PKCE flow (RFC 7636) to obtain tokens.
+/// Tokens are cached in `~/.config/sven/mcp-credentials.json` and refreshed
 /// automatically before expiry.
+///
+/// **Scopes are optional** – sven follows the MCP Authorization spec scope
+/// discovery strategy and discovers them automatically:
+///
+/// 1. `scope` parameter in the `WWW-Authenticate` header of the 401 response.
+/// 2. `scopes_supported` from the server's Protected Resource Metadata
+///    (`/.well-known/oauth-protected-resource`, RFC 9728).
+/// 3. Omit the `scope` parameter if neither source is available.
+///
+/// You only need to set `scopes` if you want to override the discovered values.
+///
+/// Minimal config that works for most OAuth-protected MCP servers:
+/// ```yaml
+/// mcp_servers:
+///   atlassian:
+///     transport:
+///       type: http
+///       url: "https://mcp.atlassian.com/v2"
+///     oauth: {}
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpOAuthConfig {
-    /// OAuth scopes to request during authorization.
-    #[serde(default)]
+    /// OAuth scopes to request.  Leave empty to have sven discover them
+    /// automatically from the server (recommended).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
-    /// Pre-registered OAuth client ID.  If absent, dynamic client registration
-    /// is attempted (per RFC 7591).
+    /// Pre-registered OAuth client ID.  Leave absent to use the default
+    /// `sven-mcp-client` public client.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    /// Pre-registered OAuth client secret.
+    /// Pre-registered OAuth client secret (only needed for confidential clients).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
 }
@@ -88,8 +109,7 @@ fn default_mcp_timeout() -> u64 {
 ///     transport:
 ///       type: http
 ///       url: "https://mcp.atlassian.com/v2"
-///     oauth:
-///       scopes: ["read:jira-work", "read:confluence-content.all"]
+///     oauth: {}   # scopes auto-discovered from the server
 ///     enabled: true
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
