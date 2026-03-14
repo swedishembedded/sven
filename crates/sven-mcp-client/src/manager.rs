@@ -352,7 +352,9 @@ impl McpManager {
                     })
                     .await;
 
-                let auth_result = this.authenticate(&name_owned).await;
+                let auth_result = this
+                    .authenticate_with_www_auth(&name_owned, www_auth.as_deref())
+                    .await;
 
                 // Clear the in-progress flag regardless of outcome.
                 {
@@ -600,6 +602,17 @@ impl McpManager {
     /// (up to 5 minutes) or an error occurs.  On success, tokens are persisted
     /// and the server is automatically reconnected.
     pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<String> {
+        self.authenticate_with_www_auth(server, None).await
+    }
+
+    /// Like [`authenticate`] but accepts `www_authenticate` from a 401 response.
+    /// Use this when re-auth is triggered by an HTTP 401 so discovery can use
+    /// the server's `resource_metadata` URL if present.
+    pub async fn authenticate_with_www_auth(
+        self: &Arc<Self>,
+        server: &str,
+        www_authenticate: Option<&str>,
+    ) -> Result<String> {
         let cfg = self.server_config(server).await?;
 
         let url = match &cfg.transport {
@@ -619,7 +632,8 @@ impl McpManager {
         let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
         let client_secret = cfg.oauth.as_ref().and_then(|o| o.client_secret.clone());
 
-        let discovery = discover_oauth_info(&self.http_client, &url, None, config_scopes).await?;
+        let discovery =
+            discover_oauth_info(&self.http_client, &url, www_authenticate, config_scopes).await?;
 
         let tokens = run_oauth_flow(
             &self.http_client,

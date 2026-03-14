@@ -35,10 +35,17 @@ impl McpConnection {
         let id = transport.next_id();
         let req = JsonRpcRequest::new(id, "initialize", Some(serde_json::to_value(&params)?));
 
-        let result = transport
-            .send_request(&req)
-            .await
-            .with_context(|| format!("MCP initialize failed for {name}"))?;
+        let result = transport.send_request(&req).await.map_err(|e| {
+            // Preserve UnauthorizedError without wrapping so the manager can downcast
+            // and trigger the OAuth flow. Other errors get context for diagnostics.
+            if e.downcast_ref::<crate::transport::UnauthorizedError>()
+                .is_some()
+            {
+                e
+            } else {
+                e.context(format!("MCP initialize failed for {name}"))
+            }
+        })?;
 
         let init_result: crate::protocol::InitializeResult =
             serde_json::from_value(result).context("parse initialize result")?;
