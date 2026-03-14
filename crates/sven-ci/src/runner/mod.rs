@@ -584,6 +584,7 @@ impl CiRunner {
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_runtime_context(runtime_ctx)
             .with_allow_interactive_oauth(false)
+            .with_wait_for_mcp_tools(20_000)
             .build(initial_mode, model, profile)
             .await;
 

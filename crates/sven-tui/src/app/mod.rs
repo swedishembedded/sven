@@ -175,6 +175,9 @@ pub struct App {
     /// Checked alongside `command_registry` during slash command dispatch.
     pub(crate) mcp_prompt_commands:
         std::collections::HashMap<String, Arc<dyn crate::commands::SlashCommand>>,
+    /// Broadcast sender for MCP tool refresh. When ToolsChanged fires, we send
+    /// so all agent tasks update their registries.
+    pub(crate) mcp_refresh_tx: Option<tokio::sync::broadcast::Sender<()>>,
     /// Tool display registry — set by AgentBuilder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
@@ -404,6 +407,7 @@ impl App {
             shared_tool_displays,
             mcp_manager: None,
             mcp_prompt_commands: std::collections::HashMap::new(),
+            mcp_refresh_tx: None,
             history_path,
             jsonl_path,
             needs_terminal_recover: false,
@@ -826,7 +830,7 @@ impl App {
         }
 
         // ── Completion overlay ────────────────────────────────────────────────
-        if let Some(ref overlay) = self.ui.completion {
+        if let Some(ref mut overlay) = self.ui.completion {
             frame.render_widget(
                 CompletionMenu {
                     overlay,
@@ -973,6 +977,9 @@ impl App {
                 .await;
             });
         } else {
+            let (mcp_refresh_tx, _) = tokio::sync::broadcast::channel(16);
+            self.mcp_refresh_tx = Some(mcp_refresh_tx.clone());
+
             let cfg = self.config.clone();
             let mode = self.session.mode;
             let startup_model_cfg = self.session.model_cfg.clone();
@@ -982,6 +989,7 @@ impl App {
             let shared_tools_task = self.shared_tools.clone();
             let shared_tool_displays_task = self.shared_tool_displays.clone();
             let buffer_store_task = Arc::clone(&self.buffer_store);
+            let mcp_refresh_rx = mcp_refresh_tx.subscribe();
             let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<(
                 Arc<McpManager>,
                 tokio::sync::mpsc::Receiver<sven_mcp_client::McpEvent>,
@@ -1001,6 +1009,7 @@ impl App {
                     shared_tool_displays_task,
                     buffer_store_task,
                     Some(mcp_tx),
+                    Some(mcp_refresh_rx),
                 )
                 .await;
             });
@@ -1017,7 +1026,7 @@ impl App {
                     let toast_tx = tx.clone();
                     let mgr_clone = Arc::clone(&mgr);
                     tokio::spawn(async move {
-                        mcp_event_consumer(mcp_event_rx, toast_tx, mgr_clone).await;
+                        mcp_event_consumer(mcp_event_rx, toast_tx, mcp_refresh_tx, mgr_clone).await;
                     });
                 }
             }
@@ -1576,6 +1585,7 @@ impl App {
         let shared_tools = self.shared_tools.clone();
         let shared_tool_displays = self.shared_tool_displays.clone();
         let buffer_store = Arc::clone(&self.buffer_store);
+        let mcp_refresh_rx = self.mcp_refresh_tx.as_ref().map(|tx| tx.subscribe());
 
         tokio::spawn(crate::agent::agent_task(
             cfg,
@@ -1591,6 +1601,7 @@ impl App {
             shared_tool_displays,
             buffer_store,
             None, // mcp_manager_tx — not needed for sub-session restarts
+            mcp_refresh_rx,
         ));
     }
 
@@ -1727,15 +1738,18 @@ impl App {
 // ── MCP event consumer ────────────────────────────────────────────────────────
 
 /// Background task that consumes `McpEvent`s and forwards them as TUI toasts.
-///
-/// Runs until the sender end of the channel is dropped (i.e. the McpManager
-/// is dropped or the application exits).
+/// When `ToolsChanged` fires, sends on `refresh_tx` so all agent tasks refresh
+/// their MCP tool registries.
 async fn mcp_event_consumer(
     mut rx: mpsc::Receiver<McpEvent>,
     toast_tx: mpsc::Sender<ui_state::Toast>,
+    refresh_tx: tokio::sync::broadcast::Sender<()>,
     _mgr: Arc<McpManager>,
 ) {
     while let Some(event) = rx.recv().await {
+        if matches!(event, McpEvent::ToolsChanged) {
+            let _ = refresh_tx.send(());
+        }
         let toast = match event {
             McpEvent::AuthStarted { ref server } => Some(ui_state::Toast::info(format!(
                 "Opening browser to authenticate with '{server}'…"

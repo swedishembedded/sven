@@ -23,7 +23,7 @@ use tracing::warn;
 
 use sven_config::{AgentConfig, AgentMode, CompactionStrategy};
 use sven_model::{CompletionRequest, FunctionCall, Message, MessageContent, ResponseEvent, Role};
-use sven_tools::{events::ToolEvent, ToolCall, ToolRegistry};
+use sven_tools::{events::ToolEvent, Tool, ToolCall, ToolRegistry};
 
 use crate::{
     compact::{compact_session_with_strategy, emergency_compact, smart_truncate},
@@ -136,6 +136,13 @@ impl Agent {
     /// (e.g. `--rerun-toolcalls`).
     pub fn tools(&self) -> &Arc<ToolRegistry> {
         &self.tools
+    }
+
+    /// Replace MCP tools in the registry with the given set.
+    /// Call when MCP servers connect, disconnect, or tools are reloaded so
+    /// subsequent model turns use the updated tool list.
+    pub fn refresh_mcp_tools(&self, tools: Vec<Arc<dyn Tool>>) {
+        self.tools.replace_mcp_tools(tools);
     }
 
     /// Expose the shared mode lock so external callers (e.g. ACP mode-switch

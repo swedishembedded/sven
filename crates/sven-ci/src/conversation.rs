@@ -130,6 +130,7 @@ impl ConversationRunner {
 
         let mut agent = AgentBuilder::new(self.config.clone())
             .with_allow_interactive_oauth(false)
+            .with_wait_for_mcp_tools(20_000)
             .build(opts.mode, model.clone(), profile)
             .await;
 

@@ -8,9 +8,11 @@
 //! construction and [`AgentRuntimeContext`] population internally.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{mpsc, Mutex};
-use tracing::warn;
+use tokio::time::Instant;
+use tracing::{info, warn};
 
 use sven_config::{AgentMode, Config};
 use sven_core::{Agent, ModelResolver};
@@ -43,6 +45,10 @@ pub struct AgentBuilder {
     permission_requester: Option<Arc<dyn PermissionRequester>>,
     /// When false (headless/CI), MCP OAuth flows are never triggered.
     allow_interactive_oauth: bool,
+    /// When Some(ms), wait up to that many milliseconds for MCP tools to become
+    /// available before building the registry. Used in headless mode so the
+    /// conversation session gets tools from connecting MCP servers.
+    wait_for_mcp_tools_ms: Option<u64>,
 }
 
 impl AgentBuilder {
@@ -57,6 +63,7 @@ impl AgentBuilder {
             shared_tool_displays: None,
             permission_requester: None,
             allow_interactive_oauth: true,
+            wait_for_mcp_tools_ms: None,
         }
     }
 
@@ -100,6 +107,19 @@ impl AgentBuilder {
     /// IDE approves or denies the call.
     pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
         self.permission_requester = Some(requester);
+        self
+    }
+
+    /// In headless/CI mode, wait up to `timeout_ms` milliseconds for MCP
+    /// servers to connect and expose tools before building the agent.
+    /// Ensures the conversation session receives MCP tools rather than
+    /// starting with none. Pass 0 to disable waiting (default).
+    pub fn with_wait_for_mcp_tools(mut self, timeout_ms: u64) -> Self {
+        self.wait_for_mcp_tools_ms = if timeout_ms > 0 {
+            Some(timeout_ms)
+        } else {
+            None
+        };
         self
     }
 
@@ -157,6 +177,34 @@ impl AgentBuilder {
         );
         mcp_manager.connect_all().await;
         mcp_manager.start_background_tasks();
+
+        // In headless mode, wait for MCP tools so the conversation session
+        // receives them rather than starting with none.
+        let has_enabled_servers = self.config.mcp_servers.values().any(|c| c.enabled);
+        if let Some(timeout_ms) = self.wait_for_mcp_tools_ms {
+            if has_enabled_servers {
+                let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+                let poll_interval = Duration::from_millis(200);
+                loop {
+                    let tools = mcp_manager.tools().await;
+                    if !tools.is_empty() {
+                        info!(
+                            count = tools.len(),
+                            "MCP tools available, proceeding with agent build"
+                        );
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        warn!(
+                            timeout_ms,
+                            "MCP tools not available within timeout, proceeding without"
+                        );
+                        break;
+                    }
+                    tokio::time::sleep(poll_interval).await;
+                }
+            }
+        }
 
         let mut registry = build_tool_registry(
             &self.config,

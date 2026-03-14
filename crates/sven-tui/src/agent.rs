@@ -13,8 +13,9 @@ use sven_input::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
+use sven_tools::Tool;
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
 /// Request sent from the TUI to the background agent task.
@@ -48,6 +49,9 @@ pub enum AgentRequest {
     GenerateTitle { user_text: String },
     /// Request peer list (node-proxy mode); handled by the mux, not the agent task.
     ListPeers,
+    /// Refresh MCP tools from the manager (e.g. when ToolsChanged fires).
+    /// Ensures the current conversation uses the updated tool list.
+    RefreshMcpTools,
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
@@ -140,6 +144,8 @@ pub async fn agent_task(
     buffer_store: Arc<Mutex<OutputBufferStore>>,
     // Optional one-shot channel to deliver the McpManager + event receiver to the TUI.
     mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
+    // When Some, receive MCP tool-refresh signals (ToolsChanged) and update the registry.
+    mcp_refresh_rx: Option<broadcast::Receiver<()>>,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> =
         match sven_model::from_config(&startup_model_cfg) {
@@ -183,7 +189,40 @@ pub async fn agent_task(
     // Track current model config so GenerateTitle can spin up a one-off completion.
     let mut current_model_cfg = startup_model_cfg;
 
-    while let Some(req) = rx.recv().await {
+    let mut mcp_refresh_rx = mcp_refresh_rx;
+
+    loop {
+        let req = tokio::select! {
+            biased;
+
+            Some(req) = rx.recv() => req,
+            None = rx.recv() => break,
+
+            result = async {
+                if let Some(ref mut r) = mcp_refresh_rx {
+                    r.recv().await
+                } else {
+                    std::future::pending().await
+                }
+            } => {
+                match result {
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let tools = mcp_manager.tools().await;
+                        let tools: Vec<Arc<dyn Tool>> = tools
+                            .into_iter()
+                            .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                            .collect();
+                        agent.refresh_mcp_tools(tools);
+                        if let Some(ref st) = shared_tools {
+                            st.set(agent.tools().schemas());
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+                continue;
+            }
+        };
+
         match req {
             AgentRequest::Submit {
                 content,
@@ -297,6 +336,17 @@ pub async fn agent_task(
             }
             AgentRequest::ListPeers => {
                 // Only relevant in node-proxy mode; local agent ignores.
+            }
+            AgentRequest::RefreshMcpTools => {
+                let tools = mcp_manager.tools().await;
+                let tools: Vec<Arc<dyn Tool>> = tools
+                    .into_iter()
+                    .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                    .collect();
+                agent.refresh_mcp_tools(tools);
+                if let Some(ref st) = shared_tools {
+                    st.set(agent.tools().schemas());
+                }
             }
         }
     }

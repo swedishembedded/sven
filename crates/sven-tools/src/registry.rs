@@ -83,8 +83,11 @@ impl SharedToolDisplays {
 /// `ToolRegistry` is automatically `Sync` because `HashMap<String, Arc<dyn Tool>>`
 /// is `Sync` when `dyn Tool: Send + Sync`, which is guaranteed by the `Tool`
 /// supertrait bounds (`Tool: Send + Sync`).  No manual `unsafe impl` is needed.
+///
+/// The tools map is behind `RwLock` so MCP tools can be replaced at runtime when
+/// servers connect/disconnect or tools are reloaded.
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn Tool>>,
+    tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
     /// Shared so the TUI can hold a clone for chat rendering without owning the registry.
     display_registry: Arc<RwLock<ToolDisplayRegistry>>,
     /// Optional permission requester wired up by the ACP server layer.
@@ -96,7 +99,7 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            tools: RwLock::new(HashMap::new()),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
             permission_requester: None,
         }
@@ -112,7 +115,9 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
-        self.tools.insert(tool.name().to_string(), Arc::new(tool));
+        if let Ok(mut guard) = self.tools.write() {
+            guard.insert(tool.name().to_string(), Arc::new(tool));
+        }
     }
 
     /// Register a tool that also provides display metadata. The same instance
@@ -120,10 +125,22 @@ impl ToolRegistry {
     pub fn register_with_display(&mut self, tool: impl Tool + crate::tool::ToolDisplay + 'static) {
         let arc = Arc::new(tool);
         let name = arc.name().to_string();
-        self.tools
-            .insert(name.clone(), Arc::clone(&arc) as Arc<dyn Tool>);
+        if let Ok(mut guard) = self.tools.write() {
+            guard.insert(name.clone(), Arc::clone(&arc) as Arc<dyn Tool>);
+        }
         if let Ok(mut disp) = self.display_registry.write() {
             disp.register_arc(name, arc as Arc<dyn crate::tool::ToolDisplay>);
+        }
+    }
+
+    /// Replace all MCP tools with the given set.  Call when MCP servers connect,
+    /// disconnect, or tools are reloaded so the agent uses the updated list.
+    pub fn replace_mcp_tools(&self, new_tools: Vec<Arc<dyn Tool>>) {
+        if let Ok(mut guard) = self.tools.write() {
+            guard.retain(|_, t| !t.is_mcp());
+            for tool in new_tools {
+                guard.insert(tool.name().to_string(), tool);
+            }
         }
     }
 
@@ -133,7 +150,7 @@ impl ToolRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.get(name).cloned()
+        self.tools.read().ok()?.get(name).cloned()
     }
 
     /// Produce schemas for ALL registered tools (mode-unfiltered).
@@ -147,8 +164,13 @@ impl ToolRegistry {
     }
 
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let tool = match self.tools.get(&call.name) {
-            Some(t) => Arc::clone(t),
+        let tool = match self
+            .tools
+            .read()
+            .ok()
+            .and_then(|g| g.get(&call.name).cloned())
+        {
+            Some(t) => t,
             None => return ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
         };
         if let Some(ref requester) = self.permission_requester {
@@ -165,25 +187,30 @@ impl ToolRegistry {
     }
 
     pub fn names(&self) -> Vec<String> {
-        self.tools.keys().cloned().collect()
+        self.tools
+            .read()
+            .ok()
+            .map_or_else(Vec::new, |g| g.keys().cloned().collect())
     }
 
     /// Returns the [`OutputCategory`] for the named tool, or
     /// [`OutputCategory::Generic`] if the tool is not registered.
     pub fn output_category(&self, tool_name: &str) -> OutputCategory {
         self.tools
-            .get(tool_name)
+            .read()
+            .ok()
+            .and_then(|g| g.get(tool_name))
             .map(|t| t.output_category())
             .unwrap_or_default()
     }
 
     pub fn names_for_mode(&self, mode: AgentMode) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .tools
-            .values()
-            .filter(|t| t.modes().contains(&mode))
-            .map(|t| t.name().to_string())
-            .collect();
+        let mut names: Vec<String> = self.tools.read().ok().map_or_else(Vec::new, |g| {
+            g.values()
+                .filter(|t| t.modes().contains(&mode))
+                .map(|t| t.name().to_string())
+                .collect()
+        });
         names.sort();
         names
     }
@@ -200,7 +227,11 @@ impl ToolRegistry {
         let mut core: Vec<ToolSchema> = Vec::new();
         let mut mcp: Vec<ToolSchema> = Vec::new();
 
-        for t in self.tools.values() {
+        let guard = match self.tools.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        for t in guard.values() {
             if !predicate(t) {
                 continue;
             }
@@ -216,6 +247,7 @@ impl ToolRegistry {
                 core.push(schema);
             }
         }
+        drop(guard);
 
         core.sort_by(|a, b| a.name.cmp(&b.name));
         mcp.sort_by(|a, b| a.name.cmp(&b.name));
