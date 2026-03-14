@@ -244,6 +244,10 @@ pub async fn node_agent_task(
                 // Title generation is local-agent only; not sent in node-proxy mode.
                 continue;
             }
+            AgentRequest::RefreshMcpTools => {
+                // Node-proxy mode has no local MCP manager; the node owns tools.
+                continue;
+            }
             AgentRequest::ListPeers => {
                 if send_cmd(&ws_out_tx, &Cmd::ListPeers).is_err() {
                     let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;

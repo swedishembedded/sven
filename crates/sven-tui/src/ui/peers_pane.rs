@@ -9,13 +9,14 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    prelude::StatefulWidget,
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, BorderType, Borders, Widget},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Widget},
 };
 
 use super::theme::{BORDER_DIM, BORDER_FOCUS, BORDER_RESIZE, TEXT, TEXT_DIM};
-use super::width_utils::{char_width, display_width, truncate_to_width_exact};
+use super::width_utils::{fit_to_width, truncate_to_width};
 
 /// Data for a single peer in the peers list.
 pub struct PeerListItem<'a> {
@@ -84,101 +85,6 @@ impl Widget for PeersPane<'_> {
             return;
         }
 
-        let visible_rows = inner.height as usize;
-        let total = self.items.len();
-
-        // Clamp scroll offset so selected is always visible.
-        let scroll = self.scroll_offset;
-
-        let visible_range = scroll..(scroll + visible_rows).min(total);
-
-        for (row_idx, item_idx) in visible_range.enumerate() {
-            let item = &self.items[item_idx];
-            let y = inner.y + row_idx as u16;
-            if y >= inner.y + inner.height {
-                break;
-            }
-
-            let is_cursor = item_idx == self.selected;
-
-            // ── Status icon ───────────────────────────────────────────────────
-            let (icon_char, icon_style) = if item.connected {
-                (
-                    if self.ascii { '*' } else { '●' },
-                    Style::default().fg(Color::Rgb(100, 180, 100)),
-                )
-            } else {
-                (
-                    if self.ascii { '-' } else { '○' },
-                    Style::default().fg(TEXT_DIM),
-                )
-            };
-
-            // ── Row background ───────────────────────────────────────────────
-            let (bg_color, text_style) = if is_cursor {
-                (
-                    Color::Rgb(40, 40, 60),
-                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-                )
-            } else {
-                (Color::Reset, Style::default().fg(TEXT_DIM))
-            };
-
-            // Fill background for the full row width.
-            for x in 0..inner.width {
-                let cell = buf.cell_mut((inner.x + x, y));
-                if let Some(c) = cell {
-                    c.set_bg(bg_color);
-                }
-            }
-
-            // ── Icon ──────────────────────────────────────────────────────────
-            let icon_x = inner.x;
-            if let Some(cell) = buf.cell_mut((icon_x, y)) {
-                cell.set_char(icon_char);
-                cell.set_style(icon_style.bg(bg_color));
-            }
-
-            // ── Name (truncated) ─────────────────────────────────────────────
-            let name_x = inner.x + 2;
-            let max_name_width = inner.width.saturating_sub(2) as usize;
-
-            let (display_name, needs_ellipsis) =
-                if display_width(item.name) > max_name_width && max_name_width > 1 {
-                    (
-                        truncate_to_width_exact(item.name, max_name_width.saturating_sub(1)),
-                        true,
-                    )
-                } else {
-                    (truncate_to_width_exact(item.name, max_name_width), false)
-                };
-
-            let mut col_offset = 0u16;
-            for ch in display_name.chars() {
-                if let Some(cell) = buf.cell_mut((name_x + col_offset, y)) {
-                    cell.set_char(ch);
-                    cell.set_style(text_style.bg(bg_color));
-                }
-                col_offset += char_width(ch) as u16;
-            }
-
-            if needs_ellipsis {
-                if let Some(cell) = buf.cell_mut((name_x + col_offset, y)) {
-                    cell.set_char(if self.ascii { '.' } else { '…' });
-                    cell.set_style(text_style.bg(bg_color));
-                }
-            }
-
-            // ── Delegate indicator ───────────────────────────────────────────
-            if item.can_delegate {
-                let delegate_x = inner.x + inner.width.saturating_sub(2);
-                if let Some(cell) = buf.cell_mut((delegate_x, y)) {
-                    cell.set_char(if self.ascii { 'D' } else { '⚡' });
-                    cell.set_style(Style::default().fg(Color::Rgb(255, 200, 100)).bg(bg_color));
-                }
-            }
-        }
-
         // ── Empty state ───────────────────────────────────────────────────────
         if self.items.is_empty() {
             let empty_msg = if self.ascii {
@@ -186,15 +92,86 @@ impl Widget for PeersPane<'_> {
             } else {
                 " (no peers) "
             };
-            let msg_len = empty_msg.len() as u16;
-            let x = inner.x + inner.width.saturating_sub(msg_len) / 2;
-            let y = inner.y + inner.height / 2;
-            for (i, ch) in empty_msg.chars().enumerate() {
-                if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
-                    cell.set_char(ch);
-                    cell.set_style(Style::default().fg(TEXT_DIM));
-                }
-            }
+            Paragraph::new(Span::styled(empty_msg, Style::default().fg(TEXT_DIM)))
+                .centered()
+                .render(inner, buf);
+            return;
         }
+
+        // ── Build ListItems ───────────────────────────────────────────────────
+        // Layout per row:  icon(1) + space(1) + name(…) + delegate_indicator(2)
+        // The delegate indicator occupies the last 2 columns of the row.
+        // We use fit_to_width to pad the name so the delegate column is always
+        // at the same position, and then append the indicator at the end.
+        let delegate_w: usize = 2; // " ⚡" / " D"
+        let name_cols = (inner.width as usize).saturating_sub(2 + delegate_w); // 2 = icon + space
+
+        let list_items: Vec<ListItem> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(item_idx, item)| {
+                let is_cursor = item_idx == self.selected;
+
+                // Status icon
+                let (icon_char, icon_fg) = if item.connected {
+                    (
+                        if self.ascii { '*' } else { '\u{25CF}' }, // ●
+                        Color::Rgb(100, 180, 100),
+                    )
+                } else {
+                    (
+                        if self.ascii { '-' } else { '\u{25CB}' }, // ○
+                        TEXT_DIM,
+                    )
+                };
+
+                // Row background
+                let (bg_color, text_fg, text_mod) = if is_cursor {
+                    (Color::Rgb(40, 40, 60), TEXT, Modifier::BOLD)
+                } else {
+                    (Color::Reset, TEXT_DIM, Modifier::empty())
+                };
+
+                // Name, padded/truncated to fixed width so delegate column aligns.
+                let name_trunc = truncate_to_width(item.name, name_cols);
+                let name_padded = fit_to_width(&name_trunc, name_cols);
+
+                // Delegate indicator (right-aligned, always 2 cols).
+                let delegate_str = if item.can_delegate {
+                    if self.ascii {
+                        " D"
+                    } else {
+                        " \u{26A1}"
+                    } // ⚡
+                } else {
+                    "  "
+                };
+                let delegate_fg = if item.can_delegate {
+                    Color::Rgb(255, 200, 100)
+                } else {
+                    Color::Reset
+                };
+
+                let line = Line::from(vec![
+                    Span::styled(icon_char.to_string(), Style::default().fg(icon_fg)),
+                    Span::raw(" "),
+                    Span::styled(
+                        name_padded,
+                        Style::default().fg(text_fg).add_modifier(text_mod),
+                    ),
+                    Span::styled(delegate_str, Style::default().fg(delegate_fg)),
+                ]);
+
+                ListItem::new(line).style(Style::default().bg(bg_color))
+            })
+            .collect();
+
+        // ── Render via ratatui List + transient ListState ─────────────────────
+        let list = List::new(list_items);
+        let mut list_state = ListState::default();
+        *list_state.offset_mut() = self.scroll_offset;
+        list_state.select(Some(self.selected));
+        StatefulWidget::render(list, inner, buf, &mut list_state);
     }
 }

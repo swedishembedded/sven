@@ -6,9 +6,10 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    widgets::{List, ListItem, ListState, Widget},
 };
 use sven_config::AgentMode;
 
@@ -49,11 +50,10 @@ impl Widget for QueuePanel<'_> {
             return;
         }
 
-        let visible: Vec<Line<'static>> = self
+        let list_items: Vec<ListItem> = self
             .items
             .iter()
             .enumerate()
-            .take(inner.height as usize)
             .map(|(i, item)| {
                 let is_selected = self.selected == Some(i);
                 let is_editing = self.editing == Some(i);
@@ -110,10 +110,14 @@ impl Widget for QueuePanel<'_> {
                     Span::styled(badge, Style::default().fg(Color::Magenta))
                 };
 
-                Line::from(vec![num_span, badge_span, text_span])
+                ListItem::new(Line::from(vec![num_span, badge_span, text_span]))
             })
             .collect();
 
-        Paragraph::new(visible).render(inner, buf);
+        // Use a transient ListState with no selection highlight — the styling
+        // is already baked into each ListItem's Span styles (selected/editing).
+        let list = List::new(list_items);
+        let mut list_state = ListState::default();
+        StatefulWidget::render(list, inner, buf, &mut list_state);
     }
 }

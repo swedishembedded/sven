@@ -7,6 +7,11 @@
 //! (or [`ratatui::widgets::StatefulWidget`]) implementor plus any data types
 //! that are tightly coupled to its rendering.
 
+use ratatui::{
+    layout::Rect,
+    widgets::{Scrollbar, ScrollbarOrientation},
+};
+
 pub(crate) mod chat_list_pane;
 pub(crate) mod chat_pane;
 pub(crate) mod completion_menu;
@@ -51,3 +56,28 @@ pub(crate) use width_utils::{
     char_width, col_to_byte_offset, display_width, fit_to_width, truncate_to_width,
     truncate_to_width_exact,
 };
+
+// ── Shared render helpers ─────────────────────────────────────────────────────
+
+/// Standard sven vertical scrollbar (right side, no begin/end symbols).
+///
+/// Both [`ChatPane`] and [`InputPane`] use identical configuration — this
+/// keeps the look consistent and removes duplication.
+pub(crate) fn sven_scrollbar() -> Scrollbar<'static> {
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_symbol("|")
+        .track_symbol(Some("░"))
+}
+
+/// Compute a centered popup rectangle inside `area`.
+///
+/// The result is clamped so the popup never exceeds `area`'s dimensions.
+pub(crate) fn centered_popup(area: Rect, width: u16, height: u16) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    Rect::new(x, y, w, h)
+}

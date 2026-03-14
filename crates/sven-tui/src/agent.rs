@@ -172,6 +172,9 @@ pub async fn agent_task(
         ctx
     };
 
+    // Keep a clone so the loop can call shared_tools.set() after tool refreshes;
+    // the original is moved into the AgentBuilder to seed the initial snapshot.
+    let shared_tools_loop = shared_tools.clone();
     let (mut agent, mcp_manager, mcp_event_rx) = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
         .with_shared_tools(shared_tools)
@@ -180,7 +183,8 @@ pub async fn agent_task(
         .await;
 
     if let Some(tx_mcp) = mcp_manager_tx {
-        let _ = tx_mcp.send((mcp_manager, mcp_event_rx));
+        // Clone the Arc so the agent task retains its own handle for tool refreshes.
+        let _ = tx_mcp.send((Arc::clone(&mcp_manager), mcp_event_rx));
     }
 
     // Model/mode overrides are applied permanently: no revert after the turn.
@@ -195,8 +199,10 @@ pub async fn agent_task(
         let req = tokio::select! {
             biased;
 
-            Some(req) = rx.recv() => req,
-            None = rx.recv() => break,
+            req = rx.recv() => match req {
+                Some(r) => r,
+                None => break,
+            },
 
             result = async {
                 if let Some(ref mut r) = mcp_refresh_rx {
@@ -213,9 +219,7 @@ pub async fn agent_task(
                             .map(|t| Arc::new(t) as Arc<dyn Tool>)
                             .collect();
                         agent.refresh_mcp_tools(tools);
-                        if let Some(ref st) = shared_tools {
-                            st.set(agent.tools().schemas());
-                        }
+                        shared_tools_loop.set(agent.tools().schemas());
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -344,9 +348,7 @@ pub async fn agent_task(
                     .map(|t| Arc::new(t) as Arc<dyn Tool>)
                     .collect();
                 agent.refresh_mcp_tools(tools);
-                if let Some(ref st) = shared_tools {
-                    st.set(agent.tools().schemas());
-                }
+                shared_tools_loop.set(agent.tools().schemas());
             }
         }
     }

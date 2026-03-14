@@ -199,8 +199,7 @@ impl ToolRegistry {
         self.tools
             .read()
             .ok()
-            .and_then(|g| g.get(tool_name))
-            .map(|t| t.output_category())
+            .and_then(|g| g.get(tool_name).map(|t| t.output_category()))
             .unwrap_or_default()
     }
 

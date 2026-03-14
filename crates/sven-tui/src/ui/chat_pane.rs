@@ -14,14 +14,17 @@ use ratatui::{
     prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Clear, Paragraph, ScrollbarState, Widget},
 };
 
 use crate::markdown::StyledLines;
 use crate::pager::{highlight_match_in_line, tint_match_line};
 
-use super::theme::{open_pane_block, BG};
 use super::width_utils::truncate_to_width_exact;
+use super::{
+    sven_scrollbar,
+    theme::{open_pane_block, BG},
+};
 
 // ── ChatPane widget ───────────────────────────────────────────────────────────
 
@@ -196,12 +199,7 @@ impl Widget for ChatPane<'_> {
             let mut sb_state = ScrollbarState::new(scrollable_range)
                 .position(self.scroll_offset as usize)
                 .viewport_content_length(visible_height);
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .thumb_symbol("|")
-                .track_symbol(Some("░"))
-                .render(sb_area, buf, &mut sb_state);
+            sven_scrollbar().render(sb_area, buf, &mut sb_state);
         }
 
         // ── Auto-scroll paused banner ─────────────────────────────────────────

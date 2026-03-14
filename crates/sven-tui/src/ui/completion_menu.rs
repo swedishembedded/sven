@@ -7,21 +7,22 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget},
 };
 
 use crate::overlay::completion::CompletionOverlay;
 
 use super::theme::border_type;
-use super::width_utils::{display_width, truncate_to_width_exact};
+use super::width_utils::truncate_to_width_exact;
 
 // ── CompletionMenu widget ─────────────────────────────────────────────────────
 
 /// Floating completion overlay — positioned just above the input pane.
 pub struct CompletionMenu<'a> {
-    pub overlay: &'a CompletionOverlay,
+    pub overlay: &'a mut CompletionOverlay,
     /// The input pane rect — used to anchor the popup above it.
     pub input_pane: Rect,
     pub ascii: bool,
@@ -73,57 +74,40 @@ impl Widget for CompletionMenu<'_> {
         let list_area = Rect::new(inner.x, inner.y, inner.width, list_rows);
         let desc_area = Rect::new(inner.x, inner.y + list_rows, inner.width, 1);
 
-        // ── Item list ─────────────────────────────────────────────────────────
-        let scroll = self.overlay.scroll_offset;
-        let mut lines: Vec<Line<'static>> = Vec::new();
-
-        for (i, item) in self
+        // ── Item list via ratatui List + ListState ────────────────────────────
+        let avail = (inner.width as usize).saturating_sub(1);
+        let items: Vec<ListItem> = self
             .overlay
             .items
             .iter()
-            .skip(scroll)
-            .take(list_rows as usize)
-            .enumerate()
-        {
-            let abs_idx = i + scroll;
-            let selected = abs_idx == self.overlay.selected;
+            .map(|item| {
+                let raw_label = if item.display.is_empty() {
+                    item.value.as_str()
+                } else {
+                    item.display.as_str()
+                };
+                let label = truncate_to_width_exact(raw_label, avail);
+                ListItem::new(Line::from(Span::raw(label)))
+            })
+            .collect();
 
-            let raw_label = if item.display.is_empty() {
-                item.value.as_str()
-            } else {
-                item.display.as_str()
-            };
-            let avail = (inner.width as usize).saturating_sub(1);
-            let label = truncate_to_width_exact(raw_label, avail);
-
-            let (fg, bg, modifier) = if selected {
-                (Color::Black, Color::LightCyan, Modifier::BOLD)
-            } else {
-                (Color::White, Color::Black, Modifier::empty())
-            };
-
-            let base = Style::default().fg(fg).bg(bg).add_modifier(modifier);
-
-            // Pad to fill the row so bg covers the full width.
-            let pad_len = (inner.width as usize).saturating_sub(display_width(&label) + 1);
-            let pad = " ".repeat(pad_len);
-
-            lines.push(Line::from(vec![
-                Span::styled(String::new(), base),
-                Span::styled(format!("{label}{pad}"), base),
-            ]));
-        }
-
-        Paragraph::new(lines)
+        let list = List::new(items)
             .style(Style::default().bg(Color::Black))
-            .render(list_area, buf);
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        StatefulWidget::render(list, list_area, buf, &mut self.overlay.list_state);
 
         // ── Description preview ───────────────────────────────────────────────
-        if let Some(item) = self.overlay.items.get(self.overlay.selected) {
+        if let Some(item) = self.overlay.selected_item() {
             let desc = item.description.as_deref().unwrap_or("");
             if !desc.is_empty() {
-                let avail = inner.width.saturating_sub(2) as usize;
-                let desc_str = truncate_to_width_exact(desc, avail);
+                let avail_desc = inner.width.saturating_sub(2) as usize;
+                let desc_str = truncate_to_width_exact(desc, avail_desc);
                 Paragraph::new(Line::from(vec![
                     Span::raw(" "),
                     Span::styled(

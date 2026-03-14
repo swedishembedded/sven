@@ -53,7 +53,7 @@ hex          = "0.4"
 subtle       = "2.6"
 lru          = "0.12"
 pulldown-cmark = "0.12"
-ratatui      = "0.29"
+ratatui      = "0.30"
 crossterm    = { version = "0.28", features = ["event-stream"] }
 syntect      = "5"
 unicode-width = { version = "0.2", features = ["cjk"] }

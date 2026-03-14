@@ -11,8 +11,11 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use super::theme::{border_type, BAR_AGENT, BAR_TOOL, BG_ELEVATED, BORDER_FOCUS, TEXT, TEXT_DIM};
 use super::width_utils::{display_width, fit_to_width, truncate_to_width_exact};
+use super::{
+    centered_popup,
+    theme::{border_type, BAR_AGENT, BAR_TOOL, BG_ELEVATED, BORDER_FOCUS, TEXT, TEXT_DIM},
+};
 
 /// All key binding entries, grouped into sections.  Each tuple is `(key, description, is_header)`.
 const BINDINGS: &[(&str, &str, bool)] = &[
@@ -65,10 +68,7 @@ impl Widget for HelpOverlay {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let width = 80u16.min(area.width.saturating_sub(4));
         let height = 34u16.min(area.height.saturating_sub(2));
-
-        let x = (area.width.saturating_sub(width)) / 2;
-        let y = (area.height.saturating_sub(height)) / 2;
-        let popup_area = Rect::new(x, y, width, height);
+        let popup_area = centered_popup(area, width, height);
 
         Clear.render(popup_area, buf);
 

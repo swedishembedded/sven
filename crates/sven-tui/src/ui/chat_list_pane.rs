@@ -12,16 +12,17 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    prelude::StatefulWidget,
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, BorderType, Borders, Widget},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Widget},
 };
 use sven_input::ChatStatus;
 
 use crate::app::session_manager::SessionEntry;
 
 use super::theme::{BORDER_DIM, BORDER_FOCUS, BORDER_RESIZE, SPINNER_FRAMES, TEXT, TEXT_DIM};
-use super::width_utils::{char_width, truncate_to_width_exact};
+use super::width_utils::truncate_to_width;
 
 /// Data for a single row in the chat list.
 pub struct ChatListItem<'a> {
@@ -96,126 +97,118 @@ impl Widget for ChatListPane<'_> {
             return;
         }
 
-        let visible_rows = inner.height as usize;
-        let total = self.items.len();
+        // Reserve the last row for the hint when focused.
+        let hint_height = if self.focused && inner.height >= 3 {
+            1u16
+        } else {
+            0u16
+        };
+        let list_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(hint_height),
+        );
 
-        // Clamp scroll offset so selected is always visible.
-        let scroll = self.scroll_offset;
+        // ── Build ListItems with pre-computed row styles ───────────────────────
+        // ratatui's List sets `buf.set_style(row_area, item_style)` for every
+        // item before rendering content, which fills the entire row (including
+        // trailing empty cells) with the item's background — matching the
+        // previous manual `buf.cell_mut` background fill.
+        let max_title_cols = (inner.width as usize).saturating_sub(3); // icon + space + min indent
+        let list_items: Vec<ListItem> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(item_idx, item)| {
+                let is_cursor = item_idx == self.selected;
 
-        let visible_range = scroll..(scroll + visible_rows).min(total);
-
-        for (row_idx, item_idx) in visible_range.enumerate() {
-            let item = &self.items[item_idx];
-            let y = inner.y + row_idx as u16;
-            if y >= inner.y + inner.height {
-                break;
-            }
-
-            let is_cursor = item_idx == self.selected;
-
-            // ── Status icon ───────────────────────────────────────────────────
-            let (icon_char, icon_style) = if item.busy {
-                let frame_idx = (item.anim_frame as usize) % SPINNER_FRAMES.len();
-                let icon = SPINNER_FRAMES[frame_idx];
-                // Use the first char of the spinner frame string.
-                let ch = icon.chars().next().unwrap_or('·');
-                (ch, Style::default().fg(Color::Cyan))
-            } else {
-                match item.status {
-                    ChatStatus::Completed => (
-                        if self.ascii { 'v' } else { '✓' },
-                        Style::default().fg(Color::Rgb(100, 140, 100)),
-                    ),
-                    ChatStatus::Archived => (
-                        if self.ascii { 'a' } else { '◈' },
-                        Style::default().fg(Color::Rgb(120, 100, 80)),
-                    ),
-                    ChatStatus::Active => {
-                        if item.is_active {
-                            ('●', Style::default().fg(Color::Rgb(100, 180, 240)))
-                        } else {
-                            ('○', Style::default().fg(TEXT_DIM))
+                // ── Status icon ───────────────────────────────────────────────
+                let (icon_char, icon_fg) = if item.busy {
+                    let frame_idx = (item.anim_frame as usize) % SPINNER_FRAMES.len();
+                    let ch = SPINNER_FRAMES[frame_idx]
+                        .chars()
+                        .next()
+                        .unwrap_or('\u{00B7}');
+                    (ch, Color::Cyan)
+                } else {
+                    match item.status {
+                        ChatStatus::Completed => (
+                            if self.ascii { 'v' } else { '\u{2713}' }, // ✓
+                            Color::Rgb(100, 140, 100),
+                        ),
+                        ChatStatus::Archived => (
+                            if self.ascii { 'a' } else { '\u{25C8}' }, // ◈
+                            Color::Rgb(120, 100, 80),
+                        ),
+                        ChatStatus::Active => {
+                            if item.is_active {
+                                ('\u{25CF}', Color::Rgb(100, 180, 240)) // ●
+                            } else {
+                                ('\u{25CB}', TEXT_DIM) // ○
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            // ── Row background ────────────────────────────────────────────────
-            let (bg_color, text_style) = if item.is_active && is_cursor {
-                (
-                    Color::Rgb(35, 55, 85),
-                    Style::default()
-                        .fg(Color::Rgb(200, 220, 255))
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if item.is_active {
-                (
-                    Color::Rgb(28, 42, 65),
-                    Style::default().fg(Color::Rgb(180, 200, 240)),
-                )
-            } else if is_cursor {
-                (
-                    Color::Rgb(40, 40, 60),
-                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-                )
-            } else {
-                (Color::Reset, Style::default().fg(TEXT_DIM))
-            };
+                // ── Row background + text colour (tri-state: active+cursor / active / cursor / normal)
+                let (bg_color, title_fg, title_mod) = if item.is_active && is_cursor {
+                    (
+                        Color::Rgb(35, 55, 85),
+                        Color::Rgb(200, 220, 255),
+                        Modifier::BOLD,
+                    )
+                } else if item.is_active {
+                    (
+                        Color::Rgb(28, 42, 65),
+                        Color::Rgb(180, 200, 240),
+                        Modifier::empty(),
+                    )
+                } else if is_cursor {
+                    (Color::Rgb(40, 40, 60), TEXT, Modifier::BOLD)
+                } else {
+                    (Color::Reset, TEXT_DIM, Modifier::empty())
+                };
 
-            // Fill background for the full row width.
-            for x in 0..inner.width {
-                let cell = buf.cell_mut((inner.x + x, y));
-                if let Some(c) = cell {
-                    c.set_bg(bg_color);
-                }
-            }
+                // ── Title with tree-depth indent ──────────────────────────────
+                let indent = (item.depth.saturating_mul(2)) as usize;
+                let avail = max_title_cols.saturating_sub(indent);
+                // truncate_to_width adds ellipsis automatically when needed.
+                let title = truncate_to_width(item.title, avail);
+                let indent_str = " ".repeat(indent);
 
-            // ── Icon ──────────────────────────────────────────────────────────
-            let icon_x = inner.x;
-            if let Some(cell) = buf.cell_mut((icon_x, y)) {
-                cell.set_char(icon_char);
-                cell.set_style(icon_style.bg(bg_color));
-            }
+                let icon_span = Span::styled(icon_char.to_string(), Style::default().fg(icon_fg));
+                let gap_span = Span::raw(" ");
+                let indent_span = Span::raw(indent_str);
+                let title_span =
+                    Span::styled(title, Style::default().fg(title_fg).add_modifier(title_mod));
 
-            // ── Indent for tree depth ──────────────────────────────────────────
-            let indent = item.depth.saturating_mul(2);
-            let title_x = inner.x + 2 + indent;
-            let max_title_width = inner.width.saturating_sub(2 + indent) as usize;
+                ListItem::new(Line::from(vec![
+                    icon_span,
+                    gap_span,
+                    indent_span,
+                    title_span,
+                ]))
+                // Set the item-level background; List fills the full row with
+                // this style before rendering content (see ratatui list rendering.rs).
+                .style(Style::default().bg(bg_color))
+            })
+            .collect();
 
-            // Width-aware truncation: reserve 1 col for ellipsis if needed.
-            let full_title = item.title;
-            let (display_title, needs_ellipsis) = if super::width_utils::display_width(full_title)
-                > max_title_width
-                && max_title_width > 1
-            {
-                (
-                    truncate_to_width_exact(full_title, max_title_width.saturating_sub(1)),
-                    true,
-                )
-            } else {
-                (truncate_to_width_exact(full_title, max_title_width), false)
-            };
-
-            let mut col_offset = 0u16;
-            for ch in display_title.chars() {
-                if let Some(cell) = buf.cell_mut((title_x + col_offset, y)) {
-                    cell.set_char(ch);
-                    cell.set_style(text_style.bg(bg_color));
-                }
-                col_offset += char_width(ch) as u16;
-            }
-            if needs_ellipsis {
-                let ellipsis_x = title_x + col_offset;
-                if let Some(cell) = buf.cell_mut((ellipsis_x, y)) {
-                    cell.set_char(if self.ascii { '.' } else { '…' });
-                    cell.set_style(Style::default().fg(TEXT_DIM).bg(bg_color));
-                }
-            }
-        }
+        // ── Render list via ratatui List + local ListState ────────────────────
+        // We build a transient ListState here: scroll and selection are owned
+        // by the app state and passed in as plain fields. List::render updates
+        // the state's offset to keep the selected item visible, but since the
+        // state is local the update is discarded — the app drives navigation.
+        let list = List::new(list_items);
+        let mut list_state = ListState::default();
+        *list_state.offset_mut() = self.scroll_offset;
+        list_state.select(Some(self.selected));
+        StatefulWidget::render(list, list_area, buf, &mut list_state);
 
         // ── "New chat" hint at the bottom ─────────────────────────────────────
-        let hint_y = inner.y + inner.height.saturating_sub(1);
         if self.focused && inner.height >= 3 {
+            let hint_y = inner.y + inner.height.saturating_sub(1);
             let hint = " n:new  d:del  a:arch ";
             let hint_style = Style::default().fg(TEXT_DIM);
             for (i, ch) in hint.chars().enumerate() {

@@ -7,7 +7,8 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
-    widgets::Widget,
+    text::{Line, Span},
+    widgets::{Clear, Paragraph, Widget},
 };
 
 use crate::app::ui_state::Toast;
@@ -42,30 +43,26 @@ impl Widget for ToastStack<'_> {
         let width = (max_len as u16 + 5)
             .clamp(18, 52)
             .min(area.width.saturating_sub(2));
-        let x = area.width.saturating_sub(width);
+        let x = area.x + area.width.saturating_sub(width);
 
         // Render from the bottom up so newest toast is at the bottom.
-        let mut row = area.height.saturating_sub(1);
+        let mut row = area.y + area.height.saturating_sub(1);
         for toast in visible.iter().rev() {
-            if row == 0 || row > area.height {
+            if row < area.y || row > area.y + area.height {
                 break;
             }
             let fg = toast.color;
-            let check = if self.ascii { "* " } else { "✓ " };
+            let check = if self.ascii { "* " } else { "\u{2713} " }; // ✓
             let msg = truncate_to_width_exact(&toast.message, (width as usize).saturating_sub(3));
             let text = format!("{check}{msg}");
 
-            // Clear the background so the toast doesn't bleed into underlying content.
-            for col in x..x + width {
-                buf[(col, row)].reset();
-            }
-
-            buf.set_string(
-                x,
-                row,
-                &text,
+            let toast_area = Rect::new(x, row, width, 1);
+            Clear.render(toast_area, buf);
+            Paragraph::new(Line::from(Span::styled(
+                text,
                 Style::default().fg(fg).add_modifier(Modifier::BOLD),
-            );
+            )))
+            .render(toast_area, buf);
 
             row = row.saturating_sub(1);
         }

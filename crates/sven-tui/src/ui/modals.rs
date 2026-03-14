@@ -11,8 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use super::theme::border_type;
 use super::width_utils::{display_width, truncate_to_width_exact};
+use super::{centered_popup, theme::border_type};
 
 // ── ConfirmModal widget ───────────────────────────────────────────────────────
 
@@ -47,9 +47,7 @@ impl Widget for ConfirmModalView<'_> {
         let modal_h = (1 + message_lines + 1 + 1 + 1 + 2)
             .max(7)
             .min(area.height.saturating_sub(2));
-        let x = area.width.saturating_sub(modal_w) / 2;
-        let y = area.height.saturating_sub(modal_h) / 2;
-        let modal_area = Rect::new(x, y, modal_w, modal_h);
+        let modal_area = centered_popup(area, modal_w, modal_h);
 
         Clear.render(modal_area, buf);
 
@@ -170,9 +168,7 @@ impl QuestionModalView<'_> {
         let modal_h = (content_rows + 2)
             .min(area.height.saturating_sub(2))
             .max(10);
-        let x = area.width.saturating_sub(modal_w) / 2;
-        let y = area.height.saturating_sub(modal_h) / 2;
-        let modal_area = Rect::new(x, y, modal_w, modal_h);
+        let modal_area = centered_popup(area, modal_w, modal_h);
 
         Clear.render(modal_area, buf);
 

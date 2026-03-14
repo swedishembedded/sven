@@ -1490,10 +1490,16 @@ impl App {
         if let Some(mention_prefix) = self.at_mention_prefix() {
             let items = self.mention_completion_items(&mention_prefix);
             if !items.is_empty() {
-                let prev_selected = self.ui.completion.as_ref().map(|o| o.selected).unwrap_or(0);
+                let prev_selected = self
+                    .ui
+                    .completion
+                    .as_ref()
+                    .map(|o| o.selected())
+                    .unwrap_or(0);
                 let mut overlay = CompletionOverlay::new(items);
-                overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
-                overlay.adjust_scroll_pub();
+                overlay.list_state.select(Some(
+                    prev_selected.min(overlay.items.len().saturating_sub(1)),
+                ));
                 self.ui.completion = Some(overlay);
                 return;
             }
@@ -1515,10 +1521,16 @@ impl App {
         if items.is_empty() {
             self.ui.completion = None;
         } else {
-            let prev_selected = self.ui.completion.as_ref().map(|o| o.selected).unwrap_or(0);
+            let prev_selected = self
+                .ui
+                .completion
+                .as_ref()
+                .map(|o| o.selected())
+                .unwrap_or(0);
             let mut overlay = CompletionOverlay::new(items);
-            overlay.selected = prev_selected.min(overlay.items.len().saturating_sub(1));
-            overlay.adjust_scroll_pub();
+            overlay.list_state.select(Some(
+                prev_selected.min(overlay.items.len().saturating_sub(1)),
+            ));
             self.ui.completion = Some(overlay);
         }
     }

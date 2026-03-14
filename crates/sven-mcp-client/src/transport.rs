@@ -29,7 +29,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 
 use crate::oauth::{refresh_token, CredentialsStore, StoredTokens};
-use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ServerNotification};
 
 /// Timeout applied to each MCP request/response exchange.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -62,6 +62,9 @@ impl std::error::Error for UnauthorizedError {}
 
 // ── StdioTransport ────────────────────────────────────────────────────────────
 
+/// Callback invoked when the server sends a notification (e.g. tools/list_changed).
+pub type OnNotification = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// MCP transport over a stdio subprocess.
 pub struct StdioTransport {
     _child: Child,
@@ -69,6 +72,7 @@ pub struct StdioTransport {
     stdout: Mutex<BufReader<ChildStdout>>,
     next_id: AtomicU64,
     timeout: Duration,
+    on_notification: Option<OnNotification>,
 }
 
 impl StdioTransport {
@@ -77,6 +81,7 @@ impl StdioTransport {
         args: &[String],
         env: &HashMap<String, String>,
         timeout_secs: u64,
+        on_notification: Option<OnNotification>,
     ) -> Result<Self> {
         use tokio::process::Command;
 
@@ -114,6 +119,7 @@ impl StdioTransport {
             stdout: Mutex::new(BufReader::new(stdout)),
             next_id: AtomicU64::new(1),
             timeout,
+            on_notification,
         })
     }
 
@@ -183,6 +189,21 @@ impl StdioTransport {
             }
 
             trace!(line = %trimmed, "MCP ← server");
+
+            // Server notifications (e.g. notifications/tools/list_changed) have "method" but no "id".
+            if let Ok(notif) = serde_json::from_str::<ServerNotification>(trimmed) {
+                if let Some(ref cb) = self.on_notification {
+                    let method = notif.method.as_str();
+                    if method == "notifications/tools/list_changed"
+                        || method == "notifications/prompts/list_changed"
+                        || method == "notifications/resources/list_changed"
+                    {
+                        debug!(method = %method, "MCP server notification");
+                        cb(method);
+                    }
+                }
+                continue;
+            }
 
             let resp: JsonRpcResponse = match serde_json::from_str(trimmed) {
                 Ok(r) => r,

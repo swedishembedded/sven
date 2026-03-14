@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use sven_config::{McpServerConfig, McpTransport};
@@ -27,7 +27,7 @@ use crate::oauth::{
     discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthRedirectOptions,
 };
 use crate::transport::{
-    build_http_transport, AuthState, StdioTransport, Transport, UnauthorizedError,
+    build_http_transport, AuthState, OnNotification, StdioTransport, Transport, UnauthorizedError,
 };
 
 // ── McpEvent ──────────────────────────────────────────────────────────────────
@@ -97,6 +97,9 @@ pub struct McpManager {
     /// When false (headless/CI mode), never trigger interactive OAuth flows.
     /// Batch runs must complete without user interaction.
     allow_interactive_oauth: bool,
+    /// Channel for server-initiated notifications (tools/list_changed, etc.).
+    notif_tx: mpsc::Sender<(String, String)>,
+    notif_rx: Mutex<Option<mpsc::Receiver<(String, String)>>>,
 }
 
 impl McpManager {
@@ -110,6 +113,7 @@ impl McpManager {
         allow_interactive_oauth: bool,
     ) -> Arc<Self> {
         let http_client = reqwest::Client::builder().build().unwrap_or_default();
+        let (notif_tx, notif_rx) = mpsc::channel(32);
 
         Arc::new(Self {
             config: RwLock::new(config),
@@ -118,6 +122,8 @@ impl McpManager {
             http_client,
             event_tx,
             allow_interactive_oauth,
+            notif_tx,
+            notif_rx: Mutex::new(Some(notif_rx)),
         })
     }
 
@@ -129,6 +135,19 @@ impl McpManager {
     /// servers in the `Reconnecting` state and retries them when the backoff
     /// delay has elapsed.
     pub fn start_background_tasks(self: &Arc<Self>) {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut rx = match this.notif_rx.lock().await.take() {
+                Some(r) => r,
+                None => return,
+            };
+            while let Some((server_name, method)) = rx.recv().await {
+                if let Err(e) = this.handle_server_notification(&server_name, &method).await {
+                    debug!(server = %server_name, method = %method, error = %e, "server notification handling failed");
+                }
+            }
+        });
+
         let this = Arc::clone(self);
         tokio::spawn(async move {
             loop {
@@ -783,6 +802,54 @@ impl McpManager {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /// Handle server-initiated notifications (tools/list_changed, prompts/list_changed, etc.).
+    /// Refetches the affected lists and emits ToolsChanged.
+    async fn handle_server_notification(
+        self: &Arc<Self>,
+        server_name: &str,
+        method: &str,
+    ) -> Result<()> {
+        let (tc, pc) = {
+            let mut servers = self.servers.write().await;
+            let state = servers
+                .get_mut(server_name)
+                .with_context(|| format!("no server state for {server_name}"))?;
+            let conn = state
+                .connection
+                .as_ref()
+                .with_context(|| format!("server {server_name} is not connected"))?;
+
+            let refetch_tools = method == "notifications/tools/list_changed"
+                || method == "notifications/resources/list_changed";
+            let refetch_prompts = method == "notifications/prompts/list_changed";
+
+            if refetch_tools {
+                state.tools = conn.list_tools().await.unwrap_or_else(|e| {
+                    warn!(server = %server_name, error = %e, "tools/list failed after notification");
+                    vec![]
+                });
+            }
+            if refetch_prompts {
+                state.prompts = conn.list_prompts().await.unwrap_or_else(|e| {
+                    warn!(server = %server_name, error = %e, "prompts/list failed after notification");
+                    vec![]
+                });
+            }
+
+            (state.tools.len(), state.prompts.len())
+        };
+
+        info!(
+            server = %server_name,
+            method = %method,
+            tools = tc,
+            prompts = pc,
+            "refreshed after server notification"
+        );
+        let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
+        Ok(())
+    }
+
     async fn try_connect(
         &self,
         name: &str,
@@ -811,7 +878,19 @@ impl McpManager {
     async fn build_transport(&self, name: &str, cfg: &McpServerConfig) -> Result<Transport> {
         match &cfg.transport {
             McpTransport::Stdio { command, args } => {
-                let t = StdioTransport::spawn(command, args, &cfg.env, cfg.timeout_secs).await?;
+                let notif_tx = self.notif_tx.clone();
+                let server_name = name.to_string();
+                let on_notification: OnNotification = Arc::new(move |method| {
+                    let _ = notif_tx.try_send((server_name.clone(), method.to_string()));
+                });
+                let t = StdioTransport::spawn(
+                    command,
+                    args,
+                    &cfg.env,
+                    cfg.timeout_secs,
+                    Some(on_notification),
+                )
+                .await?;
                 Ok(Transport::Stdio(Box::new(t)))
             }
             McpTransport::Http { url, headers } => {

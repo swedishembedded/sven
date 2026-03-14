@@ -11,13 +11,16 @@ use ratatui::{
     prelude::StatefulWidget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Clear, Paragraph, ScrollbarState, Widget},
 };
 
 use crate::app::input_state::InputAttachment;
 use crate::input_wrap::wrap_content;
 
-use super::theme::{open_pane_block, open_pane_block_resizing, BAR_AGENT, BG, TEXT_DIM};
+use super::{
+    sven_scrollbar,
+    theme::{open_pane_block, open_pane_block_resizing, BAR_AGENT, BG, TEXT_DIM},
+};
 
 // ── InputEditMode ─────────────────────────────────────────────────────────────
 
@@ -246,12 +249,7 @@ impl Widget for InputPane<'_> {
             let mut sb_state = ScrollbarState::new(scrollable_range)
                 .position(scroll)
                 .viewport_content_length(visible_height);
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .thumb_symbol("|")
-                .track_symbol(Some("░"))
-                .render(sb_area, buf, &mut sb_state);
+            sven_scrollbar().render(sb_area, buf, &mut sb_state);
         }
     }
 }

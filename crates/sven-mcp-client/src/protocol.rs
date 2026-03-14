@@ -54,6 +54,14 @@ impl JsonRpcNotification {
     }
 }
 
+/// A server-to-client notification (e.g. notifications/tools/list_changed).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerNotification {
+    pub method: String,
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
 /// A JSON-RPC 2.0 response from an MCP server.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcResponse {
@@ -137,7 +145,7 @@ pub fn initialize_params() -> InitializeParams {
         protocol_version: "2024-11-05",
         capabilities: ClientCapabilities {
             roots: Some(RootsCapability {
-                list_changed: false,
+                list_changed: true, // Receive notifications/tools/list_changed etc from server
             }),
             sampling: None,
         },
