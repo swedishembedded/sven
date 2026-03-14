@@ -547,6 +547,73 @@ async fn anthropic_tools_use_input_schema_not_parameters() {
     );
 }
 
+/// Full MCP-style schema (properties with descriptions, required) is passed
+/// through to the model API. MCP servers provide inputSchema with JSON Schema;
+/// sven must forward the complete schema so the model can use tools correctly.
+#[tokio::test]
+async fn anthropic_mcp_tool_schema_preserves_full_input_schema() {
+    let sse = "data: {\"type\":\"message_stop\"}\n\n";
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+
+    let cfg = ModelConfig {
+        provider: "anthropic".into(),
+        name: "claude-3-haiku-20240307".into(),
+        api_key: Some("key".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}")),
+        ..ModelConfig::default()
+    };
+
+    // MCP inputSchema format: full JSON Schema with property descriptions
+    let full_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Absolute or relative path to the file to read"
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Byte offset to start reading from (optional)"
+            }
+        },
+        "required": ["path"]
+    });
+
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider
+        .complete(CompletionRequest {
+            messages: vec![Message::user("hi")],
+            tools: vec![ToolSchema {
+                name: "github-read_file".into(),
+                description: "Read contents of a file from a GitHub repository".into(),
+                parameters: full_schema.clone(),
+                ..Default::default()
+            }],
+            stream: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+
+    let req = req_rx.await.unwrap();
+    let tools = req.body["tools"].as_array().expect("tools array");
+    assert_eq!(tools.len(), 1);
+    let schema = &tools[0]["input_schema"];
+    assert!(schema.is_object(), "input_schema must be present");
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], serde_json::json!(["path"]));
+    // Property descriptions must be preserved for model usability
+    assert_eq!(
+        schema["properties"]["path"]["description"],
+        "Absolute or relative path to the file to read"
+    );
+    assert_eq!(
+        schema["properties"]["offset"]["description"],
+        "Byte offset to start reading from (optional)"
+    );
+}
+
 #[tokio::test]
 async fn anthropic_cache_tools_adds_cache_control_to_last_tool() {
     let sse = "data: {\"type\":\"message_stop\"}\n\n";
