@@ -6,6 +6,14 @@
 //! Both transports implement a single `send_request` method that sends a
 //! JSON-RPC 2.0 request and waits for the response.  Notifications
 //! (initialize confirmation) are fire-and-forget via `send_notification`.
+//!
+//! ## HTTP Streamable Transport
+//!
+//! The HTTP transport implements the MCP Streamable HTTP spec:
+//! - Sends `Accept: application/json, text/event-stream` per spec.
+//! - Handles both plain JSON and `text/event-stream` responses.
+//! - Captures and re-sends `mcp-session-id` for stateful server sessions.
+//! - Proactively refreshes OAuth tokens within the refresh window.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -217,6 +225,11 @@ pub struct HttpTransport {
     auth: Arc<Mutex<Option<AuthState>>>,
     /// Optional context for proactive token refresh.
     refresh_ctx: Option<RefreshContext>,
+    /// Session ID from `mcp-session-id` response header.
+    ///
+    /// Stateful MCP servers (e.g. Atlassian) return this header on the
+    /// `initialize` response and require it in all subsequent requests.
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 /// Authentication state for an HTTP MCP server.
@@ -278,10 +291,6 @@ impl HttpTransport {
         Self::with_refresh(url, headers, timeout_secs, auth, None)
     }
 
-    /// Create transport with optional proactive refresh context.
-    ///
-    /// When `refresh_ctx` is provided, OAuth tokens are proactively refreshed
-    /// before each request when they are within the expiry window.
     pub(crate) fn with_refresh(
         url: impl Into<String>,
         headers: &HashMap<String, String>,
@@ -297,6 +306,11 @@ impl HttpTransport {
         default_headers.insert(
             reqwest::header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
+        );
+        // Per MCP Streamable HTTP spec: clients SHOULD accept both JSON and SSE.
+        default_headers.insert(
+            reqwest::header::ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
         );
         for (k, v) in headers {
             let name = HeaderName::from_bytes(k.as_bytes())
@@ -323,6 +337,7 @@ impl HttpTransport {
             timeout,
             auth: Arc::new(Mutex::new(auth)),
             refresh_ctx,
+            session_id: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -341,7 +356,13 @@ impl HttpTransport {
     pub async fn send_notification(&self, notif: &JsonRpcNotification) -> Result<()> {
         let body = serde_json::to_string(notif)?;
         let req = self.build_request(body).await?;
-        let _ = tokio::time::timeout(self.timeout, req.send()).await;
+        // Send notification and capture any session ID from the response header,
+        // but do not require a meaningful JSON body back (202 Accepted is typical).
+        if let Ok(Ok(resp)) =
+            tokio::time::timeout(self.timeout, req.send()).await
+        {
+            self.capture_session_id(&resp).await;
+        }
         Ok(())
     }
 
@@ -372,10 +393,27 @@ impl HttpTransport {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(anyhow!(
-                "MCP HTTP error {}: {}",
+                "MCP server returned HTTP {}: {}",
                 status,
-                text.chars().take(200).collect::<String>()
+                text.chars().take(500).collect::<String>()
             ));
+        }
+
+        // Capture session ID before consuming the response body.
+        self.capture_session_id(&resp).await;
+
+        // The Streamable HTTP spec allows the server to respond with either:
+        // - application/json  → direct JSON-RPC response
+        // - text/event-stream → SSE stream carrying one or more JSON-RPC messages
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        if content_type.contains("text/event-stream") {
+            return self.parse_sse_response(resp, req.id).await;
         }
 
         let rpc_resp: JsonRpcResponse = resp
@@ -392,11 +430,73 @@ impl HttpTransport {
             .ok_or_else(|| anyhow!("MCP HTTP response missing result"))
     }
 
+    /// Parse a `text/event-stream` response and return the JSON-RPC result
+    /// for the given request ID.
+    ///
+    /// Each SSE event has the form `data: <json>\n\n`.  We scan for the first
+    /// event whose JSON payload matches the expected `id` and return its result.
+    async fn parse_sse_response(&self, resp: reqwest::Response, expected_id: u64) -> Result<Value> {
+        let text = resp
+            .text()
+            .await
+            .context("read SSE response body")?;
+
+        trace!(body_len = text.len(), "MCP ← SSE response");
+
+        // Events are separated by blank lines; each field is "key: value".
+        for event_block in text.split("\n\n") {
+            let data = event_block
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join("");
+
+            if data.is_empty() {
+                continue;
+            }
+
+            let rpc_resp: JsonRpcResponse = match serde_json::from_str(&data) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            let matches = match &rpc_resp.id {
+                Some(Value::Number(n)) => n.as_u64() == Some(expected_id),
+                Some(Value::String(s)) => s.parse::<u64>().ok() == Some(expected_id),
+                _ => false,
+            };
+
+            if !matches {
+                continue;
+            }
+
+            if let Some(err) = rpc_resp.error {
+                return Err(anyhow!("{}", err));
+            }
+
+            return rpc_resp
+                .result
+                .ok_or_else(|| anyhow!("MCP SSE response missing result"));
+        }
+
+        Err(anyhow!(
+            "no matching JSON-RPC response found in SSE stream for request id {}",
+            expected_id
+        ))
+    }
+
     async fn build_request(&self, body: String) -> Result<reqwest::RequestBuilder> {
-        // Proactively refresh OAuth tokens if they are near expiry.
+        // Proactively refresh OAuth tokens if near expiry.
         self.maybe_refresh_token().await;
 
         let mut rb = self.client.post(&self.url).body(body);
+
+        // Include session ID if the server provided one during initialize.
+        if let Some(ref sid) = *self.session_id.lock().await {
+            rb = rb.header("mcp-session-id", sid.as_str());
+        }
+
         if let Some(auth) = &*self.auth.lock().await {
             match auth {
                 AuthState::BearerToken(token) => {
@@ -410,13 +510,25 @@ impl HttpTransport {
         Ok(rb)
     }
 
-    /// Proactively refresh the OAuth token if it is within the refresh window.
+    /// Capture `mcp-session-id` from a response header.
     ///
-    /// Updates `self.auth` with the refreshed token and persists to the
-    /// credentials store if one is available.  Silently swallows errors so
-    /// that a failed refresh does not block the request — the server will
-    /// return 401 if the token is truly invalid, which triggers the full
-    /// re-auth flow.
+    /// Stateful servers return this on the `initialize` response; we store it
+    /// and re-send it on every subsequent request in the same session.
+    async fn capture_session_id(&self, resp: &reqwest::Response) {
+        // Try both `mcp-session-id` and `Mcp-Session-Id` (case-insensitive via reqwest).
+        let sid = resp
+            .headers()
+            .get("mcp-session-id")
+            .or_else(|| resp.headers().get("Mcp-Session-Id"))
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+
+        if let Some(ref s) = sid {
+            debug!(session_id = %s, "MCP session ID captured");
+            *self.session_id.lock().await = sid;
+        }
+    }
+
     async fn maybe_refresh_token(&self) {
         let needs_refresh = {
             let auth_guard = self.auth.lock().await;
@@ -473,9 +585,7 @@ impl HttpTransport {
                     refresh_token: fresh.refresh_token,
                     expires_at: fresh.expires_at,
                     token_endpoint: fresh.token_endpoint,
-                    client_id: fresh
-                        .client_id
-                        .unwrap_or_else(|| "sven-mcp-client".to_string()),
+                    client_id: fresh.client_id.unwrap_or_else(|| "sven-mcp-client".to_string()),
                     client_secret: fresh.client_secret,
                 };
                 *self.auth.lock().await = Some(new_auth);
@@ -485,14 +595,14 @@ impl HttpTransport {
                 warn!(
                     server = %ctx.server_name,
                     error = %e,
-                    "proactive token refresh failed; will retry on next request"
+                    "proactive token refresh failed"
                 );
             }
         }
     }
 }
 
-// ── Transport enum (avoids boxing dyn) ───────────────────────────────────────
+// ── Transport enum ────────────────────────────────────────────────────────────
 
 pub enum Transport {
     Stdio(Box<StdioTransport>),
@@ -544,10 +654,6 @@ impl std::fmt::Debug for Transport {
 
 // ── Public constructor helpers ────────────────────────────────────────────────
 
-/// Build an `HttpTransport` with optional proactive refresh.
-///
-/// This is the preferred constructor when the manager has a `CredentialsStore`
-/// and server identity available for token refresh.
 pub fn build_http_transport(
     url: &str,
     headers: &HashMap<String, String>,
@@ -568,21 +674,4 @@ pub fn build_http_transport(
     };
 
     HttpTransport::with_refresh(url, headers, timeout_secs, auth, refresh_ctx)
-}
-
-// ── Logging helpers ───────────────────────────────────────────────────────────
-
-pub fn trim_server_error(err: &str) -> String {
-    let trimmed = err.trim();
-    if trimmed.len() > 400 {
-        format!("{}…", &trimmed[..400])
-    } else {
-        trimmed.to_string()
-    }
-}
-
-pub fn maybe_warn_stderr(name: &str, msg: &str) {
-    if !msg.trim().is_empty() {
-        warn!(server = %name, "MCP server stderr: {}", trim_server_error(msg));
-    }
 }

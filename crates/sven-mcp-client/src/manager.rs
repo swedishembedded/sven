@@ -56,6 +56,9 @@ struct ServerState {
     health: HealthState,
     tools: Vec<crate::protocol::McpTool>,
     prompts: Vec<crate::protocol::McpPrompt>,
+    /// Set while an OAuth flow is in progress to prevent spawning a second
+    /// concurrent flow if another 401 arrives before the first completes.
+    auth_in_progress: bool,
 }
 
 impl ServerState {
@@ -67,6 +70,7 @@ impl ServerState {
             health,
             tools: vec![],
             prompts: vec![],
+            auth_in_progress: false,
         }
     }
 
@@ -76,6 +80,7 @@ impl ServerState {
             health: HealthState::new(),
             tools: vec![],
             prompts: vec![],
+            auth_in_progress: false,
         }
     }
 }
@@ -219,7 +224,9 @@ impl McpManager {
                 if let Some(unauth) = e.downcast_ref::<UnauthorizedError>() {
                     self.handle_unauthorized(name, &cfg, unauth);
                 } else {
-                    let error_str = e.to_string();
+                    // Use the full anyhow chain so the error message includes
+                    // the underlying HTTP response body or transport error.
+                    let error_str = format!("{:#}", e);
                     let mut servers = self.servers.write().await;
                     let state = servers
                         .entry(name.to_string())
@@ -267,18 +274,31 @@ impl McpManager {
         let name_owned = name.to_string();
 
         tokio::spawn(async move {
-            // Mark the server as needing auth right away.
-            {
+            // Check and set the auth_in_progress flag atomically.
+            // If an auth flow is already running for this server, skip starting
+            // another one (prevents infinite re-auth loops on persistent 401s).
+            let should_start_auth = {
                 let mut servers = this.servers.write().await;
                 let state = servers
                     .entry(name_owned.clone())
                     .or_insert_with(ServerState::new);
-                state.health.status = ServerStatus::NeedsAuth {
-                    auth_url: String::new(),
-                };
+                if state.auth_in_progress {
+                    debug!(server = %name_owned, "auth already in progress, skipping duplicate");
+                    false
+                } else {
+                    state.auth_in_progress = has_oauth_config;
+                    state.health.status = ServerStatus::NeedsAuth {
+                        auth_url: String::new(),
+                    };
+                    true
+                }
+            };
+
+            if !should_start_auth {
+                return;
             }
 
-            // Discover the authorization server URL.
+            // Discover the authorization server URL for display purposes.
             let discovery_result = discover_oauth_info(
                 &this.http_client,
                 &server_url,
@@ -309,7 +329,7 @@ impl McpManager {
                     ctx.authorization_url(&disc.scopes).unwrap_or_default()
                 }
                 Err(ref e) => {
-                    warn!(server = %name_owned, error = %e, "OAuth discovery failed during 401 handling");
+                    warn!(server = %name_owned, error = %e, "OAuth discovery failed");
                     String::new()
                 }
             };
@@ -325,7 +345,6 @@ impl McpManager {
             }
 
             if has_oauth_config {
-                // Auto-start OAuth if config has `oauth:` section.
                 let _ = this
                     .event_tx
                     .send(McpEvent::AuthStarted {
@@ -333,27 +352,38 @@ impl McpManager {
                     })
                     .await;
 
-                match this.authenticate(&name_owned).await {
+                let auth_result = this.authenticate(&name_owned).await;
+
+                // Clear the in-progress flag regardless of outcome.
+                {
+                    let mut servers = this.servers.write().await;
+                    if let Some(state) = servers.get_mut(&name_owned) {
+                        state.auth_in_progress = false;
+                    }
+                }
+
+                match auth_result {
                     Ok(_) => {
                         debug!(server = %name_owned, "auto-auth completed successfully");
                     }
                     Err(e) => {
                         warn!(server = %name_owned, error = %e, "auto-auth failed");
+                        let error_str = format!("{:#}", e);
                         let mut servers = this.servers.write().await;
                         if let Some(state) = servers.get_mut(&name_owned) {
-                            state.health.report_error(e.to_string());
+                            state.health.report_error(error_str.clone());
                         }
                         let _ = this
                             .event_tx
                             .send(McpEvent::ServerFailed {
                                 name: name_owned,
-                                error: e.to_string(),
+                                error: error_str,
                             })
                             .await;
                     }
                 }
             } else {
-                // Manual auth required.
+                // Manual auth required — user must run `/mcp auth <name>`.
                 let _ = this
                     .event_tx
                     .send(McpEvent::AuthRequired {

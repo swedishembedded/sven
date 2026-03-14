@@ -1755,9 +1755,12 @@ async fn mcp_event_consumer(
                 if error.contains("401") || error.contains("Unauthorized") {
                     None
                 } else {
+                    // Show a generous slice of the full error chain so the
+                    // user sees the actual HTTP response, not just the context
+                    // wrapper (e.g. "HTTP 403: ..." rather than "MCP initialize").
+                    let summary = error.chars().take(300).collect::<String>();
                     Some(ui_state::Toast::error(format!(
-                        "MCP server '{name}' failed: {}",
-                        error.chars().take(80).collect::<String>()
+                        "MCP '{name}': {summary}"
                     )))
                 }
             }
