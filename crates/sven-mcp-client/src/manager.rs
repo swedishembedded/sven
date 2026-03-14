@@ -606,7 +606,19 @@ impl McpManager {
                             s.health.prompt_count,
                         )
                     })
-                    .unwrap_or((ServerStatus::Initializing, 0, 0));
+                    .unwrap_or_else(|| {
+                        let status = config
+                            .get(&name)
+                            .map(|c| {
+                                if c.enabled {
+                                    ServerStatus::Initializing
+                                } else {
+                                    ServerStatus::Disabled
+                                }
+                            })
+                            .unwrap_or(ServerStatus::Initializing);
+                        (status, 0, 0)
+                    });
                 ServerStatusSummary {
                     name,
                     status,
