@@ -376,6 +376,20 @@ impl HttpTransport {
             .with_context(|| format!("MCP HTTP request failed: {}", req.method))?;
 
         let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        debug!(
+            status = %status,
+            content_type = %content_type,
+            method = %req.method,
+            "MCP HTTP response"
+        );
+
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let www_authenticate = resp
                 .headers()
@@ -403,13 +417,6 @@ impl HttpTransport {
         // The Streamable HTTP spec allows the server to respond with either:
         // - application/json  → direct JSON-RPC response
         // - text/event-stream → SSE stream carrying one or more JSON-RPC messages
-        let content_type = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-
         if content_type.contains("text/event-stream") {
             return self.parse_sse_response(resp, req.id).await;
         }
@@ -417,6 +424,10 @@ impl HttpTransport {
         let rpc_resp: JsonRpcResponse = resp
             .json()
             .await
+            .map_err(|e| {
+                debug!(error = %e, "MCP HTTP JSON parse failed");
+                e
+            })
             .context("parse MCP HTTP response as JSON-RPC")?;
 
         if let Some(err) = rpc_resp.error {
@@ -475,6 +486,11 @@ impl HttpTransport {
                 .ok_or_else(|| anyhow!("MCP SSE response missing result"));
         }
 
+        debug!(
+            expected_id = expected_id,
+            body_preview = %text.chars().take(200).collect::<String>(),
+            "MCP SSE: no matching JSON-RPC response in stream"
+        );
         Err(anyhow!(
             "no matching JSON-RPC response found in SSE stream for request id {}",
             expected_id
@@ -527,7 +543,7 @@ impl HttpTransport {
     async fn maybe_refresh_token(&self) {
         let needs_refresh = {
             let auth_guard = self.auth.lock().await;
-            auth_guard.as_ref().map_or(false, |a| a.is_expired())
+            auth_guard.as_ref().is_some_and(|a| a.is_expired())
         };
 
         if !needs_refresh {

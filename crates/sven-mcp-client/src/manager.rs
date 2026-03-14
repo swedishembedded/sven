@@ -23,9 +23,7 @@ use sven_tools::Tool as _;
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::client::McpConnection;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
-use crate::oauth::{
-    discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthContext,
-};
+use crate::oauth::{discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore};
 use crate::transport::{
     build_http_transport, AuthState, StdioTransport, Transport, UnauthorizedError,
 };
@@ -174,7 +172,11 @@ impl McpManager {
             let this = Arc::clone(self);
             tokio::spawn(async move {
                 if let Err(e) = this.connect(&name).await {
-                    warn!(server = %name, error = %e, "MCP server connect failed");
+                    let chain = format!("{:#}", e);
+                    warn!(
+                        server = %name,
+                        "MCP server connect failed: {chain}"
+                    );
                 }
             });
         }
@@ -206,6 +208,31 @@ impl McpManager {
             state.health.status = ServerStatus::Connecting;
         }
 
+        // Proactive OAuth: if OAuth is configured but no tokens exist yet, trigger
+        // the auth flow before wasting a connection attempt. This avoids the initial
+        // round-trip failure on servers (e.g. Atlassian) that return a hard 400/401
+        // for any unauthenticated request.
+        //
+        // We call handle_unauthorized (sync, non-blocking) which spawns the OAuth
+        // task and reconnects automatically after tokens are obtained. Awaiting
+        // authenticate_with_www_auth here would make connect()'s future !Send,
+        // breaking the tokio::spawn sites that drive the connection lifecycle.
+        let had_auth = if let McpTransport::Http { url, .. } = &cfg.transport {
+            let auth = self.load_http_auth(name, url, &cfg).await;
+            if auth.is_none() && cfg.oauth.is_some() {
+                debug!(server = %name, "no OAuth tokens; triggering proactive auth flow");
+                let synthetic_unauth = UnauthorizedError {
+                    url: url.clone(),
+                    www_authenticate: None,
+                };
+                self.handle_unauthorized(name, &cfg, &synthetic_unauth, false);
+                return Ok(());
+            }
+            auth.is_some()
+        } else {
+            false
+        };
+
         match self.try_connect(name, &cfg).await {
             Ok((conn, tools, prompts)) => {
                 let tc = tools.len();
@@ -230,7 +257,11 @@ impl McpManager {
             }
             Err(e) => {
                 if let Some(unauth) = e.downcast_ref::<UnauthorizedError>() {
-                    self.handle_unauthorized(name, &cfg, unauth);
+                    self.handle_unauthorized(name, &cfg, unauth, had_auth);
+                } else if is_auth_required_error(&e) {
+                    // Some servers (e.g. Atlassian) return 400 instead of 401 when
+                    // unauthenticated. Treat as auth-required and trigger OAuth.
+                    self.handle_auth_required_error(name, &cfg, &e, had_auth);
                 } else {
                     // Use the full anyhow chain so the error message includes
                     // the underlying HTTP response body or transport error.
@@ -258,12 +289,49 @@ impl McpManager {
     /// Sets the status to `NeedsAuth` and emits an event. If the server config
     /// has an `oauth` section, also automatically spawns the browser-based
     /// OAuth flow (background task).
+    ///
+    /// When `had_auth` is true, we already sent a Bearer token and the server
+    /// returned 401/400. Re-running OAuth would not help (credentials already
+    /// invalid). Clear stored tokens and report the error instead of looping.
     fn handle_unauthorized(
         self: &Arc<Self>,
         name: &str,
         cfg: &McpServerConfig,
         unauth: &UnauthorizedError,
+        had_auth: bool,
     ) {
+        if had_auth {
+            // We already had valid tokens and the server rejected them. Don't
+            // trigger OAuth again — that would loop perpetually. Clear stale
+            // credentials and report the error.
+            let server_url = match &cfg.transport {
+                McpTransport::Http { url, .. } => url.clone(),
+                _ => return,
+            };
+            self.store.remove(name, &server_url);
+            let error_str = format!(
+                "Server rejected credentials after authentication: {}",
+                unauth.url
+            );
+            let this = Arc::clone(self);
+            let name_owned = name.to_string();
+            tokio::spawn(async move {
+                let mut servers = this.servers.write().await;
+                if let Some(state) = servers.get_mut(&name_owned) {
+                    state.auth_in_progress = false;
+                    state.health.report_error(error_str.clone());
+                }
+                let _ = this
+                    .event_tx
+                    .send(McpEvent::ServerFailed {
+                        name: name_owned,
+                        error: error_str,
+                    })
+                    .await;
+            });
+            return;
+        }
+
         let www_auth = unauth.www_authenticate.clone();
         let server_url = match &cfg.transport {
             McpTransport::Http { url, .. } => url.clone(),
@@ -276,7 +344,11 @@ impl McpManager {
             .map(|o| o.scopes.as_slice())
             .unwrap_or(&[])
             .to_vec();
-        let has_oauth_config = cfg.oauth.is_some();
+        // Treat any server that explicitly signals auth-required (401 or 400
+        // "session ID" error) as OAuth-capable, even when `oauth` is absent from
+        // config. The MCP spec requires clients to attempt OAuth discovery when
+        // the server returns a 401/WWW-Authenticate challenge.
+        let has_oauth_config = true;
 
         let this = Arc::clone(self);
         let name_owned = name.to_string();
@@ -315,27 +387,12 @@ impl McpManager {
             )
             .await;
 
+            // Build a display-only auth URL using the authorization endpoint directly.
+            // We do NOT construct a full authorization URL with a placeholder redirect_uri
+            // here because any port we pick would differ from the actual dynamic port
+            // chosen when run_oauth_flow() binds the callback listener.
             let auth_url = match discovery_result {
-                Ok(ref disc) => {
-                    let client_id = {
-                        let cfg_guard = this.config.read().await;
-                        cfg_guard
-                            .get(&name_owned)
-                            .and_then(|c| c.oauth.as_ref())
-                            .and_then(|o| o.client_id.clone())
-                    };
-                    let code_verifier = crate::oauth::generate_code_verifier();
-                    let state_token = crate::oauth::generate_state();
-                    let ctx = OAuthContext {
-                        code_verifier,
-                        state: state_token,
-                        server_url: server_url.clone(),
-                        metadata: disc.auth_server_metadata.clone(),
-                        redirect_uri: OAuthContext::callback_uri(19876),
-                        client_id,
-                    };
-                    ctx.authorization_url(&disc.scopes).unwrap_or_default()
-                }
+                Ok(ref disc) => disc.auth_server_metadata.authorization_endpoint.clone(),
                 Err(ref e) => {
                     warn!(server = %name_owned, error = %e, "OAuth discovery failed");
                     String::new()
@@ -361,7 +418,7 @@ impl McpManager {
                     .await;
 
                 let auth_result = this
-                    .authenticate_with_www_auth(&name_owned, www_auth.as_deref())
+                    .authenticate_with_www_auth(&name_owned, www_auth.as_deref(), true)
                     .await;
 
                 // Clear the in-progress flag regardless of outcome.
@@ -626,16 +683,21 @@ impl McpManager {
     /// (up to 5 minutes) or an error occurs.  On success, tokens are persisted
     /// and the server is automatically reconnected.
     pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<String> {
-        self.authenticate_with_www_auth(server, None).await
+        self.authenticate_with_www_auth(server, None, true).await
     }
 
     /// Like [`authenticate`] but accepts `www_authenticate` from a 401 response.
     /// Use this when re-auth is triggered by an HTTP 401 so discovery can use
     /// the server's `resource_metadata` URL if present.
+    ///
+    /// When `spawn_reconnect` is true (default), spawns a task to reconnect after
+    /// OAuth. When false, the caller is responsible for reconnecting (e.g. when
+    /// called from connect() during proactive OAuth).
     pub async fn authenticate_with_www_auth(
         self: &Arc<Self>,
         server: &str,
         www_authenticate: Option<&str>,
+        spawn_reconnect: bool,
     ) -> Result<String> {
         if !self.allow_interactive_oauth {
             anyhow::bail!(
@@ -676,14 +738,15 @@ impl McpManager {
         )
         .await?;
 
-        // Reconnect with fresh tokens.
-        let this = Arc::clone(self);
-        let name = server.to_string();
-        tokio::spawn(async move {
-            if let Err(e) = this.connect(&name).await {
-                warn!(server = %name, error = %e, "reconnect after OAuth failed");
-            }
-        });
+        if spawn_reconnect {
+            let this = Arc::clone(self);
+            let name = server.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = this.connect(&name).await {
+                    warn!(server = %name, error = %e, "reconnect after OAuth failed");
+                }
+            });
+        }
 
         Ok(format!(
             "Authenticated as {}",
@@ -791,9 +854,36 @@ impl McpManager {
 
         None
     }
+
+    /// Handle auth-required errors (400/401) by triggering OAuth flow.
+    fn handle_auth_required_error(
+        self: &Arc<Self>,
+        name: &str,
+        cfg: &McpServerConfig,
+        _e: &anyhow::Error,
+        had_auth: bool,
+    ) {
+        // Reuse the 401 handler with a synthetic UnauthorizedError.
+        let unauth = UnauthorizedError {
+            url: match &cfg.transport {
+                McpTransport::Http { url, .. } => url.clone(),
+                _ => return,
+            },
+            www_authenticate: None,
+        };
+        self.handle_unauthorized(name, cfg, &unauth, had_auth);
+    }
 }
 
 // ── Config change detection ───────────────────────────────────────────────────
+
+/// Check if an error indicates the server requires authentication (e.g. 400 from
+/// Atlassian when sending unauthenticated requests).
+fn is_auth_required_error(e: &anyhow::Error) -> bool {
+    let s = format!("{:#}", e);
+    s.contains("Request must be an initialize request if no session ID is provided")
+        || s.contains("No valid session ID provided")
+}
 
 fn config_changed(old: &McpServerConfig, new: &McpServerConfig) -> bool {
     if old.enabled != new.enabled {

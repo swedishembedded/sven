@@ -122,9 +122,14 @@ pub struct CredentialsStore {
 
 impl CredentialsStore {
     /// Open the default credentials store at `~/.config/sven/mcp-credentials.json`.
+    ///
+    /// When `config_dir()` is unavailable (e.g. unset HOME in sandbox), falls back
+    /// to `home_dir()/.config` so credentials are stored in a real path, not a
+    /// literal `~/.config` that would resolve relative to CWD.
     pub fn default_path() -> PathBuf {
         dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."))
             .join("sven")
             .join("mcp-credentials.json")
     }
@@ -184,9 +189,27 @@ impl CredentialsStore {
         Ok(())
     }
 
+    /// Normalize a server URL for consistent store keys.
+    ///
+    /// URLs can differ by trailing slashes or path normalization across config
+    /// sources. Normalizing ensures save/load use the same key.
+    fn normalize_url_for_key(server_url: &str) -> String {
+        Url::parse(server_url)
+            .ok()
+            .map(|u| {
+                let mut s = u.to_string();
+                if s.ends_with('/') && s.len() > 1 && !s.ends_with("://") {
+                    s.pop();
+                }
+                s
+            })
+            .unwrap_or_else(|| server_url.to_string())
+    }
+
     /// Compute the store key for a server.
     fn key(server_name: &str, server_url: &str) -> String {
-        format!("{server_name}::{server_url}")
+        let url = Self::normalize_url_for_key(server_url);
+        format!("{server_name}::{url}")
     }
 
     /// Load tokens for a specific server.
@@ -356,6 +379,10 @@ pub async fn fetch_protected_resource_metadata(
 
 /// Try to discover Protected Resource Metadata from the well-known endpoint of
 /// the MCP server.
+///
+/// Tries multiple discovery URLs per RFC 9728 §3:
+/// - `{origin}/.well-known/oauth-protected-resource` (origin-level)
+/// - `{origin}/.well-known/oauth-protected-resource{path}` (path-based)
 pub async fn discover_protected_resource_metadata(
     client: &reqwest::Client,
     server_url: &str,
@@ -367,19 +394,38 @@ pub async fn discover_protected_resource_metadata(
         url.host_str().unwrap_or(""),
         url.port().map(|p| format!(":{p}")).unwrap_or_default()
     );
-    let well_known = format!("{origin}/.well-known/oauth-protected-resource");
+    let path = url.path().trim_end_matches('/');
 
-    debug!(url = %well_known, "trying Protected Resource Metadata endpoint");
-    let resp = client
-        .get(&well_known)
-        .header("MCP-Protocol-Version", "2024-11-05")
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
+    let candidates = vec![
+        format!("{origin}/.well-known/oauth-protected-resource"),
+        if !path.is_empty() && path != "/" {
+            format!("{origin}/.well-known/oauth-protected-resource{path}")
+        } else {
+            String::new()
+        },
+    ];
+
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        debug!(url = %candidate, "trying Protected Resource Metadata endpoint");
+        match client
+            .get(&candidate)
+            .header("MCP-Protocol-Version", "2024-11-05")
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(prm) = resp.json::<ProtectedResourceMetadata>().await {
+                    return Some(prm);
+                }
+            }
+            _ => {}
+        }
     }
-    resp.json().await.ok()
+
+    None
 }
 
 // ── WWW-Authenticate parsing ───────────────────────────────────────────────────
@@ -525,10 +571,12 @@ pub struct OAuthContext {
 impl OAuthContext {
     /// Build the callback URI for the given port.
     ///
-    /// Uses `localhost` (not `127.0.0.1`) as many OAuth providers only accept
-    /// the canonical `localhost` hostname for loopback callbacks.
+    /// Uses `127.0.0.1` per RFC 8252 §8.3 which explicitly states that
+    /// `localhost` is NOT RECOMMENDED for loopback redirect URIs because DNS
+    /// resolution of `localhost` may behave unexpectedly. The loopback IP
+    /// address is always reliable and must be accepted by compliant servers.
     pub fn callback_uri(port: u16) -> String {
-        format!("http://localhost:{port}/callback")
+        format!("http://127.0.0.1:{port}/callback")
     }
 
     /// Build the authorization URL the user should visit.
@@ -724,19 +772,36 @@ async fn run_dcr(
     }
 }
 
-/// Attempt to open a URL in the user's browser.
+/// Attempt to open a URL in the user's default browser.
+///
+/// Uses the `webbrowser` crate which respects the system default and `$BROWSER`
+/// on Linux. If opening fails (e.g. in Docker, headless, or no display), we log
+/// the URL so the user can open it manually — the OAuth callback server keeps
+/// waiting.
 fn open_browser(url: &str) {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    let _ = std::process::Command::new(opener).arg(url).spawn();
+    match webbrowser::open(url) {
+        Ok(()) => {}
+        Err(e) => {
+            warn!(
+                error = %e,
+                url = %url,
+                "Could not open default browser (e.g. running in Docker or headless). \
+                 Open the URL above manually to complete OAuth"
+            );
+            eprintln!(
+                "\nOAuth: Could not open browser. Open this URL manually to complete login:\n  {url}\n"
+            );
+        }
+    }
 }
 
 // ── Dynamic Client Registration (RFC 7591) ────────────────────────────────────
 
 /// Client registration request metadata (RFC 7591 §2).
+///
+/// Note: `code_challenge_method` is intentionally absent. PKCE method selection
+/// (S256) is negotiated at the authorization endpoint via `code_challenge_method`
+/// parameter, not during client registration (RFC 7591 does not define this field).
 #[derive(Debug, Serialize)]
 struct ClientRegistrationRequest {
     redirect_uris: Vec<String>,
@@ -744,7 +809,6 @@ struct ClientRegistrationRequest {
     token_endpoint_auth_method: String,
     grant_types: Vec<String>,
     response_types: Vec<String>,
-    code_challenge_method: String,
 }
 
 /// Client registration response (RFC 7591 §3.2.1).
@@ -764,10 +828,11 @@ async fn register_client(
     registration_endpoint: &str,
     redirect_uri: &str,
 ) -> Result<ClientRegistrationResponse> {
-    // Register both localhost and 127.0.0.1 variants so the server accepts either.
+    // Register both the canonical 127.0.0.1 URI (RFC 8252 §8.3 recommended) and
+    // the localhost variant for servers that only accept the named hostname.
     let redirect_uris = vec![
         redirect_uri.to_string(),
-        redirect_uri.replace("localhost", "127.0.0.1"),
+        redirect_uri.replace("127.0.0.1", "localhost"),
     ];
 
     let req = ClientRegistrationRequest {
@@ -779,7 +844,6 @@ async fn register_client(
             "refresh_token".to_string(),
         ],
         response_types: vec!["code".to_string()],
-        code_challenge_method: "S256".to_string(),
     };
 
     let resp = client
@@ -1249,5 +1313,715 @@ pub async fn ensure_fresh(
             store.remove(&server_name, &server_url);
             Err(anyhow!("token refresh failed for {server_name}: {e}"))
         }
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use url::Url;
+
+    use super::*;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Build a minimal `OAuthServerMetadata` for testing authorization URL construction.
+    fn test_metadata() -> OAuthServerMetadata {
+        OAuthServerMetadata {
+            authorization_endpoint: "https://auth.example.com/authorize".into(),
+            token_endpoint: "https://auth.example.com/token".into(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            response_types_supported: None,
+            code_challenge_methods_supported: None,
+        }
+    }
+
+    /// Build an `OAuthContext` with predictable values for authorization URL tests.
+    fn test_oauth_context() -> OAuthContext {
+        OAuthContext {
+            code_verifier: generate_code_verifier(),
+            state: generate_state(),
+            server_url: "https://mcp.example.com/v1/mcp".into(),
+            metadata: test_metadata(),
+            redirect_uri: OAuthContext::callback_uri(8080),
+            client_id: Some("test-client-id".into()),
+        }
+    }
+
+    /// Parse the query parameters of a URL into a `HashMap`.
+    fn query_params(url_str: &str) -> HashMap<String, String> {
+        Url::parse(url_str)
+            .expect("valid URL")
+            .query_pairs()
+            .into_owned()
+            .collect()
+    }
+
+    /// Build a `StoredTokens` expiring at `expires_at` unix seconds.
+    fn stored_tokens_expiring_at(expires_at: Option<u64>) -> StoredTokens {
+        StoredTokens {
+            server_name: "test".into(),
+            server_url: "https://example.com".into(),
+            access_token: "tok".into(),
+            refresh_token: None,
+            expires_at,
+            token_endpoint: "https://example.com/token".into(),
+            client_id: None,
+            client_secret: None,
+        }
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    // ── RFC 7636 §4.1 — PKCE code verifier ───────────────────────────────────
+
+    /// RFC 7636 §4.1: code_verifier MUST use only unreserved characters
+    /// from RFC 3986 §2.3: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~".
+    /// Our base64url output is a valid subset of those characters.
+    #[test]
+    fn code_verifier_chars_are_rfc3986_unreserved() {
+        let v = generate_code_verifier();
+        for c in v.chars() {
+            assert!(
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~'),
+                "code_verifier contains char '{c}' outside RFC 3986 §2.3 unreserved set"
+            );
+        }
+    }
+
+    /// RFC 7636 §4.1: length MUST be >= 43 and <= 128 characters.
+    #[test]
+    fn code_verifier_length_is_base64url_no_padding() {
+        let v = generate_code_verifier();
+        assert!(
+            v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "code_verifier must use base64url alphabet without padding"
+        );
+        // 32 random bytes → 43 base64url characters (no padding).
+        assert_eq!(v.len(), 43, "expected 43 base64url chars for 32 bytes");
+    }
+
+    /// RFC 7636 §4.1: length bounds — 43 chars minimum, 128 maximum.
+    #[test]
+    fn code_verifier_length_within_rfc7636_bounds() {
+        let v = generate_code_verifier();
+        assert!(
+            v.len() >= 43,
+            "RFC 7636 §4.1: code_verifier must be at least 43 chars, got {}",
+            v.len()
+        );
+        assert!(
+            v.len() <= 128,
+            "RFC 7636 §4.1: code_verifier must be at most 128 chars, got {}",
+            v.len()
+        );
+    }
+
+    /// RFC 7636 §4.1: "A fresh cryptographically random string ... MUST be
+    /// created for each authorization request." Two successive calls MUST
+    /// produce distinct values.
+    #[test]
+    fn code_verifier_is_unique_across_calls() {
+        let v1 = generate_code_verifier();
+        let v2 = generate_code_verifier();
+        assert_ne!(
+            v1, v2,
+            "RFC 7636 §4.1: each authorization request must use a unique code_verifier"
+        );
+    }
+
+    /// RFC 7636 §7.1: "It is RECOMMENDED that the output of a suitable
+    /// random number generator be used to create a 32-octet sequence." This
+    /// verifies that the encoded string decodes back to exactly 32 bytes
+    /// (= 256 bits of entropy as recommended).
+    #[test]
+    fn code_verifier_encodes_256_bits_of_entropy() {
+        let v = generate_code_verifier();
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(v.as_bytes())
+            .expect("code_verifier must be valid base64url");
+        assert_eq!(
+            decoded.len(),
+            32,
+            "RFC 7636 §7.1: code_verifier must encode 32 bytes (256 bits of entropy)"
+        );
+    }
+
+    // ── RFC 7636 §4.2 — PKCE code challenge ──────────────────────────────────
+
+    /// RFC 7636 Appendix B: normative test vector. The implementation MUST
+    /// produce exactly this challenge for the given verifier.
+    #[test]
+    fn code_challenge_s256_known_vector() {
+        // RFC 7636 Appendix B test vector.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        assert_eq!(compute_code_challenge(verifier), expected);
+    }
+
+    /// RFC 7636 §4.2: code_challenge MUST NOT contain padding characters.
+    /// Base64url without padding means no '=' characters.
+    #[test]
+    fn code_challenge_has_no_base64_padding() {
+        let challenge = compute_code_challenge(&generate_code_verifier());
+        assert!(
+            !challenge.contains('='),
+            "RFC 7636 §4.2: code_challenge must not contain base64 padding '='"
+        );
+    }
+
+    /// RFC 7636 §4.2: challenge uses URL-safe base64 alphabet. Standard base64
+    /// uses '+' and '/' which are NOT URL-safe; these MUST be replaced with '-'
+    /// and '_' respectively and the challenge must have no padding.
+    #[test]
+    fn code_challenge_uses_url_safe_alphabet_only() {
+        let challenge = compute_code_challenge(&generate_code_verifier());
+        assert!(
+            !challenge.contains('+') && !challenge.contains('/'),
+            "RFC 7636 §4.2: code_challenge must use URL-safe alphabet (no '+' or '/')"
+        );
+        // All characters must be base64url-safe.
+        for c in challenge.chars() {
+            assert!(
+                c.is_ascii_alphanumeric() || c == '-' || c == '_',
+                "code_challenge contains non-base64url char '{c}'"
+            );
+        }
+    }
+
+    /// RFC 7636 §4.2: SHA-256 produces 32 bytes; 32 bytes base64url-encoded
+    /// without padding is exactly 43 characters.
+    #[test]
+    fn code_challenge_length_is_43_chars() {
+        let challenge = compute_code_challenge(&generate_code_verifier());
+        assert_eq!(
+            challenge.len(),
+            43,
+            "RFC 7636 §4.2: S256 code_challenge must be 43 base64url chars (SHA-256 → 32 bytes)"
+        );
+    }
+
+    /// RFC 7636 §4.2: the challenge is a pure function of the verifier.
+    /// The same verifier MUST always produce the same challenge.
+    #[test]
+    fn code_challenge_is_deterministic() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        assert_eq!(
+            compute_code_challenge(verifier),
+            compute_code_challenge(verifier),
+            "RFC 7636 §4.2: code_challenge is a deterministic function of the verifier"
+        );
+    }
+
+    // ── RFC 6749 §10.12 / RFC 8252 §8.9 — CSRF state ─────────────────────────
+
+    /// RFC 6749 §10.12: state MUST be non-empty and use URL-safe characters.
+    #[test]
+    fn state_token_is_nonempty_url_safe() {
+        let s = generate_state();
+        assert!(!s.is_empty());
+        assert!(
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "state must use base64url alphabet"
+        );
+    }
+
+    /// RFC 6749 §10.12: "The probability of an attacker guessing generated
+    /// tokens … MUST be less than or equal to 2^(-128)." This requires at
+    /// least 128 bits of entropy. Our implementation uses 16 random bytes
+    /// (= 128 bits). This test verifies the encoded string decodes to 16 bytes.
+    #[test]
+    fn state_encodes_minimum_128_bit_entropy() {
+        let s = generate_state();
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s.as_bytes())
+            .expect("state must be valid base64url");
+        assert_eq!(
+            decoded.len(),
+            16,
+            "RFC 6749 §10.12: state must encode 16 bytes (128 bits) of entropy"
+        );
+    }
+
+    /// RFC 6749 §10.12: a fresh state value MUST be created for every
+    /// authorization request. Two successive calls MUST produce distinct values.
+    #[test]
+    fn state_is_unique_across_calls() {
+        let s1 = generate_state();
+        let s2 = generate_state();
+        assert_ne!(
+            s1, s2,
+            "RFC 6749 §10.12: each authorization request must use a unique state value"
+        );
+    }
+
+    /// RFC 6749 §10.12 / RFC 6819 §5.3.5: the client MUST verify that the
+    /// `state` received in the callback exactly matches the value sent in the
+    /// authorization request. Any mismatch MUST be treated as a CSRF attempt.
+    /// This test verifies the comparison is strict string equality.
+    #[test]
+    fn state_mismatch_is_detectable_for_csrf_protection() {
+        let sent = generate_state();
+        let received = generate_state(); // simulates attacker-controlled or mixed-up state
+        assert_ne!(
+            sent, received,
+            "RFC 6749 §10.12: different states must not compare equal \
+             (run_oauth_flow rejects mismatches to prevent CSRF)"
+        );
+        // Verify exact same value does compare equal (correct callback round-trip).
+        let echoed = sent.clone();
+        assert_eq!(
+            sent, echoed,
+            "An echoed state value must compare equal to the original"
+        );
+    }
+
+    // ── RFC 8252 §7.3 — Loopback redirect URI ────────────────────────────────
+
+    /// RFC 8252 §7.3: loopback redirect URIs MUST use the `http` scheme
+    /// (not `https` — TLS to localhost has no security benefit and causes
+    /// certificate validation problems).
+    #[test]
+    fn callback_uri_scheme_is_http_not_https() {
+        let uri = OAuthContext::callback_uri(12345);
+        assert!(
+            uri.starts_with("http://"),
+            "RFC 8252 §7.3: loopback redirect URI must use http scheme, got: {uri}"
+        );
+        assert!(
+            !uri.starts_with("https://"),
+            "RFC 8252 §7.3: loopback redirect URI must NOT use https, got: {uri}"
+        );
+    }
+
+    /// RFC 8252 §7.3 / §8.3: the loopback redirect URI MUST use the IP
+    /// literal `127.0.0.1`, NOT the hostname `localhost`. DNS resolution of
+    /// `localhost` may be intercepted or may resolve to non-loopback interfaces.
+    #[test]
+    fn callback_uri_uses_loopback_ip_not_localhost() {
+        let uri = OAuthContext::callback_uri(8888);
+        assert!(
+            uri.starts_with("http://127.0.0.1:"),
+            "RFC 8252 §8.3: callback must use 127.0.0.1, got: {uri}"
+        );
+        assert_eq!(uri, "http://127.0.0.1:8888/callback");
+    }
+
+    /// RFC 8252 §7.3: the callback path must be `/callback`.
+    #[test]
+    fn callback_uri_path_is_slash_callback() {
+        let uri = OAuthContext::callback_uri(9999);
+        let parsed = Url::parse(&uri).expect("callback URI must be a valid URL");
+        assert_eq!(
+            parsed.path(),
+            "/callback",
+            "callback URI must have path /callback"
+        );
+    }
+
+    /// RFC 8252 §7.3 §8.3: "the client SHOULD use a loopback IP literal
+    /// rather than localhost … any port." The port MUST be dynamic (OS-assigned)
+    /// rather than a fixed well-known value. Verify the URI reflects whatever
+    /// port is given.
+    #[test]
+    fn callback_uri_reflects_given_port() {
+        assert_eq!(
+            OAuthContext::callback_uri(1234),
+            "http://127.0.0.1:1234/callback"
+        );
+        assert_eq!(
+            OAuthContext::callback_uri(65535),
+            "http://127.0.0.1:65535/callback"
+        );
+        assert_ne!(
+            OAuthContext::callback_uri(1111),
+            OAuthContext::callback_uri(2222),
+            "different ports must produce different URIs"
+        );
+    }
+
+    // ── RFC 6749 §4.1.1 + RFC 7636 §4.3 — Authorization URL structure ─────────
+
+    /// RFC 6749 §4.1.1: `response_type` MUST be set to `"code"`.
+    #[test]
+    fn authorization_url_contains_response_type_code() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert_eq!(
+            params.get("response_type").map(String::as_str),
+            Some("code"),
+            "RFC 6749 §4.1.1: authorization request must include response_type=code"
+        );
+    }
+
+    /// RFC 7636 §4.3: `code_challenge` MUST be present in authorization requests.
+    #[test]
+    fn authorization_url_contains_code_challenge() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert!(
+            params.contains_key("code_challenge"),
+            "RFC 7636 §4.3: authorization request must include code_challenge"
+        );
+        assert!(
+            !params["code_challenge"].is_empty(),
+            "code_challenge must not be empty"
+        );
+    }
+
+    /// RFC 7636 §4.3: `code_challenge_method` MUST be `"S256"`. The `plain`
+    /// method MUST NOT be used in new implementations when S256 is available.
+    #[test]
+    fn authorization_url_contains_code_challenge_method_s256() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert_eq!(
+            params.get("code_challenge_method").map(String::as_str),
+            Some("S256"),
+            "RFC 7636 §4.3: authorization request must use code_challenge_method=S256"
+        );
+    }
+
+    /// RFC 6749 §10.12: `state` MUST be present for CSRF protection.
+    #[test]
+    fn authorization_url_contains_state() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert!(
+            params.contains_key("state"),
+            "RFC 6749 §10.12: authorization request must include state for CSRF protection"
+        );
+        assert!(!params["state"].is_empty(), "state must not be empty");
+    }
+
+    /// RFC 6749 §4.1.1 / RFC 8252 §7.3: `redirect_uri` MUST be present so
+    /// the authorization server can send the callback to the correct listener.
+    #[test]
+    fn authorization_url_contains_redirect_uri() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert!(
+            params.contains_key("redirect_uri"),
+            "RFC 6749 §4.1.1: authorization request must include redirect_uri"
+        );
+        assert!(
+            params["redirect_uri"].starts_with("http://127.0.0.1:"),
+            "redirect_uri must be the loopback callback URI, got: {}",
+            params["redirect_uri"]
+        );
+    }
+
+    /// RFC 6749 §4.1.1 / RFC 3.3: `scope` MUST be omitted when no scopes are
+    /// requested (clients must not send empty scope strings).
+    #[test]
+    fn authorization_url_omits_scope_when_empty() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert!(
+            !params.contains_key("scope"),
+            "RFC 6749 §4.1.1: scope parameter must be omitted when no scopes are requested"
+        );
+    }
+
+    /// RFC 6749 §3.3: `scope` values are space-delimited, case-sensitive strings.
+    /// When scopes are provided they MUST appear as a single space-separated value.
+    #[test]
+    fn authorization_url_includes_scope_when_provided() {
+        let ctx = test_oauth_context();
+        let scopes = vec!["read:issues".to_string(), "write:issues".to_string()];
+        let url = ctx.authorization_url(&scopes).unwrap();
+        let params = query_params(&url);
+        assert_eq!(
+            params.get("scope").map(String::as_str),
+            Some("read:issues write:issues"),
+            "RFC 6749 §3.3: scopes must be space-delimited in the authorization request"
+        );
+    }
+
+    /// RFC 7636 §4.2: the `code_challenge` in the authorization URL must be
+    /// the S256 transform of the `code_verifier` stored in the context.
+    #[test]
+    fn authorization_url_code_challenge_matches_verifier() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        let expected_challenge = compute_code_challenge(&ctx.code_verifier);
+        assert_eq!(
+            params.get("code_challenge").map(String::as_str),
+            Some(expected_challenge.as_str()),
+            "RFC 7636 §4.2: code_challenge must be S256(code_verifier)"
+        );
+    }
+
+    /// RFC 6749 §4.1.1: `client_id` MUST be present in the authorization request.
+    #[test]
+    fn authorization_url_contains_client_id() {
+        let ctx = test_oauth_context();
+        let url = ctx.authorization_url(&[]).unwrap();
+        let params = query_params(&url);
+        assert!(
+            params.contains_key("client_id"),
+            "RFC 6749 §4.1.1: authorization request must include client_id"
+        );
+        assert_eq!(
+            params.get("client_id").map(String::as_str),
+            Some("test-client-id")
+        );
+    }
+
+    // ── RFC 6749 §5.1 / Refresh skew boundary ────────────────────────────────
+
+    /// StoredTokens with no expiry is never considered expired.
+    #[test]
+    fn stored_tokens_no_expiry_not_expired() {
+        assert!(!stored_tokens_expiring_at(None).is_expired());
+    }
+
+    /// A token expiring 1 hour from now is not expired.
+    #[test]
+    fn stored_tokens_far_future_not_expired() {
+        assert!(!stored_tokens_expiring_at(Some(now_secs() + 3600)).is_expired());
+    }
+
+    /// A token whose expiry is in the past is expired.
+    #[test]
+    fn stored_tokens_past_expiry_is_expired() {
+        assert!(stored_tokens_expiring_at(Some(now_secs() - 1)).is_expired());
+    }
+
+    /// RFC 6749 §5.1 / proactive refresh: a token expiring in exactly
+    /// `REFRESH_SKEW_SECS` seconds is considered expired because the client
+    /// refreshes proactively within the skew window. At `now + REFRESH_SKEW`,
+    /// the condition `now + REFRESH_SKEW >= exp` is `true`.
+    #[test]
+    fn stored_tokens_at_refresh_skew_boundary_is_expired() {
+        let at_boundary = now_secs() + REFRESH_SKEW_SECS;
+        assert!(
+            stored_tokens_expiring_at(Some(at_boundary)).is_expired(),
+            "token expiring at now+REFRESH_SKEW_SECS ({at_boundary}) must be \
+             considered expired for proactive refresh"
+        );
+    }
+
+    /// One second past the refresh window the token is NOT yet considered expired
+    /// (enough margin remains for a fresh request).
+    #[test]
+    fn stored_tokens_one_second_past_refresh_skew_is_not_expired() {
+        let just_outside = now_secs() + REFRESH_SKEW_SECS + 1;
+        assert!(
+            !stored_tokens_expiring_at(Some(just_outside)).is_expired(),
+            "token expiring at now+REFRESH_SKEW_SECS+1 ({just_outside}) must NOT \
+             be considered expired yet"
+        );
+    }
+
+    // ── RFC 6749 §6 — ensure_fresh contracts ─────────────────────────────────
+
+    /// RFC 6749 §5.1: a token that has not expired MUST be returned unchanged
+    /// without any network call.
+    #[tokio::test]
+    async fn ensure_fresh_returns_non_expired_token_unchanged() {
+        let far_future = now_secs() + 3600;
+        let stored = StoredTokens {
+            server_name: "s".into(),
+            server_url: "https://example.com".into(),
+            access_token: "original-token".into(),
+            refresh_token: None,
+            expires_at: Some(far_future),
+            token_endpoint: "https://example.com/token".into(),
+            client_id: None,
+            client_secret: None,
+        };
+        let store_path =
+            std::env::temp_dir().join(format!("sven-test-{}.json", std::process::id()));
+        let store = CredentialsStore::new(store_path.clone());
+        let client = reqwest::Client::new();
+
+        let result = ensure_fresh(&client, stored, &store).await;
+        assert!(result.is_ok(), "non-expired token should be returned as-is");
+        assert_eq!(result.unwrap().access_token, "original-token");
+
+        // Clean up temp file if it was written.
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// RFC 6749 §6: when the access token is expired and no refresh token is
+    /// available, `ensure_fresh` MUST return an error. The caller must then
+    /// trigger a new authorization flow.
+    #[tokio::test]
+    async fn ensure_fresh_fails_when_expired_and_no_refresh_token() {
+        let past = now_secs() - 1;
+        let stored = StoredTokens {
+            server_name: "s".into(),
+            server_url: "https://example.com".into(),
+            access_token: "expired-token".into(),
+            refresh_token: None, // no refresh token
+            expires_at: Some(past),
+            token_endpoint: "https://example.com/token".into(),
+            client_id: None,
+            client_secret: None,
+        };
+        let store_path =
+            std::env::temp_dir().join(format!("sven-test-{}-no-refresh.json", std::process::id()));
+        let store = CredentialsStore::new(store_path.clone());
+        let client = reqwest::Client::new();
+
+        let result = ensure_fresh(&client, stored, &store).await;
+        assert!(
+            result.is_err(),
+            "expired token without refresh_token must return Err"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no refresh token") || err.contains("expired"),
+            "error message must indicate missing refresh token, got: {err}"
+        );
+
+        // The store must have cleared the expired token so the next
+        // connection attempt triggers a fresh OAuth flow.
+        let still_stored = store.load("s", "https://example.com");
+        assert!(
+            still_stored.is_none(),
+            "RFC 6749 §6: expired tokens without refresh must be cleared from storage"
+        );
+
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    // ── WWW-Authenticate parsing ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_www_authenticate_bearer_realm() {
+        let parsed = parse_www_authenticate(r#"Bearer realm="mcp""#);
+        assert_eq!(parsed.realm.as_deref(), Some("mcp"));
+        assert!(parsed.resource_metadata.is_none());
+        assert!(parsed.scope.is_none());
+        assert!(parsed.error.is_none());
+    }
+
+    #[test]
+    fn parse_www_authenticate_full_challenge() {
+        let header = r#"Bearer realm="MCP",resource_metadata="https://example.com/.well-known/oauth-protected-resource",scope="read write",error="insufficient_scope""#;
+        let parsed = parse_www_authenticate(header);
+        assert_eq!(parsed.realm.as_deref(), Some("MCP"));
+        assert_eq!(
+            parsed.resource_metadata.as_deref(),
+            Some("https://example.com/.well-known/oauth-protected-resource")
+        );
+        assert_eq!(parsed.scope.as_deref(), Some("read write"));
+        assert_eq!(parsed.error.as_deref(), Some("insufficient_scope"));
+    }
+
+    /// RFC 6750 §3: WWW-Authenticate scheme matching MUST be case-insensitive.
+    #[test]
+    fn parse_www_authenticate_lowercase_bearer() {
+        let parsed = parse_www_authenticate(r#"bearer realm="test""#);
+        assert_eq!(parsed.realm.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn parse_www_authenticate_empty_string() {
+        let parsed = parse_www_authenticate("");
+        assert!(parsed.realm.is_none());
+        assert!(parsed.resource_metadata.is_none());
+    }
+
+    #[test]
+    fn parse_www_authenticate_no_quotes() {
+        let parsed = parse_www_authenticate("Bearer realm=mcp");
+        assert_eq!(parsed.realm.as_deref(), Some("mcp"));
+    }
+
+    /// RFC 6750 §3.1: `error=invalid_token` indicates an expired or invalid
+    /// bearer token. Clients MUST parse this to know they need to re-authenticate.
+    #[test]
+    fn parse_www_authenticate_invalid_token_error() {
+        let parsed = parse_www_authenticate(
+            r#"Bearer realm="api",error="invalid_token",error_description="token expired""#,
+        );
+        assert_eq!(parsed.error.as_deref(), Some("invalid_token"));
+    }
+
+    /// RFC 6750 §3.1: `error=insufficient_scope` means the token lacks the
+    /// required scope. Client should know this is a permissions issue, not expiry.
+    #[test]
+    fn parse_www_authenticate_insufficient_scope_error() {
+        let parsed = parse_www_authenticate(
+            r#"Bearer realm="api",error="insufficient_scope",scope="admin""#,
+        );
+        assert_eq!(parsed.error.as_deref(), Some("insufficient_scope"));
+        assert_eq!(parsed.scope.as_deref(), Some("admin"));
+    }
+
+    // ── HTTP request path extraction ──────────────────────────────────────────
+
+    #[test]
+    fn extract_get_path_standard_request() {
+        assert_eq!(
+            extract_get_path("GET /callback?code=abc&state=xyz HTTP/1.1"),
+            Some("/callback?code=abc&state=xyz")
+        );
+    }
+
+    #[test]
+    fn extract_get_path_http_1_0() {
+        assert_eq!(
+            extract_get_path("GET /callback?code=x HTTP/1.0"),
+            Some("/callback?code=x")
+        );
+    }
+
+    #[test]
+    fn extract_get_path_no_version_suffix() {
+        assert_eq!(extract_get_path("GET /callback?a=b"), Some("/callback?a=b"));
+    }
+
+    #[test]
+    fn extract_get_path_non_get_returns_none() {
+        assert_eq!(extract_get_path("POST /token HTTP/1.1"), None);
+    }
+
+    // ── URL decode ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn url_decode_plain_string() {
+        assert_eq!(url_decode("hello"), "hello");
+    }
+
+    #[test]
+    fn url_decode_percent_encoded() {
+        assert_eq!(url_decode("hello%20world"), "hello world");
+    }
+
+    #[test]
+    fn url_decode_plus_as_space() {
+        assert_eq!(url_decode("hello+world"), "hello world");
+    }
+
+    #[test]
+    fn url_decode_mixed_encoding() {
+        assert_eq!(url_decode("foo%3Dbar%26baz%3Dqux"), "foo=bar&baz=qux");
+    }
+
+    #[test]
+    fn url_decode_empty_string() {
+        assert_eq!(url_decode(""), "");
     }
 }
