@@ -577,8 +577,18 @@ mcp_servers:
 | `scopes` | OAuth scopes (leave empty for auto-discovery) |
 | `client_id` | Pre-registered client ID (omit for default) |
 | `client_secret` | Client secret for confidential clients |
-| `redirect_uri` | Custom redirect URI (e.g. `cursor://cursor.mcp/callback` for Atlassian) |
+| `redirect_uri` | Custom redirect URI (omit for default; see below) |
 | `callback_port` | Port for local callback when using custom redirect (default: 5598) |
+
+**Default OAuth redirect: `sven://sven.mcp/callback`**
+
+When `redirect_uri` is not set, sven uses:
+
+- **`sven://sven.mcp/callback`** — when running natively. The Debian package installs
+  a protocol handler that forwards to the local callback server. Works out of the box.
+- **`http://127.0.0.1:5598/callback`** — when running in a container (Docker, Podman).
+  The `sven://` handler on the host cannot reach the container, so sven falls back to
+  localhost. Ensure port 5598 is forwarded (e.g. `-p 5598:5598`).
 
 **Using `cursor://cursor.mcp` for Atlassian MCP**
 

@@ -81,14 +81,15 @@ pub struct McpOAuthConfig {
     /// Pre-registered OAuth client secret (only needed for confidential clients).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
-    /// Custom redirect URI for OAuth. Use `cursor://cursor.mcp/callback` for
-    /// Atlassian MCP (pre-allowlisted). Requires configuring your OS to forward
-    /// that protocol to localhost (see callback_port).
+    /// Custom redirect URI for OAuth. When absent, sven uses `sven://sven.mcp/callback`
+    /// (installed by the Debian package) when not in a container, or
+    /// `http://127.0.0.1:5598/callback` when running in a container (Docker, etc.).
+    /// Use `cursor://cursor.mcp/callback` for Atlassian MCP (pre-allowlisted).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uri: Option<String>,
     /// Port for the local callback server when using a custom redirect_uri.
     /// The protocol handler must forward to `http://127.0.0.1:{port}/callback`.
-    /// Default: 5598.
+    /// Default: 5598. When in a container, ensure this port is forwarded (e.g. -p 5598:5598).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_port: Option<u16>,
 }

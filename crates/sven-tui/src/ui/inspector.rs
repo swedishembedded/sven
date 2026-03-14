@@ -390,6 +390,8 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
                    url: \"https://mcp.atlassian.com/v1/mcp\"\n\
                  oauth: {}\n\
              ```\n\n\
+             **Default:** sven://sven.mcp/callback (installed by .deb). In containers,\n\
+             sven falls back to localhost; forward port 5598.\n\
              **Example (Atlassian with cursor:// — pre-allowlisted):**\n\
              ```yaml\n\
              mcp_servers:\n\
@@ -400,8 +402,7 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
                  oauth:\n\
                    redirect_uri: \"cursor://cursor.mcp/callback\"\n\
                    callback_port: 5598\n\
-             ```\n\
-             Configure your OS to forward cursor:// to http://127.0.0.1:5598/callback\n",
+             ```\n",
         );
         return out;
     }

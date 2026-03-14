@@ -946,6 +946,20 @@ pub enum Commands {
     },
     /// Print the effective configuration and exit
     ShowConfig,
+    /// Handle OAuth callback from sven:// protocol (used by OS protocol handler).
+    ///
+    /// When the OAuth server redirects to sven://sven.mcp/callback?code=...&state=...,
+    /// the OS invokes this command. It forwards the callback to the local server
+    /// listening on port 5598 (or SVEN_OAUTH_CALLBACK_PORT).
+    ///
+    /// This is normally invoked automatically by the sven:// protocol handler
+    /// installed by the Debian package. You only need to call it manually when
+    /// testing or when using a custom protocol setup.
+    OauthCallback {
+        /// The sven:// URL from the OAuth redirect (e.g. sven://sven.mcp/callback?code=X&state=Y).
+        #[arg(value_name = "URL")]
+        url: String,
+    },
     /// List saved conversations
     Chats {
         /// Maximum number of conversations to show (default: 20)

@@ -408,6 +408,22 @@ The handler script (`scripts/oauth-callback-handler.sh`) forwards the callback
 to `http://127.0.0.1:5598/callback` by default. Set `SVEN_OAUTH_CALLBACK_PORT`
 if you use a different `callback_port` in your config.
 
+### Running Sven in a container (Docker, Podman)
+
+When Sven runs inside a container, the `sven://` protocol handler (installed on
+the host) cannot reach the callback server inside the container. Sven detects
+this and automatically falls back to `http://127.0.0.1:5598/callback`, binding
+to `0.0.0.0:5598` so forwarded traffic is accepted.
+
+**Required:** Forward port 5598 when running the container:
+
+```sh
+docker run -p 5598:5598 ... sven ...
+```
+
+The OAuth browser opens on the host; the redirect goes to `http://127.0.0.1:5598`,
+which Docker forwards to the container. No `redirect_uri` config is needed.
+
 ### OAuth fails and browser does not open again
 
 When OAuth fails (user cancels, error, etc.), Sven sets the server status to

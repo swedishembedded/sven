@@ -61,6 +61,10 @@ use url::Url;
 const REFRESH_SKEW_SECS: u64 = 60;
 /// Timeout in seconds waiting for the OAuth callback.
 const CALLBACK_TIMEOUT_SECS: u64 = 300;
+/// Default OAuth callback port (used for sven:// and localhost fallback).
+const DEFAULT_CALLBACK_PORT: u16 = 5598;
+/// Default redirect URI when not in container (sven:// installed by .deb).
+pub const DEFAULT_REDIRECT_URI: &str = "sven://sven.mcp/callback";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -603,12 +607,36 @@ impl OAuthContext {
     }
 }
 
-/// Options for custom OAuth redirect (e.g. cursor://cursor.mcp for Atlassian).
+/// Detect if we are running inside a container (Docker, Podman, etc.).
+///
+/// When in a container, the sven:// protocol handler (installed on the host)
+/// cannot reach our callback server. We fall back to http://127.0.0.1:PORT
+/// and bind to 0.0.0.0 so port forwarding (e.g. -p 5598:5598) works.
+pub fn running_in_container() -> bool {
+    if std::path::Path::new("/.dockerenv").exists() {
+        return true;
+    }
+    if std::path::Path::new("/run/.containerenv").exists() {
+        return true;
+    }
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+        if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("kubepods")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Options for custom OAuth redirect (e.g. sven://sven.mcp, cursor://cursor.mcp).
 #[derive(Debug, Clone, Default)]
 pub struct OAuthRedirectOptions {
-    /// Custom redirect URI. When set (e.g. cursor://cursor.mcp/callback), the
+    /// Custom redirect URI. When set (e.g. sven://sven.mcp/callback), the
     /// OAuth server redirects here. The OS protocol handler must forward to
     /// our local callback server (see callback_port).
+    ///
+    /// When None, we use DEFAULT_REDIRECT_URI (sven://) if not in a container,
+    /// or http://127.0.0.1:5598/callback if in a container (localhost fallback).
     pub redirect_uri: Option<String>,
     /// Port for the local callback server when using a custom redirect_uri.
     /// Default: 5598.
@@ -640,8 +668,11 @@ pub async fn run_oauth_flow(
     let metadata = discovery.auth_server_metadata;
     let scopes = discovery.scopes;
 
+    let port = redirect_opts.callback_port.unwrap_or(DEFAULT_CALLBACK_PORT);
+    let in_container = running_in_container();
+
     let (listener, redirect_uri, port) = if let Some(ref custom_uri) = redirect_opts.redirect_uri {
-        let port = redirect_opts.callback_port.unwrap_or(5598);
+        // Explicit config: use as-is, bind 127.0.0.1.
         let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
             .with_context(|| format!("bind OAuth callback on port {port} (for {custom_uri})"))?;
@@ -651,12 +682,32 @@ pub async fn run_oauth_flow(
             "Using custom redirect; configure your OS to forward {custom_uri} to http://127.0.0.1:{port}/callback"
         );
         (listener, custom_uri.clone(), port)
-    } else {
-        let listener = TcpListener::bind("127.0.0.1:0")
+    } else if in_container {
+        // Default when in container: sven:// on host cannot reach us; use localhost.
+        // Bind 0.0.0.0 so port forwarding (e.g. -p 5598:5598) works.
+        let uri = format!("http://127.0.0.1:{port}/callback");
+        let listener = TcpListener::bind(format!("0.0.0.0:{port}"))
             .await
-            .context("bind OAuth callback listener")?;
-        let port = listener.local_addr()?.port();
-        let uri = OAuthContext::callback_uri(port);
+            .with_context(|| {
+                format!("bind OAuth callback on 0.0.0.0:{port} (container fallback)")
+            })?;
+        info!(
+            redirect_uri = %uri,
+            port = port,
+            "Running in container; using localhost redirect. Ensure port {port} is forwarded (e.g. -p {port}:{port})"
+        );
+        (listener, uri, port)
+    } else {
+        // Default when not in container: sven://sven.mcp/callback (installed by .deb).
+        let uri = DEFAULT_REDIRECT_URI.to_string();
+        let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
+            .await
+            .with_context(|| format!("bind OAuth callback on port {port} (for {uri})"))?;
+        info!(
+            redirect_uri = %uri,
+            port = port,
+            "Using sven:// redirect (protocol handler forwards to http://127.0.0.1:{port}/callback)"
+        );
         (listener, uri, port)
     };
 
@@ -854,12 +905,17 @@ async fn register_client(
     registration_endpoint: &str,
     redirect_uri: &str,
 ) -> Result<ClientRegistrationResponse> {
-    // Register both the canonical 127.0.0.1 URI (RFC 8252 §8.3 recommended) and
-    // the localhost variant for servers that only accept the named hostname.
-    let redirect_uris = vec![
-        redirect_uri.to_string(),
-        redirect_uri.replace("127.0.0.1", "localhost"),
-    ];
+    // For http://127.0.0.1 URIs, register both 127.0.0.1 and localhost variants
+    // since some servers treat them differently. For custom schemes (sven://, cursor://)
+    // only register the canonical URI.
+    let redirect_uris: Vec<String> = if redirect_uri.contains("127.0.0.1") {
+        vec![
+            redirect_uri.to_string(),
+            redirect_uri.replace("127.0.0.1", "localhost"),
+        ]
+    } else {
+        vec![redirect_uri.to_string()]
+    };
 
     let req = ClientRegistrationRequest {
         redirect_uris,

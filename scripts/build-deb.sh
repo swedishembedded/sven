@@ -69,6 +69,7 @@ rm -rf "${STAGING}"
 install -d \
     "${STAGING}/DEBIAN" \
     "${STAGING}/usr/bin" \
+    "${STAGING}/usr/share/applications" \
     "${STAGING}/usr/share/bash-completion/completions" \
     "${STAGING}/usr/share/zsh/vendor-completions" \
     "${STAGING}/usr/share/fish/vendor_completions.d" \
@@ -76,6 +77,19 @@ install -d \
 
 # ── Install binary ────────────────────────────────────────────────────────────
 install -m 755 "${BINARY}" "${STAGING}/usr/bin/sven"
+
+# ── sven:// protocol handler (OAuth callback) ─────────────────────────────────
+cat > "${STAGING}/usr/share/applications/sven-oauth.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Sven OAuth Handler
+Comment=Handle sven:// OAuth callback for MCP authentication
+Exec=sven oauth-callback %u
+MimeType=x-scheme-handler/sven
+NoDisplay=true
+Categories=Utility;
+DESKTOP
+chmod 644 "${STAGING}/usr/share/applications/sven-oauth.desktop"
 
 # ── Shell completions ─────────────────────────────────────────────────────────
 if [[ -n "${COMPLETIONS_DIR_OVERRIDE}" ]]; then
@@ -140,6 +154,10 @@ EOF
 cat > "${STAGING}/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# Register sven:// protocol handler so it appears in desktop associations.
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
 exit 0
 EOF
 chmod 755 "${STAGING}/DEBIAN/postinst"
