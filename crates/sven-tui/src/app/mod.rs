@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use sven_bootstrap::OutputBufferStore;
-use sven_mcp_client::McpManager;
+use sven_mcp_client::{McpEvent, McpManager};
 
 use crate::{
     agent::{agent_task, AgentRequest},
@@ -982,7 +982,10 @@ impl App {
             let shared_tools_task = self.shared_tools.clone();
             let shared_tool_displays_task = self.shared_tool_displays.clone();
             let buffer_store_task = Arc::clone(&self.buffer_store);
-            let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<Arc<McpManager>>();
+            let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<(
+                Arc<McpManager>,
+                tokio::sync::mpsc::Receiver<sven_mcp_client::McpEvent>,
+            )>();
             tokio::spawn(async move {
                 agent_task(
                     cfg,
@@ -1001,15 +1004,22 @@ impl App {
                 )
                 .await;
             });
-            // Receive the McpManager from the agent task; also discover any
-            // prompts already available and register them as slash commands.
-            if let Ok(mgr) = mcp_rx.await {
+            // Receive the McpManager and event receiver from the agent task.
+            if let Ok((mgr, mcp_event_rx)) = mcp_rx.await {
                 let prompt_commands = crate::commands::mcp::discover_mcp_prompts(&mgr).await;
                 for cmd in prompt_commands {
                     let cmd: Arc<dyn crate::commands::SlashCommand> = Arc::new(cmd);
                     self.mcp_prompt_commands.insert(cmd.name().to_string(), cmd);
                 }
-                self.mcp_manager = Some(mgr);
+                self.mcp_manager = Some(Arc::clone(&mgr));
+                // Spawn a background task to forward MCP events as TUI toasts.
+                if let Some(ref tx) = self.toast_tx {
+                    let toast_tx = tx.clone();
+                    let mgr_clone = Arc::clone(&mgr);
+                    tokio::spawn(async move {
+                        mcp_event_consumer(mcp_event_rx, toast_tx, mgr_clone).await;
+                    });
+                }
             }
         }
 
@@ -1711,5 +1721,50 @@ impl App {
         }
         self.agent.busy = false;
         self.agent.current_tool = None;
+    }
+}
+
+// ── MCP event consumer ────────────────────────────────────────────────────────
+
+/// Background task that consumes `McpEvent`s and forwards them as TUI toasts.
+///
+/// Runs until the sender end of the channel is dropped (i.e. the McpManager
+/// is dropped or the application exits).
+async fn mcp_event_consumer(
+    mut rx: mpsc::Receiver<McpEvent>,
+    toast_tx: mpsc::Sender<ui_state::Toast>,
+    _mgr: Arc<McpManager>,
+) {
+    while let Some(event) = rx.recv().await {
+        let toast = match event {
+            McpEvent::AuthStarted { ref server } => Some(ui_state::Toast::info(format!(
+                "Opening browser to authenticate with '{server}'…"
+            ))),
+            McpEvent::AuthRequired { ref server, .. } => Some(ui_state::Toast::warning(format!(
+                "'{server}' requires authentication — run `/mcp auth {server}`"
+            ))),
+            McpEvent::ServerConnected(ref server) => Some(ui_state::Toast::success(format!(
+                "MCP server '{server}' connected"
+            ))),
+            McpEvent::ServerFailed {
+                ref name,
+                ref error,
+            } => {
+                // Only surface non-auth failures as toasts (auth failures
+                // are already shown via AuthStarted/AuthRequired).
+                if error.contains("401") || error.contains("Unauthorized") {
+                    None
+                } else {
+                    Some(ui_state::Toast::error(format!(
+                        "MCP server '{name}' failed: {}",
+                        error.chars().take(80).collect::<String>()
+                    )))
+                }
+            }
+            _ => None,
+        };
+        if let Some(t) = toast {
+            let _ = toast_tx.send(t).await;
+        }
     }
 }

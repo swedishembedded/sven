@@ -33,7 +33,8 @@
 //! 3. If the server advertises a registration endpoint and no client_id is configured,
 //!    perform Dynamic Client Registration (RFC 7591) to obtain a client_id.
 //! 4. Generate a PKCE code verifier and code challenge.
-//! 5. **Start the local callback server first** (bind to 127.0.0.1:19876).
+//! 5. **Bind the callback listener first** (OS-assigned port) so we're ready before
+//!    the browser opens.
 //! 6. Build the authorization URL and open it in the user's browser.
 //! 7. Wait for the redirect callback with `?code=...&state=...`.
 //! 8. Exchange the authorization code for tokens via `POST /token`.
@@ -42,7 +43,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
@@ -54,10 +57,8 @@ use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
 use url::Url;
 
-/// PKCE OAuth callback port.
-const CALLBACK_PORT: u16 = 19876;
-/// Seconds before token expiry to trigger a refresh.
-const REFRESH_SKEW_SECS: u64 = 30;
+/// Seconds before token expiry to trigger a proactive refresh.
+const REFRESH_SKEW_SECS: u64 = 60;
 /// Timeout in seconds waiting for the OAuth callback.
 const CALLBACK_TIMEOUT_SECS: u64 = 300;
 
@@ -76,6 +77,9 @@ pub struct StoredTokens {
     pub token_endpoint: String,
     /// The client_id used during authorization.
     pub client_id: Option<String>,
+    /// The client_secret (from DCR or config), needed for token refresh with confidential clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 impl StoredTokens {
@@ -92,6 +96,23 @@ impl StoredTokens {
             }
         }
     }
+}
+
+/// Persisted DCR client registration for a server.
+///
+/// Stored separately from tokens so it survives token expiry/rotation.
+/// However, since we use dynamic callback ports, DCR client_info is only
+/// valid as long as the same port is available. We store it to avoid
+/// unnecessary re-registration on hot restarts within the same session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredClientInfo {
+    pub server_name: String,
+    pub server_url: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    /// The `redirect_uri` that was used when this client was registered.
+    /// Required for re-use: the auth server validates redirect_uri matches registration.
+    pub redirect_uri: String,
 }
 
 /// The credentials store – a JSON file mapping server keys to tokens.
@@ -116,6 +137,13 @@ impl CredentialsStore {
         Self::new(Self::default_path())
     }
 
+    fn client_info_path(&self) -> PathBuf {
+        self.path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("mcp-client-info.json")
+    }
+
     fn load_all(&self) -> Result<HashMap<String, StoredTokens>> {
         if !self.path.exists() {
             return Ok(HashMap::new());
@@ -132,6 +160,27 @@ impl CredentialsStore {
         let text = serde_json::to_string_pretty(store)?;
         std::fs::write(&self.path, text)
             .with_context(|| format!("write credentials store: {}", self.path.display()))?;
+        Ok(())
+    }
+
+    fn load_all_client_info(&self) -> Result<HashMap<String, StoredClientInfo>> {
+        let path = self.client_info_path();
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("read client info store: {}", path.display()))?;
+        serde_json::from_str(&text).context("parse client info store")
+    }
+
+    fn save_all_client_info(&self, store: &HashMap<String, StoredClientInfo>) -> Result<()> {
+        let path = self.client_info_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let text = serde_json::to_string_pretty(store)?;
+        std::fs::write(&path, text)
+            .with_context(|| format!("write client info store: {}", path.display()))?;
         Ok(())
     }
 
@@ -163,6 +212,31 @@ impl CredentialsStore {
         all.remove(&Self::key(server_name, server_url));
         let _ = self.save_all(&all);
     }
+
+    /// Load DCR client info for a specific server.
+    pub fn load_client_info(
+        &self,
+        server_name: &str,
+        server_url: &str,
+    ) -> Option<StoredClientInfo> {
+        self.load_all_client_info()
+            .ok()?
+            .remove(&Self::key(server_name, server_url))
+    }
+
+    /// Persist DCR client info for a specific server.
+    pub fn save_client_info(&self, info: &StoredClientInfo) -> Result<()> {
+        let mut all = self.load_all_client_info().unwrap_or_default();
+        all.insert(Self::key(&info.server_name, &info.server_url), info.clone());
+        self.save_all_client_info(&all)
+    }
+
+    /// Remove DCR client info for a specific server.
+    pub fn remove_client_info(&self, server_name: &str, server_url: &str) {
+        let mut all = self.load_all_client_info().unwrap_or_default();
+        all.remove(&Self::key(server_name, server_url));
+        let _ = self.save_all_client_info(&all);
+    }
 }
 
 // ── OAuth discovery ───────────────────────────────────────────────────────────
@@ -180,24 +254,37 @@ pub struct OAuthServerMetadata {
 
 /// Discover OAuth server metadata from the well-known endpoint.
 ///
-/// Tries two paths per RFC 8414:
-/// - `/.well-known/oauth-authorization-server` (root)
-/// - `/.well-known/oauth-authorization-server/{base_path}` (path-based)
+/// Tries multiple discovery URLs per RFC 8414 and OIDC conventions:
+/// - `/.well-known/oauth-authorization-server` at origin
+/// - `/.well-known/oauth-authorization-server{path}` (path-based)
+/// - `/.well-known/openid-configuration` (OIDC fallback)
 pub async fn discover_oauth_metadata(
     client: &reqwest::Client,
     server_url: &str,
 ) -> Result<OAuthServerMetadata> {
     let url = Url::parse(server_url).context("parse server URL for OAuth discovery")?;
-    let base = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
-    let port_suffix = url.port().map(|p| format!(":{p}")).unwrap_or_default();
-    let base = format!("{base}{port_suffix}");
+    let origin = format!(
+        "{}://{}{}",
+        url.scheme(),
+        url.host_str().unwrap_or(""),
+        url.port().map(|p| format!(":{p}")).unwrap_or_default()
+    );
+    let path = url.path().trim_end_matches('/');
 
     let candidates = vec![
-        format!("{base}/.well-known/oauth-authorization-server"),
-        format!("{server_url}/.well-known/oauth-authorization-server"),
+        format!("{origin}/.well-known/oauth-authorization-server"),
+        if !path.is_empty() && path != "/" {
+            format!("{origin}/.well-known/oauth-authorization-server{path}")
+        } else {
+            String::new()
+        },
+        format!("{origin}/.well-known/openid-configuration"),
     ];
 
     for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
         debug!(url = %candidate, "trying OAuth discovery endpoint");
         match client
             .get(&candidate)
@@ -232,11 +319,6 @@ pub async fn discover_oauth_metadata(
 // ── Protected Resource Metadata (RFC 9728) ────────────────────────────────────
 
 /// OAuth 2.0 Protected Resource Metadata (RFC 9728).
-///
-/// Served at `/.well-known/oauth-protected-resource` on the MCP server (or at
-/// the URL named in a `resource_metadata` parameter of a `WWW-Authenticate`
-/// header).  The most relevant fields for MCP scope discovery are
-/// `authorization_servers` and `scopes_supported`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProtectedResourceMetadata {
     /// The protected resource identifier URI.
@@ -274,17 +356,18 @@ pub async fn fetch_protected_resource_metadata(
 
 /// Try to discover Protected Resource Metadata from the well-known endpoint of
 /// the MCP server.
-///
-/// Tries `/.well-known/oauth-protected-resource` at the server's origin.
-/// Returns `None` (not an error) when the document is simply absent.
 pub async fn discover_protected_resource_metadata(
     client: &reqwest::Client,
     server_url: &str,
 ) -> Option<ProtectedResourceMetadata> {
     let url = Url::parse(server_url).ok()?;
-    let base = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
-    let port_suffix = url.port().map(|p| format!(":{p}")).unwrap_or_default();
-    let well_known = format!("{base}{port_suffix}/.well-known/oauth-protected-resource");
+    let origin = format!(
+        "{}://{}{}",
+        url.scheme(),
+        url.host_str().unwrap_or(""),
+        url.port().map(|p| format!(":{p}")).unwrap_or_default()
+    );
+    let well_known = format!("{origin}/.well-known/oauth-protected-resource");
 
     debug!(url = %well_known, "trying Protected Resource Metadata endpoint");
     let resp = client
@@ -302,39 +385,24 @@ pub async fn discover_protected_resource_metadata(
 // ── WWW-Authenticate parsing ───────────────────────────────────────────────────
 
 /// Parsed fields from a `Bearer` `WWW-Authenticate` challenge.
-///
-/// Example header:
-/// ```text
-/// WWW-Authenticate: Bearer realm="mcp",
-///   resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource",
-///   scope="read write"
-/// ```
 #[derive(Debug, Default)]
 pub struct WwwAuthenticate {
-    /// `realm` – usually the authorization server URL or a human-readable name.
     pub realm: Option<String>,
-    /// `resource_metadata` – URL of the RFC 9728 Protected Resource Metadata document.
     pub resource_metadata: Option<String>,
-    /// `scope` – space-separated required scopes.
     pub scope: Option<String>,
-    /// `error` – set when the token was rejected.
     pub error: Option<String>,
 }
 
 /// Parse a `WWW-Authenticate` header value into its `Bearer` parameters.
-///
-/// Handles both quoted and unquoted parameter values; ignores unknown fields.
 pub fn parse_www_authenticate(header: &str) -> WwwAuthenticate {
     let mut result = WwwAuthenticate::default();
 
-    // Strip optional "Bearer " prefix (case-insensitive)
     let rest = header
         .trim()
         .strip_prefix("Bearer ")
         .or_else(|| header.trim().strip_prefix("bearer "))
         .unwrap_or(header.trim());
 
-    // Split on commas, trim each token, parse key=value pairs.
     for part in rest.split(',') {
         let part = part.trim();
         let Some((key, raw_value)) = part.split_once('=') else {
@@ -357,31 +425,14 @@ pub fn parse_www_authenticate(header: &str) -> WwwAuthenticate {
 
 // ── Unified MCP OAuth discovery ───────────────────────────────────────────────
 
-/// All information needed to execute an OAuth PKCE flow, discovered from the
-/// MCP server rather than requiring manual configuration.
+/// All information needed to execute an OAuth PKCE flow.
 pub struct OAuthDiscovery {
-    /// OAuth authorization server metadata (endpoints, methods supported, …).
     pub auth_server_metadata: OAuthServerMetadata,
     /// Scopes to request.  Empty means "omit the `scope` parameter".
     pub scopes: Vec<String>,
 }
 
-/// Discover OAuth information for an MCP server using the full MCP
-/// Authorization spec priority chain.
-///
-/// # Priority order
-///
-/// **Authorization server:**
-/// 1. `resource_metadata` URL in `www_authenticate` → fetch PRM →
-///    `authorization_servers[0]` → fetch OAuth server metadata.
-/// 2. Try `/.well-known/oauth-protected-resource` on `server_url` → same.
-/// 3. Fall back to `/.well-known/oauth-authorization-server` on `server_url`.
-///
-/// **Scopes** (per MCP spec §"Scope Selection Strategy"):
-/// 1. `config_scopes` if non-empty (user explicitly configured them).
-/// 2. `scope` from `www_authenticate` header.
-/// 3. `scopes_supported` from Protected Resource Metadata.
-/// 4. Omit scope parameter (empty Vec).
+/// Discover OAuth information for an MCP server.
 pub async fn discover_oauth_info(
     client: &reqwest::Client,
     server_url: &str,
@@ -390,7 +441,6 @@ pub async fn discover_oauth_info(
 ) -> Result<OAuthDiscovery> {
     let parsed_www = www_authenticate.map(parse_www_authenticate);
 
-    // Step 1: resolve the Protected Resource Metadata.
     let prm: Option<ProtectedResourceMetadata> = {
         if let Some(prm_url) = parsed_www
             .as_ref()
@@ -399,16 +449,11 @@ pub async fn discover_oauth_info(
             fetch_protected_resource_metadata(client, prm_url)
                 .await
                 .ok()
-                .or_else(|| {
-                    debug!(url = %prm_url, "PRM fetch failed, falling back");
-                    None
-                })
         } else {
             discover_protected_resource_metadata(client, server_url).await
         }
     };
 
-    // Step 2: resolve the authorization server base URL.
     let auth_server_base: String = prm
         .as_ref()
         .and_then(|p| p.authorization_servers.as_ref())
@@ -416,10 +461,8 @@ pub async fn discover_oauth_info(
         .cloned()
         .unwrap_or_else(|| server_url.to_string());
 
-    // Step 3: fetch OAuth authorization server metadata.
     let auth_server_metadata = discover_oauth_metadata(client, &auth_server_base).await?;
 
-    // Step 4: determine scopes.
     let scopes = if !config_scopes.is_empty() {
         config_scopes.to_vec()
     } else if let Some(scope_str) = parsed_www.as_ref().and_then(|w| w.scope.as_deref()) {
@@ -474,14 +517,18 @@ pub struct OAuthContext {
     pub state: String,
     pub server_url: String,
     pub metadata: OAuthServerMetadata,
+    /// The redirect URI for this flow (includes the dynamic callback port).
     pub redirect_uri: String,
     pub client_id: Option<String>,
 }
 
 impl OAuthContext {
-    /// The redirect URI for this callback.
-    pub fn callback_uri() -> String {
-        format!("http://127.0.0.1:{CALLBACK_PORT}/mcp/oauth/callback")
+    /// Build the callback URI for the given port.
+    ///
+    /// Uses `localhost` (not `127.0.0.1`) as many OAuth providers only accept
+    /// the canonical `localhost` hostname for loopback callbacks.
+    pub fn callback_uri(port: u16) -> String {
+        format!("http://localhost:{port}/callback")
     }
 
     /// Build the authorization URL the user should visit.
@@ -510,15 +557,14 @@ impl OAuthContext {
 
 /// Run the full OAuth PKCE flow using pre-discovered OAuth information.
 ///
-/// 1. If no client_id is configured and the server supports Dynamic Client
-///    Registration (RFC 7591), registers to obtain a client_id.
-/// 2. Builds the authorization URL from `discovery`.
-/// 3. **Starts the callback server first** so it is listening before the user
-///    is redirected (avoids race where redirect arrives before we're ready).
-/// 4. Opens the user's browser (via `xdg-open` or `open`).
-/// 5. Waits for the callback on `127.0.0.1:19876`.
-/// 6. Exchanges the code for tokens.
-/// 7. Persists tokens to the credential store.
+/// 1. Binds the callback listener on an OS-assigned port (avoids fixed-port
+///    conflicts) before opening the browser.
+/// 2. Checks for a stored DCR client registration that matches the port; if
+///    found reuses the `client_id` / `client_secret`.
+/// 3. If no `client_id` is configured and the server supports Dynamic Client
+///    Registration (RFC 7591), registers to obtain a new `client_id`.
+/// 4. Builds the authorization URL and opens the user's browser.
+/// 5. Waits for the callback, exchanges the code for tokens, and persists them.
 ///
 /// Returns the stored tokens on success.
 pub async fn run_oauth_flow(
@@ -526,34 +572,63 @@ pub async fn run_oauth_flow(
     server_name: &str,
     server_url: &str,
     discovery: OAuthDiscovery,
-    client_id: Option<String>,
+    config_client_id: Option<String>,
+    config_client_secret: Option<String>,
     store: &CredentialsStore,
 ) -> Result<StoredTokens> {
     let metadata = discovery.auth_server_metadata;
     let scopes = discovery.scopes;
 
-    // Try Dynamic Client Registration when no client_id is configured and the
-    // server advertises a registration endpoint (per MCP spec §Authorization).
-    let client_id = if client_id.is_some() {
-        client_id
-    } else if let Some(ref reg_url) = metadata.registration_endpoint {
-        match register_client(client, reg_url).await {
-            Ok(reg) => {
-                info!(client_id = %reg.client_id, "Dynamic client registration succeeded");
-                Some(reg.client_id)
-            }
-            Err(e) => {
-                warn!(error = %e, "Dynamic client registration failed, falling back to default client_id");
-                None
-            }
+    // Bind the callback listener FIRST so we have a port before building auth URL.
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind OAuth callback listener")?;
+    let port = listener.local_addr()?.port();
+    let redirect_uri = OAuthContext::callback_uri(port);
+
+    // Resolve client credentials:
+    // Priority: config > stored DCR info > fresh DCR > default public client
+    let (final_client_id, final_client_secret) = if config_client_id.is_some() {
+        // Explicit config credentials always take priority.
+        (config_client_id, config_client_secret)
+    } else if let Some(stored_info) = store.load_client_info(server_name, server_url) {
+        // Reuse a previously registered client if the redirect_uri still matches.
+        // With dynamic ports this typically won't match, but it's worth checking.
+        if stored_info.redirect_uri == redirect_uri {
+            debug!(
+                client_id = %stored_info.client_id,
+                "reusing stored DCR client registration"
+            );
+            (Some(stored_info.client_id), stored_info.client_secret)
+        } else {
+            // Port changed: need fresh DCR (stale registration won't be accepted).
+            debug!("stored DCR redirect_uri mismatch, running fresh DCR");
+            run_dcr(
+                client,
+                &metadata,
+                server_name,
+                server_url,
+                &redirect_uri,
+                store,
+            )
+            .await
         }
+    } else if metadata.registration_endpoint.is_some() {
+        run_dcr(
+            client,
+            &metadata,
+            server_name,
+            server_url,
+            &redirect_uri,
+            store,
+        )
+        .await
     } else {
-        None
+        (None, None)
     };
 
     let code_verifier = generate_code_verifier();
     let state = generate_state();
-    let redirect_uri = OAuthContext::callback_uri();
 
     let ctx = OAuthContext {
         code_verifier: code_verifier.clone(),
@@ -561,16 +636,16 @@ pub async fn run_oauth_flow(
         server_url: server_url.to_string(),
         metadata: metadata.clone(),
         redirect_uri: redirect_uri.clone(),
-        client_id: client_id.clone(),
+        client_id: final_client_id.clone(),
     };
 
     let auth_url = ctx.authorization_url(&scopes)?;
-    info!(url = %auth_url, "Opening browser for MCP OAuth authentication");
+    info!(url = %auth_url, port = port, "OAuth PKCE flow started, opening browser");
 
-    // Start callback server BEFORE opening browser so we're listening when the
-    // auth server redirects (user may already be logged in and redirect immediately).
+    // Listener was bound before browser open to avoid the redirect arriving before
+    // we start listening (user may already be logged in → instant redirect).
     let (code, received_state) =
-        wait_for_callback_with_browser_open(CALLBACK_TIMEOUT_SECS, &auth_url).await?;
+        wait_for_oauth_callback(listener, CALLBACK_TIMEOUT_SECS, &auth_url).await?;
 
     if received_state != state {
         return Err(anyhow!(
@@ -578,15 +653,14 @@ pub async fn run_oauth_flow(
         ));
     }
 
-    // Exchange code for tokens.
     let tokens = exchange_code(
         client,
         &metadata.token_endpoint,
         &code,
         &code_verifier,
         &redirect_uri,
-        client_id.as_deref().unwrap_or("sven-mcp-client"),
-        client_id.as_deref(),
+        final_client_id.as_deref().unwrap_or("sven-mcp-client"),
+        final_client_secret.as_deref(),
     )
     .await?;
 
@@ -602,13 +676,52 @@ pub async fn run_oauth_flow(
                 .unwrap_or(0)
         }),
         token_endpoint: metadata.token_endpoint.clone(),
-        client_id,
+        client_id: final_client_id.clone(),
+        client_secret: final_client_secret.clone(),
     };
 
     store.save(&stored)?;
-    info!(server = %server_name, "OAuth tokens stored");
+    info!(server = %server_name, "OAuth tokens stored successfully");
 
     Ok(stored)
+}
+
+/// Perform Dynamic Client Registration and store the result.
+///
+/// Returns `(client_id, client_secret)`.
+async fn run_dcr(
+    client: &reqwest::Client,
+    metadata: &OAuthServerMetadata,
+    server_name: &str,
+    server_url: &str,
+    redirect_uri: &str,
+    store: &CredentialsStore,
+) -> (Option<String>, Option<String>) {
+    let reg_url = match &metadata.registration_endpoint {
+        Some(url) => url,
+        None => return (None, None),
+    };
+
+    match register_client(client, reg_url, redirect_uri).await {
+        Ok(reg) => {
+            info!(client_id = %reg.client_id, "Dynamic client registration succeeded");
+            let info = StoredClientInfo {
+                server_name: server_name.to_string(),
+                server_url: server_url.to_string(),
+                client_id: reg.client_id.clone(),
+                client_secret: reg.client_secret.clone(),
+                redirect_uri: redirect_uri.to_string(),
+            };
+            if let Err(e) = store.save_client_info(&info) {
+                warn!(error = %e, "failed to persist DCR client info");
+            }
+            (Some(reg.client_id), reg.client_secret)
+        }
+        Err(e) => {
+            warn!(error = %e, "DCR failed, using default public client_id");
+            (None, None)
+        }
+    }
 }
 
 /// Attempt to open a URL in the user's browser.
@@ -643,19 +756,23 @@ struct ClientRegistrationResponse {
 }
 
 /// Register a public OAuth client via Dynamic Client Registration (RFC 7591).
+///
+/// Registers both `localhost` and `127.0.0.1` variants of the redirect URI
+/// since some servers treat them differently.
 async fn register_client(
     client: &reqwest::Client,
     registration_endpoint: &str,
+    redirect_uri: &str,
 ) -> Result<ClientRegistrationResponse> {
-    let redirect_uri = OAuthContext::callback_uri();
-    // Register both 127.0.0.1 and localhost; some servers treat them differently.
+    // Register both localhost and 127.0.0.1 variants so the server accepts either.
     let redirect_uris = vec![
-        redirect_uri.clone(),
-        redirect_uri.replace("127.0.0.1", "localhost"),
+        redirect_uri.to_string(),
+        redirect_uri.replace("localhost", "127.0.0.1"),
     ];
+
     let req = ClientRegistrationRequest {
         redirect_uris,
-        client_name: "Sven".to_string(),
+        client_name: "Sven MCP Client".to_string(),
         token_endpoint_auth_method: "none".to_string(),
         grant_types: vec![
             "authorization_code".to_string(),
@@ -694,92 +811,138 @@ async fn register_client(
 
 /// Wait for the OAuth callback and return `(code, state)`.
 ///
-/// Binds the callback server **before** opening the browser so we're listening
-/// when the auth server redirects (avoids race if user is already logged in).
-async fn wait_for_callback_with_browser_open(
+/// The `listener` must already be bound (before the browser is opened).
+/// Only the first valid callback is processed; subsequent connections
+/// (e.g. browser retries) receive a polite "already done" response.
+async fn wait_for_oauth_callback(
+    listener: TcpListener,
     timeout_secs: u64,
     auth_url: &str,
 ) -> Result<(String, String)> {
-    let listener = TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}"))
-        .await
-        .with_context(|| format!("bind OAuth callback server on port {CALLBACK_PORT}"))?;
-
-    info!("OAuth callback server listening on 127.0.0.1:{CALLBACK_PORT}, opening browser");
-
-    // Open browser only after we're listening for the redirect.
+    // Open browser AFTER we confirmed the listener is ready.
     open_browser(auth_url);
+    info!(
+        port = listener.local_addr().map(|a| a.port()).unwrap_or(0),
+        "OAuth callback server ready, browser opened"
+    );
+
+    let done = Arc::new(AtomicBool::new(false));
 
     let accept_fut = async {
         loop {
-            let (mut stream, _) = listener.accept().await?;
-            let mut buf = vec![0u8; 4096];
-            let n = stream.read(&mut buf).await?;
-            let request = String::from_utf8_lossy(&buf[..n]);
+            let (mut stream, _peer) = listener
+                .accept()
+                .await
+                .context("OAuth callback: accept failed")?;
 
-            // Parse the GET request line.
-            let first_line = request.lines().next().unwrap_or("");
-            // "GET /mcp/oauth/callback?code=...&state=... HTTP/1.1"
-            if let Some(path_with_query) = first_line.strip_prefix("GET ").and_then(|s| {
-                s.strip_suffix(" HTTP/1.1")
-                    .or_else(|| s.strip_suffix(" HTTP/1.0"))
-            }) {
-                if let Some(query) = path_with_query
-                    .strip_prefix("/mcp/oauth/callback")
-                    .and_then(|s| s.strip_prefix('?'))
-                {
-                    if let Some((code, state)) = parse_callback_query(query) {
-                        // Send success response.
-                        let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
-                            <html><body><h1>Authentication successful!</h1>\
-                            <p>You can close this window and return to sven.</p></body></html>";
-                        let _ = stream.write_all(resp.as_bytes()).await;
-                        return Ok::<(String, String), anyhow::Error>((code, state));
-                    } else if query.contains("error=") {
-                        let error = parse_query_param(query, "error")
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let desc =
-                            parse_query_param(query, "error_description").unwrap_or_default();
-                        let resp = format!(
-                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n\
-                            <html><body><h1>Authentication failed</h1>\
-                            <p>Error: {error}</p><p>{desc}</p></body></html>"
-                        );
-                        let _ = stream.write_all(resp.as_bytes()).await;
-                        return Err(anyhow!("OAuth error {error}: {desc}"));
-                    }
-                }
+            // Short-circuit duplicate connections after we've already got the code.
+            if done.load(Ordering::SeqCst) {
+                let _ = write_html_response(&mut stream, 200, callback_already_done_html()).await;
+                continue;
             }
 
-            // Not the callback path, send 404 and keep listening.
-            let resp = "HTTP/1.1 404 Not Found\r\n\r\n";
-            let _ = stream.write_all(resp.as_bytes()).await;
+            // Read the HTTP request (give it 10 s for slow loopback stacks).
+            let mut buf = vec![0u8; 8192];
+            let n = match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf)).await
+            {
+                Ok(Ok(n)) if n > 0 => n,
+                _ => continue, // bad or empty connection, skip
+            };
+
+            let request_text = String::from_utf8_lossy(&buf[..n]);
+            let first_line = request_text.lines().next().unwrap_or("");
+
+            // Extract the request path: "GET /path?query HTTP/1.1"
+            let Some(path_and_query) = extract_get_path(first_line) else {
+                let _ = write_html_response(&mut stream, 404, not_found_html()).await;
+                continue;
+            };
+
+            // Strip leading "/callback" prefix.
+            let query = if let Some(rest) = path_and_query.strip_prefix("/callback") {
+                rest.strip_prefix('?').unwrap_or("")
+            } else {
+                // Not our endpoint.
+                let _ = write_html_response(&mut stream, 404, not_found_html()).await;
+                continue;
+            };
+
+            // OAuth error response (e.g. user denied).
+            if let Some(error) = parse_query_param(query, "error") {
+                let desc = parse_query_param(query, "error_description").unwrap_or_default();
+                let user_msg = if !desc.is_empty() {
+                    url_decode(&desc)
+                } else {
+                    error.replace('_', " ")
+                };
+                let _ = write_html_response(&mut stream, 400, callback_error_html(&user_msg)).await;
+                return Err(anyhow!("OAuth authorization failed: {}", user_msg));
+            }
+
+            // Successful callback.
+            match (
+                parse_query_param(query, "code"),
+                parse_query_param(query, "state"),
+            ) {
+                (Some(code), Some(state)) => {
+                    done.store(true, Ordering::SeqCst);
+                    let _ = write_html_response(&mut stream, 200, callback_success_html()).await;
+                    return Ok((code, state));
+                }
+                _ => {
+                    let _ = write_html_response(
+                        &mut stream,
+                        400,
+                        callback_error_html("Missing authorization code or state parameter"),
+                    )
+                    .await;
+                    return Err(anyhow!(
+                        "OAuth callback missing required parameters (code/state)"
+                    ));
+                }
+            }
         }
     };
 
-    tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), accept_fut)
+    tokio::time::timeout(Duration::from_secs(timeout_secs), accept_fut)
         .await
-        .map_err(|_| anyhow!("OAuth callback timed out after {timeout_secs}s. Complete the login in your browser and ensure you are redirected back to this application."))?
+        .map_err(|_| {
+            anyhow!(
+                "OAuth callback timed out after {}s. \
+                 Complete the login in your browser and make sure you are \
+                 redirected back to localhost.",
+                timeout_secs
+            )
+        })?
 }
 
-fn parse_callback_query(query: &str) -> Option<(String, String)> {
-    let code = parse_query_param(query, "code")?;
-    let state = parse_query_param(query, "state")?;
-    Some((code, state))
+/// Extract the path (including query string) from a raw HTTP request line.
+///
+/// Input:  `"GET /callback?code=abc HTTP/1.1"`
+/// Output: `Some("/callback?code=abc")`
+fn extract_get_path(request_line: &str) -> Option<&str> {
+    let rest = request_line.strip_prefix("GET ")?;
+    // Strip the HTTP version suffix.
+    let path = rest
+        .strip_suffix(" HTTP/1.1")
+        .or_else(|| rest.strip_suffix(" HTTP/1.0"))
+        .unwrap_or(rest);
+    Some(path)
 }
 
 fn parse_query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (k, v) = pair.split_once('=')?;
         if k == key {
-            Some(urlencoding_decode(v))
+            Some(url_decode(v))
         } else {
             None
         }
     })
 }
 
-/// Minimal URL percent-decoding.
-fn urlencoding_decode(s: &str) -> String {
+/// Minimal URL percent-decoding (handles `%HH` sequences and `+` → space).
+fn url_decode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -796,6 +959,145 @@ fn urlencoding_decode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Write an HTTP response with styled HTML and security headers.
+async fn write_html_response(
+    stream: &mut tokio::net::TcpStream,
+    status: u16,
+    html: String,
+) -> Result<()> {
+    let status_line = match status {
+        200 => "HTTP/1.1 200 OK",
+        400 => "HTTP/1.1 400 Bad Request",
+        404 => "HTTP/1.1 404 Not Found",
+        _ => "HTTP/1.1 500 Internal Server Error",
+    };
+    let body = html.into_bytes();
+    let headers = format!(
+        "{status_line}\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         Content-Length: {len}\r\n\
+         X-Frame-Options: DENY\r\n\
+         X-Content-Type-Options: nosniff\r\n\
+         Cache-Control: no-store, no-cache\r\n\
+         Connection: close\r\n\
+         \r\n",
+        len = body.len(),
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(&body).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+// ── HTML page templates ───────────────────────────────────────────────────────
+
+fn callback_success_html() -> String {
+    r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sven — Authenticated</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117; color: #e2e8f0;
+      display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    }
+    .card {
+      background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px;
+      padding: 2.5rem 3rem; text-align: center; max-width: 420px; width: 90%;
+    }
+    .icon {
+      width: 60px; height: 60px; background: #22543d; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1.25rem; font-size: 1.75rem;
+    }
+    h1 { font-size: 1.35rem; font-weight: 600; color: #68d391; margin-bottom: 0.6rem; }
+    p { color: #a0aec0; line-height: 1.6; margin-bottom: 0.4rem; }
+    .hint { margin-top: 1.5rem; font-size: 0.82rem; color: #4a5568; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#10003;</div>
+    <h1>Authentication successful</h1>
+    <p>You have been authenticated with the MCP server.</p>
+    <p>Return to sven to continue.</p>
+    <p class="hint">You can safely close this tab.</p>
+  </div>
+</body>
+</html>"#
+        .to_string()
+}
+
+fn callback_error_html(message: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sven — Authentication Failed</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117; color: #e2e8f0;
+      display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    }}
+    .card {{
+      background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px;
+      padding: 2.5rem 3rem; text-align: center; max-width: 420px; width: 90%;
+    }}
+    .icon {{
+      width: 60px; height: 60px; background: #742a2a; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1.25rem; font-size: 1.75rem;
+    }}
+    h1 {{ font-size: 1.35rem; font-weight: 600; color: #fc8181; margin-bottom: 0.6rem; }}
+    p {{ color: #a0aec0; line-height: 1.6; margin-bottom: 0.4rem; }}
+    .hint {{ margin-top: 1.5rem; font-size: 0.82rem; color: #4a5568; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#10007;</div>
+    <h1>Authentication failed</h1>
+    <p>{message}</p>
+    <p class="hint">Close this tab and try again in sven.</p>
+  </div>
+</body>
+</html>"#
+    )
+}
+
+fn callback_already_done_html() -> String {
+    r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sven — Already authenticated</title>
+  <style>
+    body {
+      font-family: sans-serif; background: #0f1117; color: #a0aec0;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <p>Authentication already completed. You can close this tab.</p>
+</body>
+</html>"#
+        .to_string()
+}
+
+fn not_found_html() -> String {
+    r#"<!DOCTYPE html><html><body><p>Not found.</p></body></html>"#.to_string()
 }
 
 // ── Token exchange ────────────────────────────────────────────────────────────
@@ -863,11 +1165,16 @@ pub async fn refresh_token(
 
     let client_id = stored.client_id.as_deref().unwrap_or("sven-mcp-client");
 
-    let params = vec![
+    let mut params = vec![
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh),
         ("client_id", client_id),
     ];
+    let secret_owned;
+    if let Some(secret) = stored.client_secret.as_deref() {
+        secret_owned = secret.to_string();
+        params.push(("client_secret", &secret_owned));
+    }
 
     let resp = client
         .post(&stored.token_endpoint)
@@ -901,37 +1208,46 @@ pub async fn refresh_token(
 
 /// Attempt to refresh the stored tokens for a server if they are expired.
 ///
-/// Returns the (possibly refreshed) tokens, or the original tokens if refresh
-/// was not needed or not possible.
+/// Returns `Ok(fresh_tokens)` on success (possibly the original if not expired).
+/// Returns `Err` if tokens are expired and refresh failed — in this case the
+/// stored credentials are cleared so the OAuth flow is triggered anew.
 pub async fn ensure_fresh(
     client: &reqwest::Client,
     stored: StoredTokens,
     store: &CredentialsStore,
-) -> StoredTokens {
+) -> Result<StoredTokens> {
     if !stored.is_expired() {
-        return stored;
+        return Ok(stored);
     }
+
+    let server_name = stored.server_name.clone();
+    let server_url = stored.server_url.clone();
+
     if stored.refresh_token.is_none() {
-        warn!(
-            server = %stored.server_name,
-            "access token expired and no refresh token available"
-        );
-        return stored;
+        // Token expired and no way to refresh: clear stale credentials.
+        store.remove(&server_name, &server_url);
+        return Err(anyhow!(
+            "access token expired and no refresh token for {server_name}"
+        ));
     }
+
     match refresh_token(client, &stored).await {
         Ok(fresh) => {
             if let Err(e) = store.save(&fresh) {
                 warn!(error = %e, "failed to persist refreshed tokens");
             }
-            fresh
+            Ok(fresh)
         }
         Err(e) => {
+            // Refresh failed (revoked, server error, etc.) — clear stale credentials
+            // so the next connection attempt triggers a full OAuth re-authorization.
             warn!(
-                server = %stored.server_name,
+                server = %server_name,
                 error = %e,
-                "token refresh failed, using (possibly expired) access token"
+                "token refresh failed, clearing stored credentials"
             );
-            stored
+            store.remove(&server_name, &server_url);
+            Err(anyhow!("token refresh failed for {server_name}: {e}"))
         }
     }
 }

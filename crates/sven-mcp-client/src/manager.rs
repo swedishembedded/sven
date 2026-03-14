@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -22,8 +23,12 @@ use sven_tools::Tool as _;
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::client::McpConnection;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
-use crate::oauth::{discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore};
-use crate::transport::{AuthState, HttpTransport, StdioTransport, Transport, UnauthorizedError};
+use crate::oauth::{
+    discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthContext,
+};
+use crate::transport::{
+    build_http_transport, AuthState, StdioTransport, Transport, UnauthorizedError,
+};
 
 // ── McpEvent ──────────────────────────────────────────────────────────────────
 
@@ -40,11 +45,12 @@ pub enum McpEvent {
     ToolsChanged,
     /// An HTTP server requires OAuth authentication.
     AuthRequired { server: String, auth_url: String },
+    /// OAuth authentication started (browser opened).
+    AuthStarted { server: String },
 }
 
 // ── ServerState ───────────────────────────────────────────────────────────────
 
-/// Per-server runtime state.
 struct ServerState {
     connection: Option<McpConnection>,
     health: HealthState,
@@ -77,26 +83,16 @@ impl ServerState {
 // ── McpManager ────────────────────────────────────────────────────────────────
 
 /// Multi-server MCP connection manager.
-///
-/// All access is guarded by a single `RwLock`.  The manager is shared via
-/// `Arc<McpManager>` between the agent loop and TUI.
 pub struct McpManager {
-    /// Current config per server name.
     config: RwLock<HashMap<String, McpServerConfig>>,
-    /// Live connection + health state per server name.
     servers: RwLock<HashMap<String, ServerState>>,
-    /// Token store for OAuth credentials.
-    store: CredentialsStore,
-    /// HTTP client shared across all HTTP transport connections.
+    store: Arc<CredentialsStore>,
     http_client: reqwest::Client,
-    /// Channel for notifying the consumer about lifecycle events.
     event_tx: mpsc::Sender<McpEvent>,
 }
 
 impl McpManager {
     /// Create a new manager with the given initial config.
-    ///
-    /// Call `connect_all()` after construction to establish connections.
     pub fn new(
         config: HashMap<String, McpServerConfig>,
         event_tx: mpsc::Sender<McpEvent>,
@@ -106,10 +102,46 @@ impl McpManager {
         Arc::new(Self {
             config: RwLock::new(config),
             servers: RwLock::new(HashMap::new()),
-            store: CredentialsStore::with_default_path(),
+            store: Arc::new(CredentialsStore::with_default_path()),
             http_client,
             event_tx,
         })
+    }
+
+    // ── Background tasks ──────────────────────────────────────────────────────
+
+    /// Start background tasks: reconnection loop.
+    ///
+    /// Call once after `connect_all()`.  The loop periodically checks for
+    /// servers in the `Reconnecting` state and retries them when the backoff
+    /// delay has elapsed.
+    pub fn start_background_tasks(self: &Arc<Self>) {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                let servers_to_retry: Vec<String> = {
+                    let servers = this.servers.read().await;
+                    servers
+                        .iter()
+                        .filter(|(_, state)| state.health.should_retry_now())
+                        .map(|(name, _)| name.clone())
+                        .collect()
+                };
+
+                for name in servers_to_retry {
+                    let this2 = Arc::clone(&this);
+                    let n = name.clone();
+                    tokio::spawn(async move {
+                        debug!(server = %n, "background reconnect attempt");
+                        if let Err(e) = this2.connect(&n).await {
+                            debug!(server = %n, error = %e, "background reconnect failed");
+                        }
+                    });
+                }
+            }
+        });
     }
 
     // ── Connection management ─────────────────────────────────────────────────
@@ -184,72 +216,8 @@ impl McpManager {
                 Ok(())
             }
             Err(e) => {
-                // Check if this is a 401 – use the UnauthorizedError to extract
-                // the WWW-Authenticate header and run proper OAuth discovery.
                 if let Some(unauth) = e.downcast_ref::<UnauthorizedError>() {
-                    let www_auth = unauth.www_authenticate.clone();
-                    let server_url = match &cfg.transport {
-                        McpTransport::Http { url, .. } => url.clone(),
-                        _ => String::new(),
-                    };
-
-                    // Run discovery to get the real authorization URL.
-                    let config_scopes = cfg
-                        .oauth
-                        .as_ref()
-                        .map(|o| o.scopes.as_slice())
-                        .unwrap_or(&[]);
-                    let auth_url = if !server_url.is_empty() {
-                        match discover_oauth_info(
-                            &self.http_client,
-                            &server_url,
-                            www_auth.as_deref(),
-                            config_scopes,
-                        )
-                        .await
-                        {
-                            Ok(discovery) => {
-                                // Build the auth URL from discovered metadata.
-                                let client_id =
-                                    cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
-                                let code_verifier = crate::oauth::generate_code_verifier();
-                                let state_token = crate::oauth::generate_state();
-                                let redirect_uri = crate::oauth::OAuthContext::callback_uri();
-                                let ctx = crate::oauth::OAuthContext {
-                                    code_verifier,
-                                    state: state_token,
-                                    server_url: server_url.clone(),
-                                    metadata: discovery.auth_server_metadata,
-                                    redirect_uri,
-                                    client_id,
-                                };
-                                ctx.authorization_url(&discovery.scopes).unwrap_or_default()
-                            }
-                            Err(disc_err) => {
-                                warn!(server = %name, error = %disc_err, "OAuth discovery failed");
-                                String::new()
-                            }
-                        }
-                    } else {
-                        String::new()
-                    };
-
-                    {
-                        let mut servers = self.servers.write().await;
-                        let state = servers
-                            .entry(name.to_string())
-                            .or_insert_with(ServerState::new);
-                        state.health.status = ServerStatus::NeedsAuth {
-                            auth_url: auth_url.clone(),
-                        };
-                    }
-                    let _ = self
-                        .event_tx
-                        .send(McpEvent::AuthRequired {
-                            server: name.to_string(),
-                            auth_url,
-                        })
-                        .await;
+                    self.handle_unauthorized(name, &cfg, unauth);
                 } else {
                     let error_str = e.to_string();
                     let mut servers = self.servers.write().await;
@@ -270,6 +238,133 @@ impl McpManager {
         }
     }
 
+    /// Handle a 401 Unauthorized response from an MCP server.
+    ///
+    /// Sets the status to `NeedsAuth` and emits an event. If the server config
+    /// has an `oauth` section, also automatically spawns the browser-based
+    /// OAuth flow (background task).
+    fn handle_unauthorized(
+        self: &Arc<Self>,
+        name: &str,
+        cfg: &McpServerConfig,
+        unauth: &UnauthorizedError,
+    ) {
+        let www_auth = unauth.www_authenticate.clone();
+        let server_url = match &cfg.transport {
+            McpTransport::Http { url, .. } => url.clone(),
+            _ => return,
+        };
+
+        let config_scopes = cfg
+            .oauth
+            .as_ref()
+            .map(|o| o.scopes.as_slice())
+            .unwrap_or(&[])
+            .to_vec();
+        let has_oauth_config = cfg.oauth.is_some();
+
+        let this = Arc::clone(self);
+        let name_owned = name.to_string();
+
+        tokio::spawn(async move {
+            // Mark the server as needing auth right away.
+            {
+                let mut servers = this.servers.write().await;
+                let state = servers
+                    .entry(name_owned.clone())
+                    .or_insert_with(ServerState::new);
+                state.health.status = ServerStatus::NeedsAuth {
+                    auth_url: String::new(),
+                };
+            }
+
+            // Discover the authorization server URL.
+            let discovery_result = discover_oauth_info(
+                &this.http_client,
+                &server_url,
+                www_auth.as_deref(),
+                &config_scopes,
+            )
+            .await;
+
+            let auth_url = match discovery_result {
+                Ok(ref disc) => {
+                    let client_id = {
+                        let cfg_guard = this.config.read().await;
+                        cfg_guard
+                            .get(&name_owned)
+                            .and_then(|c| c.oauth.as_ref())
+                            .and_then(|o| o.client_id.clone())
+                    };
+                    let code_verifier = crate::oauth::generate_code_verifier();
+                    let state_token = crate::oauth::generate_state();
+                    let ctx = OAuthContext {
+                        code_verifier,
+                        state: state_token,
+                        server_url: server_url.clone(),
+                        metadata: disc.auth_server_metadata.clone(),
+                        redirect_uri: OAuthContext::callback_uri(19876),
+                        client_id,
+                    };
+                    ctx.authorization_url(&disc.scopes).unwrap_or_default()
+                }
+                Err(ref e) => {
+                    warn!(server = %name_owned, error = %e, "OAuth discovery failed during 401 handling");
+                    String::new()
+                }
+            };
+
+            // Update status with the discovered auth URL.
+            {
+                let mut servers = this.servers.write().await;
+                if let Some(state) = servers.get_mut(&name_owned) {
+                    state.health.status = ServerStatus::NeedsAuth {
+                        auth_url: auth_url.clone(),
+                    };
+                }
+            }
+
+            if has_oauth_config {
+                // Auto-start OAuth if config has `oauth:` section.
+                let _ = this
+                    .event_tx
+                    .send(McpEvent::AuthStarted {
+                        server: name_owned.clone(),
+                    })
+                    .await;
+
+                match this.authenticate(&name_owned).await {
+                    Ok(_) => {
+                        debug!(server = %name_owned, "auto-auth completed successfully");
+                    }
+                    Err(e) => {
+                        warn!(server = %name_owned, error = %e, "auto-auth failed");
+                        let mut servers = this.servers.write().await;
+                        if let Some(state) = servers.get_mut(&name_owned) {
+                            state.health.report_error(e.to_string());
+                        }
+                        let _ = this
+                            .event_tx
+                            .send(McpEvent::ServerFailed {
+                                name: name_owned,
+                                error: e.to_string(),
+                            })
+                            .await;
+                    }
+                }
+            } else {
+                // Manual auth required.
+                let _ = this
+                    .event_tx
+                    .send(McpEvent::AuthRequired {
+                        server: name_owned,
+                        auth_url,
+                    })
+                    .await;
+            }
+        });
+    }
+
     /// Disconnect and remove a server.
     pub async fn disconnect(&self, name: &str) {
         let mut servers = self.servers.write().await;
@@ -288,7 +383,6 @@ impl McpManager {
 
     // ── Tool access ───────────────────────────────────────────────────────────
 
-    /// All tools from all connected servers, wrapped as `McpTool` instances.
     pub async fn tools(self: &Arc<Self>) -> Vec<McpTool> {
         let servers = self.servers.read().await;
         let mut tools = Vec::new();
@@ -306,12 +400,10 @@ impl McpManager {
                 ));
             }
         }
-        // Deterministic order: sorted by qualified name.
         tools.sort_by(|a, b| a.name().cmp(b.name()));
         tools
     }
 
-    /// All prompts from all connected servers.
     pub async fn prompts(&self) -> Vec<McpPromptInfo> {
         let servers = self.servers.read().await;
         let mut prompts = Vec::new();
@@ -348,7 +440,6 @@ impl McpManager {
 
     // ── Tool execution ────────────────────────────────────────────────────────
 
-    /// Call a tool on the named server.
     pub async fn call_tool(&self, server: &str, tool: &str, args: &Value) -> Result<String> {
         let servers = self.servers.read().await;
         let state = servers
@@ -361,7 +452,6 @@ impl McpManager {
         conn.call_tool(tool, args).await
     }
 
-    /// Get a prompt from the named server.
     pub async fn get_prompt(
         &self,
         server: &str,
@@ -381,12 +471,10 @@ impl McpManager {
 
     // ── Server status ─────────────────────────────────────────────────────────
 
-    /// Summaries of all configured servers (connected or not).
     pub async fn server_statuses(&self) -> Vec<ServerStatusSummary> {
         let servers = self.servers.read().await;
         let config = self.config.read().await;
 
-        // Include all configured servers, even those without a runtime state.
         let mut names: Vec<String> = config.keys().cloned().collect();
         names.sort();
 
@@ -415,10 +503,6 @@ impl McpManager {
 
     // ── Config management ─────────────────────────────────────────────────────
 
-    /// Apply a new config, diffing against the current state.
-    ///
-    /// Only servers that changed (transport, env, oauth, or enabled flag) are
-    /// reconnected.  Unchanged servers keep their live connections.
     pub async fn update_config(self: &Arc<Self>, new_config: HashMap<String, McpServerConfig>) {
         let (to_remove, to_add, to_update) = {
             let current = self.config.read().await;
@@ -426,7 +510,6 @@ impl McpManager {
             let mut to_add = Vec::new();
             let mut to_update = Vec::new();
 
-            // Servers in old config but not in new.
             for name in current.keys() {
                 if !new_config.contains_key(name) {
                     to_remove.push(name.clone());
@@ -447,18 +530,15 @@ impl McpManager {
             (to_remove, to_add, to_update)
         };
 
-        // Update the config.
         {
             let mut config = self.config.write().await;
             *config = new_config;
         }
 
-        // Disconnect removed servers.
         for name in to_remove {
             self.disconnect(&name).await;
         }
 
-        // Disconnect and reconnect updated servers.
         for name in to_update {
             self.disconnect(&name).await;
             let this = Arc::clone(self);
@@ -470,7 +550,6 @@ impl McpManager {
             });
         }
 
-        // Connect new servers.
         for name in to_add {
             let this = Arc::clone(self);
             let n = name.clone();
@@ -484,71 +563,12 @@ impl McpManager {
 
     // ── OAuth support ─────────────────────────────────────────────────────────
 
-    /// Start the OAuth flow for an HTTP server.
-    ///
-    /// Returns the authorization URL that the user should open in a browser.
-    /// Build and return the OAuth authorization URL for `server`, running the
-    /// full MCP discovery chain to find the authorization server and scopes.
-    ///
-    /// Sets the server status to `NeedsAuth { auth_url }` so the TUI can
-    /// display it.  The user should visit the URL and then call `authenticate()`
-    /// (or `/mcp auth <server>`) to complete the flow.
-    pub async fn start_oauth(self: &Arc<Self>, server: &str) -> Result<String> {
-        let cfg = self.server_config(server).await?;
-
-        let url = match &cfg.transport {
-            McpTransport::Http { url, .. } => url.clone(),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "OAuth is only supported for HTTP MCP servers"
-                ))
-            }
-        };
-
-        let config_scopes = cfg
-            .oauth
-            .as_ref()
-            .map(|o| o.scopes.as_slice())
-            .unwrap_or(&[]);
-        let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
-
-        let discovery = discover_oauth_info(&self.http_client, &url, None, config_scopes).await?;
-
-        let code_verifier = crate::oauth::generate_code_verifier();
-        let state = crate::oauth::generate_state();
-        let redirect_uri = crate::oauth::OAuthContext::callback_uri();
-
-        let ctx = crate::oauth::OAuthContext {
-            code_verifier,
-            state: state.clone(),
-            server_url: url.clone(),
-            metadata: discovery.auth_server_metadata,
-            redirect_uri,
-            client_id,
-        };
-
-        let auth_url = ctx.authorization_url(&discovery.scopes)?;
-
-        {
-            let mut servers = self.servers.write().await;
-            let server_state = servers
-                .entry(server.to_string())
-                .or_insert_with(ServerState::new);
-            server_state.health.status = ServerStatus::NeedsAuth {
-                auth_url: auth_url.clone(),
-            };
-        }
-
-        Ok(auth_url)
-    }
-
     /// Run the full interactive OAuth PKCE flow (opens browser, waits for
     /// callback) for `server`.
     ///
-    /// Scopes and the authorization server are discovered automatically via the
-    /// MCP Authorization spec discovery chain (RFC 9728 / RFC 8414).
-    /// Configuring `oauth.scopes` is optional — leave it empty and scopes will
-    /// be discovered from the server.
+    /// This method blocks until the user completes browser-based authentication
+    /// (up to 5 minutes) or an error occurs.  On success, tokens are persisted
+    /// and the server is automatically reconnected.
     pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<String> {
         let cfg = self.server_config(server).await?;
 
@@ -567,6 +587,7 @@ impl McpManager {
             .map(|o| o.scopes.as_slice())
             .unwrap_or(&[]);
         let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
+        let client_secret = cfg.oauth.as_ref().and_then(|o| o.client_secret.clone());
 
         let discovery = discover_oauth_info(&self.http_client, &url, None, config_scopes).await?;
 
@@ -576,6 +597,7 @@ impl McpManager {
             &url,
             discovery,
             client_id,
+            client_secret,
             &self.store,
         )
         .await?;
@@ -607,7 +629,6 @@ impl McpManager {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Build a transport and initialize the connection for a single server.
     async fn try_connect(
         &self,
         name: &str,
@@ -633,7 +654,6 @@ impl McpManager {
         Ok((conn, tools, prompts))
     }
 
-    /// Build the appropriate `Transport` from server config.
     async fn build_transport(&self, name: &str, cfg: &McpServerConfig) -> Result<Transport> {
         match &cfg.transport {
             McpTransport::Stdio { command, args } => {
@@ -641,32 +661,52 @@ impl McpManager {
                 Ok(Transport::Stdio(Box::new(t)))
             }
             McpTransport::Http { url, headers } => {
-                // Check for stored OAuth tokens.
                 let auth = self.load_http_auth(name, url, cfg).await;
-                let t = HttpTransport::new(url, headers, cfg.timeout_secs, auth)?;
+                let t = build_http_transport(
+                    url,
+                    headers,
+                    cfg.timeout_secs,
+                    auth,
+                    name,
+                    url,
+                    Arc::clone(&self.store),
+                )?;
                 Ok(Transport::Http(t))
             }
         }
     }
 
-    /// Load authentication state for an HTTP server.
     async fn load_http_auth(
         &self,
         name: &str,
         url: &str,
         cfg: &McpServerConfig,
     ) -> Option<AuthState> {
-        // 1. Check for stored OAuth tokens.
-        if let Some(mut stored) = self.store.load(name, url) {
-            stored = ensure_fresh(&self.http_client, stored, &self.store).await;
-            return Some(AuthState::OAuth {
-                access_token: stored.access_token,
-                refresh_token: stored.refresh_token,
-                expires_at: stored.expires_at,
-            });
+        // 1. Check for stored OAuth tokens, refresh if near expiry.
+        if let Some(stored) = self.store.load(name, url) {
+            match ensure_fresh(&self.http_client, stored, &self.store).await {
+                Ok(fresh) => {
+                    return Some(AuthState::OAuth {
+                        access_token: fresh.access_token,
+                        refresh_token: fresh.refresh_token,
+                        expires_at: fresh.expires_at,
+                        token_endpoint: fresh.token_endpoint,
+                        client_id: fresh
+                            .client_id
+                            .unwrap_or_else(|| "sven-mcp-client".to_string()),
+                        client_secret: fresh.client_secret,
+                    });
+                }
+                Err(e) => {
+                    // Refresh failed or token completely expired — clear and let
+                    // the connection attempt trigger fresh OAuth.
+                    warn!(server = %name, error = %e, "stored token invalid, will re-authenticate");
+                    return None;
+                }
+            }
         }
 
-        // 2. Check for a bearer token in the configured headers.
+        // 2. Fall back to a bearer token in the configured headers.
         if let McpTransport::Http { headers, .. } = &cfg.transport {
             if let Some(auth_header) = headers.get("Authorization") {
                 if let Some(token) = auth_header.strip_prefix("Bearer ") {
@@ -681,7 +721,6 @@ impl McpManager {
 
 // ── Config change detection ───────────────────────────────────────────────────
 
-/// Whether two server configs are meaningfully different (would require reconnect).
 fn config_changed(old: &McpServerConfig, new: &McpServerConfig) -> bool {
     if old.enabled != new.enabled {
         return true;
@@ -692,7 +731,6 @@ fn config_changed(old: &McpServerConfig, new: &McpServerConfig) -> bool {
     if old.env != new.env {
         return true;
     }
-    // Compare transport by serialized form.
     let old_t = serde_json::to_string(&old.transport).unwrap_or_default();
     let new_t = serde_json::to_string(&new.transport).unwrap_or_default();
     old_t != new_t

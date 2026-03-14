@@ -369,16 +369,26 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
     if statuses.is_empty() {
         out.push_str(
             "_No MCP servers configured._\n\n\
-             Add servers to your `sven.yaml` config under `mcp_servers:`, \
-             or use the `system` tool with `add_mcp_server`.\n\n\
-             **Example config:**\n\
+             Add servers to your `sven.yaml` config under `mcp_servers:`.\n\n\
+             **Example (stdio server):**\n\
              ```yaml\n\
              mcp_servers:\n\
                github:\n\
-                 command: npx\n\
-                 args: [-y, \"@modelcontextprotocol/server-github\"]\n\
+                 transport:\n\
+                   type: stdio\n\
+                   command: npx\n\
+                   args: [\"-y\", \"@modelcontextprotocol/server-github\"]\n\
                  env:\n\
-                   GITHUB_PERSONAL_ACCESS_TOKEN: \"<token>\"\n\
+                   GITHUB_TOKEN: \"${GITHUB_TOKEN}\"\n\
+             ```\n\n\
+             **Example (HTTP server with OAuth):**\n\
+             ```yaml\n\
+             mcp_servers:\n\
+               atlassian:\n\
+                 transport:\n\
+                   type: http\n\
+                   url: \"https://mcp.atlassian.com/v1/mcp\"\n\
+                 oauth: {}\n\
              ```\n",
         );
         return out;
@@ -392,27 +402,42 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
         let status = s.status.label();
         let detail = match &s.status {
             sven_mcp_client::ServerStatus::Failed { error } => {
-                format!(" ({})", truncate_to_width_exact(error, 40))
+                format!(" — _{}_", truncate_to_width_exact(error, 50))
             }
             sven_mcp_client::ServerStatus::Reconnecting { attempts } => {
                 format!(" (attempt {attempts})")
             }
             sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
-                " — run `/mcp auth <name>`".to_string()
+                format!(" — run `/mcp auth {}`", s.name)
             }
             _ => String::new(),
         };
         out.push_str(&format!(
-            "| **{}** | {} {} {}{} | {} | {} |\n",
-            s.name, icon, status, detail, "", s.tool_count, s.prompt_count,
+            "| **{}** | {} {}{} | {} | {} |\n",
+            s.name, icon, status, detail, s.tool_count, s.prompt_count,
         ));
     }
 
     out.push_str("\n**Commands:**\n");
-    out.push_str("- `/mcp list` — list all servers\n");
+    out.push_str("- `/mcp` — open this inspector\n");
+    out.push_str("- `/mcp auth <name>` — authenticate with OAuth (browser will open)\n");
     out.push_str("- `/mcp enable <name>` — enable a server\n");
     out.push_str("- `/mcp disable <name>` — disable a server\n");
-    out.push_str("- `/mcp auth <name>` — authenticate with OAuth\n");
+
+    // Show a help hint if any server needs auth.
+    let needs_auth: Vec<&str> = statuses
+        .iter()
+        .filter(|s| matches!(s.status, sven_mcp_client::ServerStatus::NeedsAuth { .. }))
+        .map(|s| s.name.as_str())
+        .collect();
+    if !needs_auth.is_empty() {
+        out.push_str("\n**Authentication required:**\n");
+        for name in &needs_auth {
+            out.push_str(&format!(
+                "- `/mcp auth {name}` — opens browser for OAuth login\n"
+            ));
+        }
+    }
 
     out
 }

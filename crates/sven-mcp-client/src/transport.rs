@@ -20,6 +20,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 
+use crate::oauth::{refresh_token, CredentialsStore, StoredTokens};
 use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 
 /// Timeout applied to each MCP request/response exchange.
@@ -54,11 +55,7 @@ impl std::error::Error for UnauthorizedError {}
 // ── StdioTransport ────────────────────────────────────────────────────────────
 
 /// MCP transport over a stdio subprocess.
-///
-/// Spawns a child process and communicates with it using newline-delimited
-/// JSON-RPC 2.0 over stdin/stdout.
 pub struct StdioTransport {
-    /// Child process (kept alive for the lifetime of the transport).
     _child: Child,
     stdin: Mutex<ChildStdin>,
     stdout: Mutex<BufReader<ChildStdout>>,
@@ -67,8 +64,6 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    /// Spawn `command args` with the given environment variables and create
-    /// the transport.
     pub async fn spawn(
         command: &str,
         args: &[String],
@@ -84,7 +79,6 @@ impl StdioTransport {
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true);
 
-        // Pass through a minimal safe environment + user-specified vars.
         cmd.env_clear();
         if let Some(path) = std::env::var_os("PATH") {
             cmd.env("PATH", path);
@@ -119,7 +113,6 @@ impl StdioTransport {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Send a JSON-RPC notification (no response expected).
     pub async fn send_notification(&self, notif: &JsonRpcNotification) -> Result<()> {
         let mut line = serde_json::to_string(notif)?;
         line.push('\n');
@@ -132,7 +125,6 @@ impl StdioTransport {
         Ok(())
     }
 
-    /// Send a JSON-RPC request and wait for the matching response.
     pub async fn send_request(&self, req: &JsonRpcRequest) -> Result<Value> {
         let mut line = serde_json::to_string(req)?;
         line.push('\n');
@@ -148,7 +140,6 @@ impl StdioTransport {
             stdin.flush().await?;
         }
 
-        // Read lines until we find one whose id matches our request.
         let deadline = tokio::time::Instant::now() + self.timeout;
         loop {
             if tokio::time::Instant::now() >= deadline {
@@ -188,13 +179,11 @@ impl StdioTransport {
             let resp: JsonRpcResponse = match serde_json::from_str(trimmed) {
                 Ok(r) => r,
                 Err(e) => {
-                    // Server may emit notifications; skip them.
                     debug!(line = %trimmed, error = %e, "skipping non-response line");
                     continue;
                 }
             };
 
-            // Match on id.
             let matches = match &resp.id {
                 Some(Value::Number(n)) => n.as_u64() == Some(req.id),
                 Some(Value::String(s)) => s.parse::<u64>().ok() == Some(req.id),
@@ -220,15 +209,14 @@ impl StdioTransport {
 // ── HttpTransport ─────────────────────────────────────────────────────────────
 
 /// MCP transport over HTTP (Streamable HTTP POST).
-///
-/// Each JSON-RPC request is sent as a `POST /mcp` with `application/json`
-/// body.  The server responds with the JSON-RPC response in the body.
 pub struct HttpTransport {
     client: reqwest::Client,
     url: String,
     next_id: AtomicU64,
     timeout: Duration,
     auth: Arc<Mutex<Option<AuthState>>>,
+    /// Optional context for proactive token refresh.
+    refresh_ctx: Option<RefreshContext>,
 }
 
 /// Authentication state for an HTTP MCP server.
@@ -236,12 +224,48 @@ pub struct HttpTransport {
 pub enum AuthState {
     /// A static bearer token (from config headers).
     BearerToken(String),
-    /// OAuth access token.
+    /// OAuth access token with full metadata for proactive refresh.
     OAuth {
         access_token: String,
         refresh_token: Option<String>,
         expires_at: Option<u64>,
+        /// Token endpoint URL, needed for proactive refresh.
+        token_endpoint: String,
+        /// Client ID used during authorization.
+        client_id: String,
+        /// Client secret (for confidential clients).
+        client_secret: Option<String>,
     },
+}
+
+impl AuthState {
+    /// Whether this OAuth token is expired (within refresh window).
+    pub fn is_expired(&self) -> bool {
+        match self {
+            AuthState::OAuth { expires_at, .. } => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                const REFRESH_SKEW: u64 = 60;
+                match expires_at {
+                    None => false,
+                    Some(exp) => {
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        now + REFRESH_SKEW >= *exp
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Context for proactive token refresh inside `HttpTransport`.
+pub(crate) struct RefreshContext {
+    server_name: String,
+    server_url: String,
+    store: Arc<CredentialsStore>,
 }
 
 impl HttpTransport {
@@ -251,8 +275,21 @@ impl HttpTransport {
         timeout_secs: u64,
         auth: Option<AuthState>,
     ) -> Result<Self> {
+        Self::with_refresh(url, headers, timeout_secs, auth, None)
+    }
+
+    /// Create transport with optional proactive refresh context.
+    ///
+    /// When `refresh_ctx` is provided, OAuth tokens are proactively refreshed
+    /// before each request when they are within the expiry window.
+    pub(crate) fn with_refresh(
+        url: impl Into<String>,
+        headers: &HashMap<String, String>,
+        timeout_secs: u64,
+        auth: Option<AuthState>,
+        refresh_ctx: Option<RefreshContext>,
+    ) -> Result<Self> {
         let mut default_headers = HeaderMap::new();
-        // MCP protocol version header
         default_headers.insert(
             HeaderName::from_static("mcp-protocol-version"),
             HeaderValue::from_static("2024-11-05"),
@@ -285,6 +322,7 @@ impl HttpTransport {
             next_id: AtomicU64::new(1),
             timeout,
             auth: Arc::new(Mutex::new(auth)),
+            refresh_ctx,
         })
     }
 
@@ -292,26 +330,21 @@ impl HttpTransport {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Update the authentication state (e.g., after OAuth token exchange).
     pub async fn set_auth(&self, auth: AuthState) {
         *self.auth.lock().await = Some(auth);
     }
 
-    /// Get the current auth state.
     pub async fn auth(&self) -> Option<AuthState> {
         self.auth.lock().await.clone()
     }
 
-    /// Send a JSON-RPC notification (fire and forget for HTTP).
     pub async fn send_notification(&self, notif: &JsonRpcNotification) -> Result<()> {
         let body = serde_json::to_string(notif)?;
         let req = self.build_request(body).await?;
-        // For notifications we ignore the response body but still send the request.
         let _ = tokio::time::timeout(self.timeout, req.send()).await;
         Ok(())
     }
 
-    /// Send a JSON-RPC request and return the result.
     pub async fn send_request(&self, req: &JsonRpcRequest) -> Result<Value> {
         let body = serde_json::to_string(req)?;
 
@@ -360,6 +393,9 @@ impl HttpTransport {
     }
 
     async fn build_request(&self, body: String) -> Result<reqwest::RequestBuilder> {
+        // Proactively refresh OAuth tokens if they are near expiry.
+        self.maybe_refresh_token().await;
+
         let mut rb = self.client.post(&self.url).body(body);
         if let Some(auth) = &*self.auth.lock().await {
             match auth {
@@ -372,6 +408,87 @@ impl HttpTransport {
             }
         }
         Ok(rb)
+    }
+
+    /// Proactively refresh the OAuth token if it is within the refresh window.
+    ///
+    /// Updates `self.auth` with the refreshed token and persists to the
+    /// credentials store if one is available.  Silently swallows errors so
+    /// that a failed refresh does not block the request — the server will
+    /// return 401 if the token is truly invalid, which triggers the full
+    /// re-auth flow.
+    async fn maybe_refresh_token(&self) {
+        let needs_refresh = {
+            let auth_guard = self.auth.lock().await;
+            auth_guard.as_ref().map_or(false, |a| a.is_expired())
+        };
+
+        if !needs_refresh {
+            return;
+        }
+
+        let ctx = match &self.refresh_ctx {
+            Some(c) => c,
+            None => return,
+        };
+
+        let stored_opt = {
+            let auth_guard = self.auth.lock().await;
+            match auth_guard.as_ref() {
+                Some(AuthState::OAuth {
+                    access_token,
+                    refresh_token: Some(rt),
+                    expires_at,
+                    token_endpoint,
+                    client_id,
+                    client_secret,
+                }) => Some(StoredTokens {
+                    server_name: ctx.server_name.clone(),
+                    server_url: ctx.server_url.clone(),
+                    access_token: access_token.clone(),
+                    refresh_token: Some(rt.clone()),
+                    expires_at: *expires_at,
+                    token_endpoint: token_endpoint.clone(),
+                    client_id: Some(client_id.clone()),
+                    client_secret: client_secret.clone(),
+                }),
+                _ => None,
+            }
+        };
+
+        let stored = match stored_opt {
+            Some(s) => s,
+            None => return,
+        };
+
+        debug!(server = %ctx.server_name, "proactively refreshing OAuth token");
+
+        match refresh_token(&self.client, &stored).await {
+            Ok(fresh) => {
+                if let Err(e) = ctx.store.save(&fresh) {
+                    warn!(error = %e, "failed to persist proactively refreshed token");
+                }
+                let new_auth = AuthState::OAuth {
+                    access_token: fresh.access_token,
+                    refresh_token: fresh.refresh_token,
+                    expires_at: fresh.expires_at,
+                    token_endpoint: fresh.token_endpoint,
+                    client_id: fresh
+                        .client_id
+                        .unwrap_or_else(|| "sven-mcp-client".to_string()),
+                    client_secret: fresh.client_secret,
+                };
+                *self.auth.lock().await = Some(new_auth);
+                debug!(server = %ctx.server_name, "OAuth token refreshed proactively");
+            }
+            Err(e) => {
+                warn!(
+                    server = %ctx.server_name,
+                    error = %e,
+                    "proactive token refresh failed; will retry on next request"
+                );
+            }
+        }
     }
 }
 
@@ -425,9 +542,36 @@ impl std::fmt::Debug for Transport {
     }
 }
 
+// ── Public constructor helpers ────────────────────────────────────────────────
+
+/// Build an `HttpTransport` with optional proactive refresh.
+///
+/// This is the preferred constructor when the manager has a `CredentialsStore`
+/// and server identity available for token refresh.
+pub fn build_http_transport(
+    url: &str,
+    headers: &HashMap<String, String>,
+    timeout_secs: u64,
+    auth: Option<AuthState>,
+    server_name: &str,
+    server_url: &str,
+    store: Arc<CredentialsStore>,
+) -> Result<HttpTransport> {
+    let refresh_ctx = if matches!(auth, Some(AuthState::OAuth { .. })) {
+        Some(RefreshContext {
+            server_name: server_name.to_string(),
+            server_url: server_url.to_string(),
+            store,
+        })
+    } else {
+        None
+    };
+
+    HttpTransport::with_refresh(url, headers, timeout_secs, auth, refresh_ctx)
+}
+
 // ── Logging helpers ───────────────────────────────────────────────────────────
 
-/// Trim long error messages from noisy server processes.
 pub fn trim_server_error(err: &str) -> String {
     let trimmed = err.trim();
     if trimmed.len() > 400 {
@@ -437,7 +581,6 @@ pub fn trim_server_error(err: &str) -> String {
     }
 }
 
-/// Emit a warning for server stderr output exceeding a threshold.
 pub fn maybe_warn_stderr(name: &str, msg: &str) {
     if !msg.trim().is_empty() {
         warn!(server = %name, "MCP server stderr: {}", trim_server_error(msg));

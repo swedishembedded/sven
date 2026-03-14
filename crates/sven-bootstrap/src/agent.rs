@@ -101,13 +101,12 @@ impl AgentBuilder {
         model: Arc<dyn ModelProvider>,
         profile: ToolSetProfile,
     ) -> Agent {
-        let (agent, _mcp) = self.build_with_mcp(mode, model, profile).await;
+        let (agent, _mcp, _rx) = self.build_with_mcp(mode, model, profile).await;
         agent
     }
 
-    /// Like [`build`] but also returns the [`McpManager`] so callers that
-    /// need to expose server status (e.g. the TUI `/mcp` inspector) can hold
-    /// on to it.
+    /// Like [`build`] but also returns the [`McpManager`] and the MCP event
+    /// receiver so callers (e.g. the TUI) can react to auth/connection events.
     ///
     /// 1. Creates `mode_lock` (same Arc for both the registry and the Agent).
     /// 2. Creates `(tool_event_tx, tool_event_rx)` (tx → tools, rx → Agent).
@@ -120,7 +119,11 @@ impl AgentBuilder {
         mode: AgentMode,
         model: Arc<dyn ModelProvider>,
         profile: ToolSetProfile,
-    ) -> (Agent, Arc<McpManager>) {
+    ) -> (
+        Agent,
+        Arc<McpManager>,
+        mpsc::Receiver<sven_mcp_client::McpEvent>,
+    ) {
         // Shared mode lock: SwitchModeTool holds a clone; the agent owns it.
         let mode_lock = Arc::new(Mutex::new(mode));
         // Shared event channel: tools send, agent drains.
@@ -133,9 +136,10 @@ impl AgentBuilder {
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
 
-        let (mcp_event_tx, _mcp_event_rx) = mpsc::channel::<sven_mcp_client::McpEvent>(64);
+        let (mcp_event_tx, mcp_event_rx) = mpsc::channel::<sven_mcp_client::McpEvent>(64);
         let mcp_manager = McpManager::new(self.config.mcp_servers.clone(), mcp_event_tx);
         mcp_manager.connect_all().await;
+        mcp_manager.start_background_tasks();
 
         let mut registry = build_tool_registry(
             &self.config,
@@ -203,6 +207,6 @@ impl AgentBuilder {
             Some(model_resolver),
         );
 
-        (agent, mcp_manager)
+        (agent, mcp_manager, mcp_event_rx)
     }
 }

@@ -99,6 +99,22 @@ impl HealthState {
     pub fn should_reconnect(&self) -> bool {
         matches!(self.status, ServerStatus::Reconnecting { .. })
     }
+
+    /// Whether enough backoff time has elapsed to attempt reconnection now.
+    ///
+    /// Returns `true` immediately if `last_attempt` is `None` (never tried).
+    pub fn should_retry_now(&self) -> bool {
+        if !self.should_reconnect() {
+            return false;
+        }
+        match self.last_attempt {
+            None => true,
+            Some(last) => {
+                let delay = backoff_duration(self.consecutive_failures);
+                last.elapsed() >= delay
+            }
+        }
+    }
 }
 
 impl Default for HealthState {

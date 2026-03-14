@@ -162,16 +162,23 @@ impl App {
                             let server = server.clone();
                             if let Some(ref toast_tx) = self.toast_tx {
                                 let toast_tx = toast_tx.clone();
+                                // Show immediate feedback that auth is starting.
+                                let _ = toast_tx.send(crate::app::ui_state::Toast::info(format!(
+                                    "Opening browser to authenticate '{server}'…"
+                                )));
                                 tokio::spawn(async move {
                                     match mgr.authenticate(&server).await {
-                                        Ok(msg) => {
-                                            let _ = toast_tx
-                                                .send(crate::app::ui_state::Toast::success(msg));
+                                        Ok(_) => {
+                                            let _ = toast_tx.send(
+                                                crate::app::ui_state::Toast::success(format!(
+                                                    "'{server}' authenticated successfully"
+                                                )),
+                                            );
                                         }
                                         Err(e) => {
                                             let _ =
                                                 toast_tx.send(crate::app::ui_state::Toast::error(
-                                                    format!("OAuth failed: {e}"),
+                                                    format!("OAuth failed for '{server}': {e}"),
                                                 ));
                                         }
                                     }

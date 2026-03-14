@@ -10,6 +10,7 @@ use sven_bootstrap::{AgentBuilder, McpManager, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_input::make_title;
+use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
@@ -137,8 +138,8 @@ pub async fn agent_task(
     shared_tool_displays: SharedToolDisplays,
     // Pre-created buffer store; the TUI holds a clone to display live status.
     buffer_store: Arc<Mutex<OutputBufferStore>>,
-    // Optional one-shot channel to deliver the McpManager to the TUI after build.
-    mcp_manager_tx: Option<oneshot::Sender<Arc<McpManager>>>,
+    // Optional one-shot channel to deliver the McpManager + event receiver to the TUI.
+    mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
 ) {
     let model: Arc<dyn sven_model::ModelProvider> =
         match sven_model::from_config(&startup_model_cfg) {
@@ -165,7 +166,7 @@ pub async fn agent_task(
         ctx
     };
 
-    let (mut agent, mcp_manager) = AgentBuilder::new(config.clone())
+    let (mut agent, mcp_manager, mcp_event_rx) = AgentBuilder::new(config.clone())
         .with_runtime_context(runtime_ctx)
         .with_shared_tools(shared_tools)
         .with_shared_tool_displays(shared_tool_displays)
@@ -173,7 +174,7 @@ pub async fn agent_task(
         .await;
 
     if let Some(tx_mcp) = mcp_manager_tx {
-        let _ = tx_mcp.send(mcp_manager);
+        let _ = tx_mcp.send((mcp_manager, mcp_event_rx));
     }
 
     // Model/mode overrides are applied permanently: no revert after the turn.
