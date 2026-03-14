@@ -364,7 +364,13 @@ const MCP_SERVER_CONFIG_KEYS: &[&str] = &["transport", "enabled", "env", "oauth"
 const MCP_TRANSPORT_KEYS: &[&str] = &["type", "command", "args", "url", "headers"];
 
 /// Known keys in [`crate::McpOAuthConfig`].
-const MCP_OAUTH_CONFIG_KEYS: &[&str] = &["scopes", "client_id", "client_secret"];
+const MCP_OAUTH_CONFIG_KEYS: &[&str] = &[
+    "scopes",
+    "client_id",
+    "client_secret",
+    "redirect_uri",
+    "callback_port",
+];
 
 /// Recursively walk `value` and emit a `warn!` for any mapping key that is
 /// not listed in the expected set for that schema level.

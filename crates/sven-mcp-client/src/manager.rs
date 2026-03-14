@@ -23,7 +23,9 @@ use sven_tools::Tool as _;
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::client::McpConnection;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
-use crate::oauth::{discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore};
+use crate::oauth::{
+    discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthRedirectOptions,
+};
 use crate::transport::{
     build_http_transport, AuthState, StdioTransport, Transport, UnauthorizedError,
 };
@@ -309,10 +311,7 @@ impl McpManager {
                 _ => return,
             };
             self.store.remove(name, &server_url);
-            let error_str = format!(
-                "Server rejected credentials after authentication: {}",
-                unauth.url
-            );
+            let error_str = build_rejected_credentials_error(&server_url);
             let this = Arc::clone(self);
             let name_owned = name.to_string();
             tokio::spawn(async move {
@@ -438,7 +437,11 @@ impl McpManager {
                         let error_str = format!("{:#}", e);
                         let mut servers = this.servers.write().await;
                         if let Some(state) = servers.get_mut(&name_owned) {
-                            state.health.report_error(error_str.clone());
+                            // Set Failed (not Reconnecting) so the background loop
+                            // does not retry and open the browser again.
+                            state.health.status = ServerStatus::Failed {
+                                error: error_str.clone(),
+                            };
                         }
                         let _ = this
                             .event_tx
@@ -716,13 +719,14 @@ impl McpManager {
             }
         };
 
-        let config_scopes = cfg
-            .oauth
-            .as_ref()
-            .map(|o| o.scopes.as_slice())
-            .unwrap_or(&[]);
-        let client_id = cfg.oauth.as_ref().and_then(|o| o.client_id.clone());
-        let client_secret = cfg.oauth.as_ref().and_then(|o| o.client_secret.clone());
+        let oauth_cfg = cfg.oauth.as_ref();
+        let config_scopes = oauth_cfg.map(|o| o.scopes.as_slice()).unwrap_or(&[]);
+        let client_id = oauth_cfg.and_then(|o| o.client_id.clone());
+        let client_secret = oauth_cfg.and_then(|o| o.client_secret.clone());
+        let redirect_opts = OAuthRedirectOptions {
+            redirect_uri: oauth_cfg.and_then(|o| o.redirect_uri.clone()),
+            callback_port: oauth_cfg.and_then(|o| o.callback_port),
+        };
 
         let discovery =
             discover_oauth_info(&self.http_client, &url, www_authenticate, config_scopes).await?;
@@ -735,6 +739,7 @@ impl McpManager {
             client_id,
             client_secret,
             &self.store,
+            redirect_opts,
         )
         .await?;
 
@@ -876,6 +881,24 @@ impl McpManager {
 }
 
 // ── Config change detection ───────────────────────────────────────────────────
+
+/// Build an error message when the server rejects credentials after OAuth.
+/// Includes Atlassian-specific hint when applicable (admin allowlist requirement).
+fn build_rejected_credentials_error(server_url: &str) -> String {
+    let base = format!(
+        "Server rejected credentials after authentication: {server_url}. \
+         OAuth completed successfully but the MCP server returned 401."
+    );
+    if server_url.contains("mcp.atlassian.com") {
+        format!(
+            "{base} For Atlassian MCP, an admin must allowlist your client's domain \
+             (e.g. http://127.0.0.1:*/** for local apps) in Rovo MCP Server settings. \
+             See: https://support.atlassian.com/security-and-access-policies/docs/available-atlassian-rovo-mcp-server-domains/"
+        )
+    } else {
+        base
+    }
+}
 
 /// Check if an error indicates the server requires authentication (e.g. 400 from
 /// Atlassian when sending unauthenticated requests).

@@ -350,6 +350,72 @@ cat trace.jsonl | python3 -m json.tool | less
 
 ---
 
+## MCP OAuth authentication
+
+### OAuth browser opens repeatedly (perpetual loop)
+
+If the OAuth flow completes successfully (you see "Authentication successful" in
+the browser) but the browser keeps opening again, the server is rejecting your
+credentials. Sven now stops after the first failure instead of retrying
+indefinitely.
+
+**Atlassian MCP:** Custom clients must be allowlisted by an Atlassian admin.
+Even with valid OAuth tokens, `mcp.atlassian.com` returns 401 for clients whose
+domain is not in the allowlist. See [Available Atlassian Rovo MCP server
+domains](https://support.atlassian.com/security-and-access-policies/docs/available-atlassian-rovo-mcp-server-domains/)
+for how to add your client.
+
+**Using `cursor://cursor.mcp`:** This protocol is pre-allowlisted. Configure your
+config with `redirect_uri: "cursor://cursor.mcp/callback"` and set up a
+protocol handler to forward the callback to Sven (see [Configuration](05-configuration.md#mcp_servers)).
+
+### "Server rejected credentials after authentication"
+
+This means you had valid OAuth tokens but the MCP server returned 401. For
+Atlassian MCP, ensure your client's domain is allowlisted. For other servers,
+check that the token has the correct scopes and audience.
+
+### Setting up the cursor:// protocol handler
+
+When using `redirect_uri: "cursor://cursor.mcp/callback"`, you must register a
+handler so the OAuth redirect reaches Sven's local callback server.
+
+**Linux (xdg-open):**
+
+1. Create `~/.local/share/applications/sven-oauth-cursor.desktop`:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Sven OAuth Callback
+Exec=/path/to/sven/scripts/oauth-callback-handler.sh %u
+MimeType=x-scheme-handler/cursor;
+```
+
+2. Register it:
+
+```sh
+xdg-mime default sven-oauth-cursor.desktop x-scheme-handler/cursor
+```
+
+**macOS:** Use Automator or a small app to handle `cursor://` URLs and run the
+handler script with the URL as an argument.
+
+**Windows:** Add a registry entry so `cursor://` URLs invoke the handler script
+with the URL as `%1`.
+
+The handler script (`scripts/oauth-callback-handler.sh`) forwards the callback
+to `http://127.0.0.1:5598/callback` by default. Set `SVEN_OAUTH_CALLBACK_PORT`
+if you use a different `callback_port` in your config.
+
+### OAuth fails and browser does not open again
+
+When OAuth fails (user cancels, error, etc.), Sven sets the server status to
+Failed and does not retry automatically. This prevents an annoying loop of
+browser windows. Run `/mcp auth <server>` manually to try again.
+
+---
+
 ## Debugging and logs
 
 ### Enable verbose logging

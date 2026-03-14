@@ -545,6 +545,74 @@ tools:
 
 ---
 
+### `mcp_servers`
+
+MCP (Model Context Protocol) servers extend sven with additional tools, prompts,
+and resources. Each server is identified by its key in the map (e.g. `atlassian`).
+
+| Key | Description |
+|-----|-------------|
+| `transport` | How to connect: `stdio` (subprocess) or `http` (Streamable HTTP) |
+| `enabled` | Whether the server is active (default: `true`) |
+| `env` | Environment variables for stdio servers |
+| `oauth` | OAuth 2.0 config for HTTP servers that require authentication |
+| `timeout_secs` | Request timeout (default: 30) |
+
+**HTTP transport:**
+
+```yaml
+mcp_servers:
+  atlassian:
+    transport:
+      type: http
+      url: "https://mcp.atlassian.com/v1/mcp"
+    oauth: {}   # scopes auto-discovered from the server
+    enabled: true
+```
+
+**OAuth options** (under `oauth:`):
+
+| Key | Description |
+|-----|-------------|
+| `scopes` | OAuth scopes (leave empty for auto-discovery) |
+| `client_id` | Pre-registered client ID (omit for default) |
+| `client_secret` | Client secret for confidential clients |
+| `redirect_uri` | Custom redirect URI (e.g. `cursor://cursor.mcp/callback` for Atlassian) |
+| `callback_port` | Port for local callback when using custom redirect (default: 5598) |
+
+**Using `cursor://cursor.mcp` for Atlassian MCP**
+
+Atlassian MCP pre-allowlists `cursor://cursor.mcp`. To use it:
+
+1. Set `redirect_uri: "cursor://cursor.mcp/callback"` in your oauth config.
+2. Configure your OS to forward the `cursor://` protocol to Sven's local callback server.
+3. Use the provided handler script or register a custom protocol handler.
+
+Example config:
+
+```yaml
+mcp_servers:
+  atlassian:
+    transport:
+      type: http
+      url: "https://mcp.atlassian.com/v1/mcp"
+    oauth:
+      redirect_uri: "cursor://cursor.mcp/callback"
+      callback_port: 5598
+```
+
+The protocol handler must forward `cursor://cursor.mcp/callback?code=...&state=...`
+to `http://127.0.0.1:5598/callback?code=...&state=...`. A helper script is at
+`scripts/oauth-callback-handler.sh`. See [MCP OAuth troubleshooting](07-troubleshooting.md#mcp-oauth-authentication) for setup instructions per platform.
+
+**Credentials storage**
+
+OAuth tokens are stored in `~/.config/sven/mcp-credentials.json` and refreshed
+automatically before expiry. The same credentials are reused across projects
+that use the same server URL.
+
+---
+
 ### `tui`
 
 | Key | Default | Description |

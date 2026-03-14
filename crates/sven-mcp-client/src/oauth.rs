@@ -603,10 +603,22 @@ impl OAuthContext {
     }
 }
 
+/// Options for custom OAuth redirect (e.g. cursor://cursor.mcp for Atlassian).
+#[derive(Debug, Clone, Default)]
+pub struct OAuthRedirectOptions {
+    /// Custom redirect URI. When set (e.g. cursor://cursor.mcp/callback), the
+    /// OAuth server redirects here. The OS protocol handler must forward to
+    /// our local callback server (see callback_port).
+    pub redirect_uri: Option<String>,
+    /// Port for the local callback server when using a custom redirect_uri.
+    /// Default: 5598.
+    pub callback_port: Option<u16>,
+}
+
 /// Run the full OAuth PKCE flow using pre-discovered OAuth information.
 ///
-/// 1. Binds the callback listener on an OS-assigned port (avoids fixed-port
-///    conflicts) before opening the browser.
+/// 1. Binds the callback listener (dynamic port, or fixed port when using
+///    custom redirect_uri like cursor://cursor.mcp/callback).
 /// 2. Checks for a stored DCR client registration that matches the port; if
 ///    found reuses the `client_id` / `client_secret`.
 /// 3. If no `client_id` is configured and the server supports Dynamic Client
@@ -623,16 +635,30 @@ pub async fn run_oauth_flow(
     config_client_id: Option<String>,
     config_client_secret: Option<String>,
     store: &CredentialsStore,
+    redirect_opts: OAuthRedirectOptions,
 ) -> Result<StoredTokens> {
     let metadata = discovery.auth_server_metadata;
     let scopes = discovery.scopes;
 
-    // Bind the callback listener FIRST so we have a port before building auth URL.
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .context("bind OAuth callback listener")?;
-    let port = listener.local_addr()?.port();
-    let redirect_uri = OAuthContext::callback_uri(port);
+    let (listener, redirect_uri, port) = if let Some(ref custom_uri) = redirect_opts.redirect_uri {
+        let port = redirect_opts.callback_port.unwrap_or(5598);
+        let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
+            .await
+            .with_context(|| format!("bind OAuth callback on port {port} (for {custom_uri})"))?;
+        info!(
+            redirect_uri = %custom_uri,
+            port = port,
+            "Using custom redirect; configure your OS to forward {custom_uri} to http://127.0.0.1:{port}/callback"
+        );
+        (listener, custom_uri.clone(), port)
+    } else {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind OAuth callback listener")?;
+        let port = listener.local_addr()?.port();
+        let uri = OAuthContext::callback_uri(port);
+        (listener, uri, port)
+    };
 
     // Resolve client credentials:
     // Priority: config > stored DCR info > fresh DCR > default public client
