@@ -245,7 +245,7 @@ fn expand_env_vars(text: &str, source_desc: &str) -> String {
 // ── Unknown-field validation ──────────────────────────────────────────────────
 
 /// Known top-level keys in [`Config`].
-const CONFIG_KEYS: &[&str] = &["model", "agent", "tools", "tui", "providers"];
+const CONFIG_KEYS: &[&str] = &["model", "agent", "tools", "tui", "providers", "mcp_servers"];
 
 /// Known keys in [`crate::ModelConfig`].
 const MODEL_CONFIG_KEYS: &[&str] = &[
@@ -357,6 +357,15 @@ const GDB_CONFIG_KEYS: &[&str] = &[
     "server_startup_wait_ms",
 ];
 
+/// Known keys in [`crate::McpServerConfig`].
+const MCP_SERVER_CONFIG_KEYS: &[&str] = &["transport", "enabled", "env", "oauth", "timeout_secs"];
+
+/// Known keys in [`crate::McpTransport`] (stdio: type, command, args; http: type, url, headers).
+const MCP_TRANSPORT_KEYS: &[&str] = &["type", "command", "args", "url", "headers"];
+
+/// Known keys in [`crate::McpOAuthConfig`].
+const MCP_OAUTH_CONFIG_KEYS: &[&str] = &["scopes", "client_id", "client_secret"];
+
 /// Recursively walk `value` and emit a `warn!` for any mapping key that is
 /// not listed in the expected set for that schema level.
 ///
@@ -399,6 +408,17 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
             validate_unknown_fields(val, &child_path);
         }
         return;
+    } else if path == "mcp_servers" {
+        // The mcp_servers map has arbitrary server names as keys — all are valid.
+        for (key, val) in map {
+            let key_str = match key {
+                serde_yaml::Value::String(s) => s.as_str(),
+                _ => continue,
+            };
+            let child_path = format!("mcp_servers.{key_str}");
+            validate_unknown_fields(val, &child_path);
+        }
+        return;
     } else if let Some(rest) = path.strip_prefix("providers.") {
         if rest.contains('.') {
             // providers.<name>.models.<model_name> — per-model params
@@ -406,6 +426,15 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         } else {
             // providers.<name> — provider entry
             (PROVIDER_ENTRY_KEYS, "provider entry")
+        }
+    } else if let Some(_rest) = path.strip_prefix("mcp_servers.") {
+        if path.ends_with(".transport") {
+            (MCP_TRANSPORT_KEYS, "mcp transport")
+        } else if path.ends_with(".oauth") {
+            (MCP_OAUTH_CONFIG_KEYS, "mcp oauth")
+        } else {
+            // mcp_servers.<name> — server entry
+            (MCP_SERVER_CONFIG_KEYS, "mcp server")
         }
     } else {
         // Unknown path — skip validation to avoid false positives.
@@ -434,7 +463,8 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                 | ("config", "agent")
                 | ("config", "tools")
                 | ("config", "tui")
-                | ("config", "providers") => validate_unknown_fields(val, &child_path),
+                | ("config", "providers")
+                | ("config", "mcp_servers") => validate_unknown_fields(val, &child_path),
                 ("tools", "web") | ("tools", "memory") | ("tools", "lints") | ("tools", "gdb") => {
                     validate_unknown_fields(val, &child_path)
                 }
@@ -451,6 +481,9 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                             validate_unknown_fields(model_val, &model_path);
                         }
                     }
+                }
+                ("mcp server", "transport") | ("mcp server", "oauth") => {
+                    validate_unknown_fields(val, &child_path)
                 }
                 _ => {}
             }

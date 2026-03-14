@@ -1,6 +1,6 @@
 ---
 name: repo-structure
-description: Provides the authoritative layout of the sven repository. Load when the task involves: navigating the repo (finding where code lives), adding or moving crates/modules/files, modifying CI or release workflows, understanding build/test/release targets, restructuring directories, or any task where knowing where things are avoids a full exploration. Do NOT load for tasks that only edit code inside a single already-known file.
+description: "Provides the authoritative layout of the sven repository. Load when the task involves: navigating the repo (finding where code lives), adding or moving crates/modules/files, modifying CI or release workflows, understanding build/test/release targets, restructuring directories, or any task where knowing where things are avoids a full exploration. Do NOT load for tasks that only edit code inside a single already-known file."
 ---
 
 # sven — Repository Structure

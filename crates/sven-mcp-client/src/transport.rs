@@ -358,9 +358,7 @@ impl HttpTransport {
         let req = self.build_request(body).await?;
         // Send notification and capture any session ID from the response header,
         // but do not require a meaningful JSON body back (202 Accepted is typical).
-        if let Ok(Ok(resp)) =
-            tokio::time::timeout(self.timeout, req.send()).await
-        {
+        if let Ok(Ok(resp)) = tokio::time::timeout(self.timeout, req.send()).await {
             self.capture_session_id(&resp).await;
         }
         Ok(())
@@ -436,10 +434,7 @@ impl HttpTransport {
     /// Each SSE event has the form `data: <json>\n\n`.  We scan for the first
     /// event whose JSON payload matches the expected `id` and return its result.
     async fn parse_sse_response(&self, resp: reqwest::Response, expected_id: u64) -> Result<Value> {
-        let text = resp
-            .text()
-            .await
-            .context("read SSE response body")?;
+        let text = resp.text().await.context("read SSE response body")?;
 
         trace!(body_len = text.len(), "MCP ← SSE response");
 
@@ -585,7 +580,9 @@ impl HttpTransport {
                     refresh_token: fresh.refresh_token,
                     expires_at: fresh.expires_at,
                     token_endpoint: fresh.token_endpoint,
-                    client_id: fresh.client_id.unwrap_or_else(|| "sven-mcp-client".to_string()),
+                    client_id: fresh
+                        .client_id
+                        .unwrap_or_else(|| "sven-mcp-client".to_string()),
                     client_secret: fresh.client_secret,
                 };
                 *self.auth.lock().await = Some(new_auth);

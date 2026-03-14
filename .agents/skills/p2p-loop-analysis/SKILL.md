@@ -1,6 +1,6 @@
 ---
 name: p2p-loop-analysis
-description: Analyse the sven P2P agent network for infinite message loops (echo loops, delegation storms, circular routing). Use when investigating unexpected runaway traffic between agents, infinite back-and-forth between nodes, task chains that never terminate, or when adding a new message channel/handler and needing to verify it cannot loop. Covers all three channels: Task (delegate_task), Session (send_message), and Room (post_to_room).
+description: "Analyse the sven P2P agent network for infinite message loops (echo loops, delegation storms, circular routing). Use when investigating unexpected runaway traffic between agents, infinite back-and-forth between nodes, task chains that never terminate, or when adding a new message channel/handler and needing to verify it cannot loop. Covers all three channels: Task (delegate_task), Session (send_message), and Room (post_to_room)."
 ---
 
 # P2P Loop Analysis — sven

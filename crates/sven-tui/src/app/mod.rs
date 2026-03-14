@@ -1759,9 +1759,7 @@ async fn mcp_event_consumer(
                     // user sees the actual HTTP response, not just the context
                     // wrapper (e.g. "HTTP 403: ..." rather than "MCP initialize").
                     let summary = error.chars().take(300).collect::<String>();
-                    Some(ui_state::Toast::error(format!(
-                        "MCP '{name}': {summary}"
-                    )))
+                    Some(ui_state::Toast::error(format!("MCP '{name}': {summary}")))
                 }
             }
             _ => None,
