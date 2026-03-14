@@ -386,7 +386,10 @@ impl App {
                 Some(Action::ChatListClick { inner_row })
             }
 
-            // ── Scroll wheel ─────────────────────────────────────────────────
+            // ── Input pane ────────────────────────────────────────────────────
+            (MouseEventKind::Down(MouseButton::Left), HitArea::InputPane) => {
+                Some(Action::FocusInput)
+            }
             (MouseEventKind::ScrollUp, HitArea::InputPane) => Some(Action::InputScrollUp),
             (MouseEventKind::ScrollDown, HitArea::InputPane) => Some(Action::InputScrollDown),
             (MouseEventKind::ScrollUp, _) if self.nvim.bridge.is_some() => {
