@@ -22,9 +22,6 @@ pub struct CompletionOverlay {
 
     /// ratatui list state — owns both the selected index and the scroll offset.
     pub list_state: ListState,
-
-    /// Maximum number of items to show at once (controls overlay height).
-    pub max_visible: usize,
 }
 
 impl CompletionOverlay {
@@ -33,11 +30,7 @@ impl CompletionOverlay {
         if !items.is_empty() {
             list_state.select(Some(0));
         }
-        Self {
-            items,
-            list_state,
-            max_visible: 8,
-        }
+        Self { items, list_state }
     }
 
     /// Move selection down by one, wrapping around.
@@ -73,10 +66,6 @@ impl CompletionOverlay {
     pub fn selected(&self) -> usize {
         self.list_state.selected().unwrap_or(0)
     }
-
-    /// No-op kept for call-site compatibility; [`ListState`] manages scroll
-    /// automatically during rendering.
-    pub fn adjust_scroll_pub(&mut self) {}
 }
 
 #[cfg(test)]
@@ -110,7 +99,6 @@ mod tests {
     #[test]
     fn scroll_adjusts_when_selection_moves_below_viewport() {
         let mut overlay = make_overlay(20);
-        overlay.max_visible = 5;
         for _ in 0..6 {
             overlay.select_next();
         }
