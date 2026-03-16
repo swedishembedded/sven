@@ -22,8 +22,8 @@
 //!
 //! Cross-origin mutating requests (POST/PUT/PATCH/DELETE) are rejected by
 //! inspecting `Origin`, `Referer`, and `Sec-Fetch-Site` headers. This is
-//! the same defence-in-depth approach as openclaw, but applied to all routes
-//! rather than only the control UI.
+//! This defence-in-depth approach is applied to all routes, including
+//! the control UI and any registered webhook endpoints.
 //!
 //! WebSocket upgrade requests are exempt (browsers enforce same-origin for WS).
 

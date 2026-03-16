@@ -631,7 +631,7 @@ mod tests {
             "Investigate how token usage is tracked.\n\n",
             "## Research\n",
             "<!-- sven: mode=research model=gpt-4o -->\n",
-            "Investigate codex, openclaw, and claude-code.\n\n",
+            "Research topic X.\n\n",
             "## Implement\n",
             "<!-- sven: mode=agent -->\n",
             "Apply what you found.\n",

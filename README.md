@@ -1,8 +1,9 @@
 # Agent Sven
 
-A keyboard-driven AI coding agent for the terminal. Built in Rust, sven works
-as an interactive TUI, a headless CI runner, and a networked node that teams
-up with other sven instances — all from the same binary.
+A keyboard-driven AI agent for the terminal. Built in Rust, sven works as an
+interactive TUI, a headless CI runner, a networked node that teams up with
+other sven instances, and a proactive personal automation platform — all from
+the same binary.
 
 ![sven start](docs/sven-landing.png)
 
@@ -13,6 +14,11 @@ up with other sven instances — all from the same binary.
 Give sven a task in plain English. It reads your code, runs commands, writes
 files, searches the web, debugs hardware, and delegates subtasks to peer agents
 — all autonomously, all in your terminal.
+
+Beyond interactive coding sessions, sven can run 24/7 as a proactive personal
+agent: checking your email and calendar, sending daily briefings via Telegram,
+making voice calls on your behalf, building a searchable personal knowledge
+base from anything you type, and running automated workflows on a cron schedule.
 
 ### Interactive TUI
 
@@ -125,6 +131,156 @@ See [docs/08-node.md](docs/08-node.md) for setup, security, and configuration.
 
 ---
 
+## Proactive agent capabilities
+
+When running as a node, sven gains a full stack of automation integrations that
+let it act on your behalf around the clock.
+
+### Messaging channels
+
+Reach your agent — or let it reach you — via any messaging platform:
+
+| Channel | Transport |
+|---------|-----------|
+| Telegram | Bot API long-polling |
+| Discord | REST API |
+| WhatsApp | Business Cloud API (webhook) |
+| Signal | `signal-cli` subprocess |
+| Matrix | Client-Server API |
+| IRC | Raw TCP / TLS |
+
+```yaml
+# ~/.config/sven/node.yaml
+channels:
+  telegram:
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    allowed_users: [123456789]
+```
+
+The agent gains a `send_message` tool it can use proactively — e.g. to deliver
+your morning briefing or alert you to a competitor price change.
+
+### Scheduler — cron, intervals, one-shot
+
+```yaml
+scheduler:
+  heartbeat:
+    enabled: true
+    every: "1h"
+    prompt_file: ".sven/HEARTBEAT.md"
+```
+
+Or let the agent schedule jobs itself at runtime using the `schedule` tool:
+
+```
+schedule { "action": "create", "name": "morning-briefing",
+           "cron": "0 7 * * *",
+           "prompt": "Send my morning briefing to Telegram." }
+```
+
+Jobs are persisted as YAML and survive restarts. See [docs/13-scheduler.md](docs/13-scheduler.md).
+
+### Email integration
+
+Connect IMAP/SMTP or Gmail API:
+
+```yaml
+tools:
+  email:
+    backend: gmail
+    oauth_token_path: ~/.config/sven/gmail-token.json
+```
+
+The `email` tool lets the agent list, read, send, reply to, and search email.
+See [docs/14-email.md](docs/14-email.md).
+
+### Calendar integration
+
+Connect CalDAV or Google Calendar:
+
+```yaml
+tools:
+  calendar:
+    backend: google
+    oauth_token_path: ~/.config/sven/gcal-token.json
+```
+
+The `calendar` tool provides today's schedule, upcoming events, and can create,
+update, and delete events. See [docs/15-calendar.md](docs/15-calendar.md).
+
+### Voice — TTS, STT, and outbound calls
+
+```yaml
+tools:
+  voice:
+    tts_provider: elevenlabs
+    elevenlabs_api_key: "${ELEVENLABS_API_KEY}"
+    stt_provider: whisper
+    call_provider: twilio
+    twilio_account_sid: "${TWILIO_SID}"
+    twilio_auth_token: "${TWILIO_TOKEN}"
+    twilio_from_number: "+12065550000"
+```
+
+The `voice` tool can synthesize speech, transcribe audio files, and make
+outbound phone calls on your behalf. See [docs/16-voice.md](docs/16-voice.md).
+
+### Semantic memory — "second brain"
+
+```yaml
+tools:
+  memory:
+    db_path: ~/.config/sven/memory/memory.sqlite
+```
+
+The `semantic_memory` tool stores documents in an SQLite database with FTS5
+full-text search and optional embedding vectors. The agent remembers anything
+you tell it and recalls it later with natural-language queries:
+
+```
+semantic_memory { "action": "remember",
+                  "content": "Alice at Acme prefers afternoon calls.",
+                  "tags": ["contact", "alice"] }
+
+semantic_memory { "action": "recall", "query": "Alice preferences" }
+```
+
+See [docs/17-memory.md](docs/17-memory.md).
+
+### Webhooks
+
+Trigger the agent from any external system via a generic HTTP hook:
+
+```yaml
+hooks:
+  token: "${HOOKS_TOKEN}"
+  mappings:
+    - name: github-push
+      prompt: "A push was made to the repo. Review and summarise the changes."
+```
+
+```sh
+curl -X POST https://your-node/hooks/github-push \
+     -H "Authorization: Bearer $HOOKS_TOKEN" \
+     -d '{"ref":"refs/heads/main"}'
+```
+
+See [docs/18-webhooks.md](docs/18-webhooks.md) for Gmail Pub/Sub, GitHub, and custom integrations.
+
+### Real-world automation patterns
+
+See [docs/19-use-cases.md](docs/19-use-cases.md) for complete configurations for:
+
+1. **Autonomous Personal CRM** — analyze emails and calendar, build a contact graph, track action items
+2. **Business on Autopilot** — monitor competitors, manage email, draft content, track campaign metrics
+3. **Proactive Daily Briefings** — wake at 07:00, compile schedule + email + news, send to Telegram
+4. **3D Model Search and Generation** — research Thingiverse/Printables or generate custom OpenSCAD models
+5. **"Second Brain"** — text anything to your agent; query it later with natural language
+6. **Automated Content Creation** — transcribe videos, draft platform-tailored captions, schedule uploads
+7. **AI Voice Call Agent** — make outbound calls to confirm appointments, collect notes, summarize
+
+---
+
 ## Features
 
 ### Workflow files — unique to sven
@@ -168,6 +324,13 @@ sven --file audit.md --var context="Focus on authentication."
 | **Native GDB hardware debugging** | ✓ first-class | — | — | — |
 | **Agent-to-agent P2P task routing** | ✓ built-in | — | — | — |
 | **Skills system** | ✓ built-in | — | — | — |
+| **Messaging channels** (Telegram, Discord, WhatsApp, Signal, Matrix, IRC) | ✓ | — | — | ✓ |
+| **Cron scheduler + heartbeat** | ✓ | — | — | ✓ |
+| **Email integration** (IMAP/SMTP, Gmail) | ✓ | — | — | ✓ |
+| **Calendar integration** (CalDAV, Google Calendar) | ✓ | — | — | ✓ |
+| **Voice** (TTS, STT, outbound calls) | ✓ | — | — | ✓ |
+| **Semantic memory** (SQLite + FTS5 + embeddings) | ✓ | — | — | ✓ |
+| **Generic webhooks** | ✓ | — | — | ✓ |
 | Zero runtime dependencies | ✓ native Rust | ✓ native Rust | Node.js | Node.js |
 | TUI + headless + node in one binary | ✓ | separate | separate | separate |
 
@@ -185,6 +348,12 @@ The agent has a rich built-in toolset:
 | **Sub-agents** | `task` — spawn a focused sub-agent for a self-contained subtask |
 | **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
 | **Agent networking** | `list_peers`, `delegate_task` *(node mode only)* |
+| **Messaging** | `send_message` — send to any configured channel (Telegram, Discord, WhatsApp…) |
+| **Scheduler** | `schedule` — create, list, enable, disable, delete cron/interval/one-shot jobs |
+| **Email** | `email` — list, read, send, reply to, and search email |
+| **Calendar** | `calendar` — today's schedule, upcoming events, create / update / delete events |
+| **Voice** | `voice` — synthesize speech (TTS), transcribe audio (STT), make outbound calls |
+| **Memory** | `semantic_memory` — remember, recall (BM25 + vector), forget, list, get |
 | **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
 †`ask_question` is only available in interactive TUI sessions.
@@ -270,6 +439,14 @@ See [docs/providers.md](docs/providers.md) for configuration details.
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
 | [IDE integration (ACP)](docs/03-user-guide.md#ide-integration-via-acp) | Zed, JetBrains, VS Code via Agent Client Protocol |
+| [Messaging Channels](docs/12-channels.md) | Telegram, Discord, WhatsApp, Signal, Matrix, IRC |
+| [Scheduler](docs/13-scheduler.md) | Cron jobs, intervals, heartbeat, `HEARTBEAT.md` |
+| [Email](docs/14-email.md) | IMAP/SMTP and Gmail integration |
+| [Calendar](docs/15-calendar.md) | CalDAV and Google Calendar integration |
+| [Voice](docs/16-voice.md) | TTS, STT, and outbound voice calls |
+| [Semantic Memory](docs/17-memory.md) | SQLite + FTS5 "second brain" knowledge store |
+| [Webhooks](docs/18-webhooks.md) | Generic HTTP hooks for external integrations |
+| [Automation Use Cases](docs/19-use-cases.md) | Seven complete real-world automation patterns |
 
 Build the full user guide locally:
 
@@ -409,6 +586,13 @@ Run `sven show-config` to see the full resolved config. Key sections:
 - `model` — provider, model name, API key env var, base URL override, token limits.
 - `agent` — default mode, max autonomous rounds, compaction threshold, system prompt override.
 - `tools` — timeout, Docker sandbox, auto-approve and deny glob patterns.
+- `tools.email` — email backend (`imap` or `gmail`) and credentials.
+- `tools.calendar` — calendar backend (`caldav` or `google`) and credentials.
+- `tools.voice` — TTS, STT, and call provider (ElevenLabs, OpenAI, Twilio) credentials.
+- `tools.memory` — path to the SQLite memory database.
+- `channels` — messaging channel adapters (Telegram, Discord, WhatsApp, Signal, Matrix, IRC).
+- `scheduler` — heartbeat interval, prompt file, and persisted job store path.
+- `hooks` — bearer token and `name → prompt` mappings for incoming webhook triggers.
 - `tui` — theme, markdown wrap width, ASCII-border fallback.
 
 ---
@@ -427,9 +611,13 @@ sven/
     ├── sven-ci/            # headless runner and output formatting
     ├── sven-tui/           # Ratatui TUI: layout, widgets, key bindings
     ├── sven-p2p/           # libp2p node: Noise, mDNS, relay, task routing
-    ├── sven-node/          # node: HTTP/WS node + P2P + Slack + agent wiring
+    ├── sven-node/          # node: HTTP/WS + P2P + Slack + webhooks + agent wiring
+    ├── sven-channels/      # Channel trait + adapters (Telegram, Discord, WhatsApp, Signal, Matrix, IRC)
+    ├── sven-scheduler/     # Job, Schedule, JobStore (YAML), Scheduler, Heartbeat
+    ├── sven-integrations/  # Email, Calendar, Voice providers (IMAP, Gmail, CalDAV, ElevenLabs, Twilio…)
+    ├── sven-memory/        # VectorStore trait, SQLite + FTS5 + embedding backend
     ├── sven-runtime/       # shared runtime utilities
-    └── sven-bootstrap/     # first-run setup helpers
+    └── sven-bootstrap/     # first-run setup + tool registry wiring
 ```
 
 ---
