@@ -38,6 +38,46 @@ use crate::context_tool::ContextTool;
 use crate::task_tool::TaskTool;
 use crate::GdbTool;
 
+// ── Integration tool providers ────────────────────────────────────────────────
+
+/// Optional providers for integration tools.
+///
+/// All fields are optional; tools are only registered when their provider is set.
+#[derive(Default)]
+pub struct IntegrationProviders {
+    /// Channel manager for the `send_message` tool.
+    #[cfg(feature = "integrations")]
+    pub channel_manager: Option<sven_channels::ChannelManager>,
+
+    /// Job store for the `schedule` tool.
+    #[cfg(feature = "integrations")]
+    pub job_store: Option<Arc<sven_scheduler::JobStore>>,
+
+    /// Email provider for the `email` tool.
+    #[cfg(feature = "integrations")]
+    pub email: Option<Arc<dyn sven_integrations::email::EmailProvider>>,
+
+    /// Calendar provider for the `calendar` tool.
+    #[cfg(feature = "integrations")]
+    pub calendar: Option<Arc<dyn sven_integrations::calendar::CalendarProvider>>,
+
+    /// TTS provider for the `voice` tool.
+    #[cfg(feature = "integrations")]
+    pub tts: Option<Arc<dyn sven_integrations::voice::TtsProvider>>,
+
+    /// STT provider for the `voice` tool.
+    #[cfg(feature = "integrations")]
+    pub stt: Option<Arc<dyn sven_integrations::voice::SttProvider>>,
+
+    /// Voice call provider for the `voice` tool.
+    #[cfg(feature = "integrations")]
+    pub calls: Option<Arc<dyn sven_integrations::voice::VoiceCallProvider>>,
+
+    /// Semantic memory store for the `semantic_memory` tool.
+    #[cfg(feature = "integrations")]
+    pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
+}
+
 /// Build a [`ToolRegistry`] populated according to the given `profile`.
 ///
 /// This is the single canonical place where tools are wired up.
@@ -51,6 +91,10 @@ use crate::GdbTool;
 ///
 /// The `buffer_store` is now bundled inside the `profile` variants that need it
 /// (`Full`, `Coding`, `SubAgent`).
+///
+/// Pass `integrations` to register the messaging, email, calendar, voice, and
+/// memory tools. All fields are optional; only providers that are `Some` get
+/// registered.
 pub fn build_tool_registry(
     cfg: &Config,
     model: Arc<dyn ModelProvider>,
@@ -59,7 +103,32 @@ pub fn build_tool_registry(
     tool_event_tx: mpsc::Sender<ToolEvent>,
     sub_agent_runtime: AgentRuntimeContext,
 ) -> ToolRegistry {
-    match profile {
+    build_tool_registry_with_integrations(
+        cfg,
+        model,
+        profile,
+        mode_lock,
+        tool_event_tx,
+        sub_agent_runtime,
+        IntegrationProviders::default(),
+    )
+}
+
+/// Build a [`ToolRegistry`] with optional integration tool providers.
+///
+/// This is the extended version of [`build_tool_registry`] that also registers
+/// integration tools (messaging, email, calendar, voice, memory) when providers
+/// are supplied.
+pub fn build_tool_registry_with_integrations(
+    cfg: &Config,
+    model: Arc<dyn ModelProvider>,
+    profile: ToolSetProfile,
+    mode_lock: Arc<Mutex<AgentMode>>,
+    tool_event_tx: mpsc::Sender<ToolEvent>,
+    sub_agent_runtime: AgentRuntimeContext,
+    integrations: IntegrationProviders,
+) -> ToolRegistry {
+    let mut reg = match profile {
         ToolSetProfile::Full {
             question_tx,
             todos,
@@ -111,6 +180,44 @@ pub fn build_tool_registry(
             &sub_agent_runtime,
             buffer_store,
         ),
+    };
+
+    // Register integration tools if providers are available.
+    register_integration_tools(&mut reg, integrations);
+
+    reg
+}
+
+/// Register integration tools into an existing registry based on available providers.
+fn register_integration_tools(_reg: &mut ToolRegistry, _providers: IntegrationProviders) {
+    // Integration tools are registered when the `integrations` feature is enabled
+    // and providers are supplied via IntegrationProviders.
+    //
+    // Without the feature enabled this is a no-op; the providers struct has no fields.
+    #[cfg(feature = "integrations")]
+    {
+        if let Some(manager) = _providers.channel_manager {
+            _reg.register(sven_channels::SendMessageTool::new(manager));
+        }
+        if let Some(store) = _providers.job_store {
+            _reg.register(sven_scheduler::ScheduleTool::new(store));
+        }
+        if let Some(provider) = _providers.email {
+            _reg.register(sven_integrations::email::EmailTool::new(provider));
+        }
+        if let Some(provider) = _providers.calendar {
+            _reg.register(sven_integrations::calendar::CalendarTool::new(provider));
+        }
+        if _providers.tts.is_some() || _providers.stt.is_some() || _providers.calls.is_some() {
+            _reg.register(sven_integrations::voice::VoiceTool::new(
+                _providers.tts,
+                _providers.stt,
+                _providers.calls,
+            ));
+        }
+        if let Some(store) = _providers.memory_store {
+            _reg.register(sven_memory::SemanticMemoryTool::new(store));
+        }
     }
 }
 

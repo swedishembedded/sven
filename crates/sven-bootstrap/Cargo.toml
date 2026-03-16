@@ -4,12 +4,17 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-sven-config      = { path = "../sven-config" }
-sven-model       = { path = "../sven-model" }
-sven-tools       = { path = "../sven-tools" }
-sven-core        = { path = "../sven-core" }
-sven-runtime     = { path = "../sven-runtime" }
-sven-mcp-client  = { path = "../sven-mcp-client" }
+sven-config        = { path = "../sven-config" }
+sven-model         = { path = "../sven-model" }
+sven-tools         = { path = "../sven-tools" }
+sven-core          = { path = "../sven-core" }
+sven-runtime       = { path = "../sven-runtime" }
+sven-mcp-client    = { path = "../sven-mcp-client" }
+# New integration crates — optional at bootstrap level
+sven-channels      = { path = "../sven-channels", optional = true }
+sven-scheduler     = { path = "../sven-scheduler", optional = true }
+sven-integrations  = { path = "../sven-integrations", optional = true }
+sven-memory        = { path = "../sven-memory", optional = true }
 anyhow       = { workspace = true }
 async-trait  = { workspace = true }
 futures      = { workspace = true }
@@ -19,6 +24,16 @@ tokio-util   = { version = "0.7", features = ["compat"] }
 tracing      = { workspace = true }
 agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+[features]
+default = []
+# Enable all integration tools at once
+integrations = [
+    "dep:sven-channels",
+    "dep:sven-scheduler",
+    "dep:sven-integrations",
+    "dep:sven-memory",
+]
 
 [dev-dependencies]
 tempfile = { workspace = true }

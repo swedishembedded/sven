@@ -25,7 +25,10 @@ pub use context_query::{
     build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
 };
 pub use context_tool::ContextTool;
-pub use registry::{build_cli_tool_registry, build_tool_registry};
+pub use registry::{
+    build_cli_tool_registry, build_tool_registry, build_tool_registry_with_integrations,
+    IntegrationProviders,
+};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 
