@@ -24,6 +24,7 @@ export component MainWindow inherits Window {
 
     // ── Data model ────────────────────────────────────────────────────────────
     in property <[ChatMessage]>  messages;
+    in property <[ChatMessage]>  streaming-messages;
     in property <string>         streaming-text: "";
     in property <string>         thinking-text: "";
     in property <[SessionItem]>  sessions;
@@ -74,8 +75,16 @@ export component MainWindow inherits Window {
     callback completion-accepted(string);
 
     // ── Layout ────────────────────────────────────────────────────────────────
-    VerticalLayout {
-        spacing: 0;
+    FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape && root.completion-items.length > 0) {
+                root.completion-accepted("");
+            }
+            accept
+        }
+
+        VerticalLayout {
+            spacing: 0;
 
         StatusBar {
             model-name: root.model-name;
@@ -109,6 +118,7 @@ export component MainWindow inherits Window {
                 ChatPane {
                     vertical-stretch: 1;
                     messages: root.messages;
+                    streaming-messages: root.streaming-messages;
                     streaming-text: root.streaming-text;
                     thinking-text: root.thinking-text;
                     toggle-expanded(idx) => { root.toggle-expanded(idx); }
@@ -124,6 +134,7 @@ export component MainWindow inherits Window {
                     completion-accepted(val) => { root.completion-accepted(val); }
                 }
             }
+        }
         }
     }
 

@@ -124,7 +124,7 @@ component AssistantParagraph {
     }
 }
 
-// ── Code block with syntax highlighting ──────────────────────────────────────
+// ── Code block with syntax highlighting ───────────────────────────────────────
 
 component CodeBlockBubble {
     in property <string>     content;
@@ -181,34 +181,50 @@ component CodeBlockBubble {
                     }
                 }
 
-                // Highlighted lines
-                if has-highlight: VerticalLayout {
-                    spacing: 0;
-                    alignment: start;
+                // Highlighted lines (Flickable for horizontal scroll on long lines)
+                if has-highlight: Flickable {
+                    width: parent.width - 2 * Theme.space-sm;
+                    height: Math.min(code-lines.length * (Theme.font-size-code + 4px), 400px);
+                    viewport-width: code-lines-layout.preferred-width;
+                    viewport-height: code-lines-layout.preferred-height;
+                    interactive: true;
 
-                    for line in code-lines: HorizontalLayout {
-                        alignment: start;
+                    code-lines-layout := VerticalLayout {
                         spacing: 0;
-                        height: Theme.font-size-code + 4px;
+                        alignment: start;
 
-                        for token in line.tokens: Text {
-                            text: token.text;
-                            color: token.color;
-                            font-size: Theme.font-size-code;
-                            font-family: Theme.font-mono;
-                            vertical-alignment: center;
+                        for line in code-lines: HorizontalLayout {
+                            alignment: start;
+                            spacing: 0;
+                            height: Theme.font-size-code + 4px;
+
+                            for token in line.tokens: Text {
+                                text: token.text;
+                                color: token.color;
+                                font-size: Theme.font-size-code;
+                                font-family: Theme.font-mono;
+                                vertical-alignment: center;
+                                wrap: no-wrap;
+                            }
                         }
                     }
                 }
 
-                // Fallback: plain text when no highlight data
-                if !has-highlight: Text {
-                    text: content;
-                    color: Theme.text-code;
-                    font-size: Theme.font-size-code;
-                    font-family: Theme.font-mono;
-                    wrap: word-wrap;
-                    width: available-width - 4 * Theme.space-md;
+                // Fallback: plain text when no highlight data (no-wrap + scroll for long lines)
+                if !has-highlight: Flickable {
+                    width: parent.width - 2 * Theme.space-sm;
+                    height: 400px;
+                    viewport-width: fallback-text.preferred-width;
+                    viewport-height: fallback-text.preferred-height;
+                    interactive: true;
+
+                    fallback-text := Text {
+                        text: content;
+                        color: Theme.text-code;
+                        font-size: Theme.font-size-code;
+                        font-family: Theme.font-mono;
+                        wrap: no-wrap;
+                    }
                 }
             }
         }
@@ -696,6 +712,7 @@ component MessageRow inherits VerticalLayout {
 
 export component ChatPane inherits Rectangle {
     in property <[ChatMessage]> messages;
+    in property <[ChatMessage]> streaming-messages;
     in property <string> streaming-text: "";
     in property <string> thinking-text: "";
 
@@ -705,6 +722,7 @@ export component ChatPane inherits Rectangle {
     clip: true;
 
     property <bool> has-content: messages.length > 0
+                                  || streaming-messages.length > 0
                                   || streaming-text != ""
                                   || thinking-text != "";
 
@@ -732,6 +750,22 @@ export component ChatPane inherits Rectangle {
                 toggle-expanded(idx) => { root.toggle-expanded(idx); }
             }
 
+            // Live response stream (parsed markdown with code blocks)
+            for msg[i] in streaming-messages: MessageRow {
+                msg: msg;
+                msg-index: -1;
+                available-width: parent.width - 2 * Theme.space-lg;
+                toggle-expanded(idx) => { }
+            }
+
+            // Fallback: raw streaming text when no parsed blocks
+            if streaming-messages.length == 0 && streaming-text != "": AssistantParagraph {
+                content: streaming-text;
+                is-streaming: true;
+                show-header: thinking-text == "";
+                available-width: parent.width - 2 * Theme.space-lg;
+            }
+
             // Live thinking stream
             if thinking-text != "": ThinkingBubble {
                 content: thinking-text;
@@ -740,13 +774,6 @@ export component ChatPane inherits Rectangle {
                 available-width: parent.width - 2 * Theme.space-lg;
             }
 
-            // Live response stream
-            if streaming-text != "": AssistantParagraph {
-                content: streaming-text;
-                is-streaming: true;
-                show-header: thinking-text == "";
-                available-width: parent.width - 2 * Theme.space-lg;
-            }
         }
     }
 }
