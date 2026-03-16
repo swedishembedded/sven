@@ -53,6 +53,9 @@ export struct ChatMessage {
 component UserBubble inherits Rectangle {
     in property <string> content;
     in property <length> available-width: 600px;
+    in property <int> msg-index: 0;
+
+    callback edit-clicked();
 
     width: available-width;
     border-radius: Theme.radius-md;
@@ -64,11 +67,36 @@ component UserBubble inherits Rectangle {
         padding: Theme.space-md;
         spacing: Theme.space-xs;
 
-        Text {
-            text: "You";
-            color: Theme.info;
-            font-size: Theme.font-size-sm;
-            font-weight: 700;
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.space-sm;
+
+            Text {
+                text: "You";
+                color: Theme.info;
+                font-size: Theme.font-size-sm;
+                font-weight: 700;
+            }
+
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: Theme.radius-sm;
+                background: edit-ta.has-hover ? Theme.bg-hover : transparent;
+
+                Text {
+                    text: "✎";
+                    font-size: 12px;
+                    color: edit-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+                edit-ta := TouchArea {
+                    clicked => { root.edit-clicked(); }
+                }
+            }
         }
 
         Text {
@@ -639,12 +667,15 @@ component MessageRow inherits VerticalLayout {
     in property <length>      available-width: 600px;
 
     callback toggle-expanded(int);
+    callback edit-clicked(int);
 
     alignment: start;
 
     if msg.message-type == "user": UserBubble {
         content: msg.content;
         available-width: available-width;
+        msg-index: msg-index;
+        edit-clicked => { root.edit-clicked(msg-index); }
     }
     if msg.message-type == "assistant": AssistantParagraph {
         content: msg.content;
@@ -717,6 +748,7 @@ export component ChatPane inherits Rectangle {
     in property <string> thinking-text: "";
 
     callback toggle-expanded(int);
+    callback message-edit-requested(int);
 
     background: Theme.bg-deep;
     clip: true;
@@ -748,6 +780,7 @@ export component ChatPane inherits Rectangle {
                 msg-index: i;
                 available-width: parent.width - 2 * Theme.space-lg;
                 toggle-expanded(idx) => { root.toggle-expanded(idx); }
+                edit-clicked(idx) => { root.message-edit-requested(idx); }
             }
 
             // Live response stream (parsed markdown with code blocks)

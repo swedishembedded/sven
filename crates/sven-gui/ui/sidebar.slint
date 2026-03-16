@@ -5,7 +5,7 @@
 // Session list sidebar.
 
 import { Theme } from "theme.slint";
-import { ListView } from "std-widgets.slint";
+import { ListView, Spinner } from "std-widgets.slint";
 
 export struct SessionItem {
     id: string,
@@ -40,12 +40,21 @@ component SessionRow inherits Rectangle {
         padding-left: Theme.space-sm + item.depth * 16px + (item.active ? 6px : 4px);
         padding-right: Theme.space-sm;
         spacing: Theme.space-xs;
-        alignment: start;
+        alignment: center;
 
-        // Status dot
-        Text {
-            text: item.busy ? "◌" : (item.status == "completed" ? "●" : "○");
-            color: item.busy ? Theme.accent : (item.status == "completed" ? Theme.success : Theme.text-dim);
+        // Status: spinner when busy, checkmark when completed, dot when active
+        if item.busy: Rectangle {
+            width: 14px;
+            height: 14px;
+            Spinner {
+                indeterminate: true;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+        if !item.busy: Text {
+            text: item.status == "completed" ? "✓" : "○";
+            color: item.status == "completed" ? Theme.text-dim : Theme.text-dim;
             font-size: Theme.font-size-sm;
             vertical-alignment: center;
             width: 14px;

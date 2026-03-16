@@ -25,11 +25,23 @@ export component CompletionPopup inherits Rectangle {
     background: transparent;
     visible: items.length > 0;
 
-    property <length> panel-height: Math.min(items.length * 40px + 16px, 280px);
+    property <length> panel-height: Math.min(items.length * 28px + 12px, 220px);
+
+    // Position above the input area so it doesn't occlude the input box
+    property <length> panel-y: root.height - Theme.input-area-height - root.panel-height - 6px;
+
+    // Click outside to dismiss (backdrop)
+    TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.dismissed(); }
+    }
 
     popup-panel := Rectangle {
         x: Theme.space-lg;
-        y: parent.height - self.height - 6px;
+        y: root.panel-y;
         width: Math.min(parent.width - Theme.space-lg * 2, 560px);
         height: root.panel-height;
         border-radius: Theme.radius-md;
@@ -57,7 +69,7 @@ export component CompletionPopup inherits Rectangle {
                     alignment: start;
 
                     for item[i] in items: Rectangle {
-                        height: 38px;
+                        height: 26px;
                         border-radius: Theme.radius-sm;
                         background: i == selected-index ? Theme.bg-active
                                   : item-ta.has-hover    ? Theme.bg-hover
@@ -73,29 +85,18 @@ export component CompletionPopup inherits Rectangle {
                         HorizontalLayout {
                             padding-left: Theme.space-sm;
                             padding-right: Theme.space-sm;
-                            spacing: Theme.space-sm;
+                            spacing: Theme.space-xs;
                             alignment: start;
 
-                            // Slash icon
+                            // Command name (display already includes "/" when applicable)
                             Text {
-                                text: "/";
-                                color: i == selected-index ? Theme.accent : Theme.accent-dim;
-                                font-size: Theme.font-size-sm;
-                                font-weight: 700;
-                                font-family: Theme.font-mono;
-                                vertical-alignment: center;
-                                width: 12px;
-                            }
-
-                            // Command name
-                            Text {
-                                text: item.display != "" ? item.display : item.value;
+                                text: item.display != "" ? item.display : ("/" + item.value);
                                 color: i == selected-index ? Theme.text-primary : Theme.text-secondary;
                                 font-size: Theme.font-size-sm;
                                 font-weight: 600;
                                 font-family: Theme.font-mono;
                                 vertical-alignment: center;
-                                width: 140px;
+                                width: 120px;
                             }
 
                             // Description

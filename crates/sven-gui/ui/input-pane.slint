@@ -41,12 +41,14 @@ export component InputPane inherits Rectangle {
             background: Theme.bg-deep;
             height: 64px;
 
-            if root.input-text == "": Text {
+            // Placeholder — only visible when input is empty, aligned top-left to match text
+            Text {
                 x: Theme.space-md;
-                y: (parent.height - self.preferred-height) / 2;
+                y: Theme.space-sm;
                 text: root.placeholder;
                 color: Theme.text-dim;
                 font-size: Theme.font-size-base;
+                visible: root.input-text == "";
             }
 
             text-input := TextInput {

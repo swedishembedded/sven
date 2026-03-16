@@ -32,18 +32,6 @@ export component StatusBar inherits Rectangle {
         background: Theme.border;
     }
 
-    // Context fill bar (very subtle, sits behind content)
-    Rectangle {
-        x: 0;
-        y: parent.height - 2px;
-        width: parent.width * context-pct / 100;
-        height: 2px;
-        background: context-pct > 80 ? Theme.warning
-                  : context-pct > 60 ? Theme.accent-dim
-                  : Theme.accent-dim;
-        opacity: 0.6;
-    }
-
     HorizontalLayout {
         padding-left: Theme.space-md;
         padding-right: Theme.space-md;
@@ -126,9 +114,30 @@ export component StatusBar inherits Rectangle {
                 }
             }
 
+            // Context usage progress bar (horizontal, left of in/out)
+            Rectangle {
+                width: 72px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.bg-deep;
+                clip: true;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width * root.context-pct / 100;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: root.context-pct > 80 ? Theme.warning
+                              : root.context-pct > 60 ? Theme.accent-dim
+                              : Theme.accent;
+                    opacity: 0.9;
+                }
+            }
+
             // Input token count (when available)
             if total-input-tokens > 0: Text {
-                text: "in:" + (total-input-tokens / 1000) + "k";
+                text: "in:" + Math.floor(total-input-tokens / 1000) + "k";
                 color: Theme.text-secondary;
                 font-size: Theme.font-size-sm;
                 vertical-alignment: center;
@@ -136,16 +145,8 @@ export component StatusBar inherits Rectangle {
 
             // Output token count (when available)
             if total-output-tokens > 0: Text {
-                text: "out:" + (total-output-tokens / 1000) + "k";
+                text: "out:" + Math.floor(total-output-tokens / 1000) + "k";
                 color: Theme.text-secondary;
-                font-size: Theme.font-size-sm;
-                vertical-alignment: center;
-            }
-
-            // Context usage percentage
-            Text {
-                text: "ctx " + root.context-pct + "%";
-                color: root.context-pct > 80 ? Theme.warning : Theme.text-secondary;
                 font-size: Theme.font-size-sm;
                 vertical-alignment: center;
             }

@@ -17,6 +17,7 @@ export struct PickerItem {
 export component PickerPopup inherits Rectangle {
     in property <string>       title: "Select";
     in property <[PickerItem]> items;
+    in property <bool>         show-search: true;   // false for mode picker (only 3 items)
 
     callback selected(string);
     callback dismissed();
@@ -28,6 +29,16 @@ export component PickerPopup inherits Rectangle {
     TouchArea { clicked => { root.dismissed(); } }
 
     // ── Floating panel ────────────────────────────────────────────────────────
+    FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.dismissed();
+                accept
+            } else {
+                reject
+            }
+        }
+
     panel := Rectangle {
         x: (parent.width  - self.width)  / 2;
         y: (parent.height - self.height) / 2;
@@ -39,9 +50,6 @@ export component PickerPopup inherits Rectangle {
         border-width: 1px;
         drop-shadow-blur: 24px;
         drop-shadow-color: #00000080;
-
-        // Swallow clicks inside panel
-        TouchArea { }
 
         VerticalLayout {
             padding: Theme.space-md;
@@ -55,8 +63,8 @@ export component PickerPopup inherits Rectangle {
                 font-weight: 700;
             }
 
-            // ── Search input ──────────────────────────────────────────────────
-            Rectangle {
+            // ── Search input (hidden when show-search is false, e.g. mode picker) ─
+            if root.show-search: Rectangle {
                 height: 36px;
                 border-radius: Theme.radius-sm;
                 border-color: search-input.has-focus ? Theme.accent-dim : Theme.border;
@@ -66,8 +74,10 @@ export component PickerPopup inherits Rectangle {
                 HorizontalLayout {
                     padding-left: Theme.space-sm;
                     padding-right: Theme.space-sm;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
                     spacing: Theme.space-xs;
-                    alignment: start;
+                    alignment: center;
 
                     Text {
                         text: "🔍";
@@ -78,8 +88,8 @@ export component PickerPopup inherits Rectangle {
                     }
 
                     search-input := TextInput {
-                        width: parent.width - 36px;
-                        height: parent.height;
+                        horizontal-stretch: 1;
+                        height: 24px;
                         color: Theme.text-primary;
                         font-size: Theme.font-size-base;
                         single-line: true;
@@ -88,7 +98,7 @@ export component PickerPopup inherits Rectangle {
                         accepted => { }
                     }
 
-                    if search-input.text == "": Text {
+                    if search-input.text == "" && !search-input.has-focus: Text {
                         text: "Filter…";
                         color: Theme.text-dim;
                         font-size: Theme.font-size-base;
@@ -170,5 +180,6 @@ export component PickerPopup inherits Rectangle {
                 horizontal-alignment: center;
             }
         }
+    }
     }
 }

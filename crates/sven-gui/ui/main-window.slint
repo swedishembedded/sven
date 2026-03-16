@@ -10,11 +10,12 @@ import { Sidebar, SessionItem } from "sidebar.slint";
 import { ChatPane, ChatMessage, CodeToken, CodeLine } from "chat-pane.slint";
 import { InputPane }    from "input-pane.slint";
 import { ToastStack, ToastItem } from "toast.slint";
-import { QuestionModal } from "question-modal.slint";
+import { QuestionModal, QuestionItem } from "question-modal.slint";
 import { PickerPopup, PickerItem } from "picker-popup.slint";
 import { CompletionPopup, CompletionEntry } from "completion-popup.slint";
+import { QueuePanel, QueueItem } from "queue-panel.slint";
 
-export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry, CodeToken, CodeLine }
+export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry, CodeToken, CodeLine, QueueItem, QuestionItem }
 
 export component MainWindow inherits Window {
     title: "Sven Desktop";
@@ -40,12 +41,13 @@ export component MainWindow inherits Window {
     in property <string>         connection-label: "local";
     in property <[ToastItem]>    toasts;
     in property <int>            queue-count: 0;
+    in property <[QueueItem]>    queue-items: [];
     in-out property <string>     input-text: "";
 
     // Question modal
     in property <bool>           question-visible: false;
-    in property <string>         question-text: "";
-    in-out property <string>     question-answer: "";
+    in property <[QuestionItem]> question-items: [];
+    in property <int>            question-current-index: 0;
 
     // Picker popup (model / mode)
     in property <bool>           picker-visible: false;
@@ -61,8 +63,12 @@ export component MainWindow inherits Window {
     callback cancel-run();
     callback new-session();
     callback session-selected(string);
-    callback question-answered(string);
+    callback question-answered();
     callback question-dismissed();
+    callback question-option-selected(int, int);
+    callback question-other-changed(int, string);
+    callback question-next();
+    callback question-back();
     callback toggle-expanded(int);
 
     callback model-clicked();
@@ -74,13 +80,33 @@ export component MainWindow inherits Window {
     callback input-changed(string);
     callback completion-accepted(string);
 
+    callback queue-edit-clicked(int);
+    callback queue-delete-clicked(int);
+    callback queue-submit-clicked(int);
+    callback message-edit-requested(int);
+
     // ── Layout ────────────────────────────────────────────────────────────────
     FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Escape && root.completion-items.length > 0) {
+            if (event.text == Key.Escape) {
+                if (root.question-visible) {
+                    root.question-dismissed();
+                    accept
+                } else if (root.picker-visible) {
+                    root.picker-dismissed();
+                    accept
+                } else if (root.completion-items.length > 0) {
+                    root.completion-accepted("");
+                    accept
+                } else {
+                    accept
+                }
+            } else if ((event.text == Key.Return || event.text == Key.Tab) && root.completion-items.length > 0) {
                 root.completion-accepted("");
+                accept
+            } else {
+                accept
             }
-            accept
         }
 
         VerticalLayout {
@@ -122,6 +148,14 @@ export component MainWindow inherits Window {
                     streaming-text: root.streaming-text;
                     thinking-text: root.thinking-text;
                     toggle-expanded(idx) => { root.toggle-expanded(idx); }
+                    message-edit-requested(idx) => { root.message-edit-requested(idx); }
+                }
+
+                QueuePanel {
+                    items: root.queue-items;
+                    edit-clicked(idx) => { root.queue-edit-clicked(idx); }
+                    delete-clicked(idx) => { root.queue-delete-clicked(idx); }
+                    submit-clicked(idx) => { root.queue-submit-clicked(idx); }
                 }
 
                 InputPane {
@@ -163,9 +197,13 @@ export component MainWindow inherits Window {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        question-text: root.question-text;
-        answer-text <=> root.question-answer;
-        answered(ans) => { root.question-answered(ans); }
+        questions: root.question-items;
+        current-question-index: root.question-current-index;
+        option-selected(qidx, optidx) => { root.question-option-selected(qidx, optidx); }
+        other-text-changed(qidx, txt) => { root.question-other-changed(qidx, txt); }
+        next-clicked => { root.question-next(); }
+        back-clicked => { root.question-back(); }
+        answered => { root.question-answered(); }
         dismissed => { root.question-dismissed(); }
     }
 
@@ -176,6 +214,7 @@ export component MainWindow inherits Window {
         height: parent.height;
         title: root.picker-title;
         items: root.picker-items;
+        show-search: root.picker-title != "Switch mode";
         selected(id) => { root.picker-selected(id); }
         dismissed => { root.picker-dismissed(); }
         search-changed(text) => { root.picker-search-changed(text); }

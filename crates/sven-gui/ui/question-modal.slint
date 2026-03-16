@@ -2,15 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Agent question modal dialog.
+// Agent question modal dialog — multiple choice (A/B/C/D) with optional "Other".
 
 import { Theme } from "theme.slint";
 
-export component QuestionModal inherits Rectangle {
-    in property <string>     question-text: "";
-    in-out property <string> answer-text: "";
+// Single question with options. selected-index: -1 = none, 0..options.length-1 = option, options.length = Other
+export struct QuestionItem {
+    prompt: string,
+    options: [string],
+    selected-index: int,
+    other-text: string,
+    allow-multiple: bool,
+}
 
-    callback answered(string);
+export component QuestionModal inherits Rectangle {
+    in property <[QuestionItem]> questions;
+    in property <int> current-question-index: 0;
+
+    callback option-selected(int, int);
+    callback other-text-changed(int, string);
+    callback next-clicked();
+    callback back-clicked();
+    callback answered();
     callback dismissed();
 
     background: #00000088;
@@ -19,12 +32,22 @@ export component QuestionModal inherits Rectangle {
         clicked => { root.dismissed(); }
     }
 
+    property <int> qidx: Math.max(0, Math.min(root.current-question-index, root.questions.length - 1));
+    property <QuestionItem> current-q: root.questions.length > 0 ? root.questions[root.qidx] : root.questions[0];
+    property <int> other-option-index: root.current-q.options.length;
+    property <bool> other-selected: root.current-q.selected-index == root.other-option-index;
+    property <bool> current-answered: root.current-q.selected-index >= 0;
+    property <bool> all-answered: root.questions.length > 0 && (root.questions.length < 1 || root.questions[0].selected-index >= 0) && (root.questions.length < 2 || root.questions[1].selected-index >= 0) && (root.questions.length < 3 || root.questions[2].selected-index >= 0);
+    property <bool> is-last-question: root.qidx >= root.questions.length - 1;
+    // Next enabled when current answered; Answer enabled when all answered
+    property <bool> submit-enabled: root.is-last-question ? root.all-answered : root.current-answered;
+
     // Dialog box
     Rectangle {
-        x: (parent.width - 480px) / 2;
-        y: (parent.height - 260px) / 2;
-        width: 480px;
-        height: 260px;
+        x: (parent.width - 520px) / 2;
+        y: (parent.height - 420px) / 2;
+        width: 520px;
+        height: 420px;
         border-radius: Theme.radius-lg;
         background: Theme.bg-card;
         border-color: Theme.border;
@@ -41,31 +64,116 @@ export component QuestionModal inherits Rectangle {
                 font-weight: 700;
             }
 
-            Text {
-                text: root.question-text;
-                color: Theme.text-primary;
-                font-size: Theme.font-size-base;
-                wrap: word-wrap;
+            // Question progress (e.g. "Question 1 of 3")
+            if root.questions.length > 1: Text {
+                text: "Question " + (root.qidx + 1) + " of " + root.questions.length;
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
             }
 
-            Rectangle {
-                border-radius: Theme.radius-sm;
-                border-color: answer-input.has-focus ? Theme.accent-dim : Theme.border;
-                border-width: 1px;
-                background: Theme.bg-deep;
-                height: 36px;
+            // Scrollable questions area
+            Flickable {
+                height: 280px;
+                viewport-height: options-layout.preferred-height;
+                interactive: true;
 
-                answer-input := TextInput {
-                    x: Theme.space-sm;
-                    y: (parent.height - self.preferred-height) / 2;
-                    width: parent.width - 2 * Theme.space-sm;
-                    text <=> root.answer-text;
-                    color: Theme.text-primary;
-                    font-size: Theme.font-size-base;
+                options-layout := VerticalLayout {
+                    spacing: Theme.space-sm;
+                    alignment: start;
 
-                    accepted => {
-                        root.answered(root.answer-text);
-                        root.answer-text = "";
+                    Text {
+                        text: root.current-q.prompt;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-size-base;
+                        wrap: word-wrap;
+                    }
+
+                    // Options A, B, C, D...
+                    for opt[i] in root.current-q.options: Rectangle {
+                        height: 36px;
+                        border-radius: Theme.radius-sm;
+                        background: opt-ta.has-hover ? Theme.bg-hover : (root.current-q.selected-index == i ? Theme.bg-active : transparent);
+                        border-color: root.current-q.selected-index == i ? Theme.accent-dim : Theme.border;
+                        border-width: 1px;
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-sm;
+                            alignment: start;
+
+                            Text {
+                                text: ["A", "B", "C", "D", "E", "F"][Math.min(i, 5)] + ".";
+                                color: root.current-q.selected-index == i ? Theme.accent : Theme.text-secondary;
+                                font-size: Theme.font-size-base;
+                                font-weight: root.current-q.selected-index == i ? 600 : 400;
+                            }
+
+                            Text {
+                                text: opt;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-size-base;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
+                        }
+                        opt-ta := TouchArea {
+                            clicked => { root.option-selected(root.qidx, i); }
+                        }
+                    }
+
+                    // Other option
+                    Rectangle {
+                        height: 36px;
+                        border-radius: Theme.radius-sm;
+                        background: other-ta.has-hover ? Theme.bg-hover : (root.other-selected ? Theme.bg-active : transparent);
+                        border-color: root.other-selected ? Theme.accent-dim : Theme.border;
+                        border-width: 1px;
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-sm;
+                            alignment: start;
+
+                            Text {
+                                text: ["A", "B", "C", "D", "E", "F"][Math.min(root.other-option-index, 5)] + ".";
+                                color: root.other-selected ? Theme.accent : Theme.text-secondary;
+                                font-size: Theme.font-size-base;
+                                font-weight: root.other-selected ? 600 : 400;
+                            }
+
+                            Text {
+                                text: "Other";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-size-base;
+                            }
+                        }
+                        other-ta := TouchArea {
+                            clicked => { root.option-selected(root.qidx, root.other-option-index); }
+                        }
+                    }
+
+                    // Other text input — only when Other is selected
+                    if root.other-selected: Rectangle {
+                        border-radius: Theme.radius-sm;
+                        border-color: other-input.has-focus ? Theme.accent-dim : Theme.border;
+                        border-width: 1px;
+                        background: Theme.bg-deep;
+                        height: 36px;
+
+                        other-input := TextInput {
+                            x: Theme.space-sm;
+                            y: (parent.height - self.preferred-height) / 2;
+                            width: parent.width - 2 * Theme.space-sm;
+                            text: root.current-q.other-text;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-size-base;
+
+                            edited => {
+                                root.other-text-changed(root.qidx, self.text);
+                            }
+                        }
                     }
                 }
             }
@@ -96,15 +204,37 @@ export component QuestionModal inherits Rectangle {
                     }
                 }
 
+                if root.questions.length > 1 && root.qidx > 0: Rectangle {
+                    width: 70px;
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: back-ta.has-hover ? Theme.bg-active : transparent;
+                    border-color: Theme.border;
+                    border-width: 1px;
+
+                    Text {
+                        text: "Back";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-size-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    back-ta := TouchArea {
+                        clicked => { root.back-clicked(); }
+                    }
+                }
+
                 Rectangle {
                     width: 80px;
                     height: 32px;
                     border-radius: Theme.radius-sm;
-                    background: submit-ta.has-hover ? Theme.accent : Theme.accent-dim;
+                    background: root.submit-enabled ? (submit-ta.has-hover ? Theme.accent : Theme.accent-dim) : Theme.bg-active;
 
                     Text {
-                        text: "Answer";
-                        color: Theme.bg-deep;
+                        text: root.is-last-question ? "Answer" : "Next";
+                        color: root.submit-enabled ? Theme.bg-deep : Theme.text-dim;
                         font-size: Theme.font-size-sm;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -113,9 +243,15 @@ export component QuestionModal inherits Rectangle {
                         height: parent.height;
                     }
                     submit-ta := TouchArea {
+                        enabled: root.submit-enabled;
                         clicked => {
-                            root.answered(root.answer-text);
-                            root.answer-text = "";
+                            if root.submit-enabled {
+                                if root.is-last-question {
+                                    root.answered();
+                                } else {
+                                    root.next-clicked();
+                                }
+                            }
                         }
                     }
                 }
