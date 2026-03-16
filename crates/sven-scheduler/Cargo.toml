@@ -1,0 +1,29 @@
+[package]
+name    = "sven-scheduler"
+version = "1.0.0"
+edition = "2021"
+description = "Cron scheduler, heartbeat, and job store for sven agents"
+
+[dependencies]
+sven-config  = { path = "../sven-config" }
+sven-tools   = { path = "../sven-tools" }
+
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+serde_yaml   = { workspace = true }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+dirs         = { workspace = true }
+humantime    = { workspace = true }
+
+# Cron expression parsing
+cron = "0.12"
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = { workspace = true }
