@@ -33,10 +33,18 @@
 //!
 //! ## Discovery order (later sources take precedence on command collision)
 //!
-//! Discovery uses a **unified ancestor walk**: two chains are collected —
-//! one from the project root (or CWD) up to `/`, one from `~` up to `/` —
-//! deduplicated and sorted by depth (shallowest = lowest precedence).  At
-//! every directory in the merged chain, four config dirs are checked in order:
+//! Skills are loaded from **system paths** first (lowest precedence), then from
+//! a **unified ancestor walk** of project root and home.  System paths:
+//!
+//! ```text
+//! /usr/share/sven/skills/        (distro-packaged skills)
+//! /usr/local/share/sven/skills/  (locally installed skills)
+//! ```
+//!
+//! The ancestor walk collects two chains — one from the project root (or CWD)
+//! up to `/`, one from `~` up to `/` — deduplicated and sorted by depth
+//! (shallowest = lowest precedence).  At every directory in the merged chain,
+//! five config dirs are checked in order:
 //!
 //! ```text
 //! <dir>/.agents/skills/   (lowest within a level)
@@ -49,10 +57,11 @@
 //! Because the chain runs from `/` down to the project root, entries closer to
 //! the project root always override farther ancestors.  In practice:
 //!
-//! - `~/.cursor/skills/`      — found because home is one of the walk roots
+//! - `/usr/share/sven/skills/`    — system skills (lowest precedence)
+//! - `~/.cursor/skills/`          — found because home is one of the walk roots
 //! - `/workspace/.cursor/skills/` — found when the git root is a subdirectory
 //!   of the workspace, even though the workspace has no `.git`
-//! - `<project>/.sven/skills/` — highest precedence of all
+//! - `<project>/.sven/skills/`    — highest precedence of all
 //!
 //! The `SKILL.md` filename is matched case-insensitively, so `skill.md`,
 //! `Skill.md`, and `SKILL.md` are all accepted.
@@ -553,14 +562,18 @@ fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>)
 
 /// Discover all skills from the standard search hierarchy.
 ///
-/// The search is a **unified ancestor walk**: every directory in the path from
-/// `/` down to the project root (and from `/` down to `~`) is checked for
-/// `.agents/skills/`, `.claude/skills/`, `.codex/skills/`, `.cursor/skills/`,
-/// and `.sven/skills/` (in that order within each directory, so `.sven/` beats
-/// `.cursor/` at the same level).  Because directories are loaded farthest-first, entries closer
-/// to the project root override entries from parent directories.
+/// System paths are loaded first (lowest precedence): `/usr/share/sven/skills/`
+/// and `/usr/local/share/sven/skills/`.  Then a **unified ancestor walk** runs:
+/// every directory in the path from `/` down to the project root (and from `/`
+/// down to `~`) is checked for `.agents/skills/`, `.claude/skills/`,
+/// `.codex/skills/`, `.cursor/skills/`, and `.sven/skills/` (in that order within
+/// each directory, so `.sven/` beats `.cursor/` at the same level).  Because
+/// directories are loaded farthest-first, entries closer to the project root
+/// override entries from parent directories.
 ///
 /// This means:
+/// - `/usr/share/sven/skills/` and `/usr/local/share/sven/skills/` provide
+///   system-installed skills (lowest precedence).
 /// - `/home/user/.cursor/skills/` is found because home is one of the walk roots.
 /// - `/data/.cursor/skills/` is found when the project root is a subdirectory
 ///   of `/data/` (e.g. `/data/repo/`), even though `/data/` has no `.git`.
@@ -570,16 +583,19 @@ fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>)
 /// walk base so workspace-level skills are still found.
 #[must_use]
 pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
-    discover_skills_impl(project_root, dirs::home_dir().as_deref())
+    discover_skills_impl(project_root, dirs::home_dir().as_deref(), true)
 }
 
 /// Internal implementation; `home` overrides `dirs::home_dir()`.
 ///
 /// Pass `Some(isolated_dir)` (or `None` to skip the home walk entirely) in
 /// tests so that real user config directories are never consulted.
+/// `include_system` controls whether to load from `/usr/share/sven/skills` and
+/// `/usr/local/share/sven/skills`; pass `false` in tests for deterministic results.
 pub(crate) fn discover_skills_impl(
     project_root: Option<&Path>,
     home: Option<&Path>,
+    include_system: bool,
 ) -> Vec<SkillInfo> {
     // Keyed by command; later insertions (higher-precedence sources) win.
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
@@ -589,6 +605,16 @@ pub(crate) fn discover_skills_impl(
             map.insert(skill.command.clone(), skill);
         }
     };
+
+    // System paths first (lowest precedence).  Distro packages, then locally
+    // installed.  Project and home skills override these on command collision.
+    if include_system {
+        load(PathBuf::from("/usr/share/sven/skills"), "/usr/share/sven");
+        load(
+            PathBuf::from("/usr/local/share/sven/skills"),
+            "/usr/local/share/sven",
+        );
+    }
 
     // At each directory, load all five config dir types.  The within-level
     // order (.agents < .claude < .codex < .cursor < .sven) means .sven/ wins
@@ -886,7 +912,7 @@ mod tests {
     #[test]
     fn discover_skills_empty_dir_returns_empty() {
         let tmp = TempDir::new().unwrap();
-        let result = discover_skills_impl(Some(tmp.path()), None);
+        let result = discover_skills_impl(Some(tmp.path()), None, false);
         assert!(result.is_empty());
     }
 
@@ -897,7 +923,7 @@ mod tests {
         fs::create_dir_all(&skills_dir).unwrap();
         write_skill(&skills_dir, "git-workflow", "Git helper.", "", "## Section");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].command, "git-workflow");
         assert_eq!(skills[0].name, "git-workflow"); // falls back to dir name
@@ -919,7 +945,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills[0].command, "git-workflow");
         assert_eq!(skills[0].name, "Git Workflow"); // from frontmatter
     }
@@ -933,7 +959,7 @@ mod tests {
         write_skill(&skills_dir, "apple", "A skill.", "", "");
         write_skill(&skills_dir, "mango", "M skill.", "", "");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].command, "apple");
         assert_eq!(skills[1].command, "mango");
@@ -967,7 +993,7 @@ mod tests {
             "Impl body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 3);
 
         let cmds: Vec<&str> = skills.iter().map(|s| s.command.as_str()).collect();
@@ -989,7 +1015,7 @@ mod tests {
             "Research body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].command, "sven/implement/research");
     }
@@ -1013,7 +1039,7 @@ mod tests {
         fs::create_dir_all(&scripts_dir).unwrap();
         fs::write(scripts_dir.join("helper.sh"), "#!/bin/sh\necho hi").unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         let cmds: Vec<&str> = skills.iter().map(|s| s.command.as_str()).collect();
         assert!(cmds.contains(&"sven"), "parent skill registered");
         assert!(!cmds.contains(&"sven/scripts"), "scripts/ not a sub-skill");
@@ -1031,7 +1057,7 @@ mod tests {
         fs::create_dir_all(&sven_dir).unwrap();
         write_skill(&sven_dir, "deploy", "Sven version.", "", "Sven body.");
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description.trim(), "Sven version.");
     }
@@ -1048,7 +1074,7 @@ mod tests {
         );
         fs::write(skill_dir.join("SKILL.md"), big_content).unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert!(skills.is_empty(), "oversized skill should be skipped");
     }
 
@@ -1065,7 +1091,7 @@ mod tests {
             "Body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert!(
             skills.is_empty(),
             "skill with missing binary should be skipped"
@@ -1085,7 +1111,7 @@ mod tests {
             "Body.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 1);
     }
 
@@ -1097,7 +1123,7 @@ mod tests {
         fs::create_dir_all(&no_skill).unwrap();
         fs::write(no_skill.join("README.md"), "not a skill").unwrap();
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert!(skills.is_empty());
     }
 
@@ -1114,7 +1140,7 @@ mod tests {
             "## Usage\n\nDo things.",
         );
 
-        let skills = discover_skills_impl(Some(tmp.path()), None);
+        let skills = discover_skills_impl(Some(tmp.path()), None, false);
         let content = &skills[0].content;
         assert!(
             !content.contains("description:"),
