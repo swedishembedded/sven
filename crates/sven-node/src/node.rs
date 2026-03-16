@@ -472,6 +472,12 @@ pub async fn run(
         "starting HTTP gateway",
     );
 
+    let hooks_cfg = if config.hooks.token.is_some() {
+        Some(config.hooks.clone())
+    } else {
+        None
+    };
+
     crate::http::serve(
         &config.http,
         agent_handle,
@@ -479,6 +485,7 @@ pub async fn run(
         local_token_opt,
         slack_http_states,
         web_state_opt,
+        hooks_cfg,
     )
     .await?;
 

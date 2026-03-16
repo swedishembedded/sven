@@ -23,6 +23,7 @@
 //! When TLS is off a warning is logged on every startup.
 
 pub mod auth;
+pub mod hooks;
 pub mod security;
 pub mod slack;
 pub mod tls;
@@ -46,11 +47,12 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{info, warn};
 
 use crate::{
-    config::HttpConfig,
+    config::{HooksConfig, HttpConfig},
     control::service::AgentHandle,
     web::{web_router, WebState},
 };
 use auth::{AsAuthState, AuthState};
+use hooks::{hooks_router, HooksState};
 use security::{csrf_guard, security_headers};
 
 /// Combined app state shared across all HTTP handlers.
@@ -76,6 +78,7 @@ pub async fn serve(
     local_token: Option<String>,
     slack_states: Vec<slack::SlackWebhookState>,
     web_state: Option<WebState>,
+    hooks_config: Option<HooksConfig>,
 ) -> anyhow::Result<()> {
     let addr: SocketAddr = config
         .bind
@@ -99,6 +102,15 @@ pub async fn serve(
             post(slack::slack_events_handler).with_state(state),
         );
     }
+
+    // Generic webhook routes (optional, token-gated).
+    let hook_routes = match hooks_config {
+        Some(cfg) => hooks_router(HooksState {
+            agent: agent.clone(),
+            config: cfg,
+        }),
+        None => Router::new(),
+    };
 
     // Routes that require bearer-token auth.
     let protected = Router::new()
@@ -124,7 +136,9 @@ pub async fn serve(
         .layer(RequestBodyLimitLayer::new(config.max_body_bytes))
         .with_state(app_state)
         // Merge web routes AFTER with_state — they have independent state.
-        .merge(web);
+        .merge(web)
+        // Hook routes have their own state (HooksState) — merge last.
+        .merge(hook_routes);
 
     // Graceful shutdown on Ctrl+C / SIGTERM.
     let handle = axum_server::Handle::new();
