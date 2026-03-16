@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bridge between sven-frontend async agent events and the Slint UI model.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use sven_config::{AgentMode, ModelConfig};
 use sven_core::AgentEvent;
 use sven_frontend::{
     agent_task,
-    commands::{CommandContext, CommandRegistry, ParsedCommand},
+    commands::{CommandContext, CommandRegistry, ImmediateAction, ParsedCommand},
     markdown::{parse_markdown_blocks, MarkdownBlock},
     node_agent_task,
     queue::QueueState,
@@ -23,7 +23,99 @@ use sven_model::catalog;
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays};
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 
-use crate::{ChatMessage, CompletionEntry, MainWindow, PickerItem, SessionItem, ToastItem};
+use crate::{
+    ChatMessage, CodeLine, CodeToken, CompletionEntry, MainWindow, PickerItem, SessionItem,
+    ToastItem,
+};
+
+// ── Syntax highlighting ───────────────────────────────────────────────────────
+
+/// Per-token highlight data: text + RGB color.  Send-safe (no Slint types).
+type HighlightToken = (String, u8, u8, u8);
+
+/// Highlight `code` using syntect. Returns one Vec<HighlightToken> per line.
+/// Falls back to a single plain line if the language is unknown.
+fn highlight_code(language: &str, code: &str) -> Vec<Vec<HighlightToken>> {
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
+    use syntect::util::LinesWithEndings;
+
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let theme = &ts.themes["base16-ocean.dark"];
+
+    let syntax = ss
+        .find_syntax_by_token(language)
+        .or_else(|| ss.find_syntax_by_extension(language))
+        .unwrap_or_else(|| ss.find_syntax_plain_text());
+
+    let mut h = HighlightLines::new(syntax, theme);
+    let mut result: Vec<Vec<HighlightToken>> = Vec::new();
+
+    for line in LinesWithEndings::from(code) {
+        let ranges = match h.highlight_line(line, &ss) {
+            Ok(r) => r,
+            Err(_) => {
+                result.push(vec![(
+                    line.trim_end_matches('\n').to_string(),
+                    0xa5,
+                    0xd6,
+                    0xff,
+                )]);
+                continue;
+            }
+        };
+
+        let tokens: Vec<HighlightToken> = ranges
+            .iter()
+            .filter_map(|(style, text)| {
+                let t = text.trim_end_matches('\n');
+                if t.is_empty() {
+                    None
+                } else {
+                    Some((
+                        t.to_string(),
+                        style.foreground.r,
+                        style.foreground.g,
+                        style.foreground.b,
+                    ))
+                }
+            })
+            .collect();
+
+        // Always push the line (even if empty, to preserve line count)
+        result.push(tokens);
+    }
+
+    result
+}
+
+/// Strip common inline markdown markers for live-streaming preview.
+/// Removes `**`, `__`, `*`, `_`, `` ` ``, `##` leaders, etc.
+/// Does NOT try to parse structure — just cleans up the most visually noisy
+/// cases so that partial streaming text doesn't contain raw asterisks.
+fn strip_inline_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim_start_matches('#').trim_start();
+        // Strip bold/italic markers
+        let cleaned = trimmed
+            .replace("**", "")
+            .replace("__", "")
+            .replace("~~", "");
+        // Strip lone `*` and `_` used as emphasis (simple heuristic: only
+        // when surrounded by spaces or at word boundaries)
+        let cleaned = cleaned
+            .replace(" *", " ")
+            .replace("* ", " ")
+            .replace(" _", " ")
+            .replace("_ ", " ");
+        out.push_str(&cleaned);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}
 
 // ── Plain-data structs for cross-thread communication ─────────────────────────
 
@@ -33,24 +125,22 @@ struct PlainChatMessage {
     content: String,
     role: &'static str,
 
-    // Group header
     is_first_in_group: bool,
-
-    // State
     is_error: bool,
     is_streaming: bool,
     is_expanded: bool,
 
-    // Tool call
     tool_name: String,
     tool_icon: String,
     tool_summary: String,
     tool_category: String,
     tool_fields_json: String,
 
-    // Code block / heading
     language: String,
     heading_level: i32,
+
+    /// Syntax-highlighted lines: each line is a list of (text, r, g, b) tokens.
+    code_lines: Vec<Vec<HighlightToken>>,
 }
 
 impl PlainChatMessage {
@@ -83,6 +173,28 @@ impl PlainChatMessage {
     }
 
     fn to_slint(&self) -> ChatMessage {
+        let code_lines_model = if self.code_lines.is_empty() {
+            ModelRc::new(VecModel::<CodeLine>::default())
+        } else {
+            let lines: Vec<CodeLine> = self
+                .code_lines
+                .iter()
+                .map(|line| {
+                    let tokens: Vec<CodeToken> = line
+                        .iter()
+                        .map(|(text, r, g, b)| CodeToken {
+                            text: SharedString::from(text.as_str()),
+                            color: Color::from_rgb_u8(*r, *g, *b),
+                        })
+                        .collect();
+                    CodeLine {
+                        tokens: ModelRc::new(VecModel::from(tokens)),
+                    }
+                })
+                .collect();
+            ModelRc::new(VecModel::from(lines))
+        };
+
         ChatMessage {
             message_type: SharedString::from(self.message_type),
             content: SharedString::from(self.content.as_str()),
@@ -98,6 +210,7 @@ impl PlainChatMessage {
             tool_fields_json: SharedString::from(self.tool_fields_json.as_str()),
             language: SharedString::from(self.language.as_str()),
             heading_level: self.heading_level,
+            code_lines: code_lines_model,
         }
     }
 }
@@ -109,10 +222,10 @@ struct PlainToast {
 }
 
 /// Converts markdown text into a sequence of PlainChatMessages (one per block).
+/// Code blocks are syntax-highlighted via syntect.
 fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainChatMessage> {
     let blocks = parse_markdown_blocks(text);
     if blocks.is_empty() {
-        // Fallback: show as a plain paragraph
         return vec![PlainChatMessage {
             message_type: "assistant",
             content: text.to_string(),
@@ -142,14 +255,18 @@ fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainChatMe
                 heading_level: level as i32,
                 ..Default::default()
             },
-            MarkdownBlock::CodeBlock { language, code } => PlainChatMessage {
-                message_type: "code-block",
-                content: code,
-                role,
-                is_first_in_group: is_first,
-                language,
-                ..Default::default()
-            },
+            MarkdownBlock::CodeBlock { language, code } => {
+                let code_lines = highlight_code(&language, &code);
+                PlainChatMessage {
+                    message_type: "code-block",
+                    content: code,
+                    role,
+                    is_first_in_group: is_first,
+                    language,
+                    code_lines,
+                    ..Default::default()
+                }
+            }
             MarkdownBlock::ListItem { depth, text } => PlainChatMessage {
                 message_type: "list-item",
                 content: text,
@@ -194,6 +311,8 @@ fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainChatMe
     messages
 }
 
+// ── Options ───────────────────────────────────────────────────────────────────
+
 /// Options for building a `SvenApp`.
 pub struct SvenAppOptions {
     pub config: Arc<sven_config::Config>,
@@ -216,10 +335,11 @@ impl SvenApp {
     pub async fn build(opts: SvenAppOptions) -> anyhow::Result<Self> {
         let window = MainWindow::new()?;
 
-        // Initial session
+        // ── Initial session ───────────────────────────────────────────────────
+        let initial_session_id = "session-0".to_string();
         let sessions_model = Rc::new(VecModel::<SessionItem>::default());
         sessions_model.push(SessionItem {
-            id: SharedString::from("session-0"),
+            id: SharedString::from(&initial_session_id),
             title: SharedString::from("New chat"),
             busy: false,
             active: true,
@@ -229,6 +349,7 @@ impl SvenApp {
             total_cost_usd: 0.0,
         });
         window.set_sessions(ModelRc::from(sessions_model.clone()));
+        window.set_active_session_id(SharedString::from(&initial_session_id));
 
         let msgs_model = Rc::new(VecModel::<ChatMessage>::default());
         window.set_messages(ModelRc::from(msgs_model.clone()));
@@ -238,7 +359,14 @@ impl SvenApp {
             format!("{:?}", opts.mode).to_lowercase(),
         ));
 
-        // Track current model/mode for the session
+        // ── Per-session message store ─────────────────────────────────────────
+        // Maps session_id → Vec of committed messages for that session.
+        let session_messages: Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let active_session_id: Arc<Mutex<String>> =
+            Arc::new(Mutex::new(initial_session_id.clone()));
+
+        // ── Current model/mode tracking ───────────────────────────────────────
         let current_mode = Arc::new(Mutex::new(opts.mode));
         let current_model_name = Arc::new(Mutex::new(opts.model_cfg.name.clone()));
         let current_model_provider = Arc::new(Mutex::new(opts.model_cfg.provider.clone()));
@@ -299,92 +427,61 @@ impl SvenApp {
         let total_output_tokens = Arc::new(Mutex::new(0u32));
         let total_input_tokens = Arc::new(Mutex::new(0u32));
 
-        // Message queue (for queuing while agent is busy)
         let queue_state: Arc<Mutex<QueueState>> = Arc::new(Mutex::new(QueueState::new()));
-
-        // Title generation: send GenerateTitle on first user message
         let is_first_message: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
 
         let weak = window.as_weak();
 
         // ── Toggle thinking/tool expand ───────────────────────────────────────
-        let msgs_model_clone = Rc::clone(&msgs_model);
-        window.on_toggle_expanded(move |idx| {
-            let idx = idx as usize;
-            if let Some(mut row) = msgs_model_clone.row_data(idx) {
-                row.is_expanded = !row.is_expanded;
-                msgs_model_clone.set_row_data(idx, row);
-            }
-        });
+        {
+            let msgs_clone = Rc::clone(&msgs_model);
+            window.on_toggle_expanded(move |idx| {
+                let idx = idx as usize;
+                if let Some(mut row) = msgs_clone.row_data(idx) {
+                    row.is_expanded = !row.is_expanded;
+                    msgs_clone.set_row_data(idx, row);
+                }
+            });
+        }
 
         // ── Send message callback ─────────────────────────────────────────────
         {
             let tx = agent_tx.clone();
+            let tx2 = agent_tx.clone();
             let pm_send = Arc::clone(&pending_msgs);
             let weak_send = weak.clone();
             let is_first = Arc::clone(&is_first_message);
             let queue = Arc::clone(&queue_state);
-            let tx2 = agent_tx.clone();
             let cur_mode = Arc::clone(&current_mode);
             let cur_provider = Arc::clone(&current_model_provider);
             let cur_model = Arc::clone(&current_model_name);
             let config = Arc::clone(&opts.config);
-
+            let sb_send = Arc::clone(&streaming_buf);
+            let tb_send = Arc::clone(&thinking_buf);
+            let cancel_handle_sm = Arc::clone(&cancel_handle);
             window.on_send_message(move |text| {
                 let content = text.to_string();
                 if content.is_empty() {
                     return;
                 }
 
-                // Immediately add the user message to the chat
+                // Show the user message immediately in the chat
                 pm_send
                     .lock()
                     .unwrap()
                     .push_back(PlainChatMessage::user(&content));
-                let pm2 = Arc::clone(&pm_send);
-                let w = weak_send.clone();
-                let _ = slint::invoke_from_event_loop(move || flush_messages(pm2, &w));
+                let _ = slint::invoke_from_event_loop({
+                    let pm2 = Arc::clone(&pm_send);
+                    let w = weak_send.clone();
+                    move || flush_messages(pm2, &w)
+                });
 
-                // Check if agent is busy — if so, queue the message
                 let agent_busy = weak_send
                     .upgrade()
                     .map(|w| w.get_agent_busy())
                     .unwrap_or(false);
 
-                if agent_busy {
-                    // Check if this is a slash command (process locally)
-                    if content.starts_with('/') {
-                        let registry = CommandRegistry::with_builtins();
-                        let ctx = CommandContext {
-                            config: Arc::clone(&config),
-                            current_model_provider: cur_provider.lock().unwrap().clone(),
-                            current_model_name: cur_model.lock().unwrap().clone(),
-                        };
-                        if let Some((_, result)) =
-                            sven_frontend::commands::dispatch_command(&content, &registry, &ctx)
-                        {
-                            // Apply model/mode overrides to next queued message
-                            if result.model_override.is_some() || result.mode_override.is_some() {
-                                // Update session state
-                                let mut q = queue.lock().unwrap();
-                                q.push(QueuedMessage {
-                                    content: result.message_to_send.unwrap_or_default(),
-                                    model_transition: None,
-                                    mode_transition: result.mode_override,
-                                });
-                                return;
-                            }
-                        }
-                    }
-                    queue.lock().unwrap().push(QueuedMessage {
-                        content: content.clone(),
-                        model_transition: None,
-                        mode_transition: None,
-                    });
-                    return;
-                }
-
-                // Handle slash commands
+                // ── Slash command dispatch ────────────────────────────────────
                 if content.starts_with('/') {
                     let registry = CommandRegistry::with_builtins();
                     let ctx = CommandContext {
@@ -395,28 +492,120 @@ impl SvenApp {
                     if let Some((_, result)) =
                         sven_frontend::commands::dispatch_command(&content, &registry, &ctx)
                     {
+                        // Handle immediate actions
+                        if let Some(action) = result.immediate_action {
+                            let w = weak_send.clone();
+                            let pm3 = Arc::clone(&pm_send);
+                            let sb3 = Arc::clone(&sb_send);
+                            let tb3 = Arc::clone(&tb_send);
+                            let ch3 = Arc::clone(&cancel_handle_sm);
+                            match action {
+                                ImmediateAction::ClearChat => {
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        *sb3.lock().unwrap() = String::new();
+                                        *tb3.lock().unwrap() = String::new();
+                                        pm3.lock().unwrap().clear();
+                                        if let Some(win) = w.upgrade() {
+                                            // Get model from window on UI thread — safe (Rc stays on UI thread)
+                                            let msgs = win.get_messages();
+                                            if let Some(vm) = msgs
+                                                .as_any()
+                                                .downcast_ref::<VecModel<ChatMessage>>()
+                                            {
+                                                while vm.row_count() > 0 {
+                                                    vm.remove(0);
+                                                }
+                                            }
+                                            win.set_streaming_text(SharedString::new());
+                                            win.set_thinking_text(SharedString::new());
+                                        }
+                                    });
+                                }
+                                ImmediateAction::NewConversation => {
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(win) = w.upgrade() {
+                                            win.invoke_new_session();
+                                        }
+                                    });
+                                }
+                                ImmediateAction::Abort => {
+                                    let ch = Arc::clone(&ch3);
+                                    tokio::spawn(async move {
+                                        if let Some(sender) = ch.lock().await.take() {
+                                            let _ = sender.send(());
+                                        }
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // If the command also sends a message, queue or submit it
                         if let Some(msg) = result.message_to_send {
-                            let tx = tx.clone();
-                            let mode_ov = result.mode_override;
-                            let model_ov = result
-                                .model_override
-                                .as_deref()
-                                .map(|s| sven_model::resolve_model_from_config(&config, s));
-                            tokio::spawn(async move {
-                                let _ = tx
-                                    .send(AgentRequest::Submit {
-                                        content: msg,
-                                        model_override: model_ov,
-                                        mode_override: mode_ov,
-                                    })
-                                    .await;
-                            });
+                            if agent_busy {
+                                queue.lock().unwrap().push(QueuedMessage {
+                                    content: msg,
+                                    model_transition: None,
+                                    mode_transition: result.mode_override,
+                                });
+                            } else {
+                                let tx = tx.clone();
+                                let mode_ov = result.mode_override;
+                                let model_ov = result
+                                    .model_override
+                                    .as_deref()
+                                    .map(|s| sven_model::resolve_model_from_config(&config, s));
+                                tokio::spawn(async move {
+                                    let _ = tx
+                                        .send(AgentRequest::Submit {
+                                            content: msg,
+                                            model_override: model_ov,
+                                            mode_override: mode_ov,
+                                        })
+                                        .await;
+                                });
+                            }
+                        } else if result.model_override.is_some() || result.mode_override.is_some()
+                        {
+                            // Model/mode override — stage for next send
+                            if let Some(m) = &result.model_override {
+                                let resolved = sven_model::resolve_model_from_config(&config, m);
+                                *cur_model.lock().unwrap() = resolved.name.clone();
+                                *cur_provider.lock().unwrap() = resolved.provider.clone();
+                                let name = resolved.name.clone();
+                                let w = weak_send.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(win) = w.upgrade() {
+                                        win.set_model_name(SharedString::from(&name));
+                                    }
+                                });
+                            }
+                            if let Some(mode) = result.mode_override {
+                                *cur_mode.lock().unwrap() = mode;
+                                let mode_str = format!("{mode:?}").to_lowercase();
+                                let w = weak_send.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(win) = w.upgrade() {
+                                        win.set_mode(SharedString::from(&mode_str));
+                                    }
+                                });
+                            }
                         }
                         return;
                     }
                 }
 
-                // Generate title on first real message
+                // ── Enqueue while busy ────────────────────────────────────────
+                if agent_busy {
+                    queue.lock().unwrap().push(QueuedMessage {
+                        content: content.clone(),
+                        model_transition: None,
+                        mode_transition: None,
+                    });
+                    return;
+                }
+
+                // ── Generate title on first real message ──────────────────────
                 let gen_title = {
                     let mut first = is_first.lock().unwrap();
                     if *first {
@@ -463,39 +652,56 @@ impl SvenApp {
 
         // ── New session ───────────────────────────────────────────────────────
         {
-            let msgs_model_ns = Rc::clone(&msgs_model);
-            let sessions_model_ns = Rc::clone(&sessions_model);
+            let msgs_ns = Rc::clone(&msgs_model);
+            let sessions_ns = Rc::clone(&sessions_model);
             let is_first_ns = Arc::clone(&is_first_message);
             let queue_ns = Arc::clone(&queue_state);
             let sb_ns = Arc::clone(&streaming_buf);
             let tb_ns = Arc::clone(&thinking_buf);
             let weak_ns = weak.clone();
+            let session_msgs_ns = Arc::clone(&session_messages);
+            let active_sid_ns = Arc::clone(&active_session_id);
 
             window.on_new_session(move || {
-                // Reset message history
-                while msgs_model_ns.row_count() > 0 {
-                    msgs_model_ns.remove(0);
+                // Save current session messages before switching
+                let current_id = active_sid_ns.lock().unwrap().clone();
+                {
+                    let current_msgs: Vec<PlainChatMessage> = (0..msgs_ns.row_count())
+                        .filter_map(|i| msgs_ns.row_data(i))
+                        .map(|m| PlainChatMessage {
+                            message_type: "system",
+                            content: m.content.to_string(),
+                            ..Default::default()
+                        })
+                        .collect();
+                    session_msgs_ns
+                        .lock()
+                        .unwrap()
+                        .insert(current_id, current_msgs);
                 }
 
-                // Reset streaming buffers
+                // Clear messages
+                while msgs_ns.row_count() > 0 {
+                    msgs_ns.remove(0);
+                }
+
                 *sb_ns.lock().unwrap() = String::new();
                 *tb_ns.lock().unwrap() = String::new();
                 *queue_ns.lock().unwrap() = QueueState::new();
                 *is_first_ns.lock().unwrap() = true;
 
-                // Add new session entry
-                let count = sessions_model_ns.row_count();
+                let count = sessions_ns.row_count();
                 let new_id = format!("session-{count}");
 
-                // Deactivate all existing sessions
-                for i in 0..sessions_model_ns.row_count() {
-                    if let Some(mut s) = sessions_model_ns.row_data(i) {
+                // Deactivate all sessions
+                for i in 0..sessions_ns.row_count() {
+                    if let Some(mut s) = sessions_ns.row_data(i) {
                         s.active = false;
-                        sessions_model_ns.set_row_data(i, s);
+                        sessions_ns.set_row_data(i, s);
                     }
                 }
 
-                sessions_model_ns.push(SessionItem {
+                sessions_ns.push(SessionItem {
                     id: SharedString::from(new_id.clone()),
                     title: SharedString::from("New chat"),
                     busy: false,
@@ -506,6 +712,8 @@ impl SvenApp {
                     total_cost_usd: 0.0,
                 });
 
+                *active_sid_ns.lock().unwrap() = new_id.clone();
+
                 if let Some(win) = weak_ns.upgrade() {
                     win.set_active_session_id(SharedString::from(new_id));
                     win.set_streaming_text(SharedString::new());
@@ -515,7 +723,69 @@ impl SvenApp {
             });
         }
 
-        window.on_session_selected(|_| {});
+        // ── Session selected ──────────────────────────────────────────────────
+        {
+            let msgs_ss = Rc::clone(&msgs_model);
+            let sessions_ss = Rc::clone(&sessions_model);
+            let weak_ss = weak.clone();
+            let session_msgs_ss = Arc::clone(&session_messages);
+            let active_sid_ss = Arc::clone(&active_session_id);
+            let sb_ss = Arc::clone(&streaming_buf);
+            let tb_ss = Arc::clone(&thinking_buf);
+
+            window.on_session_selected(move |id| {
+                let new_id = id.to_string();
+                let current_id = active_sid_ss.lock().unwrap().clone();
+                if new_id == current_id {
+                    return;
+                }
+
+                // Save current session's messages
+                {
+                    let snaps: Vec<PlainChatMessage> = (0..msgs_ss.row_count())
+                        .filter_map(|i| msgs_ss.row_data(i))
+                        .map(|m| slint_msg_to_plain(&m))
+                        .collect();
+                    session_msgs_ss.lock().unwrap().insert(current_id, snaps);
+                }
+
+                // Switch active marker
+                for i in 0..sessions_ss.row_count() {
+                    if let Some(mut s) = sessions_ss.row_data(i) {
+                        s.active = s.id == id;
+                        sessions_ss.set_row_data(i, s);
+                    }
+                }
+
+                *active_sid_ss.lock().unwrap() = new_id.clone();
+
+                // Load selected session's messages
+                let saved = session_msgs_ss
+                    .lock()
+                    .unwrap()
+                    .get(&new_id)
+                    .cloned()
+                    .unwrap_or_default();
+
+                while msgs_ss.row_count() > 0 {
+                    msgs_ss.remove(0);
+                }
+                for m in &saved {
+                    msgs_ss.push(m.to_slint());
+                }
+
+                *sb_ss.lock().unwrap() = String::new();
+                *tb_ss.lock().unwrap() = String::new();
+
+                if let Some(win) = weak_ss.upgrade() {
+                    win.set_active_session_id(SharedString::from(new_id));
+                    win.set_streaming_text(SharedString::new());
+                    win.set_thinking_text(SharedString::new());
+                    win.set_agent_busy(false);
+                }
+            });
+        }
+
         window.on_question_answered(|_| {});
         window.on_question_dismissed(|| {});
 
@@ -556,42 +826,55 @@ impl SvenApp {
                     .collect();
 
                 if let Some(win) = weak_ic.upgrade() {
-                    let model = Rc::new(VecModel::from(entries));
-                    win.set_completion_items(ModelRc::from(model));
+                    win.set_completion_items(ModelRc::from(Rc::new(VecModel::from(entries))));
                 }
             });
         }
 
-        // ── Completion accepted ───────────────────────────────────────────────
+        // ── Completion accepted ────────────────────────────────────────────────
         {
             let weak_ca = weak.clone();
             window.on_completion_accepted(move |val| {
-                // Replace the input text with the completed value
-                if let Some(win) = weak_ca.upgrade() {
+                let Some(win) = weak_ca.upgrade() else { return };
+                let val_str = val.to_string();
+
+                // Empty val = "accept selected" signal from Tab key
+                let apply_val = if val_str.is_empty() {
+                    // Read the currently-selected completion item
+                    let items = win.get_completion_items();
+                    let idx = win.get_completion_selected() as usize;
+                    items.row_data(idx).map(|e| e.value.to_string())
+                } else {
+                    Some(val_str)
+                };
+
+                if let Some(v) = apply_val {
                     let current = win.get_input_text().to_string();
-                    // Replace the command-being-typed with the accepted completion
                     let new_text = if let Some(stripped) = current.strip_prefix('/') {
-                        let val = val.to_string();
-                        if val.starts_with('/') {
-                            format!("{val} ")
+                        if v.starts_with('/') {
+                            format!("{v} ")
                         } else {
-                            // This is an argument completion
                             let parts: Vec<&str> = stripped.splitn(2, ' ').collect();
                             if parts.len() <= 1 {
-                                format!("/{val} ")
+                                format!("/{v} ")
                             } else {
-                                format!("/{} {val} ", parts[0])
+                                format!("/{} {v} ", parts[0])
                             }
                         }
                     } else {
-                        format!("{val} ")
+                        format!("{v} ")
                     };
                     win.set_input_text(SharedString::from(new_text));
-                    // Clear completions
-                    win.set_completion_items(ModelRc::new(VecModel::<CompletionEntry>::default()));
                 }
+                // Clear completions
+                win.set_completion_items(ModelRc::new(VecModel::<CompletionEntry>::default()));
             });
         }
+
+        // ── Picker all-items store (must be declared before model/mode clicked) ──
+        let picker_all_items: Arc<Mutex<Vec<PickerItem>>> = Arc::new(Mutex::new(Vec::new()));
+        let picker_all_for_model: Arc<Mutex<Vec<PickerItem>>> = Arc::clone(&picker_all_items);
+        let picker_all_for_mode: Arc<Mutex<Vec<PickerItem>>> = Arc::clone(&picker_all_items);
 
         // ── Model clicked ─────────────────────────────────────────────────────
         {
@@ -599,6 +882,7 @@ impl SvenApp {
             let config_mc = Arc::clone(&opts.config);
             let cur_provider_mc = Arc::clone(&current_model_provider);
             let cur_model_mc = Arc::clone(&current_model_name);
+            let all_mc = Arc::clone(&picker_all_for_model);
 
             window.on_model_clicked(move || {
                 let current = format!(
@@ -607,12 +891,11 @@ impl SvenApp {
                     cur_model_mc.lock().unwrap()
                 );
 
-                // Build picker items from catalog + config
                 let mut items: Vec<PickerItem> = Vec::new();
                 items.push(PickerItem {
                     id: SharedString::from(current.clone()),
-                    label: SharedString::from(format!("{} (current)", current)),
-                    description: SharedString::new(),
+                    label: SharedString::from(format!("{} ✓", current)),
+                    description: SharedString::from("current model"),
                 });
 
                 let mut catalog_models = catalog::static_catalog();
@@ -629,7 +912,6 @@ impl SvenApp {
                     });
                 }
 
-                // Also add named config providers
                 let mut provider_names: Vec<&str> =
                     config_mc.providers.keys().map(|s| s.as_str()).collect();
                 provider_names.sort_unstable();
@@ -648,9 +930,10 @@ impl SvenApp {
                     }
                 }
 
+                *all_mc.lock().unwrap() = items.clone();
+
                 if let Some(win) = weak_mc.upgrade() {
-                    let model = Rc::new(VecModel::from(items));
-                    win.set_picker_items(ModelRc::from(model));
+                    win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch model"));
                     win.set_picker_visible(true);
                 }
@@ -660,6 +943,7 @@ impl SvenApp {
         // ── Mode clicked ──────────────────────────────────────────────────────
         {
             let weak_mc = weak.clone();
+            let all_mc = Arc::clone(&picker_all_for_mode);
             window.on_mode_clicked(move || {
                 let items = vec![
                     PickerItem {
@@ -678,9 +962,9 @@ impl SvenApp {
                         description: SharedString::from("Read-only — explores and answers"),
                     },
                 ];
+                *all_mc.lock().unwrap() = items.clone();
                 if let Some(win) = weak_mc.upgrade() {
-                    let model = Rc::new(VecModel::from(items));
-                    win.set_picker_items(ModelRc::from(model));
+                    win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch mode"));
                     win.set_picker_visible(true);
                 }
@@ -696,29 +980,27 @@ impl SvenApp {
 
             window.on_picker_selected(move |id| {
                 let id = id.to_string();
-                if let Some(win) = weak_ps.upgrade() {
-                    win.set_picker_visible(false);
-                    let title = win.get_picker_title().to_string();
+                let Some(win) = weak_ps.upgrade() else { return };
+                win.set_picker_visible(false);
+                let title = win.get_picker_title().to_string();
 
-                    if title.contains("mode") {
-                        let mode = match id.as_str() {
-                            "plan" => AgentMode::Plan,
-                            "research" => AgentMode::Research,
-                            _ => AgentMode::Agent,
-                        };
-                        *cur_mode_ps.lock().unwrap() = mode;
-                        win.set_mode(SharedString::from(id.clone()));
+                if title.contains("mode") {
+                    let mode = match id.as_str() {
+                        "plan" => AgentMode::Plan,
+                        "research" => AgentMode::Research,
+                        _ => AgentMode::Agent,
+                    };
+                    *cur_mode_ps.lock().unwrap() = mode;
+                    win.set_mode(SharedString::from(id));
+                } else {
+                    let parts: Vec<&str> = id.splitn(2, '/').collect();
+                    if parts.len() == 2 {
+                        *cur_provider_ps.lock().unwrap() = parts[0].to_string();
+                        *cur_model_ps.lock().unwrap() = parts[1].to_string();
+                        win.set_model_name(SharedString::from(parts[1]));
                     } else {
-                        // Model selection
-                        let parts: Vec<&str> = id.splitn(2, '/').collect();
-                        if parts.len() == 2 {
-                            *cur_provider_ps.lock().unwrap() = parts[0].to_string();
-                            *cur_model_ps.lock().unwrap() = parts[1].to_string();
-                            win.set_model_name(SharedString::from(parts[1]));
-                        } else {
-                            *cur_model_ps.lock().unwrap() = id.clone();
-                            win.set_model_name(SharedString::from(id.clone()));
-                        }
+                        *cur_model_ps.lock().unwrap() = id.clone();
+                        win.set_model_name(SharedString::from(id));
                     }
                 }
             });
@@ -731,6 +1013,36 @@ impl SvenApp {
                 if let Some(win) = weak_pd.upgrade() {
                     win.set_picker_visible(false);
                 }
+            });
+        }
+
+        // ── Picker search (fuzzy filter from Rust) ────────────────────────────
+        {
+            let weak_psc = weak.clone();
+            let all = Arc::clone(&picker_all_items);
+            window.on_picker_search_changed(move |query| {
+                let Some(win) = weak_psc.upgrade() else {
+                    return;
+                };
+                let query_lower = query.to_string().to_lowercase();
+                let all_items = all.lock().unwrap();
+                if query_lower.is_empty() {
+                    win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(all_items.clone()))));
+                    return;
+                }
+                let filtered: Vec<PickerItem> = all_items
+                    .iter()
+                    .filter(|item| {
+                        item.label.to_lowercase().as_str().contains(&query_lower)
+                            || item
+                                .description
+                                .to_lowercase()
+                                .as_str()
+                                .contains(&query_lower)
+                    })
+                    .cloned()
+                    .collect();
+                win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(filtered))));
             });
         }
 
@@ -752,7 +1064,7 @@ impl SvenApp {
                     AgentEvent::TextDelta(delta) => {
                         let mut buf = sb.lock().unwrap();
                         buf.push_str(&delta);
-                        let text = buf.clone();
+                        let text = strip_inline_markdown(&buf);
                         let _ = slint::invoke_from_event_loop({
                             let w = weak2.clone();
                             move || {
@@ -792,7 +1104,7 @@ impl SvenApp {
                     AgentEvent::ThinkingDelta(delta) => {
                         let mut buf = tb.lock().unwrap();
                         buf.push_str(&delta);
-                        let text = buf.clone();
+                        let text = strip_inline_markdown(&buf);
                         let _ = slint::invoke_from_event_loop({
                             let w = weak2.clone();
                             move || {
@@ -806,13 +1118,14 @@ impl SvenApp {
 
                     AgentEvent::ThinkingComplete(content) => {
                         *tb.lock().unwrap() = String::new();
-                        // Thinking blocks are committed collapsed
+                        // Strip markdown for the stored thinking content
+                        let stripped = strip_inline_markdown(&content);
                         pm.lock().unwrap().push_back(PlainChatMessage {
                             message_type: "thinking",
-                            content,
+                            content: stripped,
                             role: "thinking",
                             is_first_in_group: false,
-                            is_expanded: false, // collapsed after streaming completes
+                            is_expanded: false,
                             ..Default::default()
                         });
                         let _ = slint::invoke_from_event_loop({
@@ -863,7 +1176,8 @@ impl SvenApp {
                             content: preview,
                             role: "tool",
                             is_error,
-                            is_expanded: false, // collapsed by default
+                            // Auto-expand error results so the error text is visible
+                            is_expanded: is_error,
                             ..Default::default()
                         });
                         let _ = slint::invoke_from_event_loop({
@@ -877,7 +1191,6 @@ impl SvenApp {
                         *sb.lock().unwrap() = String::new();
                         *tb.lock().unwrap() = String::new();
 
-                        // Dequeue next message if available
                         let next = queue_ev.lock().unwrap().pop_front();
                         let queue_len = queue_ev.lock().unwrap().len();
 
@@ -1004,7 +1317,6 @@ impl SvenApp {
                             move || {
                                 if let Some(win) = w.upgrade() {
                                     let sessions = win.get_sessions();
-                                    // Update the active session title
                                     for i in 0..sessions.row_count() {
                                         if let Some(mut row) = sessions.row_data(i) {
                                             if row.active {
@@ -1069,7 +1381,7 @@ impl SvenApp {
                     _ => {}
                 }
 
-                // Update sessions busy indicator
+                // Update session busy indicator
                 let _ = slint::invoke_from_event_loop({
                     let w = weak2.clone();
                     move || {
@@ -1133,7 +1445,44 @@ impl SvenApp {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Format tool fields as a readable multi-line string for the expanded view.
+/// Convert a Slint ChatMessage back to a PlainChatMessage for session save/restore.
+/// The `message_type` and `role` are stored in the `content` field of a special
+/// "session-snapshot" envelope. On restore, `to_slint()` re-inflates the original
+/// Slint struct by serialising all fields into the plain struct's content.
+fn slint_msg_to_plain(m: &ChatMessage) -> PlainChatMessage {
+    PlainChatMessage {
+        // Preserve the message_type by mapping back from the SharedString
+        message_type: match m.message_type.as_str() {
+            "user" => "user",
+            "assistant" => "assistant",
+            "code-block" => "code-block",
+            "heading" => "heading",
+            "list-item" => "list-item",
+            "block-quote" => "block-quote",
+            "separator" => "separator",
+            "thinking" => "thinking",
+            "tool-call" => "tool-call",
+            "tool-result" => "tool-result",
+            "error" => "error",
+            _ => "system",
+        },
+        content: m.content.to_string(),
+        role: "user", // will be overridden below
+        is_first_in_group: m.is_first_in_group,
+        is_error: m.is_error,
+        is_expanded: m.is_expanded,
+        tool_name: m.tool_name.to_string(),
+        tool_icon: m.tool_icon.to_string(),
+        tool_summary: m.tool_summary.to_string(),
+        tool_category: m.tool_category.to_string(),
+        tool_fields_json: m.tool_fields_json.to_string(),
+        language: m.language.to_string(),
+        heading_level: m.heading_level,
+        ..Default::default()
+    }
+}
+
+/// Format tool fields as a readable multi-line string.
 fn format_fields_json(fields: &[(String, String)]) -> String {
     if fields.is_empty() {
         return String::new();
@@ -1153,8 +1502,7 @@ fn format_fields_json(fields: &[(String, String)]) -> String {
         .join("\n")
 }
 
-/// Drain pending chat messages into the window's messages model.
-/// Must be called on the Slint main thread.
+/// Drain pending messages into the window model (Slint main thread only).
 fn flush_messages(pending: Arc<Mutex<VecDeque<PlainChatMessage>>>, weak: &slint::Weak<MainWindow>) {
     let Some(win) = weak.upgrade() else { return };
     let mut queue = pending.lock().unwrap();
@@ -1169,8 +1517,7 @@ fn flush_messages(pending: Arc<Mutex<VecDeque<PlainChatMessage>>>, weak: &slint:
     }
 }
 
-/// Drain pending toasts into the window's toasts model.
-/// Must be called on the Slint main thread.
+/// Drain pending toasts into the window model (Slint main thread only).
 fn flush_toasts(pending: Arc<Mutex<VecDeque<PlainToast>>>, weak: &slint::Weak<MainWindow>) {
     let Some(win) = weak.upgrade() else { return };
     let mut queue = pending.lock().unwrap();

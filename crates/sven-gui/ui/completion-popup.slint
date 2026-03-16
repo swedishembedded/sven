@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Slash command completion popup, anchored above the input pane.
+// Slash command completion popup — floats as an overlay above the input box.
+// Rendered at the window level; the InputPane is NOT responsible for its
+// position. Place this component last in the window stacking order so it
+// paints on top.
 
 import { Theme } from "theme.slint";
 
@@ -15,68 +18,105 @@ export struct CompletionEntry {
 export component CompletionPopup inherits Rectangle {
     in property <[CompletionEntry]> items;
     in property <int>               selected-index: 0;
-    in property <length>            anchor-y: 0;
 
     callback accepted(string);
     callback dismissed();
 
-    // Panel floats just above the input area
     background: transparent;
+    visible: items.length > 0;
 
-    if items.length > 0: popup-panel := Rectangle {
-        x: Theme.space-md;
-        y: anchor-y - self.height - Theme.space-xs;
-        width: 440px;
-        height: Math.min(220px, items.length * 40px);
+    property <length> panel-height: Math.min(items.length * 40px + 16px, 280px);
+
+    popup-panel := Rectangle {
+        x: Theme.space-lg;
+        y: parent.height - self.height - 6px;
+        width: Math.min(parent.width - Theme.space-lg * 2, 560px);
+        height: root.panel-height;
         border-radius: Theme.radius-md;
-        background: Theme.bg-surface;
+        background: Theme.bg-card;
         border-color: Theme.accent-dim;
         border-width: 1px;
 
-        Flickable {
-            width: parent.width;
-            height: parent.height;
-            viewport-height: item-layout.preferred-height;
-            interactive: true;
+        // Drop shadow effect via inner rect
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000060;
 
-            item-layout := VerticalLayout {
-                width: parent.width;
-                padding: Theme.space-xs;
-                spacing: 2px;
-                alignment: start;
+        VerticalLayout {
+            padding: Theme.space-xs;
+            spacing: 2px;
 
-                for item[i] in items: Rectangle {
-                    height: 36px;
-                    border-radius: Theme.radius-sm;
-                    background: i == selected-index ? Theme.bg-active
-                              : item-ta.has-hover ? Theme.bg-hover
-                              : transparent;
+            Flickable {
+                width: parent.width - 2 * Theme.space-xs;
+                height: root.panel-height - 2 * Theme.space-xs;
+                viewport-height: item-layout.preferred-height;
+                interactive: true;
 
-                    item-ta := TouchArea {
-                        clicked => { root.accepted(item.value); }
-                    }
+                item-layout := VerticalLayout {
+                    width: parent.width;
+                    spacing: 1px;
+                    alignment: start;
 
-                    HorizontalLayout {
-                        padding-left: Theme.space-sm;
-                        padding-right: Theme.space-sm;
-                        spacing: Theme.space-sm;
-                        alignment: start;
+                    for item[i] in items: Rectangle {
+                        height: 38px;
+                        border-radius: Theme.radius-sm;
+                        background: i == selected-index ? Theme.bg-active
+                                  : item-ta.has-hover    ? Theme.bg-hover
+                                  : transparent;
 
-                        Text {
-                            text: item.display != "" ? item.display : item.value;
-                            color: i == selected-index ? Theme.accent : Theme.text-primary;
-                            font-size: Theme.font-size-sm;
-                            font-weight: i == selected-index ? 600 : 400;
-                            vertical-alignment: center;
-                            width: 160px;
+                        border-color: i == selected-index ? Theme.accent-dim : transparent;
+                        border-width: i == selected-index ? 1px : 0px;
+
+                        item-ta := TouchArea {
+                            clicked => { root.accepted(item.value); }
                         }
 
-                        if item.description != "": Text {
-                            text: item.description;
-                            color: Theme.text-dim;
-                            font-size: Theme.font-size-sm;
-                            vertical-alignment: center;
-                            overflow: elide;
+                        HorizontalLayout {
+                            padding-left: Theme.space-sm;
+                            padding-right: Theme.space-sm;
+                            spacing: Theme.space-sm;
+                            alignment: start;
+
+                            // Slash icon
+                            Text {
+                                text: "/";
+                                color: i == selected-index ? Theme.accent : Theme.accent-dim;
+                                font-size: Theme.font-size-sm;
+                                font-weight: 700;
+                                font-family: Theme.font-mono;
+                                vertical-alignment: center;
+                                width: 12px;
+                            }
+
+                            // Command name
+                            Text {
+                                text: item.display != "" ? item.display : item.value;
+                                color: i == selected-index ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                font-weight: 600;
+                                font-family: Theme.font-mono;
+                                vertical-alignment: center;
+                                width: 140px;
+                            }
+
+                            // Description
+                            if item.description != "": Text {
+                                text: item.description;
+                                color: Theme.text-dim;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+
+                            // Tab hint on selected
+                            if i == selected-index: Text {
+                                text: "Tab";
+                                color: Theme.text-dim;
+                                font-size: 11px;
+                                font-family: Theme.font-mono;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
                         }
                     }
                 }

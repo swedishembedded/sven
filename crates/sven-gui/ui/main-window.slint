@@ -7,14 +7,14 @@
 import { Theme }        from "theme.slint";
 import { StatusBar }    from "status-bar.slint";
 import { Sidebar, SessionItem } from "sidebar.slint";
-import { ChatPane, ChatMessage } from "chat-pane.slint";
+import { ChatPane, ChatMessage, CodeToken, CodeLine } from "chat-pane.slint";
 import { InputPane }    from "input-pane.slint";
 import { ToastStack, ToastItem } from "toast.slint";
 import { QuestionModal } from "question-modal.slint";
 import { PickerPopup, PickerItem } from "picker-popup.slint";
-import { CompletionEntry } from "completion-popup.slint";
+import { CompletionPopup, CompletionEntry } from "completion-popup.slint";
 
-export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry }
+export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry, CodeToken, CodeLine }
 
 export component MainWindow inherits Window {
     title: "Sven Desktop";
@@ -62,15 +62,16 @@ export component MainWindow inherits Window {
     callback session-selected(string);
     callback question-answered(string);
     callback question-dismissed();
-    callback toggle-expanded(int);        // toggle thinking/tool collapse
+    callback toggle-expanded(int);
 
     callback model-clicked();
     callback mode-clicked();
-    callback picker-selected(string);     // id of picked item
+    callback picker-selected(string);
     callback picker-dismissed();
+    callback picker-search-changed(string);
 
-    callback input-changed(string);       // slash command completion
-    callback completion-accepted(string); // slash command applied
+    callback input-changed(string);
+    callback completion-accepted(string);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     VerticalLayout {
@@ -117,8 +118,6 @@ export component MainWindow inherits Window {
                     agent-busy: root.agent-busy;
                     input-text <=> root.input-text;
                     queue-count: root.queue-count;
-                    completion-items: root.completion-items;
-                    completion-selected: root.completion-selected;
                     send-message(text) => { root.send-message(text); }
                     cancel-run => { root.cancel-run(); }
                     input-changed(text) => { root.input-changed(text); }
@@ -128,7 +127,19 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Toast notifications (overlaid at bottom right)
+    // ── Completion overlay (floats above the input pane) ──────────────────────
+    if root.completion-items.length > 0: CompletionPopup {
+        x: Theme.sidebar-width;
+        y: 0;
+        width: parent.width - Theme.sidebar-width;
+        height: parent.height - Theme.status-bar-height;
+        items: root.completion-items;
+        selected-index: root.completion-selected;
+        accepted(val) => { root.completion-accepted(val); }
+        dismissed => { root.completion-accepted(""); }
+    }
+
+    // ── Toast notifications ───────────────────────────────────────────────────
     ToastStack {
         x: parent.width - 320px - Theme.space-lg;
         y: parent.height - self.preferred-height - Theme.space-lg;
@@ -136,10 +147,9 @@ export component MainWindow inherits Window {
         toasts: root.toasts;
     }
 
-    // Question modal
+    // ── Question modal ────────────────────────────────────────────────────────
     if root.question-visible: QuestionModal {
-        x: 0;
-        y: 0;
+        x: 0; y: 0;
         width: parent.width;
         height: parent.height;
         question-text: root.question-text;
@@ -148,19 +158,15 @@ export component MainWindow inherits Window {
         dismissed => { root.question-dismissed(); }
     }
 
-    // Picker popup overlay (model / mode selection)
+    // ── Picker popup ──────────────────────────────────────────────────────────
     if root.picker-visible: PickerPopup {
-        x: 0;
-        y: 0;
+        x: 0; y: 0;
         width: parent.width;
         height: parent.height;
         title: root.picker-title;
         items: root.picker-items;
-        selected(id) => {
-            root.picker-selected(id);
-        }
-        dismissed => {
-            root.picker-dismissed();
-        }
+        selected(id) => { root.picker-selected(id); }
+        dismissed => { root.picker-dismissed(); }
+        search-changed(text) => { root.picker-search-changed(text); }
     }
 }
