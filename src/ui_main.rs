@@ -123,6 +123,7 @@ fn main() -> anyhow::Result<()> {
             node_backend,
             initial_prompt: cli.prompt,
             initial_queue: vec![],
+            tool_displays: sven_tools::SharedToolDisplays::default(),
         })
         .await
     })?;

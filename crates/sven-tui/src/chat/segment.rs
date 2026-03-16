@@ -20,6 +20,7 @@ use sven_model::MessageContent;
 
 /// Return a short single-line preview of a segment for use in TUI dialog
 /// messages and labels. Uses terminal display-width for accurate CJK truncation.
+#[allow(dead_code)]
 pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     const MAX: usize = 60;
     let raw = match seg {
