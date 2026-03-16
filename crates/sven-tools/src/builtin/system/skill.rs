@@ -24,7 +24,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use sven_runtime::{SharedSkills, SkillInfo};
+use sven_runtime::{load_skill_content_from_disk, SharedSkills, SkillInfo};
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -235,7 +235,19 @@ impl SkillTool {
         };
 
         let base_dir = skill.skill_dir.display().to_string();
-        let content = skill.content.trim_end();
+        let content = match load_skill_content_from_disk(&skill.skill_md_path) {
+            Some(body) => body,
+            None => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "failed to load skill \"{command}\" from disk (file may be missing, \
+                         unreadable, oversized, or have invalid frontmatter)"
+                    ),
+                );
+            }
+        };
+        let content = content.trim_end();
         let sub_skills_hint = build_sub_skills_hint(skill, &current_skills);
 
         ToolOutput::ok(
@@ -360,6 +372,7 @@ mod tests {
     use super::*;
     use crate::tool::ToolCall;
     use serde_json::json;
+    use std::fs;
     use std::path::PathBuf;
     use sven_runtime::{SharedSkills, SkillInfo, SvenSkillMeta};
 
@@ -374,6 +387,33 @@ mod tests {
             skill_md_path: skill_dir.join("SKILL.md"),
             skill_dir,
             content: content.to_string(),
+            sven_meta: None,
+        }
+    }
+
+    /// Create a SkillInfo with a real SKILL.md on disk (in a temp dir).
+    /// Returns (SkillInfo, _guard) — keep the guard for the test duration.
+    fn make_skill_on_disk(
+        command: &str,
+        description: &str,
+        body: &str,
+        tmp: &tempfile::TempDir,
+    ) -> SkillInfo {
+        let rel: PathBuf = command.split('/').collect();
+        let skill_dir = tmp.path().join(rel);
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
+        let frontmatter = format!("---\ndescription: |\n  {description}\n---\n\n{body}");
+        fs::write(&skill_md, frontmatter).unwrap();
+        let name = command.rsplit('/').next().unwrap_or(command).to_string();
+        SkillInfo {
+            command: command.to_string(),
+            name,
+            description: description.to_string(),
+            version: None,
+            skill_md_path: skill_md,
+            skill_dir,
+            content: body.to_string(),
             sven_meta: None,
         }
     }
@@ -406,11 +446,14 @@ mod tests {
 
     #[tokio::test]
     async fn load_existing_skill_returns_content() {
-        let tool = make_tool(vec![make_skill(
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = make_skill_on_disk(
             "git-workflow",
             "Git helper.",
             "## Steps\n\n1. Run git status.",
-        )]);
+            &tmp,
+        );
+        let tool = make_tool(vec![skill]);
         let out = tool.execute(&load_call("git-workflow")).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("## Steps"));
@@ -420,7 +463,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_nested_skill_by_command_path() {
-        let tool = make_tool(vec![make_skill("sven/plan", "Planning phase.", "## Plan")]);
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = make_skill_on_disk("sven/plan", "Planning phase.", "## Plan", &tmp);
+        let tool = make_tool(vec![skill]);
         let out = tool.execute(&load_call("sven/plan")).await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("command=\"sven/plan\""));
@@ -451,15 +496,18 @@ mod tests {
 
     #[tokio::test]
     async fn load_parent_shows_hint_for_direct_children() {
-        let parent = make_skill(
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = make_skill_on_disk(
             "sven",
             "Top-level orchestrator.",
             "## Sven Workflow\n\nFor planning call skill(load, 'sven/plan').",
+            &tmp,
         );
-        let child = make_skill(
+        let child = make_skill_on_disk(
             "sven/plan",
             "Planning step — call this when planning.",
             "## Planning detail — this body must NOT appear in parent load.",
+            &tmp,
         );
         let tool = make_tool(vec![parent, child]);
 
@@ -476,7 +524,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_skill_content_ends_with_close_tag() {
-        let tool = make_tool(vec![make_skill("my-skill", "Desc.", "Content here.")]);
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = make_skill_on_disk("my-skill", "Desc.", "Content here.", &tmp);
+        let tool = make_tool(vec![skill]);
         let out = tool.execute(&load_call("my-skill")).await;
         assert!(!out.is_error);
         assert!(out.content.contains("</skill_content>"));

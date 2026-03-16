@@ -20,8 +20,8 @@ pub use agents::{discover_agents, AgentInfo, SharedAgents};
 
 pub mod skills;
 pub use skills::{
-    discover_commands, discover_skills, parse_skill_file, ParsedSkill, SharedSkills, SkillInfo,
-    SvenSkillMeta,
+    discover_commands, discover_skills, load_skill_content_from_disk, parse_skill_file,
+    ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta,
 };
 
 pub mod knowledge;

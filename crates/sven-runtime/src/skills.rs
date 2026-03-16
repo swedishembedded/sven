@@ -180,6 +180,21 @@ pub struct ParsedSkill {
     pub body: String,
 }
 
+/// Load a skill's content from disk, returning the parsed body.
+///
+/// Re-reads the SKILL.md file so that edits made after discovery are picked up.
+/// Returns `None` when the file is oversized, unreadable, or has invalid frontmatter.
+#[must_use]
+pub fn load_skill_content_from_disk(path: &Path) -> Option<String> {
+    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    if size > MAX_SKILL_FILE_BYTES {
+        return None;
+    }
+    let raw = std::fs::read_to_string(path).ok()?;
+    let parsed = parse_skill_file(&raw)?;
+    Some(parsed.body)
+}
+
 /// Parse a raw SKILL.md string into its frontmatter fields and body.
 ///
 /// The `description` field is required.  The `name` field is optional; callers
