@@ -1,11 +1,46 @@
 # Agent Sven
 
-A keyboard-driven AI agent for the terminal. Built in Rust, sven works as an
-interactive TUI, a headless CI runner, a networked node that teams up with
-other sven instances, and a proactive personal automation platform — all from
-the same binary.
+**A keyboard-driven AI agent for the terminal and desktop.** Built in Rust, sven
+works as an interactive TUI, a Slint desktop GUI (`sven-ui`), a headless CI
+runner, a networked node that teams up with other sven instances, and a
+proactive personal automation platform — two binaries, one agent.
 
 ![sven start](docs/sven-landing.png)
+
+---
+
+## Why terminal-native?
+
+The terminal is the universal interface for both humans and AI agents:
+
+• **Structured & Composable** — Text commands match LLM format and chain for complex workflows
+
+• **Lightweight & Universal** — Minimal overhead, works across all systems without runtime dependencies
+
+• **Self-Describing** — Markdown workflows and `--help` provide documentation agents can discover
+
+• **Agent-First Design** — Structured JSON output, pipeable conversations, and skills eliminate parsing complexity
+
+• **Deterministic & Reliable** — Consistent results enable predictable agent behavior in CI and automation
+
+---
+
+## Quick Start
+
+**Prerequisites:** Rust toolchain, API key for your chosen model provider (OpenAI, Anthropic, etc.)
+
+```sh
+# Build and run
+make release && ./target/release/sven
+
+# Or pipe a task
+echo "Summarise the project" | sven
+
+# Run a multi-step workflow
+sven --file plan.md
+```
+
+See [Installation](docs/01-installation.md) and [Quick Start](docs/02-quickstart.md) for setup details.
 
 ---
 
@@ -25,6 +60,13 @@ base from anything you type, and running automated workflows on a cron schedule.
 A full-screen Ratatui interface with a scrollable markdown chat log, vim-style
 navigation, and live-streamed responses. Swap between a plain ratatui view and
 an embedded Neovim buffer with `--nvim`.
+
+### Desktop GUI
+
+`sven-ui` is a native Slint desktop application built on the same agent core.
+It provides a windowed chat interface with the full tool suite, all messaging
+integrations, and node connectivity — no terminal required. Build and run it
+with `make gui-release && ./target/release/sven-ui`.
 
 ### Headless / CI
 
@@ -61,6 +103,41 @@ can delegate work to each other.
 export SVEN_NODE_TOKEN=<token from first startup>
 sven node exec "delegate the database migration to backend-agent and the UI changes to frontend-agent"
 ```
+
+---
+
+## When to use sven
+
+| Use case | How sven helps |
+|----------|----------------|
+| **Interactive coding** | TUI with vim-style navigation, live-streamed responses, optional embedded Neovim |
+| **Desktop GUI** | `sven-ui` — native Slint window with the full agent, no terminal required |
+| **CI and pipelines** | Headless mode, workflow files, pipeable output, structured JSON |
+| **Hardware debugging** | Native GDB integration — connect, set breakpoints, inspect registers autonomously |
+| **Agent teams** | P2P networking and declarative team definitions: discover peers, delegate tasks, orchestrate workflows |
+| **Personal automation** | Scheduler, email, calendar, voice, semantic memory — proactive 24/7 agent |
+| **IDE integration (ACP)** | ACP support for Zed, VS Code, JetBrains — no daemon, sven manages its own model |
+| **MCP host integration** | `sven mcp serve` exposes all sven tools to Cursor, Claude Desktop, and any MCP-compatible host |
+
+### What you can do
+
+• **Let agents handle your workflows** — Coding, refactoring, debugging. Give sven a task in plain English; it reads code, runs commands, writes files, and delegates subtasks.
+
+• **Unify tools into one agent** — TUI, desktop GUI, headless, node, GDB, email, calendar, voice, memory. Two binaries (`sven` + `sven-ui`), one agent, many integrations.
+
+• **Replace or supercharge GUI agents** — No screenshots, no pixel-clicking. Terminal-native with structured output. Chain agents via pipes.
+
+### Demo: a typical session
+
+```
+You: Add a retry loop to the fetch function in src/api.rs, with exponential backoff.
+
+sven: [reads file, runs commands, writes changes]
+     ✓ Updated src/api.rs — added retry logic with 1s, 2s, 4s backoff
+     ✓ Ran cargo check — no errors
+```
+
+See [Examples](docs/06-examples.md) for more workflows.
 
 ---
 
@@ -126,6 +203,22 @@ online, then:
 
 sven handles the rest — calling `list_peers`, picking the right peers, calling
 `delegate_task` for each, and assembling the results.
+
+### Declarative agent teams
+
+Beyond ad-hoc delegation, sven supports declarative team definitions in
+`.sven/teams/*.yaml`. Each team specifies members, roles, and a shared task
+list. The orchestrator uses `create_task`, `claim_task`, and `list_team` tools
+to coordinate workers, track progress, and spawn new agent processes.
+
+```sh
+sven team start --file .sven/teams/myteam.yaml   # spawn all team members
+sven team status myteam                           # show live task board
+sven team list                                    # list all known teams
+```
+
+Use `sven peer chat backend-agent` for an interactive session with any peer —
+no running node required.
 
 See [docs/08-node.md](docs/08-node.md) for setup, security, and configuration.
 
@@ -331,8 +424,11 @@ sven --file audit.md --var context="Focus on authentication."
 | **Voice** (TTS, STT, outbound calls) | ✓ | — | — | ✓ |
 | **Semantic memory** (SQLite + FTS5 + embeddings) | ✓ | — | — | ✓ |
 | **Generic webhooks** | ✓ | — | — | ✓ |
+| **MCP server** (Cursor, Claude Desktop, opencode…) | ✓ | — | — | — |
+| **Declarative agent teams** | ✓ built-in | — | — | — |
+| **Desktop GUI** (Slint native window) | ✓ sven-ui | — | — | — |
 | Zero runtime dependencies | ✓ native Rust | ✓ native Rust | Node.js | Node.js |
-| TUI + headless + node in one binary | ✓ | separate | separate | separate |
+| TUI + desktop GUI + headless + node | ✓ | separate | separate | separate |
 
 ### Tool suite
 
@@ -439,6 +535,7 @@ See [docs/providers.md](docs/providers.md) for configuration details.
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
 | [IDE integration (ACP)](docs/03-user-guide.md#ide-integration-via-acp) | Zed, JetBrains, VS Code via Agent Client Protocol |
+| [MCP integration](#mcp-integration) | Expose sven tools to Cursor, Claude Desktop, and other MCP hosts |
 | [Messaging Channels](docs/12-channels.md) | Telegram, Discord, WhatsApp, Signal, Matrix, IRC |
 | [Scheduler](docs/13-scheduler.md) | Cron jobs, intervals, heartbeat, `HEARTBEAT.md` |
 | [Email](docs/14-email.md) | IMAP/SMTP and Gmail integration |
@@ -537,11 +634,11 @@ Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.or
 letting ACP-aware editors drive it directly as an AI coding agent over stdio.
 No daemon, no relay, no IDE API key required — sven manages its own model.
 
-```sh
-# Zed: add to ~/.config/zed/settings.json
+```json
+// Zed: add to ~/.config/zed/settings.json
 {
-  "agent_servers": {
-    "sven": { "type": "custom", "command": "sven", "args": ["acp", "serve"] }
+  "agents": {
+    "sven": { "command": "sven", "args": ["acp", "serve"] }
   }
 }
 ```
@@ -556,6 +653,51 @@ sven acp serve --node-url wss://localhost:8443 --token "$SVEN_NODE_TOKEN"
 
 See the [IDE integration guide](docs/03-user-guide.md#ide-integration-via-acp)
 and the [ACP technical reference](docs/technical/acp.md) for full details.
+
+---
+
+## MCP integration
+
+Sven can expose its full tool suite as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io)
+server, letting any MCP-compatible host — Cursor, Claude Desktop, opencode,
+codex, and others — call sven's tools directly.
+
+```sh
+# Start as an MCP server (stdio transport)
+sven mcp serve
+```
+
+Add to your MCP host config (`mcp.json` or equivalent):
+
+```json
+{
+  "mcpServers": {
+    "sven": {
+      "command": "sven",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+To proxy through a running `sven node` (all node tools available):
+
+```json
+{
+  "mcpServers": {
+    "sven": {
+      "command": "sven",
+      "args": ["mcp", "serve", "--node-url", "wss://127.0.0.1:18790/ws", "--token", "<token>"]
+    }
+  }
+}
+```
+
+Or expose only a specific subset of tools:
+
+```sh
+sven mcp serve --tools read_file,write_file,grep,run_terminal_command
+```
 
 ---
 
@@ -597,21 +739,43 @@ Run `sven show-config` to see the full resolved config. Key sections:
 
 ---
 
+## Core design principles
+
+1. **Terminal-first** — The agent lives in the terminal. No browser, no screenshots, no RPA fragility. Structured text in, structured text out.
+
+2. **Two binaries, one agent** — `sven` (TUI + headless + node) and `sven-ui` (desktop GUI) share the same agent core. Same tools, same model loop, same configuration.
+
+3. **Agent-native output** — JSON, conversation markdown, JSONL for fine-tuning. Pipeable so agents can chain sven instances.
+
+4. **Real integrations** — GDB talks to real debuggers. Email uses real IMAP/Gmail. Calendar uses real CalDAV/Google. No toy implementations.
+
+5. **Zero runtime dependencies** — Native Rust. No Node.js, no Python. Minimal footprint.
+
+---
+
 ## Workspace layout
 
 ```
 sven/
-├── src/                    # binary entry-point and CLI
+├── src/                    # binary entry-points: sven (CLI/TUI) and sven-ui (desktop GUI)
 └── crates/
     ├── sven-config/        # config schema and loader
     ├── sven-model/         # ModelProvider trait + 32 drivers
     ├── sven-core/          # agent loop, session, context compaction
     ├── sven-tools/         # full tool suite + approval policy
     ├── sven-input/         # markdown step parser and message queue
+    ├── sven-image/         # image loading, resizing, and base64-encoding for multimodal requests
     ├── sven-ci/            # headless runner and output formatting
-    ├── sven-tui/           # Ratatui TUI: layout, widgets, key bindings
+    ├── sven-frontend/      # shared agent-wiring layer for TUI and desktop GUI
+    ├── sven-tui/           # Ratatui TUI: layout, widgets, key bindings, Neovim integration
+    ├── sven-gui/           # Slint desktop GUI (sven-ui binary)
     ├── sven-p2p/           # libp2p node: Noise, mDNS, relay, task routing
-    ├── sven-node/          # node: HTTP/WS + P2P + Slack + webhooks + agent wiring
+    ├── sven-node/          # node: HTTP/WS + P2P + webhooks + agent wiring
+    ├── sven-node-client/   # shared WebSocket client for ACP/MCP node proxies
+    ├── sven-acp/           # ACP server: IDE integration for Zed, VS Code, JetBrains
+    ├── sven-mcp/           # MCP server: expose sven tools to Cursor, Claude Desktop, etc.
+    ├── sven-mcp-client/    # MCP client for consuming external MCP servers
+    ├── sven-team/          # agent team coordination: declarative definitions, task list, spawn
     ├── sven-channels/      # Channel trait + adapters (Telegram, Discord, WhatsApp, Signal, Matrix, IRC)
     ├── sven-scheduler/     # Job, Schedule, JobStore (YAML), Scheduler, Heartbeat
     ├── sven-integrations/  # Email, Calendar, Voice providers (IMAP, Gmail, CalDAV, ElevenLabs, Twilio…)
@@ -625,7 +789,17 @@ sven/
 ## Testing
 
 ```sh
-make test       # unit and integration tests (cargo test)
-make bats       # end-to-end tests (requires bats-core)
-make check      # clippy lints
+make test           # unit and integration tests (cargo test)
+make tests/e2e      # end-to-end tests (requires bats-core)
+make check          # clippy lints
 ```
+
+---
+
+## Limitations
+
+• **Requires model API access** — You need an API key for at least one supported provider (OpenAI, Anthropic, etc.). Local models work via Ollama, LM Studio, or vLLM.
+
+• **Workflow structure applies only with `--file`** — Piped stdin is treated as a single message; multi-step `##` parsing applies only when using `-f`/`--file`.
+
+• **Node security is strict by default** — TLS on, loopback-only binding, explicit device pairing. Suitable for local/trusted use; adjust for production deployments.
