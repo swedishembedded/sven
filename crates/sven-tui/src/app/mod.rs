@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crossterm::event::EventStream;
 use futures::StreamExt;
 use ratatui::{layout::Rect, DefaultTerminal, Frame};
-use sven_config::{AgentMode, Config, ModelConfig};
+use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_model::Message;
 use sven_tools::QuestionRequest;
@@ -62,62 +62,9 @@ pub(crate) use ui_state::UiState;
 // throughout the codebase.
 pub use ui_state::FocusPane;
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// ── Public types (re-exported from sven-frontend for cross-frontend sharing) ───
 
-/// Specifies a model switch to take effect with a queued message.
-#[derive(Debug, Clone)]
-pub enum ModelDirective {
-    SwitchTo(Box<ModelConfig>),
-}
-
-impl ModelDirective {
-    pub fn into_model_config(self) -> ModelConfig {
-        match self {
-            ModelDirective::SwitchTo(c) => *c,
-        }
-    }
-
-    /// Display label for UI (e.g. queue panel). Never panics.
-    pub fn display_label(&self) -> String {
-        match self {
-            ModelDirective::SwitchTo(c) => format!("{}/{}", c.provider, c.name),
-        }
-    }
-}
-
-/// A message waiting in the queue, with optional per-message transitions.
-#[derive(Debug, Clone)]
-pub struct QueuedMessage {
-    pub content: String,
-    pub model_transition: Option<ModelDirective>,
-    pub mode_transition: Option<AgentMode>,
-}
-
-impl QueuedMessage {
-    pub fn plain(content: String) -> Self {
-        Self {
-            content,
-            model_transition: None,
-            mode_transition: None,
-        }
-    }
-}
-
-/// Node-proxy backend configuration for the TUI.
-///
-/// When set, the TUI forwards all agent interactions to a running sven node
-/// over WebSocket instead of running a local agent.  The node's agent
-/// has a live `P2pHandle`, so peer tools (`list_peers`, `delegate_task`, …)
-/// are available.
-#[derive(Debug, Clone)]
-pub struct NodeBackend {
-    /// WebSocket URL of the running node (e.g. `wss://127.0.0.1:18790/ws`).
-    pub url: String,
-    /// Bearer token for the node's HTTP API.
-    pub token: String,
-    /// Skip TLS certificate verification (safe on loopback).
-    pub insecure: bool,
-}
+pub use sven_frontend::{ModelDirective, NodeBackend, QueuedMessage};
 
 /// Options passed when constructing the TUI app.
 pub struct AppOptions {

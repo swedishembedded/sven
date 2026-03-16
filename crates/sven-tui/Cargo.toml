@@ -12,6 +12,7 @@ sven-core      = { path = "../sven-core" }
 sven-bootstrap = { path = "../sven-bootstrap" }
 sven-mcp-client = { path = "../sven-mcp-client" }
 sven-runtime   = { path = "../sven-runtime" }
+sven-frontend  = { path = "../sven-frontend" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }

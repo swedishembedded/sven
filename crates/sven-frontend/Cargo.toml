@@ -1,0 +1,33 @@
+[package]
+name    = "sven-frontend"
+version = "0.1.0"
+edition = "2021"
+description = "Shared agent-wiring layer for sven frontends (TUI and GUI)"
+license = "Apache-2.0"
+
+[dependencies]
+sven-config      = { path = "../sven-config" }
+sven-model       = { path = "../sven-model" }
+sven-input       = { path = "../sven-input" }
+sven-tools       = { path = "../sven-tools" }
+sven-core        = { path = "../sven-core" }
+sven-bootstrap   = { path = "../sven-bootstrap" }
+sven-mcp-client  = { path = "../sven-mcp-client" }
+sven-runtime     = { path = "../sven-runtime" }
+anyhow           = { workspace = true }
+tokio            = { workspace = true }
+futures          = { workspace = true }
+tracing          = { workspace = true }
+serde_json       = { workspace = true }
+serde            = { workspace = true }
+uuid             = { workspace = true }
+base64           = { workspace = true }
+chrono           = { workspace = true }
+unicode-width    = { workspace = true }
+rustls           = { workspace = true }
+rand             = "0.8"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
