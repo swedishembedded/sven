@@ -18,7 +18,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check docs docs-pdf \
+.PHONY: all build release gui gui-release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -28,13 +28,22 @@ REPO    := swedishembedded/sven
 
 all: build
 
-## build     – debug build
+## build     – debug build (CLI + TUI + GUI)
 build:
 	$(CARGO) build $(CARGO_FLAGS)
 
-## release   – optimised release build
+## release   – optimised release build (CLI + TUI + GUI)
 release:
 	$(CARGO) build --release $(CARGO_FLAGS)
+
+## gui       – debug build of the desktop GUI only
+gui:
+	$(CARGO) build --bin sven-ui $(CARGO_FLAGS)
+
+## gui-release – optimised release build of the desktop GUI only
+gui-release:
+	$(CARGO) build --bin sven-ui --release $(CARGO_FLAGS)
+	@echo "Desktop GUI binary: target/release/sven-ui"
 
 ## test      – run all unit + integration tests
 test:

@@ -1,0 +1,368 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Scrollable chat message pane.
+
+import { Theme } from "theme.slint";
+
+export struct ChatMessage {
+    message-type: string,
+    content: string,
+    tool-name: string,
+    is-error: bool,
+    is-streaming: bool,
+    role: string,
+}
+
+// ── Message bubble components ─────────────────────────────────────────────────
+
+component UserBubble inherits Rectangle {
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: Theme.user-msg-bg;
+    border-color: Theme.user-msg-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        Text {
+            text: "You";
+            color: Theme.info;
+            font-size: Theme.font-size-sm;
+            font-weight: 700;
+        }
+
+        Text {
+            text: content;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-base;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component AssistantBubble inherits Rectangle {
+    in property <string> content;
+    in property <bool>   is-streaming: false;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: Theme.asst-msg-bg;
+    border-color: Theme.asst-msg-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        HorizontalLayout {
+            spacing: Theme.space-xs;
+            alignment: start;
+            Text {
+                text: "⬡ Sven";
+                color: Theme.accent;
+                font-size: Theme.font-size-sm;
+                font-weight: 700;
+            }
+            if is-streaming: Text {
+                text: "▋";
+                color: Theme.accent;
+                font-size: Theme.font-size-sm;
+            }
+        }
+
+        Text {
+            text: content;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-base;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component ThinkingBubble inherits Rectangle {
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: Theme.thinking-bg;
+    border-color: Theme.thinking-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        Text {
+            text: "◎ Thinking";
+            color: Theme.thinking-text;
+            font-size: Theme.font-size-sm;
+            font-weight: 600;
+        }
+
+        Text {
+            text: content;
+            color: Theme.thinking-text;
+            font-size: Theme.font-size-sm;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component ToolCallBubble inherits Rectangle {
+    in property <string> tool-name;
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: Theme.tool-bg;
+    border-color: Theme.tool-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        HorizontalLayout {
+            spacing: Theme.space-xs;
+            alignment: start;
+            Text {
+                text: "⚙ " + tool-name;
+                color: Theme.tool-name-color;
+                font-size: Theme.font-size-sm;
+                font-weight: 700;
+            }
+        }
+
+        if content != "": Text {
+            text: content;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-code;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component ToolResultBubble inherits Rectangle {
+    in property <string> content;
+    in property <bool>   is-error;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: is-error ? Theme.error-bg : Theme.tool-bg;
+    border-color: is-error ? Theme.error-border : Theme.tool-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        Text {
+            text: is-error ? "✕ Error" : "✓ Result";
+            color: is-error ? Theme.error-text : Theme.success;
+            font-size: Theme.font-size-sm;
+            font-weight: 600;
+        }
+
+        Text {
+            text: content;
+            color: is-error ? Theme.error-text : Theme.text-secondary;
+            font-size: Theme.font-size-code;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component ErrorBubble inherits Rectangle {
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    border-radius: Theme.radius-md;
+    background: Theme.error-bg;
+    border-color: Theme.error-border;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        Text {
+            text: "✕ " + content;
+            color: Theme.error-text;
+            font-size: Theme.font-size-base;
+            wrap: word-wrap;
+            width: available-width - 2 * Theme.space-md;
+        }
+    }
+}
+
+component SystemEventRow {
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+    height: 28px;
+
+    Text {
+        text: content;
+        color: Theme.text-dim;
+        font-size: Theme.font-size-sm;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+// ── Welcome screen ────────────────────────────────────────────────────────────
+
+export component WelcomeScreen {
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.space-lg;
+
+        Text {
+            text: "⬡";
+            font-size: 48px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Sven Desktop";
+            font-size: 24px;
+            font-weight: 700;
+            color: Theme.text-primary;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "An efficient AI coding agent";
+            font-size: Theme.font-size-base;
+            color: Theme.text-secondary;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Type a message below to start";
+            font-size: Theme.font-size-sm;
+            color: Theme.text-dim;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ── Message row dispatching ───────────────────────────────────────────────────
+//
+// MessageRow inherits VerticalLayout so that only the one matching `if` branch
+// is instantiated (the others cost zero height) and the parent VerticalLayout
+// in ChatPane can measure each row's preferred-height correctly.  Without an
+// enclosing layout the conditional children would all sit at (0,0) and overlap.
+
+component MessageRow inherits VerticalLayout {
+    in property <ChatMessage> msg;
+    in property <length> available-width: 600px;
+
+    alignment: start;
+
+    if msg.message-type == "user": UserBubble {
+        content: msg.content;
+        available-width: available-width;
+    }
+    if msg.message-type == "assistant": AssistantBubble {
+        content: msg.content;
+        is-streaming: false;
+        available-width: available-width;
+    }
+    if msg.message-type == "thinking": ThinkingBubble {
+        content: msg.content;
+        available-width: available-width;
+    }
+    if msg.message-type == "tool-call": ToolCallBubble {
+        tool-name: msg.tool-name;
+        content: msg.content;
+        available-width: available-width;
+    }
+    if msg.message-type == "tool-result": ToolResultBubble {
+        content: msg.content;
+        is-error: msg.is-error;
+        available-width: available-width;
+    }
+    if msg.message-type == "error": ErrorBubble {
+        content: msg.content;
+        available-width: available-width;
+    }
+    if msg.message-type == "system": SystemEventRow {
+        content: msg.content;
+        available-width: available-width;
+    }
+}
+
+// ── Main chat pane ────────────────────────────────────────────────────────────
+
+export component ChatPane inherits Rectangle {
+    in property <[ChatMessage]> messages;
+    /// Live text delta from the assistant (shown as a streaming bubble).
+    in property <string> streaming-text: "";
+    /// Live thinking delta (shown as a streaming ThinkingBubble while the
+    /// model reasons; cleared once ThinkingComplete fires).
+    in property <string> thinking-text: "";
+
+    background: Theme.bg-deep;
+    clip: true;
+
+    property <bool> has-content: messages.length > 0
+                                  || streaming-text != ""
+                                  || thinking-text != "";
+
+    if !has-content: WelcomeScreen {
+        width: parent.width;
+        height: parent.height;
+    }
+
+    if has-content: Flickable {
+        width: parent.width;
+        height: parent.height;
+        interactive: true;
+        viewport-height: content-layout.preferred-height;
+
+        content-layout := VerticalLayout {
+            width: parent.width;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+            alignment: start;
+
+            for msg in messages: MessageRow {
+                msg: msg;
+                available-width: parent.width - 2 * Theme.space-lg;
+            }
+
+            // Live thinking stream (shown while the model is reasoning)
+            if thinking-text != "": ThinkingBubble {
+                content: thinking-text;
+                available-width: parent.width - 2 * Theme.space-lg;
+            }
+
+            // Live response stream (shown token-by-token)
+            if streaming-text != "": AssistantBubble {
+                content: streaming-text;
+                is-streaming: true;
+                available-width: parent.width - 2 * Theme.space-lg;
+            }
+        }
+    }
+}

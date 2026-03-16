@@ -1,0 +1,114 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Status bar shown at the top of the main window.
+
+import { Theme } from "theme.slint";
+
+export component StatusBar inherits Rectangle {
+    in property <string> model-name: "claude";
+    in property <string> mode: "agent";
+    in property <int>    context-pct: 0;
+    in property <bool>   agent-busy: false;
+    in property <float>  total-cost-usd: 0.0;
+    in property <int>    total-output-tokens: 0;
+    in property <string> connection-label: "local";
+    in property <bool>   is-node-proxy: false;
+
+    height: Theme.status-bar-height;
+    background: Theme.bg-surface;
+
+    // Bottom border line
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+        alignment: space-between;
+
+        // ── Left: logo + model ────────────────────────────────────────────────
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            alignment: start;
+
+            Text {
+                text: "⬡ sven";
+                color: Theme.accent;
+                font-size: Theme.font-size-md;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            // Divider
+            Rectangle {
+                width: 1px;
+                height: 16px;
+                y: (parent.height - self.height) / 2;
+                background: Theme.border;
+            }
+
+            Text {
+                text: root.model-name;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "·";
+                color: Theme.text-dim;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.mode;
+                color: Theme.info;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+        }
+
+        // ── Right: metrics ────────────────────────────────────────────────────
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            alignment: end;
+
+            // Busy indicator
+            if root.agent-busy: HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: center;
+                Text {
+                    text: "⟳ thinking";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Context usage
+            Text {
+                text: "ctx " + root.context-pct + "%";
+                color: root.context-pct > 80 ? Theme.warning : Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            // Connection type
+            Text {
+                text: root.is-node-proxy ? "⬡ " + root.connection-label : "⬡ local";
+                color: root.is-node-proxy ? Theme.info : Theme.text-dim;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

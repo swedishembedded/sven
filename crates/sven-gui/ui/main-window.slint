@@ -1,0 +1,118 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Sven Desktop – Main application window
+
+import { Theme }        from "theme.slint";
+import { StatusBar }    from "status-bar.slint";
+import { Sidebar, SessionItem } from "sidebar.slint";
+import { ChatPane, ChatMessage } from "chat-pane.slint";
+import { InputPane }    from "input-pane.slint";
+import { ToastStack, ToastItem } from "toast.slint";
+import { QuestionModal } from "question-modal.slint";
+
+export { SessionItem, ChatMessage, ToastItem }
+
+export component MainWindow inherits Window {
+    title: "Sven Desktop";
+    preferred-width: 1280px;
+    preferred-height: 820px;
+    background: Theme.bg-deep;
+
+    // ── Data model ────────────────────────────────────────────────────────────
+    in property <[ChatMessage]>  messages;
+    in property <string>         streaming-text: "";
+    in property <string>         thinking-text: "";
+    in property <[SessionItem]>  sessions;
+    in property <string>         active-session-id: "";
+    in property <string>         model-name: "claude";
+    in property <string>         mode: "agent";
+    in property <int>            context-pct: 0;
+    in property <bool>           agent-busy: false;
+    in property <float>          total-cost-usd: 0.0;
+    in property <int>            total-output-tokens: 0;
+    in property <bool>           is-node-proxy: false;
+    in property <string>         connection-label: "local";
+    in property <[ToastItem]>    toasts;
+    in-out property <string>     input-text: "";
+
+    // Question modal
+    in property <bool>           question-visible: false;
+    in property <string>         question-text: "";
+    in-out property <string>     question-answer: "";
+
+    // ── Callbacks ─────────────────────────────────────────────────────────────
+    callback send-message(string);
+    callback cancel-run();
+    callback new-session();
+    callback session-selected(string);
+    callback question-answered(string);
+    callback question-dismissed();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    VerticalLayout {
+        spacing: 0;
+
+        StatusBar {
+            model-name: root.model-name;
+            mode: root.mode;
+            context-pct: root.context-pct;
+            agent-busy: root.agent-busy;
+            total-cost-usd: root.total-cost-usd;
+            is-node-proxy: root.is-node-proxy;
+            connection-label: root.connection-label;
+        }
+
+        HorizontalLayout {
+            spacing: 0;
+            vertical-stretch: 1;
+
+            Sidebar {
+                sessions: root.sessions;
+                active-session-id: root.active-session-id;
+                session-selected(id) => { root.session-selected(id); }
+                new-session => { root.new-session(); }
+            }
+
+            VerticalLayout {
+                spacing: 0;
+                horizontal-stretch: 1;
+
+                ChatPane {
+                    vertical-stretch: 1;
+                    messages: root.messages;
+                    streaming-text: root.streaming-text;
+                    thinking-text: root.thinking-text;
+                }
+
+                InputPane {
+                    agent-busy: root.agent-busy;
+                    input-text <=> root.input-text;
+                    send-message(text) => { root.send-message(text); }
+                    cancel-run => { root.cancel-run(); }
+                }
+            }
+        }
+    }
+
+    // Toast notifications (overlaid at bottom right)
+    ToastStack {
+        x: parent.width - 320px - Theme.space-lg;
+        y: parent.height - self.preferred-height - Theme.space-lg;
+        width: 320px;
+        toasts: root.toasts;
+    }
+
+    // Question modal
+    if root.question-visible: QuestionModal {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        question-text: root.question-text;
+        answer-text <=> root.question-answer;
+        answered(ans) => { root.question-answered(ans); }
+        dismissed => { root.question-dismissed(); }
+    }
+}

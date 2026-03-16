@@ -1,0 +1,29 @@
+[package]
+name    = "sven-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Slint-based desktop GUI widgets and bridge for Sven"
+license = "Apache-2.0"
+build = "build.rs"
+
+[dependencies]
+sven-frontend = { path = "../sven-frontend" }
+sven-config   = { path = "../sven-config" }
+sven-core     = { path = "../sven-core" }
+sven-tools    = { path = "../sven-tools" }
+sven-input    = { path = "../sven-input" }
+sven-model    = { path = "../sven-model" }
+sven-bootstrap = { path = "../sven-bootstrap" }
+sven-runtime  = { path = "../sven-runtime" }
+sven-mcp-client = { path = "../sven-mcp-client" }
+slint         = { workspace = true }
+tokio         = { workspace = true }
+futures       = { workspace = true }
+tracing       = { workspace = true }
+anyhow        = { workspace = true }
+serde_json    = { workspace = true }
+chrono        = { workspace = true }
+uuid          = { workspace = true }
+
+[build-dependencies]
+slint-build = { workspace = true }

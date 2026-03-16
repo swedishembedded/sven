@@ -37,6 +37,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 BINARY="${BINARY_OVERRIDE:-${ROOT}/target/release/sven}"
+GUI_BINARY="${ROOT}/target/release/sven-ui"
 
 # ── Sanity checks ──────────────────────────────────────────────────────────────
 if [[ ! -f "${BINARY}" ]]; then
@@ -75,8 +76,31 @@ install -d \
     "${STAGING}/usr/share/fish/vendor_completions.d" \
     "${STAGING}/usr/share/doc/sven"
 
-# ── Install binary ────────────────────────────────────────────────────────────
+# ── Install binaries ──────────────────────────────────────────────────────────
 install -m 755 "${BINARY}" "${STAGING}/usr/bin/sven"
+
+# Install desktop GUI if available
+if [[ -f "${GUI_BINARY}" ]]; then
+    echo "  Installing sven-ui desktop GUI..."
+    install -m 755 "${GUI_BINARY}" "${STAGING}/usr/bin/sven-ui"
+    install -d "${STAGING}/usr/share/applications"
+    cat > "${STAGING}/usr/share/applications/sven-ui.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Sven
+GenericName=AI Coding Agent
+Comment=Sven desktop AI coding agent
+Exec=sven-ui
+Icon=sven
+Terminal=false
+Categories=Development;IDE;
+Keywords=ai;coding;agent;llm;
+StartupNotify=true
+DESKTOP
+    chmod 644 "${STAGING}/usr/share/applications/sven-ui.desktop"
+else
+    echo "  sven-ui not found at ${GUI_BINARY}, skipping GUI installation."
+fi
 
 # ── sven:// protocol handler (OAuth callback) ─────────────────────────────────
 cat > "${STAGING}/usr/share/applications/sven-oauth.desktop" <<'DESKTOP'
@@ -142,12 +166,12 @@ Depends: libc6 (>= 2.17)
 Section: utils
 Priority: optional
 Homepage: https://agentsven.com
-Description: An efficient AI coding agent for CLI and CI
- Sven is an efficient AI coding agent that works both as an interactive
- terminal UI (TUI) and as a headless CI pipeline tool.  It can read
- multi-step instructions from Markdown files or stdin, execute tool calls
- (shell, filesystem, glob search), and stream clean text to stdout so its
- output pipes directly into other agents or CI steps.
+Description: An efficient AI coding agent for CLI, TUI, and desktop
+ Sven is an efficient AI coding agent that works as an interactive terminal UI
+ (TUI), a Slint-based cross-platform desktop GUI (sven-ui), and a headless CI
+ pipeline tool.  It can read multi-step instructions from Markdown files or
+ stdin, execute tool calls (shell, filesystem, glob search), and stream clean
+ text to stdout so its output pipes directly into other agents or CI steps.
 EOF
 
 # ── DEBIAN/postinst ───────────────────────────────────────────────────────────

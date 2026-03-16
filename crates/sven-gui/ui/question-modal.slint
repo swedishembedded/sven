@@ -1,0 +1,125 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Agent question modal dialog.
+
+import { Theme } from "theme.slint";
+
+export component QuestionModal inherits Rectangle {
+    in property <string>     question-text: "";
+    in-out property <string> answer-text: "";
+
+    callback answered(string);
+    callback dismissed();
+
+    background: #00000088;
+
+    TouchArea {
+        clicked => { root.dismissed(); }
+    }
+
+    // Dialog box
+    Rectangle {
+        x: (parent.width - 480px) / 2;
+        y: (parent.height - 260px) / 2;
+        width: 480px;
+        height: 260px;
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-card;
+        border-color: Theme.border;
+        border-width: 1px;
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-md;
+
+            Text {
+                text: "Sven has a question";
+                color: Theme.accent;
+                font-size: Theme.font-size-md;
+                font-weight: 700;
+            }
+
+            Text {
+                text: root.question-text;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-base;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                border-radius: Theme.radius-sm;
+                border-color: answer-input.has-focus ? Theme.accent-dim : Theme.border;
+                border-width: 1px;
+                background: Theme.bg-deep;
+                height: 36px;
+
+                answer-input := TextInput {
+                    x: Theme.space-sm;
+                    y: (parent.height - self.preferred-height) / 2;
+                    width: parent.width - 2 * Theme.space-sm;
+                    text <=> root.answer-text;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-base;
+
+                    accepted => {
+                        root.answered(root.answer-text);
+                        root.answer-text = "";
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                alignment: end;
+
+                Rectangle {
+                    width: 80px;
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-ta.has-hover ? Theme.bg-active : transparent;
+                    border-color: Theme.border;
+                    border-width: 1px;
+
+                    Text {
+                        text: "Cancel";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-size-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    cancel-ta := TouchArea {
+                        clicked => { root.dismissed(); }
+                    }
+                }
+
+                Rectangle {
+                    width: 80px;
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: submit-ta.has-hover ? Theme.accent : Theme.accent-dim;
+
+                    Text {
+                        text: "Answer";
+                        color: Theme.bg-deep;
+                        font-size: Theme.font-size-sm;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    submit-ta := TouchArea {
+                        clicked => {
+                            root.answered(root.answer-text);
+                            root.answer-text = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

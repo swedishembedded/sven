@@ -12,6 +12,8 @@ members = [
     "crates/sven-bootstrap",
     "crates/sven-ci",
     "crates/sven-tui",
+    "crates/sven-frontend",
+    "crates/sven-gui",
     "crates/sven-p2p",
     "crates/sven-node",
     "crates/sven-node-client",
@@ -65,6 +67,8 @@ similar      = "2"
 rmcp         = { version = "0.15", default-features = false }
 memmap2      = "0.9"
 notify       = "7"
+slint        = { version = "1.15" }
+slint-build  = "1.15"
 
 [package]
 name    = "sven"
@@ -76,6 +80,10 @@ license = "Apache-2.0"
 [[bin]]
 name = "sven"
 path = "src/main.rs"
+
+[[bin]]
+name = "sven-ui"
+path = "src/ui_main.rs"
 
 [dependencies]
 sven-config      = { path = "crates/sven-config" }
@@ -90,6 +98,8 @@ sven-tui         = { path = "crates/sven-tui" }
 sven-node        = { path = "crates/sven-node" }
 sven-mcp         = { path = "crates/sven-mcp" }
 sven-acp         = { path = "crates/sven-acp" }
+sven-gui         = { path = "crates/sven-gui" }
+sven-frontend    = { path = "crates/sven-frontend" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }
@@ -133,8 +143,10 @@ depends       = "$auto"
 section       = "utils"
 priority      = "optional"
 assets = [
-    # Binary
-    ["target/release/sven", "usr/bin/sven", "755"],
+    # CLI/TUI binary
+    ["target/release/sven",    "usr/bin/sven",    "755"],
+    # Desktop GUI binary
+    ["target/release/sven-ui", "usr/bin/sven-ui", "755"],
     # Shell completions (generated during the deb build — see Makefile)
     ["target/completions/sven.bash", "usr/share/bash-completion/completions/sven",    "644"],
     ["target/completions/_sven",     "usr/share/zsh/vendor-completions/_sven",        "644"],

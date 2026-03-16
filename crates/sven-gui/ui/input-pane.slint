@@ -1,0 +1,131 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Message input area with send button and cancel support.
+
+import { Theme } from "theme.slint";
+
+export component InputPane inherits Rectangle {
+    in property <bool>   agent-busy: false;
+    in property <string> placeholder: "Type a message… (Enter to send)";
+    in-out property <string> input-text: "";
+
+    callback send-message(string);
+    callback cancel-run();
+
+    height: Theme.input-area-height;
+    background: Theme.bg-surface;
+
+    // Top border
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
+
+        // Input field
+        Rectangle {
+            border-radius: Theme.radius-md;
+            border-color: text-input.has-focus ? Theme.accent-dim : Theme.border;
+            border-width: 1px;
+            background: Theme.bg-deep;
+            height: 64px;
+
+            // Placeholder text
+            if root.input-text == "": Text {
+                x: Theme.space-md;
+                y: Theme.space-sm;
+                text: root.placeholder;
+                color: Theme.text-dim;
+                font-size: Theme.font-size-base;
+            }
+
+            text-input := TextInput {
+                x: Theme.space-md;
+                y: Theme.space-sm;
+                width: parent.width - 2 * Theme.space-md;
+                height: parent.height - 2 * Theme.space-sm;
+                text <=> root.input-text;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-base;
+                wrap: word-wrap;
+                enabled: !root.agent-busy;
+
+                accepted => {
+                    if root.input-text != "" {
+                        root.send-message(root.input-text);
+                        root.input-text = "";
+                    }
+                }
+            }
+        }
+
+        // Action row
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            alignment: end;
+
+            // Cancel button (only while busy)
+            if root.agent-busy: Rectangle {
+                width: 80px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: cancel-ta.has-hover ? Theme.error-bg : transparent;
+                border-color: Theme.error-border;
+                border-width: 1px;
+
+                Text {
+                    text: "⏹ Stop";
+                    color: Theme.error-text;
+                    font-size: Theme.font-size-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                cancel-ta := TouchArea {
+                    clicked => { root.cancel-run(); }
+                }
+            }
+
+            // Send button
+            Rectangle {
+                width: 70px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: (root.input-text != "" && !root.agent-busy)
+                    ? (send-ta.has-hover ? Theme.accent : Theme.accent-dim)
+                    : Theme.bg-active;
+
+                Text {
+                    text: root.agent-busy ? "…" : "Send ↵";
+                    color: (root.input-text != "" && !root.agent-busy)
+                        ? Theme.bg-deep
+                        : Theme.text-dim;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                send-ta := TouchArea {
+                    enabled: root.input-text != "" && !root.agent-busy;
+                    clicked => {
+                        root.send-message(root.input-text);
+                        root.input-text = "";
+                    }
+                }
+            }
+        }
+    }
+}

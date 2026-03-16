@@ -1,0 +1,151 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Session list sidebar.
+
+import { Theme } from "theme.slint";
+import { ListView } from "std-widgets.slint";
+
+export struct SessionItem {
+    id: string,
+    title: string,
+    busy: bool,
+    active: bool,
+    depth: int,
+    status: string,
+    current-tool: string,
+    total-cost-usd: float,
+}
+
+component SessionRow inherits Rectangle {
+    in property <SessionItem> item;
+    in property <int> index;
+    callback clicked(int);
+
+    height: 36px;
+    background: ta.has-hover ? Theme.bg-hover : (item.active ? Theme.bg-active : transparent);
+
+    // Active indicator bar
+    if item.active: Rectangle {
+        x: 0;
+        y: (parent.height - 24px) / 2;
+        width: 2px;
+        height: 24px;
+        background: Theme.accent;
+        border-radius: 1px;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm + item.depth * 16px + (item.active ? 6px : 4px);
+        padding-right: Theme.space-sm;
+        spacing: Theme.space-xs;
+        alignment: start;
+
+        // Status dot
+        Text {
+            text: item.busy ? "◌" : (item.status == "completed" ? "●" : "○");
+            color: item.busy ? Theme.accent : (item.status == "completed" ? Theme.success : Theme.text-dim);
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            width: 14px;
+        }
+
+        Text {
+            text: item.title;
+            color: item.active ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(root.index); }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <[SessionItem]> sessions;
+    in property <string> active-session-id;
+    callback session-selected(string);
+    callback new-session();
+
+    width: Theme.sidebar-width;
+    background: Theme.bg-surface;
+
+    VerticalLayout {
+        spacing: 0;
+
+        // Header
+        Rectangle {
+            height: 40px;
+            background: Theme.bg-surface;
+
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                padding-right: Theme.space-sm;
+                spacing: 0;
+                alignment: space-between;
+
+                Text {
+                    text: "Conversations";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: new-ta.has-hover ? Theme.bg-active : transparent;
+
+                    Text {
+                        text: "+";
+                        color: new-ta.has-hover ? Theme.accent : Theme.text-secondary;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    new-ta := TouchArea {
+                        clicked => { root.new-session(); }
+                    }
+                }
+            }
+
+            // Bottom border
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border-dim;
+            }
+        }
+
+        // Session list
+        ListView {
+            for item[i] in root.sessions: SessionRow {
+                item: item;
+                index: i;
+                clicked(idx) => {
+                    if idx < root.sessions.length {
+                        root.session-selected(root.sessions[idx].id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Right border
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0;
+        width: 1px;
+        height: parent.height;
+        background: Theme.border;
+    }
+}

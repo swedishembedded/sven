@@ -1,0 +1,70 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Sven Desktop – Design tokens
+// A dark, high-contrast theme with amber accent for an authoritative developer tool feel.
+
+export global Theme {
+    // ── Base palette ─────────────────────────────────────────────────────────
+    out property <color> bg-deep:    #0d1117;
+    out property <color> bg-surface: #161b22;
+    out property <color> bg-card:    #1c2128;
+    out property <color> bg-hover:   #21262d;
+    out property <color> bg-active:  #2d333b;
+
+    out property <color> border:     #30363d;
+    out property <color> border-dim: #21262d;
+
+    // ── Accent (amber) ───────────────────────────────────────────────────────
+    out property <color> accent:      #f0a500;
+    out property <color> accent-dim:  #b07a00;
+    out property <color> accent-glow: #f0a50033;
+
+    // ── Text ─────────────────────────────────────────────────────────────────
+    out property <color> text-primary:   #e6edf3;
+    out property <color> text-secondary: #8b949e;
+    out property <color> text-dim:       #484f58;
+    out property <color> text-code:      #a5d6ff;
+
+    // ── Semantic colours ──────────────────────────────────────────────────────
+    out property <color> user-msg-bg:      #1c2640;
+    out property <color> user-msg-border:  #2d4070;
+    out property <color> asst-msg-bg:      #161b22;
+    out property <color> asst-msg-border:  #30363d;
+    out property <color> tool-bg:          #131d2e;
+    out property <color> tool-border:      #1e3a5f;
+    out property <color> tool-name-color:  #58a6ff;
+    out property <color> thinking-bg:      #1a1a2e;
+    out property <color> thinking-border:  #2d2d5b;
+    out property <color> thinking-text:    #79a1d4;
+    out property <color> error-bg:         #2d1a1a;
+    out property <color> error-border:     #5a2020;
+    out property <color> error-text:       #f85149;
+    out property <color> success:          #3fb950;
+    out property <color> warning:          #d29922;
+    out property <color> info:             #58a6ff;
+
+    // ── Typography ────────────────────────────────────────────────────────────
+    out property <length> font-size-sm:   12px;
+    out property <length> font-size-base: 14px;
+    out property <length> font-size-md:   15px;
+    out property <length> font-size-lg:   17px;
+    out property <length> font-size-code: 13px;
+
+    // ── Spacing ───────────────────────────────────────────────────────────────
+    out property <length> space-xs:  4px;
+    out property <length> space-sm:  8px;
+    out property <length> space-md:  12px;
+    out property <length> space-lg:  16px;
+    out property <length> space-xl:  24px;
+
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 6px;
+    out property <length> radius-lg: 10px;
+
+    // ── Sidebar ───────────────────────────────────────────────────────────────
+    out property <length> sidebar-width: 220px;
+    out property <length> status-bar-height: 32px;
+    out property <length> input-area-height: 120px;
+}

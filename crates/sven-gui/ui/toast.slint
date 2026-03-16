@@ -1,0 +1,61 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Toast notification stack.
+
+import { Theme } from "theme.slint";
+
+export struct ToastItem {
+    message: string,
+    level: string,
+}
+
+export component ToastStack {
+    in property <[ToastItem]> toasts;
+
+    VerticalLayout {
+        spacing: Theme.space-sm;
+        alignment: end;
+        padding: Theme.space-lg;
+
+        for t in root.toasts: Rectangle {
+            border-radius: Theme.radius-md;
+            background: t.level == "error" ? Theme.error-bg
+                      : t.level == "success" ? #0d1f0d
+                      : Theme.bg-card;
+            border-color: t.level == "error" ? Theme.error-border
+                        : t.level == "success" ? Theme.success
+                        : Theme.border;
+            border-width: 1px;
+            width: 300px;
+            height: 40px;
+
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-xs;
+
+                Text {
+                    text: t.level == "error" ? "✕"
+                        : t.level == "success" ? "✓"
+                        : "ℹ";
+                    color: t.level == "error" ? Theme.error-text
+                         : t.level == "success" ? Theme.success
+                         : Theme.info;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    width: 16px;
+                }
+
+                Text {
+                    text: t.message;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+    }
+}

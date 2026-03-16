@@ -405,7 +405,7 @@ fn print_tool_help(name: &str, description: &str, schema: &serde_json::Value) {
 /// We extract the query string and GET http://127.0.0.1:PORT/callback?...
 async fn run_oauth_callback(url: &str) -> anyhow::Result<()> {
     let port = std::env::var("SVEN_OAUTH_CALLBACK_PORT").unwrap_or_else(|_| "5598".to_string());
-    let query = url.splitn(2, '?').nth(1).unwrap_or("");
+    let query = url.split_once('?').map(|x| x.1).unwrap_or("");
     let callback_url = if query.is_empty() {
         format!("http://127.0.0.1:{port}/callback")
     } else {
