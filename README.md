@@ -28,7 +28,10 @@ Telegram, making voice calls, and running scheduled workflows.
 - **Proactive automation** — Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7 as a node.
 - **Skills system** — Markdown instruction files the agent loads on demand for coding standards, project conventions, or multi-step procedures.
 - **32 model providers** — OpenAI, Anthropic, Gemini, Ollama, and 28 more — no external gateway, pure Rust.
-- **MCP + ACP** — Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or drive sven from Zed, VS Code, or JetBrains via the Agent Client Protocol.
+- **MCP — server and client** — Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or connect sven to external MCP servers (including OAuth-protected ones) and use their tools directly inside any session.
+- **ACP** — Drive sven from Zed, VS Code, or JetBrains via the Agent Client Protocol; no daemon, no IDE key, sven manages its own model.
+- **Large-content analysis** — RLM context tools (`context_open`, `context_query`, `context_reduce`) memory-map files and codebases far larger than any context window and analyse them via parallel sub-agent chunking.
+- **Knowledge base** — `.sven/knowledge/*.md` documents encode project facts; sven auto-detects drift when source files change after a document's `updated:` date and warns at session start.
 - **Terminal-native, zero runtime deps** — Structured text in, structured text out. No Node.js, no Python, no screenshots, no pixel-clicking.
 
 ## Quick Start
@@ -48,6 +51,12 @@ sven --file plan.md
 
 See [Installation](docs/01-installation.md) and [Quick Start](docs/02-quickstart.md) for full setup details.
 
+Install shell completions:
+
+```sh
+sven completions bash >> ~/.bashrc      # also: zsh, fish, powershell
+```
+
 ## Agent modes
 
 | Mode | Behaviour |
@@ -57,6 +66,14 @@ See [Installation](docs/01-installation.md) and [Quick Start](docs/02-quickstart
 | `agent` | Full read/write access. Default for interactive use. |
 
 Set with `--mode` or cycle live in the TUI with `F4`.
+
+## Conversation history
+
+```sh
+sven chats                  # list saved conversations (ID, date, turns, title)
+sven --resume               # pick a conversation to resume with fzf
+sven --resume <ID>          # resume a specific conversation directly
+```
 
 ## GDB-native hardware debugging
 
@@ -142,7 +159,37 @@ sven --file audit.md --var context="Focus on authentication."
 
 Each `##` heading is a step. YAML frontmatter sets mode and model. Per-step
 `<!-- sven: ... -->` directives control timeouts. Variable templating with
-`{{key}}` fills values at runtime. See [docs/04-ci-pipeline.md](docs/04-ci-pipeline.md).
+`{{key}}` fills values at runtime.
+
+```sh
+sven validate --file audit.md   # parse and lint a workflow file without running it
+```
+
+See [docs/04-ci-pipeline.md](docs/04-ci-pipeline.md) for output formats, exit codes, and CI integration.
+
+## Parallel pipelines — map / tee / reduce
+
+sven ships three commands for fan-out/fan-in agent pipelines:
+
+```sh
+# Run one agent per input line in parallel, substituting {} with each line
+git diff --name-only HEAD~1 | sven map 'review {} for security issues'
+sven map --concurrency 8 --model groq/llama-3.3-70b-versatile 'summarise {}'
+
+# Broadcast one stdin to N commands in parallel and merge the results
+sven tee "sven 'find security issues'" "sven 'find performance issues'"
+
+# Synthesise all stdin into a single agent (fan-in)
+git diff --name-only HEAD~1 | sven map 'review {}' | sven reduce 'prioritise findings and write a report'
+```
+
+`sven index` builds a fast symbol-search index over the current repo:
+
+```sh
+sven index build            # create/update .sven/index/index.json
+sven index query "Handler"  # search symbol names and signatures
+sven index stats            # show index statistics
+```
 
 ## Tool suite
 
@@ -162,11 +209,31 @@ Each `##` heading is a step. YAML frontmatter sets mode and model. Per-step
 | **Calendar** | `calendar` — query schedule, create/update/delete events |
 | **Voice** | `voice` — TTS, STT, outbound calls |
 | **Memory** | `semantic_memory` — remember, recall (BM25 + vector), forget, list, get |
+| **Large content** | `context_open`, `context_read`, `context_grep`, `context_query`, `context_reduce` — memory-map files/dirs and analyse content larger than the context window |
+| **Streaming buffers** | `buf_status`, `buf_read`, `buf_grep` — inspect live output from running sub-agents or shell commands |
+| **Knowledge** | `list_knowledge`, `search_knowledge` — query `.sven/knowledge/` project knowledge documents |
+| **Collaboration** | `send_message` (peer), `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` *(node mode only)* |
 | **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
 †`ask_question` is only available in interactive TUI sessions.
 
 Each tool call goes through a configurable approval policy — auto-approved, denied, or presented for confirmation based on glob patterns.
+
+## TUI key bindings
+
+| Key | Action |
+|-----|--------|
+| `F4` | Cycle agent mode (research → plan → agent) |
+| `--nvim` | Launch with embedded Neovim buffer |
+| `Ctrl+b` | Toggle chat list sidebar; `n` new, `d` delete, `a` archive |
+| `/` | In-chat search; `n`/`N` next/previous match |
+| `Ctrl+t` | Full-screen transcript pager (vim navigation + `/` search) |
+| `d` / `x` | Truncate history from focused segment / remove focused segment |
+| `r` | Truncate to just before the focused segment and re-submit |
+| `e` / `Enter` | Edit a sent message in-place |
+| `y` / `Y` | Copy focused segment / entire chat to clipboard |
+| Mouse | Click to select, drag to copy, scroll wheel in input pane |
+| `?` | Show full key-binding reference |
 
 ## Model Providers
 
@@ -203,8 +270,7 @@ The same `sven acp serve` command works for VS Code (ACP extension) and JetBrain
 
 ## MCP integration
 
-Sven can expose its full tool suite as an [MCP](https://modelcontextprotocol.io) server,
-letting Cursor, Claude Desktop, opencode, and others call sven's tools directly.
+**As a server** — expose sven's full tool suite to Cursor, Claude Desktop, opencode, and any other MCP-compatible host:
 
 ```json
 {
@@ -212,6 +278,17 @@ letting Cursor, Claude Desktop, opencode, and others call sven's tools directly.
     "sven": { "command": "sven", "args": ["mcp", "serve"] }
   }
 }
+```
+
+**As a client** — connect sven to any external MCP server and use its tools transparently in every session. OAuth 2.0 PKCE, Dynamic Client Registration, and token refresh are handled automatically. Configure servers in `~/.config/sven/config.yaml`:
+
+```yaml
+mcp_servers:
+  - name: atlassian
+    command: npx
+    args: ["-y", "@atlassian/mcp-server"]
+  - name: github
+    url: https://api.githubcopilot.com/mcp/
 ```
 
 ## Documentation
@@ -227,6 +304,9 @@ letting Cursor, Claude Desktop, opencode, and others call sven's tools directly.
 | [Examples](docs/06-examples.md) | Real-world use cases |
 | [Troubleshooting](docs/07-troubleshooting.md) | Common issues and fixes |
 | [Node / P2P](docs/08-node.md) | Remote access, device pairing, agent networking |
+| [Agent Collaboration](docs/09-collaboration.md) | Peer conversations, rooms, and gossipsub broadcast |
+| [Large-Content Analysis](docs/10-large-content.md) | RLM context tools for files larger than the context window |
+| [Teams and Tasks](docs/11-teams-and-tasks.md) | Declarative agent teams, task board, git worktree isolation |
 | [Messaging Channels](docs/12-channels.md) | Telegram, Discord, WhatsApp, Signal, Matrix, IRC |
 | [Scheduler](docs/13-scheduler.md) | Cron jobs, intervals, heartbeat |
 | [Email](docs/14-email.md) | IMAP/SMTP and Gmail integration |
