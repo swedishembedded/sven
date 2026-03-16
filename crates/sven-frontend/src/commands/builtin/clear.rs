@@ -1,21 +1,21 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `/new` command — start a completely new conversation with a fresh JSONL file.
+//! `/clear` command — erase all chat segments and reset the conversation view.
 
 use crate::commands::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
 };
 
-pub struct NewCommand;
+pub struct ClearCommand;
 
-impl SlashCommand for NewCommand {
+impl SlashCommand for ClearCommand {
     fn name(&self) -> &str {
-        "new"
+        "clear"
     }
 
     fn description(&self) -> &str {
-        "Start a completely new conversation with a fresh JSONL file"
+        "Clear the chat history"
     }
 
     fn complete(
@@ -29,7 +29,7 @@ impl SlashCommand for NewCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandResult {
         CommandResult {
-            immediate_action: Some(ImmediateAction::NewConversation),
+            immediate_action: Some(ImmediateAction::ClearChat),
             ..Default::default()
         }
     }
@@ -40,29 +40,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn execute_returns_new_conversation_action() {
-        let result = NewCommand.execute(vec![]);
-        assert!(
-            matches!(
-                result.immediate_action,
-                Some(ImmediateAction::NewConversation)
-            ),
-            "new must return ImmediateAction::NewConversation"
-        );
-    }
-
-    #[test]
-    fn execute_ignores_args() {
-        let result = NewCommand.execute(vec!["confirm".into()]);
+    fn execute_returns_clear_chat_action() {
+        let result = ClearCommand.execute(vec![]);
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::NewConversation)
+            Some(ImmediateAction::ClearChat)
         ));
     }
 
     #[test]
     fn execute_does_not_set_model_mode_or_message() {
-        let result = NewCommand.execute(vec![]);
+        let result = ClearCommand.execute(vec![]);
         assert!(result.model_override.is_none());
         assert!(result.mode_override.is_none());
         assert!(result.message_to_send.is_none());

@@ -2,31 +2,55 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Message input area with send button and cancel support.
+// Message input area with send/queue button, cancel, and slash completion.
 
 import { Theme } from "theme.slint";
+import { CompletionPopup, CompletionEntry } from "completion-popup.slint";
 
 export component InputPane inherits Rectangle {
     in property <bool>   agent-busy: false;
-    in property <string> placeholder: "Type a message… (Enter to send)";
+    in property <string> placeholder: "Type a message… (Enter to send, / for commands)";
+    in property <int>    queue-count: 0;
+    in property <[CompletionEntry]> completion-items;
+    in property <int>    completion-selected: 0;
     in-out property <string> input-text: "";
 
     callback send-message(string);
     callback cancel-run();
+    callback input-changed(string);     // fired on every keystroke for completion
+    callback completion-accepted(string);
 
-    height: Theme.input-area-height;
+    height: Theme.input-area-height + (completion-items.length > 0 ? 220px : 0px);
     background: Theme.bg-surface;
 
     // Top border
     Rectangle {
         x: 0;
-        y: 0;
+        y: completion-items.length > 0 ? 220px : 0px;
         width: parent.width;
         height: 1px;
         background: Theme.border;
     }
 
+    // Completion popup (floats above input)
+    CompletionPopup {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: completion-items.length > 0 ? 220px : 0px;
+        items: root.completion-items;
+        selected-index: root.completion-selected;
+        accepted(val) => {
+            root.completion-accepted(val);
+        }
+        dismissed => {
+            // Clear by changing input — bridge handles this
+        }
+    }
+
     VerticalLayout {
+        y: completion-items.length > 0 ? 220px : 0px;
+        height: Theme.input-area-height;
         padding: Theme.space-md;
         spacing: Theme.space-sm;
 
@@ -56,12 +80,17 @@ export component InputPane inherits Rectangle {
                 color: Theme.text-primary;
                 font-size: Theme.font-size-base;
                 wrap: word-wrap;
-                enabled: !root.agent-busy;
+                // Always enabled — users can type while agent is running to queue messages
+
+                edited => {
+                    root.input-changed(root.input-text);
+                }
 
                 accepted => {
                     if root.input-text != "" {
                         root.send-message(root.input-text);
                         root.input-text = "";
+                        root.input-changed("");
                     }
                 }
             }
@@ -71,6 +100,26 @@ export component InputPane inherits Rectangle {
         HorizontalLayout {
             spacing: Theme.space-sm;
             alignment: end;
+
+            // Queue count badge (shown when messages are queued)
+            if root.queue-count > 0: Rectangle {
+                width: 80px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-active;
+                border-color: Theme.accent-dim;
+                border-width: 1px;
+
+                Text {
+                    text: "⏱ " + root.queue-count + " queued";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
 
             // Cancel button (only while busy)
             if root.agent-busy: Rectangle {
@@ -96,20 +145,18 @@ export component InputPane inherits Rectangle {
                 }
             }
 
-            // Send button
+            // Send / Queue button
             Rectangle {
-                width: 70px;
+                width: 80px;
                 height: 28px;
                 border-radius: Theme.radius-sm;
-                background: (root.input-text != "" && !root.agent-busy)
+                background: root.input-text != ""
                     ? (send-ta.has-hover ? Theme.accent : Theme.accent-dim)
                     : Theme.bg-active;
 
                 Text {
-                    text: root.agent-busy ? "…" : "Send ↵";
-                    color: (root.input-text != "" && !root.agent-busy)
-                        ? Theme.bg-deep
-                        : Theme.text-dim;
+                    text: root.agent-busy ? "⏱ Queue" : "Send ↵";
+                    color: root.input-text != "" ? Theme.bg-deep : Theme.text-dim;
                     font-size: Theme.font-size-sm;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -119,10 +166,11 @@ export component InputPane inherits Rectangle {
                 }
 
                 send-ta := TouchArea {
-                    enabled: root.input-text != "" && !root.agent-busy;
+                    enabled: root.input-text != "";
                     clicked => {
                         root.send-message(root.input-text);
                         root.input-text = "";
+                        root.input-changed("");
                     }
                 }
             }

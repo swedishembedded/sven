@@ -11,8 +11,10 @@ import { ChatPane, ChatMessage } from "chat-pane.slint";
 import { InputPane }    from "input-pane.slint";
 import { ToastStack, ToastItem } from "toast.slint";
 import { QuestionModal } from "question-modal.slint";
+import { PickerPopup, PickerItem } from "picker-popup.slint";
+import { CompletionEntry } from "completion-popup.slint";
 
-export { SessionItem, ChatMessage, ToastItem }
+export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry }
 
 export component MainWindow inherits Window {
     title: "Sven Desktop";
@@ -32,15 +34,26 @@ export component MainWindow inherits Window {
     in property <bool>           agent-busy: false;
     in property <float>          total-cost-usd: 0.0;
     in property <int>            total-output-tokens: 0;
+    in property <int>            total-input-tokens: 0;
     in property <bool>           is-node-proxy: false;
     in property <string>         connection-label: "local";
     in property <[ToastItem]>    toasts;
+    in property <int>            queue-count: 0;
     in-out property <string>     input-text: "";
 
     // Question modal
     in property <bool>           question-visible: false;
     in property <string>         question-text: "";
     in-out property <string>     question-answer: "";
+
+    // Picker popup (model / mode)
+    in property <bool>           picker-visible: false;
+    in property <string>         picker-title: "Select";
+    in property <[PickerItem]>   picker-items;
+
+    // Slash command completion
+    in property <[CompletionEntry]> completion-items;
+    in property <int>               completion-selected: 0;
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
     callback send-message(string);
@@ -49,6 +62,15 @@ export component MainWindow inherits Window {
     callback session-selected(string);
     callback question-answered(string);
     callback question-dismissed();
+    callback toggle-expanded(int);        // toggle thinking/tool collapse
+
+    callback model-clicked();
+    callback mode-clicked();
+    callback picker-selected(string);     // id of picked item
+    callback picker-dismissed();
+
+    callback input-changed(string);       // slash command completion
+    callback completion-accepted(string); // slash command applied
 
     // ── Layout ────────────────────────────────────────────────────────────────
     VerticalLayout {
@@ -60,8 +82,12 @@ export component MainWindow inherits Window {
             context-pct: root.context-pct;
             agent-busy: root.agent-busy;
             total-cost-usd: root.total-cost-usd;
+            total-output-tokens: root.total-output-tokens;
+            total-input-tokens: root.total-input-tokens;
             is-node-proxy: root.is-node-proxy;
             connection-label: root.connection-label;
+            model-clicked => { root.model-clicked(); }
+            mode-clicked => { root.mode-clicked(); }
         }
 
         HorizontalLayout {
@@ -84,13 +110,19 @@ export component MainWindow inherits Window {
                     messages: root.messages;
                     streaming-text: root.streaming-text;
                     thinking-text: root.thinking-text;
+                    toggle-expanded(idx) => { root.toggle-expanded(idx); }
                 }
 
                 InputPane {
                     agent-busy: root.agent-busy;
                     input-text <=> root.input-text;
+                    queue-count: root.queue-count;
+                    completion-items: root.completion-items;
+                    completion-selected: root.completion-selected;
                     send-message(text) => { root.send-message(text); }
                     cancel-run => { root.cancel-run(); }
+                    input-changed(text) => { root.input-changed(text); }
+                    completion-accepted(val) => { root.completion-accepted(val); }
                 }
             }
         }
@@ -114,5 +146,21 @@ export component MainWindow inherits Window {
         answer-text <=> root.question-answer;
         answered(ans) => { root.question-answered(ans); }
         dismissed => { root.question-dismissed(); }
+    }
+
+    // Picker popup overlay (model / mode selection)
+    if root.picker-visible: PickerPopup {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        title: root.picker-title;
+        items: root.picker-items;
+        selected(id) => {
+            root.picker-selected(id);
+        }
+        dismissed => {
+            root.picker-dismissed();
+        }
     }
 }

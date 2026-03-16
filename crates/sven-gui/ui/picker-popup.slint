@@ -1,0 +1,92 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Generic picker popup used for model and mode selection.
+
+import { Theme } from "theme.slint";
+
+export struct PickerItem {
+    id: string,
+    label: string,
+    description: string,
+}
+
+export component PickerPopup inherits Rectangle {
+    in property <string>      title: "Select";
+    in property <[PickerItem]> items;
+
+    callback selected(string);   // emits item.id
+    callback dismissed();
+
+    background: #00000080;
+
+    // Click backdrop to dismiss
+    backdrop-ta := TouchArea {
+        clicked => { root.dismissed(); }
+    }
+
+    // Floating panel
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 480px;
+        height: Math.min(parent.height - 80px, 64px + items.length * 56px);
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-surface;
+        border-color: Theme.border;
+        border-width: 1px;
+
+        // Stop clicks inside panel from dismissing
+        inner-ta := TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-md;
+            spacing: Theme.space-sm;
+
+            // Title
+            Text {
+                text: title;
+                color: Theme.accent;
+                font-size: Theme.font-size-md;
+                font-weight: 700;
+            }
+
+            // Items
+            for item in items: Rectangle {
+                height: 48px;
+                border-radius: Theme.radius-sm;
+                background: item-ta.has-hover ? Theme.bg-hover : transparent;
+
+                item-ta := TouchArea {
+                    clicked => { root.selected(item.id); }
+                }
+
+                HorizontalLayout {
+                    padding: Theme.space-sm;
+                    spacing: Theme.space-sm;
+                    alignment: start;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: item.label;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-size-base;
+                            font-weight: 600;
+                        }
+
+                        if item.description != "": Text {
+                            text: item.description;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -2,33 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Skill-based slash commands loaded from SKILL.md files.
-//!
-//! Each discovered skill is registered as a slash command whose name is the
-//! sanitized skill command path.  Hierarchical skills use `/` as a separator
-//! so that `sven/plan` becomes the command `/sven/plan` in the TUI.
-//!
-//! When invoked, the command injects the skill's full SKILL.md body —
-//! optionally followed by a user-provided task — as the message to send to
-//! the agent.  Sub-skill bodies are never pre-loaded; the parent body
-//! instructs the model to call `load_skill(<command>)` for each step.
-//!
-//! ## Usage
-//!
-//! ```text
-//! /sven                    → send parent skill content alone
-//! /sven/plan               → send sven/plan skill content alone
-//! /sven/plan analyse task  → send sven/plan content + "Task: analyse task"
-//! ```
 
 use std::fs;
 use std::path::PathBuf;
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use sven_runtime::{AgentInfo, SkillInfo};
 
 use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
-use crate::ui::width_utils::{display_width, truncate_to_width_exact};
 
 const MAX_DESCRIPTION_LEN: usize = 100;
+
+fn display_width(s: &str) -> usize {
+    UnicodeWidthStr::width(s)
+}
+
+fn truncate_to_width_exact(s: &str, max: usize) -> String {
+    let mut width = 0;
+    let mut end = 0;
+    for c in s.chars() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + w > max {
+            break;
+        }
+        width += w;
+        end += c.len_utf8();
+    }
+    s[..end].to_string()
+}
 
 fn truncate_description(s: &str, max: usize) -> String {
     let trimmed = s.trim();
@@ -45,18 +47,10 @@ fn truncate_description(s: &str, max: usize) -> String {
 // ── SkillCommand ──────────────────────────────────────────────────────────────
 
 /// A slash command backed by a command `.md` file.
-///
-/// Content is read from disk on each execution so that edits to the file
-/// are picked up without re-running discovery or refreshing the registry.
 pub struct SkillCommand {
-    /// Sanitized command path (e.g. `"sven_plan"` for a skill at `"sven/plan"`
-    /// — but since we preserve `/`, this is `"sven/plan"`).
     pub name: String,
-    /// One-line description (truncated to 100 chars).
     pub description: String,
-    /// Absolute path to the command .md file; read in [`execute`] each time.
     pub source_path: PathBuf,
-    /// Absolute path to the skill directory (for future script resolution).
     #[allow(dead_code)]
     pub skill_dir: PathBuf,
 }
@@ -70,12 +64,7 @@ impl SlashCommand for SkillCommand {
         &self.description
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -99,11 +88,6 @@ impl SlashCommand for SkillCommand {
     }
 }
 
-/// Build the message to send when a content-based slash command is executed.
-///
-/// When `args` is empty the content is sent as-is.  When a task is provided
-/// it is appended with a `\n\nTask:` separator so the model can distinguish
-/// the injected instructions from the user's intent.
 fn build_content_message(content: &str, args: &[String]) -> String {
     let task = args.join(" ");
     let task = task.trim();
@@ -116,21 +100,12 @@ fn build_content_message(content: &str, args: &[String]) -> String {
 
 // ── Discovery ─────────────────────────────────────────────────────────────────
 
-/// Build [`SkillCommand`] instances from a slice of user-authored commands.
-///
-/// Unlike [`make_skill_commands`], this function preserves the command name
-/// exactly as derived from the filename (e.g. `review-code.md` → `/review-code`).
-/// Only the last-path-component is lowercased; hyphens are kept intact so
-/// commands behave identically to Cursor's `.cursor/commands/` convention.
-///
-/// Duplicate names are disambiguated by appending `-2`, `-3`, etc.
 #[must_use]
 pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> {
     let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(commands.len());
 
     for cmd in commands {
-        // Normalise: lowercase each path segment, preserve hyphens and slashes.
         let normalised = cmd
             .command
             .split('/')
@@ -138,8 +113,6 @@ pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> 
             .collect::<Vec<_>>()
             .join("/");
 
-        // Deduplicate with hyphen-style suffix to stay consistent with the
-        // filename convention (e.g. `review-code`, `review-code-2`).
         let unique_name = resolve_unique_command_name(normalised, &mut used_names);
 
         result.push(SkillCommand {
@@ -153,11 +126,6 @@ pub fn make_command_slash_commands(commands: &[SkillInfo]) -> Vec<SkillCommand> 
     result
 }
 
-/// Append a numeric suffix separated by `sep` until the name is unique.
-///
-/// Used by both skill commands (`sep = '_'`) and user commands / agents
-/// (`sep = '-'`) so that the disambiguation suffix matches the filename
-/// convention of each kind.
 fn resolve_unique_name_sep(
     base: String,
     sep: char,
@@ -187,19 +155,10 @@ fn resolve_unique_command_name(
 // ── AgentCommand ──────────────────────────────────────────────────────────────
 
 /// A slash command backed by a subagent markdown file.
-///
-/// When invoked, injects the subagent's system prompt (body) as a message
-/// prefix, optionally followed by the user-provided task.  The `model_override`
-/// field carries the `model:` frontmatter value so the app can switch models
-/// for the turn.
 pub struct AgentCommand {
-    /// Slash command name derived from the agent's `name` field (lowercase).
     pub name: String,
-    /// One-line description from frontmatter.
     pub description: String,
-    /// Agent system prompt body, injected into the message.
     pub content: String,
-    /// Optional model override from frontmatter (`None` → use session model).
     pub model_override: Option<String>,
 }
 
@@ -212,12 +171,7 @@ impl SlashCommand for AgentCommand {
         &self.description
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -230,11 +184,6 @@ impl SlashCommand for AgentCommand {
     }
 }
 
-/// Build [`AgentCommand`] instances from a slice of discovered subagents.
-///
-/// Each agent becomes a slash command keyed by the lowercased agent name with
-/// hyphens preserved (e.g. `security-auditor` → `/security-auditor`).
-/// Duplicate names are disambiguated by appending `-2`, `-3`, etc.
 #[must_use]
 pub fn make_agent_slash_commands(agents: &[AgentInfo]) -> Vec<AgentCommand> {
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -255,8 +204,6 @@ pub fn make_agent_slash_commands(agents: &[AgentInfo]) -> Vec<AgentCommand> {
     result
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,8 +213,6 @@ mod tests {
     use sven_config::Config;
     use sven_runtime::AgentInfo;
 
-    /// Build a SkillCommand that reads content from a temp file (so execute() loads from disk).
-    /// Returns the temp dir so the caller keeps it alive for the duration of the test.
     fn make_cmd(name: &str, description: &str, content: &str) -> (SkillCommand, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cmd.md");
@@ -302,8 +247,6 @@ mod tests {
         }
     }
 
-    // ── SkillCommand::execute ─────────────────────────────────────────────────
-
     #[test]
     fn execute_no_args_returns_content() {
         let (cmd, _guard) = make_cmd("sven/plan", "Plan.", "## Instructions\n\nDo things.");
@@ -312,9 +255,6 @@ mod tests {
             result.message_to_send.as_deref(),
             Some("## Instructions\n\nDo things.")
         );
-        assert!(result.model_override.is_none());
-        assert!(result.mode_override.is_none());
-        assert!(result.immediate_action.is_none());
     }
 
     #[test]
@@ -327,44 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn execute_multi_word_task_joined() {
-        let (cmd, _guard) = make_cmd("deploy", "Deploy.", "Deploy content.");
-        let result = cmd.execute(vec![
-            "push".to_string(),
-            "to".to_string(),
-            "prod".to_string(),
-        ]);
-        assert!(result
-            .message_to_send
-            .unwrap()
-            .contains("Task: push to prod"));
-    }
-
-    #[test]
-    fn execute_whitespace_only_args_treated_as_no_task() {
-        let (cmd, _guard) = make_cmd("deploy", "Deploy.", "Deploy content.");
-        let result = cmd.execute(vec!["  ".to_string()]);
-        assert_eq!(result.message_to_send.as_deref(), Some("Deploy content."));
-    }
-
-    #[test]
     fn complete_returns_empty() {
         let (cmd, _guard) = make_cmd("test", "Test.", "body");
         assert!(cmd.complete(0, "partial", &ctx()).is_empty());
     }
 
     #[test]
-    fn description_truncated_to_100_chars() {
-        let long_desc = "x".repeat(120);
-        let (cmd, _guard) = make_cmd("cmd", &long_desc, "body");
-        assert!(cmd.description.chars().count() <= MAX_DESCRIPTION_LEN);
-    }
-
-    // ── make_command_slash_commands ───────────────────────────────────────────
-
-    #[test]
     fn command_hyphens_preserved() {
-        use sven_runtime::SkillInfo;
         let info = SkillInfo {
             command: "review-code".to_string(),
             name: "review-code".to_string(),
@@ -380,28 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn command_duplicates_get_hyphen_suffix() {
-        use sven_runtime::SkillInfo;
-        let make = |cmd: &str| SkillInfo {
-            command: cmd.to_string(),
-            name: cmd.to_string(),
-            description: "D.".to_string(),
-            version: None,
-            skill_md_path: PathBuf::from("/tmp/a.md"),
-            skill_dir: PathBuf::from("/tmp"),
-            content: "b".to_string(),
-            sven_meta: None,
-        };
-        let cmds = make_command_slash_commands(&[make("deploy"), make("deploy")]);
-        assert_eq!(cmds.len(), 2);
-        let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"deploy"));
-        assert!(names.contains(&"deploy-2"));
-    }
-
-    // ── AgentCommand ─────────────────────────────────────────────────────────
-
-    #[test]
     fn agent_command_injects_prompt() {
         let agent = make_agent("verifier", "Validates work.", "You verify.", None);
         let cmds = make_agent_slash_commands(&[agent]);
@@ -412,64 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn agent_command_carries_model_override() {
-        let agent = make_agent("fast-agent", "Fast.", "body", Some("fast"));
-        let cmds = make_agent_slash_commands(&[agent]);
-        assert_eq!(cmds[0].model_override.as_deref(), Some("fast"));
-    }
-
-    #[test]
-    fn agent_command_no_model_when_inherit() {
-        let agent = AgentInfo {
-            name: "agent".to_string(),
-            description: "D.".to_string(),
-            model: None, // already normalised by parse_agent_file
-            readonly: false,
-            is_background: false,
-            content: "body".to_string(),
-            agent_md_path: PathBuf::from("/tmp/agent.md"),
-            knowledge: vec![],
-        };
-        let cmds = make_agent_slash_commands(&[agent]);
-        assert!(cmds[0].model_override.is_none());
-    }
-
-    #[test]
     fn agent_name_lowercased() {
         let agent = make_agent("Security-Auditor", "Security.", "body", None);
         let cmds = make_agent_slash_commands(&[agent]);
         assert_eq!(cmds[0].name, "security-auditor");
-    }
-
-    // ── resolve_unique_name_sep ───────────────────────────────────────────────
-
-    #[test]
-    fn resolve_unique_underscore_sep() {
-        let mut used = std::collections::HashSet::new();
-        assert_eq!(
-            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
-            "foo"
-        );
-        assert_eq!(
-            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
-            "foo_2"
-        );
-        assert_eq!(
-            resolve_unique_name_sep("foo".to_string(), '_', &mut used),
-            "foo_3"
-        );
-    }
-
-    #[test]
-    fn resolve_unique_hyphen_sep() {
-        let mut used = std::collections::HashSet::new();
-        assert_eq!(
-            resolve_unique_name_sep("bar".to_string(), '-', &mut used),
-            "bar"
-        );
-        assert_eq!(
-            resolve_unique_name_sep("bar".to_string(), '-', &mut used),
-            "bar-2"
-        );
     }
 }

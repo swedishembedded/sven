@@ -2,16 +2,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Conversion helpers: sven-frontend types → Slint model types.
-//!
-//! Slint requires data to be provided as `VecModel<T>` where `T` is a struct
-//! generated from the `.slint` definitions. These functions convert from the
-//! domain types in `sven-frontend` to the generated Slint structs.
 
 use slint::{ModelRc, SharedString, VecModel};
 use sven_frontend::ChatSegment;
 use sven_model::{MessageContent, Role};
 
 use crate::{ChatMessage, SessionItem, ToastItem};
+
+/// Build a default (all-empty) ChatMessage value.
+pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> ChatMessage {
+    ChatMessage {
+        message_type: SharedString::from(message_type),
+        content: SharedString::from(content),
+        role: SharedString::from(role),
+        is_first_in_group: false,
+        is_error: false,
+        is_streaming: false,
+        is_expanded: false,
+        tool_name: SharedString::new(),
+        tool_icon: SharedString::new(),
+        tool_summary: SharedString::new(),
+        tool_category: SharedString::new(),
+        tool_fields_json: SharedString::new(),
+        language: SharedString::new(),
+        heading_level: 0,
+    }
+}
 
 /// Convert a `ChatSegment` to a `ChatMessage` for the Slint model.
 pub fn segment_to_chat_message(seg: &ChatSegment) -> Option<ChatMessage> {
@@ -39,27 +55,26 @@ pub fn segment_to_chat_message(seg: &ChatSegment) -> Option<ChatMessage> {
             Some(ChatMessage {
                 message_type: SharedString::from(message_type),
                 content: SharedString::from(content),
-                tool_name: SharedString::from(tool_name),
-                is_error,
-                is_streaming: false,
                 role: SharedString::from(format!("{:?}", m.role)),
+                is_first_in_group: message_type != "tool-call" && message_type != "tool-result",
+                is_error,
+                tool_name: SharedString::from(tool_name),
+                ..default_chat_message("", "", "")
             })
         }
         ChatSegment::Thinking { content } => Some(ChatMessage {
             message_type: SharedString::from("thinking"),
             content: SharedString::from(content.as_str()),
-            tool_name: SharedString::new(),
-            is_error: false,
-            is_streaming: false,
             role: SharedString::from("thinking"),
+            is_expanded: false,
+            ..default_chat_message("", "", "")
         }),
         ChatSegment::Error(msg) => Some(ChatMessage {
             message_type: SharedString::from("error"),
             content: SharedString::from(msg.as_str()),
-            tool_name: SharedString::new(),
-            is_error: true,
-            is_streaming: false,
             role: SharedString::from("error"),
+            is_error: true,
+            ..default_chat_message("", "", "")
         }),
         ChatSegment::ContextCompacted {
             tokens_before,
@@ -71,18 +86,14 @@ pub fn segment_to_chat_message(seg: &ChatSegment) -> Option<ChatMessage> {
             content: SharedString::from(format!(
                 "Context compacted ({strategy}): {tokens_before} → {tokens_after} tokens"
             )),
-            tool_name: SharedString::new(),
-            is_error: false,
-            is_streaming: false,
             role: SharedString::from("system"),
+            ..default_chat_message("", "", "")
         }),
         ChatSegment::CollabEvent(ev) => Some(ChatMessage {
             message_type: SharedString::from("system"),
             content: SharedString::from(sven_core::prompts::format_collab_event(ev)),
-            tool_name: SharedString::new(),
-            is_error: false,
-            is_streaming: false,
             role: SharedString::from("system"),
+            ..default_chat_message("", "", "")
         }),
         ChatSegment::DelegateSummary {
             to_name,
@@ -95,10 +106,8 @@ pub fn segment_to_chat_message(seg: &ChatSegment) -> Option<ChatMessage> {
             content: SharedString::from(format!(
                 "Delegated \"{task_title}\" to {to_name}: {status} — {result_preview}"
             )),
-            tool_name: SharedString::new(),
-            is_error: false,
-            is_streaming: false,
             role: SharedString::from("system"),
+            ..default_chat_message("", "", "")
         }),
         ChatSegment::TodoUpdate(_) => None,
     }

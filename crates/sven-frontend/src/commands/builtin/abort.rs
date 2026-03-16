@@ -5,18 +5,6 @@
 
 use crate::commands::{CommandContext, CommandResult, CompletionItem, SlashCommand};
 
-/// Abort the current model run.
-///
-/// If the agent is currently running, the active turn is cancelled.  Any text
-/// that was already streamed is preserved as a partial assistant message.
-///
-/// If there are queued messages, they are **not** automatically submitted after
-/// the abort; the user must submit the next message manually by selecting it in
-/// the queue panel and pressing `s` (or by typing a new message, which will
-/// also be queued until explicitly sent).
-///
-/// To immediately send a queued message instead of just stopping, use the
-/// force-submit binding (`f`) in the queue panel.
 pub struct AbortCommand;
 
 impl SlashCommand for AbortCommand {

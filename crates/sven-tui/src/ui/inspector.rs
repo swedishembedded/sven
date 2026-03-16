@@ -35,30 +35,8 @@ use crate::ui::width_utils::truncate_to_width_exact;
 
 // ── InspectorKind ─────────────────────────────────────────────────────────────
 
-/// Identifies which view the inspector is displaying.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InspectorKind {
-    Skills,
-    Subagents,
-    Peers,
-    Context,
-    Tools,
-    Mcp,
-}
-
-impl InspectorKind {
-    /// Header title shown in the pager banner.
-    pub fn title(self) -> &'static str {
-        match self {
-            InspectorKind::Skills => "SKILLS",
-            InspectorKind::Subagents => "SUBAGENTS",
-            InspectorKind::Peers => "PEERS",
-            InspectorKind::Context => "CONTEXT",
-            InspectorKind::Tools => "TOOLS",
-            InspectorKind::Mcp => "MCP SERVERS",
-        }
-    }
-}
+/// Re-exported from `sven_frontend::commands` for use in the TUI.
+pub use sven_frontend::commands::InspectorKind;
 
 // ── InspectorOverlay ──────────────────────────────────────────────────────────
 

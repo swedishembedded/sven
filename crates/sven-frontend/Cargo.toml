@@ -26,6 +26,7 @@ chrono           = { workspace = true }
 unicode-width    = { workspace = true }
 rustls           = { workspace = true }
 rand             = "0.8"
+pulldown-cmark   = { workspace = true }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 

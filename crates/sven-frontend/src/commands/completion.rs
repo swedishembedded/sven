@@ -2,13 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Fuzzy completion matching and the CompletionManager.
-//!
-//! The completion manager bridges the parser output, the command registry,
-//! and the completion overlay widget.  It handles:
-//!
-//! - Completing command names when the user types `/partial`
-//! - Delegating argument completion to individual commands
-//! - Fuzzy filtering and ranking of results
 
 use std::sync::Arc;
 
@@ -19,7 +12,7 @@ use super::{CommandContext, CommandRegistry, ParsedCommand};
 /// A single item in the completion list.
 #[derive(Debug, Clone)]
 pub struct CompletionItem {
-    /// The value to insert when this item is selected (e.g. `"anthropic/claude-opus-4-6"`).
+    /// The value to insert when this item is selected.
     pub value: String,
 
     /// Human-readable label shown in the overlay (may include description).
@@ -35,8 +28,6 @@ pub struct CompletionItem {
 
 impl CompletionItem {
     /// Create a simple item where value and display are the same.
-    ///
-    /// Used in tests and by stub command implementations.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn simple(value: impl Into<String>) -> Self {
         let v = value.into();
@@ -69,11 +60,6 @@ impl CompletionItem {
 ///
 /// Returns `Some(score)` if all pattern chars appear in order in the
 /// candidate, or `None` if the pattern does not match.
-///
-/// Scoring:
-/// - +1 per matched character
-/// - +5 bonus when the match starts at position 0
-/// - +3 bonus for each consecutive character match
 pub fn fuzzy_score(pattern: &str, candidate: &str) -> Option<usize> {
     if pattern.is_empty() {
         return Some(0);
@@ -96,15 +82,12 @@ pub fn fuzzy_score(pattern: &str, candidate: &str) -> Option<usize> {
                 if first_match_idx.is_none() {
                     first_match_idx = Some(actual_idx);
                 }
-                // Consecutive bonus
                 if prev_matched && offset == 0 {
                     score += 3;
                 }
-                // Start-of-string bonus
                 if actual_idx == 0 {
                     score += 5;
                 }
-                // Word-boundary bonus (preceded by '/', '-', '_', ' ')
                 if actual_idx > 0 {
                     let prev = candidate_lc[actual_idx - 1];
                     if matches!(prev, '/' | '-' | '_' | ' ') {
@@ -122,9 +105,6 @@ pub fn fuzzy_score(pattern: &str, candidate: &str) -> Option<usize> {
 }
 
 /// Filter and rank `items` against `filter`, returning only those that match.
-///
-/// Items are sorted by descending score, then alphabetically by value.
-/// When `filter` is empty, all items are returned in alphabetical order.
 pub fn filter_and_rank(items: Vec<CompletionItem>, filter: &str) -> Vec<CompletionItem> {
     if filter.is_empty() {
         let mut result = items;
@@ -135,7 +115,6 @@ pub fn filter_and_rank(items: Vec<CompletionItem>, filter: &str) -> Vec<Completi
     let mut scored: Vec<CompletionItem> = items
         .into_iter()
         .filter_map(|mut item| {
-            // Score against both value and display
             let score_value = fuzzy_score(filter, &item.value).unwrap_or(0);
             let score_display = fuzzy_score(filter, &item.display).unwrap_or(0);
             let score = score_value.max(score_display);
@@ -148,7 +127,6 @@ pub fn filter_and_rank(items: Vec<CompletionItem>, filter: &str) -> Vec<Completi
         })
         .collect();
 
-    // Re-filter: only keep actual matches
     scored.retain(|item| {
         fuzzy_score(filter, &item.value).is_some() || fuzzy_score(filter, &item.display).is_some()
     });
@@ -160,8 +138,6 @@ pub fn filter_and_rank(items: Vec<CompletionItem>, filter: &str) -> Vec<Completi
 // ── Completion manager ────────────────────────────────────────────────────────
 
 /// Manages completion generation for the active input.
-///
-/// Bridges the parser, command registry, and completion overlay.
 pub struct CompletionManager {
     registry: Arc<CommandRegistry>,
 }
@@ -172,8 +148,6 @@ impl CompletionManager {
     }
 
     /// Generate completions for `parsed` in `ctx`.
-    ///
-    /// Returns an empty vec when there is nothing to complete.
     pub fn get_completions(
         &self,
         parsed: &ParsedCommand,
@@ -183,7 +157,6 @@ impl CompletionManager {
             ParsedCommand::NotCommand | ParsedCommand::Complete { .. } => vec![],
 
             ParsedCommand::PartialCommand { partial } => {
-                // Complete command names
                 let items: Vec<CompletionItem> = self
                     .registry
                     .iter()
@@ -202,19 +175,10 @@ impl CompletionManager {
                 command,
                 arg_index,
                 partial,
-            } => {
-                match self.registry.get(command) {
-                    Some(cmd) => {
-                        // The command is responsible for filtering and ranking
-                        // its own completions (it may also pin items at specific
-                        // positions, e.g. the current model at index 0).
-                        // Do NOT re-rank here: a second filter_and_rank with an
-                        // empty partial would alphabetically sort away pinned items.
-                        cmd.complete(*arg_index, partial, ctx)
-                    }
-                    None => vec![],
-                }
-            }
+            } => match self.registry.get(command) {
+                Some(cmd) => cmd.complete(*arg_index, partial, ctx),
+                None => vec![],
+            },
         }
     }
 }
@@ -258,7 +222,6 @@ mod tests {
     fn fuzzy_score_consecutive_bonus() {
         let consec = fuzzy_score("mo", "mode").unwrap();
         let spread = fuzzy_score("me", "model").unwrap();
-        // "mo" in "mode" is consecutive from start; "me" spans chars — consec should score higher
         assert!(
             consec >= spread,
             "consecutive match should score at least as high"
@@ -296,14 +259,10 @@ mod tests {
             CompletionItem::simple("anthropic/claude-opus"),
             CompletionItem::simple("mode"),
         ];
-        // "mod" matches "mode" much better than "anthropic/claude-opus"
         let result = filter_and_rank(items, "mode");
         assert_eq!(result[0].value, "mode");
     }
 
-    /// Regression: CompletionManager must NOT re-rank arg completions.
-    /// A second filter_and_rank with empty partial alphabetically sorts items,
-    /// displacing pinned entries (e.g. the current model at index 0).
     #[test]
     fn get_completions_preserves_cmd_complete_ordering() {
         use crate::commands::{CommandContext, CommandRegistry, ParsedCommand};
@@ -313,7 +272,6 @@ mod tests {
         let registry = Arc::new(CommandRegistry::with_builtins());
         let manager = CompletionManager::new(registry);
 
-        // Simulate "/model " (empty partial) — the current model should be first.
         let parsed = ParsedCommand::CompletingArgs {
             command: "model".to_string(),
             arg_index: 0,

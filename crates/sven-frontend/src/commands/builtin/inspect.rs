@@ -1,20 +1,14 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Inspector slash commands: `/skills`, `/subagents`, `/peers`, `/context`.
-//!
-//! Each command opens the full-screen [`InspectorOverlay`] for the
-//! corresponding view kind.  The actual content is rendered in
-//! `App::submit_user_input` when it handles [`ImmediateAction::OpenInspector`].
+//! Inspector slash commands: `/skills`, `/subagents`, `/peers`, `/context`, `/tools`, `/mcp`.
 
-use crate::{
-    commands::{CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand},
-    ui::InspectorKind,
+use crate::commands::{
+    CommandContext, CommandResult, CompletionItem, ImmediateAction, InspectorKind, SlashCommand,
 };
 
 // ── /skills ───────────────────────────────────────────────────────────────────
 
-/// Open the skills inspector.
 pub struct SkillsCommand;
 
 impl SlashCommand for SkillsCommand {
@@ -26,12 +20,7 @@ impl SlashCommand for SkillsCommand {
         "Show all available skills as a browsable tree with paths and metadata."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -47,7 +36,6 @@ impl SlashCommand for SkillsCommand {
 
 // ── /subagents ────────────────────────────────────────────────────────────────
 
-/// Open the subagents inspector.
 pub struct SubagentsCommand;
 
 impl SlashCommand for SubagentsCommand {
@@ -59,12 +47,7 @@ impl SlashCommand for SubagentsCommand {
         "Show all configured subagents with their descriptions, models, and paths."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -80,7 +63,6 @@ impl SlashCommand for SubagentsCommand {
 
 // ── /peers ────────────────────────────────────────────────────────────────────
 
-/// Open the peers inspector.
 pub struct PeersCommand;
 
 impl SlashCommand for PeersCommand {
@@ -89,16 +71,10 @@ impl SlashCommand for PeersCommand {
     }
 
     fn description(&self) -> &str {
-        "Show configured subagents and active subprocess buffers \
-         (subagents spawned via the task tool)."
+        "Show configured subagents and active subprocess buffers."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -114,7 +90,6 @@ impl SlashCommand for PeersCommand {
 
 // ── /context ──────────────────────────────────────────────────────────────────
 
-/// Open the context inspector.
 pub struct ContextCommand;
 
 impl SlashCommand for ContextCommand {
@@ -127,12 +102,7 @@ impl SlashCommand for ContextCommand {
          and active output buffer handles."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -148,7 +118,6 @@ impl SlashCommand for ContextCommand {
 
 // ── /tools ────────────────────────────────────────────────────────────────────
 
-/// Open the tools inspector.
 pub struct ToolsCommand;
 
 impl SlashCommand for ToolsCommand {
@@ -157,16 +126,10 @@ impl SlashCommand for ToolsCommand {
     }
 
     fn description(&self) -> &str {
-        "Show all available tools with descriptions and parameter counts. \
-         In node-proxy mode, fetches the tool list live from the connected node."
+        "Show all available tools with descriptions and parameter counts."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -182,10 +145,6 @@ impl SlashCommand for ToolsCommand {
 
 // ── /mcp ──────────────────────────────────────────────────────────────────────
 
-/// Open the MCP servers inspector.
-///
-/// Without arguments: opens the full-screen server status view.
-/// With subcommands: `list`, `enable <name>`, `disable <name>`, `auth <name>`.
 pub struct McpCommand;
 
 impl SlashCommand for McpCommand {
@@ -215,7 +174,6 @@ impl SlashCommand for McpCommand {
                 })
                 .collect()
         } else if arg_index == 1 {
-            // Complete server names for auth, enable, disable
             let servers: Vec<&str> = ctx.config.mcp_servers.keys().map(String::as_str).collect();
             servers
                 .into_iter()

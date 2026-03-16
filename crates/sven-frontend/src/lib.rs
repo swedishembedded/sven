@@ -26,8 +26,12 @@
 //! ```
 
 pub mod agent;
+pub mod commands;
+pub mod markdown;
 pub mod node_agent;
+pub mod queue;
 pub mod segment;
+pub mod tool_view;
 pub mod types;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────

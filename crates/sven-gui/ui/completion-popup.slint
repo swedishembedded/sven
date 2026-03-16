@@ -1,0 +1,86 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Slash command completion popup, anchored above the input pane.
+
+import { Theme } from "theme.slint";
+
+export struct CompletionEntry {
+    value: string,
+    display: string,
+    description: string,
+}
+
+export component CompletionPopup inherits Rectangle {
+    in property <[CompletionEntry]> items;
+    in property <int>               selected-index: 0;
+    in property <length>            anchor-y: 0;
+
+    callback accepted(string);
+    callback dismissed();
+
+    // Panel floats just above the input area
+    background: transparent;
+
+    if items.length > 0: popup-panel := Rectangle {
+        x: Theme.space-md;
+        y: anchor-y - self.height - Theme.space-xs;
+        width: 440px;
+        height: Math.min(220px, items.length * 40px);
+        border-radius: Theme.radius-md;
+        background: Theme.bg-surface;
+        border-color: Theme.accent-dim;
+        border-width: 1px;
+
+        Flickable {
+            width: parent.width;
+            height: parent.height;
+            viewport-height: item-layout.preferred-height;
+            interactive: true;
+
+            item-layout := VerticalLayout {
+                width: parent.width;
+                padding: Theme.space-xs;
+                spacing: 2px;
+                alignment: start;
+
+                for item[i] in items: Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius-sm;
+                    background: i == selected-index ? Theme.bg-active
+                              : item-ta.has-hover ? Theme.bg-hover
+                              : transparent;
+
+                    item-ta := TouchArea {
+                        clicked => { root.accepted(item.value); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-sm;
+                        padding-right: Theme.space-sm;
+                        spacing: Theme.space-sm;
+                        alignment: start;
+
+                        Text {
+                            text: item.display != "" ? item.display : item.value;
+                            color: i == selected-index ? Theme.accent : Theme.text-primary;
+                            font-size: Theme.font-size-sm;
+                            font-weight: i == selected-index ? 600 : 400;
+                            vertical-alignment: center;
+                            width: 160px;
+                        }
+
+                        if item.description != "": Text {
+                            text: item.description;
+                            color: Theme.text-dim;
+                            font-size: Theme.font-size-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

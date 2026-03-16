@@ -224,7 +224,6 @@ mod tests {
 
     #[test]
     fn command_with_no_args_needed_e_g_quit_partial() {
-        // "/quit" with no space: still PartialCommand (user might keep typing)
         assert_eq!(
             parse("/quit"),
             ParsedCommand::PartialCommand {
@@ -235,7 +234,6 @@ mod tests {
 
     #[test]
     fn command_with_trailing_space_is_completing_first_arg() {
-        // "/quit " with trailing space: start completing arg 0 (no args typed yet)
         assert_eq!(
             parse("/quit "),
             ParsedCommand::CompletingArgs {
@@ -248,7 +246,6 @@ mod tests {
 
     #[test]
     fn quoted_argument_parsed_as_single_token() {
-        // "/model \"my custom provider\""
         let input = "/model \"my provider\"";
         match parse(input) {
             ParsedCommand::CompletingArgs {

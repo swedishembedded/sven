@@ -13,8 +13,12 @@ export component StatusBar inherits Rectangle {
     in property <bool>   agent-busy: false;
     in property <float>  total-cost-usd: 0.0;
     in property <int>    total-output-tokens: 0;
+    in property <int>    total-input-tokens: 0;
     in property <string> connection-label: "local";
     in property <bool>   is-node-proxy: false;
+
+    callback model-clicked();
+    callback mode-clicked();
 
     height: Theme.status-bar-height;
     background: Theme.bg-surface;
@@ -28,13 +32,25 @@ export component StatusBar inherits Rectangle {
         background: Theme.border;
     }
 
+    // Context fill bar (very subtle, sits behind content)
+    Rectangle {
+        x: 0;
+        y: parent.height - 2px;
+        width: parent.width * context-pct / 100;
+        height: 2px;
+        background: context-pct > 80 ? Theme.warning
+                  : context-pct > 60 ? Theme.accent-dim
+                  : Theme.accent-dim;
+        opacity: 0.6;
+    }
+
     HorizontalLayout {
         padding-left: Theme.space-md;
         padding-right: Theme.space-md;
         spacing: Theme.space-md;
         alignment: space-between;
 
-        // ── Left: logo + model ────────────────────────────────────────────────
+        // ── Left: logo + model + mode ─────────────────────────────────────────
         HorizontalLayout {
             spacing: Theme.space-sm;
             alignment: start;
@@ -55,11 +71,19 @@ export component StatusBar inherits Rectangle {
                 background: Theme.border;
             }
 
-            Text {
-                text: root.model-name;
-                color: Theme.text-primary;
-                font-size: Theme.font-size-sm;
-                vertical-alignment: center;
+            // Clickable model name
+            model-area := TouchArea {
+                height: parent.height;
+                width: model-text.preferred-width + 8px;
+                clicked => { root.model-clicked(); }
+
+                model-text := Text {
+                    text: root.model-name;
+                    color: model-area.has-hover ? Theme.accent : Theme.text-primary;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    x: 4px;
+                }
             }
 
             Text {
@@ -69,11 +93,19 @@ export component StatusBar inherits Rectangle {
                 vertical-alignment: center;
             }
 
-            Text {
-                text: root.mode;
-                color: Theme.info;
-                font-size: Theme.font-size-sm;
-                vertical-alignment: center;
+            // Clickable mode
+            mode-area := TouchArea {
+                height: parent.height;
+                width: mode-text.preferred-width + 8px;
+                clicked => { root.mode-clicked(); }
+
+                mode-text := Text {
+                    text: root.mode;
+                    color: mode-area.has-hover ? Theme.accent : Theme.info;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    x: 4px;
+                }
             }
         }
 
@@ -94,10 +126,34 @@ export component StatusBar inherits Rectangle {
                 }
             }
 
-            // Context usage
+            // Input token count (when available)
+            if total-input-tokens > 0: Text {
+                text: "in:" + (total-input-tokens / 1000) + "k";
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            // Output token count (when available)
+            if total-output-tokens > 0: Text {
+                text: "out:" + (total-output-tokens / 1000) + "k";
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            // Context usage percentage
             Text {
                 text: "ctx " + root.context-pct + "%";
                 color: root.context-pct > 80 ? Theme.warning : Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            // Cost (shown when non-zero)
+            if root.total-cost-usd > 0: Text {
+                text: "$" + Math.round(root.total-cost-usd * 100) / 100.0;
+                color: Theme.text-dim;
                 font-size: Theme.font-size-sm;
                 vertical-alignment: center;
             }

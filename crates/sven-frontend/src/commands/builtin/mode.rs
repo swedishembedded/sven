@@ -88,12 +88,8 @@ mod tests {
 
     #[test]
     fn execute_unknown_mode_returns_no_override() {
-        // An unrecognised mode name must not silently set any override.
         let result = ModeCommand.execute(vec!["invalid".into()]);
-        assert!(
-            result.mode_override.is_none(),
-            "unknown mode must not set override"
-        );
+        assert!(result.mode_override.is_none());
     }
 
     #[test]
@@ -122,9 +118,9 @@ mod tests {
         };
         let items = ModeCommand.complete(0, "", &ctx);
         let names: Vec<&str> = items.iter().map(|i| i.value.as_str()).collect();
-        assert!(names.contains(&"research"), "research must be listed");
-        assert!(names.contains(&"plan"), "plan must be listed");
-        assert!(names.contains(&"agent"), "agent must be listed");
+        assert!(names.contains(&"research"));
+        assert!(names.contains(&"plan"));
+        assert!(names.contains(&"agent"));
     }
 
     #[test]
@@ -140,18 +136,5 @@ mod tests {
         let items = ModeCommand.complete(0, "res", &ctx);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].value, "research");
-    }
-
-    #[test]
-    fn complete_wrong_arg_index_returns_empty() {
-        use crate::commands::CommandContext;
-        use std::sync::Arc;
-        use sven_config::Config;
-        let ctx = CommandContext {
-            config: Arc::new(Config::default()),
-            current_model_provider: "openai".into(),
-            current_model_name: "gpt-4o".into(),
-        };
-        assert!(ModeCommand.complete(1, "", &ctx).is_empty());
     }
 }

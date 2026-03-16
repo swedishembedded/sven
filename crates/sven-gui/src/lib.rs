@@ -8,7 +8,6 @@
 //! property model.
 
 pub mod bridge;
-pub mod markdown;
 pub mod models;
 
 // Include the generated Slint bindings.

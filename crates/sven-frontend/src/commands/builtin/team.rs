@@ -1,9 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Team collaboration slash commands:
-//!   - `/approve [task_id]` — approve a pending plan submitted by a teammate
-//!   - `/reject [task_id] [reason]` — reject a pending plan with feedback
+//! Team collaboration slash commands.
 
 use crate::commands::{
     CommandContext, CommandResult, CompletionItem, ImmediateAction, SlashCommand,
@@ -11,7 +9,6 @@ use crate::commands::{
 
 // ── /approve ──────────────────────────────────────────────────────────────────
 
-/// Approve the most recent pending plan, or a specific task by ID.
 pub struct ApproveCommand;
 
 impl SlashCommand for ApproveCommand {
@@ -20,16 +17,10 @@ impl SlashCommand for ApproveCommand {
     }
 
     fn description(&self) -> &str {
-        "Approve a teammate's pending plan. Pass an optional task_id to approve \
-         a specific plan; without an argument, approves the latest pending plan."
+        "Approve a teammate's pending plan."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -44,7 +35,6 @@ impl SlashCommand for ApproveCommand {
 
 // ── /reject ───────────────────────────────────────────────────────────────────
 
-/// Reject a pending plan with feedback.
 pub struct RejectCommand;
 
 impl SlashCommand for RejectCommand {
@@ -53,16 +43,10 @@ impl SlashCommand for RejectCommand {
     }
 
     fn description(&self) -> &str {
-        "Reject a teammate's pending plan. Pass an optional task_id as the first \
-         argument; remaining arguments are the rejection feedback."
+        "Reject a teammate's pending plan with feedback."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -79,7 +63,6 @@ impl SlashCommand for RejectCommand {
 
 // ── /agents ───────────────────────────────────────────────────────────────────
 
-/// Open the agent/team picker overlay.
 pub struct AgentsCommand;
 
 impl SlashCommand for AgentsCommand {
@@ -88,16 +71,10 @@ impl SlashCommand for AgentsCommand {
     }
 
     fn description(&self) -> &str {
-        "Show the team members overlay (also Ctrl+a). \
-         Navigate with arrow keys, Enter to switch to that agent's view."
+        "Show the team members overlay."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -111,7 +88,6 @@ impl SlashCommand for AgentsCommand {
 
 // ── /architect ────────────────────────────────────────────────────────────────
 
-/// Switch into architect/editor two-model mode.
 pub struct ArchitectCommand;
 
 impl SlashCommand for ArchitectCommand {
@@ -120,16 +96,10 @@ impl SlashCommand for ArchitectCommand {
     }
 
     fn description(&self) -> &str {
-        "Start architect/editor mode: this agent acts as the architect, planning and \
-         specifying changes, while a separate editor agent implements them."
+        "Start architect/editor mode."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
@@ -151,7 +121,6 @@ impl SlashCommand for ArchitectCommand {
 
 // ── /tasks ────────────────────────────────────────────────────────────────────
 
-/// Show the team task list.
 pub struct TasksCommand;
 
 impl SlashCommand for TasksCommand {
@@ -160,15 +129,10 @@ impl SlashCommand for TasksCommand {
     }
 
     fn description(&self) -> &str {
-        "Show the current team task list (also Ctrl+t)."
+        "Show the current team task list."
     }
 
-    fn complete(
-        &self,
-        _arg_index: usize,
-        _partial: &str,
-        _ctx: &CommandContext,
-    ) -> Vec<CompletionItem> {
+    fn complete(&self, _: usize, _: &str, _: &CommandContext) -> Vec<CompletionItem> {
         vec![]
     }
 
