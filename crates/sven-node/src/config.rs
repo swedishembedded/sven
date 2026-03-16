@@ -126,6 +126,18 @@ pub struct NodeConfig {
     /// devices are held for admin approval before gaining PTY access.
     #[serde(default)]
     pub web: Option<WebConfig>,
+
+    /// Messaging channel integrations (Telegram, Discord, WhatsApp, Signal, Matrix, IRC).
+    #[serde(default)]
+    pub channels: ChannelsConfig,
+
+    /// Scheduler configuration (cron jobs, heartbeat, one-shot timers).
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
+
+    /// Generic webhook trigger configuration.
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 /// TLS provisioning strategy.
@@ -493,6 +505,262 @@ pub enum SlackMode {
     Socket,
     /// Inbound HTTP webhook — Slack POSTs events to your server.
     Http,
+}
+
+// ── Channels config ───────────────────────────────────────────────────────────
+
+/// Messaging channels configuration.
+///
+/// Each subsection enables and configures one messaging platform.
+/// Only configured channels are started; unconfigured channels are ignored.
+///
+/// # Example
+/// ```yaml
+/// channels:
+///   telegram:
+///     bot_token: "${TELEGRAM_BOT_TOKEN}"
+///     allowed_users: [123456789]
+///   discord:
+///     bot_token: "${DISCORD_BOT_TOKEN}"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChannelsConfig {
+    /// Telegram Bot API integration.
+    #[serde(default)]
+    pub telegram: Option<TelegramConfig>,
+    /// Discord Bot integration.
+    #[serde(default)]
+    pub discord: Option<DiscordConfig>,
+    /// WhatsApp Business Cloud API integration.
+    #[serde(default)]
+    pub whatsapp: Option<WhatsAppConfig>,
+    /// Signal integration via signal-cli subprocess.
+    #[serde(default)]
+    pub signal: Option<SignalConfig>,
+    /// Matrix homeserver integration.
+    #[serde(default)]
+    pub matrix: Option<MatrixConfig>,
+    /// IRC integration.
+    #[serde(default)]
+    pub irc: Option<IrcConfig>,
+}
+
+/// Telegram Bot API configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// Bot token from @BotFather (`bot_token: "${TELEGRAM_BOT_TOKEN}"`).
+    pub bot_token: String,
+    /// Optional list of Telegram user IDs allowed to interact with the agent.
+    /// If empty, all users can interact (use with care).
+    #[serde(default)]
+    pub allowed_users: Vec<i64>,
+}
+
+/// Discord Bot configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscordConfig {
+    /// Discord bot token (`bot_token: "${DISCORD_BOT_TOKEN}"`).
+    pub bot_token: String,
+    /// Guild (server) IDs the bot should respond in.
+    /// If empty, the bot responds in all guilds it is a member of.
+    #[serde(default)]
+    pub guild_ids: Vec<u64>,
+    /// Channel IDs the bot is allowed to respond in.
+    /// If empty, the bot responds in all text channels it can read.
+    #[serde(default)]
+    pub allowed_channel_ids: Vec<u64>,
+}
+
+/// WhatsApp Business Cloud API configuration.
+///
+/// Requires a verified Meta Business account and a WhatsApp phone number.
+/// Messages arrive via a webhook that the node serves at `/channels/whatsapp`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhatsAppConfig {
+    /// WhatsApp Business phone number ID (from Meta developer portal).
+    pub phone_number_id: String,
+    /// Meta Permanent Access Token or System User Token.
+    /// Use `${WHATSAPP_TOKEN}` to reference an environment variable.
+    pub access_token: String,
+    /// Webhook verify token — set the same value in the Meta developer portal.
+    pub verify_token: String,
+}
+
+/// Signal integration via `signal-cli` subprocess.
+///
+/// Requires `signal-cli` installed and a registered phone number.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalConfig {
+    /// Path to the `signal-cli` binary. Default: `signal-cli`.
+    #[serde(default = "SignalConfig::default_cli_path")]
+    pub signal_cli_path: String,
+    /// Registered phone number in E.164 format (e.g. `+12065551234`).
+    pub phone_number: String,
+}
+
+impl SignalConfig {
+    fn default_cli_path() -> String {
+        "signal-cli".to_string()
+    }
+}
+
+/// Matrix homeserver integration via matrix-sdk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatrixConfig {
+    /// Matrix homeserver URL (e.g. `https://matrix.org`).
+    pub homeserver: String,
+    /// Matrix user ID (e.g. `@sven:matrix.org`).
+    pub username: String,
+    /// Matrix password. Use `${MATRIX_PASSWORD}` to reference an environment variable.
+    pub password: String,
+    /// Room IDs the agent should join and respond in.
+    /// If empty, the agent responds in all invited rooms.
+    #[serde(default)]
+    pub room_ids: Vec<String>,
+}
+
+/// IRC integration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IrcConfig {
+    /// IRC server hostname.
+    pub server: String,
+    /// IRC server port. Default: 6697 (TLS).
+    #[serde(default = "IrcConfig::default_port")]
+    pub port: u16,
+    /// Use TLS. Default: true.
+    #[serde(default = "IrcConfig::default_tls")]
+    pub tls: bool,
+    /// IRC nickname for the bot.
+    pub nickname: String,
+    /// Channels to join (e.g. `["#sven", "#general"]`).
+    #[serde(default)]
+    pub channels: Vec<String>,
+    /// NickServ password for identification. Use `${IRC_PASSWORD}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl IrcConfig {
+    fn default_port() -> u16 {
+        6697
+    }
+    fn default_tls() -> bool {
+        true
+    }
+}
+
+// ── Scheduler config ──────────────────────────────────────────────────────────
+
+/// Scheduler configuration.
+///
+/// # Example
+/// ```yaml
+/// scheduler:
+///   heartbeat:
+///     enabled: true
+///     every: "30m"
+///     prompt: "Review pending tasks, emails, and notifications. Reply HEARTBEAT_OK if nothing to do."
+///   jobs_file: "~/.config/sven/scheduler/jobs.yaml"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SchedulerConfig {
+    /// Periodic heartbeat that wakes the agent on a fixed interval.
+    #[serde(default)]
+    pub heartbeat: HeartbeatConfig,
+    /// Path to the persistent cron jobs YAML file.
+    /// Default: `~/.config/sven/scheduler/jobs.yaml`.
+    #[serde(default, deserialize_with = "de_opt_path")]
+    pub jobs_file: Option<PathBuf>,
+}
+
+/// Heartbeat configuration — periodic agent wakeup.
+///
+/// When enabled, the agent is woken at the configured interval and given
+/// the heartbeat prompt. The agent reviews pending tasks, emails, and
+/// notifications. If there is nothing to do it replies `HEARTBEAT_OK`.
+/// A `HEARTBEAT.md` file in the workspace root can provide additional
+/// standing instructions for the heartbeat turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatConfig {
+    /// Whether the heartbeat is active. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Interval between heartbeats (e.g. `"30m"`, `"1h"`, `"15m"`).
+    #[serde(default = "HeartbeatConfig::default_every")]
+    pub every: String,
+    /// Prompt sent to the agent on each heartbeat turn.
+    #[serde(default = "HeartbeatConfig::default_prompt")]
+    pub prompt: String,
+}
+
+impl HeartbeatConfig {
+    fn default_every() -> String {
+        "30m".to_string()
+    }
+    fn default_prompt() -> String {
+        "Heartbeat check: review pending tasks, emails, and notifications. \
+         Act on anything urgent. Reply HEARTBEAT_OK if nothing requires action."
+            .to_string()
+    }
+}
+
+impl Default for HeartbeatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            every: Self::default_every(),
+            prompt: Self::default_prompt(),
+        }
+    }
+}
+
+// ── Hooks config ──────────────────────────────────────────────────────────────
+
+/// Generic webhook configuration.
+///
+/// Webhooks allow external services to trigger agent runs via HTTP POST.
+/// All webhook endpoints require a Bearer token for authentication.
+///
+/// # Endpoints
+///
+/// - `POST /hooks/wake` — wake the main session with an optional message
+/// - `POST /hooks/agent` — spawn an isolated agent run with a custom prompt
+/// - `POST /hooks/{name}` — custom-mapped hook; the `name` must be in `mappings`
+///
+/// # Example
+/// ```yaml
+/// hooks:
+///   token: "${HOOKS_TOKEN}"
+///   mappings:
+///     gmail:
+///       path: "/hooks/gmail"
+///       prompt: "New Gmail notification received. Check your email and take action."
+///     github:
+///       path: "/hooks/github"
+///       prompt: "GitHub event received: {payload}"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksConfig {
+    /// Bearer token required for all webhook endpoints.
+    /// If absent, webhook endpoints are disabled entirely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Named webhook mappings.
+    #[serde(default)]
+    pub mappings: HashMap<String, HookMapping>,
+}
+
+/// A single named webhook mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookMapping {
+    /// URL path this hook listens on (e.g. `/hooks/gmail`).
+    pub path: String,
+    /// Prompt template sent to the agent when this hook fires.
+    /// Use `{payload}` to include the raw JSON request body.
+    pub prompt: String,
+    /// When true, the agent runs in an isolated session rather than the main session.
+    #[serde(default)]
+    pub isolated: bool,
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────

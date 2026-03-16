@@ -788,6 +788,15 @@ pub struct ToolsConfig {
     /// Memory-mapped context tools configuration (RLM pattern)
     #[serde(default)]
     pub context: ContextConfig,
+    /// Email integration (IMAP/SMTP or Gmail API)
+    #[serde(default)]
+    pub email: EmailConfig,
+    /// Calendar integration (CalDAV or Google Calendar)
+    #[serde(default)]
+    pub calendar: CalendarConfig,
+    /// Voice integration (TTS/STT/calls)
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 impl Default for ToolsConfig {
@@ -809,6 +818,9 @@ impl Default for ToolsConfig {
             lints: LintsConfig::default(),
             gdb: GdbConfig::default(),
             context: ContextConfig::default(),
+            email: EmailConfig::default(),
+            calendar: CalendarConfig::default(),
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -954,6 +966,196 @@ impl Default for TuiConfig {
             ascii_borders: false,
         }
     }
+}
+
+// ── Email integration ─────────────────────────────────────────────────────────
+
+/// Backend to use for email access.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EmailBackend {
+    /// IMAP (receive) + SMTP (send). Works with any mail provider.
+    #[default]
+    Imap,
+    /// Gmail REST API with OAuth2. Richer label/thread support.
+    Gmail,
+}
+
+/// Email integration configuration.
+///
+/// # IMAP/SMTP example
+/// ```yaml
+/// tools:
+///   email:
+///     backend: imap
+///     imap_host: "imap.gmail.com"
+///     imap_port: 993
+///     smtp_host: "smtp.gmail.com"
+///     smtp_port: 587
+///     username: "${EMAIL_USER}"
+///     password: "${EMAIL_PASSWORD}"
+/// ```
+///
+/// # Gmail API example
+/// ```yaml
+/// tools:
+///   email:
+///     backend: gmail
+///     oauth_client_id: "${GMAIL_CLIENT_ID}"
+///     oauth_client_secret: "${GMAIL_CLIENT_SECRET}"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EmailConfig {
+    /// Email backend driver.
+    #[serde(default)]
+    pub backend: EmailBackend,
+    /// IMAP server hostname (IMAP backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imap_host: Option<String>,
+    /// IMAP server port (default: 993 for TLS).
+    #[serde(default = "EmailConfig::default_imap_port")]
+    pub imap_port: u16,
+    /// SMTP server hostname (IMAP backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smtp_host: Option<String>,
+    /// SMTP server port (default: 587 for STARTTLS).
+    #[serde(default = "EmailConfig::default_smtp_port")]
+    pub smtp_port: u16,
+    /// Email account username / address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Email account password or app-specific password.
+    /// Use `${VAR}` to reference an environment variable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Gmail OAuth2 client ID (Gmail backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    /// Gmail OAuth2 client secret (Gmail backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_secret: Option<String>,
+    /// Path where OAuth2 tokens are cached. Default: `~/.config/sven/gmail-token.json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_token_path: Option<String>,
+}
+
+impl EmailConfig {
+    fn default_imap_port() -> u16 {
+        993
+    }
+    fn default_smtp_port() -> u16 {
+        587
+    }
+}
+
+// ── Calendar integration ──────────────────────────────────────────────────────
+
+/// Backend to use for calendar access.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CalendarBackend {
+    /// CalDAV — works with Nextcloud, Radicale, iCloud, and most self-hosted servers.
+    #[default]
+    Caldav,
+    /// Google Calendar REST API with OAuth2.
+    Google,
+}
+
+/// Calendar integration configuration.
+///
+/// # CalDAV example
+/// ```yaml
+/// tools:
+///   calendar:
+///     backend: caldav
+///     url: "https://nextcloud.example.com/remote.php/dav"
+///     username: "${CALDAV_USER}"
+///     password: "${CALDAV_PASSWORD}"
+/// ```
+///
+/// # Google Calendar example
+/// ```yaml
+/// tools:
+///   calendar:
+///     backend: google
+///     oauth_client_id: "${GCAL_CLIENT_ID}"
+///     oauth_client_secret: "${GCAL_CLIENT_SECRET}"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CalendarConfig {
+    /// Calendar backend driver.
+    #[serde(default)]
+    pub backend: CalendarBackend,
+    /// CalDAV server URL (CalDAV backend).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// CalDAV username.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// CalDAV password. Use `${VAR}` to reference an environment variable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Google Calendar OAuth2 client ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    /// Google Calendar OAuth2 client secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_secret: Option<String>,
+    /// Path where OAuth2 tokens are cached. Default: `~/.config/sven/gcal-token.json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_token_path: Option<String>,
+}
+
+// ── Voice integration ─────────────────────────────────────────────────────────
+
+/// Voice integration configuration.
+///
+/// # Example
+/// ```yaml
+/// tools:
+///   voice:
+///     tts_provider: elevenlabs
+///     tts_api_key: "${ELEVENLABS_API_KEY}"
+///     tts_voice_id: "21m00Tcm4TlvDq8ikWAM"
+///     stt_provider: openai
+///     call_provider: twilio
+///     twilio_account_sid: "${TWILIO_SID}"
+///     twilio_auth_token: "${TWILIO_TOKEN}"
+///     twilio_phone_number: "+1234567890"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    /// Text-to-speech provider: `elevenlabs` | `openai` | `system`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tts_provider: Option<String>,
+    /// API key for the TTS provider. Use `${VAR}` to reference an environment variable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tts_api_key: Option<String>,
+    /// Voice ID / name to use for synthesis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tts_voice_id: Option<String>,
+    /// Speech-to-text provider: `openai` | `deepgram` | `whisper_cpp`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_provider: Option<String>,
+    /// API key for the STT provider. Use `${VAR}` to reference an environment variable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_api_key: Option<String>,
+    /// Voice call provider: `twilio`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_provider: Option<String>,
+    /// Twilio Account SID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub twilio_account_sid: Option<String>,
+    /// Twilio Auth Token. Use `${VAR}` to reference an environment variable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub twilio_auth_token: Option<String>,
+    /// Twilio phone number to call from (E.164 format, e.g. `+1234567890`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub twilio_phone_number: Option<String>,
+    /// Public base URL of this sven node, used for Twilio webhooks.
+    /// Example: `https://myagent.example.com`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_base_url: Option<String>,
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
