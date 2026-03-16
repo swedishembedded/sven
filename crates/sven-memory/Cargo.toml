@@ -1,0 +1,29 @@
+[package]
+name    = "sven-memory"
+version = "1.0.0"
+edition = "2021"
+description = "Semantic (vector + BM25) memory store for sven agents"
+
+[dependencies]
+sven-config  = { path = "../sven-config" }
+sven-tools   = { path = "../sven-tools" }
+sven-model   = { path = "../sven-model" }
+
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+dirs         = { workspace = true }
+chrono       = { workspace = true }
+uuid         = { workspace = true }
+reqwest      = { workspace = true }
+
+# SQLite for persistent memory storage with FTS5
+rusqlite     = { version = "0.31", features = ["bundled", "load_extension"] }
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = { workspace = true }
