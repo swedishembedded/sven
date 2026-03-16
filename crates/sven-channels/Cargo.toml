@@ -1,0 +1,32 @@
+[package]
+name    = "sven-channels"
+version = "1.0.0"
+edition = "2021"
+description = "Messaging channel integrations for sven (Telegram, Discord, WhatsApp, Signal, Matrix, IRC)"
+
+[features]
+default = []
+telegram = ["dep:teloxide"]
+discord  = ["dep:serenity"]
+
+[dependencies]
+sven-config  = { path = "../sven-config" }
+sven-tools   = { path = "../sven-tools" }
+
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+reqwest      = { workspace = true }
+uuid         = { workspace = true }
+
+# Optional channel backends
+teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls"], optional = true }
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"], optional = true }
+
+[dev-dependencies]
+tokio    = { workspace = true }
+tempfile = { workspace = true }

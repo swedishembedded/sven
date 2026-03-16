@@ -21,6 +21,11 @@ members = [
     "crates/sven-mcp-client",
     "crates/sven-acp",
     "crates/sven-team",
+    # New integration crates
+    "crates/sven-channels",
+    "crates/sven-scheduler",
+    "crates/sven-integrations",
+    "crates/sven-memory",
 ]
 
 [workspace.dependencies]
@@ -123,6 +128,7 @@ sven-bootstrap   = { path = "crates/sven-bootstrap" }
 sven-tools       = { path = "crates/sven-tools" }
 sven-config      = { path = "crates/sven-config" }
 sven-model       = { path = "crates/sven-model" }
+sven-channels    = { path = "crates/sven-channels" }
 async-trait      = { workspace = true }
 tokio            = { workspace = true }
 tempfile         = { workspace = true }
