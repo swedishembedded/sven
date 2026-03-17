@@ -35,9 +35,10 @@ struct MarkdownRenderer {
     code_buf: String,
     // List state: stack of (is_ordered, current_number)
     list_stack: Vec<Option<u64>>,
-    // When Some, the current list item begins with a task-list checkbox.
-    // The bool is the checked state; the field is consumed when the Item starts.
-    pending_task_marker: Option<bool>,
+    // True when we're inside an Item but haven't rendered the bullet/checkbox yet.
+    // TaskListMarker arrives *after* Start(Item) in pulldown-cmark. We defer until
+    // we see TaskListMarker (→ checkbox) or first content (→ bullet).
+    list_item_prefix_pending: bool,
     // Link URL to show after link text
     pending_link_url: Option<String>,
     // Table state: buffer the whole table before rendering (need all widths first).
@@ -66,7 +67,7 @@ impl MarkdownRenderer {
             code_lang: String::new(),
             code_buf: String::new(),
             list_stack: Vec::new(),
-            pending_task_marker: None,
+            list_item_prefix_pending: false,
             pending_link_url: None,
             table_alignments: Vec::new(),
             table_rows: Vec::new(),
@@ -88,6 +89,26 @@ impl MarkdownRenderer {
 
     fn current_style(&self) -> Style {
         *self.style_stack.last().unwrap_or(&Style::default())
+    }
+
+    /// Emit bullet/ordered prefix for a list item when we see first content.
+    /// TaskListMarker is emitted after Start(Item), so we defer until we see
+    /// either TaskListMarker (checkbox) or first content (bullet).
+    fn flush_list_item_prefix_if_pending(&mut self) {
+        if !self.list_item_prefix_pending {
+            return;
+        }
+        self.list_item_prefix_pending = false;
+        let bullet: String = match self.list_stack.last_mut() {
+            Some(Some(n)) => {
+                let s = format!("  {}. ", n);
+                *n += 1;
+                s
+            }
+            _ => format!("  {} ", md_bullet(self.ascii)),
+        };
+        self.current_spans
+            .push(Span::styled(bullet, Style::default().fg(Color::LightBlue)));
     }
 
     fn render(mut self, md: &str) -> StyledLines {
@@ -225,18 +246,20 @@ impl MarkdownRenderer {
                     }
                 }
                 Event::Start(Tag::Item) => {
-                    let bullet: String = match self.list_stack.last_mut() {
-                        Some(Some(n)) => {
-                            let s = format!("  {}. ", n);
-                            *n += 1;
-                            s
-                        }
-                        _ => format!("  {} ", md_bullet(self.ascii)),
-                    };
-                    // If a task-list marker was pending (set by TaskListMarker
-                    // event which arrives before the item content), use a
-                    // checkbox prefix instead of the regular bullet.
-                    if let Some(checked) = self.pending_task_marker.take() {
+                    // Defer prefix rendering: TaskListMarker arrives *after* Start(Item)
+                    // in pulldown-cmark's event stream. We'll render at TaskListMarker
+                    // (checkbox) or at first content (bullet).
+                    self.list_item_prefix_pending = true;
+                }
+                Event::End(TagEnd::Item) => {
+                    // Empty item: emit bullet if we never saw TaskListMarker or content
+                    self.flush_list_item_prefix_if_pending();
+                    self.push_line();
+                }
+                Event::TaskListMarker(checked) => {
+                    // TaskListMarker arrives after Start(Item). Emit checkbox now.
+                    if self.list_item_prefix_pending {
+                        self.list_item_prefix_pending = false;
                         let (box_char, box_style) = if checked {
                             (
                                 if self.ascii { "[x] " } else { "☑ " },
@@ -254,18 +277,7 @@ impl MarkdownRenderer {
                             .push(Span::styled("  ", Style::default()));
                         self.current_spans
                             .push(Span::styled(box_char.to_string(), box_style));
-                    } else {
-                        self.current_spans
-                            .push(Span::styled(bullet, Style::default().fg(Color::LightBlue)));
                     }
-                }
-                Event::End(TagEnd::Item) => {
-                    self.push_line();
-                }
-                Event::TaskListMarker(checked) => {
-                    // Store the checked state; it will be consumed when the
-                    // enclosing Tag::Item is rendered.
-                    self.pending_task_marker = Some(checked);
                 }
 
                 // ── Block quotes ──────────────────────────────────────────────
@@ -292,6 +304,7 @@ impl MarkdownRenderer {
 
                 // ── Text (with word-wrap) ─────────────────────────────────────
                 Event::Text(t) => {
+                    self.flush_list_item_prefix_if_pending();
                     let style = self.current_style();
                     let width = self.width;
                     let mut col = current_col(&self.current_spans);
@@ -318,6 +331,7 @@ impl MarkdownRenderer {
 
                 // ── Inline code ───────────────────────────────────────────────
                 Event::Code(t) => {
+                    self.flush_list_item_prefix_if_pending();
                     // No explicit background: inherits from the parent widget
                     // (chat pane or pager) so inline code never creates a
                     // contrasting black box on non-black backgrounds.
@@ -658,6 +672,26 @@ mod tests {
         assert!(
             lines.len() <= 1,
             "empty input should yield at most one line"
+        );
+    }
+
+    #[test]
+    fn task_list_first_item_shows_checkbox_when_completed() {
+        // TaskListMarker arrives after Start(Item) in pulldown-cmark. The first
+        // item must show ☑ (not •) when completed.
+        let md = "- [x] First task done\n- [ ] Second pending\n";
+        let lines = render_markdown(md, 80, false);
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("☑") && text.contains("First task"),
+            "first completed item must show checkbox, not bullet; got: {text:?}"
+        );
+        assert!(
+            text.contains("☐") && text.contains("Second"),
+            "second pending item must show unchecked box; got: {text:?}"
         );
     }
 
