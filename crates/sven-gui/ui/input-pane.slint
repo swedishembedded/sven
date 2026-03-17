@@ -2,23 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Message input area. The slash-command completion popup is rendered as a
-// window-level overlay by MainWindow (not inside this component).
+// Message input area with auto-grow height, keyboard shortcut hints, and
+// input-history navigation.
 
 import { Theme } from "theme.slint";
+import { Badge } from "widgets.slint";
 
 export component InputPane inherits Rectangle {
     in property <bool>   agent-busy: false;
-    in property <string> placeholder: "Type a message… (Enter to send, / for commands)";
+    in property <string> placeholder: "Message Sven…";
     in property <int>    queue-count: 0;
     in-out property <string> input-text: "";
+    in property <bool>   has-history: false;
 
     callback send-message(string);
     callback cancel-run();
     callback input-changed(string);
     callback completion-accepted(string);
+    callback history-prev();
+    callback history-next();
 
-    height: Theme.input-area-height;
+    // Height grows with content, capped at max.
+    property <length> dynamic-height: Math.clamp(
+        Theme.space-md * 2 + Math.max(64px, text-input.preferred-height) + 40px + Theme.space-sm,
+        Theme.input-area-min + 40px,
+        Theme.input-area-max
+    );
+
+    height: dynamic-height;
+    animate height { duration: Theme.duration-fast; easing: ease-in-out; }
     background: Theme.bg-surface;
 
     // Top border
@@ -33,15 +45,17 @@ export component InputPane inherits Rectangle {
         padding: Theme.space-md;
         spacing: Theme.space-sm;
 
-        // Input field
+        // ── Input field ───────────────────────────────────────────────────────
         input-rect := Rectangle {
             border-radius: Theme.radius-md;
             border-color: text-input.has-focus ? Theme.accent-dim : Theme.border;
             border-width: 1px;
             background: Theme.bg-deep;
-            height: 64px;
+            height: Math.max(64px, text-input.preferred-height + 2 * Theme.space-sm);
+            animate border-color { duration: Theme.duration-fast; }
+            animate height { duration: Theme.duration-fast; easing: ease-in-out; }
 
-            // Placeholder — only visible when input is empty, aligned top-left to match text
+            // Placeholder
             Text {
                 x: Theme.space-md;
                 y: Theme.space-sm;
@@ -55,98 +69,139 @@ export component InputPane inherits Rectangle {
                 x: Theme.space-md;
                 y: Theme.space-sm;
                 width: parent.width - 2 * Theme.space-md;
-                height: parent.height - 2 * Theme.space-sm;
+                height: self.preferred-height;
                 text <=> root.input-text;
                 color: Theme.text-primary;
                 font-size: Theme.font-size-base;
+                font-family: Theme.font-ui;
                 wrap: word-wrap;
 
                 edited => {
                     root.input-changed(root.input-text);
                 }
 
-                accepted => {
-                    if root.input-text != "" {
-                        root.send-message(root.input-text);
-                        root.input-text = "";
-                        root.input-changed("");
+                key-pressed(event) => {
+                    // Enter (without Shift) sends the message
+                    if event.text == Key.Return && !event.modifiers.shift {
+                        if root.input-text != "" {
+                            root.send-message(root.input-text);
+                            root.input-text = "";
+                            root.input-changed("");
+                        }
+                        accept
+                    } else if event.text == Key.UpArrow && root.input-text == "" {
+                        root.history-prev();
+                        accept
+                    } else if event.text == Key.DownArrow && root.has-history {
+                        root.history-next();
+                        accept
+                    } else {
+                        reject
                     }
                 }
             }
         }
 
-        // Action row
+        // ── Action row ────────────────────────────────────────────────────────
         HorizontalLayout {
             spacing: Theme.space-sm;
-            alignment: end;
+            alignment: space-between;
 
-            if root.queue-count > 0: Rectangle {
-                width: 90px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: Theme.bg-active;
-                border-color: Theme.accent-dim;
-                border-width: 1px;
-
-                Text {
-                    text: "⏱ " + root.queue-count + " queued";
-                    color: Theme.accent;
-                    font-size: Theme.font-size-sm;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    width: parent.width;
-                    height: parent.height;
-                }
+            // Keyboard hint
+            Text {
+                text: "↵ send · ⇧↵ newline · / commands";
+                color: Theme.text-dim;
+                font-size: Theme.font-size-xs;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
             }
 
-            if root.agent-busy: Rectangle {
-                width: 80px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: cancel-ta.has-hover ? Theme.error-bg : transparent;
-                border-color: Theme.error-border;
-                border-width: 1px;
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                alignment: end;
 
-                Text {
-                    text: "⏹ Stop";
-                    color: Theme.error-text;
-                    font-size: Theme.font-size-sm;
-                    horizontal-alignment: center;
+                // Character count (warn at 4000+)
+                if root.input-text.character-count > 3000: Text {
+                    text: root.input-text.character-count + " chars";
+                    color: root.input-text.character-count > 8000 ? Theme.warning : Theme.text-dim;
+                    font-size: Theme.font-size-xs;
+                    font-family: Theme.font-mono;
                     vertical-alignment: center;
-                    width: parent.width;
-                    height: parent.height;
                 }
 
-                cancel-ta := TouchArea {
-                    clicked => { root.cancel-run(); }
-                }
-            }
+                // Queue count badge
+                if root.queue-count > 0: Rectangle {
+                    height: 28px;
+                    width: queue-text.preferred-width + 16px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg-active;
+                    border-color: Theme.accent-dim;
+                    border-width: 1px;
 
-            Rectangle {
-                width: 80px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: root.input-text != ""
-                    ? (send-ta.has-hover ? Theme.accent : Theme.accent-dim)
-                    : Theme.bg-active;
-
-                Text {
-                    text: root.agent-busy ? "⏱ Queue" : "Send ↵";
-                    color: root.input-text != "" ? Theme.bg-deep : Theme.text-dim;
-                    font-size: Theme.font-size-sm;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    width: parent.width;
-                    height: parent.height;
+                    queue-text := Text {
+                        text: "⏱ " + root.queue-count + " queued";
+                        color: Theme.accent;
+                        font-size: Theme.font-size-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
                 }
 
-                send-ta := TouchArea {
-                    enabled: root.input-text != "";
-                    clicked => {
-                        root.send-message(root.input-text);
-                        root.input-text = "";
-                        root.input-changed("");
+                // Stop button
+                if root.agent-busy: Rectangle {
+                    width: 80px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-ta.has-hover ? Theme.error-bg : transparent;
+                    border-color: Theme.error-border;
+                    border-width: 1px;
+                    animate background { duration: Theme.duration-fast; }
+
+                    Text {
+                        text: "⏹ Stop";
+                        color: Theme.error-text;
+                        font-size: Theme.font-size-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    cancel-ta := TouchArea {
+                        clicked => { root.cancel-run(); }
+                    }
+                }
+
+                // Send / Queue button
+                Rectangle {
+                    width: 80px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: root.input-text != ""
+                        ? (send-ta.has-hover ? Theme.accent : Theme.accent-dim)
+                        : Theme.bg-active;
+                    animate background { duration: Theme.duration-fast; }
+
+                    Text {
+                        text: root.agent-busy ? "⏱ Queue" : "Send ↵";
+                        color: root.input-text != "" ? Theme.bg-deep : Theme.text-dim;
+                        font-size: Theme.font-size-sm;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    send-ta := TouchArea {
+                        enabled: root.input-text != "";
+                        clicked => {
+                            root.send-message(root.input-text);
+                            root.input-text = "";
+                            root.input-changed("");
+                        }
                     }
                 }
             }

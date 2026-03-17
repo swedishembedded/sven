@@ -1,0 +1,111 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// In-chat search bar (Ctrl+F / /).
+
+import { Theme } from "theme.slint";
+import { IconButton } from "widgets.slint";
+
+export component SearchBar inherits Rectangle {
+    in property <int>    match-count: 0;
+    in property <int>    current-match: 0;
+    in-out property <string> query: "";
+
+    callback query-changed(string);
+    callback next-match();
+    callback prev-match();
+    callback closed();
+
+    height: 40px;
+    background: Theme.bg-card;
+    border-color: Theme.border;
+    border-width: 1px;
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.closed();
+                accept
+            } else if event.text == Key.Return {
+                root.next-match();
+                accept
+            } else {
+                reject
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: Theme.space-md;
+            padding-right: Theme.space-md;
+            padding-top: Theme.space-xs;
+            padding-bottom: Theme.space-xs;
+            spacing: Theme.space-sm;
+            alignment: center;
+
+            Text {
+                text: "🔍";
+                font-size: Theme.font-size-sm;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+                width: 18px;
+            }
+
+            // Search input
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                border-color: search-ti.has-focus ? Theme.accent-dim : Theme.border;
+                border-width: 1px;
+                background: Theme.bg-deep;
+                animate border-color { duration: Theme.duration-fast; }
+
+                search-ti := TextInput {
+                    x: Theme.space-sm;
+                    y: (parent.height - self.preferred-height) / 2;
+                    width: parent.width - 2 * Theme.space-sm;
+                    text <=> root.query;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    single-line: true;
+                    edited => { root.query-changed(self.text); }
+                }
+            }
+
+            // Match count
+            if match-count > 0: Text {
+                text: (current-match + 1) + " / " + match-count;
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
+                width: 60px;
+            }
+            if match-count == 0 && query != "": Text {
+                text: "no matches";
+                color: Theme.error-text;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+            }
+
+            IconButton {
+                icon: "▲";
+                tooltip-text: "Previous match (Shift+N)";
+                enabled: match-count > 0;
+                clicked => { root.prev-match(); }
+            }
+            IconButton {
+                icon: "▼";
+                tooltip-text: "Next match (N / Enter)";
+                enabled: match-count > 0;
+                clicked => { root.next-match(); }
+            }
+            IconButton {
+                icon: "✕";
+                tooltip-text: "Close search (Esc)";
+                clicked => { root.closed(); }
+            }
+        }
+    }
+}

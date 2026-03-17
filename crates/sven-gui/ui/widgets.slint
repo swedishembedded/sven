@@ -1,0 +1,535 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Sven Desktop – Reusable widget library.
+// All building-block components used across multiple panels.
+
+import { Theme } from "theme.slint";
+import { Spinner } from "std-widgets.slint";
+
+// ── ModalBackdrop ─────────────────────────────────────────────────────────────
+// Dimmed full-screen backdrop. Place behind modal panels.
+
+export component ModalBackdrop inherits Rectangle {
+    callback dismissed();
+    background: #00000088;
+    TouchArea { clicked => { root.dismissed(); } }
+}
+
+// ── IconButton ────────────────────────────────────────────────────────────────
+// Square icon-only button with hover/press states.
+
+export component IconButton inherits Rectangle {
+    in property <string>  icon;
+    in property <string>  tooltip-text: "";
+    in property <bool>    destructive: false;
+    in property <bool>    enabled: true;
+    in property <color>   icon-color: Theme.text-secondary;
+    in property <color>   hover-icon-color: Theme.text-primary;
+    in property <color>   hover-bg: Theme.bg-hover;
+
+    callback clicked();
+
+    width:  Theme.icon-btn-size;
+    height: Theme.icon-btn-size;
+    border-radius: Theme.radius-sm;
+
+    property <color> _icon-color:
+        !enabled ? Theme.text-dim :
+        ta.has-hover ? (destructive ? Theme.error-text : hover-icon-color) :
+        icon-color;
+
+    background:
+        !enabled ? transparent :
+        ta.pressed ? Theme.bg-active :
+        ta.has-hover ? (destructive ? Theme.error-bg : hover-bg) :
+        transparent;
+
+    animate background { duration: Theme.duration-fast; }
+
+    Text {
+        text: icon;
+        color: parent._icon-color;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+        animate color { duration: Theme.duration-fast; }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── TextButton ────────────────────────────────────────────────────────────────
+// Labelled button with optional primary (filled) style.
+
+export component TextButton inherits Rectangle {
+    in property <string> label;
+    in property <bool>   primary: false;
+    in property <bool>   enabled: true;
+    in property <bool>   destructive: false;
+
+    callback clicked();
+
+    height: 32px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+
+    background:
+        !enabled ? Theme.bg-active :
+        primary  ? (ta.has-hover ? Theme.accent : Theme.accent-dim) :
+        destructive ? (ta.has-hover ? Theme.error-bg : transparent) :
+        (ta.has-hover ? Theme.bg-hover : transparent);
+
+    border-color:
+        !enabled  ? Theme.border-dim :
+        primary   ? transparent :
+        destructive ? Theme.error-border :
+        Theme.border;
+
+    animate background { duration: Theme.duration-fast; }
+
+    Text {
+        text: label;
+        color:
+            !enabled ? Theme.text-dim :
+            primary  ? Theme.bg-deep :
+            destructive ? Theme.error-text :
+            Theme.text-secondary;
+        font-size: Theme.font-size-sm;
+        font-weight: primary ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── SearchInput ───────────────────────────────────────────────────────────────
+// Text input with embedded search icon and clear button.
+
+export component SearchInput inherits Rectangle {
+    in property <string>  placeholder: "Search…";
+    in-out property <string> text: "";
+    callback text-changed(string);
+    callback accepted();
+
+    height: Theme.row-height;
+    border-radius: Theme.radius-sm;
+    border-color: ti.has-focus ? Theme.accent-dim : Theme.border;
+    border-width: 1px;
+    background: Theme.bg-deep;
+    animate border-color { duration: Theme.duration-fast; }
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-xs;
+        spacing: Theme.space-xs;
+        alignment: center;
+
+        Text {
+            text: "🔍";
+            font-size: Theme.font-size-sm;
+            color: ti.has-focus ? Theme.accent-dim : Theme.text-dim;
+            vertical-alignment: center;
+            width: 18px;
+        }
+
+        ti := TextInput {
+            horizontal-stretch: 1;
+            height: 22px;
+            text <=> root.text;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-base;
+            single-line: true;
+            edited => { root.text-changed(self.text); }
+            accepted => { root.accepted(); }
+        }
+
+        // Placeholder when empty and unfocused
+        if root.text == "" && !ti.has-focus: Text {
+            text: root.placeholder;
+            color: Theme.text-dim;
+            font-size: Theme.font-size-base;
+            vertical-alignment: center;
+        }
+
+        // Clear button when text present
+        if root.text != "": IconButton {
+            icon: "✕";
+            icon-color: Theme.text-dim;
+            hover-icon-color: Theme.text-primary;
+            width: 18px;
+            height: 18px;
+            clicked => {
+                root.text = "";
+                root.text-changed("");
+            }
+        }
+    }
+}
+
+// ── SelectableListItem ────────────────────────────────────────────────────────
+// Single row for SelectableList; exposes hover/selected styling.
+
+component SelectableListItem inherits Rectangle {
+    in property <string> label;
+    in property <string> subtitle: "";
+    in property <string> tag: "";
+    in property <bool>   selected: false;
+    in property <int>    index;
+
+    callback clicked(int);
+
+    height: 52px;
+    border-radius: Theme.radius-sm;
+    background:
+        selected ? Theme.bg-active :
+        ta.has-hover ? Theme.bg-hover :
+        transparent;
+    animate background { duration: Theme.duration-fast; }
+    border-color: selected ? Theme.accent-dim : transparent;
+    border-width: selected ? 1px : 0px;
+
+    HorizontalLayout {
+        padding: Theme.space-sm;
+        spacing: Theme.space-sm;
+        alignment: start;
+
+        // Selected accent bar
+        Rectangle {
+            width: 3px;
+            height: 32px;
+            border-radius: 2px;
+            background: selected ? Theme.accent : (ta.has-hover ? Theme.accent-dim : transparent);
+            animate background { duration: Theme.duration-fast; }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: label;
+                color: selected ? Theme.text-primary : (ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+                font-size: Theme.font-size-base;
+                font-weight: selected ? 600 : 400;
+                overflow: elide;
+            }
+
+            if subtitle != "": Text {
+                text: subtitle;
+                color: Theme.text-dim;
+                font-size: Theme.font-size-sm;
+                overflow: elide;
+            }
+        }
+
+        if tag != "": Rectangle {
+            height: 20px;
+            width: tag-text.preferred-width + 10px;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg-deep;
+            border-color: Theme.border;
+            border-width: 1px;
+
+            tag-text := Text {
+                text: tag;
+                color: Theme.text-dim;
+                font-size: Theme.font-size-xs;
+                font-family: Theme.font-mono;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(root.index); }
+    }
+}
+
+// ── SelectableList ────────────────────────────────────────────────────────────
+// Keyboard-navigable scrollable list.
+
+export struct ListEntry {
+    label: string,
+    subtitle: string,
+    tag: string,
+}
+
+export component SelectableList inherits Rectangle {
+    in property <[ListEntry]> items;
+    in-out property <int> selected-index: -1;
+
+    callback item-selected(int);
+
+    clip: true;
+    border-radius: Theme.radius-sm;
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.UpArrow {
+                if root.selected-index > 0 {
+                    root.selected-index -= 1;
+                    root.item-selected(root.selected-index);
+                }
+                accept
+            } else if event.text == Key.DownArrow {
+                if root.selected-index < root.items.length - 1 {
+                    root.selected-index += 1;
+                    root.item-selected(root.selected-index);
+                }
+                accept
+            } else if event.text == Key.Return {
+                if root.selected-index >= 0 {
+                    root.item-selected(root.selected-index);
+                }
+                accept
+            } else {
+                reject
+            }
+        }
+
+        Flickable {
+            width: parent.width;
+            height: parent.height;
+            viewport-height: list-layout.preferred-height;
+            interactive: true;
+
+            list-layout := VerticalLayout {
+                width: parent.width;
+                spacing: 2px;
+                alignment: start;
+
+                for item[i] in root.items: SelectableListItem {
+                    label: item.label;
+                    subtitle: item.subtitle;
+                    tag: item.tag;
+                    selected: i == root.selected-index;
+                    index: i;
+                    clicked(idx) => {
+                        root.selected-index = idx;
+                        root.item-selected(idx);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── ProgressBar ───────────────────────────────────────────────────────────────
+// Horizontal progress bar with colour thresholds.
+
+export component ProgressBar inherits Rectangle {
+    in property <int>    value: 0;     // 0–100
+    in property <bool>   animate-fill: true;
+
+    height: 6px;
+    border-radius: 3px;
+    background: Theme.bg-deep;
+    clip: true;
+
+    property <color> fill-color:
+        value > 80 ? Theme.warning :
+        value > 60 ? Theme.accent-dim :
+        Theme.accent;
+
+    Rectangle {
+        x: 0; y: 0;
+        width: parent.width * root.value / 100;
+        height: parent.height;
+        border-radius: 3px;
+        background: root.fill-color;
+        opacity: 0.9;
+
+        animate width { duration: Theme.duration-normal; easing: ease-in-out; }
+    }
+}
+
+// ── Divider ───────────────────────────────────────────────────────────────────
+
+export component HDivider inherits Rectangle {
+    height: 1px;
+    background: Theme.border;
+}
+
+export component VDivider inherits Rectangle {
+    width: 1px;
+    background: Theme.border;
+}
+
+// ── Badge ─────────────────────────────────────────────────────────────────────
+// Small count badge.
+
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color>  badge-color: Theme.accent;
+
+    height: 18px;
+    width: max(badge-label.preferred-width + 8px, 18px);
+    border-radius: 9px;
+    background: badge-color;
+
+    badge-label := Text {
+        text: root.text;
+        color: Theme.bg-deep;
+        font-size: Theme.font-size-xs;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+// ── TabBar ────────────────────────────────────────────────────────────────────
+// Horizontal tab strip.
+
+export component TabBar inherits Rectangle {
+    in property <[string]> tabs;
+    in-out property <int>  active: 0;
+    callback tab-changed(int);
+
+    height: 36px;
+    background: Theme.bg-surface;
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-sm;
+        spacing: 2px;
+        alignment: start;
+
+        for label[i] in tabs: Rectangle {
+            width: tab-text.preferred-width + Theme.space-xl;
+            height: parent.height;
+            background: i == active ? Theme.bg-active : (tab-ta.has-hover ? Theme.bg-hover : transparent);
+            border-radius: Theme.radius-sm;
+            animate background { duration: Theme.duration-fast; }
+
+            // Bottom accent line on active
+            if i == active: Rectangle {
+                x: Theme.space-sm;
+                y: parent.height - 2px;
+                width: parent.width - 2 * Theme.space-sm;
+                height: 2px;
+                background: Theme.accent;
+                border-radius: 1px;
+            }
+
+            tab-text := Text {
+                text: label;
+                color: i == active ? Theme.accent : (tab-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+                font-size: Theme.font-size-sm;
+                font-weight: i == active ? 600 : 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+                animate color { duration: Theme.duration-fast; }
+            }
+
+            tab-ta := TouchArea {
+                clicked => {
+                    root.active = i;
+                    root.tab-changed(i);
+                }
+            }
+        }
+    }
+
+    HDivider { y: parent.height - 1px; width: parent.width; }
+}
+
+// ── CollapsibleSection ────────────────────────────────────────────────────────
+// Header bar with expand/collapse toggle and animated content area.
+
+export component CollapsibleSection inherits Rectangle {
+    in property <string>  title;
+    in property <color>   title-color: Theme.text-secondary;
+    in property <bool>    expanded: true;
+    in property <string>  expand-icon: "▾";
+    in property <string>  collapse-icon: "▸";
+    in property <length>  content-height;   // set to preferred-height of inner content
+    callback toggle();
+
+    background: transparent;
+    height: header-row.preferred-height + (expanded ? content-area.height : 0px);
+    clip: true;
+
+    animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+
+    header-row := TouchArea {
+        height: 28px;
+        width: parent.width;
+        clicked => { root.toggle(); }
+
+        HorizontalLayout {
+            padding-left: Theme.space-sm;
+            padding-right: Theme.space-sm;
+            spacing: Theme.space-xs;
+            alignment: start;
+
+            Text {
+                text: root.expanded ? root.expand-icon : root.collapse-icon;
+                color: root.title-color;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+                width: 14px;
+            }
+            Text {
+                text: root.title;
+                color: root.title-color;
+                font-size: Theme.font-size-sm;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    content-area := Rectangle {
+        y: header-row.height;
+        width: parent.width;
+        height: root.expanded ? root.content-height : 0px;
+        clip: true;
+        animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+
+        @children
+    }
+}
+
+// ── SpinnerRow ────────────────────────────────────────────────────────────────
+// Centered spinner with optional label for loading states.
+
+export component SpinnerRow inherits Rectangle {
+    in property <string> label: "";
+    height: 40px;
+    HorizontalLayout {
+        alignment: center;
+        spacing: Theme.space-sm;
+        Spinner {
+            indeterminate: true;
+            width: 16px;
+            height: 16px;
+        }
+        if label != "": Text {
+            text: label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+        }
+    }
+}

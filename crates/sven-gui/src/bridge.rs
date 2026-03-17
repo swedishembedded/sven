@@ -2,524 +2,59 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Bridge between sven-frontend async agent events and the Slint UI model.
+//!
+//! `SvenApp::build` sets up the window, registers all callbacks, spawns the
+//! agent task, and starts the event-bridge loop.  All heavyweight helpers
+//! live in the sibling modules (sessions, queue_ops, search, clipboard, …).
 
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use sven_config::{AgentMode, ModelConfig};
 use sven_core::AgentEvent;
 use sven_frontend::{
     agent_task,
     commands::{CommandContext, CommandRegistry, ImmediateAction, ParsedCommand},
-    markdown::{parse_markdown_blocks, MarkdownBlock},
     node_agent_task,
     queue::QueueState,
-    tool_view::extract_tool_view,
     AgentRequest, NodeBackend, QueuedMessage,
 };
-use sven_input::{
-    chat_path, ensure_chat_dir, json_str_to_yaml, list_chats, load_chat_from, save_chat_to,
-    yaml_to_json_str, ChatDocument, ChatStatus, SessionId, TurnRecord,
-};
+use sven_input::{chat_path, list_chats, load_chat_from, ChatStatus, SessionId};
 use sven_model::catalog;
 use sven_model::{FunctionCall, Message as SvenMessage, MessageContent, Role};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, TodoItem};
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 
 use crate::{
-    ChatMessage, CodeLine, CodeToken, CompletionEntry, MainWindow, PickerItem, QuestionItem,
-    QueueItem, SessionItem, ToastItem,
+    clipboard::copy_to_clipboard,
+    inspector::{items_from_list, InspectorKind},
+    plain_msg::{slint_msg_to_plain, PlainChatMessage, PlainToast},
+    queue_ops::sync_queue_model,
+    search::new_shared_search,
+    sessions::{
+        chat_document_to_plain_messages, delete_session_from_disk, format_fields_json,
+        markdown_to_plain_messages, save_session_to_disk, strip_inline_markdown,
+    },
+    ChatMessage, CompletionEntry, MainWindow, PickerItem, QuestionItem, QueueItem, SessionItem,
+    ToastItem,
 };
 
-// ── Syntax highlighting ───────────────────────────────────────────────────────
+// ── Format helpers ────────────────────────────────────────────────────────────
 
-/// Per-token highlight data: text + RGB color.  Send-safe (no Slint types).
-type HighlightToken = (String, u8, u8, u8);
-
-/// Highlight `code` using syntect. Returns one Vec<HighlightToken> per line.
-/// Falls back to a single plain line if the language is unknown.
-fn highlight_code(language: &str, code: &str) -> Vec<Vec<HighlightToken>> {
-    use syntect::easy::HighlightLines;
-    use syntect::highlighting::ThemeSet;
-    use syntect::parsing::SyntaxSet;
-    use syntect::util::LinesWithEndings;
-
-    let ss = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
-
-    let syntax = ss
-        .find_syntax_by_token(language)
-        .or_else(|| ss.find_syntax_by_extension(language))
-        .unwrap_or_else(|| ss.find_syntax_plain_text());
-
-    let mut h = HighlightLines::new(syntax, theme);
-    let mut result: Vec<Vec<HighlightToken>> = Vec::new();
-
-    for line in LinesWithEndings::from(code) {
-        let ranges = match h.highlight_line(line, &ss) {
-            Ok(r) => r,
-            Err(_) => {
-                result.push(vec![(
-                    line.trim_end_matches('\n').to_string(),
-                    0xa5,
-                    0xd6,
-                    0xff,
-                )]);
-                continue;
-            }
-        };
-
-        let tokens: Vec<HighlightToken> = ranges
-            .iter()
-            .filter_map(|(style, text)| {
-                let t = text.trim_end_matches('\n');
-                if t.is_empty() {
-                    None
-                } else {
-                    Some((
-                        t.to_string(),
-                        style.foreground.r,
-                        style.foreground.g,
-                        style.foreground.b,
-                    ))
-                }
-            })
-            .collect();
-
-        // Always push the line (even if empty, to preserve line count)
-        result.push(tokens);
+fn format_todos_display(todos: &[TodoItem]) -> String {
+    if todos.is_empty() {
+        return String::new();
     }
-
-    result
+    todos
+        .iter()
+        .map(|t| format!("{} {}", t.status.icon(), t.content))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Convert a ChatDocument's turns to PlainChatMessages for display.
-fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessage> {
-    let mut out = Vec::new();
-    for turn in &doc.turns {
-        match turn {
-            TurnRecord::User { content } => {
-                out.push(PlainChatMessage::user(content));
-            }
-            TurnRecord::Assistant { content } => {
-                out.extend(markdown_to_plain_messages(content, "assistant"));
-            }
-            TurnRecord::Thinking { content } => {
-                out.push(PlainChatMessage {
-                    message_type: "thinking",
-                    content: content.clone(),
-                    role: "thinking",
-                    is_first_in_group: false,
-                    ..Default::default()
-                });
-            }
-            TurnRecord::ToolCall {
-                tool_call_id: _,
-                name,
-                arguments,
-            } => {
-                let args_json = yaml_to_json_str(arguments);
-                let args_value: serde_json::Value = serde_json::from_str(&args_json)
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                let view = extract_tool_view(name, &args_value, None);
-                let fields_json = format_fields_json(&view.fields);
-                out.push(PlainChatMessage {
-                    message_type: "tool-call",
-                    content: args_json,
-                    role: "assistant",
-                    tool_name: name.clone(),
-                    tool_icon: view.icon,
-                    tool_summary: view.summary,
-                    tool_category: view.category,
-                    tool_fields_json: fields_json,
-                    is_expanded: false,
-                    ..Default::default()
-                });
-            }
-            TurnRecord::ToolResult {
-                tool_call_id: _,
-                content,
-            } => {
-                let preview: String = content.chars().take(500).collect();
-                out.push(PlainChatMessage {
-                    message_type: "tool-result",
-                    content: preview,
-                    role: "tool",
-                    ..Default::default()
-                });
-            }
-            TurnRecord::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy,
-                ..
-            } => {
-                let strat = strategy.as_deref().unwrap_or("unknown");
-                out.push(PlainChatMessage::system(format!(
-                    "Context compacted ({strat}): {tokens_before}→{tokens_after} tokens"
-                )));
-            }
-        }
-    }
-    out
-}
-
-/// Convert PlainChatMessage slice to TurnRecords for saving to ChatDocument.
-/// Merges consecutive assistant display blocks into single assistant turns.
-fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
-    let mut turns = Vec::new();
-    let mut assistant_buf = String::new();
-    let mut tool_call_counter = 0u32;
-    let mut last_tool_call_id: Option<String> = None;
-
-    for p in plain {
-        match p.message_type {
-            "user" => {
-                if !assistant_buf.is_empty() {
-                    turns.push(TurnRecord::Assistant {
-                        content: std::mem::take(&mut assistant_buf),
-                    });
-                }
-                turns.push(TurnRecord::User {
-                    content: p.content.clone(),
-                });
-            }
-            "assistant" | "code-block" | "heading" | "list-item" | "block-quote" | "separator"
-            | "inline-code" | "table-row" => {
-                if !assistant_buf.is_empty() {
-                    assistant_buf.push('\n');
-                }
-                assistant_buf.push_str(&p.content);
-            }
-            "tool-call" => {
-                if !assistant_buf.is_empty() {
-                    turns.push(TurnRecord::Assistant {
-                        content: std::mem::take(&mut assistant_buf),
-                    });
-                }
-                let id = format!("call_{}", tool_call_counter);
-                tool_call_counter += 1;
-                last_tool_call_id = Some(id.clone());
-                let arguments = json_str_to_yaml(&p.content);
-                turns.push(TurnRecord::ToolCall {
-                    tool_call_id: id,
-                    name: p.tool_name.clone(),
-                    arguments,
-                });
-            }
-            "tool-result" => {
-                if let Some(id) = last_tool_call_id.take() {
-                    turns.push(TurnRecord::ToolResult {
-                        tool_call_id: id,
-                        content: p.content.clone(),
-                    });
-                }
-            }
-            "thinking" => {
-                if !assistant_buf.is_empty() {
-                    turns.push(TurnRecord::Assistant {
-                        content: std::mem::take(&mut assistant_buf),
-                    });
-                }
-                turns.push(TurnRecord::Thinking {
-                    content: p.content.clone(),
-                });
-            }
-            "system" => {
-                if !assistant_buf.is_empty() {
-                    turns.push(TurnRecord::Assistant {
-                        content: std::mem::take(&mut assistant_buf),
-                    });
-                }
-                if let Some((tb, ta, strat)) = parse_context_compacted(&p.content) {
-                    turns.push(TurnRecord::ContextCompacted {
-                        tokens_before: tb,
-                        tokens_after: ta,
-                        strategy: Some(strat),
-                        turn: None,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    if !assistant_buf.is_empty() {
-        turns.push(TurnRecord::Assistant {
-            content: assistant_buf,
-        });
-    }
-    turns
-}
-
-/// Parse "Context compacted (X): N→M tokens" into (before, after, strategy).
-fn parse_context_compacted(s: &str) -> Option<(usize, usize, String)> {
-    let rest = s.strip_prefix("Context compacted (")?;
-    let (strat, rest) = rest.split_once("): ")?;
-    let (before_str, after_str) = rest.split_once("→")?;
-    let before = before_str.trim().parse().ok()?;
-    let after_clean = after_str.trim().trim_end_matches(" tokens");
-    let after = after_clean.parse().ok()?;
-    Some((before, after, strat.to_string()))
-}
-
-/// Save a session's messages to disk (same format as TUI).
-fn save_session_to_disk(
-    session_id: &str,
-    plain: &[PlainChatMessage],
-    title: &str,
-    model: Option<&str>,
-    mode: Option<&str>,
-) {
-    let turns = plain_messages_to_turns(plain);
-    if turns.is_empty() {
-        return;
-    }
-    let sid = SessionId::from_string(session_id.to_string());
-    let path = chat_path(&sid);
-    if let Err(e) = ensure_chat_dir() {
-        tracing::warn!("cannot create chat dir: {e}");
-        return;
-    }
-    let mut doc = ChatDocument {
-        id: sid,
-        title: title.to_string(),
-        model: model.map(String::from),
-        mode: mode.map(String::from),
-        status: ChatStatus::Active,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        parent_id: None,
-        turns,
-    };
-    if let Err(e) = save_chat_to(&path, &mut doc) {
-        tracing::warn!("failed to save chat {}: {e}", path.display());
-    }
-}
-
-/// Strip common inline markdown markers for live-streaming preview.
-/// Removes `**`, `__`, `*`, `_`, `` ` ``, `##` leaders, etc.
-/// Does NOT try to parse structure — just cleans up the most visually noisy
-/// cases so that partial streaming text doesn't contain raw asterisks.
-fn strip_inline_markdown(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        let trimmed = line.trim_start_matches('#').trim_start();
-        // Strip bold/italic markers
-        let cleaned = trimmed
-            .replace("**", "")
-            .replace("__", "")
-            .replace("~~", "");
-        // Strip lone `*` and `_` used as emphasis (simple heuristic: only
-        // when surrounded by spaces or at word boundaries)
-        let cleaned = cleaned
-            .replace(" *", " ")
-            .replace("* ", " ")
-            .replace(" _", " ")
-            .replace("_ ", " ");
-        out.push_str(&cleaned);
-        out.push('\n');
-    }
-    out.trim_end().to_string()
-}
-
-// ── Plain-data structs for cross-thread communication ─────────────────────────
-
-#[derive(Clone, Default)]
-struct PlainChatMessage {
-    message_type: &'static str,
-    content: String,
-    role: &'static str,
-
-    is_first_in_group: bool,
-    is_error: bool,
-    is_streaming: bool,
-    is_expanded: bool,
-
-    tool_name: String,
-    tool_icon: String,
-    tool_summary: String,
-    tool_category: String,
-    tool_fields_json: String,
-
-    language: String,
-    heading_level: i32,
-
-    /// Syntax-highlighted lines: each line is a list of (text, r, g, b) tokens.
-    code_lines: Vec<Vec<HighlightToken>>,
-}
-
-impl PlainChatMessage {
-    fn user(content: impl Into<String>) -> Self {
-        Self {
-            message_type: "user",
-            content: content.into(),
-            role: "user",
-            ..Default::default()
-        }
-    }
-
-    fn system(content: impl Into<String>) -> Self {
-        Self {
-            message_type: "system",
-            content: content.into(),
-            role: "system",
-            ..Default::default()
-        }
-    }
-
-    fn error(content: impl Into<String>) -> Self {
-        Self {
-            message_type: "error",
-            content: content.into(),
-            role: "error",
-            is_error: true,
-            ..Default::default()
-        }
-    }
-
-    fn to_slint(&self) -> ChatMessage {
-        let code_lines_model = if self.code_lines.is_empty() {
-            ModelRc::new(VecModel::<CodeLine>::default())
-        } else {
-            let lines: Vec<CodeLine> = self
-                .code_lines
-                .iter()
-                .map(|line| {
-                    let tokens: Vec<CodeToken> = line
-                        .iter()
-                        .map(|(text, r, g, b)| CodeToken {
-                            text: SharedString::from(text.as_str()),
-                            color: Color::from_rgb_u8(*r, *g, *b),
-                        })
-                        .collect();
-                    CodeLine {
-                        tokens: ModelRc::new(VecModel::from(tokens)),
-                    }
-                })
-                .collect();
-            ModelRc::new(VecModel::from(lines))
-        };
-
-        ChatMessage {
-            message_type: SharedString::from(self.message_type),
-            content: SharedString::from(self.content.as_str()),
-            role: SharedString::from(self.role),
-            is_first_in_group: self.is_first_in_group,
-            is_error: self.is_error,
-            is_streaming: self.is_streaming,
-            is_expanded: self.is_expanded,
-            tool_name: SharedString::from(self.tool_name.as_str()),
-            tool_icon: SharedString::from(self.tool_icon.as_str()),
-            tool_summary: SharedString::from(self.tool_summary.as_str()),
-            tool_category: SharedString::from(self.tool_category.as_str()),
-            tool_fields_json: SharedString::from(self.tool_fields_json.as_str()),
-            language: SharedString::from(self.language.as_str()),
-            heading_level: self.heading_level,
-            code_lines: code_lines_model,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PlainToast {
-    message: String,
-    level: &'static str,
-}
-
-/// Converts markdown text into a sequence of PlainChatMessages (one per block).
-/// Code blocks are syntax-highlighted via syntect.
-fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainChatMessage> {
-    let blocks = parse_markdown_blocks(text);
-    if blocks.is_empty() {
-        return vec![PlainChatMessage {
-            message_type: "assistant",
-            content: text.to_string(),
-            role,
-            is_first_in_group: true,
-            ..Default::default()
-        }];
-    }
-
-    let mut messages: Vec<PlainChatMessage> = Vec::with_capacity(blocks.len());
-    let mut is_first = true;
-
-    for block in blocks {
-        let msg = match block {
-            MarkdownBlock::Paragraph(text) => PlainChatMessage {
-                message_type: "assistant",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
-            MarkdownBlock::Heading { level, text } => PlainChatMessage {
-                message_type: "heading",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                heading_level: level as i32,
-                ..Default::default()
-            },
-            MarkdownBlock::CodeBlock { language, code } => {
-                let code_lines = highlight_code(&language, &code);
-                PlainChatMessage {
-                    message_type: "code-block",
-                    content: code,
-                    role,
-                    is_first_in_group: is_first,
-                    language,
-                    code_lines,
-                    ..Default::default()
-                }
-            }
-            MarkdownBlock::ListItem { depth, text } => PlainChatMessage {
-                message_type: "list-item",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                heading_level: depth as i32,
-                ..Default::default()
-            },
-            MarkdownBlock::Separator => PlainChatMessage {
-                message_type: "separator",
-                content: String::new(),
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
-            MarkdownBlock::BlockQuote(text) => PlainChatMessage {
-                message_type: "block-quote",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
-            MarkdownBlock::InlineCode(text) => PlainChatMessage {
-                message_type: "assistant",
-                content: format!("`{text}`"),
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
-            MarkdownBlock::TableRow(cells) => PlainChatMessage {
-                message_type: "assistant",
-                content: cells.join(" │ "),
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
-        };
-        is_first = false;
-        messages.push(msg);
-    }
-
-    messages
-}
-
-// ── Options ───────────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 /// Options for building a `SvenApp`.
 pub struct SvenAppOptions {
@@ -539,7 +74,7 @@ pub struct SvenApp {
 }
 
 impl SvenApp {
-    /// Build the app (creates window, spawns agent task).
+    /// Build the app: create window, register callbacks, spawn agent.
     pub async fn build(opts: SvenAppOptions) -> anyhow::Result<Self> {
         let window = MainWindow::new()?;
 
@@ -557,7 +92,7 @@ impl SvenApp {
             current_tool: SharedString::new(),
             total_cost_usd: 0.0,
         });
-        // Load chat history from disk (same as TUI) and add to sidebar
+
         if let Ok(entries) = list_chats(Some(50)) {
             for chat_entry in &entries {
                 let id_str = chat_entry.id.as_str().to_string();
@@ -593,14 +128,11 @@ impl SvenApp {
             format!("{:?}", opts.mode).to_lowercase(),
         ));
 
-        // ── Per-session message store ─────────────────────────────────────────
-        // Maps session_id → Vec of committed messages for that session.
+        // ── Shared state ──────────────────────────────────────────────────────
         let session_messages: Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let active_session_id: Arc<Mutex<String>> =
             Arc::new(Mutex::new(initial_session_id_str.clone()));
-
-        // ── Current model/mode tracking ───────────────────────────────────────
         let current_mode = Arc::new(Mutex::new(opts.mode));
         let current_model_name = Arc::new(Mutex::new(opts.model_cfg.name.clone()));
         let current_model_provider = Arc::new(Mutex::new(opts.model_cfg.provider.clone()));
@@ -650,7 +182,7 @@ impl SvenApp {
             });
         }
 
-        // ── Shared state for event bridge ─────────────────────────────────────
+        // ── Streaming buffers ─────────────────────────────────────────────────
         let pending_msgs: Arc<Mutex<VecDeque<PlainChatMessage>>> =
             Arc::new(Mutex::new(VecDeque::new()));
         let pending_toasts: Arc<Mutex<VecDeque<PlainToast>>> =
@@ -664,15 +196,21 @@ impl SvenApp {
         let queue_state: Arc<Mutex<QueueState>> = Arc::new(Mutex::new(QueueState::new()));
         let editing_msg_index: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
         let is_first_message: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
-        // Session that owns the currently running agent (streaming). Events are routed here.
         let streaming_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        // Current todo list per session (updated by TodoUpdate; used for todo tool-call display).
         let current_todos: Arc<Mutex<HashMap<String, Vec<TodoItem>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
+        // Input history per session
+        let input_history: Arc<Mutex<VecDeque<String>>> =
+            Arc::new(Mutex::new(VecDeque::with_capacity(100)));
+        let input_history_index: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+
+        // Search state
+        let search = new_shared_search();
+
         let weak = window.as_weak();
 
-        // ── Message edit (restart from here) ───────────────────────────────────
+        // ── Message edit ──────────────────────────────────────────────────────
         {
             let msgs_edit = Rc::clone(&msgs_model);
             let editing = Arc::clone(&editing_msg_index);
@@ -690,7 +228,7 @@ impl SvenApp {
             });
         }
 
-        // ── Toggle thinking/tool expand ───────────────────────────────────────
+        // ── Toggle expand ─────────────────────────────────────────────────────
         {
             let msgs_clone = Rc::clone(&msgs_model);
             window.on_toggle_expanded(move |idx| {
@@ -702,7 +240,140 @@ impl SvenApp {
             });
         }
 
-        // ── Send message callback ─────────────────────────────────────────────
+        // ── Copy text ─────────────────────────────────────────────────────────
+        {
+            window.on_copy_text(move |text| {
+                copy_to_clipboard(text.as_str());
+            });
+        }
+
+        // ── Input history ─────────────────────────────────────────────────────
+        {
+            let hist = Arc::clone(&input_history);
+            let hist_idx = Arc::clone(&input_history_index);
+            let weak_h = weak.clone();
+            window.on_input_history_prev(move || {
+                let h = hist.lock().unwrap();
+                if h.is_empty() {
+                    return;
+                }
+                let mut idx = hist_idx.lock().unwrap();
+                let new_idx = match *idx {
+                    None => 0,
+                    Some(i) => (i + 1).min(h.len() - 1),
+                };
+                *idx = Some(new_idx);
+                if let Some(entry) = h.get(new_idx) {
+                    if let Some(win) = weak_h.upgrade() {
+                        win.set_input_text(SharedString::from(entry.as_str()));
+                    }
+                }
+            });
+
+            let hist2 = Arc::clone(&input_history);
+            let hist_idx2 = Arc::clone(&input_history_index);
+            let weak_h2 = weak.clone();
+            window.on_input_history_next(move || {
+                let mut idx = hist_idx2.lock().unwrap();
+                let new_idx = match *idx {
+                    None | Some(0) => {
+                        *idx = None;
+                        if let Some(win) = weak_h2.upgrade() {
+                            win.set_input_text(SharedString::new());
+                        }
+                        return;
+                    }
+                    Some(i) => i - 1,
+                };
+                *idx = Some(new_idx);
+                let h = hist2.lock().unwrap();
+                if let Some(entry) = h.get(new_idx) {
+                    if let Some(win) = weak_h2.upgrade() {
+                        win.set_input_text(SharedString::from(entry.as_str()));
+                    }
+                }
+            });
+        }
+
+        // ── Search ────────────────────────────────────────────────────────────
+        {
+            let search_q = Arc::clone(&search);
+            let msgs_s = Rc::clone(&msgs_model);
+            let weak_s = weak.clone();
+            window.on_search_query_changed(move |query| {
+                let contents: Vec<String> = (0..msgs_s.row_count())
+                    .filter_map(|i| msgs_s.row_data(i))
+                    .map(|m| m.content.to_string())
+                    .collect();
+                let mut ss = search_q.lock().unwrap();
+                ss.update(query.as_str(), &contents);
+                let match_count = ss.match_count() as i32;
+                let current = ss.current as i32;
+                let match_row = ss.current_row().map(|r| r as i32).unwrap_or(-1);
+                drop(ss);
+                // Update search highlight on messages
+                for i in 0..msgs_s.row_count() {
+                    if let Some(mut row) = msgs_s.row_data(i) {
+                        row.is_search_match = false;
+                        msgs_s.set_row_data(i, row);
+                    }
+                }
+                if match_row >= 0 {
+                    if let Some(mut row) = msgs_s.row_data(match_row as usize) {
+                        row.is_search_match = true;
+                        msgs_s.set_row_data(match_row as usize, row);
+                    }
+                }
+                if let Some(win) = weak_s.upgrade() {
+                    win.set_search_match_count(match_count);
+                    win.set_search_current_match(current);
+                }
+            });
+
+            let search_n = Arc::clone(&search);
+            let msgs_sn = Rc::clone(&msgs_model);
+            let weak_sn = weak.clone();
+            window.on_search_next(move || {
+                let mut ss = search_n.lock().unwrap();
+                ss.next();
+                let current = ss.current as i32;
+                let match_row = ss.current_row().map(|r| r as i32).unwrap_or(-1);
+                drop(ss);
+                clear_search_highlights(&msgs_sn);
+                if match_row >= 0 {
+                    if let Some(mut row) = msgs_sn.row_data(match_row as usize) {
+                        row.is_search_match = true;
+                        msgs_sn.set_row_data(match_row as usize, row);
+                    }
+                }
+                if let Some(win) = weak_sn.upgrade() {
+                    win.set_search_current_match(current);
+                }
+            });
+
+            let search_p = Arc::clone(&search);
+            let msgs_sp = Rc::clone(&msgs_model);
+            let weak_sp = weak.clone();
+            window.on_search_prev(move || {
+                let mut ss = search_p.lock().unwrap();
+                ss.prev();
+                let current = ss.current as i32;
+                let match_row = ss.current_row().map(|r| r as i32).unwrap_or(-1);
+                drop(ss);
+                clear_search_highlights(&msgs_sp);
+                if match_row >= 0 {
+                    if let Some(mut row) = msgs_sp.row_data(match_row as usize) {
+                        row.is_search_match = true;
+                        msgs_sp.set_row_data(match_row as usize, row);
+                    }
+                }
+                if let Some(win) = weak_sp.upgrade() {
+                    win.set_search_current_match(current);
+                }
+            });
+        }
+
+        // ── Send message ──────────────────────────────────────────────────────
         {
             let tx = agent_tx.clone();
             let tx2 = agent_tx.clone();
@@ -724,13 +395,28 @@ impl SvenApp {
             let session_msgs_send = Arc::clone(&session_messages);
             let pt_send = Arc::clone(&pending_toasts);
             let msgs_send = Rc::clone(&msgs_model);
+            let hist_send = Arc::clone(&input_history);
+            let hist_idx_send = Arc::clone(&input_history_index);
+
             window.on_send_message(move |text| {
                 let content = text.to_string();
                 if content.is_empty() {
                     return;
                 }
 
-                // ── Edit-and-restart: truncate at edited message, resubmit ─────
+                // Save to input history
+                {
+                    let mut h = hist_send.lock().unwrap();
+                    if h.front() != Some(&content) {
+                        h.push_front(content.clone());
+                        if h.len() > 200 {
+                            h.pop_back();
+                        }
+                    }
+                    *hist_idx_send.lock().unwrap() = None;
+                }
+
+                // Edit-and-restart
                 if let Some(idx) = editing_send.lock().unwrap().take() {
                     let mut plain: Vec<PlainChatMessage> = (0..idx)
                         .filter_map(|i| msgs_send.row_data(i))
@@ -739,7 +425,6 @@ impl SvenApp {
                     plain.push(PlainChatMessage::user(&content));
                     let messages = plain_messages_to_sven_messages(&plain);
                     let sid = active_sid_send.lock().unwrap().clone();
-                    // Truncate display at idx, replace with edited
                     while msgs_send.row_count() > idx + 1 {
                         msgs_send.remove(idx + 1);
                     }
@@ -785,7 +470,7 @@ impl SvenApp {
                     .map(|w| w.get_agent_busy())
                     .unwrap_or(false);
 
-                // ── Slash command dispatch ────────────────────────────────────
+                // Slash command dispatch
                 if content.starts_with('/') {
                     let registry = CommandRegistry::with_builtins();
                     let ctx = CommandContext {
@@ -796,13 +481,13 @@ impl SvenApp {
                     if let Some((_, result)) =
                         sven_frontend::commands::dispatch_command(&content, &registry, &ctx)
                     {
-                        // Handle immediate actions
                         if let Some(action) = result.immediate_action {
                             let w = weak_send.clone();
                             let pm3 = Arc::clone(&pm_send);
                             let sb3 = Arc::clone(&sb_send);
                             let tb3 = Arc::clone(&tb_send);
                             let ch3 = Arc::clone(&cancel_handle_sm);
+                            let _pt3 = Arc::clone(&pt_send);
                             match action {
                                 ImmediateAction::ClearChat => {
                                     let _ = slint::invoke_from_event_loop(move || {
@@ -810,7 +495,6 @@ impl SvenApp {
                                         *tb3.lock().unwrap() = String::new();
                                         pm3.lock().unwrap().clear();
                                         if let Some(win) = w.upgrade() {
-                                            // Get model from window on UI thread — safe (Rc stays on UI thread)
                                             let msgs = win.get_messages();
                                             if let Some(vm) = msgs
                                                 .as_any()
@@ -845,35 +529,33 @@ impl SvenApp {
                                     });
                                 }
                                 ImmediateAction::OpenTeamPicker => {
-                                    let pt = Arc::clone(&pt_send);
-                                    let w = weak_send.clone();
-                                    pt.lock().unwrap().push_back(PlainToast {
-                                        message: "Team picker not yet available in GUI".to_string(),
-                                        level: "info",
-                                    });
                                     let _ = slint::invoke_from_event_loop(move || {
-                                        flush_toasts(pt, &w);
+                                        if let Some(win) = w.upgrade() {
+                                            win.set_team_picker_visible(true);
+                                        }
                                     });
                                 }
                                 ImmediateAction::OpenInspector { kind } => {
-                                    let pt = Arc::clone(&pt_send);
-                                    let w = weak_send.clone();
-                                    let title = kind.title().to_string();
-                                    pt.lock().unwrap().push_back(PlainToast {
-                                        message: format!(
-                                            "Inspector ({title}) not yet available in GUI"
-                                        ),
-                                        level: "info",
-                                    });
+                                    let tab = match kind.title() {
+                                        "Skills" => 0,
+                                        "Subagents" => 1,
+                                        "Peers" => 2,
+                                        "Context" => 3,
+                                        "Tools" => 4,
+                                        "Mcp" | "MCP" => 5,
+                                        _ => 0,
+                                    };
                                     let _ = slint::invoke_from_event_loop(move || {
-                                        flush_toasts(pt, &w);
+                                        if let Some(win) = w.upgrade() {
+                                            win.set_inspector_tab(tab);
+                                            win.set_inspector_visible(true);
+                                        }
                                     });
                                 }
                                 _ => {}
                             }
                         }
 
-                        // If the command also sends a message, queue or submit it
                         if let Some(msg) = result.message_to_send {
                             if agent_busy {
                                 queue.lock().unwrap().push(QueuedMessage {
@@ -881,31 +563,11 @@ impl SvenApp {
                                     model_transition: None,
                                     mode_transition: result.mode_override,
                                 });
-                                let items: Vec<QueueItem> = queue
-                                    .lock()
-                                    .unwrap()
-                                    .messages
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, qm)| QueueItem {
-                                        index: i as i32,
-                                        content: SharedString::from(
-                                            qm.content
-                                                .lines()
-                                                .next()
-                                                .unwrap_or("")
-                                                .chars()
-                                                .take(80)
-                                                .collect::<String>(),
-                                        ),
-                                    })
-                                    .collect();
-                                let qlen = items.len();
+                                let len = sync_queue_model(&queue, &queue_items_send);
                                 let w = weak_send.clone();
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(win) = w.upgrade() {
-                                        win.set_queue_items(ModelRc::new(VecModel::from(items)));
-                                        win.set_queue_count(qlen as i32);
+                                        win.set_queue_count(len as i32);
                                     }
                                 });
                             } else {
@@ -940,7 +602,6 @@ impl SvenApp {
                             }
                         } else if result.model_override.is_some() || result.mode_override.is_some()
                         {
-                            // Model/mode override — stage for next send
                             if let Some(m) = &result.model_override {
                                 let resolved = sven_model::resolve_model_from_config(&config, m);
                                 *cur_model.lock().unwrap() = resolved.name.clone();
@@ -968,44 +629,21 @@ impl SvenApp {
                     }
                 }
 
-                // ── Enqueue while busy (do NOT add to chat — queue panel shows it) ─
+                // Enqueue while busy
                 if agent_busy {
                     queue.lock().unwrap().push(QueuedMessage {
                         content: content.clone(),
                         model_transition: None,
                         mode_transition: None,
                     });
-                    let items: Vec<QueueItem> = queue
-                        .lock()
-                        .unwrap()
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .map(|(i, qm)| QueueItem {
-                            index: i as i32,
-                            content: SharedString::from(
-                                qm.content
-                                    .lines()
-                                    .next()
-                                    .unwrap_or("")
-                                    .chars()
-                                    .take(80)
-                                    .collect::<String>(),
-                            ),
-                        })
-                        .collect();
-                    let qlen = items.len();
-                    queue_items_send.clear();
-                    for item in &items {
-                        queue_items_send.push(item.clone());
-                    }
+                    let len = sync_queue_model(&queue, &queue_items_send);
                     if let Some(win) = weak_send.upgrade() {
-                        win.set_queue_count(qlen as i32);
+                        win.set_queue_count(len as i32);
                     }
                     return;
                 }
 
-                // ── Send immediately: add user message to chat, then submit ─────
+                // Send immediately
                 pm_send
                     .lock()
                     .unwrap()
@@ -1018,7 +656,6 @@ impl SvenApp {
                     move || flush_messages_to_session(pm2, &sid, sm, &w)
                 });
 
-                // ── Generate title on first real message ──────────────────────
                 let gen_title = {
                     let mut first = is_first.lock().unwrap();
                     if *first {
@@ -1042,7 +679,6 @@ impl SvenApp {
                             mode_override: Some(mode_val),
                         })
                         .await;
-
                     if gen_title {
                         let _ = tx3
                             .send(AgentRequest::GenerateTitle { user_text: content })
@@ -1065,7 +701,7 @@ impl SvenApp {
             });
         }
 
-        // ── Queue panel actions ────────────────────────────────────────────────
+        // ── Queue panel actions ───────────────────────────────────────────────
         {
             let tx_q = agent_tx.clone();
             let pm_q = Arc::clone(&pending_msgs);
@@ -1073,47 +709,29 @@ impl SvenApp {
             let active_q = Arc::clone(&active_session_id);
             let streaming_q = Arc::clone(&streaming_session_id);
             let cur_mode_q = Arc::clone(&current_mode);
+            let weak_q = weak.clone();
 
             window.on_queue_edit_clicked({
                 let queue_q = Arc::clone(&queue_state);
-                let weak_q = weak.clone();
+                let weak_q2 = weak.clone();
                 let qi_q = Rc::clone(&queue_items_model);
                 move |idx| {
                     let idx = idx as usize;
-                    let mut q = queue_q.lock().unwrap();
-                    if let Some(qm) = q.messages.get_mut(idx) {
-                        let content = qm.content.clone();
-                        drop(q);
-                        if let Some(win) = weak_q.upgrade() {
+                    let content = {
+                        let mut q = queue_q.lock().unwrap();
+                        if idx < q.messages.len() {
+                            let c = q.messages[idx].content.clone();
+                            q.messages.remove(idx);
+                            Some(c)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(content) = content {
+                        let len = sync_queue_model(&queue_q, &qi_q);
+                        if let Some(win) = weak_q2.upgrade() {
                             win.set_input_text(SharedString::from(&content));
-                            // Remove from queue and sync
-                            let mut q2 = queue_q.lock().unwrap();
-                            if idx < q2.messages.len() {
-                                q2.messages.remove(idx);
-                            }
-                            let items: Vec<QueueItem> = q2
-                                .messages
-                                .iter()
-                                .enumerate()
-                                .map(|(i, qm)| QueueItem {
-                                    index: i as i32,
-                                    content: SharedString::from(
-                                        qm.content
-                                            .lines()
-                                            .next()
-                                            .unwrap_or("")
-                                            .chars()
-                                            .take(80)
-                                            .collect::<String>(),
-                                    ),
-                                })
-                                .collect();
-                            let qlen = items.len();
-                            qi_q.clear();
-                            for item in items {
-                                qi_q.push(item);
-                            }
-                            win.set_queue_count(qlen as i32);
+                            win.set_queue_count(len as i32);
                         }
                     }
                 }
@@ -1121,150 +739,90 @@ impl SvenApp {
 
             window.on_queue_delete_clicked({
                 let queue_q = Arc::clone(&queue_state);
-                let weak_q = weak.clone();
+                let weak_q2 = weak.clone();
                 let qi_q = Rc::clone(&queue_items_model);
                 move |idx| {
                     let idx = idx as usize;
-                    let mut q = queue_q.lock().unwrap();
-                    if idx < q.messages.len() {
-                        q.messages.remove(idx);
-                        let items: Vec<QueueItem> = q
-                            .messages
-                            .iter()
-                            .enumerate()
-                            .map(|(i, qm)| QueueItem {
-                                index: i as i32,
-                                content: SharedString::from(
-                                    qm.content
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("")
-                                        .chars()
-                                        .take(80)
-                                        .collect::<String>(),
-                                ),
-                            })
-                            .collect();
-                        let qlen = items.len();
-                        drop(q);
-                        qi_q.clear();
-                        for item in items {
-                            qi_q.push(item);
+                    {
+                        let mut q = queue_q.lock().unwrap();
+                        if idx < q.messages.len() {
+                            q.messages.remove(idx);
                         }
-                        if let Some(win) = weak_q.upgrade() {
-                            win.set_queue_count(qlen as i32);
-                        }
+                    }
+                    let len = sync_queue_model(&queue_q, &qi_q);
+                    if let Some(win) = weak_q2.upgrade() {
+                        win.set_queue_count(len as i32);
+                    }
+                }
+            });
+
+            window.on_queue_clear_all({
+                let queue_q = Arc::clone(&queue_state);
+                let weak_q2 = weak.clone();
+                let qi_q = Rc::clone(&queue_items_model);
+                move || {
+                    queue_q.lock().unwrap().messages.clear();
+                    qi_q.clear();
+                    if let Some(win) = weak_q2.upgrade() {
+                        win.set_queue_count(0);
                     }
                 }
             });
 
             window.on_queue_submit_clicked({
                 let queue_q = Arc::clone(&queue_state);
-                let weak_q = weak.clone();
+                let weak_q2 = weak.clone();
                 let qi_q = Rc::clone(&queue_items_model);
+                let cancel_handle2 = Arc::clone(&cancel_handle);
                 move |idx| {
                     let idx = idx as usize;
-                    let mut q = queue_q.lock().unwrap();
-                    let qm = match q.messages.remove(idx) {
-                        Some(m) => m,
-                        None => return,
+                    let qm = {
+                        let mut q = queue_q.lock().unwrap();
+                        q.messages.remove(idx)
                     };
-                    let agent_busy = weak_q
+                    let agent_busy = weak_q2
                         .upgrade()
                         .map(|w| w.get_agent_busy())
                         .unwrap_or(false);
-                    let items: Vec<QueueItem> = q
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .map(|(i, qm)| QueueItem {
-                            index: i as i32,
-                            content: SharedString::from(
-                                qm.content
-                                    .lines()
-                                    .next()
-                                    .unwrap_or("")
-                                    .chars()
-                                    .take(80)
-                                    .collect::<String>(),
-                            ),
-                        })
-                        .collect();
-                    let qlen = items.len();
-                    qi_q.clear();
-                    for item in items {
-                        qi_q.push(item);
+                    let len = sync_queue_model(&queue_q, &qi_q);
+                    if let Some(win) = weak_q2.upgrade() {
+                        win.set_queue_count(len as i32);
                     }
-                    if let Some(win) = weak_q.upgrade() {
-                        win.set_queue_count(qlen as i32);
-                    }
-                    drop(q);
 
-                    if agent_busy {
-                        // Force submit: put at front, abort current run
-                        let mut q2 = queue_q.lock().unwrap();
-                        q2.messages.push_front(qm);
-                        q2.abort_pending = false;
-                        drop(q2);
-                        let ch = Arc::clone(&cancel_handle);
-                        tokio::spawn(async move {
-                            if let Some(sender) = ch.lock().await.take() {
-                                let _ = sender.send(());
-                            }
-                        });
-                        // Sync queue (we added back at front)
-                        let q3 = queue_q.lock().unwrap();
-                        let items2: Vec<QueueItem> = q3
-                            .messages
-                            .iter()
-                            .enumerate()
-                            .map(|(i, qm)| QueueItem {
-                                index: i as i32,
-                                content: SharedString::from(
-                                    qm.content
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("")
-                                        .chars()
-                                        .take(80)
-                                        .collect::<String>(),
-                                ),
-                            })
-                            .collect();
-                        let qlen2 = items2.len();
-                        drop(q3);
-                        qi_q.clear();
-                        for item in items2 {
-                            qi_q.push(item);
+                    if let Some(qm) = qm {
+                        if agent_busy {
+                            queue_q.lock().unwrap().messages.push_front(qm);
+                            let ch = Arc::clone(&cancel_handle2);
+                            tokio::spawn(async move {
+                                if let Some(sender) = ch.lock().await.take() {
+                                    let _ = sender.send(());
+                                }
+                            });
+                        } else {
+                            let content = qm.content.clone();
+                            let mode_val = *cur_mode_q.lock().unwrap();
+                            pm_q.lock()
+                                .unwrap()
+                                .push_back(PlainChatMessage::user(&content));
+                            let sid = active_q.lock().unwrap().clone();
+                            *streaming_q.lock().unwrap() = Some(sid.clone());
+                            let tx = tx_q.clone();
+                            let _ = slint::invoke_from_event_loop({
+                                let pm2 = Arc::clone(&pm_q);
+                                let sm2 = Arc::clone(&sm_q);
+                                let w2 = weak_q.clone();
+                                move || flush_messages_to_session(pm2, &sid, sm2, &w2)
+                            });
+                            tokio::spawn(async move {
+                                let _ = tx
+                                    .send(AgentRequest::Submit {
+                                        content,
+                                        model_override: None,
+                                        mode_override: Some(mode_val),
+                                    })
+                                    .await;
+                            });
                         }
-                        if let Some(win) = weak_q.upgrade() {
-                            win.set_queue_count(qlen2 as i32);
-                        }
-                    } else {
-                        // Agent idle: add to chat and send
-                        let content = qm.content.clone();
-                        let mode_val = *cur_mode_q.lock().unwrap();
-                        pm_q.lock()
-                            .unwrap()
-                            .push_back(PlainChatMessage::user(&content));
-                        let sid = active_q.lock().unwrap().clone();
-                        *streaming_q.lock().unwrap() = Some(sid.clone());
-                        let tx = tx_q.clone();
-                        let _ = slint::invoke_from_event_loop({
-                            let pm2 = Arc::clone(&pm_q);
-                            let sm2 = Arc::clone(&sm_q);
-                            let w2 = weak_q.clone();
-                            move || flush_messages_to_session(pm2, &sid, sm2, &w2)
-                        });
-                        tokio::spawn(async move {
-                            let _ = tx
-                                .send(AgentRequest::Submit {
-                                    content,
-                                    model_override: None,
-                                    mode_override: Some(mode_val),
-                                })
-                                .await;
-                        });
                     }
                 }
             });
@@ -1284,7 +842,6 @@ impl SvenApp {
             let active_sid_ns = Arc::clone(&active_session_id);
 
             window.on_new_session(move || {
-                // Save current session messages before switching (to memory and disk)
                 let current_id = active_sid_ns.lock().unwrap().clone();
                 {
                     let current_msgs: Vec<PlainChatMessage> = (0..msgs_ns.row_count())
@@ -1304,7 +861,6 @@ impl SvenApp {
                         .insert(current_id, current_msgs);
                 }
 
-                // Clear messages
                 while msgs_ns.row_count() > 0 {
                     msgs_ns.remove(0);
                 }
@@ -1317,7 +873,6 @@ impl SvenApp {
 
                 let new_id = SessionId::new().as_str().to_string();
 
-                // Deactivate all sessions
                 for i in 0..sessions_ns.row_count() {
                     if let Some(mut s) = sessions_ns.row_data(i) {
                         s.active = false;
@@ -1352,7 +907,60 @@ impl SvenApp {
             });
         }
 
-        // ── Question modal state (must be before session_selected) ──────────────
+        // ── Session delete ────────────────────────────────────────────────────
+        {
+            let sessions_del = Rc::clone(&sessions_model);
+            let session_msgs_del = Arc::clone(&session_messages);
+            let active_del = Arc::clone(&active_session_id);
+            let weak_del = weak.clone();
+
+            window.on_session_delete_requested(move |id| {
+                let id_str = id.to_string();
+                let is_active = active_del.lock().unwrap().clone() == id_str;
+
+                // Remove from sessions list
+                for i in 0..sessions_del.row_count() {
+                    if let Some(s) = sessions_del.row_data(i) {
+                        if s.id == id {
+                            sessions_del.remove(i);
+                            break;
+                        }
+                    }
+                }
+
+                // Remove from memory
+                session_msgs_del.lock().unwrap().remove(&id_str);
+
+                // Delete from disk
+                delete_session_from_disk(&id_str);
+
+                // If active session was deleted, switch to new session
+                if is_active {
+                    if let Some(win) = weak_del.upgrade() {
+                        win.invoke_new_session();
+                    }
+                }
+            });
+        }
+
+        // ── Session rename ────────────────────────────────────────────────────
+        {
+            let sessions_ren = Rc::clone(&sessions_model);
+            window.on_session_rename_requested(move |id, new_title| {
+                let id_str = id.to_string();
+                for i in 0..sessions_ren.row_count() {
+                    if let Some(mut s) = sessions_ren.row_data(i) {
+                        if s.id == id_str {
+                            s.title = new_title.clone();
+                            sessions_ren.set_row_data(i, s);
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // ── Question modal state ──────────────────────────────────────────────
         struct PendingQuestion {
             session_id: String,
             questions: Vec<sven_tools::Question>,
@@ -1435,7 +1043,6 @@ impl SvenApp {
                     return;
                 }
 
-                // Save current session's messages (to memory and disk)
                 {
                     let snaps: Vec<PlainChatMessage> = (0..msgs_ss.row_count())
                         .filter_map(|i| msgs_ss.row_data(i))
@@ -1459,7 +1066,6 @@ impl SvenApp {
                     session_msgs_ss.lock().unwrap().insert(current_id, snaps);
                 }
 
-                // Switch active marker
                 for i in 0..sessions_ss.row_count() {
                     if let Some(mut s) = sessions_ss.row_data(i) {
                         s.active = s.id == id;
@@ -1469,12 +1075,10 @@ impl SvenApp {
 
                 *active_sid_ss.lock().unwrap() = new_id.clone();
 
-                // Load selected session's messages (from memory or disk)
                 let saved = session_msgs_ss.lock().unwrap().get(&new_id).cloned();
                 let saved = match saved {
                     Some(msgs) => msgs,
                     None => {
-                        // Not in memory — try loading from disk (same chat dir as TUI)
                         let sid = SessionId::from_string(new_id.clone());
                         let path = chat_path(&sid);
                         if path.exists() {
@@ -1516,7 +1120,6 @@ impl SvenApp {
                     win.set_agent_busy(false);
                 }
 
-                // Show pending question if user switched to the session that has it
                 if let Some(ref pq) = *pending_show.lock().unwrap() {
                     if pq.session_id == new_id {
                         qi_model_show.clear();
@@ -1534,7 +1137,7 @@ impl SvenApp {
             });
         }
 
-        // ── Question modal (ask_question tool) ─────────────────────────────────
+        // ── Question modal recv ───────────────────────────────────────────────
         {
             let weak_q = weak.clone();
             let pending = Arc::clone(&pending_question);
@@ -1558,6 +1161,7 @@ impl SvenApp {
                                 answer_tx,
                             });
                             let items = questions_to_slint(&questions);
+                            let all_answered = questions.is_empty();
                             QUESTION_ITEMS_MODEL.with(|tl| {
                                 if let Some(ref qi) = *tl.borrow() {
                                     qi.clear();
@@ -1573,6 +1177,7 @@ impl SvenApp {
                                 }
                             });
                             win.set_question_current_index(0);
+                            win.set_question_all_answered(all_answered);
                             win.set_question_visible(show);
                         }
                     });
@@ -1580,6 +1185,7 @@ impl SvenApp {
             });
         }
 
+        // ── Question callbacks ────────────────────────────────────────────────
         {
             let pending = Arc::clone(&pending_question);
             let qi_model = Rc::clone(&question_items_model);
@@ -1587,11 +1193,27 @@ impl SvenApp {
 
             window.on_question_option_selected({
                 let qi = Rc::clone(&qi_model);
+                let weak_qa = weak.clone();
+                let pending_qa = Arc::clone(&pending);
                 move |qidx_val, opt_idx| {
                     let idx = qidx_val as usize;
                     if let Some(mut row) = qi.row_data(idx) {
                         row.selected_index = opt_idx;
                         qi.set_row_data(idx, row);
+                    }
+                    // Update all-answered property
+                    let all = (0..qi.row_count())
+                        .filter_map(|i| qi.row_data(i))
+                        .all(|r| r.selected_index >= 0);
+                    let pq_len = pending_qa
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|p| p.questions.len())
+                        .unwrap_or(0);
+                    let all_done = all && pq_len > 0;
+                    if let Some(win) = weak_qa.upgrade() {
+                        win.set_question_all_answered(all_done);
                     }
                 }
             });
@@ -1663,7 +1285,7 @@ impl SvenApp {
             });
         }
 
-        // ── Slash command completion ───────────────────────────────────────────
+        // ── Slash completion ──────────────────────────────────────────────────
         {
             let weak_ic = weak.clone();
             let config_ic = Arc::clone(&opts.config);
@@ -1701,20 +1323,19 @@ impl SvenApp {
 
                 if let Some(win) = weak_ic.upgrade() {
                     win.set_completion_items(ModelRc::from(Rc::new(VecModel::from(entries))));
+                    win.set_completion_selected(0);
                 }
             });
         }
 
-        // ── Completion accepted ────────────────────────────────────────────────
+        // ── Completion accepted ───────────────────────────────────────────────
         {
             let weak_ca = weak.clone();
             window.on_completion_accepted(move |val| {
                 let Some(win) = weak_ca.upgrade() else { return };
                 let val_str = val.to_string();
 
-                // Empty val = "accept selected" signal from Tab key
                 let apply_val = if val_str.is_empty() {
-                    // Read the currently-selected completion item
                     let items = win.get_completion_items();
                     let idx = win.get_completion_selected() as usize;
                     items.row_data(idx).map(|e| e.value.to_string())
@@ -1739,9 +1360,8 @@ impl SvenApp {
                         format!("{v} ")
                     };
                     win.set_input_text(SharedString::from(&new_text));
-                    // Clear completions
                     win.set_completion_items(ModelRc::new(VecModel::<CompletionEntry>::default()));
-                    // If result is a complete slash command (e.g. "/agents "), send it immediately
+                    win.set_completion_selected(0);
                     if new_text.starts_with('/') && new_text.ends_with(' ') {
                         win.invoke_send_message(SharedString::from(new_text.trim()));
                         win.set_input_text(SharedString::new());
@@ -1752,18 +1372,15 @@ impl SvenApp {
             });
         }
 
-        // ── Picker all-items store (must be declared before model/mode clicked) ──
+        // ── Picker ────────────────────────────────────────────────────────────
         let picker_all_items: Arc<Mutex<Vec<PickerItem>>> = Arc::new(Mutex::new(Vec::new()));
-        let picker_all_for_model: Arc<Mutex<Vec<PickerItem>>> = Arc::clone(&picker_all_items);
-        let picker_all_for_mode: Arc<Mutex<Vec<PickerItem>>> = Arc::clone(&picker_all_items);
 
-        // ── Model clicked ─────────────────────────────────────────────────────
         {
             let weak_mc = weak.clone();
             let config_mc = Arc::clone(&opts.config);
             let cur_provider_mc = Arc::clone(&current_model_provider);
             let cur_model_mc = Arc::clone(&current_model_name);
-            let all_mc = Arc::clone(&picker_all_for_model);
+            let all_mc = Arc::clone(&picker_all_items);
 
             window.on_model_clicked(move || {
                 let current = format!(
@@ -1772,12 +1389,11 @@ impl SvenApp {
                     cur_model_mc.lock().unwrap()
                 );
 
-                let mut items: Vec<PickerItem> = Vec::new();
-                items.push(PickerItem {
+                let mut items: Vec<PickerItem> = vec![PickerItem {
                     id: SharedString::from(current.clone()),
                     label: SharedString::from(format!("{} ✓", current)),
                     description: SharedString::from("current model"),
-                });
+                }];
 
                 let mut catalog_models = catalog::static_catalog();
                 catalog_models.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.id.cmp(&b.id)));
@@ -1817,14 +1433,14 @@ impl SvenApp {
                     win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch model"));
                     win.set_picker_visible(true);
+                    win.set_picker_keyboard_index(0);
                 }
             });
         }
 
-        // ── Mode clicked ──────────────────────────────────────────────────────
         {
             let weak_mc = weak.clone();
-            let all_mc = Arc::clone(&picker_all_for_mode);
+            let all_mc = Arc::clone(&picker_all_items);
             window.on_mode_clicked(move || {
                 let items = vec![
                     PickerItem {
@@ -1848,11 +1464,11 @@ impl SvenApp {
                     win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch mode"));
                     win.set_picker_visible(true);
+                    win.set_picker_keyboard_index(0);
                 }
             });
         }
 
-        // ── Picker selected ───────────────────────────────────────────────────
         {
             let weak_ps = weak.clone();
             let cur_mode_ps = Arc::clone(&current_mode);
@@ -1887,7 +1503,6 @@ impl SvenApp {
             });
         }
 
-        // ── Picker dismissed ──────────────────────────────────────────────────
         {
             let weak_pd = weak.clone();
             window.on_picker_dismissed(move || {
@@ -1897,7 +1512,6 @@ impl SvenApp {
             });
         }
 
-        // ── Picker search (fuzzy filter from Rust) ────────────────────────────
         {
             let weak_psc = weak.clone();
             let all = Arc::clone(&picker_all_items);
@@ -1907,23 +1521,45 @@ impl SvenApp {
                 };
                 let query_lower = query.to_string().to_lowercase();
                 let all_items = all.lock().unwrap();
-                if query_lower.is_empty() {
-                    win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(all_items.clone()))));
-                    return;
-                }
-                let filtered: Vec<PickerItem> = all_items
-                    .iter()
-                    .filter(|item| {
-                        item.label.to_lowercase().as_str().contains(&query_lower)
-                            || item
-                                .description
-                                .to_lowercase()
-                                .as_str()
-                                .contains(&query_lower)
-                    })
-                    .cloned()
-                    .collect();
+                let filtered: Vec<PickerItem> = if query_lower.is_empty() {
+                    all_items.clone()
+                } else {
+                    all_items
+                        .iter()
+                        .filter(|item| {
+                            item.label.to_lowercase().as_str().contains(&query_lower)
+                                || item
+                                    .description
+                                    .to_lowercase()
+                                    .as_str()
+                                    .contains(&query_lower)
+                        })
+                        .cloned()
+                        .collect()
+                };
                 win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(filtered))));
+                win.set_picker_keyboard_index(0);
+            });
+        }
+
+        // ── Inspector ─────────────────────────────────────────────────────────
+        {
+            let weak_insp = weak.clone();
+            window.on_inspector_tab_changed(move |tab| {
+                // Populate with placeholder; real data fetching would happen here
+                let kind = InspectorKind::from_index(tab);
+                let items =
+                    items_from_list(&[(kind.title().to_string(), String::new(), String::new())]);
+                if let Some(win) = weak_insp.upgrade() {
+                    win.set_inspector_items(items);
+                }
+            });
+        }
+
+        // ── Team agent ────────────────────────────────────────────────────────
+        {
+            window.on_team_agent_selected(move |_id| {
+                // Team agent switching can be expanded in the future
             });
         }
 
@@ -2030,7 +1666,6 @@ impl SvenApp {
 
                     AgentEvent::ThinkingComplete(content) => {
                         *tb.lock().unwrap() = String::new();
-                        // Strip markdown for the stored thinking content
                         let stripped = strip_inline_markdown(&content);
                         pm.lock().unwrap().push_back(PlainChatMessage {
                             message_type: "thinking",
@@ -2060,6 +1695,7 @@ impl SvenApp {
                     }
 
                     AgentEvent::ToolCallStarted(tc_call) => {
+                        use sven_frontend::tool_view::extract_tool_view;
                         let view = extract_tool_view(&tc_call.name, &tc_call.args, None);
                         let (fields_json, is_expanded) = if tc_call.name == "todo" {
                             let todos_from_args: Vec<TodoItem> = tc_call
@@ -2086,8 +1722,7 @@ impl SvenApp {
                             } else {
                                 todos_from_args
                             };
-                            let formatted = format_todos_display(&todos);
-                            (formatted, true)
+                            (format_todos_display(&todos), true)
                         } else {
                             (format_fields_json(&view.fields), false)
                         };
@@ -2104,6 +1739,7 @@ impl SvenApp {
                             ..Default::default()
                         });
                         let sid = streaming_sid_ev.lock().unwrap().clone();
+                        let tool_name = tc_call.name.clone();
                         let sid_clone = sid.clone();
                         let sm = Arc::clone(&session_msgs_ev);
                         let _ = slint::invoke_from_event_loop({
@@ -2117,6 +1753,18 @@ impl SvenApp {
                                 }
                                 if let Some(win) = w.upgrade() {
                                     win.set_agent_busy(true);
+                                    // Update current_tool on active session
+                                    let sessions = win.get_sessions();
+                                    for i in 0..sessions.row_count() {
+                                        if let Some(mut s) = sessions.row_data(i) {
+                                            if s.active {
+                                                s.current_tool =
+                                                    SharedString::from(tool_name.as_str());
+                                                sessions.set_row_data(i, s);
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -2131,7 +1779,6 @@ impl SvenApp {
                             content: preview,
                             role: "tool",
                             is_error,
-                            // Auto-expand error results so the error text is visible
                             is_expanded: is_error,
                             ..Default::default()
                         });
@@ -2146,6 +1793,19 @@ impl SvenApp {
                                     flush_messages_to_session(pm2, s, sm, &w);
                                 } else {
                                     flush_messages(pm2, &w);
+                                }
+                                // Clear current_tool
+                                if let Some(win) = w.upgrade() {
+                                    let sessions = win.get_sessions();
+                                    for i in 0..sessions.row_count() {
+                                        if let Some(mut s) = sessions.row_data(i) {
+                                            if s.active {
+                                                s.current_tool = SharedString::new();
+                                                sessions.set_row_data(i, s);
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -2201,35 +1861,15 @@ impl SvenApp {
                             *streaming_sid_ev.lock().unwrap() = None;
                         }
 
-                        let items: Vec<QueueItem> = queue_ev
-                            .lock()
-                            .unwrap()
-                            .messages
-                            .iter()
-                            .enumerate()
-                            .map(|(i, qm)| QueueItem {
-                                index: i as i32,
-                                content: SharedString::from(
-                                    qm.content
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("")
-                                        .chars()
-                                        .take(80)
-                                        .collect::<String>(),
-                                ),
-                            })
-                            .collect();
+                        let model = cur_model_ev.lock().unwrap().clone();
+                        let mode = format!("{:?}", *cur_mode_ev.lock().unwrap()).to_lowercase();
+                        let sm = Arc::clone(&session_msgs_ev);
                         let _ = slint::invoke_from_event_loop({
                             let w = weak2.clone();
                             let queue_empty = queue_len == 0;
-                            let sm = Arc::clone(&session_msgs_ev);
                             let active = active_sid_ev.lock().unwrap().clone();
-                            let model = cur_model_ev.lock().unwrap().clone();
-                            let mode = format!("{:?}", *cur_mode_ev.lock().unwrap()).to_lowercase();
                             move || {
                                 if let Some(win) = w.upgrade() {
-                                    win.set_queue_items(ModelRc::new(VecModel::from(items)));
                                     win.set_streaming_text(SharedString::new());
                                     win.set_streaming_messages(ModelRc::new(
                                         VecModel::<ChatMessage>::default(),
@@ -2239,7 +1879,6 @@ impl SvenApp {
                                         win.set_agent_busy(false);
                                     }
                                     win.set_queue_count(queue_len as i32);
-                                    // Save active session to disk after turn completes
                                     if let Some(plain) = sm.lock().unwrap().get(&active) {
                                         if !plain.is_empty() {
                                             let sessions = win.get_sessions();
@@ -2525,9 +2164,7 @@ impl SvenApp {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Convert PlainChatMessage slice to sven_model::Message for Resubmit.
-/// Merges consecutive assistant display blocks into single assistant messages.
-/// Uses synthetic tool_call_ids for tool-call/tool-result pairs.
+/// Convert plain messages to sven_model messages for Resubmit.
 fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessage> {
     use sven_frontend::segment::ChatSegment;
     let mut segments: Vec<ChatSegment> = Vec::new();
@@ -2596,78 +2233,52 @@ fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessag
     sven_frontend::messages_for_resubmit(&segments)
 }
 
-/// Convert a Slint ChatMessage back to a PlainChatMessage for session save/restore.
-/// The `message_type` and `role` are stored in the `content` field of a special
-/// "session-snapshot" envelope. On restore, `to_slint()` re-inflates the original
-/// Slint struct by serialising all fields into the plain struct's content.
-fn slint_msg_to_plain(m: &ChatMessage) -> PlainChatMessage {
-    PlainChatMessage {
-        // Preserve the message_type by mapping back from the SharedString
-        message_type: match m.message_type.as_str() {
-            "user" => "user",
-            "assistant" => "assistant",
-            "code-block" => "code-block",
-            "heading" => "heading",
-            "list-item" => "list-item",
-            "block-quote" => "block-quote",
-            "separator" => "separator",
-            "thinking" => "thinking",
-            "tool-call" => "tool-call",
-            "tool-result" => "tool-result",
-            "error" => "error",
-            _ => "system",
-        },
-        content: m.content.to_string(),
-        role: "user", // will be overridden below
-        is_first_in_group: m.is_first_in_group,
-        is_error: m.is_error,
-        is_expanded: m.is_expanded,
-        tool_name: m.tool_name.to_string(),
-        tool_icon: m.tool_icon.to_string(),
-        tool_summary: m.tool_summary.to_string(),
-        tool_category: m.tool_category.to_string(),
-        tool_fields_json: m.tool_fields_json.to_string(),
-        language: m.language.to_string(),
-        heading_level: m.heading_level,
-        ..Default::default()
+/// Clear is-search-match flag on all messages.
+fn clear_search_highlights(model: &Rc<VecModel<ChatMessage>>) {
+    for i in 0..model.row_count() {
+        if let Some(mut row) = model.row_data(i) {
+            if row.is_search_match {
+                row.is_search_match = false;
+                model.set_row_data(i, row);
+            }
+        }
     }
 }
 
-/// Format todo items for display in the todo tool-call bubble.
-fn format_todos_display(todos: &[TodoItem]) -> String {
-    if todos.is_empty() {
-        return String::new();
+/// Update the last todo tool-call message with formatted todo list.
+fn update_last_todo_tool_call(win: &MainWindow, formatted: &str) {
+    let msgs_rc = win.get_messages();
+    if let Some(vec_model) = msgs_rc.as_any().downcast_ref::<VecModel<ChatMessage>>() {
+        let n = vec_model.row_count();
+        for i in (0..n).rev() {
+            if let Some(mut row) = vec_model.row_data(i) {
+                if row.message_type == "tool-call" && row.tool_name == "todo" {
+                    row.tool_fields_json = SharedString::from(formatted);
+                    vec_model.set_row_data(i, row);
+                    break;
+                }
+            }
+        }
     }
-    todos
-        .iter()
-        .map(|t| format!("{} {}", t.status.icon(), t.content))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
-/// Format tool fields as a readable multi-line string.
-fn format_fields_json(fields: &[(String, String)]) -> String {
-    if fields.is_empty() {
-        return String::new();
+/// Move a session to the top of the sidebar list.
+fn move_session_to_top(win: &MainWindow, session_id: &str) {
+    let sessions_rc = win.get_sessions();
+    if let Some(vec_model) = sessions_rc.as_any().downcast_ref::<VecModel<SessionItem>>() {
+        for i in 0..vec_model.row_count() {
+            if let Some(row) = vec_model.row_data(i) {
+                if row.id == session_id && i > 0 {
+                    let item = vec_model.remove(i);
+                    vec_model.insert(0, item);
+                    break;
+                }
+            }
+        }
     }
-    fields
-        .iter()
-        .map(|(k, v)| {
-            let v_short: String = v.chars().take(120).collect();
-            let v_display = if v.len() > 120 {
-                format!("{v_short}…")
-            } else {
-                v_short
-            };
-            format!("{k}: {v_display}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
-/// Drain pending messages into the session store and optionally the window.
-/// Only pushes to the window when `session_id` matches the active session.
-/// Moves the session to the top of the sidebar when it receives new messages.
+/// Drain pending messages into session store and optionally the window.
 fn flush_messages_to_session(
     pending: Arc<Mutex<VecDeque<PlainChatMessage>>>,
     session_id: &str,
@@ -2695,44 +2306,10 @@ fn flush_messages_to_session(
             }
         }
     }
-    // Move this session to the top of the sidebar (most recently active first)
     move_session_to_top(&win, session_id);
 }
 
-/// Update the last todo tool-call message with the given formatted todo list.
-fn update_last_todo_tool_call(win: &MainWindow, formatted: &str) {
-    let msgs_rc = win.get_messages();
-    if let Some(vec_model) = msgs_rc.as_any().downcast_ref::<VecModel<ChatMessage>>() {
-        let n = vec_model.row_count();
-        for i in (0..n).rev() {
-            if let Some(mut row) = vec_model.row_data(i) {
-                if row.message_type == "tool-call" && row.tool_name == "todo" {
-                    row.tool_fields_json = SharedString::from(formatted);
-                    vec_model.set_row_data(i, row);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// Move a session to the top of the sidebar list by id.
-fn move_session_to_top(win: &MainWindow, session_id: &str) {
-    let sessions_rc = win.get_sessions();
-    if let Some(vec_model) = sessions_rc.as_any().downcast_ref::<VecModel<SessionItem>>() {
-        for i in 0..vec_model.row_count() {
-            if let Some(row) = vec_model.row_data(i) {
-                if row.id == session_id && i > 0 {
-                    let item = vec_model.remove(i);
-                    vec_model.insert(0, item);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// Drain pending messages into the window model (Slint main thread only).
+/// Drain pending messages into the window model (no session routing).
 fn flush_messages(pending: Arc<Mutex<VecDeque<PlainChatMessage>>>, weak: &slint::Weak<MainWindow>) {
     let Some(win) = weak.upgrade() else { return };
     let mut queue = pending.lock().unwrap();
@@ -2747,7 +2324,7 @@ fn flush_messages(pending: Arc<Mutex<VecDeque<PlainChatMessage>>>, weak: &slint:
     }
 }
 
-/// Drain pending toasts into the window model (Slint main thread only).
+/// Drain pending toasts into the window toast model.
 fn flush_toasts(pending: Arc<Mutex<VecDeque<PlainToast>>>, weak: &slint::Weak<MainWindow>) {
     let Some(win) = weak.upgrade() else { return };
     let mut queue = pending.lock().unwrap();
@@ -2757,6 +2334,7 @@ fn flush_toasts(pending: Arc<Mutex<VecDeque<PlainToast>>>, weak: &slint::Weak<Ma
             vec_model.push(ToastItem {
                 message: SharedString::from(t.message),
                 level: SharedString::from(t.level),
+                dismiss_after_ms: 5000,
             });
             while vec_model.row_count() > 5 {
                 vec_model.remove(0);

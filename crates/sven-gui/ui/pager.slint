@@ -1,0 +1,104 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Full-screen pager overlay (Ctrl+T): scrollable transcript view.
+
+import { Theme } from "theme.slint";
+import { ModalBackdrop, IconButton, SearchInput, HDivider } from "widgets.slint";
+import { ChatMessage, CodeLine, CodeToken, TextRun, MessageRow, WelcomeScreen } from "chat-pane.slint";
+
+export component PagerOverlay inherits Rectangle {
+    in property <[ChatMessage]> messages;
+
+    callback dismissed();
+    callback toggle-expanded(int);
+    callback copy-text(string);
+
+    ModalBackdrop { dismissed => { root.dismissed(); } }
+
+    Rectangle {
+        x: 40px;
+        y: 40px;
+        width: parent.width  - 80px;
+        height: parent.height - 80px;
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-deep;
+        border-color: Theme.border;
+        border-width: 1px;
+        drop-shadow-blur: Theme.shadow-blur-lg;
+        drop-shadow-color: Theme.shadow-color-lg;
+        clip: true;
+
+        VerticalLayout {
+            spacing: 0;
+
+            // Header
+            Rectangle {
+                height: 44px;
+                background: Theme.bg-surface;
+
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-md;
+                    alignment: space-between;
+
+                    Text {
+                        text: "⬡ Full Transcript";
+                        color: Theme.accent;
+                        font-size: Theme.font-size-md;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        alignment: end;
+
+                        Text {
+                            text: messages.length + " messages";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-size-sm;
+                            vertical-alignment: center;
+                        }
+
+                        IconButton {
+                            icon: "✕";
+                            tooltip-text: "Close (Esc)";
+                            clicked => { root.dismissed(); }
+                        }
+                    }
+                }
+
+                HDivider { y: parent.height - 1px; width: parent.width; }
+            }
+
+            // Messages
+            if messages.length == 0: WelcomeScreen {
+                vertical-stretch: 1;
+            }
+
+            if messages.length > 0: Flickable {
+                vertical-stretch: 1;
+                width: parent.width;
+                viewport-height: pager-layout.preferred-height;
+                interactive: true;
+
+                pager-layout := VerticalLayout {
+                    width: parent.width;
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-xs;
+                    alignment: start;
+
+                    for msg[i] in messages: MessageRow {
+                        msg: msg;
+                        msg-index: i;
+                        available-width: parent.width - 2 * Theme.space-lg;
+                        toggle-expanded(idx) => { root.toggle-expanded(idx); }
+                        copy-text(t) => { root.copy-text(t); }
+                    }
+                }
+            }
+        }
+    }
+}

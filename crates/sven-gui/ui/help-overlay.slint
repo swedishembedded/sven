@@ -1,0 +1,192 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Help overlay — F1 keyboard shortcuts grid.
+
+import { Theme } from "theme.slint";
+import { ModalBackdrop, HDivider } from "widgets.slint";
+
+export component HelpOverlay inherits Rectangle {
+    callback dismissed();
+
+    ModalBackdrop { dismissed => { root.dismissed(); } }
+
+    Rectangle {
+        x: (parent.width  - self.width)  / 2;
+        y: (parent.height - self.height) / 2;
+        width: 620px;
+        height: Math.min(parent.height - 80px, 560px);
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-card;
+        border-color: Theme.border;
+        border-width: 1px;
+        drop-shadow-blur: Theme.shadow-blur-lg;
+        drop-shadow-color: Theme.shadow-color-lg;
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "Keyboard Shortcuts";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-lg;
+                    font-weight: 700;
+                }
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: Theme.radius-sm;
+                    background: close-ta.has-hover ? Theme.bg-hover : transparent;
+                    Text {
+                        text: "✕";
+                        color: Theme.text-secondary;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    close-ta := TouchArea { clicked => { root.dismissed(); } }
+                }
+            }
+
+            HDivider { width: parent.width - Theme.space-xl * 2; }
+
+            Flickable {
+                height: parent.height - 120px;
+                viewport-height: shortcuts-layout.preferred-height;
+                interactive: true;
+
+                shortcuts-layout := VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    // Section: Global
+                    Text { text: "Global"; color: Theme.accent-dim; font-size: Theme.font-size-sm; font-weight: 700; }
+                    GridLayout {
+                        spacing: Theme.space-xs;
+                        for entry in [
+                            { key: "F1", desc: "Help overlay (this)" },
+                            { key: "Ctrl+B", desc: "Toggle sidebar" },
+                            { key: "Ctrl+T", desc: "Pager (full transcript)" },
+                            { key: "Ctrl+F  /  /", desc: "Search in chat" },
+                            { key: "Ctrl+A", desc: "Team picker" },
+                            { key: "Ctrl+C", desc: "Abort running agent" },
+                            { key: "Ctrl+N", desc: "New session" },
+                            { key: "Escape", desc: "Close overlay / popup" },
+                        ]: HorizontalLayout {
+                            spacing: Theme.space-md;
+                            Rectangle {
+                                width: 110px;
+                                height: 22px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.bg-deep;
+                                border-color: Theme.border;
+                                border-width: 1px;
+                                Text {
+                                    text: entry.key;
+                                    color: Theme.accent-dim;
+                                    font-size: Theme.font-size-sm;
+                                    font-family: Theme.font-mono;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            Text {
+                                text: entry.desc;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Section: Chat navigation
+                    Text { text: "Chat Navigation"; color: Theme.accent-dim; font-size: Theme.font-size-sm; font-weight: 700; }
+                    GridLayout {
+                        spacing: Theme.space-xs;
+                        for entry in [
+                            { key: "j / k", desc: "Navigate messages" },
+                            { key: "g / G", desc: "Jump to top / bottom" },
+                            { key: "e", desc: "Edit focused user message" },
+                            { key: "y", desc: "Copy focused message" },
+                            { key: "Space", desc: "Toggle expand thinking/tool" },
+                            { key: "N / Shift+N", desc: "Next / prev search match" },
+                        ]: HorizontalLayout {
+                            spacing: Theme.space-md;
+                            Rectangle {
+                                width: 110px;
+                                height: 22px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.bg-deep;
+                                border-color: Theme.border;
+                                border-width: 1px;
+                                Text {
+                                    text: entry.key;
+                                    color: Theme.accent-dim;
+                                    font-size: Theme.font-size-sm;
+                                    font-family: Theme.font-mono;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            Text {
+                                text: entry.desc;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Section: Input
+                    Text { text: "Input"; color: Theme.accent-dim; font-size: Theme.font-size-sm; font-weight: 700; }
+                    GridLayout {
+                        spacing: Theme.space-xs;
+                        for entry in [
+                            { key: "Enter", desc: "Send message" },
+                            { key: "Shift+Enter", desc: "Newline" },
+                            { key: "↑ (empty)", desc: "Previous message in history" },
+                            { key: "/", desc: "Slash command prefix" },
+                            { key: "Tab", desc: "Accept completion" },
+                            { key: "↑/↓", desc: "Navigate completions" },
+                        ]: HorizontalLayout {
+                            spacing: Theme.space-md;
+                            Rectangle {
+                                width: 110px;
+                                height: 22px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.bg-deep;
+                                border-color: Theme.border;
+                                border-width: 1px;
+                                Text {
+                                    text: entry.key;
+                                    color: Theme.accent-dim;
+                                    font-size: Theme.font-size-sm;
+                                    font-family: Theme.font-mono;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            Text {
+                                text: entry.desc;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

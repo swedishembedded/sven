@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Generic picker popup with live search-filter support.
-// The visible item list is filtered server-side (bridge.rs) via the
-// `search-changed` callback; Rust updates `items` with the filtered subset.
+// Generic picker popup with live search-filter and full keyboard navigation.
 
 import { Theme } from "theme.slint";
+import { SearchInput } from "widgets.slint";
 
 export struct PickerItem {
     id: string,
@@ -17,169 +16,164 @@ export struct PickerItem {
 export component PickerPopup inherits Rectangle {
     in property <string>       title: "Select";
     in property <[PickerItem]> items;
-    in property <bool>         show-search: true;   // false for mode picker (only 3 items)
+    in property <bool>         show-search: true;
 
     callback selected(string);
     callback dismissed();
-    callback search-changed(string);   // fired on every keystroke; Rust filters items
+    callback search-changed(string);
+
+    in-out property <int> keyboard-index: 0;
 
     background: #00000090;
-
-    // Dismiss on backdrop click
     TouchArea { clicked => { root.dismissed(); } }
 
-    // ── Floating panel ────────────────────────────────────────────────────────
     FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Escape) {
+            if event.text == Key.Escape {
                 root.dismissed();
+                accept
+            } else if event.text == Key.UpArrow {
+                if root.keyboard-index > 0 {
+                    root.keyboard-index -= 1;
+                }
+                accept
+            } else if event.text == Key.DownArrow {
+                if root.keyboard-index < root.items.length - 1 {
+                    root.keyboard-index += 1;
+                }
+                accept
+            } else if event.text == Key.Return {
+                if root.keyboard-index < root.items.length {
+                    root.selected(root.items[root.keyboard-index].id);
+                }
                 accept
             } else {
                 reject
             }
         }
 
-    panel := Rectangle {
-        x: (parent.width  - self.width)  / 2;
-        y: (parent.height - self.height) / 2;
-        width: 520px;
-        height: Math.min(parent.height - 80px, 540px);
-        border-radius: Theme.radius-lg;
-        background: Theme.bg-surface;
-        border-color: Theme.border;
-        border-width: 1px;
-        drop-shadow-blur: 24px;
-        drop-shadow-color: #00000080;
+        panel := Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: Theme.modal-width;
+            height: Math.min(parent.height - 80px, 540px);
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-surface;
+            border-color: Theme.border;
+            border-width: 1px;
+            drop-shadow-blur: Theme.shadow-blur-lg;
+            drop-shadow-color: Theme.shadow-color-lg;
 
-        VerticalLayout {
-            padding: Theme.space-md;
-            spacing: Theme.space-sm;
+            VerticalLayout {
+                padding: Theme.space-md;
+                spacing: Theme.space-sm;
 
-            // ── Title ─────────────────────────────────────────────────────────
-            Text {
-                text: title;
-                color: Theme.accent;
-                font-size: Theme.font-size-md;
-                font-weight: 700;
-            }
+                Text {
+                    text: title;
+                    color: Theme.accent;
+                    font-size: Theme.font-size-md;
+                    font-weight: 700;
+                }
 
-            // ── Search input (hidden when show-search is false, e.g. mode picker) ─
-            if root.show-search: Rectangle {
-                height: 36px;
-                border-radius: Theme.radius-sm;
-                border-color: search-input.has-focus ? Theme.accent-dim : Theme.border;
-                border-width: 1px;
-                background: Theme.bg-deep;
+                if root.show-search: search-box := SearchInput {
+                    placeholder: "Filter…";
+                    text-changed(t) => { root.search-changed(t); }
+                }
 
-                HorizontalLayout {
-                    padding-left: Theme.space-sm;
-                    padding-right: Theme.space-sm;
-                    padding-top: 6px;
-                    padding-bottom: 6px;
-                    spacing: Theme.space-xs;
-                    alignment: center;
-
+                // Empty state
+                if root.items.length == 0: Rectangle {
+                    height: 60px;
                     Text {
-                        text: "🔍";
+                        text: "No items found";
+                        color: Theme.text-dim;
                         font-size: Theme.font-size-sm;
-                        color: Theme.text-dim;
+                        horizontal-alignment: center;
                         vertical-alignment: center;
-                        width: 20px;
-                    }
-
-                    search-input := TextInput {
-                        horizontal-stretch: 1;
-                        height: 24px;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-size-base;
-                        single-line: true;
-
-                        edited => { root.search-changed(self.text); }
-                        accepted => { }
-                    }
-
-                    if search-input.text == "" && !search-input.has-focus: Text {
-                        text: "Filter…";
-                        color: Theme.text-dim;
-                        font-size: Theme.font-size-base;
-                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
                     }
                 }
-            }
 
-            // ── Item list ─────────────────────────────────────────────────────
-            Rectangle {
-                vertical-stretch: 1;
-                clip: true;
-                border-radius: Theme.radius-sm;
+                if root.items.length > 0: Rectangle {
+                    vertical-stretch: 1;
+                    clip: true;
+                    border-radius: Theme.radius-sm;
 
-                Flickable {
-                    width: parent.width;
-                    height: parent.height;
-                    viewport-height: list-layout.preferred-height;
-                    interactive: true;
-
-                    list-layout := VerticalLayout {
+                    Flickable {
                         width: parent.width;
-                        spacing: 2px;
-                        alignment: start;
+                        height: parent.height;
+                        viewport-height: list-layout.preferred-height;
+                        interactive: true;
 
-                        for item in items: Rectangle {
-                            height: 52px;
-                            border-radius: Theme.radius-sm;
-                            background: row-ta.has-hover ? Theme.bg-hover : transparent;
+                        list-layout := VerticalLayout {
+                            width: parent.width;
+                            spacing: 2px;
+                            alignment: start;
 
-                            row-ta := TouchArea {
-                                clicked => { root.selected(item.id); }
-                            }
+                            for item[i] in items: Rectangle {
+                                height: 52px;
+                                border-radius: Theme.radius-sm;
+                                background:
+                                    i == root.keyboard-index ? Theme.bg-active :
+                                    row-ta.has-hover ? Theme.bg-hover :
+                                    transparent;
+                                border-color: i == root.keyboard-index ? Theme.accent-dim : transparent;
+                                border-width: i == root.keyboard-index ? 1px : 0px;
+                                animate background { duration: Theme.duration-fast; }
 
-                            HorizontalLayout {
-                                padding: Theme.space-sm;
-                                spacing: Theme.space-sm;
-                                alignment: start;
-
-                                Rectangle {
-                                    width: 3px;
-                                    height: 32px;
-                                    border-radius: 2px;
-                                    background: row-ta.has-hover ? Theme.accent-dim : transparent;
+                                row-ta := TouchArea {
+                                    clicked => {
+                                        root.keyboard-index = i;
+                                        root.selected(item.id);
+                                    }
                                 }
 
-                                VerticalLayout {
-                                    alignment: center;
-                                    spacing: 2px;
-                                    horizontal-stretch: 1;
+                                HorizontalLayout {
+                                    padding: Theme.space-sm;
+                                    spacing: Theme.space-sm;
+                                    alignment: start;
 
-                                    Text {
-                                        text: item.label;
-                                        color: Theme.text-primary;
-                                        font-size: Theme.font-size-base;
-                                        font-weight: 600;
-                                        overflow: elide;
+                                    Rectangle {
+                                        width: 3px;
+                                        height: 32px;
+                                        border-radius: 2px;
+                                        background: (i == root.keyboard-index || row-ta.has-hover) ? Theme.accent-dim : transparent;
                                     }
 
-                                    if item.description != "": Text {
-                                        text: item.description;
-                                        color: Theme.text-secondary;
-                                        font-size: Theme.font-size-sm;
-                                        overflow: elide;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        horizontal-stretch: 1;
+
+                                        Text {
+                                            text: item.label;
+                                            color: i == root.keyboard-index ? Theme.text-primary : Theme.text-secondary;
+                                            font-size: Theme.font-size-base;
+                                            font-weight: i == root.keyboard-index ? 600 : 400;
+                                            overflow: elide;
+                                        }
+
+                                        if item.description != "": Text {
+                                            text: item.description;
+                                            color: Theme.text-dim;
+                                            font-size: Theme.font-size-sm;
+                                            overflow: elide;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // ── Footer hint ───────────────────────────────────────────────────
-            Text {
-                text: "Click to select  •  Esc to dismiss";
-                color: Theme.text-dim;
-                font-size: 11px;
-                font-family: Theme.font-mono;
-                horizontal-alignment: center;
+                Text {
+                    text: "↑↓ navigate · Enter select · Esc dismiss";
+                    color: Theme.text-dim;
+                    font-size: Theme.font-size-xs;
+                    font-family: Theme.font-mono;
+                    horizontal-alignment: center;
+                }
             }
         }
-    }
     }
 }

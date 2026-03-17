@@ -25,6 +25,6 @@ serde_json    = { workspace = true }
 chrono        = { workspace = true }
 uuid          = { workspace = true }
 syntect       = { workspace = true }
-
+pulldown-cmark = { workspace = true }
 [build-dependencies]
 slint-build = { workspace = true }

@@ -7,7 +7,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use sven_frontend::ChatSegment;
 use sven_model::{MessageContent, Role};
 
-use crate::{ChatMessage, CodeLine, SessionItem, ToastItem};
+use crate::{ChatMessage, CodeLine, SessionItem, TextRun, ToastItem};
 
 /// Build a default (all-empty) ChatMessage value.
 pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> ChatMessage {
@@ -19,6 +19,7 @@ pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> Ch
         is_error: false,
         is_streaming: false,
         is_expanded: false,
+        is_search_match: false,
         tool_name: SharedString::new(),
         tool_icon: SharedString::new(),
         tool_summary: SharedString::new(),
@@ -27,6 +28,8 @@ pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> Ch
         language: SharedString::new(),
         heading_level: 0,
         code_lines: ModelRc::new(VecModel::<CodeLine>::default()),
+        text_runs: ModelRc::new(VecModel::<TextRun>::default()),
+        cells: ModelRc::new(VecModel::<SharedString>::default()),
     }
 }
 
@@ -128,6 +131,7 @@ pub fn make_toast(message: impl Into<String>, level: &str) -> ToastItem {
     ToastItem {
         message: SharedString::from(message.into()),
         level: SharedString::from(level),
+        dismiss_after_ms: 5000,
     }
 }
 

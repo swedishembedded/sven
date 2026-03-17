@@ -1,0 +1,168 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Inspector overlay — Skills | Subagents | Peers | Context | Tools | MCP tabs.
+
+import { Theme } from "theme.slint";
+import { ModalBackdrop, TabBar, IconButton, HDivider } from "widgets.slint";
+
+export struct InspectorItem {
+    title: string,
+    subtitle: string,
+    tag: string,
+}
+
+export component InspectorOverlay inherits Rectangle {
+    in property <[InspectorItem]> items;
+    in-out property <int>          active-tab: 0;
+
+    callback dismissed();
+    callback tab-changed(int);   // triggers Rust data refresh
+    callback item-clicked(int);
+
+    ModalBackdrop { dismissed => { root.dismissed(); } }
+
+    Rectangle {
+        x: 40px;
+        y: 40px;
+        width: parent.width  - 80px;
+        height: parent.height - 80px;
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-surface;
+        border-color: Theme.border;
+        border-width: 1px;
+        drop-shadow-blur: Theme.shadow-blur-lg;
+        drop-shadow-color: Theme.shadow-color-lg;
+        clip: true;
+
+        VerticalLayout {
+            spacing: 0;
+
+            // Title bar
+            Rectangle {
+                height: 44px;
+                background: Theme.bg-card;
+
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-md;
+                    alignment: space-between;
+
+                    Text {
+                        text: "⬡ Inspector";
+                        color: Theme.accent;
+                        font-size: Theme.font-size-md;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    IconButton {
+                        icon: "✕";
+                        clicked => { root.dismissed(); }
+                    }
+                }
+
+                HDivider { y: parent.height - 1px; width: parent.width; }
+            }
+
+            // Tab bar
+            TabBar {
+                tabs: ["Skills", "Subagents", "Peers", "Context", "Tools", "MCP"];
+                active <=> root.active-tab;
+                tab-changed(i) => { root.tab-changed(i); }
+            }
+
+            // Item list
+            Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+
+                if items.length == 0: Rectangle {
+                    height: 80px;
+                    Text {
+                        text: "Loading…";
+                        color: Theme.text-dim;
+                        font-size: Theme.font-size-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                }
+
+                if items.length > 0: Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-height: item-layout.preferred-height;
+                    interactive: true;
+
+                    item-layout := VerticalLayout {
+                        padding: Theme.space-sm;
+                        spacing: 2px;
+                        alignment: start;
+
+                        for item[i] in items: Rectangle {
+                            height: item.subtitle != "" ? 56px : Theme.row-height;
+                            border-radius: Theme.radius-sm;
+                            background: row-ta.has-hover ? Theme.bg-hover : transparent;
+                            animate background { duration: Theme.duration-fast; }
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-md;
+                                spacing: Theme.space-sm;
+                                alignment: start;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: item.title;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-size-base;
+                                        overflow: elide;
+                                    }
+
+                                    if item.subtitle != "": Text {
+                                        text: item.subtitle;
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.font-size-sm;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                if item.tag != "": Rectangle {
+                                    height: 20px;
+                                    width: tag-txt.preferred-width + 10px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.bg-deep;
+                                    border-color: Theme.border;
+                                    border-width: 1px;
+                                    y: (parent.height - self.height) / 2;
+
+                                    tag-txt := Text {
+                                        text: item.tag;
+                                        color: Theme.text-dim;
+                                        font-size: Theme.font-size-xs;
+                                        font-family: Theme.font-mono;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                }
+                            }
+
+                            row-ta := TouchArea {
+                                clicked => { root.item-clicked(i); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -8,7 +8,14 @@
 //! property model.
 
 pub mod bridge;
+pub mod clipboard;
+pub mod highlight;
+pub mod inspector;
 pub mod models;
+pub mod plain_msg;
+pub mod queue_ops;
+pub mod search;
+pub mod sessions;
 
 // Include the generated Slint bindings.
 slint::include_modules!();

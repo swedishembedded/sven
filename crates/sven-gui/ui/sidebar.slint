@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Session list sidebar.
+// Session list sidebar with search, delete, rename, and cost display.
 
 import { Theme } from "theme.slint";
 import { ListView, Spinner } from "std-widgets.slint";
+import { IconButton, SearchInput } from "widgets.slint";
 
 export struct SessionItem {
     id: string,
@@ -22,9 +23,12 @@ component SessionRow inherits Rectangle {
     in property <SessionItem> item;
     in property <int> index;
     callback clicked(int);
+    callback delete-clicked(string);
+    callback rename-clicked(string, string);
 
-    height: 36px;
+    height: item.current-tool != "" ? 50px : Theme.row-height;
     background: ta.has-hover ? Theme.bg-hover : (item.active ? Theme.bg-active : transparent);
+    animate background { duration: Theme.duration-fast; }
 
     // Active indicator bar
     if item.active: Rectangle {
@@ -36,37 +40,79 @@ component SessionRow inherits Rectangle {
         border-radius: 1px;
     }
 
-    HorizontalLayout {
+    VerticalLayout {
         padding-left: Theme.space-sm + item.depth * 16px + (item.active ? 6px : 4px);
-        padding-right: Theme.space-sm;
-        spacing: Theme.space-xs;
+        padding-right: Theme.space-xs;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 2px;
         alignment: center;
 
-        // Status: spinner when busy, checkmark when completed, dot when active
-        if item.busy: Rectangle {
-            width: 14px;
-            height: 14px;
-            Spinner {
-                indeterminate: true;
-                width: parent.width;
-                height: parent.height;
+        HorizontalLayout {
+            spacing: Theme.space-xs;
+            alignment: start;
+
+            // Status indicator
+            if item.busy: Rectangle {
+                width: 14px;
+                height: 14px;
+                Spinner {
+                    indeterminate: true;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            if !item.busy: Text {
+                text: item.status == "completed" ? "✓" :
+                      item.status == "archived"  ? "◉" : "○";
+                color: item.status == "completed" ? Theme.success :
+                       item.status == "archived"  ? Theme.text-dim : Theme.text-dim;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+                width: 14px;
+            }
+
+            Text {
+                text: item.title;
+                color: item.active ? Theme.text-primary : Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+
+            // Cost badge (non-zero)
+            if item.total-cost-usd > 0.0: Text {
+                text: "$" + Math.round(item.total-cost-usd * 100) / 100.0;
+                color: Theme.text-dim;
+                font-size: Theme.font-size-xs;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
+            }
+
+            // Action buttons (visible on hover)
+            HorizontalLayout {
+                spacing: 1px;
+                opacity: ta.has-hover ? 1.0 : 0.0;
+                animate opacity { duration: Theme.duration-fast; }
+
+                IconButton {
+                    icon: "✕";
+                    destructive: true;
+                    tooltip-text: "Delete session";
+                    clicked => { root.delete-clicked(root.item.id); }
+                }
             }
         }
-        if !item.busy: Text {
-            text: item.status == "completed" ? "✓" : "○";
-            color: item.status == "completed" ? Theme.text-dim : Theme.text-dim;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            width: 14px;
-        }
 
-        Text {
-            text: item.title;
-            color: item.active ? Theme.text-primary : Theme.text-secondary;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
+        // Current tool display
+        if item.current-tool != "": Text {
+            text: "⟳ " + item.current-tool;
+            color: Theme.accent-dim;
+            font-size: Theme.font-size-xs;
+            font-family: Theme.font-mono;
             overflow: elide;
-            horizontal-stretch: 1;
+            x: 22px;
         }
     }
 
@@ -76,10 +122,14 @@ component SessionRow inherits Rectangle {
 }
 
 export component Sidebar inherits Rectangle {
-    in property <[SessionItem]> sessions;
-    in property <string> active-session-id;
+    in property <[SessionItem]>  sessions;
+    in property <string>         active-session-id;
+    in-out property <string>     search-text: "";
+
     callback session-selected(string);
     callback new-session();
+    callback session-delete-requested(string);
+    callback session-rename-requested(string, string);
 
     width: Theme.sidebar-width;
     background: Theme.bg-surface;
@@ -87,7 +137,7 @@ export component Sidebar inherits Rectangle {
     VerticalLayout {
         spacing: 0;
 
-        // Header
+        // ── Header ────────────────────────────────────────────────────────────
         Rectangle {
             height: 40px;
             background: Theme.bg-surface;
@@ -111,6 +161,7 @@ export component Sidebar inherits Rectangle {
                     height: 28px;
                     border-radius: Theme.radius-sm;
                     background: new-ta.has-hover ? Theme.bg-active : transparent;
+                    animate background { duration: Theme.duration-fast; }
 
                     Text {
                         text: "+";
@@ -118,6 +169,7 @@ export component Sidebar inherits Rectangle {
                         font-size: 18px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                        animate color { duration: Theme.duration-fast; }
                     }
 
                     new-ta := TouchArea {
@@ -126,7 +178,6 @@ export component Sidebar inherits Rectangle {
                 }
             }
 
-            // Bottom border
             Rectangle {
                 y: parent.height - 1px;
                 width: parent.width;
@@ -135,16 +186,34 @@ export component Sidebar inherits Rectangle {
             }
         }
 
-        // Session list
+        // ── Search bar ────────────────────────────────────────────────────────
+        Rectangle {
+            height: 40px;
+            background: Theme.bg-surface;
+
+            SearchInput {
+                x: Theme.space-sm;
+                y: Theme.space-xs;
+                width: parent.width - 2 * Theme.space-sm;
+                height: parent.height - 2 * Theme.space-xs;
+                placeholder: "Filter sessions…";
+                text <=> root.search-text;
+            }
+        }
+
+        // ── Session list ──────────────────────────────────────────────────────
         ListView {
             for item[i] in root.sessions: SessionRow {
                 item: item;
                 index: i;
+                visible: true;
                 clicked(idx) => {
                     if idx < root.sessions.length {
                         root.session-selected(root.sessions[idx].id);
                     }
                 }
+                delete-clicked(id) => { root.session-delete-requested(id); }
+                rename-clicked(id, title) => { root.session-rename-requested(id, title); }
             }
         }
     }

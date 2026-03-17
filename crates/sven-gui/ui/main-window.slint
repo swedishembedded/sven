@@ -4,18 +4,27 @@
 //
 // Sven Desktop – Main application window
 
-import { Theme }        from "theme.slint";
-import { StatusBar }    from "status-bar.slint";
+import { Theme }           from "theme.slint";
+import { StatusBar }       from "status-bar.slint";
 import { Sidebar, SessionItem } from "sidebar.slint";
-import { ChatPane, ChatMessage, CodeToken, CodeLine } from "chat-pane.slint";
-import { InputPane }    from "input-pane.slint";
+import { ChatPane, ChatMessage, CodeToken, CodeLine, TextRun } from "chat-pane.slint";
+import { InputPane }       from "input-pane.slint";
 import { ToastStack, ToastItem } from "toast.slint";
 import { QuestionModal, QuestionItem } from "question-modal.slint";
 import { PickerPopup, PickerItem } from "picker-popup.slint";
 import { CompletionPopup, CompletionEntry } from "completion-popup.slint";
 import { QueuePanel, QueueItem } from "queue-panel.slint";
+import { SearchBar }       from "search-bar.slint";
+import { HelpOverlay }     from "help-overlay.slint";
+import { PagerOverlay }    from "pager.slint";
+import { TeamPickerOverlay, TeamAgentItem } from "team-picker.slint";
+import { InspectorOverlay, InspectorItem } from "inspector.slint";
 
-export { SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry, CodeToken, CodeLine, QueueItem, QuestionItem }
+export {
+    SessionItem, ChatMessage, ToastItem, PickerItem, CompletionEntry,
+    CodeToken, CodeLine, QueueItem, QuestionItem, TextRun,
+    TeamAgentItem, InspectorItem
+}
 
 export component MainWindow inherits Window {
     title: "Sven Desktop";
@@ -44,25 +53,59 @@ export component MainWindow inherits Window {
     in property <[QueueItem]>    queue-items: [];
     in-out property <string>     input-text: "";
 
+    // Sidebar
+    in-out property <bool>       sidebar-visible: true;
+    in-out property <length>     sidebar-width: Theme.sidebar-width;
+
     // Question modal
     in property <bool>           question-visible: false;
     in property <[QuestionItem]> question-items: [];
     in property <int>            question-current-index: 0;
+    in property <bool>           question-all-answered: false;
 
-    // Picker popup (model / mode)
+    // Picker popup
     in property <bool>           picker-visible: false;
     in property <string>         picker-title: "Select";
     in property <[PickerItem]>   picker-items;
+    in-out property <int>        picker-keyboard-index: 0;
 
-    // Slash command completion
+    // Completion
     in property <[CompletionEntry]> completion-items;
-    in property <int>               completion-selected: 0;
+    in-out property <int>           completion-selected: 0;
+
+    // Search
+    in-out property <bool>       search-visible: false;
+    in property <int>            search-match-count: 0;
+    in property <int>            search-current-match: 0;
+
+    // Overlays
+    in-out property <bool>       help-visible: false;
+    in-out property <bool>       pager-visible: false;
+    in-out property <bool>       team-picker-visible: false;
+    in-out property <bool>       inspector-visible: false;
+    in-out property <int>        inspector-tab: 0;
+
+    // Inspector data
+    in property <[InspectorItem]> inspector-items;
+
+    // Team data
+    in property <[TeamAgentItem]> team-agents;
+    in property <string>          current-agent-id: "";
+
+    // Input history
+    in property <bool>           has-input-history: false;
+
+    // Scroll trigger - toggle this to scroll chat to bottom
+    in-out property <bool>       scroll-bottom-trigger: false;
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
     callback send-message(string);
     callback cancel-run();
     callback new-session();
     callback session-selected(string);
+    callback session-delete-requested(string);
+    callback session-rename-requested(string, string);
+
     callback question-answered();
     callback question-dismissed();
     callback question-option-selected(int, int);
@@ -83,122 +126,213 @@ export component MainWindow inherits Window {
     callback queue-edit-clicked(int);
     callback queue-delete-clicked(int);
     callback queue-submit-clicked(int);
+    callback queue-clear-all();
     callback message-edit-requested(int);
+
+    callback search-query-changed(string);
+    callback search-next();
+    callback search-prev();
+
+    callback copy-text(string);
+
+    callback inspector-tab-changed(int);
+    callback inspector-refresh();
+    callback team-agent-selected(string);
+
+    callback input-history-prev();
+    callback input-history-next();
+
+    // ── Computed ──────────────────────────────────────────────────────────────
+    property <length> effective-sidebar-width: sidebar-visible ? sidebar-width : 0px;
 
     // ── Layout ────────────────────────────────────────────────────────────────
     FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                if (root.question-visible) {
-                    root.question-dismissed();
-                    accept
-                } else if (root.picker-visible) {
-                    root.picker-dismissed();
-                    accept
-                } else if (root.completion-items.length > 0) {
-                    root.completion-accepted("");
-                    accept
-                } else {
-                    accept
+            if event.text == Key.Escape {
+                if root.inspector-visible   { root.inspector-visible = false; accept }
+                else if root.pager-visible  { root.pager-visible = false; accept }
+                else if root.team-picker-visible { root.team-picker-visible = false; accept }
+                else if root.help-visible   { root.help-visible = false; accept }
+                else if root.search-visible { root.search-visible = false; accept }
+                else if root.question-visible { root.question-dismissed(); accept }
+                else if root.picker-visible { root.picker-dismissed(); accept }
+                else if root.completion-items.length > 0 { root.completion-accepted(""); accept }
+                else { accept }
+            // Completion navigation
+            } else if event.text == Key.UpArrow && root.completion-items.length > 0 {
+                if root.completion-selected > 0 { root.completion-selected -= 1; }
+                accept
+            } else if event.text == Key.DownArrow && root.completion-items.length > 0 {
+                if root.completion-selected < root.completion-items.length - 1 {
+                    root.completion-selected += 1;
                 }
-            } else if ((event.text == Key.Return || event.text == Key.Tab) && root.completion-items.length > 0) {
+                accept
+            } else if (event.text == Key.Return || event.text == Key.Tab) && root.completion-items.length > 0 {
                 root.completion-accepted("");
                 accept
-            } else {
+            // Global shortcuts
+            } else if event.text == Key.F1 {
+                root.help-visible = !root.help-visible;
                 accept
+            } else if event.modifiers.control && event.text == "b" {
+                root.sidebar-visible = !root.sidebar-visible;
+                accept
+            } else if event.modifiers.control && event.text == "t" {
+                root.pager-visible = !root.pager-visible;
+                accept
+            } else if event.modifiers.control && event.text == "f" {
+                root.search-visible = !root.search-visible;
+                accept
+            } else if event.modifiers.control && event.text == "a" {
+                root.team-picker-visible = !root.team-picker-visible;
+                accept
+            } else if event.modifiers.control && event.text == "n" {
+                root.new-session();
+                accept
+            } else {
+                reject
             }
         }
 
         VerticalLayout {
             spacing: 0;
 
-        StatusBar {
-            model-name: root.model-name;
-            mode: root.mode;
-            context-pct: root.context-pct;
-            agent-busy: root.agent-busy;
-            total-cost-usd: root.total-cost-usd;
-            total-output-tokens: root.total-output-tokens;
-            total-input-tokens: root.total-input-tokens;
-            is-node-proxy: root.is-node-proxy;
-            connection-label: root.connection-label;
-            model-clicked => { root.model-clicked(); }
-            mode-clicked => { root.mode-clicked(); }
-        }
-
-        HorizontalLayout {
-            spacing: 0;
-            vertical-stretch: 1;
-
-            Sidebar {
-                sessions: root.sessions;
-                active-session-id: root.active-session-id;
-                session-selected(id) => { root.session-selected(id); }
-                new-session => { root.new-session(); }
+            StatusBar {
+                model-name: root.model-name;
+                mode: root.mode;
+                context-pct: root.context-pct;
+                agent-busy: root.agent-busy;
+                total-cost-usd: root.total-cost-usd;
+                total-output-tokens: root.total-output-tokens;
+                total-input-tokens: root.total-input-tokens;
+                is-node-proxy: root.is-node-proxy;
+                connection-label: root.connection-label;
+                model-clicked => { root.model-clicked(); }
+                mode-clicked  => { root.mode-clicked(); }
+                help-clicked  => { root.help-visible = true; }
             }
 
-            VerticalLayout {
+            HorizontalLayout {
                 spacing: 0;
-                horizontal-stretch: 1;
+                vertical-stretch: 1;
 
-                ChatPane {
-                    vertical-stretch: 1;
-                    messages: root.messages;
-                    streaming-messages: root.streaming-messages;
-                    streaming-text: root.streaming-text;
-                    thinking-text: root.thinking-text;
-                    toggle-expanded(idx) => { root.toggle-expanded(idx); }
-                    message-edit-requested(idx) => { root.message-edit-requested(idx); }
+                // Sidebar with resizable drag handle
+                if root.sidebar-visible: Sidebar {
+                    width: root.sidebar-width;
+                    sessions: root.sessions;
+                    active-session-id: root.active-session-id;
+                    session-selected(id) => { root.session-selected(id); }
+                    new-session => { root.new-session(); }
+                    session-delete-requested(id) => { root.session-delete-requested(id); }
+                    session-rename-requested(id, title) => { root.session-rename-requested(id, title); }
                 }
 
-                QueuePanel {
-                    items: root.queue-items;
-                    edit-clicked(idx) => { root.queue-edit-clicked(idx); }
-                    delete-clicked(idx) => { root.queue-delete-clicked(idx); }
-                    submit-clicked(idx) => { root.queue-submit-clicked(idx); }
+                // Resize handle for sidebar
+                if root.sidebar-visible: resize-handle := Rectangle {
+                    width: 4px;
+                    background: resize-ta.has-hover ? Theme.accent-dim : transparent;
+                    animate background { duration: Theme.duration-fast; }
+
+                    resize-ta := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: ew-resize;
+                        moved => {
+                            if self.pressed {
+                                root.sidebar-width = Math.clamp(
+                                    root.sidebar-width + (self.mouse-x - self.pressed-x),
+                                    Theme.sidebar-min-width,
+                                    Theme.sidebar-max-width
+                                );
+                            }
+                        }
+                    }
                 }
 
-                InputPane {
-                    agent-busy: root.agent-busy;
-                    input-text <=> root.input-text;
-                    queue-count: root.queue-count;
-                    send-message(text) => { root.send-message(text); }
-                    cancel-run => { root.cancel-run(); }
-                    input-changed(text) => { root.input-changed(text); }
-                    completion-accepted(val) => { root.completion-accepted(val); }
+                VerticalLayout {
+                    spacing: 0;
+                    horizontal-stretch: 1;
+
+                    ChatPane {
+                        vertical-stretch: 1;
+                        messages: root.messages;
+                        streaming-messages: root.streaming-messages;
+                        streaming-text: root.streaming-text;
+                        thinking-text: root.thinking-text;
+                        toggle-expanded(idx) => { root.toggle-expanded(idx); }
+                        message-edit-requested(idx) => { root.message-edit-requested(idx); }
+                        copy-text(t) => { root.copy-text(t); }
+                        scroll-bottom-trigger: root.scroll-bottom-trigger;
+                    }
+
+                    // Search bar (conditionally shown)
+                    if root.search-visible: SearchBar {
+                        match-count: root.search-match-count;
+                        current-match: root.search-current-match;
+                        query-changed(q) => { root.search-query-changed(q); }
+                        next-match => { root.search-next(); }
+                        prev-match => { root.search-prev(); }
+                        closed => { root.search-visible = false; }
+                    }
+
+                    QueuePanel {
+                        items: root.queue-items;
+                        edit-clicked(idx) => { root.queue-edit-clicked(idx); }
+                        delete-clicked(idx) => { root.queue-delete-clicked(idx); }
+                        submit-clicked(idx) => { root.queue-submit-clicked(idx); }
+                        clear-all => { root.queue-clear-all(); }
+                    }
+
+                    InputPane {
+                        agent-busy: root.agent-busy;
+                        input-text <=> root.input-text;
+                        queue-count: root.queue-count;
+                        has-history: root.has-input-history;
+                        send-message(text) => { root.send-message(text); }
+                        cancel-run => { root.cancel-run(); }
+                        input-changed(text) => { root.input-changed(text); }
+                        completion-accepted(val) => { root.completion-accepted(val); }
+                        history-prev => { root.input-history-prev(); }
+                        history-next => { root.input-history-next(); }
+                    }
                 }
             }
-        }
         }
     }
 
-    // ── Completion overlay (floats above the input pane) ──────────────────────
+    // ── Overlays (stacked above everything) ───────────────────────────────────
+
+    // Completion popup
     if root.completion-items.length > 0: CompletionPopup {
-        x: Theme.sidebar-width;
+        x: root.effective-sidebar-width;
         y: 0;
-        width: parent.width - Theme.sidebar-width;
+        width: parent.width - root.effective-sidebar-width;
         height: parent.height - Theme.status-bar-height;
         items: root.completion-items;
-        selected-index: root.completion-selected;
+        selected-index <=> root.completion-selected;
         accepted(val) => { root.completion-accepted(val); }
         dismissed => { root.completion-accepted(""); }
     }
 
-    // ── Toast notifications ───────────────────────────────────────────────────
+    // Toast stack
     ToastStack {
-        x: parent.width - 320px - Theme.space-lg;
+        x: parent.width - Theme.toast-width - Theme.space-lg;
         y: parent.height - self.preferred-height - Theme.space-lg;
-        width: 320px;
+        width: Theme.toast-width;
         toasts: root.toasts;
+        dismiss-toast(idx) => {
+            // Handled by Rust (removes from toasts model)
+        }
     }
 
-    // ── Question modal ────────────────────────────────────────────────────────
+    // Question modal
     if root.question-visible: QuestionModal {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
         questions: root.question-items;
         current-question-index: root.question-current-index;
+        all-answered: root.question-all-answered;
         option-selected(qidx, optidx) => { root.question-option-selected(qidx, optidx); }
         other-text-changed(qidx, txt) => { root.question-other-changed(qidx, txt); }
         next-clicked => { root.question-next(); }
@@ -207,16 +341,61 @@ export component MainWindow inherits Window {
         dismissed => { root.question-dismissed(); }
     }
 
-    // ── Picker popup ──────────────────────────────────────────────────────────
+    // Picker popup
     if root.picker-visible: PickerPopup {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
         title: root.picker-title;
         items: root.picker-items;
+        keyboard-index: root.picker-keyboard-index;
         show-search: root.picker-title != "Switch mode";
         selected(id) => { root.picker-selected(id); }
         dismissed => { root.picker-dismissed(); }
         search-changed(text) => { root.picker-search-changed(text); }
+    }
+
+    // Help overlay
+    if root.help-visible: HelpOverlay {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => { root.help-visible = false; }
+    }
+
+    // Pager overlay
+    if root.pager-visible: PagerOverlay {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        messages: root.messages;
+        dismissed => { root.pager-visible = false; }
+        toggle-expanded(idx) => { root.toggle-expanded(idx); }
+        copy-text(t) => { root.copy-text(t); }
+    }
+
+    // Team picker
+    if root.team-picker-visible: TeamPickerOverlay {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        agents: root.team-agents;
+        current-agent-id: root.current-agent-id;
+        agent-selected(id) => {
+            root.team-agent-selected(id);
+            root.team-picker-visible = false;
+        }
+        dismissed => { root.team-picker-visible = false; }
+    }
+
+    // Inspector overlay
+    if root.inspector-visible: InspectorOverlay {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        items: root.inspector-items;
+        active-tab <=> root.inspector-tab;
+        dismissed => { root.inspector-visible = false; }
+        tab-changed(i) => { root.inspector-tab-changed(i); }
     }
 }

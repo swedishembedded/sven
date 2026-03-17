@@ -1,0 +1,152 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Team picker overlay — select which agent/teammate to chat with.
+
+import { Theme } from "theme.slint";
+import { ModalBackdrop, SearchInput, SelectableList, ListEntry } from "widgets.slint";
+
+export struct TeamAgentItem {
+    id: string,
+    name: string,
+    description: string,
+    status: string,   // idle | busy | offline
+}
+
+export component TeamPickerOverlay inherits Rectangle {
+    in property <[TeamAgentItem]> agents;
+    in property <string>          current-agent-id: "";
+
+    callback agent-selected(string);
+    callback dismissed();
+
+    ModalBackdrop { dismissed => { root.dismissed(); } }
+
+    Rectangle {
+        x: (parent.width  - self.width)  / 2;
+        y: (parent.height - self.height) / 2;
+        width: Theme.modal-width;
+        height: Math.min(parent.height - 80px, 500px);
+        border-radius: Theme.radius-lg;
+        background: Theme.bg-surface;
+        border-color: Theme.border;
+        border-width: 1px;
+        drop-shadow-blur: Theme.shadow-blur-lg;
+        drop-shadow-color: Theme.shadow-color-lg;
+        clip: true;
+
+        VerticalLayout {
+            padding: Theme.space-md;
+            spacing: Theme.space-sm;
+
+            Text {
+                text: "Switch Agent";
+                color: Theme.accent;
+                font-size: Theme.font-size-md;
+                font-weight: 700;
+            }
+
+            // Agent list
+            if agents.length == 0: Rectangle {
+                height: 60px;
+                Text {
+                    text: "No agents available";
+                    color: Theme.text-dim;
+                    font-size: Theme.font-size-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            if agents.length > 0: Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+
+                Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-height: agent-list.preferred-height;
+                    interactive: true;
+
+                    agent-list := VerticalLayout {
+                        spacing: 2px;
+                        alignment: start;
+
+                        for agent in agents: Rectangle {
+                            height: 60px;
+                            border-radius: Theme.radius-sm;
+                            background: agent.id == current-agent-id ? Theme.bg-active :
+                                        (agent-ta.has-hover ? Theme.bg-hover : transparent);
+                            border-color: agent.id == current-agent-id ? Theme.accent-dim : transparent;
+                            border-width: agent.id == current-agent-id ? 1px : 0px;
+                            animate background { duration: Theme.duration-fast; }
+
+                            HorizontalLayout {
+                                padding: Theme.space-sm;
+                                spacing: Theme.space-sm;
+                                alignment: start;
+
+                                // Status dot
+                                Rectangle {
+                                    width: 10px;
+                                    height: 10px;
+                                    border-radius: 5px;
+                                    background:
+                                        agent.status == "busy"    ? Theme.accent :
+                                        agent.status == "offline" ? Theme.text-dim :
+                                        Theme.success;
+                                    y: (parent.height - self.height) / 2;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: agent.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-size-base;
+                                        font-weight: agent.id == current-agent-id ? 700 : 400;
+                                    }
+                                    Text {
+                                        text: agent.description;
+                                        color: Theme.text-dim;
+                                        font-size: Theme.font-size-sm;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                Text {
+                                    text: agent.status;
+                                    color:
+                                        agent.status == "busy"    ? Theme.accent :
+                                        agent.status == "offline" ? Theme.text-dim :
+                                        Theme.success;
+                                    font-size: Theme.font-size-xs;
+                                    font-family: Theme.font-mono;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            agent-ta := TouchArea {
+                                clicked => { root.agent-selected(agent.id); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: "Click to select · Esc dismiss";
+                color: Theme.text-dim;
+                font-size: Theme.font-size-xs;
+                font-family: Theme.font-mono;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

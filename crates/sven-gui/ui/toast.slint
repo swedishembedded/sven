@@ -2,60 +2,101 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Toast notification stack.
+// Toast notification stack with slide-in animation and dismiss support.
 
 import { Theme } from "theme.slint";
+import { IconButton } from "widgets.slint";
 
 export struct ToastItem {
     message: string,
-    level: string,
+    level: string,          // error | success | warning | info
+    dismiss-after-ms: int,  // 0 = manual dismiss only
+}
+
+component ToastNotification inherits Rectangle {
+    in property <ToastItem> item;
+    in property <int>       index;
+    callback dismiss(int);
+
+    property <color> bg-color:
+        item.level == "error"   ? Theme.error-bg :
+        item.level == "success" ? Theme.success-bg :
+        item.level == "warning" ? Theme.warning-bg :
+        Theme.info-bg;
+
+    property <color> border-color-val:
+        item.level == "error"   ? Theme.error-border :
+        item.level == "success" ? Theme.success-border :
+        item.level == "warning" ? Theme.warning :
+        Theme.info;
+
+    property <string> icon:
+        item.level == "error"   ? "✕" :
+        item.level == "success" ? "✓" :
+        item.level == "warning" ? "⚠" : "ℹ";
+
+    property <color> icon-color:
+        item.level == "error"   ? Theme.error-text :
+        item.level == "success" ? Theme.success :
+        item.level == "warning" ? Theme.warning :
+        Theme.info;
+
+    width: Theme.toast-width;
+    height: 44px;
+    border-radius: Theme.radius-md;
+    background: bg-color;
+    border-color: border-color-val;
+    border-width: 1px;
+    drop-shadow-blur: Theme.shadow-blur-sm;
+    drop-shadow-color: Theme.shadow-color-sm;
+
+    // Slide-in from right via x offset
+    animate x { duration: Theme.duration-normal; easing: ease-out; }
+
+    HorizontalLayout {
+        padding: Theme.space-sm;
+        spacing: Theme.space-xs;
+
+        Text {
+            text: icon;
+            color: icon-color;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            width: 16px;
+        }
+
+        Text {
+            text: item.message;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        IconButton {
+            icon: "✕";
+            icon-color: Theme.text-dim;
+            hover-icon-color: Theme.text-primary;
+            width: 20px;
+            height: 20px;
+            clicked => { root.dismiss(root.index); }
+        }
+    }
 }
 
 export component ToastStack {
     in property <[ToastItem]> toasts;
+    callback dismiss-toast(int);
 
     VerticalLayout {
         spacing: Theme.space-sm;
         alignment: end;
-        padding: Theme.space-lg;
 
-        for t in root.toasts: Rectangle {
-            border-radius: Theme.radius-md;
-            background: t.level == "error" ? Theme.error-bg
-                      : t.level == "success" ? #0d1f0d
-                      : Theme.bg-card;
-            border-color: t.level == "error" ? Theme.error-border
-                        : t.level == "success" ? Theme.success
-                        : Theme.border;
-            border-width: 1px;
-            width: 300px;
-            height: 40px;
-
-            HorizontalLayout {
-                padding: Theme.space-sm;
-                spacing: Theme.space-xs;
-
-                Text {
-                    text: t.level == "error" ? "✕"
-                        : t.level == "success" ? "✓"
-                        : "ℹ";
-                    color: t.level == "error" ? Theme.error-text
-                         : t.level == "success" ? Theme.success
-                         : Theme.info;
-                    font-size: Theme.font-size-sm;
-                    vertical-alignment: center;
-                    width: 16px;
-                }
-
-                Text {
-                    text: t.message;
-                    color: Theme.text-primary;
-                    font-size: Theme.font-size-sm;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                }
-            }
+        for t[i] in root.toasts: ToastNotification {
+            item: t;
+            index: i;
+            dismiss(idx) => { root.dismiss-toast(idx); }
         }
     }
 }

@@ -26,6 +26,7 @@ export global Theme {
     out property <color> text-secondary: #8b949e;
     out property <color> text-dim:       #484f58;
     out property <color> text-code:      #a5d6ff;
+    out property <color> text-link:      #58a6ff;
 
     // ── Semantic colours ──────────────────────────────────────────────────────
     out property <color> user-msg-bg:      #1c2640;
@@ -42,20 +43,36 @@ export global Theme {
     out property <color> error-border:     #5a2020;
     out property <color> error-text:       #f85149;
     out property <color> success:          #3fb950;
+    out property <color> success-bg:       #0d1f0d;
+    out property <color> success-border:   #2a5f2a;
     out property <color> warning:          #d29922;
+    out property <color> warning-bg:       #2d2210;
     out property <color> info:             #58a6ff;
+    out property <color> info-bg:          #0d1926;
 
     // ── Code / monospace ─────────────────────────────────────────────────────
-    out property <color>  code-bg:     #0d1117;
-    out property <color>  code-border: #21262d;
-    out property <string> font-mono:   "Monospace";
+    out property <color>  code-bg:        #0d1117;
+    out property <color>  code-border:    #21262d;
+    out property <color>  inline-code-bg: #1c2128;
+    out property <string> font-mono:      "Monospace";
+    out property <string> font-ui:        "sans-serif";
 
     // ── Typography ────────────────────────────────────────────────────────────
+    out property <length> font-size-xs:   11px;
     out property <length> font-size-sm:   12px;
     out property <length> font-size-base: 14px;
     out property <length> font-size-md:   15px;
     out property <length> font-size-lg:   17px;
+    out property <length> font-size-xl:   20px;
     out property <length> font-size-code: 13px;
+
+    // Heading sizes h1–h6
+    out property <length> font-size-h1: 24px;
+    out property <length> font-size-h2: 20px;
+    out property <length> font-size-h3: 17px;
+    out property <length> font-size-h4: 15px;
+    out property <length> font-size-h5: 14px;
+    out property <length> font-size-h6: 13px;
 
     // ── Spacing ───────────────────────────────────────────────────────────────
     out property <length> space-xs:  4px;
@@ -63,13 +80,41 @@ export global Theme {
     out property <length> space-md:  12px;
     out property <length> space-lg:  16px;
     out property <length> space-xl:  24px;
+    out property <length> space-2xl: 32px;
 
     out property <length> radius-sm: 4px;
     out property <length> radius-md: 6px;
     out property <length> radius-lg: 10px;
+    out property <length> radius-xl: 14px;
 
-    // ── Sidebar ───────────────────────────────────────────────────────────────
-    out property <length> sidebar-width: 220px;
-    out property <length> status-bar-height: 32px;
-    out property <length> input-area-height: 120px;
+    // ── Animations ────────────────────────────────────────────────────────────
+    out property <duration> duration-fast:   100ms;
+    out property <duration> duration-normal: 200ms;
+    out property <duration> duration-slow:   350ms;
+
+    // ── Shadows ───────────────────────────────────────────────────────────────
+    out property <color>  shadow-color-sm: #00000040;
+    out property <color>  shadow-color-md: #00000060;
+    out property <color>  shadow-color-lg: #00000080;
+    out property <length> shadow-blur-sm:   8px;
+    out property <length> shadow-blur-md:  16px;
+    out property <length> shadow-blur-lg:  24px;
+
+    // ── Scrollbar ─────────────────────────────────────────────────────────────
+    out property <color>  scrollbar-track: #1c2128;
+    out property <color>  scrollbar-thumb: #30363d;
+    out property <length> scrollbar-width: 6px;
+
+    // ── Layout constants ──────────────────────────────────────────────────────
+    out property <length> sidebar-width:       220px;
+    out property <length> sidebar-min-width:   160px;
+    out property <length> sidebar-max-width:   380px;
+    out property <length> status-bar-height:    32px;
+    out property <length> input-area-min:       80px;
+    out property <length> input-area-default:  120px;
+    out property <length> input-area-max:      280px;
+    out property <length> modal-width:         520px;
+    out property <length> toast-width:         320px;
+    out property <length> row-height:           36px;
+    out property <length> icon-btn-size:        24px;
 }

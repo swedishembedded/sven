@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Scrollable chat message pane with markdown block rendering.
+// Scrollable chat message pane with rich markdown block rendering.
 
 import { Theme } from "theme.slint";
+import { IconButton, HDivider } from "widgets.slint";
 
 // ── Syntax-highlight types ────────────────────────────────────────────────────
 
@@ -17,11 +18,22 @@ export struct CodeLine {
     tokens: [CodeToken],
 }
 
+// ── Inline text run ───────────────────────────────────────────────────────────
+
+export struct TextRun {
+    text: string,
+    bold: bool,
+    italic: bool,
+    is-code: bool,
+    is-link: bool,
+    url: string,
+}
+
 // ── Chat message struct ───────────────────────────────────────────────────────
 
 export struct ChatMessage {
     // Core classification
-    message-type: string,   // user|assistant|code-block|heading|list-item|separator|thinking|tool-call|tool-result|error|system|block-quote
+    message-type: string,   // user|assistant|inline-code|code-block|heading|list-item|separator|thinking|tool-call|tool-result|error|system|block-quote|table-row
     content: string,
     role: string,
 
@@ -32,6 +44,7 @@ export struct ChatMessage {
     is-error: bool,
     is-streaming: bool,
     is-expanded: bool,
+    is-search-match: bool,
 
     // Tool call fields
     tool-name: string,
@@ -46,54 +59,71 @@ export struct ChatMessage {
 
     // Syntax-highlighted lines (populated for code-block type)
     code-lines: [CodeLine],
+
+    // Inline text runs (populated for assistant paragraphs with formatting)
+    text-runs: [TextRun],
+
+    // Table cells (populated for table-row type)
+    cells: [string],
 }
 
 // ── User bubble ───────────────────────────────────────────────────────────────
 
 component UserBubble inherits Rectangle {
-    in property <string> content;
-    in property <length> available-width: 600px;
-    in property <int> msg-index: 0;
+    in property <string>  content;
+    in property <length>  available-width: 600px;
+    in property <int>     msg-index: 0;
+    in property <bool>    is-search-match: false;
 
     callback edit-clicked();
+    callback copy-clicked(string);
 
     width: available-width;
     border-radius: Theme.radius-md;
-    background: Theme.user-msg-bg;
-    border-color: Theme.user-msg-border;
+    background: is-search-match ? Theme.accent-glow : Theme.user-msg-bg;
+    border-color: is-search-match ? Theme.accent : Theme.user-msg-border;
     border-width: 1px;
+    animate background { duration: Theme.duration-fast; }
 
     VerticalLayout {
         padding: Theme.space-md;
         spacing: Theme.space-xs;
 
         HorizontalLayout {
-            alignment: start;
+            alignment: space-between;
             spacing: Theme.space-sm;
 
-            Text {
-                text: "You";
-                color: Theme.info;
-                font-size: Theme.font-size-sm;
-                font-weight: 700;
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                alignment: start;
+                Text {
+                    text: "You";
+                    color: Theme.info;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
             }
 
-            Rectangle {
-                width: 24px;
-                height: 24px;
-                border-radius: Theme.radius-sm;
-                background: edit-ta.has-hover ? Theme.bg-hover : transparent;
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: end;
+                opacity: action-area.has-hover ? 1.0 : 0.0;
+                animate opacity { duration: Theme.duration-fast; }
 
-                Text {
-                    text: "✎";
-                    font-size: 12px;
-                    color: edit-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    width: parent.width;
-                    height: parent.height;
+                action-area := TouchArea {
+                    width: 0;
+                    height: 0;
                 }
-                edit-ta := TouchArea {
+
+                IconButton {
+                    icon: "⎘";
+                    tooltip-text: "Copy message";
+                    clicked => { root.copy-clicked(root.content); }
+                }
+                IconButton {
+                    icon: "✎";
+                    tooltip-text: "Edit message";
                     clicked => { root.edit-clicked(); }
                 }
             }
@@ -109,15 +139,23 @@ component UserBubble inherits Rectangle {
     }
 }
 
-// ── Assistant paragraph ───────────────────────────────────────────────────────
+// ── Rich-text paragraph ───────────────────────────────────────────────────────
+// Renders a paragraph with inline text runs when available.
 
-component AssistantParagraph {
-    in property <string> content;
-    in property <bool>   is-streaming: false;
-    in property <bool>   show-header: false;
-    in property <length> available-width: 600px;
+component RichParagraph inherits Rectangle {
+    in property <string>     content;
+    in property <[TextRun]>  text-runs;
+    in property <bool>       is-streaming: false;
+    in property <bool>       show-header: false;
+    in property <bool>       is-bold: false;
+    in property <bool>       is-search-match: false;
+    in property <length>     available-width: 600px;
+
+    callback copy-clicked(string);
 
     width: available-width;
+    background: is-search-match ? Theme.accent-glow : transparent;
+    animate background { duration: Theme.duration-fast; }
 
     VerticalLayout {
         padding-left: Theme.space-md;
@@ -128,26 +166,120 @@ component AssistantParagraph {
 
         if show-header: HorizontalLayout {
             spacing: Theme.space-xs;
-            alignment: start;
-            Text {
-                text: "⬡ Sven";
-                color: Theme.accent;
-                font-size: Theme.font-size-sm;
-                font-weight: 700;
-            }
-            if is-streaming: Text {
-                text: "▋";
-                color: Theme.accent;
-                font-size: Theme.font-size-sm;
+            alignment: space-between;
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: start;
+                Text {
+                    text: "⬡ Sven";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 700;
+                }
+                if is-streaming: Text {
+                    text: "▋";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-sm;
+                }
             }
         }
 
-        Text {
+        // Render plain content when no runs (streaming or simple text)
+        if text-runs.length == 0: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
+            font-weight: is-bold ? 700 : 400;
             wrap: word-wrap;
             width: available-width - 2 * Theme.space-md;
+        }
+
+        // Render inline runs in an HLayout (flat, no line-wrap between runs)
+        // For wrapping text with mixed formatting, runs are rendered as
+        // a single flow; Slint auto-breaks the HLayout across visual lines.
+        if text-runs.length > 0: HorizontalLayout {
+            spacing: 0;
+            alignment: start;
+
+            for run in text-runs: Rectangle {
+                height: run-text.preferred-height;
+                width: run-text.preferred-width + (run.is-code ? 4px : 0px);
+                border-radius: run.is-code ? Theme.radius-sm : 0;
+                background: run.is-code ? Theme.inline-code-bg : transparent;
+                border-color: run.is-code ? Theme.code-border : transparent;
+                border-width: run.is-code ? 1px : 0px;
+
+                run-text := Text {
+                    x: run.is-code ? 2px : 0;
+                    text: run.text;
+                    color: run.is-code ? Theme.text-code :
+                           run.is-link ? Theme.text-link :
+                           Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    font-weight: run.bold ? 700 : 400;
+                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+// ── Assistant paragraph (streaming / simple) ──────────────────────────────────
+
+export component AssistantParagraph inherits Rectangle {
+    in property <string>     content;
+    in property <[TextRun]>  text-runs;
+    in property <bool>       is-streaming: false;
+    in property <bool>       show-header: false;
+    in property <bool>       is-search-match: false;
+    in property <length>     available-width: 600px;
+
+    callback copy-clicked(string);
+
+    width: available-width;
+
+    RichParagraph {
+        content: root.content;
+        text-runs: root.text-runs;
+        is-streaming: root.is-streaming;
+        show-header: root.show-header;
+        is-search-match: root.is-search-match;
+        available-width: root.available-width;
+        copy-clicked(t) => { root.copy-clicked(t); }
+    }
+}
+
+// ── Inline code ───────────────────────────────────────────────────────────────
+
+component InlineCodeBlock inherits Rectangle {
+    in property <string> content;
+    in property <length> available-width: 600px;
+
+    width: available-width;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        padding-top: Theme.space-xs;
+        padding-bottom: Theme.space-xs;
+
+        Rectangle {
+            border-radius: Theme.radius-sm;
+            background: Theme.inline-code-bg;
+            border-color: Theme.code-border;
+            border-width: 1px;
+            height: inline-code-text.preferred-height + 6px;
+            width: inline-code-text.preferred-width + 10px;
+
+            inline-code-text := Text {
+                x: 5px;
+                y: 3px;
+                text: content;
+                color: Theme.text-code;
+                font-size: Theme.font-size-code;
+                font-family: Theme.font-mono;
+            }
         }
     }
 }
@@ -160,7 +292,10 @@ component CodeBlockBubble {
     in property <[CodeLine]> code-lines;
     in property <length>     available-width: 600px;
 
+    callback copy-clicked(string);
+
     property <bool> has-highlight: code-lines.length > 0;
+    property <int>  line-count: has-highlight ? code-lines.length : content.character-count;
 
     width: available-width;
 
@@ -169,7 +304,7 @@ component CodeBlockBubble {
         padding-right: Theme.space-md;
         padding-bottom: Theme.space-xs;
 
-        Rectangle {
+        block-rect := Rectangle {
             border-radius: Theme.radius-sm;
             background: Theme.code-bg;
             border-color: Theme.code-border;
@@ -182,10 +317,11 @@ component CodeBlockBubble {
                 padding-right: Theme.space-sm;
                 spacing: 0;
 
-                // Language bar
-                if language != "": Rectangle {
-                    height: 24px;
+                // Language bar with copy button
+                Rectangle {
+                    height: 28px;
                     border-radius: Theme.radius-sm;
+                    background: transparent;
 
                     HorizontalLayout {
                         alignment: space-between;
@@ -193,26 +329,32 @@ component CodeBlockBubble {
                         padding-right: Theme.space-xs;
 
                         Text {
-                            text: language;
+                            text: language != "" ? language : "text";
                             color: Theme.accent-dim;
-                            font-size: 11px;
+                            font-size: Theme.font-size-xs;
                             font-family: Theme.font-mono;
                             vertical-alignment: center;
                         }
 
-                        Text {
-                            text: "✦";
-                            color: Theme.text-dim;
-                            font-size: 10px;
-                            vertical-alignment: center;
+                        HorizontalLayout {
+                            spacing: Theme.space-xs;
+                            alignment: end;
+
+                            IconButton {
+                                icon: "⎘";
+                                tooltip-text: "Copy code";
+                                icon-color: Theme.text-dim;
+                                hover-bg: Theme.bg-hover;
+                                clicked => { root.copy-clicked(root.content); }
+                            }
                         }
                     }
                 }
 
-                // Highlighted lines (Flickable for horizontal scroll on long lines)
+                // Highlighted lines
                 if has-highlight: Flickable {
                     width: parent.width - 2 * Theme.space-sm;
-                    height: Math.min(code-lines.length * (Theme.font-size-code + 4px), 400px);
+                    height: Math.min(line-count * (Theme.font-size-code + 4px), 480px);
                     viewport-width: code-lines-layout.preferred-width;
                     viewport-height: code-lines-layout.preferred-height;
                     interactive: true;
@@ -238,10 +380,10 @@ component CodeBlockBubble {
                     }
                 }
 
-                // Fallback: plain text when no highlight data (no-wrap + scroll for long lines)
+                // Fallback plain text
                 if !has-highlight: Flickable {
                     width: parent.width - 2 * Theme.space-sm;
-                    height: 400px;
+                    height: Math.min(content.character-count / 80 * (Theme.font-size-code + 4px) + Theme.font-size-code, 480px);
                     viewport-width: fallback-text.preferred-width;
                     viewport-height: fallback-text.preferred-height;
                     interactive: true;
@@ -277,43 +419,82 @@ component HeadingBlock {
         Text {
             text: content;
             color: Theme.text-primary;
-            font-size: heading-level <= 1 ? Theme.font-size-lg
-                     : heading-level <= 2 ? Theme.font-size-md
-                     : Theme.font-size-base;
-            font-weight: heading-level <= 2 ? 700 : 600;
+            font-size:
+                heading-level <= 1 ? Theme.font-size-h1 :
+                heading-level <= 2 ? Theme.font-size-h2 :
+                heading-level <= 3 ? Theme.font-size-h3 :
+                heading-level <= 4 ? Theme.font-size-h4 :
+                Theme.font-size-h5;
+            font-weight: heading-level <= 3 ? 700 : 600;
             wrap: word-wrap;
             width: available-width - 2 * Theme.space-md;
         }
+
+        // Underline for h1/h2
+        if heading-level <= 2: HDivider { width: available-width - 2 * Theme.space-md; }
     }
 }
 
 // ── List item ─────────────────────────────────────────────────────────────────
 
 component ListItemBlock {
-    in property <string> content;
-    in property <int>    list-depth: 0;
-    in property <length> available-width: 600px;
+    in property <string>    content;
+    in property <[TextRun]> text-runs;
+    in property <int>       list-depth: 0;
+    in property <length>    available-width: 600px;
 
     width: available-width;
 
     HorizontalLayout {
         padding-left: Theme.space-md + list-depth * Theme.space-md;
         padding-right: Theme.space-md;
+        padding-top: 2px;
+        padding-bottom: 2px;
         spacing: Theme.space-xs;
         alignment: start;
 
         Text {
-            text: "•";
+            text: list-depth == 0 ? "•" : "◦";
             color: Theme.accent-dim;
             font-size: Theme.font-size-base;
+            vertical-alignment: top;
+            y: 2px;
+            width: 14px;
         }
 
-        Text {
+        if text-runs.length == 0: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
             wrap: word-wrap;
-            width: available-width - Theme.space-md * (3 + list-depth);
+            width: available-width - Theme.space-md * (3 + list-depth) - 14px;
+        }
+
+        if text-runs.length > 0: HorizontalLayout {
+            spacing: 0;
+            alignment: start;
+            width: available-width - Theme.space-md * (3 + list-depth) - 14px;
+
+            for run in text-runs: Rectangle {
+                height: run-text.preferred-height;
+                width: run-text.preferred-width + (run.is-code ? 4px : 0px);
+                border-radius: run.is-code ? Theme.radius-sm : 0;
+                background: run.is-code ? Theme.inline-code-bg : transparent;
+                border-width: run.is-code ? 1px : 0px;
+                border-color: run.is-code ? Theme.code-border : transparent;
+
+                run-text := Text {
+                    x: run.is-code ? 2px : 0;
+                    text: run.text;
+                    color: run.is-code ? Theme.text-code :
+                           run.is-link ? Theme.text-link :
+                           Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    font-weight: run.bold ? 700 : 400;
+                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 }
@@ -339,6 +520,7 @@ component BlockQuoteBlock {
                 width: 3px;
                 height: quote-text.preferred-height;
                 background: Theme.accent-dim;
+                border-radius: 2px;
             }
 
             Rectangle { width: Theme.space-sm; }
@@ -347,6 +529,7 @@ component BlockQuoteBlock {
                 text: content;
                 color: Theme.text-secondary;
                 font-size: Theme.font-size-base;
+                font-family: Theme.font-ui;
                 wrap: word-wrap;
                 width: available-width - Theme.space-md * 2 - 3px - Theme.space-sm;
             }
@@ -358,7 +541,6 @@ component BlockQuoteBlock {
 
 component SeparatorBlock {
     in property <length> available-width: 600px;
-
     width: available-width;
     height: 16px;
 
@@ -368,6 +550,60 @@ component SeparatorBlock {
         width: available-width - 2 * Theme.space-md;
         height: 1px;
         background: Theme.border;
+    }
+}
+
+// ── Table row ─────────────────────────────────────────────────────────────────
+
+component TableRowBlock {
+    in property <[string]> cells;
+    in property <string>   content;  // fallback
+    in property <bool>     is-header: false;
+    in property <length>   available-width: 600px;
+
+    width: available-width;
+    height: row-layout.preferred-height;
+
+    row-layout := HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        padding-top: Theme.space-xs;
+        padding-bottom: Theme.space-xs;
+        spacing: 0;
+        alignment: start;
+
+        // Render cells if available
+        if cells.length > 0: HorizontalLayout {
+            spacing: 0;
+            alignment: start;
+            for cell in cells: Rectangle {
+                horizontal-stretch: 1;
+                border-color: Theme.border-dim;
+                border-width: 1px;
+                background: is-header ? Theme.bg-card : transparent;
+
+                Text {
+                    x: Theme.space-xs;
+                    y: Theme.space-xs;
+                    width: parent.width - Theme.space-xs * 2;
+                    text: cell;
+                    color: is-header ? Theme.text-primary : Theme.text-secondary;
+                    font-size: Theme.font-size-sm;
+                    font-weight: is-header ? 600 : 400;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // Fallback to content string
+        if cells.length == 0: Text {
+            text: content;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
     }
 }
 
@@ -391,7 +627,6 @@ component ThinkingBubble inherits Rectangle {
         padding: Theme.space-md;
         spacing: Theme.space-xs;
 
-        // Header row — always visible, clickable to expand/collapse
         header-ta := TouchArea {
             height: header-row.preferred-height;
             clicked => { root.toggle-expanded(); }
@@ -413,7 +648,6 @@ component ThinkingBubble inherits Rectangle {
                     font-size: Theme.font-size-sm;
                 }
 
-                // Single-line preview when collapsed — one line, elided
                 if !is-expanded && !is-streaming && content != "": Text {
                     text: content;
                     color: Theme.thinking-text;
@@ -422,18 +656,23 @@ component ThinkingBubble inherits Rectangle {
                     overflow: elide;
                     wrap: no-wrap;
                     height: Theme.font-size-sm + 2px;
-                    width: available-width - 160px;
+                    width: available-width - 180px;
                 }
             }
         }
 
-        // Full content — only when expanded
-        if is-expanded: Text {
-            text: content;
-            color: Theme.thinking-text;
-            font-size: Theme.font-size-sm;
-            wrap: word-wrap;
-            width: available-width - 2 * Theme.space-md;
+        if is-expanded: Rectangle {
+            clip: true;
+            height: expanded-text.preferred-height;
+            animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+
+            expanded-text := Text {
+                text: content;
+                color: Theme.thinking-text;
+                font-size: Theme.font-size-sm;
+                wrap: word-wrap;
+                width: available-width - 2 * Theme.space-md;
+            }
         }
     }
 }
@@ -445,7 +684,7 @@ component ToolCallBubble inherits Rectangle {
     in property <string> tool-icon: "▶";
     in property <string> tool-summary: "";
     in property <string> tool-category: "";
-    in property <string> tool-fields-json: "[]";
+    in property <string> tool-fields-json: "";
     in property <bool>   is-expanded: false;
     in property <length> available-width: 600px;
 
@@ -481,7 +720,7 @@ component ToolCallBubble inherits Rectangle {
                     color: Theme.text-secondary;
                     font-size: Theme.font-size-sm;
                     overflow: elide;
-                    width: available-width - 220px;
+                    width: available-width - 240px;
                 }
 
                 Text {
@@ -492,13 +731,19 @@ component ToolCallBubble inherits Rectangle {
             }
         }
 
-        if is-expanded && tool-fields-json != "" && tool-fields-json != "[]": Text {
-            text: tool-fields-json;
-            color: Theme.text-secondary;
-            font-size: Theme.font-size-code;
-            font-family: Theme.font-mono;
-            wrap: word-wrap;
-            width: available-width - 2 * Theme.space-md;
+        if is-expanded && tool-fields-json != "": Rectangle {
+            clip: true;
+            height: fields-text.preferred-height;
+            animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+
+            fields-text := Text {
+                text: tool-fields-json;
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-code;
+                font-family: Theme.font-mono;
+                wrap: word-wrap;
+                width: available-width - 2 * Theme.space-md;
+            }
         }
     }
 }
@@ -531,7 +776,6 @@ component ToolResultBubble inherits Rectangle {
                 spacing: Theme.space-xs;
                 alignment: start;
                 Text {
-                    // Error header: always show first line of error as preview
                     text: is-error ? "✕ Error" : (is-expanded ? "▾ Result" : "▸ Result");
                     color: is-error ? Theme.error-text : Theme.success;
                     font-size: Theme.font-size-sm;
@@ -540,7 +784,6 @@ component ToolResultBubble inherits Rectangle {
             }
         }
 
-        // Error content: always visible (no expand/collapse needed for errors)
         if is-error: Text {
             text: content;
             color: Theme.error-text;
@@ -551,14 +794,19 @@ component ToolResultBubble inherits Rectangle {
             opacity: 0.85;
         }
 
-        // Result content: only when expanded (non-error)
-        if !is-error && is-expanded: Text {
-            text: content;
-            color: Theme.text-secondary;
-            font-size: Theme.font-size-code;
-            font-family: Theme.font-mono;
-            wrap: word-wrap;
-            width: available-width - 2 * Theme.space-md;
+        if !is-error && is-expanded: Rectangle {
+            clip: true;
+            height: result-text.preferred-height;
+            animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+
+            result-text := Text {
+                text: content;
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-code;
+                font-family: Theme.font-mono;
+                wrap: word-wrap;
+                width: available-width - 2 * Theme.space-md;
+            }
         }
     }
 }
@@ -608,7 +856,7 @@ component SystemEventRow {
     in property <length> available-width: 600px;
 
     width: available-width;
-    height: 28px;
+    height: Theme.row-height;
 
     Text {
         text: content;
@@ -637,7 +885,7 @@ export component WelcomeScreen {
 
         Text {
             text: "Sven Desktop";
-            font-size: 24px;
+            font-size: Theme.font-size-h1;
             font-weight: 700;
             color: Theme.text-primary;
             horizontal-alignment: center;
@@ -651,7 +899,7 @@ export component WelcomeScreen {
         }
 
         Text {
-            text: "Type a message below to start";
+            text: "Type a message below to start · / for commands · F1 for help";
             font-size: Theme.font-size-sm;
             color: Theme.text-dim;
             horizontal-alignment: center;
@@ -661,13 +909,14 @@ export component WelcomeScreen {
 
 // ── Message row dispatching ───────────────────────────────────────────────────
 
-component MessageRow inherits VerticalLayout {
+export component MessageRow inherits VerticalLayout {
     in property <ChatMessage> msg;
     in property <int>         msg-index;
     in property <length>      available-width: 600px;
 
     callback toggle-expanded(int);
     callback edit-clicked(int);
+    callback copy-text(string);
 
     alignment: start;
 
@@ -675,12 +924,21 @@ component MessageRow inherits VerticalLayout {
         content: msg.content;
         available-width: available-width;
         msg-index: msg-index;
+        is-search-match: msg.is-search-match;
         edit-clicked => { root.edit-clicked(msg-index); }
+        copy-clicked(t) => { root.copy-text(t); }
     }
     if msg.message-type == "assistant": AssistantParagraph {
         content: msg.content;
+        text-runs: msg.text-runs;
         is-streaming: msg.is-streaming;
         show-header: msg.is-first-in-group;
+        is-search-match: msg.is-search-match;
+        available-width: available-width;
+        copy-clicked(t) => { root.copy-text(t); }
+    }
+    if msg.message-type == "inline-code": InlineCodeBlock {
+        content: msg.content;
         available-width: available-width;
     }
     if msg.message-type == "code-block": CodeBlockBubble {
@@ -688,6 +946,7 @@ component MessageRow inherits VerticalLayout {
         language: msg.language;
         code-lines: msg.code-lines;
         available-width: available-width;
+        copy-clicked(t) => { root.copy-text(t); }
     }
     if msg.message-type == "heading": HeadingBlock {
         content: msg.content;
@@ -696,6 +955,7 @@ component MessageRow inherits VerticalLayout {
     }
     if msg.message-type == "list-item": ListItemBlock {
         content: msg.content;
+        text-runs: msg.text-runs;
         list-depth: msg.heading-level;
         available-width: available-width;
     }
@@ -704,6 +964,11 @@ component MessageRow inherits VerticalLayout {
         available-width: available-width;
     }
     if msg.message-type == "separator": SeparatorBlock {
+        available-width: available-width;
+    }
+    if msg.message-type == "table-row": TableRowBlock {
+        cells: msg.cells;
+        content: msg.content;
         available-width: available-width;
     }
     if msg.message-type == "thinking": ThinkingBubble {
@@ -744,11 +1009,15 @@ component MessageRow inherits VerticalLayout {
 export component ChatPane inherits Rectangle {
     in property <[ChatMessage]> messages;
     in property <[ChatMessage]> streaming-messages;
-    in property <string> streaming-text: "";
-    in property <string> thinking-text: "";
+    in property <string>        streaming-text: "";
+    in property <string>        thinking-text: "";
+    in property <int>           search-match-row: -1;
+    // Toggle this to trigger a scroll-to-bottom
+    in-out property <bool>      scroll-bottom-trigger: false;
 
     callback toggle-expanded(int);
     callback message-edit-requested(int);
+    callback copy-text(string);
 
     background: Theme.bg-deep;
     clip: true;
@@ -763,11 +1032,22 @@ export component ChatPane inherits Rectangle {
         height: parent.height;
     }
 
-    if has-content: Flickable {
+    if has-content: flick := Flickable {
         width: parent.width;
         height: parent.height;
         interactive: true;
         viewport-height: content-layout.preferred-height;
+
+        // Auto-scroll: when viewport grows (new content arrives), scroll to
+        // bottom if user was already near the bottom.
+        property <length> _prev-height: 0;
+        changed viewport-height => {
+            if (-self.viewport-y >= self._prev-height - self.height - 80px
+                    || self._prev-height == 0px) {
+                self.viewport-y = -(self.viewport-height - self.height);
+            }
+            self._prev-height = self.viewport-height;
+        }
 
         content-layout := VerticalLayout {
             width: parent.width;
@@ -781,17 +1061,19 @@ export component ChatPane inherits Rectangle {
                 available-width: parent.width - 2 * Theme.space-lg;
                 toggle-expanded(idx) => { root.toggle-expanded(idx); }
                 edit-clicked(idx) => { root.message-edit-requested(idx); }
+                copy-text(t) => { root.copy-text(t); }
             }
 
-            // Live response stream (parsed markdown with code blocks)
+            // Live response stream
             for msg[i] in streaming-messages: MessageRow {
                 msg: msg;
                 msg-index: -1;
                 available-width: parent.width - 2 * Theme.space-lg;
                 toggle-expanded(idx) => { }
+                copy-text(t) => { root.copy-text(t); }
             }
 
-            // Fallback: raw streaming text when no parsed blocks
+            // Fallback streaming text
             if streaming-messages.length == 0 && streaming-text != "": AssistantParagraph {
                 content: streaming-text;
                 is-streaming: true;
@@ -806,7 +1088,6 @@ export component ChatPane inherits Rectangle {
                 is-streaming: true;
                 available-width: parent.width - 2 * Theme.space-lg;
             }
-
         }
     }
 }

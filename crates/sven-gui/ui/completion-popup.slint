@@ -2,10 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Slash command completion popup — floats as an overlay above the input box.
-// Rendered at the window level; the InputPane is NOT responsible for its
-// position. Place this component last in the window stacking order so it
-// paints on top.
+// Slash command completion popup with full keyboard navigation.
+// Rendered as a window-level overlay above the input pane.
 
 import { Theme } from "theme.slint";
 
@@ -17,27 +15,30 @@ export struct CompletionEntry {
 
 export component CompletionPopup inherits Rectangle {
     in property <[CompletionEntry]> items;
-    in property <int>               selected-index: 0;
+    in-out property <int>           selected-index: 0;
 
     callback accepted(string);
     callback dismissed();
+    callback selection-changed(int);
 
     background: transparent;
     visible: items.length > 0;
 
-    property <length> panel-height: Math.min(items.length * 28px + 12px, 220px);
+    property <length> item-height: 28px;
+    property <length> panel-height: Math.min(items.length * item-height + 12px, 220px);
+    property <length> panel-y: root.height - Theme.input-area-default - root.panel-height - 6px;
 
-    // Position above the input area so it doesn't occlude the input box
-    property <length> panel-y: root.height - Theme.input-area-height - root.panel-height - 6px;
-
-    // Click outside to dismiss (backdrop)
+    // Backdrop
     TouchArea {
-        x: 0;
-        y: 0;
+        x: 0; y: 0;
         width: parent.width;
         height: parent.height;
         clicked => { root.dismissed(); }
     }
+
+    // Key navigation via a FocusScope at the window level is handled by
+    // MainWindow, which updates `selected-index` and calls `accepted` /
+    // `dismissed`.  The popup itself only renders.
 
     popup-panel := Rectangle {
         x: Theme.space-lg;
@@ -48,10 +49,8 @@ export component CompletionPopup inherits Rectangle {
         background: Theme.bg-card;
         border-color: Theme.accent-dim;
         border-width: 1px;
-
-        // Drop shadow effect via inner rect
-        drop-shadow-blur: 16px;
-        drop-shadow-color: #00000060;
+        drop-shadow-blur: Theme.shadow-blur-md;
+        drop-shadow-color: Theme.shadow-color-md;
 
         VerticalLayout {
             padding: Theme.space-xs;
@@ -69,17 +68,21 @@ export component CompletionPopup inherits Rectangle {
                     alignment: start;
 
                     for item[i] in items: Rectangle {
-                        height: 26px;
+                        height: root.item-height;
                         border-radius: Theme.radius-sm;
-                        background: i == selected-index ? Theme.bg-active
-                                  : item-ta.has-hover    ? Theme.bg-hover
-                                  : transparent;
-
+                        background:
+                            i == selected-index ? Theme.bg-active :
+                            item-ta.has-hover    ? Theme.bg-hover  :
+                            transparent;
                         border-color: i == selected-index ? Theme.accent-dim : transparent;
                         border-width: i == selected-index ? 1px : 0px;
+                        animate background { duration: Theme.duration-fast; }
 
                         item-ta := TouchArea {
-                            clicked => { root.accepted(item.value); }
+                            clicked => {
+                                root.selected-index = i;
+                                root.accepted(item.value);
+                            }
                         }
 
                         HorizontalLayout {
@@ -88,7 +91,6 @@ export component CompletionPopup inherits Rectangle {
                             spacing: Theme.space-xs;
                             alignment: start;
 
-                            // Command name (display already includes "/" when applicable)
                             Text {
                                 text: item.display != "" ? item.display : ("/" + item.value);
                                 color: i == selected-index ? Theme.text-primary : Theme.text-secondary;
@@ -96,10 +98,9 @@ export component CompletionPopup inherits Rectangle {
                                 font-weight: 600;
                                 font-family: Theme.font-mono;
                                 vertical-alignment: center;
-                                width: 120px;
+                                width: 130px;
                             }
 
-                            // Description
                             if item.description != "": Text {
                                 text: item.description;
                                 color: Theme.text-dim;
@@ -109,11 +110,10 @@ export component CompletionPopup inherits Rectangle {
                                 horizontal-stretch: 1;
                             }
 
-                            // Tab hint on selected
                             if i == selected-index: Text {
-                                text: "Tab";
+                                text: "Tab ↵";
                                 color: Theme.text-dim;
-                                font-size: 11px;
+                                font-size: Theme.font-size-xs;
                                 font-family: Theme.font-mono;
                                 vertical-alignment: center;
                                 horizontal-alignment: right;

@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Agent question modal dialog — multiple choice (A/B/C/D) with optional "Other".
+// Agent question modal — scalable multiple-choice with optional multi-select,
+// "Other" free-text, and keyboard navigation.
 
 import { Theme } from "theme.slint";
+import { TextButton } from "widgets.slint";
 
-// Single question with options. selected-index: -1 = none, 0..options.length-1 = option, options.length = Other
+// Single question with options.
+// selected-index: -1 = none, 0..options.length-1 = option, options.length = Other
 export struct QuestionItem {
     prompt: string,
     options: [string],
@@ -17,9 +20,11 @@ export struct QuestionItem {
 
 export component QuestionModal inherits Rectangle {
     in property <[QuestionItem]> questions;
-    in property <int> current-question-index: 0;
+    in property <int>            current-question-index: 0;
+    // Rust computes all-answered to avoid fragile Slint logic
+    in property <bool>           all-answered: false;
 
-    callback option-selected(int, int);
+    callback option-selected(int, int);  // (question-idx, option-idx)
     callback other-text-changed(int, string);
     callback next-clicked();
     callback back-clicked();
@@ -28,229 +33,249 @@ export component QuestionModal inherits Rectangle {
 
     background: #00000088;
 
-    TouchArea {
-        clicked => { root.dismissed(); }
-    }
+    TouchArea { clicked => { root.dismissed(); } }
 
-    property <int> qidx: Math.max(0, Math.min(root.current-question-index, root.questions.length - 1));
-    property <QuestionItem> current-q: root.questions.length > 0 ? root.questions[root.qidx] : root.questions[0];
-    property <int> other-option-index: root.current-q.options.length;
+    property <int> qidx: root.questions.length > 0
+        ? Math.max(0, Math.min(root.current-question-index, root.questions.length - 1))
+        : 0;
+    property <QuestionItem> current-q: root.questions.length > 0
+        ? root.questions[root.qidx]
+        : root.questions[0];
+    property <int>  other-option-index: root.current-q.options.length;
     property <bool> other-selected: root.current-q.selected-index == root.other-option-index;
     property <bool> current-answered: root.current-q.selected-index >= 0;
-    property <bool> all-answered: root.questions.length > 0 && (root.questions.length < 1 || root.questions[0].selected-index >= 0) && (root.questions.length < 2 || root.questions[1].selected-index >= 0) && (root.questions.length < 3 || root.questions[2].selected-index >= 0);
     property <bool> is-last-question: root.qidx >= root.questions.length - 1;
-    // Next enabled when current answered; Answer enabled when all answered
     property <bool> submit-enabled: root.is-last-question ? root.all-answered : root.current-answered;
 
-    // Dialog box
-    Rectangle {
-        x: (parent.width - 520px) / 2;
-        y: (parent.height - 420px) / 2;
-        width: 520px;
-        height: 420px;
-        border-radius: Theme.radius-lg;
-        background: Theme.bg-card;
-        border-color: Theme.border;
-        border-width: 1px;
-
-        VerticalLayout {
-            padding: Theme.space-xl;
-            spacing: Theme.space-md;
-
-            Text {
-                text: "Sven has a question";
-                color: Theme.accent;
-                font-size: Theme.font-size-md;
-                font-weight: 700;
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.dismissed();
+                accept
+            } else if event.text == Key.Return && root.submit-enabled {
+                if root.is-last-question {
+                    root.answered();
+                } else {
+                    root.next-clicked();
+                }
+                accept
+            } else {
+                reject
             }
+        }
 
-            // Question progress (e.g. "Question 1 of 3")
-            if root.questions.length > 1: Text {
-                text: "Question " + (root.qidx + 1) + " of " + root.questions.length;
-                color: Theme.text-secondary;
-                font-size: Theme.font-size-sm;
-            }
+        // Dialog box
+        Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: Theme.modal-width;
+            height: Math.min(parent.height - 80px, 520px);
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-card;
+            border-color: Theme.border;
+            border-width: 1px;
+            drop-shadow-blur: Theme.shadow-blur-md;
+            drop-shadow-color: Theme.shadow-color-md;
 
-            // Scrollable questions area
-            Flickable {
-                height: 280px;
-                viewport-height: options-layout.preferred-height;
-                interactive: true;
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-md;
 
-                options-layout := VerticalLayout {
-                    spacing: Theme.space-sm;
-                    alignment: start;
+                // Title
+                Text {
+                    text: "Sven has a question";
+                    color: Theme.accent;
+                    font-size: Theme.font-size-md;
+                    font-weight: 700;
+                }
 
-                    Text {
-                        text: root.current-q.prompt;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-size-base;
-                        wrap: word-wrap;
-                    }
+                // Progress
+                if root.questions.length > 1: Text {
+                    text: "Question " + (root.qidx + 1) + " of " + root.questions.length;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-size-sm;
+                }
 
-                    // Options A, B, C, D...
-                    for opt[i] in root.current-q.options: Rectangle {
-                        height: 36px;
-                        border-radius: Theme.radius-sm;
-                        background: opt-ta.has-hover ? Theme.bg-hover : (root.current-q.selected-index == i ? Theme.bg-active : transparent);
-                        border-color: root.current-q.selected-index == i ? Theme.accent-dim : Theme.border;
-                        border-width: 1px;
+                // Options area — scrollable
+                Flickable {
+                    height: Math.min(parent.height - 200px, 300px);
+                    viewport-height: options-layout.preferred-height;
+                    interactive: true;
 
-                        HorizontalLayout {
-                            padding-left: Theme.space-md;
-                            padding-right: Theme.space-md;
-                            spacing: Theme.space-sm;
-                            alignment: start;
+                    options-layout := VerticalLayout {
+                        spacing: Theme.space-sm;
+                        alignment: start;
 
-                            Text {
-                                text: ["A", "B", "C", "D", "E", "F"][Math.min(i, 5)] + ".";
-                                color: root.current-q.selected-index == i ? Theme.accent : Theme.text-secondary;
-                                font-size: Theme.font-size-base;
-                                font-weight: root.current-q.selected-index == i ? 600 : 400;
-                            }
-
-                            Text {
-                                text: opt;
-                                color: Theme.text-primary;
-                                font-size: Theme.font-size-base;
-                                horizontal-stretch: 1;
-                                wrap: word-wrap;
-                            }
-                        }
-                        opt-ta := TouchArea {
-                            clicked => { root.option-selected(root.qidx, i); }
-                        }
-                    }
-
-                    // Other option
-                    Rectangle {
-                        height: 36px;
-                        border-radius: Theme.radius-sm;
-                        background: other-ta.has-hover ? Theme.bg-hover : (root.other-selected ? Theme.bg-active : transparent);
-                        border-color: root.other-selected ? Theme.accent-dim : Theme.border;
-                        border-width: 1px;
-
-                        HorizontalLayout {
-                            padding-left: Theme.space-md;
-                            padding-right: Theme.space-md;
-                            spacing: Theme.space-sm;
-                            alignment: start;
-
-                            Text {
-                                text: ["A", "B", "C", "D", "E", "F"][Math.min(root.other-option-index, 5)] + ".";
-                                color: root.other-selected ? Theme.accent : Theme.text-secondary;
-                                font-size: Theme.font-size-base;
-                                font-weight: root.other-selected ? 600 : 400;
-                            }
-
-                            Text {
-                                text: "Other";
-                                color: Theme.text-primary;
-                                font-size: Theme.font-size-base;
-                            }
-                        }
-                        other-ta := TouchArea {
-                            clicked => { root.option-selected(root.qidx, root.other-option-index); }
-                        }
-                    }
-
-                    // Other text input — only when Other is selected
-                    if root.other-selected: Rectangle {
-                        border-radius: Theme.radius-sm;
-                        border-color: other-input.has-focus ? Theme.accent-dim : Theme.border;
-                        border-width: 1px;
-                        background: Theme.bg-deep;
-                        height: 36px;
-
-                        other-input := TextInput {
-                            x: Theme.space-sm;
-                            y: (parent.height - self.preferred-height) / 2;
-                            width: parent.width - 2 * Theme.space-sm;
-                            text: root.current-q.other-text;
+                        Text {
+                            text: root.current-q.prompt;
                             color: Theme.text-primary;
                             font-size: Theme.font-size-base;
+                            wrap: word-wrap;
+                        }
 
-                            edited => {
-                                root.other-text-changed(root.qidx, self.text);
+                        // Allow-multiple hint
+                        if root.current-q.allow-multiple: Text {
+                            text: "Select all that apply";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-size-sm;
+                        }
+
+                        // Options (dynamic, no A-F limit)
+                        for opt[i] in root.current-q.options: Rectangle {
+                            height: option-text.preferred-height + 16px;
+                            border-radius: Theme.radius-sm;
+                            background: opt-ta.has-hover ? Theme.bg-hover :
+                                (root.current-q.selected-index == i ? Theme.bg-active : transparent);
+                            border-color: root.current-q.selected-index == i ? Theme.accent-dim : Theme.border;
+                            border-width: 1px;
+                            animate background { duration: Theme.duration-fast; }
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-md;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                spacing: Theme.space-sm;
+                                alignment: start;
+
+                                // Option indicator (checkbox or radio style)
+                                Rectangle {
+                                    width: 18px;
+                                    height: 18px;
+                                    border-radius: root.current-q.allow-multiple ? Theme.radius-sm : 9px;
+                                    border-color: root.current-q.selected-index == i ? Theme.accent : Theme.border;
+                                    border-width: 1px;
+                                    background: root.current-q.selected-index == i ? Theme.accent-dim : transparent;
+                                    animate border-color { duration: Theme.duration-fast; }
+                                    animate background { duration: Theme.duration-fast; }
+                                }
+
+                                // Option letter
+                                Text {
+                                    text: i < 26 ?
+                                        (["A","B","C","D","E","F","G","H","I","J","K","L","M",
+                                          "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"][i]) + "."
+                                        : (i + 1) + ".";
+                                    color: root.current-q.selected-index == i ? Theme.accent : Theme.text-secondary;
+                                    font-size: Theme.font-size-base;
+                                    font-weight: root.current-q.selected-index == i ? 600 : 400;
+                                    vertical-alignment: center;
+                                    width: 24px;
+                                }
+
+                                option-text := Text {
+                                    text: opt;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-size-base;
+                                    horizontal-stretch: 1;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            opt-ta := TouchArea {
+                                clicked => { root.option-selected(root.qidx, i); }
+                            }
+                        }
+
+                        // Other option
+                        Rectangle {
+                            height: 40px;
+                            border-radius: Theme.radius-sm;
+                            background: other-ta.has-hover ? Theme.bg-hover :
+                                (root.other-selected ? Theme.bg-active : transparent);
+                            border-color: root.other-selected ? Theme.accent-dim : Theme.border;
+                            border-width: 1px;
+                            animate background { duration: Theme.duration-fast; }
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-md;
+                                spacing: Theme.space-sm;
+                                alignment: start;
+
+                                Rectangle {
+                                    width: 18px;
+                                    height: 18px;
+                                    border-radius: root.current-q.allow-multiple ? Theme.radius-sm : 9px;
+                                    border-color: root.other-selected ? Theme.accent : Theme.border;
+                                    border-width: 1px;
+                                    background: root.other-selected ? Theme.accent-dim : transparent;
+                                }
+
+                                Text {
+                                    text: root.other-option-index < 26 ?
+                                        (["A","B","C","D","E","F","G","H","I","J","K","L","M",
+                                          "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"][Math.min(root.other-option-index, 25)]) + "."
+                                        : (root.other-option-index + 1) + ".";
+                                    color: root.other-selected ? Theme.accent : Theme.text-secondary;
+                                    font-size: Theme.font-size-base;
+                                    font-weight: root.other-selected ? 600 : 400;
+                                    vertical-alignment: center;
+                                    width: 24px;
+                                }
+
+                                Text {
+                                    text: "Other";
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-size-base;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            other-ta := TouchArea {
+                                clicked => { root.option-selected(root.qidx, root.other-option-index); }
+                            }
+                        }
+
+                        // Other text input
+                        if root.other-selected: Rectangle {
+                            border-radius: Theme.radius-sm;
+                            border-color: other-input.has-focus ? Theme.accent-dim : Theme.border;
+                            border-width: 1px;
+                            background: Theme.bg-deep;
+                            height: 40px;
+                            animate border-color { duration: Theme.duration-fast; }
+
+                            other-input := TextInput {
+                                x: Theme.space-sm;
+                                y: (parent.height - self.preferred-height) / 2;
+                                width: parent.width - 2 * Theme.space-sm;
+                                text: root.current-q.other-text;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-size-base;
+                                edited => {
+                                    root.other-text-changed(root.qidx, self.text);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            HorizontalLayout {
-                spacing: Theme.space-sm;
-                alignment: end;
+                // Buttons
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    alignment: end;
 
-                Rectangle {
-                    width: 80px;
-                    height: 32px;
-                    border-radius: Theme.radius-sm;
-                    background: cancel-ta.has-hover ? Theme.bg-active : transparent;
-                    border-color: Theme.border;
-                    border-width: 1px;
-
-                    Text {
-                        text: "Cancel";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-size-sm;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        width: parent.width;
-                        height: parent.height;
-                    }
-                    cancel-ta := TouchArea {
+                    TextButton {
+                        label: "Cancel";
+                        width: 80px;
                         clicked => { root.dismissed(); }
                     }
-                }
 
-                if root.questions.length > 1 && root.qidx > 0: Rectangle {
-                    width: 70px;
-                    height: 32px;
-                    border-radius: Theme.radius-sm;
-                    background: back-ta.has-hover ? Theme.bg-active : transparent;
-                    border-color: Theme.border;
-                    border-width: 1px;
-
-                    Text {
-                        text: "Back";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-size-sm;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        width: parent.width;
-                        height: parent.height;
-                    }
-                    back-ta := TouchArea {
+                    if root.questions.length > 1 && root.qidx > 0: TextButton {
+                        label: "← Back";
+                        width: 80px;
                         clicked => { root.back-clicked(); }
                     }
-                }
 
-                Rectangle {
-                    width: 80px;
-                    height: 32px;
-                    border-radius: Theme.radius-sm;
-                    background: root.submit-enabled ? (submit-ta.has-hover ? Theme.accent : Theme.accent-dim) : Theme.bg-active;
-
-                    Text {
-                        text: root.is-last-question ? "Answer" : "Next";
-                        color: root.submit-enabled ? Theme.bg-deep : Theme.text-dim;
-                        font-size: Theme.font-size-sm;
-                        font-weight: 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        width: parent.width;
-                        height: parent.height;
-                    }
-                    submit-ta := TouchArea {
+                    TextButton {
+                        label: root.is-last-question ? "Answer ↵" : "Next →";
+                        primary: true;
                         enabled: root.submit-enabled;
+                        width: 90px;
                         clicked => {
-                            if root.submit-enabled {
-                                if root.is-last-question {
-                                    root.answered();
-                                } else {
-                                    root.next-clicked();
-                                }
+                            if root.is-last-question {
+                                root.answered();
+                            } else {
+                                root.next-clicked();
                             }
                         }
                     }

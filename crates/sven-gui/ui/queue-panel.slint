@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Queue panel — pending messages above the input, with edit/delete/submit actions.
+// Queue panel — pending messages above the input, with edit/delete/submit.
 
 import { Theme } from "theme.slint";
+import { IconButton, HDivider } from "widgets.slint";
 
 export struct QueueItem {
     index: int,
@@ -16,111 +17,112 @@ export component QueuePanel inherits Rectangle {
     callback edit-clicked(int);
     callback delete-clicked(int);
     callback submit-clicked(int);
+    callback clear-all();
 
     visible: items.length > 0;
-    height: root.visible ? (items.length * 36px + Theme.space-sm * 2) : 0px;
+    height: root.visible ? (Math.min(items.length, 4) * Theme.row-height + 28px) : 0px;
+    animate height { duration: Theme.duration-fast; easing: ease-in-out; }
     background: Theme.bg-surface;
 
-    Rectangle {
-        x: 0; y: 0;
-        width: parent.width;
-        height: 1px;
-        background: Theme.border;
-    }
+    HDivider { x: 0; y: 0; width: parent.width; }
 
     VerticalLayout {
-        padding: Theme.space-sm;
-        spacing: 2px;
+        padding-top: 4px;
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-sm;
+        padding-bottom: 4px;
+        spacing: 0;
         alignment: start;
 
-        for item in items: Rectangle {
-            height: 34px;
-            border-radius: Theme.radius-sm;
-            background: row-ta.has-hover ? Theme.bg-hover : transparent;
+        // Header row
+        HorizontalLayout {
+            height: 22px;
+            alignment: space-between;
+            padding-left: Theme.space-xs;
+            padding-right: Theme.space-xs;
 
-            row-ta := TouchArea {
-                height: parent.height;
-                width: parent.width;
+            Text {
+                text: "⏱ Queued messages (" + root.items.length + ")";
+                color: Theme.accent-dim;
+                font-size: Theme.font-size-xs;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
             }
 
-            HorizontalLayout {
-                padding-left: Theme.space-sm;
-                padding-right: Theme.space-xs;
-                spacing: Theme.space-xs;
-                alignment: center;
+            if root.items.length > 1: IconButton {
+                icon: "✕";
+                tooltip-text: "Clear all";
+                icon-color: Theme.text-dim;
+                clicked => { root.clear-all(); }
+            }
+        }
 
-                // Content preview (truncated)
-                Text {
-                    horizontal-stretch: 1;
-                    text: item.content;
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-size-sm;
-                    overflow: elide;
-                    vertical-alignment: center;
-                }
+        // Items (max 4 visible, then scroll)
+        Rectangle {
+            height: Math.min(root.items.length, 4) * Theme.row-height;
+            clip: true;
 
-                // Icon buttons aligned right
-                HorizontalLayout {
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-height: rows-layout.preferred-height;
+                interactive: true;
+
+                rows-layout := VerticalLayout {
                     spacing: 2px;
-                    alignment: end;
+                    alignment: start;
 
-                    edit-btn := Rectangle {
-                        width: 24px;
-                        height: 24px;
-                        border-radius: 4px;
-                        background: edit-ta.has-hover ? Theme.bg-hover : transparent;
+                    for item in items: Rectangle {
+                        height: Theme.row-height - 2px;
+                        border-radius: Theme.radius-sm;
+                        background: row-ta.has-hover ? Theme.bg-hover : transparent;
+                        animate background { duration: Theme.duration-fast; }
 
-                        Text {
-                            text: "✎";
-                            color: Theme.text-dim;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            width: parent.width;
+                        row-ta := TouchArea {
                             height: parent.height;
-                        }
-                        edit-ta := TouchArea {
-                            clicked => { root.edit-clicked(item.index); }
-                        }
-                    }
-
-                    del-btn := Rectangle {
-                        width: 24px;
-                        height: 24px;
-                        border-radius: 4px;
-                        background: del-ta.has-hover ? Theme.error-bg : transparent;
-
-                        Text {
-                            text: "✕";
-                            color: Theme.text-dim;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
                             width: parent.width;
-                            height: parent.height;
                         }
-                        del-ta := TouchArea {
-                            clicked => { root.delete-clicked(item.index); }
-                        }
-                    }
 
-                    submit-btn := Rectangle {
-                        width: 24px;
-                        height: 24px;
-                        border-radius: 4px;
-                        background: submit-ta.has-hover ? Theme.accent-dim : transparent;
+                        HorizontalLayout {
+                            padding-left: Theme.space-sm;
+                            padding-right: Theme.space-xs;
+                            spacing: Theme.space-xs;
+                            alignment: center;
 
-                        Text {
-                            text: "▶";
-                            color: Theme.accent;
-                            font-size: 11px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            width: parent.width;
-                            height: parent.height;
-                        }
-                        submit-ta := TouchArea {
-                            clicked => { root.submit-clicked(item.index); }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: item.content;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 2px;
+                                alignment: end;
+                                opacity: row-ta.has-hover ? 1.0 : 0.0;
+                                animate opacity { duration: Theme.duration-fast; }
+
+                                IconButton {
+                                    icon: "✎";
+                                    tooltip-text: "Edit";
+                                    clicked => { root.edit-clicked(item.index); }
+                                }
+                                IconButton {
+                                    icon: "✕";
+                                    destructive: true;
+                                    tooltip-text: "Remove";
+                                    clicked => { root.delete-clicked(item.index); }
+                                }
+                                IconButton {
+                                    icon: "▶";
+                                    icon-color: Theme.accent;
+                                    hover-bg: Theme.accent-glow;
+                                    tooltip-text: "Submit now";
+                                    clicked => { root.submit-clicked(item.index); }
+                                }
+                            }
                         }
                     }
                 }
