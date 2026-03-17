@@ -1402,31 +1402,28 @@ async fn run_gui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     };
 
     // ── Build and run the Slint GUI ────────────────────────────────────────────
-    // The Slint event loop must run on a multi-threaded tokio runtime so that
-    // `slint::invoke_from_event_loop` and `tokio::spawn` work correctly from
-    // within the synchronous callback closures.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("failed to build tokio runtime for GUI")?;
+    // `app.run()` is the Slint synchronous event loop and must not be called
+    // from inside a tokio async task without yielding the thread first.
+    // `block_in_place` tells tokio "this thread will block; move other tasks
+    // elsewhere" and keeps us on the current (main) thread, which is required
+    // by Slint.  We use the existing runtime handle to drive the async build
+    // without creating a nested runtime.
+    let opts = SvenAppOptions {
+        config: Arc::clone(&config),
+        model_cfg,
+        mode: cli.mode,
+        node_backend,
+        initial_prompt: cli.prompt,
+        initial_queue: vec![],
+        tool_displays: sven_tools::SharedToolDisplays::default(),
+    };
 
-    let _guard = runtime.enter();
-
-    let app = runtime.block_on(async {
-        SvenApp::build(SvenAppOptions {
-            config: Arc::clone(&config),
-            model_cfg,
-            mode: cli.mode,
-            node_backend,
-            initial_prompt: cli.prompt,
-            initial_queue: vec![],
-            tool_displays: sven_tools::SharedToolDisplays::default(),
-        })
-        .await
-    })?;
-
-    app.run()?;
-    Ok(())
+    tokio::task::block_in_place(|| {
+        let handle = tokio::runtime::Handle::current();
+        let app = handle.block_on(SvenApp::build(opts))?;
+        app.run()?;
+        Ok(())
+    })
 }
 
 async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
