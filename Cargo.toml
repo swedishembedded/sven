@@ -86,10 +86,6 @@ license = "Apache-2.0"
 name = "sven"
 path = "src/main.rs"
 
-[[bin]]
-name = "sven-ui"
-path = "src/ui_main.rs"
-
 [dependencies]
 sven-config      = { path = "crates/sven-config" }
 sven-model       = { path = "crates/sven-model" }

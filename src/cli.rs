@@ -700,8 +700,12 @@ pub struct Cli {
     pub prompt: Option<String>,
 
     /// Run headless (no TUI); outputs clean text to stdout
-    #[arg(long, short = 'H')]
+    #[arg(long, short = 'H', conflicts_with = "gui")]
     pub headless: bool,
+
+    /// Open the desktop GUI (Slint-based) instead of the TUI
+    #[arg(long, short = 'g', conflicts_with = "headless")]
+    pub gui: bool,
 
     /// Agent mode
     #[arg(long, short = 'm', value_enum, default_value = "agent")]
@@ -1112,6 +1116,9 @@ impl Cli {
     /// a TTY stdin but a piped stdout.  Without this check it would try to start
     /// the full TUI and write escape codes into the pipe, causing it to hang.
     pub fn is_headless(&self) -> bool {
+        if self.gui {
+            return false;
+        }
         self.headless
             || self.prompt.is_some()
             || !std::io::stdin().is_terminal()
