@@ -1441,6 +1441,7 @@ impl SvenApp {
         {
             let weak_mc = weak.clone();
             let all_mc = Arc::clone(&picker_all_items);
+            let cur_mode_mc = Arc::clone(&current_mode);
             window.on_mode_clicked(move || {
                 let items = vec![
                     PickerItem {
@@ -1460,11 +1461,16 @@ impl SvenApp {
                     },
                 ];
                 *all_mc.lock().unwrap() = items.clone();
+                let mode_str = format!("{:?}", *cur_mode_mc.lock().unwrap()).to_lowercase();
+                let idx = items
+                    .iter()
+                    .position(|i| i.id.to_string() == mode_str)
+                    .unwrap_or(0);
                 if let Some(win) = weak_mc.upgrade() {
                     win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch mode"));
                     win.set_picker_visible(true);
-                    win.set_picker_keyboard_index(0);
+                    win.set_picker_keyboard_index(idx as i32);
                 }
             });
         }
@@ -2004,7 +2010,7 @@ impl SvenApp {
 
                     AgentEvent::TitleGenerated(title) => {
                         let _ = slint::invoke_from_event_loop({
-                            let title = title.clone();
+                            let title = sven_input::sanitize_llm_title(&title);
                             let w = weak2.clone();
                             move || {
                                 if let Some(win) = w.upgrade() {

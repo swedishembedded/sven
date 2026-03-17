@@ -22,6 +22,6 @@ pub use conversation::{
     ConversationRecord, ParsedJsonlConversation, TurnMetadata,
 };
 pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
-pub use history::make_title;
+pub use history::{make_title, sanitize_llm_title};
 pub use markdown::{parse_workflow, ParsedWorkflow};
 pub use queue::{Step, StepOptions, StepQueue};

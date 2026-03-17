@@ -28,6 +28,8 @@ export component PickerPopup inherits Rectangle {
     TouchArea { clicked => { root.dismissed(); } }
 
     FocusScope {
+        width: parent.width;
+        height: parent.height;
         key-pressed(event) => {
             if event.text == Key.Escape {
                 root.dismissed();

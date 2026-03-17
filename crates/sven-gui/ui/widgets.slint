@@ -145,23 +145,26 @@ export component SearchInput inherits Rectangle {
             width: 18px;
         }
 
-        ti := TextInput {
+        Rectangle {
             horizontal-stretch: 1;
-            height: 22px;
-            text <=> root.text;
-            color: Theme.text-primary;
-            font-size: Theme.font-size-base;
-            single-line: true;
-            edited => { root.text-changed(self.text); }
-            accepted => { root.accepted(); }
-        }
+            // Placeholder behind TextInput so clicks reach the input
+            if root.text == "" && !ti.has-focus: Text {
+                text: root.placeholder;
+                color: Theme.text-dim;
+                font-size: Theme.font-size-base;
+                vertical-alignment: center;
+            }
 
-        // Placeholder when empty and unfocused
-        if root.text == "" && !ti.has-focus: Text {
-            text: root.placeholder;
-            color: Theme.text-dim;
-            font-size: Theme.font-size-base;
-            vertical-alignment: center;
+            ti := TextInput {
+                horizontal-stretch: 1;
+                height: 22px;
+                text <=> root.text;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-base;
+                single-line: true;
+                edited => { root.text-changed(self.text); }
+                accepted => { root.accepted(); }
+            }
         }
 
         // Clear button when text present

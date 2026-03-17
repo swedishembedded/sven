@@ -26,6 +26,7 @@ component SessionRow inherits Rectangle {
     callback delete-clicked(string);
     callback rename-clicked(string, string);
 
+    width: parent.width;
     height: item.current-tool != "" ? 50px : Theme.row-height;
     background: ta.has-hover ? Theme.bg-hover : (item.active ? Theme.bg-active : transparent);
     animate background { duration: Theme.duration-fast; }
@@ -72,13 +73,17 @@ component SessionRow inherits Rectangle {
                 width: 14px;
             }
 
-            Text {
-                text: item.title;
-                color: item.active ? Theme.text-primary : Theme.text-secondary;
-                font-size: Theme.font-size-sm;
-                vertical-alignment: center;
-                overflow: elide;
+            Rectangle {
                 horizontal-stretch: 1;
+                min-width: 0;
+                Text {
+                    text: item.title;
+                    color: item.active ? Theme.text-primary : Theme.text-secondary;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    width: parent.width;
+                }
             }
 
             // Cost badge (non-zero)
@@ -203,6 +208,7 @@ export component Sidebar inherits Rectangle {
 
         // ── Session list ──────────────────────────────────────────────────────
         ListView {
+            vertical-stretch: 1;
             for item[i] in root.sessions: SessionRow {
                 item: item;
                 index: i;

@@ -240,6 +240,37 @@ pub fn make_filename(first_user_message: &str) -> String {
     }
 }
 
+/// Sanitizes an LLM-generated chat title. The model may return code blocks,
+/// multi-line output, or other unsuitable content. Returns a short, display-safe title.
+pub fn sanitize_llm_title(raw: &str) -> String {
+    let s = raw.trim();
+    // Take first line only — avoid code blocks or multi-line output.
+    let first_line = s.lines().next().unwrap_or(s).trim();
+    // Strip markdown code block markers (```lang or ```).
+    let stripped = first_line
+        .strip_prefix("```")
+        .map(|t| t.trim_start_matches(char::is_alphanumeric).trim())
+        .unwrap_or(first_line);
+    let stripped = stripped.strip_suffix("```").unwrap_or(stripped).trim();
+    // Take first sentence or up to 60 chars.
+    let end = stripped
+        .char_indices()
+        .find(|(_, c)| matches!(*c, '.' | '!' | '?' | '\n'))
+        .map(|(i, _)| i + 1)
+        .unwrap_or(stripped.len());
+    let out: String = stripped.chars().take(end.min(60)).collect();
+    let out = out.trim().trim_matches('"').trim();
+    if out.is_empty()
+        || out
+            .chars()
+            .all(|c| c.is_ascii_punctuation() || c.is_whitespace())
+    {
+        "Chat".to_string()
+    } else {
+        out.to_string()
+    }
+}
+
 /// Derives a human-readable title (capitalised, up to ~80 chars) from a
 /// free-form text string — used as the H1 title in saved conversation files.
 pub fn make_title(text: &str) -> String {

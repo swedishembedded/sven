@@ -664,7 +664,8 @@ component ThinkingBubble inherits Rectangle {
         if is-expanded: Rectangle {
             clip: true;
             height: expanded-text.preferred-height;
-            animate height { duration: Theme.duration-normal; easing: ease-in-out; }
+            // No height animation — during streaming, height changes on every text delta;
+            // animating would restart each time and look jarring. Content grows instantly.
 
             expanded-text := Text {
                 text: content;
