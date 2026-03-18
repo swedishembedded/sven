@@ -30,6 +30,7 @@ export component IconButton inherits Rectangle {
     in property <color>   hover-bg: Theme.bg-hover;
 
     callback clicked();
+    out property <bool> has-hover: ta.has-hover;
 
     width:  Theme.icon-btn-size;
     height: Theme.icon-btn-size;

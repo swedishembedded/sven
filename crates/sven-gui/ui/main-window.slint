@@ -105,6 +105,7 @@ export component MainWindow inherits Window {
     callback session-selected(string);
     callback session-delete-requested(string);
     callback session-rename-requested(string, string);
+    callback sidebar-search-changed(string);
 
     callback question-answered();
     callback question-dismissed();
@@ -225,6 +226,7 @@ export component MainWindow inherits Window {
                     new-session => { root.new-session(); }
                     session-delete-requested(id) => { root.session-delete-requested(id); }
                     session-rename-requested(id, title) => { root.session-rename-requested(id, title); }
+                    search-changed(t) => { root.sidebar-search-changed(t); }
                 }
 
                 // Resize handle for sidebar

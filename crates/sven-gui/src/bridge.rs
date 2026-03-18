@@ -11,9 +11,10 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, FilterModel, Model, ModelRc, SharedString, VecModel};
 use sven_config::{AgentMode, ModelConfig};
 use sven_core::AgentEvent;
+use sven_frontend::commands::completion::fuzzy_score;
 use sven_frontend::{
     agent_task,
     commands::{CommandContext, CommandRegistry, ImmediateAction, ParsedCommand},
@@ -40,6 +41,12 @@ use crate::{
     ChatMessage, CompletionEntry, MainWindow, PickerItem, QuestionItem, QueueItem, SessionItem,
     ToastItem,
 };
+
+// ── Thread-local sessions model (main thread only) ─────────────────────────────
+std::thread_local! {
+    static SESSIONS_MODEL: std::cell::RefCell<Option<Rc<VecModel<SessionItem>>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
@@ -89,7 +96,6 @@ impl SvenApp {
             active: true,
             depth: 0,
             status: SharedString::from("active"),
-            current_tool: SharedString::new(),
             total_cost_usd: 0.0,
         });
 
@@ -107,14 +113,62 @@ impl SvenApp {
                         ChatStatus::Completed => "completed",
                         ChatStatus::Archived => "archived",
                     }),
-                    current_tool: SharedString::new(),
                     total_cost_usd: 0.0,
                 });
             }
         }
 
-        window.set_sessions(ModelRc::from(sessions_model.clone()));
+        // Shared state (needed early for filter model)
+        let session_messages: Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // Wrap sessions in FilterModel for sidebar search; search query is shared state
+        let sidebar_search_query: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let sidebar_search_query_for_filter = Arc::clone(&sidebar_search_query);
+        let session_msgs_for_filter = Arc::clone(&session_messages);
+        let filter_model = Rc::new(FilterModel::new(
+            sessions_model.clone(),
+            move |session: &SessionItem| {
+                let query = sidebar_search_query_for_filter.lock().unwrap();
+                if query.is_empty() {
+                    return true;
+                }
+                let q = query.to_lowercase();
+                // Fuzzy match on title
+                if fuzzy_score(&q, session.title.as_str()).is_some() {
+                    return true;
+                }
+                // Match status
+                if session.status.to_lowercase().contains(&q) {
+                    return true;
+                }
+                // Match chat content for loaded sessions (cached in memory)
+                if let Some(msgs) = session_msgs_for_filter
+                    .lock()
+                    .unwrap()
+                    .get(session.id.as_str())
+                {
+                    let content: String = msgs
+                        .iter()
+                        .map(|m| m.content.to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if content.contains(&q) {
+                        return true;
+                    }
+                    for m in msgs {
+                        if fuzzy_score(&q, &m.content).is_some() {
+                            return true;
+                        }
+                    }
+                }
+                false
+            },
+        ));
+        window.set_sessions(ModelRc::from(filter_model.clone()));
         window.set_active_session_id(SharedString::from(&initial_session_id_str));
+
+        SESSIONS_MODEL.with(|tl| *tl.borrow_mut() = Some(Rc::clone(&sessions_model)));
 
         let msgs_model = Rc::new(VecModel::<ChatMessage>::default());
         let streaming_msgs_model = Rc::new(VecModel::<ChatMessage>::default());
@@ -129,8 +183,6 @@ impl SvenApp {
         ));
 
         // ── Shared state ──────────────────────────────────────────────────────
-        let session_messages: Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
         let active_session_id: Arc<Mutex<String>> =
             Arc::new(Mutex::new(initial_session_id_str.clone()));
         let current_mode = Arc::new(Mutex::new(opts.mode));
@@ -889,7 +941,6 @@ impl SvenApp {
                         active: true,
                         depth: 0,
                         status: SharedString::from("active"),
-                        current_tool: SharedString::new(),
                         total_cost_usd: 0.0,
                     },
                 );
@@ -1548,6 +1599,16 @@ impl SvenApp {
             });
         }
 
+        // ── Sidebar search ────────────────────────────────────────────────────
+        {
+            let search_q = Arc::clone(&sidebar_search_query);
+            let filter = Rc::clone(&filter_model);
+            window.on_sidebar_search_changed(move |query| {
+                *search_q.lock().unwrap() = query.to_string();
+                filter.reset();
+            });
+        }
+
         // ── Inspector ─────────────────────────────────────────────────────────
         {
             let weak_insp = weak.clone();
@@ -1745,7 +1806,6 @@ impl SvenApp {
                             ..Default::default()
                         });
                         let sid = streaming_sid_ev.lock().unwrap().clone();
-                        let tool_name = tc_call.name.clone();
                         let sid_clone = sid.clone();
                         let sm = Arc::clone(&session_msgs_ev);
                         let _ = slint::invoke_from_event_loop({
@@ -1759,18 +1819,6 @@ impl SvenApp {
                                 }
                                 if let Some(win) = w.upgrade() {
                                     win.set_agent_busy(true);
-                                    // Update current_tool on active session
-                                    let sessions = win.get_sessions();
-                                    for i in 0..sessions.row_count() {
-                                        if let Some(mut s) = sessions.row_data(i) {
-                                            if s.active {
-                                                s.current_tool =
-                                                    SharedString::from(tool_name.as_str());
-                                                sessions.set_row_data(i, s);
-                                                break;
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         });
@@ -1799,19 +1847,6 @@ impl SvenApp {
                                     flush_messages_to_session(pm2, s, sm, &w);
                                 } else {
                                     flush_messages(pm2, &w);
-                                }
-                                // Clear current_tool
-                                if let Some(win) = w.upgrade() {
-                                    let sessions = win.get_sessions();
-                                    for i in 0..sessions.row_count() {
-                                        if let Some(mut s) = sessions.row_data(i) {
-                                            if s.active {
-                                                s.current_tool = SharedString::new();
-                                                sessions.set_row_data(i, s);
-                                                break;
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         });
@@ -2269,19 +2304,21 @@ fn update_last_todo_tool_call(win: &MainWindow, formatted: &str) {
 }
 
 /// Move a session to the top of the sidebar list.
-fn move_session_to_top(win: &MainWindow, session_id: &str) {
-    let sessions_rc = win.get_sessions();
-    if let Some(vec_model) = sessions_rc.as_any().downcast_ref::<VecModel<SessionItem>>() {
-        for i in 0..vec_model.row_count() {
-            if let Some(row) = vec_model.row_data(i) {
-                if row.id == session_id && i > 0 {
-                    let item = vec_model.remove(i);
-                    vec_model.insert(0, item);
-                    break;
+/// Uses the underlying VecModel from thread-local (must run on main/Slint thread).
+fn move_session_to_top(session_id: &str) {
+    SESSIONS_MODEL.with(|tl| {
+        if let Some(ref sessions_model) = *tl.borrow() {
+            for i in 0..sessions_model.row_count() {
+                if let Some(row) = sessions_model.row_data(i) {
+                    if row.id == session_id && i > 0 {
+                        let item = sessions_model.remove(i);
+                        sessions_model.insert(0, item);
+                        break;
+                    }
                 }
             }
         }
-    }
+    });
 }
 
 /// Drain pending messages into session store and optionally the window.
@@ -2312,7 +2349,7 @@ fn flush_messages_to_session(
             }
         }
     }
-    move_session_to_top(&win, session_id);
+    move_session_to_top(session_id);
 }
 
 /// Drain pending messages into the window model (no session routing).

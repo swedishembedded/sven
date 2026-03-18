@@ -5,7 +5,7 @@
 // Session list sidebar with search, delete, rename, and cost display.
 
 import { Theme } from "theme.slint";
-import { ListView, Spinner } from "std-widgets.slint";
+import { Spinner } from "std-widgets.slint";
 import { IconButton, SearchInput } from "widgets.slint";
 
 export struct SessionItem {
@@ -15,30 +15,35 @@ export struct SessionItem {
     active: bool,
     depth: int,
     status: string,
-    current-tool: string,
     total-cost-usd: float,
 }
 
 component SessionRow inherits Rectangle {
     in property <SessionItem> item;
     in property <int> index;
+    in property <length> row-width: Theme.sidebar-width;
     callback clicked(int);
     callback delete-clicked(string);
     callback rename-clicked(string, string);
 
-    width: parent.width;
-    height: item.current-tool != "" ? 50px : Theme.row-height;
+    width: row-width;
+    height: Theme.row-height;
     background: ta.has-hover ? Theme.bg-hover : (item.active ? Theme.bg-active : transparent);
     animate background { duration: Theme.duration-fast; }
 
     // Active indicator bar
     if item.active: Rectangle {
         x: 0;
-        y: (parent.height - 24px) / 2;
+        y: (root.height - 24px) / 2;
         width: 2px;
         height: 24px;
         background: Theme.accent;
         border-radius: 1px;
+    }
+
+    // TouchArea drawn first (underneath) so IconButton can receive clicks when on top
+    ta := TouchArea {
+        clicked => { root.clicked(root.index); }
     }
 
     VerticalLayout {
@@ -51,78 +56,78 @@ component SessionRow inherits Rectangle {
 
         HorizontalLayout {
             spacing: Theme.space-xs;
-            alignment: start;
+            alignment: space-between;
 
-            // Status indicator
-            if item.busy: Rectangle {
-                width: 14px;
-                height: 14px;
-                Spinner {
-                    indeterminate: true;
-                    width: parent.width;
-                    height: parent.height;
-                }
-            }
-            if !item.busy: Text {
-                text: item.status == "completed" ? "✓" :
-                      item.status == "archived"  ? "◉" : "○";
-                color: item.status == "completed" ? Theme.success :
-                       item.status == "archived"  ? Theme.text-dim : Theme.text-dim;
-                font-size: Theme.font-size-sm;
-                vertical-alignment: center;
-                width: 14px;
-            }
-
-            Rectangle {
+            // Left: status + title
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: start;
                 horizontal-stretch: 1;
                 min-width: 0;
-                Text {
-                    text: item.title;
-                    color: item.active ? Theme.text-primary : Theme.text-secondary;
+
+                // Status indicator
+                if item.busy: Rectangle {
+                    width: 14px;
+                    height: 14px;
+                    Spinner {
+                        indeterminate: true;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                }
+                if !item.busy: Text {
+                    text: item.status == "completed" ? "✓" :
+                          item.status == "archived"  ? "◉" : "○";
+                    color: item.status == "completed" ? Theme.success :
+                           item.status == "archived"  ? Theme.text-dim : Theme.text-dim;
                     font-size: Theme.font-size-sm;
                     vertical-alignment: center;
-                    overflow: elide;
-                    width: parent.width;
+                    width: 14px;
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                    Text {
+                        text: item.title;
+                        color: item.active ? Theme.text-primary : Theme.text-secondary;
+                        font-size: Theme.font-size-sm;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        width: parent.width;
+                    }
                 }
             }
 
-            // Cost badge (non-zero)
-            if item.total-cost-usd > 0.0: Text {
-                text: "$" + Math.round(item.total-cost-usd * 100) / 100.0;
-                color: Theme.text-dim;
-                font-size: Theme.font-size-xs;
-                font-family: Theme.font-mono;
-                vertical-alignment: center;
-            }
-
-            // Action buttons (visible on hover)
+            // Right: cost + delete (aligned to end)
             HorizontalLayout {
-                spacing: 1px;
-                opacity: ta.has-hover ? 1.0 : 0.0;
-                animate opacity { duration: Theme.duration-fast; }
+                spacing: Theme.space-xs;
+                alignment: end;
 
-                IconButton {
-                    icon: "✕";
-                    destructive: true;
-                    tooltip-text: "Delete session";
-                    clicked => { root.delete-clicked(root.item.id); }
+                // Cost badge (non-zero)
+                if item.total-cost-usd > 0.0: Text {
+                    text: "$" + Math.round(item.total-cost-usd * 100) / 100.0;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-size-xs;
+                    font-family: Theme.font-mono;
+                    vertical-alignment: center;
+                }
+
+                // Action buttons (visible on row hover or button hover)
+                HorizontalLayout {
+                    spacing: 1px;
+                    opacity: (ta.has-hover || delete-btn.has-hover) ? 1.0 : 0.0;
+                    animate opacity { duration: Theme.duration-fast; }
+
+                    delete-btn := IconButton {
+                        icon: "✕";
+                        destructive: true;
+                        tooltip-text: "Delete session";
+                        clicked => { root.delete-clicked(root.item.id); }
+                    }
                 }
             }
         }
-
-        // Current tool display
-        if item.current-tool != "": Text {
-            text: "⟳ " + item.current-tool;
-            color: Theme.accent-dim;
-            font-size: Theme.font-size-xs;
-            font-family: Theme.font-mono;
-            overflow: elide;
-            x: 22px;
-        }
-    }
-
-    ta := TouchArea {
-        clicked => { root.clicked(root.index); }
     }
 }
 
@@ -135,6 +140,7 @@ export component Sidebar inherits Rectangle {
     callback new-session();
     callback session-delete-requested(string);
     callback session-rename-requested(string, string);
+    callback search-changed(string);
 
     width: Theme.sidebar-width;
     background: Theme.bg-surface;
@@ -203,23 +209,39 @@ export component Sidebar inherits Rectangle {
                 height: parent.height - 2 * Theme.space-xs;
                 placeholder: "Filter sessions…";
                 text <=> root.search-text;
+                text-changed(t) => { root.search-changed(t); }
             }
         }
 
         // ── Session list ──────────────────────────────────────────────────────
-        ListView {
+        Rectangle {
             vertical-stretch: 1;
-            for item[i] in root.sessions: SessionRow {
-                item: item;
-                index: i;
-                visible: true;
-                clicked(idx) => {
-                    if idx < root.sessions.length {
-                        root.session-selected(root.sessions[idx].id);
+            clip: true;
+
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-height: session-list.preferred-height;
+                interactive: true;
+
+                session-list := VerticalLayout {
+                    width: parent.width;
+                    spacing: 0;
+                    alignment: start;
+
+                    for item[i] in root.sessions: SessionRow {
+                        item: item;
+                        index: i;
+                        row-width: root.width;
+                        clicked(idx) => {
+                            if idx < root.sessions.length {
+                                root.session-selected(root.sessions[idx].id);
+                            }
+                        }
+                        delete-clicked(id) => { root.session-delete-requested(id); }
+                        rename-clicked(id, title) => { root.session-rename-requested(id, title); }
                     }
                 }
-                delete-clicked(id) => { root.session-delete-requested(id); }
-                rename-clicked(id, title) => { root.session-rename-requested(id, title); }
             }
         }
     }
