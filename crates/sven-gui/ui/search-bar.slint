@@ -41,7 +41,7 @@ export component SearchBar inherits Rectangle {
             padding-top: Theme.space-xs;
             padding-bottom: Theme.space-xs;
             spacing: Theme.space-sm;
-            alignment: center;
+            alignment: start;
 
             Text {
                 text: "🔍";
@@ -69,6 +69,7 @@ export component SearchBar inherits Rectangle {
                     color: Theme.text-primary;
                     font-size: Theme.font-size-base;
                     single-line: true;
+                    horizontal-alignment: left;
                     edited => { root.query-changed(self.text); }
                 }
             }

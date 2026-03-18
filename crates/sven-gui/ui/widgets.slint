@@ -117,7 +117,8 @@ export component TextButton inherits Rectangle {
 }
 
 // ── SearchInput ───────────────────────────────────────────────────────────────
-// Text input with embedded search icon and clear button.
+// TextInput with placeholder overlay, themed to match. LineEdit uses native
+// styling (white bg) which clashes with dark theme, so we use TextInput directly.
 
 export component SearchInput inherits Rectangle {
     in property <string>  placeholder: "Search…";
@@ -125,18 +126,19 @@ export component SearchInput inherits Rectangle {
     callback text-changed(string);
     callback accepted();
 
-    height: Theme.row-height;
+    height: 40px;
     border-radius: Theme.radius-sm;
     border-color: ti.has-focus ? Theme.accent-dim : Theme.border;
     border-width: 1px;
     background: Theme.bg-deep;
     animate border-color { duration: Theme.duration-fast; }
+    forward-focus: ti;
 
     HorizontalLayout {
         padding-left: Theme.space-sm;
-        padding-right: Theme.space-xs;
+        padding-right: Theme.space-sm;
         spacing: Theme.space-xs;
-        alignment: center;
+        alignment: start;
 
         Text {
             text: "🔍";
@@ -148,27 +150,43 @@ export component SearchInput inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
-            // Placeholder behind TextInput so clicks reach the input
-            if root.text == "" && !ti.has-focus: Text {
+            vertical-stretch: 1;
+            width: 90%;
+            min-height: 32px;
+            background: transparent;
+
+            if root.text == "" && ti.preedit-text == "": Text {
+                width: 100%;
+                height: 100%;
                 text: root.placeholder;
                 color: Theme.text-dim;
                 font-size: Theme.font-size-base;
                 vertical-alignment: center;
+                horizontal-alignment: left;
             }
 
-            ti := TextInput {
-                horizontal-stretch: 1;
-                height: 22px;
-                text <=> root.text;
-                color: Theme.text-primary;
-                font-size: Theme.font-size-base;
-                single-line: true;
-                edited => { root.text-changed(self.text); }
-                accepted => { root.accepted(); }
+            HorizontalLayout {
+                width: 100%;
+                height: 100%;
+                padding: 0;
+                alignment: start;
+
+                ti := TextInput {
+                    horizontal-stretch: 1;
+                    height: parent.height;
+                    width: 100%;
+                    text <=> root.text;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    single-line: true;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    edited => { root.text-changed(self.text); }
+                    accepted => { root.accepted(); }
+                }
             }
         }
 
-        // Clear button when text present
         if root.text != "": IconButton {
             icon: "✕";
             icon-color: Theme.text-dim;
