@@ -70,10 +70,11 @@ export struct ChatMessage {
 // ── User bubble ───────────────────────────────────────────────────────────────
 
 component UserBubble inherits Rectangle {
-    in property <string>  content;
-    in property <length>  available-width: 600px;
-    in property <int>     msg-index: 0;
-    in property <bool>    is-search-match: false;
+    in property <string>     content;
+    in property <[TextRun]> text-runs;
+    in property <length>     available-width: 600px;
+    in property <int>        msg-index: 0;
+    in property <bool>       is-search-match: false;
 
     callback edit-clicked();
     callback copy-clicked(string);
@@ -129,12 +130,43 @@ component UserBubble inherits Rectangle {
             }
         }
 
-        Text {
+        // Plain content when no runs, or long content (ensure wrapping)
+        if text-runs.length == 0 || content.character-count > 120: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
             wrap: word-wrap;
             width: available-width - 2 * Theme.space-md;
+        }
+
+        // Rich inline formatting for short content (bold, italic, code, links)
+        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
+            spacing: 0;
+            alignment: start;
+            width: available-width - 2 * Theme.space-md;
+
+            for run in text-runs: Rectangle {
+                height: run-text.preferred-height;
+                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
+                               available-width - 2 * Theme.space-md);
+                border-radius: run.is-code ? Theme.radius-sm : 0;
+                background: run.is-code ? Theme.inline-code-bg : transparent;
+                border-color: run.is-code ? Theme.code-border : transparent;
+                border-width: run.is-code ? 1px : 0px;
+
+                run-text := Text {
+                    x: run.is-code ? 2px : 0;
+                    text: run.text;
+                    color: run.is-code ? Theme.text-code :
+                           run.is-link ? Theme.text-link :
+                           Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    font-weight: run.bold ? 700 : 400;
+                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
+                    wrap: word-wrap;
+                    width: parent.width - (run.is-code ? 4px : 0px);
+                }
+            }
         }
     }
 }
@@ -184,8 +216,9 @@ component RichParagraph inherits Rectangle {
             }
         }
 
-        // Render plain content when no runs (streaming or simple text)
-        if text-runs.length == 0: Text {
+        // Render plain content when no runs, or when content is long (ensure wrapping)
+        // Long content with runs would overflow in HorizontalLayout; use plain Text to fit.
+        if text-runs.length == 0 || content.character-count > 120: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
@@ -194,16 +227,16 @@ component RichParagraph inherits Rectangle {
             width: available-width - 2 * Theme.space-md;
         }
 
-        // Render inline runs in an HLayout (flat, no line-wrap between runs)
-        // For wrapping text with mixed formatting, runs are rendered as
-        // a single flow; Slint auto-breaks the HLayout across visual lines.
-        if text-runs.length > 0: HorizontalLayout {
+        // Render inline runs for short content (bold, italic, code, links)
+        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
             spacing: 0;
             alignment: start;
+            width: available-width - 2 * Theme.space-md;
 
             for run in text-runs: Rectangle {
                 height: run-text.preferred-height;
-                width: run-text.preferred-width + (run.is-code ? 4px : 0px);
+                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
+                               available-width - 2 * Theme.space-md);
                 border-radius: run.is-code ? Theme.radius-sm : 0;
                 background: run.is-code ? Theme.inline-code-bg : transparent;
                 border-color: run.is-code ? Theme.code-border : transparent;
@@ -219,6 +252,7 @@ component RichParagraph inherits Rectangle {
                     font-weight: run.bold ? 700 : 400;
                     font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
                     wrap: word-wrap;
+                    width: parent.width - (run.is-code ? 4px : 0px);
                 }
             }
         }
@@ -462,7 +496,7 @@ component ListItemBlock {
             width: 14px;
         }
 
-        if text-runs.length == 0: Text {
+        if text-runs.length == 0 || content.character-count > 120: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
@@ -470,14 +504,15 @@ component ListItemBlock {
             width: available-width - Theme.space-md * (3 + list-depth) - 14px;
         }
 
-        if text-runs.length > 0: HorizontalLayout {
+        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
             spacing: 0;
             alignment: start;
             width: available-width - Theme.space-md * (3 + list-depth) - 14px;
 
             for run in text-runs: Rectangle {
                 height: run-text.preferred-height;
-                width: run-text.preferred-width + (run.is-code ? 4px : 0px);
+                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
+                               available-width - Theme.space-md * (3 + list-depth) - 14px);
                 border-radius: run.is-code ? Theme.radius-sm : 0;
                 background: run.is-code ? Theme.inline-code-bg : transparent;
                 border-width: run.is-code ? 1px : 0px;
@@ -493,6 +528,7 @@ component ListItemBlock {
                     font-weight: run.bold ? 700 : 400;
                     font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
                     wrap: word-wrap;
+                    width: parent.width - (run.is-code ? 4px : 0px);
                 }
             }
         }
@@ -923,6 +959,7 @@ export component MessageRow inherits VerticalLayout {
 
     if msg.message-type == "user": UserBubble {
         content: msg.content;
+        text-runs: msg.text-runs;
         available-width: available-width;
         msg-index: msg-index;
         is-search-match: msg.is-search-match;

@@ -484,15 +484,15 @@ impl SvenApp {
                         .filter_map(|i| msgs_send.row_data(i))
                         .map(|m| slint_msg_to_plain(&m))
                         .collect();
-                    plain.push(PlainChatMessage::user(&content));
+                    let new_user_msgs = markdown_to_plain_messages(&content, "user");
+                    plain.extend(new_user_msgs.clone());
                     let messages = plain_messages_to_sven_messages(&plain);
                     let sid = active_sid_send.lock().unwrap().clone();
-                    while msgs_send.row_count() > idx + 1 {
-                        msgs_send.remove(idx + 1);
+                    while msgs_send.row_count() > idx {
+                        msgs_send.remove(idx);
                     }
-                    if let Some(mut row) = msgs_send.row_data(idx) {
-                        row.content = SharedString::from(&content);
-                        msgs_send.set_row_data(idx, row);
+                    for (i, m) in new_user_msgs.iter().enumerate() {
+                        msgs_send.insert(idx + i, m.to_slint());
                     }
                     session_msgs_send
                         .lock()
@@ -633,10 +633,9 @@ impl SvenApp {
                                     }
                                 });
                             } else {
-                                pm_send
-                                    .lock()
-                                    .unwrap()
-                                    .push_back(PlainChatMessage::user(&msg));
+                                for m in markdown_to_plain_messages(&msg, "user") {
+                                    pm_send.lock().unwrap().push_back(m);
+                                }
                                 let sid = active_sid_send.lock().unwrap().clone();
                                 let sid_flush = sid.clone();
                                 let _ = slint::invoke_from_event_loop({
@@ -706,10 +705,9 @@ impl SvenApp {
                 }
 
                 // Send immediately
-                pm_send
-                    .lock()
-                    .unwrap()
-                    .push_back(PlainChatMessage::user(&content));
+                for m in markdown_to_plain_messages(&content, "user") {
+                    pm_send.lock().unwrap().push_back(m);
+                }
                 let sid = active_sid_send.lock().unwrap().clone();
                 let _ = slint::invoke_from_event_loop({
                     let pm2 = Arc::clone(&pm_send);
@@ -863,9 +861,9 @@ impl SvenApp {
                         } else {
                             let content = qm.content.clone();
                             let mode_val = *cur_mode_q.lock().unwrap();
-                            pm_q.lock()
-                                .unwrap()
-                                .push_back(PlainChatMessage::user(&content));
+                            for m in markdown_to_plain_messages(&content, "user") {
+                                pm_q.lock().unwrap().push_back(m);
+                            }
                             let sid = active_q.lock().unwrap().clone();
                             *streaming_q.lock().unwrap() = Some(sid.clone());
                             let tx = tx_q.clone();
@@ -2263,30 +2261,52 @@ impl SvenApp {
 
 /// Convert plain messages to sven_model messages for Resubmit.
 fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessage> {
+    use crate::sessions::block_to_markdown;
     use sven_frontend::segment::ChatSegment;
+
     let mut segments: Vec<ChatSegment> = Vec::new();
     let mut assistant_buf = String::new();
+    let mut user_blocks: Vec<PlainChatMessage> = Vec::new();
     let mut last_tool_call_id: Option<String> = None;
     let mut tool_call_counter = 0u32;
 
+    let flush_user = |segments: &mut Vec<ChatSegment>, blocks: &mut Vec<PlainChatMessage>| {
+        if !blocks.is_empty() {
+            let md = crate::sessions::user_blocks_to_markdown(blocks);
+            segments.push(ChatSegment::Message(SvenMessage::user(&md)));
+            blocks.clear();
+        }
+    };
+
     for p in plain {
+        let is_user_block = p.role == "user";
+
         match p.message_type {
-            "user" => {
+            "user" if is_user_block => {
                 if !assistant_buf.is_empty() {
                     segments.push(ChatSegment::Message(SvenMessage::assistant(
                         std::mem::take(&mut assistant_buf),
                     )));
                 }
-                segments.push(ChatSegment::Message(SvenMessage::user(&p.content)));
+                flush_user(&mut segments, &mut user_blocks);
+                user_blocks.push(p.clone());
+            }
+            "code-block" | "heading" | "list-item" | "block-quote" | "separator"
+            | "inline-code" | "table-row"
+                if is_user_block =>
+            {
+                user_blocks.push(p.clone());
             }
             "assistant" | "code-block" | "heading" | "list-item" | "block-quote" | "separator"
             | "inline-code" | "table-row" => {
+                flush_user(&mut segments, &mut user_blocks);
                 if !assistant_buf.is_empty() {
-                    assistant_buf.push('\n');
+                    assistant_buf.push_str("\n\n");
                 }
-                assistant_buf.push_str(&p.content);
+                assistant_buf.push_str(&block_to_markdown(p));
             }
             "tool-call" => {
+                flush_user(&mut segments, &mut user_blocks);
                 if !assistant_buf.is_empty() {
                     segments.push(ChatSegment::Message(SvenMessage::assistant(
                         std::mem::take(&mut assistant_buf),
@@ -2307,6 +2327,7 @@ fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessag
                 }));
             }
             "tool-result" => {
+                flush_user(&mut segments, &mut user_blocks);
                 if let Some(id) = last_tool_call_id.take() {
                     segments.push(ChatSegment::Message(SvenMessage::tool_result(
                         id, &p.content,
@@ -2314,6 +2335,7 @@ fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessag
                 }
             }
             "system" => {
+                flush_user(&mut segments, &mut user_blocks);
                 if !assistant_buf.is_empty() {
                     segments.push(ChatSegment::Message(SvenMessage::assistant(
                         std::mem::take(&mut assistant_buf),
@@ -2321,9 +2343,12 @@ fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessag
                 }
                 segments.push(ChatSegment::Message(SvenMessage::system(&p.content)));
             }
-            _ => {}
+            _ => {
+                flush_user(&mut segments, &mut user_blocks);
+            }
         }
     }
+    flush_user(&mut segments, &mut user_blocks);
     if !assistant_buf.is_empty() {
         segments.push(ChatSegment::Message(SvenMessage::assistant(assistant_buf)));
     }

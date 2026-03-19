@@ -219,24 +219,76 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
 }
 
 /// Strip common inline markdown markers for live-streaming preview.
-/// Removes bold/italic markers so partial streaming text looks clean.
+/// Removes bold/italic/code markers so partial streaming text looks clean.
+/// Handles incomplete code blocks (``` without closing) by stripping the fence.
 pub fn strip_inline_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
+    let mut in_code_block = false;
+    let mut code_block_content = String::new();
+
     for line in text.lines() {
         let trimmed = line.trim_start_matches('#').trim_start();
+
+        // Detect code block fences
+        if trimmed.starts_with("```") {
+            if in_code_block {
+                // Closing fence - emit accumulated code
+                out.push_str(&code_block_content);
+                code_block_content.clear();
+                in_code_block = false;
+            } else {
+                // Opening fence - start accumulating
+                in_code_block = true;
+            }
+            out.push('\n');
+            continue;
+        }
+
+        if in_code_block {
+            code_block_content.push_str(line);
+            code_block_content.push('\n');
+            continue;
+        }
+
+        // Strip inline formatting
         let cleaned = trimmed
             .replace("**", "")
             .replace("__", "")
-            .replace("~~", "");
-        let cleaned = cleaned
-            .replace(" *", " ")
+            .replace("~~", "")
             .replace("* ", " ")
-            .replace(" _", " ")
-            .replace("_ ", " ");
+            .replace(" *", " ")
+            .replace("_ ", " ")
+            .replace(" _", " ");
+        // Strip inline code backticks (single pairs)
+        let cleaned = strip_inline_code_backticks(&cleaned);
         out.push_str(&cleaned);
         out.push('\n');
     }
+
+    if in_code_block {
+        out.push_str(&code_block_content);
+    }
     out.trim_end().to_string()
+}
+
+/// Remove `inline code` backticks, leaving the inner text.
+fn strip_inline_code_backticks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '`' {
+            // Skip until next backtick or end
+            while let Some(n) = chars.next() {
+                if n == '`' {
+                    break;
+                }
+                out.push(n);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // ── Session persistence ───────────────────────────────────────────────────────
@@ -312,54 +364,49 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
     out
 }
 
-/// Convert user blocks back to markdown for saving.
-fn user_blocks_to_markdown(blocks: &[PlainChatMessage]) -> String {
-    let mut out = String::new();
-    for (i, p) in blocks.iter().enumerate() {
-        if i > 0 {
-            out.push_str("\n\n");
+/// Convert a single block to its markdown representation.
+pub fn block_to_markdown(p: &PlainChatMessage) -> String {
+    match p.message_type {
+        "user" | "assistant" => p.content.clone(),
+        "code-block" => {
+            let mut s = String::new();
+            if !p.language.is_empty() {
+                s.push_str("```");
+                s.push_str(&p.language);
+                s.push('\n');
+            } else {
+                s.push_str("```\n");
+            }
+            s.push_str(&p.content);
+            s.push_str("\n```");
+            s
         }
-        match p.message_type {
-            "user" | "assistant" => out.push_str(&p.content),
-            "code-block" => {
-                if !p.language.is_empty() {
-                    out.push_str("```");
-                    out.push_str(&p.language);
-                    out.push('\n');
-                } else {
-                    out.push_str("```\n");
-                }
-                out.push_str(&p.content);
-                out.push_str("\n```");
-            }
-            "heading" => {
-                let n = p.heading_level.max(1).min(6) as usize;
-                out.push_str(&"#".repeat(n));
-                out.push(' ');
-                out.push_str(&p.content);
-            }
-            "list-item" => {
-                out.push_str(&"  ".repeat(p.heading_level.max(0) as usize));
-                out.push_str("- ");
-                out.push_str(&p.content);
-            }
-            "block-quote" => {
-                out.push_str("> ");
-                out.push_str(&p.content.replace('\n', "\n> "));
-            }
-            "separator" => out.push_str("---"),
-            "inline-code" => {
-                out.push('`');
-                out.push_str(&p.content);
-                out.push('`');
-            }
-            "table-row" => {
-                out.push_str(&p.cells.join(" | "));
-            }
-            _ => out.push_str(&p.content),
+        "heading" => {
+            let n = p.heading_level.max(1).min(6) as usize;
+            format!("{} {}", "#".repeat(n), p.content)
         }
+        "list-item" => {
+            format!(
+                "{}* {}",
+                "  ".repeat(p.heading_level.max(0) as usize),
+                p.content
+            )
+        }
+        "block-quote" => format!("> {}", p.content.replace('\n', "\n> ")),
+        "separator" => "---".to_string(),
+        "inline-code" => format!("`{}`", p.content),
+        "table-row" => p.cells.join(" | "),
+        _ => p.content.clone(),
     }
-    out
+}
+
+/// Convert user blocks back to markdown for saving.
+pub fn user_blocks_to_markdown(blocks: &[PlainChatMessage]) -> String {
+    blocks
+        .iter()
+        .map(block_to_markdown)
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Convert `PlainChatMessage` slice to `TurnRecord`s for saving to a `ChatDocument`.
@@ -393,22 +440,21 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                 user_blocks.push(p.clone());
             }
             "code-block" | "heading" | "list-item" | "block-quote" | "separator"
-            | "inline-code" | "table-row" if is_user_block => {
-                if user_blocks.is_empty() {
-                    // First user block wasn't "user" type (e.g. code-only)
-                    user_blocks.push(p.clone());
-                } else {
-                    user_blocks.push(p.clone());
-                }
+            | "inline-code" | "table-row"
+                if is_user_block =>
+            {
+                user_blocks.push(p.clone());
             }
             "assistant" | "code-block" | "heading" | "list-item" | "block-quote" | "separator"
             | "inline-code" | "table-row" => {
+                flush_user(&mut turns, &mut user_blocks);
                 if !assistant_buf.is_empty() {
-                    assistant_buf.push('\n');
+                    assistant_buf.push_str("\n\n");
                 }
-                assistant_buf.push_str(&p.content);
+                assistant_buf.push_str(&block_to_markdown(p));
             }
             "tool-call" => {
+                flush_user(&mut turns, &mut user_blocks);
                 if !assistant_buf.is_empty() {
                     turns.push(TurnRecord::Assistant {
                         content: std::mem::take(&mut assistant_buf),
@@ -433,6 +479,7 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                 }
             }
             "thinking" => {
+                flush_user(&mut turns, &mut user_blocks);
                 if !assistant_buf.is_empty() {
                     turns.push(TurnRecord::Assistant {
                         content: std::mem::take(&mut assistant_buf),
@@ -443,6 +490,7 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                 });
             }
             "system" => {
+                flush_user(&mut turns, &mut user_blocks);
                 if !assistant_buf.is_empty() {
                     turns.push(TurnRecord::Assistant {
                         content: std::mem::take(&mut assistant_buf),
@@ -457,9 +505,12 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                     });
                 }
             }
-            _ => {}
+            _ => {
+                flush_user(&mut turns, &mut user_blocks);
+            }
         }
     }
+    flush_user(&mut turns, &mut user_blocks);
     if !assistant_buf.is_empty() {
         turns.push(TurnRecord::Assistant {
             content: assistant_buf,
