@@ -7,7 +7,7 @@
 use slint::{Color, Model, ModelRc, SharedString, VecModel};
 
 use crate::highlight::HighlightToken;
-use crate::{ChatMessage, CodeLine, CodeToken, TextRun};
+use crate::{ChatMessage, CodeLine, CodeToken, RichLine, TextRun};
 
 // ── Text-run inline formatting ────────────────────────────────────────────────
 
@@ -73,8 +73,22 @@ pub struct PlainChatMessage {
     /// Empty means the `content` string is rendered as-is.
     pub text_runs: Vec<PlainTextRun>,
 
+    /// Pre-wrapped rich text lines: each entry is one visual line of runs.
+    /// Populated for paragraphs, list items, and blockquotes.
+    /// When non-empty, renders as VerticalLayout of HorizontalLayouts.
+    pub rich_lines: Vec<Vec<PlainTextRun>>,
+
     /// Table cells for `table-row` type (tab-separated in `content` too).
     pub cells: Vec<String>,
+
+    /// Result content from the associated tool call (for tool-call messages).
+    pub tool_result_content: String,
+
+    /// Whether the tool result is an error.
+    pub tool_result_is_error: bool,
+
+    /// First line of thinking content for the collapsed preview.
+    pub thinking_preview: String,
 }
 
 impl PlainChatMessage {
@@ -151,6 +165,23 @@ impl PlainChatMessage {
             ModelRc::new(VecModel::from(cells))
         };
 
+        // Build rich_lines model
+        let rich_lines_model: ModelRc<RichLine> = if self.rich_lines.is_empty() {
+            ModelRc::new(VecModel::<RichLine>::default())
+        } else {
+            let lines: Vec<RichLine> = self
+                .rich_lines
+                .iter()
+                .map(|line| {
+                    let runs: Vec<TextRun> = line.iter().map(|r| r.to_slint()).collect();
+                    RichLine {
+                        runs: ModelRc::new(VecModel::from(runs)),
+                    }
+                })
+                .collect();
+            ModelRc::new(VecModel::from(lines))
+        };
+
         ChatMessage {
             message_type: SharedString::from(self.message_type),
             content: SharedString::from(self.content.as_str()),
@@ -165,10 +196,14 @@ impl PlainChatMessage {
             tool_summary: SharedString::from(self.tool_summary.as_str()),
             tool_category: SharedString::from(self.tool_category.as_str()),
             tool_fields_json: SharedString::from(self.tool_fields_json.as_str()),
+            tool_result_content: SharedString::from(self.tool_result_content.as_str()),
+            tool_result_is_error: self.tool_result_is_error,
+            thinking_preview: SharedString::from(self.thinking_preview.as_str()),
             language: SharedString::from(self.language.as_str()),
             heading_level: self.heading_level,
             code_lines: code_lines_model,
             text_runs: text_runs_model,
+            rich_lines: rich_lines_model,
             cells: cells_model,
         }
     }
@@ -239,6 +274,9 @@ pub fn slint_msg_to_plain(m: &ChatMessage) -> PlainChatMessage {
         tool_summary: m.tool_summary.to_string(),
         tool_category: m.tool_category.to_string(),
         tool_fields_json: m.tool_fields_json.to_string(),
+        tool_result_content: m.tool_result_content.to_string(),
+        tool_result_is_error: m.tool_result_is_error,
+        thinking_preview: m.thinking_preview.to_string(),
         language: m.language.to_string(),
         heading_level: m.heading_level,
         code_lines,

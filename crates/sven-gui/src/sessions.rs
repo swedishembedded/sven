@@ -86,6 +86,131 @@ pub fn parse_inline_runs(text: &str) -> Vec<PlainTextRun> {
     }
 }
 
+// ── Rich line splitting ────────────────────────────────────────────────────────
+
+/// Split a flat list of inline runs into visual lines of at most `max_chars`
+/// characters each.  Long runs are split at word boundaries where possible.
+///
+/// This allows Slint to render each line as a `HorizontalLayout` without
+/// overflow, giving full inline formatting support regardless of text length.
+pub fn split_runs_into_rich_lines(
+    runs: Vec<PlainTextRun>,
+    max_chars: usize,
+) -> Vec<Vec<PlainTextRun>> {
+    let mut lines: Vec<Vec<PlainTextRun>> = Vec::new();
+    let mut current_line: Vec<PlainTextRun> = Vec::new();
+    let mut current_len: usize = 0;
+
+    for run in runs {
+        // Handle explicit newlines by splitting the run text on '\n'
+        let sub_texts: Vec<&str> = run.text.split('\n').collect();
+        for (si, sub) in sub_texts.iter().enumerate() {
+            if si > 0 {
+                // Newline: flush current line
+                if !current_line.is_empty() {
+                    lines.push(std::mem::take(&mut current_line));
+                } else {
+                    lines.push(vec![]);
+                }
+                current_len = 0;
+            }
+            if sub.is_empty() {
+                continue;
+            }
+            let run_len = sub.chars().count();
+
+            if current_len == 0 || current_len + run_len <= max_chars {
+                // Fits on current line
+                current_line.push(PlainTextRun {
+                    text: sub.to_string(),
+                    bold: run.bold,
+                    italic: run.italic,
+                    is_code: run.is_code,
+                    is_link: run.is_link,
+                    url: run.url.clone(),
+                });
+                current_len += run_len;
+            } else if run_len > max_chars {
+                // Run is very long — split at word boundaries, filling lines
+                let mut remaining: String = sub.to_string();
+                while !remaining.is_empty() {
+                    let available = max_chars.saturating_sub(current_len);
+                    let take = if available == 0 {
+                        // Flush current line and start fresh
+                        if !current_line.is_empty() {
+                            lines.push(std::mem::take(&mut current_line));
+                            current_len = 0;
+                        }
+                        max_chars
+                    } else {
+                        available
+                    };
+
+                    // Find a good split point (word boundary within `take` chars)
+                    let chars: Vec<char> = remaining.chars().collect();
+                    let split_at = if chars.len() <= take {
+                        chars.len()
+                    } else {
+                        // Walk back from `take` to find a space
+                        let mut bp = take;
+                        while bp > 0 && chars[bp - 1] != ' ' {
+                            bp -= 1;
+                        }
+                        if bp == 0 {
+                            take
+                        } else {
+                            bp
+                        }
+                    };
+
+                    let piece: String = chars[..split_at].iter().collect();
+                    let piece_len = split_at;
+                    current_line.push(PlainTextRun {
+                        text: piece,
+                        bold: run.bold,
+                        italic: run.italic,
+                        is_code: run.is_code,
+                        is_link: run.is_link,
+                        url: run.url.clone(),
+                    });
+                    current_len += piece_len;
+                    remaining = chars[split_at..].iter().collect();
+
+                    if current_len >= max_chars && !remaining.is_empty() {
+                        lines.push(std::mem::take(&mut current_line));
+                        current_len = 0;
+                    }
+                }
+            } else {
+                // Doesn't fit — flush current line, start new one
+                if !current_line.is_empty() {
+                    lines.push(std::mem::take(&mut current_line));
+                    current_len = 0;
+                }
+                current_line.push(PlainTextRun {
+                    text: sub.to_string(),
+                    bold: run.bold,
+                    italic: run.italic,
+                    is_code: run.is_code,
+                    is_link: run.is_link,
+                    url: run.url.clone(),
+                });
+                current_len += run_len;
+            }
+        }
+    }
+
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    if lines.is_empty() {
+        lines.push(vec![]);
+    }
+
+    lines
+}
+
 // ── Markdown → PlainChatMessage ───────────────────────────────────────────────
 
 /// Format tool fields as a readable multi-line string.
@@ -132,6 +257,7 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
         let msg = match block {
             MarkdownBlock::Paragraph(text) => {
                 let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs.clone(), 80);
                 let msg_type = if role == "user" && is_first {
                     "user"
                 } else {
@@ -143,6 +269,7 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                     role,
                     is_first_in_group: is_first,
                     text_runs: runs,
+                    rich_lines,
                     ..Default::default()
                 }
             }
@@ -168,6 +295,7 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
             }
             MarkdownBlock::ListItem { depth, text } => {
                 let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs.clone(), 72);
                 PlainChatMessage {
                     message_type: "list-item",
                     content: text,
@@ -175,6 +303,7 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                     is_first_in_group: is_first,
                     heading_level: depth as i32,
                     text_runs: runs,
+                    rich_lines,
                     ..Default::default()
                 }
             }
@@ -185,13 +314,19 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                 is_first_in_group: is_first,
                 ..Default::default()
             },
-            MarkdownBlock::BlockQuote(text) => PlainChatMessage {
-                message_type: "block-quote",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                ..Default::default()
-            },
+            MarkdownBlock::BlockQuote(text) => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs.clone(), 76);
+                PlainChatMessage {
+                    message_type: "block-quote",
+                    content: text,
+                    role,
+                    is_first_in_group: is_first,
+                    text_runs: runs,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
             MarkdownBlock::InlineCode(text) => PlainChatMessage {
                 message_type: "inline-code",
                 content: text,
@@ -278,7 +413,7 @@ fn strip_inline_code_backticks(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '`' {
             // Skip until next backtick or end
-            while let Some(n) = chars.next() {
+            for n in chars.by_ref() {
                 if n == '`' {
                     break;
                 }
@@ -323,6 +458,7 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                     .unwrap_or(serde_json::Value::Object(Default::default()));
                 let view = extract_tool_view(name, &args_value, None);
                 let fields_json = format_fields_json(&view.fields);
+                let is_expanded = name == "todo";
                 out.push(PlainChatMessage {
                     message_type: "tool-call",
                     content: args_json,
@@ -332,7 +468,7 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                     tool_summary: view.summary,
                     tool_category: view.category,
                     tool_fields_json: fields_json,
-                    is_expanded: false,
+                    is_expanded,
                     ..Default::default()
                 });
             }
@@ -341,12 +477,10 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                 content,
             } => {
                 let preview: String = content.chars().take(500).collect();
-                out.push(PlainChatMessage {
-                    message_type: "tool-result",
-                    content: preview,
-                    role: "tool",
-                    ..Default::default()
-                });
+                // Attach result to the preceding tool-call message
+                if let Some(last) = out.iter_mut().rev().find(|m| m.message_type == "tool-call") {
+                    last.tool_result_content = preview;
+                }
             }
             TurnRecord::ContextCompacted {
                 tokens_before,
@@ -465,12 +599,21 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                 last_tool_call_id = Some(id.clone());
                 let arguments = json_str_to_yaml(&p.content);
                 turns.push(TurnRecord::ToolCall {
-                    tool_call_id: id,
+                    tool_call_id: id.clone(),
                     name: p.tool_name.clone(),
                     arguments,
                 });
+                // Emit the merged tool result if present
+                if !p.tool_result_content.is_empty() {
+                    turns.push(TurnRecord::ToolResult {
+                        tool_call_id: id,
+                        content: p.tool_result_content.clone(),
+                    });
+                    last_tool_call_id = None;
+                }
             }
             "tool-result" => {
+                // Legacy standalone tool-result (from old sessions without merged results)
                 if let Some(id) = last_tool_call_id.take() {
                     turns.push(TurnRecord::ToolResult {
                         tool_call_id: id,

@@ -29,6 +29,12 @@ export struct TextRun {
     url: string,
 }
 
+// ── Pre-wrapped rich text line (one visual line of runs) ──────────────────────
+
+export struct RichLine {
+    runs: [TextRun],
+}
+
 // ── Chat message struct ───────────────────────────────────────────────────────
 
 export struct ChatMessage {
@@ -52,6 +58,12 @@ export struct ChatMessage {
     tool-summary: string,
     tool-category: string,
     tool-fields-json: string,
+    // Merged tool result (attached to the tool-call message)
+    tool-result-content: string,
+    tool-result-is-error: bool,
+
+    // Thinking preview (first line, shown when collapsed)
+    thinking-preview: string,
 
     // Code block fields
     language: string,
@@ -63,18 +75,67 @@ export struct ChatMessage {
     // Inline text runs (populated for assistant paragraphs with formatting)
     text-runs: [TextRun],
 
+    // Pre-wrapped rich text lines (VerticalLayout of HorizontalLayouts)
+    rich-lines: [RichLine],
+
     // Table cells (populated for table-row type)
     cells: [string],
+}
+
+// ── Reusable run renderer (one line's worth of inline runs) ───────────────────
+
+component RunLine {
+    in property <[TextRun]> runs;
+    in property <length>    line-width: 600px;
+    in property <length>    run-font-size: Theme.font-size-base;
+    in property <bool>      is-bold: false;
+
+    height: Math.max(run-font-size + 4px, 20px);
+
+    HorizontalLayout {
+        spacing: 0;
+        alignment: start;
+        width: line-width;
+
+        for run in runs: run-rect := Rectangle {
+            property <length> fs: root.run-font-size;
+            property <bool> ib: root.is-bold;
+            height: parent.height;
+            width: Math.min(
+                run-t.preferred-width + (run.is-code ? 6px : 0px),
+                line-width
+            );
+            border-radius: run.is-code ? Theme.radius-sm : 0;
+            background: run.is-code ? Theme.inline-code-bg : transparent;
+            border-color: run.is-code ? Theme.code-border : transparent;
+            border-width: run.is-code ? 1px : 0;
+
+            run-t := Text {
+                x: run.is-code ? 3px : 0;
+                text: run.text;
+                color: run.is-code ? Theme.text-code :
+                       run.is-link ? Theme.text-link :
+                       Theme.text-primary;
+                font-size: run-rect.fs;
+                font-weight: (run.bold || run-rect.ib) ? 700 : 400;
+                font-italic: run.italic;
+                font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
+                vertical-alignment: center;
+                wrap: no-wrap;
+            }
+        }
+    }
 }
 
 // ── User bubble ───────────────────────────────────────────────────────────────
 
 component UserBubble inherits Rectangle {
-    in property <string>     content;
-    in property <[TextRun]> text-runs;
-    in property <length>     available-width: 600px;
-    in property <int>        msg-index: 0;
-    in property <bool>       is-search-match: false;
+    in property <string>      content;
+    in property <[TextRun]>   text-runs;
+    in property <[RichLine]>  rich-lines;
+    in property <length>      available-width: 600px;
+    in property <int>         msg-index: 0;
+    in property <bool>        is-search-match: false;
 
     callback edit-clicked();
     callback copy-clicked(string);
@@ -130,58 +191,42 @@ component UserBubble inherits Rectangle {
             }
         }
 
-        // Plain content when no runs, or long content (ensure wrapping)
-        if text-runs.length == 0 || content.character-count > 120: Text {
+        // Rich rendering: pre-wrapped lines from Rust
+        if rich-lines.length > 0: VerticalLayout {
+            spacing: 0;
+            alignment: start;
+            width: available-width - 2 * Theme.space-md;
+
+            for line in rich-lines: RunLine {
+                runs: line.runs;
+                line-width: available-width - 2 * Theme.space-md;
+                run-font-size: Theme.font-size-base;
+            }
+        }
+
+        // Fallback plain text
+        if rich-lines.length == 0: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
             wrap: word-wrap;
             width: available-width - 2 * Theme.space-md;
         }
-
-        // Rich inline formatting for short content (bold, italic, code, links)
-        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
-            spacing: 0;
-            alignment: start;
-            width: available-width - 2 * Theme.space-md;
-
-            for run in text-runs: Rectangle {
-                height: run-text.preferred-height;
-                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
-                               available-width - 2 * Theme.space-md);
-                border-radius: run.is-code ? Theme.radius-sm : 0;
-                background: run.is-code ? Theme.inline-code-bg : transparent;
-                border-color: run.is-code ? Theme.code-border : transparent;
-                border-width: run.is-code ? 1px : 0px;
-
-                run-text := Text {
-                    x: run.is-code ? 2px : 0;
-                    text: run.text;
-                    color: run.is-code ? Theme.text-code :
-                           run.is-link ? Theme.text-link :
-                           Theme.text-primary;
-                    font-size: Theme.font-size-base;
-                    font-weight: run.bold ? 700 : 400;
-                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
-                    wrap: word-wrap;
-                    width: parent.width - (run.is-code ? 4px : 0px);
-                }
-            }
-        }
     }
 }
 
 // ── Rich-text paragraph ───────────────────────────────────────────────────────
-// Renders a paragraph with inline text runs when available.
+// Renders a paragraph with pre-wrapped rich lines when available, otherwise
+// falls back to a plain word-wrap Text.
 
 component RichParagraph inherits Rectangle {
-    in property <string>     content;
-    in property <[TextRun]>  text-runs;
-    in property <bool>       is-streaming: false;
-    in property <bool>       show-header: false;
-    in property <bool>       is-bold: false;
-    in property <bool>       is-search-match: false;
-    in property <length>     available-width: 600px;
+    in property <string>      content;
+    in property <[RichLine]>  rich-lines;
+    in property <bool>        is-streaming: false;
+    in property <bool>        show-header: false;
+    in property <bool>        is-bold: false;
+    in property <bool>        is-search-match: false;
+    in property <length>      available-width: 600px;
 
     callback copy-clicked(string);
 
@@ -216,9 +261,22 @@ component RichParagraph inherits Rectangle {
             }
         }
 
-        // Render plain content when no runs, or when content is long (ensure wrapping)
-        // Long content with runs would overflow in HorizontalLayout; use plain Text to fit.
-        if text-runs.length == 0 || content.character-count > 120: Text {
+        // Rich rendering: pre-wrapped lines from Rust
+        if rich-lines.length > 0: VerticalLayout {
+            spacing: 0;
+            alignment: start;
+            width: available-width - 2 * Theme.space-md;
+
+            for line in rich-lines: RunLine {
+                runs: line.runs;
+                line-width: available-width - 2 * Theme.space-md;
+                run-font-size: Theme.font-size-base;
+                is-bold: is-bold;
+            }
+        }
+
+        // Fallback plain text when no rich lines (streaming or unparsed)
+        if rich-lines.length == 0: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
@@ -226,48 +284,19 @@ component RichParagraph inherits Rectangle {
             wrap: word-wrap;
             width: available-width - 2 * Theme.space-md;
         }
-
-        // Render inline runs for short content (bold, italic, code, links)
-        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
-            spacing: 0;
-            alignment: start;
-            width: available-width - 2 * Theme.space-md;
-
-            for run in text-runs: Rectangle {
-                height: run-text.preferred-height;
-                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
-                               available-width - 2 * Theme.space-md);
-                border-radius: run.is-code ? Theme.radius-sm : 0;
-                background: run.is-code ? Theme.inline-code-bg : transparent;
-                border-color: run.is-code ? Theme.code-border : transparent;
-                border-width: run.is-code ? 1px : 0px;
-
-                run-text := Text {
-                    x: run.is-code ? 2px : 0;
-                    text: run.text;
-                    color: run.is-code ? Theme.text-code :
-                           run.is-link ? Theme.text-link :
-                           Theme.text-primary;
-                    font-size: Theme.font-size-base;
-                    font-weight: run.bold ? 700 : 400;
-                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
-                    wrap: word-wrap;
-                    width: parent.width - (run.is-code ? 4px : 0px);
-                }
-            }
-        }
     }
 }
 
 // ── Assistant paragraph (streaming / simple) ──────────────────────────────────
 
 export component AssistantParagraph inherits Rectangle {
-    in property <string>     content;
-    in property <[TextRun]>  text-runs;
-    in property <bool>       is-streaming: false;
-    in property <bool>       show-header: false;
-    in property <bool>       is-search-match: false;
-    in property <length>     available-width: 600px;
+    in property <string>      content;
+    in property <[TextRun]>   text-runs;
+    in property <[RichLine]>  rich-lines;
+    in property <bool>        is-streaming: false;
+    in property <bool>        show-header: false;
+    in property <bool>        is-search-match: false;
+    in property <length>      available-width: 600px;
 
     callback copy-clicked(string);
 
@@ -275,7 +304,7 @@ export component AssistantParagraph inherits Rectangle {
 
     RichParagraph {
         content: root.content;
-        text-runs: root.text-runs;
+        rich-lines: root.rich-lines;
         is-streaming: root.is-streaming;
         show-header: root.show-header;
         is-search-match: root.is-search-match;
@@ -472,15 +501,19 @@ component HeadingBlock {
 // ── List item ─────────────────────────────────────────────────────────────────
 
 component ListItemBlock {
-    in property <string>    content;
-    in property <[TextRun]> text-runs;
-    in property <int>       list-depth: 0;
-    in property <length>    available-width: 600px;
+    in property <string>      content;
+    in property <[TextRun]>   text-runs;
+    in property <[RichLine]>  rich-lines;
+    in property <int>         list-depth: 0;
+    in property <length>      available-width: 600px;
+
+    property <length> indent: Theme.space-md + list-depth * Theme.space-md;
+    property <length> text-width: available-width - indent - Theme.space-md - 18px;
 
     width: available-width;
 
     HorizontalLayout {
-        padding-left: Theme.space-md + list-depth * Theme.space-md;
+        padding-left: indent;
         padding-right: Theme.space-md;
         padding-top: 2px;
         padding-bottom: 2px;
@@ -496,41 +529,26 @@ component ListItemBlock {
             width: 14px;
         }
 
-        if text-runs.length == 0 || content.character-count > 120: Text {
+        // Rich pre-wrapped lines
+        if rich-lines.length > 0: VerticalLayout {
+            spacing: 0;
+            alignment: start;
+            width: text-width;
+
+            for line in rich-lines: RunLine {
+                runs: line.runs;
+                line-width: text-width;
+                run-font-size: Theme.font-size-base;
+            }
+        }
+
+        // Plain text fallback
+        if rich-lines.length == 0: Text {
             text: content;
             color: Theme.text-primary;
             font-size: Theme.font-size-base;
             wrap: word-wrap;
-            width: available-width - Theme.space-md * (3 + list-depth) - 14px;
-        }
-
-        if text-runs.length > 0 && content.character-count <= 120: HorizontalLayout {
-            spacing: 0;
-            alignment: start;
-            width: available-width - Theme.space-md * (3 + list-depth) - 14px;
-
-            for run in text-runs: Rectangle {
-                height: run-text.preferred-height;
-                width: Math.min(run-text.preferred-width + (run.is-code ? 4px : 0px),
-                               available-width - Theme.space-md * (3 + list-depth) - 14px);
-                border-radius: run.is-code ? Theme.radius-sm : 0;
-                background: run.is-code ? Theme.inline-code-bg : transparent;
-                border-width: run.is-code ? 1px : 0px;
-                border-color: run.is-code ? Theme.code-border : transparent;
-
-                run-text := Text {
-                    x: run.is-code ? 2px : 0;
-                    text: run.text;
-                    color: run.is-code ? Theme.text-code :
-                           run.is-link ? Theme.text-link :
-                           Theme.text-primary;
-                    font-size: Theme.font-size-base;
-                    font-weight: run.bold ? 700 : 400;
-                    font-family: run.is-code ? Theme.font-mono : Theme.font-ui;
-                    wrap: word-wrap;
-                    width: parent.width - (run.is-code ? 4px : 0px);
-                }
-            }
+            width: text-width;
         }
     }
 }
@@ -538,8 +556,11 @@ component ListItemBlock {
 // ── Block quote ───────────────────────────────────────────────────────────────
 
 component BlockQuoteBlock {
-    in property <string> content;
-    in property <length> available-width: 600px;
+    in property <string>      content;
+    in property <[RichLine]>  rich-lines;
+    in property <length>      available-width: 600px;
+
+    property <length> inner-width: available-width - Theme.space-md * 2 - 3px - Theme.space-sm;
 
     width: available-width;
 
@@ -551,23 +572,37 @@ component BlockQuoteBlock {
 
         HorizontalLayout {
             spacing: 0;
+            alignment: start;
 
             Rectangle {
                 width: 3px;
-                height: quote-text.preferred-height;
                 background: Theme.accent-dim;
                 border-radius: 2px;
             }
 
             Rectangle { width: Theme.space-sm; }
 
-            quote-text := Text {
+            // Rich lines when available
+            if rich-lines.length > 0: VerticalLayout {
+                spacing: 0;
+                alignment: start;
+                width: inner-width;
+
+                for line in rich-lines: RunLine {
+                    runs: line.runs;
+                    line-width: inner-width;
+                    run-font-size: Theme.font-size-base;
+                }
+            }
+
+            // Plain text fallback
+            if rich-lines.length == 0: Text {
                 text: content;
                 color: Theme.text-secondary;
                 font-size: Theme.font-size-base;
                 font-family: Theme.font-ui;
                 wrap: word-wrap;
-                width: available-width - Theme.space-md * 2 - 3px - Theme.space-sm;
+                width: inner-width;
             }
         }
     }
@@ -647,6 +682,7 @@ component TableRowBlock {
 
 component ThinkingBubble inherits Rectangle {
     in property <string> content;
+    in property <string> thinking-preview: "";
     in property <bool>   is-expanded: true;
     in property <bool>   is-streaming: false;
     in property <length> available-width: 600px;
@@ -684,7 +720,19 @@ component ThinkingBubble inherits Rectangle {
                     font-size: Theme.font-size-sm;
                 }
 
-                if !is-expanded && !is-streaming && content != "": Text {
+                // Show first-line preview when collapsed (uses thinking-preview, not full content)
+                if !is-expanded && !is-streaming && thinking-preview != "": Text {
+                    text: thinking-preview;
+                    color: Theme.thinking-text;
+                    font-size: Theme.font-size-sm;
+                    opacity: 0.6;
+                    overflow: elide;
+                    wrap: no-wrap;
+                    height: Theme.font-size-sm + 2px;
+                    width: available-width - 180px;
+                }
+                // Fallback: use first chars of content when no preview available
+                if !is-expanded && !is-streaming && thinking-preview == "" && content != "": Text {
                     text: content;
                     color: Theme.thinking-text;
                     font-size: Theme.font-size-sm;
@@ -722,15 +770,19 @@ component ToolCallBubble inherits Rectangle {
     in property <string> tool-summary: "";
     in property <string> tool-category: "";
     in property <string> tool-fields-json: "";
+    in property <string> tool-result-content: "";
+    in property <bool>   tool-result-is-error: false;
     in property <bool>   is-expanded: false;
     in property <length> available-width: 600px;
 
     callback toggle-expanded();
 
+    property <bool> has-result: tool-result-content != "";
+
     width: available-width;
     border-radius: Theme.radius-md;
     background: Theme.tool-bg;
-    border-color: Theme.tool-border;
+    border-color: tool-result-is-error && has-result ? Theme.error-border : Theme.tool-border;
     border-width: 1px;
 
     VerticalLayout {
@@ -760,6 +812,19 @@ component ToolCallBubble inherits Rectangle {
                     width: available-width - 240px;
                 }
 
+                // Status indicator: error / done / running
+                if has-result && tool-result-is-error: Text {
+                    text: " ✕";
+                    color: Theme.error-text;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 700;
+                }
+                if has-result && !tool-result-is-error: Text {
+                    text: " ✓";
+                    color: Theme.success;
+                    font-size: Theme.font-size-sm;
+                }
+
                 Text {
                     text: is-expanded ? " ▾" : " ▸";
                     color: Theme.text-dim;
@@ -768,18 +833,80 @@ component ToolCallBubble inherits Rectangle {
             }
         }
 
+        // Expanded: tool input fields
         if is-expanded && tool-fields-json != "": Rectangle {
             clip: true;
-            height: fields-text.preferred-height;
+            height: fields-text.preferred-height + Theme.space-sm;
             animate height { duration: Theme.duration-normal; easing: ease-in-out; }
 
-            fields-text := Text {
-                text: tool-fields-json;
-                color: Theme.text-secondary;
-                font-size: Theme.font-size-code;
-                font-family: Theme.font-mono;
-                wrap: word-wrap;
-                width: available-width - 2 * Theme.space-md;
+            VerticalLayout {
+                padding-top: Theme.space-xs;
+                padding-bottom: Theme.space-xs;
+                spacing: 0;
+
+                fields-text := Text {
+                    text: tool-fields-json;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-size-code;
+                    font-family: Theme.font-mono;
+                    wrap: word-wrap;
+                    width: available-width - 2 * Theme.space-md;
+                }
+            }
+        }
+
+        // Expanded: tool result section
+        if is-expanded && has-result: Rectangle {
+            border-radius: Theme.radius-sm;
+            background: tool-result-is-error ? Theme.error-bg : Theme.bg-card;
+            border-color: tool-result-is-error ? Theme.error-border : Theme.border-dim;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-xs;
+
+                HorizontalLayout {
+                    alignment: start;
+                    Text {
+                        text: tool-result-is-error ? "✕ Error" : "Result";
+                        color: tool-result-is-error ? Theme.error-text : Theme.text-secondary;
+                        font-size: Theme.font-size-xs;
+                        font-weight: 600;
+                    }
+                }
+
+                Text {
+                    text: tool-result-content;
+                    color: tool-result-is-error ? Theme.error-text : Theme.text-secondary;
+                    font-size: Theme.font-size-code;
+                    font-family: Theme.font-mono;
+                    wrap: word-wrap;
+                    width: available-width - 4 * Theme.space-md;
+                    opacity: 0.9;
+                }
+            }
+        }
+
+        // Error result always visible (even when collapsed)
+        if !is-expanded && has-result && tool-result-is-error: Rectangle {
+            border-radius: Theme.radius-sm;
+            background: Theme.error-bg;
+            border-color: Theme.error-border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: Theme.space-sm;
+
+                Text {
+                    text: tool-result-content;
+                    color: Theme.error-text;
+                    font-size: Theme.font-size-code;
+                    font-family: Theme.font-mono;
+                    wrap: word-wrap;
+                    width: available-width - 4 * Theme.space-md;
+                    opacity: 0.9;
+                }
             }
         }
     }
@@ -960,6 +1087,7 @@ export component MessageRow inherits VerticalLayout {
     if msg.message-type == "user": UserBubble {
         content: msg.content;
         text-runs: msg.text-runs;
+        rich-lines: msg.rich-lines;
         available-width: available-width;
         msg-index: msg-index;
         is-search-match: msg.is-search-match;
@@ -969,6 +1097,7 @@ export component MessageRow inherits VerticalLayout {
     if msg.message-type == "assistant": AssistantParagraph {
         content: msg.content;
         text-runs: msg.text-runs;
+        rich-lines: msg.rich-lines;
         is-streaming: msg.is-streaming;
         show-header: msg.is-first-in-group;
         is-search-match: msg.is-search-match;
@@ -994,11 +1123,13 @@ export component MessageRow inherits VerticalLayout {
     if msg.message-type == "list-item": ListItemBlock {
         content: msg.content;
         text-runs: msg.text-runs;
+        rich-lines: msg.rich-lines;
         list-depth: msg.heading-level;
         available-width: available-width;
     }
     if msg.message-type == "block-quote": BlockQuoteBlock {
         content: msg.content;
+        rich-lines: msg.rich-lines;
         available-width: available-width;
     }
     if msg.message-type == "separator": SeparatorBlock {
@@ -1011,6 +1142,7 @@ export component MessageRow inherits VerticalLayout {
     }
     if msg.message-type == "thinking": ThinkingBubble {
         content: msg.content;
+        thinking-preview: msg.thinking-preview;
         is-expanded: msg.is-expanded;
         available-width: available-width;
         toggle-expanded => { root.toggle-expanded(msg-index); }
@@ -1021,10 +1153,13 @@ export component MessageRow inherits VerticalLayout {
         tool-summary: msg.tool-summary;
         tool-category: msg.tool-category;
         tool-fields-json: msg.tool-fields-json;
+        tool-result-content: msg.tool-result-content;
+        tool-result-is-error: msg.tool-result-is-error;
         is-expanded: msg.is-expanded;
         available-width: available-width;
         toggle-expanded => { root.toggle-expanded(msg-index); }
     }
+    // tool-result type kept for backward compat but rendered as collapsed within tool-call
     if msg.message-type == "tool-result": ToolResultBubble {
         content: msg.content;
         is-error: msg.is-error;

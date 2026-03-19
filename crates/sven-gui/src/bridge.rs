@@ -1546,10 +1546,7 @@ impl SvenApp {
                 ];
                 *all_mc.lock().unwrap() = items.clone();
                 let mode_str = format!("{:?}", *cur_mode_mc.lock().unwrap()).to_lowercase();
-                let idx = items
-                    .iter()
-                    .position(|i| i.id.to_string() == mode_str)
-                    .unwrap_or(0);
+                let idx = items.iter().position(|i| i.id == mode_str).unwrap_or(0);
                 if let Some(win) = weak_mc.upgrade() {
                     win.set_picker_items(ModelRc::from(Rc::new(VecModel::from(items))));
                     win.set_picker_title(SharedString::from("Switch mode"));
@@ -1765,9 +1762,15 @@ impl SvenApp {
                     AgentEvent::ThinkingComplete(content) => {
                         *tb.lock().unwrap() = String::new();
                         let stripped = strip_inline_markdown(&content);
+                        let preview = stripped
+                            .lines()
+                            .find(|l| !l.trim().is_empty())
+                            .unwrap_or("")
+                            .to_string();
                         pm.lock().unwrap().push_back(PlainChatMessage {
                             message_type: "thinking",
                             content: stripped,
+                            thinking_preview: preview,
                             role: "thinking",
                             is_first_in_group: false,
                             is_expanded: false,
@@ -1859,25 +1862,18 @@ impl SvenApp {
                         output, is_error, ..
                     } => {
                         let preview: String = output.chars().take(500).collect();
-                        pm.lock().unwrap().push_back(PlainChatMessage {
-                            message_type: "tool-result",
-                            content: preview,
-                            role: "tool",
-                            is_error,
-                            is_expanded: is_error,
-                            ..Default::default()
-                        });
                         let sid = streaming_sid_ev.lock().unwrap().clone();
                         let sid_clone = sid.clone();
                         let sm = Arc::clone(&session_msgs_ev);
                         let _ = slint::invoke_from_event_loop({
-                            let pm2 = Arc::clone(&pm);
                             let w = weak2.clone();
                             move || {
+                                // Attach result to the last tool-call message in both
+                                // the session store and the Slint window model.
                                 if let Some(ref s) = sid_clone {
-                                    flush_messages_to_session(pm2, s, sm, &w);
-                                } else {
-                                    flush_messages(pm2, &w);
+                                    attach_tool_result_to_last_call(&preview, is_error, s, &sm, &w);
+                                } else if let Some(win) = w.upgrade() {
+                                    attach_tool_result_in_window(&win, &preview, is_error);
                                 }
                             }
                         });
@@ -2364,6 +2360,53 @@ fn clear_search_highlights(model: &Rc<VecModel<ChatMessage>>) {
                 model.set_row_data(i, row);
             }
         }
+    }
+}
+
+/// Attach a tool result to the last tool-call message in the Slint window model.
+fn attach_tool_result_in_window(win: &MainWindow, result: &str, is_error: bool) {
+    let msgs_rc = win.get_messages();
+    if let Some(vec_model) = msgs_rc.as_any().downcast_ref::<VecModel<ChatMessage>>() {
+        let n = vec_model.row_count();
+        for i in (0..n).rev() {
+            if let Some(mut row) = vec_model.row_data(i) {
+                if row.message_type == "tool-call" {
+                    row.tool_result_content = SharedString::from(result);
+                    row.tool_result_is_error = is_error;
+                    vec_model.set_row_data(i, row);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Attach a tool result to the last tool-call message in both the session store
+/// and (if the session is active) the Slint window model.
+fn attach_tool_result_to_last_call(
+    result: &str,
+    is_error: bool,
+    session_id: &str,
+    session_messages: &Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>>,
+    weak: &slint::Weak<MainWindow>,
+) {
+    // Update session store
+    {
+        let mut store = session_messages.lock().unwrap();
+        if let Some(msgs) = store.get_mut(session_id) {
+            for msg in msgs.iter_mut().rev() {
+                if msg.message_type == "tool-call" {
+                    msg.tool_result_content = result.to_string();
+                    msg.tool_result_is_error = is_error;
+                    break;
+                }
+            }
+        }
+    }
+    // Update Slint model if this session is active
+    let Some(win) = weak.upgrade() else { return };
+    if win.get_active_session_id() == session_id {
+        attach_tool_result_in_window(&win, result, is_error);
     }
 }
 

@@ -87,18 +87,84 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
             .unwrap_or_default(),
 
         // Todo management
-        "todo" => String::new(),
+        "todo" => {
+            let action = str_field("action").unwrap_or_else(|| "update".to_string());
+            match action.as_str() {
+                "read" => "Reading todos".to_string(),
+                _ => "Updating todos".to_string(),
+            }
+        }
 
         // Lints
-        "ReadLints" | "read_lints" => String::new(),
+        "ReadLints" | "read_lints" => {
+            let paths = args
+                .get("paths")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    let items: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|p| shorten_path(p, 2))
+                        .take(2)
+                        .collect();
+                    items.join(", ")
+                })
+                .unwrap_or_default();
+            if paths.is_empty() {
+                "Checking lints".to_string()
+            } else {
+                truncate_summary(&format!("Checking lints: {paths}"), 80)
+            }
+        }
 
         // List directory
         "list_dir" | "ListDir" => str_field("path")
             .map(|p| shorten_path(&p, 2))
             .unwrap_or_default(),
 
+        // Skill loading/listing
+        "skill" | "Skill" | "load_skill" | "LoadSkill" => {
+            let action = str_field("action").unwrap_or_else(|| "load".to_string());
+            match action.as_str() {
+                "list" => "Listing skills".to_string(),
+                "load" => {
+                    let skill_name = str_field("name")
+                        .or_else(|| str_field("skill_name"))
+                        .or_else(|| str_field("command"))
+                        .unwrap_or_default();
+                    if skill_name.is_empty() {
+                        "Loading skill".to_string()
+                    } else {
+                        truncate_summary(&format!("Loading skill '{skill_name}'"), 80)
+                    }
+                }
+                _ => str_field("name")
+                    .map(|n| truncate_summary(&n, 80))
+                    .unwrap_or_default(),
+            }
+        }
+
+        // Ask question
+        "ask_question" | "AskQuestion" => str_field("question")
+            .or_else(|| str_field("prompt"))
+            .map(|q| truncate_summary(&format!("Asking: {q}"), 80))
+            .unwrap_or_else(|| "Asking question".to_string()),
+
+        // Mode switch
+        "switch_mode" | "SwitchMode" => str_field("target_mode_id")
+            .or_else(|| str_field("mode"))
+            .map(|m| format!("Switching to {m}"))
+            .unwrap_or_else(|| "Switching mode".to_string()),
+
         // Memory operations
-        "memory" | "Memory" | "update_memory" | "UpdateMemory" => String::new(),
+        "memory" | "Memory" | "update_memory" | "UpdateMemory" => {
+            let key = str_field("key").unwrap_or_default();
+            if key.is_empty() {
+                "Updating memory".to_string()
+            } else {
+                truncate_summary(&format!("Memory: {key}"), 80)
+            }
+        }
 
         // Internal buffer/editor tools — opaque IDs add no value
         _ if name.starts_with("buf_") || name.starts_with("nvim_") => String::new(),
