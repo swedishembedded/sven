@@ -1311,6 +1311,13 @@ impl App {
                     entry.status = refreshed.status;
                     entry.created_at = refreshed.created_at;
                     entry.updated_at = refreshed.updated_at;
+                    // Restore persisted usage only when the entry has no live data yet
+                    // (i.e. this session has never been active in this process run).
+                    if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {
+                        entry.total_context_tokens = refreshed.total_context_tokens;
+                        entry.total_output_tokens = refreshed.total_output_tokens;
+                        entry.total_cost_usd = refreshed.total_cost_usd;
+                    }
                 }
                 let mut chat = ChatState::new();
                 chat.segments = segments;
@@ -1459,6 +1466,11 @@ impl App {
     }
 
     /// Snapshot the current active session's chat state into its SessionEntry.
+    ///
+    /// For idle sessions that have a yaml_path (i.e. their content is already
+    /// persisted on disk), the snapshot is stored but then immediately evicted
+    /// (`stored_chat` cleared) to free memory.  Busy background sessions keep
+    /// their `stored_chat` so incoming agent event segments are not lost.
     fn save_active_to_session_entry(&mut self) {
         let active_id = self.sessions.active_id.clone();
         if let Some(entry) = self.sessions.get_mut(&active_id) {
@@ -1480,6 +1492,18 @@ impl App {
             entry.total_cost_usd = self.agent.total_cost_usd;
             entry.cache_hit_pct = self.agent.cache_hit_pct;
             entry.updated_at = chrono::Utc::now();
+
+            // Evict stored_chat for idle sessions that have a backing file.
+            // Busy sessions must keep their chat state in memory so that
+            // background agent events can still push segments into it.
+            let has_disk_backing = entry
+                .yaml_path
+                .as_ref()
+                .map(|p| p.exists())
+                .unwrap_or(false);
+            if !entry.busy && has_disk_backing {
+                entry.stored_chat = None;
+            }
         }
     }
 

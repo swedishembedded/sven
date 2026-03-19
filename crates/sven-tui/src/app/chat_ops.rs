@@ -457,6 +457,7 @@ impl App {
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
                 parent_id: None,
+                usage: None,
                 turns,
             }
         };
@@ -552,6 +553,7 @@ impl App {
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                     parent_id: None,
+                    usage: None,
                     turns,
                 }
             };

@@ -22,7 +22,7 @@ use sven_frontend::{
     queue::QueueState,
     AgentRequest, NodeBackend, QueuedMessage,
 };
-use sven_input::{chat_path, list_chats, load_chat_from, ChatStatus, SessionId};
+use sven_input::{chat_path, list_chats, load_chat_from, ChatStatus, ChatUsage, SessionId};
 use sven_model::catalog;
 use sven_model::{FunctionCall, Message as SvenMessage, MessageContent, Role};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, TodoItem};
@@ -99,9 +99,19 @@ impl SvenApp {
             total_cost_usd: 0.0,
         });
 
+        // Per-session usage map — populated from disk on startup and updated live.
+        let session_usage: Arc<Mutex<HashMap<String, ChatUsage>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
         if let Ok(entries) = list_chats(Some(50)) {
+            let mut usage_map = session_usage.lock().unwrap();
             for chat_entry in &entries {
                 let id_str = chat_entry.id.as_str().to_string();
+                let cost = chat_entry
+                    .usage
+                    .as_ref()
+                    .map(|u| u.total_cost_usd as f32)
+                    .unwrap_or(0.0);
                 sessions_model.push(SessionItem {
                     id: SharedString::from(&id_str),
                     title: SharedString::from(&chat_entry.title),
@@ -113,8 +123,11 @@ impl SvenApp {
                         ChatStatus::Completed => "completed",
                         ChatStatus::Archived => "archived",
                     }),
-                    total_cost_usd: 0.0,
+                    total_cost_usd: cost,
                 });
+                if let Some(u) = chat_entry.usage.clone() {
+                    usage_map.insert(id_str, u);
+                }
             }
         }
 
@@ -241,9 +254,6 @@ impl SvenApp {
             Arc::new(Mutex::new(VecDeque::new()));
         let streaming_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let thinking_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-        let total_cost = Arc::new(Mutex::new(0.0f64));
-        let total_output_tokens = Arc::new(Mutex::new(0u32));
-        let total_input_tokens = Arc::new(Mutex::new(0u32));
 
         let queue_state: Arc<Mutex<QueueState>> = Arc::new(Mutex::new(QueueState::new()));
         let editing_msg_index: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
@@ -891,6 +901,7 @@ impl SvenApp {
             let tb_ns = Arc::clone(&thinking_buf);
             let weak_ns = weak.clone();
             let session_msgs_ns = Arc::clone(&session_messages);
+            let session_usage_ns = Arc::clone(&session_usage);
             let active_sid_ns = Arc::clone(&active_session_id);
 
             window.on_new_session(move || {
@@ -905,12 +916,11 @@ impl SvenApp {
                             .find_map(|i| sessions_ns.row_data(i).filter(|s| s.id == current_id))
                             .map(|s| s.title.to_string())
                             .unwrap_or_else(|| "Chat".to_string());
-                        save_session_to_disk(&current_id, &current_msgs, &title, None, None);
+                        let usage = session_usage_ns.lock().unwrap().get(&current_id).cloned();
+                        save_session_to_disk(&current_id, &current_msgs, &title, None, None, usage);
                     }
-                    session_msgs_ns
-                        .lock()
-                        .unwrap()
-                        .insert(current_id, current_msgs);
+                    // Evict outgoing session from memory; reload lazily from disk if needed.
+                    session_msgs_ns.lock().unwrap().remove(&current_id);
                 }
 
                 while msgs_ns.row_count() > 0 {
@@ -954,6 +964,11 @@ impl SvenApp {
                     win.set_thinking_text(SharedString::new());
                     win.set_agent_busy(false);
                     win.set_queue_count(0);
+                    // New blank session starts with zero counters.
+                    win.set_total_cost_usd(0.0);
+                    win.set_total_output_tokens(0);
+                    win.set_total_input_tokens(0);
+                    win.set_context_pct(0);
                 }
             });
         }
@@ -1081,6 +1096,7 @@ impl SvenApp {
             let qi_model_show = Rc::clone(&question_items_model);
             let qidx_show = Arc::clone(&question_current_index);
             let session_msgs_ss = Arc::clone(&session_messages);
+            let session_usage_ss = Arc::clone(&session_usage);
             let active_sid_ss = Arc::clone(&active_session_id);
             let sb_ss = Arc::clone(&streaming_buf);
             let tb_ss = Arc::clone(&thinking_buf);
@@ -1106,15 +1122,19 @@ impl SvenApp {
                             .unwrap_or_else(|| "Chat".to_string());
                         let model = cur_model_ss.lock().unwrap().clone();
                         let mode = format!("{:?}", *cur_mode_ss.lock().unwrap()).to_lowercase();
+                        let usage = session_usage_ss.lock().unwrap().get(&current_id).cloned();
                         save_session_to_disk(
                             &current_id,
                             &snaps,
                             &title,
                             Some(&model),
                             Some(&mode),
+                            usage,
                         );
                     }
-                    session_msgs_ss.lock().unwrap().insert(current_id, snaps);
+                    // Evict the outgoing session from memory after saving to disk;
+                    // it will be reloaded lazily from disk if visited again.
+                    session_msgs_ss.lock().unwrap().remove(&current_id);
                 }
 
                 for i in 0..sessions_ss.row_count() {
@@ -1163,12 +1183,27 @@ impl SvenApp {
                 *sb_ss.lock().unwrap() = String::new();
                 *tb_ss.lock().unwrap() = String::new();
 
+                // Restore per-session token usage for the new active session.
+                let (target_cost, target_out, target_in) = {
+                    let map = session_usage_ss.lock().unwrap();
+                    let u = map.get(&new_id);
+                    (
+                        u.map(|u| u.total_cost_usd as f32).unwrap_or(0.0),
+                        u.map(|u| u.total_output_tokens as i32).unwrap_or(0),
+                        u.map(|u| u.total_input_tokens as i32).unwrap_or(0),
+                    )
+                };
+
                 if let Some(win) = weak_ss.upgrade() {
                     win.set_active_session_id(SharedString::from(new_id.clone()));
                     win.set_streaming_text(SharedString::new());
                     win.set_streaming_messages(ModelRc::new(VecModel::<ChatMessage>::default()));
                     win.set_thinking_text(SharedString::new());
                     win.set_agent_busy(false);
+                    win.set_total_cost_usd(target_cost);
+                    win.set_total_output_tokens(target_out);
+                    win.set_total_input_tokens(target_in);
+                    win.set_context_pct(0);
                 }
 
                 if let Some(ref pq) = *pending_show.lock().unwrap() {
@@ -1635,9 +1670,7 @@ impl SvenApp {
         let pt = Arc::clone(&pending_toasts);
         let sb = Arc::clone(&streaming_buf);
         let tb = Arc::clone(&thinking_buf);
-        let tc = Arc::clone(&total_cost);
-        let tt_out = Arc::clone(&total_output_tokens);
-        let tt_in = Arc::clone(&total_input_tokens);
+        let session_usage_ev = Arc::clone(&session_usage);
         let queue_ev = Arc::clone(&queue_state);
         let tx_ev = agent_tx.clone();
         let weak2 = weak.clone();
@@ -1905,6 +1938,10 @@ impl SvenApp {
                         let model = cur_model_ev.lock().unwrap().clone();
                         let mode = format!("{:?}", *cur_mode_ev.lock().unwrap()).to_lowercase();
                         let sm = Arc::clone(&session_msgs_ev);
+                        let active_usage = {
+                            let active = active_sid_ev.lock().unwrap().clone();
+                            session_usage_ev.lock().unwrap().get(&active).cloned()
+                        };
                         let _ = slint::invoke_from_event_loop({
                             let w = weak2.clone();
                             let queue_empty = queue_len == 0;
@@ -1935,6 +1972,7 @@ impl SvenApp {
                                                 &title,
                                                 Some(&model),
                                                 Some(&mode),
+                                                active_usage.clone(),
                                             );
                                         }
                                     }
@@ -2004,10 +2042,11 @@ impl SvenApp {
                         output,
                         cache_read,
                         cache_write,
+                        cache_read_total: _,
+                        cache_write_total: _,
                         max_tokens,
                         max_output_tokens,
                         cost_usd,
-                        ..
                     } => {
                         let ctx_pct = if max_tokens > 0 {
                             let budget = max_tokens.saturating_sub(max_output_tokens);
@@ -2016,20 +2055,37 @@ impl SvenApp {
                         } else {
                             0
                         };
-                        if output > 0 {
-                            let mut t = tt_out.lock().unwrap();
-                            *t = t.saturating_add(output);
-                        }
-                        if input > 0 {
-                            let mut t = tt_in.lock().unwrap();
-                            *t = t.saturating_add(input);
-                        }
-                        if let Some(c) = cost_usd {
-                            *tc.lock().unwrap() += c;
-                        }
-                        let cost_f32 = *tc.lock().unwrap() as f32;
-                        let out_tokens = *tt_out.lock().unwrap() as i32;
-                        let in_tokens = *tt_in.lock().unwrap() as i32;
+                        // Accumulate into per-session usage map.
+                        let sid = streaming_sid_ev
+                            .lock()
+                            .unwrap()
+                            .clone()
+                            .unwrap_or_else(|| active_sid_ev.lock().unwrap().clone());
+                        let (cost_f32, out_tokens, in_tokens) = {
+                            let mut map = session_usage_ev.lock().unwrap();
+                            let u = map.entry(sid.clone()).or_default();
+                            if output > 0 {
+                                u.total_output_tokens =
+                                    u.total_output_tokens.saturating_add(output as u64);
+                            }
+                            if input > 0 {
+                                u.total_input_tokens =
+                                    u.total_input_tokens.saturating_add(input as u64);
+                            }
+                            u.total_cache_read_tokens =
+                                u.total_cache_read_tokens.saturating_add(cache_read as u64);
+                            u.total_cache_write_tokens = u
+                                .total_cache_write_tokens
+                                .saturating_add(cache_write as u64);
+                            if let Some(c) = cost_usd {
+                                u.total_cost_usd += c;
+                            }
+                            (
+                                u.total_cost_usd as f32,
+                                u.total_output_tokens as i32,
+                                u.total_input_tokens as i32,
+                            )
+                        };
                         let _ = slint::invoke_from_event_loop({
                             let w = weak2.clone();
                             move || {

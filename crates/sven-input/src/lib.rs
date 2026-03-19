@@ -13,7 +13,7 @@ pub use chat_document::{
     load_chat_from_with_metadata, load_chat_with_metadata, parse_chat_document, records_to_turns,
     save_chat, save_chat_atomic, save_chat_to, save_chat_to_atomic, serialize_chat_document,
     turns_to_messages, turns_to_records, yaml_to_json_str, ChatDocument, ChatEntry, ChatStatus,
-    FileMetadata, FileModifiedError, SessionId, TurnRecord,
+    ChatUsage, FileMetadata, FileModifiedError, SessionId, TurnRecord,
 };
 pub use conversation::{
     parse_conversation, parse_jsonl_conversation, parse_jsonl_full, serialize_conversation,

@@ -29,7 +29,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use sven_core::AgentEvent;
-use sven_input::{ChatDocument, ChatEntry, ChatStatus, SessionId};
+use sven_input::{ChatDocument, ChatEntry, ChatStatus, ChatUsage, SessionId};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -116,6 +116,17 @@ impl SessionEntry {
     /// Create a new `SessionEntry` from a `ChatDocument`, keeping the document's
     /// original `SessionId` so the file path derived from it stays consistent.
     pub fn from_document(doc: &ChatDocument) -> Self {
+        let (total_input_tokens, total_output_tokens, total_cost_usd) = doc
+            .usage
+            .as_ref()
+            .map(|u| {
+                (
+                    u.total_input_tokens,
+                    u.total_output_tokens,
+                    u.total_cost_usd,
+                )
+            })
+            .unwrap_or((0, 0, 0.0));
         Self {
             id: doc.id.clone(),
             parent_id: None,
@@ -138,10 +149,10 @@ impl SessionEntry {
             busy: false,
             current_tool: None,
             context_pct: 0,
-            total_context_tokens: 0,
+            total_context_tokens: total_input_tokens as u32,
             total_context_pct: 0,
-            total_output_tokens: 0,
-            total_cost_usd: 0.0,
+            total_output_tokens: total_output_tokens as u32,
+            total_cost_usd,
             cache_hit_pct: 0,
         }
     }
@@ -150,6 +161,17 @@ impl SessionEntry {
     /// keeping the supplied `id` (so the session manager's active_id reference
     /// stays valid).  Used when continuing a loaded chat in the TUI.
     pub fn from_document_into(doc: &ChatDocument, id: SessionId) -> Self {
+        let (total_input_tokens, total_output_tokens, total_cost_usd) = doc
+            .usage
+            .as_ref()
+            .map(|u| {
+                (
+                    u.total_input_tokens,
+                    u.total_output_tokens,
+                    u.total_cost_usd,
+                )
+            })
+            .unwrap_or((0, 0, 0.0));
         Self {
             id,
             parent_id: None,
@@ -172,10 +194,10 @@ impl SessionEntry {
             busy: false,
             current_tool: None,
             context_pct: 0,
-            total_context_tokens: 0,
+            total_context_tokens: total_input_tokens as u32,
             total_context_pct: 0,
-            total_output_tokens: 0,
-            total_cost_usd: 0.0,
+            total_output_tokens: total_output_tokens as u32,
+            total_cost_usd,
             cache_hit_pct: 0,
         }
     }
@@ -296,6 +318,20 @@ impl SessionEntry {
 
         let turns = records_to_turns(&records);
 
+        let usage = {
+            let u = ChatUsage {
+                total_input_tokens: self.total_context_tokens as u64,
+                total_output_tokens: self.total_output_tokens as u64,
+                total_cache_read_tokens: 0,
+                total_cache_write_tokens: 0,
+                total_cost_usd: self.total_cost_usd,
+            };
+            if u.is_empty() {
+                None
+            } else {
+                Some(u)
+            }
+        };
         ChatDocument {
             id: self.id.clone(),
             title: self.title.clone(),
@@ -305,6 +341,7 @@ impl SessionEntry {
             created_at: self.created_at,
             updated_at: Utc::now(),
             parent_id: self.parent_id.clone(),
+            usage,
             turns,
         }
     }

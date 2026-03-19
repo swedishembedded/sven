@@ -9,7 +9,7 @@ use sven_frontend::{
 };
 use sven_input::{
     chat_path, ensure_chat_dir, json_str_to_yaml, yaml_to_json_str, ChatDocument, ChatStatus,
-    SessionId, TurnRecord,
+    ChatUsage, SessionId, TurnRecord,
 };
 
 use crate::{
@@ -110,11 +110,13 @@ pub fn format_fields_json(fields: &[(String, String)]) -> String {
 
 /// Convert markdown text into a sequence of `PlainChatMessage`s (one per block).
 /// Code blocks are syntax-highlighted; assistant paragraphs get inline run parsing.
+/// When `role == "user"`, the first block uses message_type "user" for UserBubble rendering.
 pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainChatMessage> {
     let blocks = parse_markdown_blocks(text);
     if blocks.is_empty() {
+        let msg_type = if role == "user" { "user" } else { "assistant" };
         return vec![PlainChatMessage {
-            message_type: "assistant",
+            message_type: msg_type,
             content: text.to_string(),
             role,
             is_first_in_group: true,
@@ -130,8 +132,13 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
         let msg = match block {
             MarkdownBlock::Paragraph(text) => {
                 let runs = parse_inline_runs(&text);
+                let msg_type = if role == "user" && is_first {
+                    "user"
+                } else {
+                    "assistant"
+                };
                 PlainChatMessage {
-                    message_type: "assistant",
+                    message_type: msg_type,
                     content: text,
                     role,
                     is_first_in_group: is_first,
@@ -240,7 +247,7 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
     for turn in &doc.turns {
         match turn {
             TurnRecord::User { content } => {
-                out.push(PlainChatMessage::user(content));
+                out.extend(markdown_to_plain_messages(content, "user"));
             }
             TurnRecord::Assistant { content } => {
                 out.extend(markdown_to_plain_messages(content, "assistant"));
@@ -305,24 +312,94 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
     out
 }
 
+/// Convert user blocks back to markdown for saving.
+fn user_blocks_to_markdown(blocks: &[PlainChatMessage]) -> String {
+    let mut out = String::new();
+    for (i, p) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n\n");
+        }
+        match p.message_type {
+            "user" | "assistant" => out.push_str(&p.content),
+            "code-block" => {
+                if !p.language.is_empty() {
+                    out.push_str("```");
+                    out.push_str(&p.language);
+                    out.push('\n');
+                } else {
+                    out.push_str("```\n");
+                }
+                out.push_str(&p.content);
+                out.push_str("\n```");
+            }
+            "heading" => {
+                let n = p.heading_level.max(1).min(6) as usize;
+                out.push_str(&"#".repeat(n));
+                out.push(' ');
+                out.push_str(&p.content);
+            }
+            "list-item" => {
+                out.push_str(&"  ".repeat(p.heading_level.max(0) as usize));
+                out.push_str("- ");
+                out.push_str(&p.content);
+            }
+            "block-quote" => {
+                out.push_str("> ");
+                out.push_str(&p.content.replace('\n', "\n> "));
+            }
+            "separator" => out.push_str("---"),
+            "inline-code" => {
+                out.push('`');
+                out.push_str(&p.content);
+                out.push('`');
+            }
+            "table-row" => {
+                out.push_str(&p.cells.join(" | "));
+            }
+            _ => out.push_str(&p.content),
+        }
+    }
+    out
+}
+
 /// Convert `PlainChatMessage` slice to `TurnRecord`s for saving to a `ChatDocument`.
 pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
     let mut turns = Vec::new();
     let mut assistant_buf = String::new();
+    let mut user_blocks: Vec<PlainChatMessage> = Vec::new();
     let mut tool_call_counter = 0u32;
     let mut last_tool_call_id: Option<String> = None;
 
+    let flush_user = |turns: &mut Vec<TurnRecord>, blocks: &mut Vec<PlainChatMessage>| {
+        if !blocks.is_empty() {
+            turns.push(TurnRecord::User {
+                content: user_blocks_to_markdown(blocks),
+            });
+            blocks.clear();
+        }
+    };
+
     for p in plain {
+        let is_user_block = p.role == "user";
+
         match p.message_type {
-            "user" => {
+            "user" if is_user_block => {
                 if !assistant_buf.is_empty() {
                     turns.push(TurnRecord::Assistant {
                         content: std::mem::take(&mut assistant_buf),
                     });
                 }
-                turns.push(TurnRecord::User {
-                    content: p.content.clone(),
-                });
+                flush_user(&mut turns, &mut user_blocks);
+                user_blocks.push(p.clone());
+            }
+            "code-block" | "heading" | "list-item" | "block-quote" | "separator"
+            | "inline-code" | "table-row" if is_user_block => {
+                if user_blocks.is_empty() {
+                    // First user block wasn't "user" type (e.g. code-only)
+                    user_blocks.push(p.clone());
+                } else {
+                    user_blocks.push(p.clone());
+                }
             }
             "assistant" | "code-block" | "heading" | "list-item" | "block-quote" | "separator"
             | "inline-code" | "table-row" => {
@@ -408,6 +485,7 @@ pub fn save_session_to_disk(
     title: &str,
     model: Option<&str>,
     mode: Option<&str>,
+    usage: Option<ChatUsage>,
 ) {
     let turns = plain_messages_to_turns(plain);
     if turns.is_empty() {
@@ -419,6 +497,7 @@ pub fn save_session_to_disk(
         tracing::warn!("cannot create chat dir: {e}");
         return;
     }
+    let persisted_usage = usage.filter(|u| !u.is_empty());
     let mut doc = ChatDocument {
         id: sid,
         title: title.to_string(),
@@ -428,6 +507,7 @@ pub fn save_session_to_disk(
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         parent_id: None,
+        usage: persisted_usage,
         turns,
     };
     if let Err(e) = sven_input::save_chat_to(&path, &mut doc) {
