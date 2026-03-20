@@ -30,10 +30,12 @@ pub enum MarkdownBlock {
     InlineCode(String),
 
     /// An ordered or unordered list item with nesting depth (0-based).
+    /// `task_checked`: Some(true/false) for task lists, None for regular bullets.
     ListItem {
         depth: u8,
         text: String,
         ordered: bool,
+        task_checked: Option<bool>,
     },
 
     /// A thematic break / horizontal rule.
@@ -69,6 +71,7 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
     let mut list_depth: i32 = -1;
     let mut list_ordered_stack: Vec<bool> = Vec::new();
     let mut in_list_item: bool = false;
+    let mut list_item_task_checked: Option<bool> = None;
     let mut in_blockquote: bool = false;
     let mut blockquote_buf: String = String::new();
     let mut in_table: bool = false;
@@ -126,7 +129,11 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
             }
             Event::Start(Tag::Item) => {
                 in_list_item = true;
+                list_item_task_checked = None;
                 current_text.clear();
+            }
+            Event::TaskListMarker(checked) => {
+                list_item_task_checked = Some(checked);
             }
             Event::End(TagEnd::Item) => {
                 in_list_item = false;
@@ -137,6 +144,7 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                         depth: list_depth.max(0) as u8,
                         text,
                         ordered,
+                        task_checked: list_item_task_checked,
                     });
                 }
             }

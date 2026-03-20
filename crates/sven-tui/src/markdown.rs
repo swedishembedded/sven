@@ -1,9 +1,10 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use sven_frontend::markdown::{parse_markdown_blocks, MarkdownBlock};
 
 use crate::ui::theme::{md_blockquote, md_bullet, md_rule_char};
 
@@ -14,14 +15,327 @@ pub type StyledLines = Vec<Line<'static>>;
 
 /// Convert a markdown string into a list of styled [`Line`]s for Ratatui.
 ///
+/// Uses the same block parser as the GUI (`parse_markdown_blocks`) so rendering
+/// is consistent across frontends. Each block type (paragraph, heading, list
+/// item, block quote, etc.) is rendered correctly without cross-contamination.
+///
 /// `wrap_width` — wrap long text at this column (0 → 80).
 /// `ascii`      — use plain-ASCII box chars instead of Unicode.
 pub fn render_markdown(md: &str, wrap_width: u16, ascii: bool) -> StyledLines {
-    let r = MarkdownRenderer::new(wrap_width, ascii);
-    r.render(md)
+    let width = if wrap_width == 0 {
+        80
+    } else {
+        wrap_width as usize
+    };
+    let blocks = parse_markdown_blocks(md);
+    render_blocks_to_lines(&blocks, width, ascii)
 }
 
-// ── Renderer struct ───────────────────────────────────────────────────────────
+// ── Blocks-based renderer (matches GUI parsing) ───────────────────────────────
+
+/// Render parsed markdown blocks to styled lines. Uses the same block structure
+/// as the GUI so paragraphs, block quotes, list items, etc. are never confused.
+fn render_blocks_to_lines(blocks: &[MarkdownBlock], width: usize, ascii: bool) -> StyledLines {
+    let mut lines = Vec::new();
+    let mut ordered_counter: u64 = 1;
+    let mut i = 0;
+
+    while i < blocks.len() {
+        // Collect consecutive TableRow blocks and render as a single table.
+        if let MarkdownBlock::TableRow(_) = &blocks[i] {
+            ordered_counter = 1;
+            let mut table_rows: Vec<(Vec<String>, bool)> = Vec::new();
+            while i < blocks.len() {
+                if let MarkdownBlock::TableRow(cells) = &blocks[i] {
+                    let cells = cells.clone();
+                    let is_separator = cells.iter().all(|c| c.trim().chars().all(|ch| ch == '-'));
+                    if !is_separator {
+                        let is_header = table_rows.is_empty();
+                        table_rows.push((cells, is_header));
+                    }
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if !table_rows.is_empty() {
+                let table_lines = render_table(&table_rows, &[], width, ascii);
+                lines.extend(table_lines);
+                lines.push(Line::default());
+            }
+            continue;
+        }
+
+        let block = &blocks[i];
+        i += 1;
+
+        let block_lines = match block {
+            MarkdownBlock::Paragraph(text) => {
+                let spans = parse_inline_to_spans(text);
+                let mut block_lines = word_wrap_spans_to_lines(&spans, width, Style::default());
+                block_lines.push(Line::default());
+                block_lines
+            }
+            MarkdownBlock::Heading { level, text } => {
+                let spans = parse_inline_to_spans(text);
+                let style = heading_style_from_level(*level);
+                let mut block_lines = word_wrap_spans_to_lines(&spans, width, style);
+                block_lines.push(Line::default());
+                block_lines
+            }
+            MarkdownBlock::CodeBlock { language: _, code } => {
+                let mut block_lines = plain_code_lines(code, width);
+                block_lines.push(Line::default());
+                block_lines
+            }
+            MarkdownBlock::ListItem {
+                depth,
+                text,
+                ordered,
+                task_checked,
+            } => {
+                let (prefix, display_text) = if *ordered {
+                    let num = ordered_counter;
+                    ordered_counter += 1;
+                    let indent = "  ".repeat(*depth as usize);
+                    (format!("{indent}  {num}. "), text.as_str())
+                } else {
+                    ordered_counter = 1;
+                    let indent = "  ".repeat(*depth as usize);
+                    let (bullet, display_text) = if let Some(checked) = task_checked {
+                        (
+                            if *checked {
+                                if ascii {
+                                    "  [x] "
+                                } else {
+                                    "  ☑ "
+                                }
+                            } else {
+                                if ascii {
+                                    "  [ ] "
+                                } else {
+                                    "  ☐ "
+                                }
+                            },
+                            text.as_str(),
+                        )
+                    } else {
+                        (md_bullet(ascii), text.as_str())
+                    };
+                    (format!("{indent}{bullet}"), display_text)
+                };
+                let spans = parse_inline_to_spans(display_text);
+                word_wrap_spans_to_lines_with_prefix(
+                    &spans,
+                    width,
+                    &prefix,
+                    Style::default().fg(Color::LightBlue),
+                    Style::default(),
+                )
+            }
+            MarkdownBlock::BlockQuote(text) => {
+                ordered_counter = 1;
+                let prefix = md_blockquote(ascii).to_string();
+                let spans = parse_inline_to_spans(text);
+                let mut block_lines = word_wrap_spans_to_lines_with_prefix(
+                    &spans,
+                    width,
+                    &prefix,
+                    Style::default().fg(Color::Green),
+                    Style::default().fg(Color::Green),
+                );
+                block_lines.push(Line::default());
+                block_lines
+            }
+            MarkdownBlock::Separator => {
+                ordered_counter = 1;
+                let rc = md_rule_char(ascii);
+                let rc_w = unicode_width::UnicodeWidthChar::width(rc)
+                    .unwrap_or(1)
+                    .max(1);
+                let count = width / rc_w;
+                vec![
+                    Line::from(Span::styled(
+                        rc.to_string().repeat(count),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::default(),
+                ]
+            }
+            MarkdownBlock::InlineCode(text) => {
+                ordered_counter = 1;
+                vec![Line::from(Span::styled(
+                    format!("`{text}`"),
+                    Style::default().fg(Color::Yellow),
+                ))]
+            }
+            MarkdownBlock::TableRow(_) => unreachable!("TableRow handled above"),
+        };
+        lines.extend(block_lines);
+    }
+
+    lines
+}
+
+/// Parse inline markdown (bold, italic, code, links) into styled spans.
+fn parse_inline_to_spans(text: &str) -> Vec<(String, Style)> {
+    let wrapped = format!("{}\n", text);
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(&wrapped, opts);
+
+    let mut spans: Vec<(String, Style)> = Vec::new();
+    let mut style_stack = vec![Style::default()];
+
+    for event in parser {
+        match event {
+            Event::Start(Tag::Strong) => {
+                let base = *style_stack.last().unwrap_or(&Style::default());
+                style_stack.push(base.add_modifier(Modifier::BOLD));
+            }
+            Event::End(TagEnd::Strong) => {
+                style_stack.pop();
+            }
+            Event::Start(Tag::Emphasis) => {
+                let base = *style_stack.last().unwrap_or(&Style::default());
+                style_stack.push(base.add_modifier(Modifier::ITALIC));
+            }
+            Event::End(TagEnd::Emphasis) => {
+                style_stack.pop();
+            }
+            Event::Start(Tag::Strikethrough) => {
+                let base = *style_stack.last().unwrap_or(&Style::default());
+                style_stack.push(base.add_modifier(Modifier::CROSSED_OUT));
+            }
+            Event::End(TagEnd::Strikethrough) => {
+                style_stack.pop();
+            }
+            Event::Start(Tag::Link { dest_url: _, .. }) => {
+                let base = *style_stack.last().unwrap_or(&Style::default());
+                style_stack.push(base.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED));
+            }
+            Event::End(TagEnd::Link) => {
+                style_stack.pop();
+            }
+            Event::Text(t) => {
+                let s = t.to_string();
+                if !s.is_empty() {
+                    let style = *style_stack.last().unwrap_or(&Style::default());
+                    spans.push((s, style));
+                }
+            }
+            Event::Code(t) => {
+                let style = Style::default().fg(Color::Yellow);
+                spans.push((format!("`{t}`"), style));
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                let style = *style_stack.last().unwrap_or(&Style::default());
+                spans.push((" ".to_string(), style));
+            }
+            _ => {}
+        }
+    }
+
+    if spans.is_empty() && !text.is_empty() {
+        vec![(text.to_string(), Style::default())]
+    } else {
+        spans
+    }
+}
+
+/// Word-wrap spans into lines of at most `width` columns.
+fn word_wrap_spans_to_lines(
+    spans: &[(String, Style)],
+    width: usize,
+    base_style: Style,
+) -> Vec<Line<'static>> {
+    word_wrap_spans_to_lines_with_prefix(spans, width, "", Style::default(), base_style)
+}
+
+/// Word-wrap spans with an optional prefix (e.g. bullet or blockquote marker).
+fn word_wrap_spans_to_lines_with_prefix(
+    spans: &[(String, Style)],
+    width: usize,
+    prefix: &str,
+    prefix_style: Style,
+    base_style: Style,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let prefix_w = unicode_width::UnicodeWidthStr::width(prefix);
+    let content_width = width.saturating_sub(prefix_w);
+
+    let mut current_line: Vec<Span<'static>> = Vec::new();
+    let mut col = 0usize;
+    let mut is_first_line = true;
+
+    for (text, style) in spans {
+        let effective_style = style.patch(base_style);
+        for word in text.split_inclusive(' ') {
+            let word_w = unicode_width::UnicodeWidthStr::width(word);
+            if col + word_w > content_width && !current_line.is_empty() {
+                let mut line_spans = Vec::new();
+                if is_first_line && !prefix.is_empty() {
+                    line_spans.push(Span::styled(prefix.to_string(), prefix_style));
+                    is_first_line = false;
+                } else if !prefix.is_empty() {
+                    line_spans.push(Span::raw(" ".repeat(prefix_w)));
+                }
+                line_spans.extend(std::mem::take(&mut current_line));
+                lines.push(Line::from(line_spans));
+                col = 0;
+            }
+            current_line.push(Span::styled(word.to_string(), effective_style));
+            col += word_w;
+        }
+    }
+
+    if !current_line.is_empty() {
+        let mut line_spans = Vec::new();
+        if is_first_line && !prefix.is_empty() {
+            line_spans.push(Span::styled(prefix.to_string(), prefix_style));
+        } else if !prefix.is_empty() {
+            line_spans.push(Span::raw(" ".repeat(prefix_w)));
+        }
+        line_spans.extend(current_line);
+        lines.push(Line::from(line_spans));
+    }
+
+    if lines.is_empty() && !spans.is_empty() {
+        let mut line_spans = Vec::new();
+        if !prefix.is_empty() {
+            line_spans.push(Span::styled(prefix.to_string(), prefix_style));
+        }
+        for (text, style) in spans {
+            line_spans.push(Span::styled(text.clone(), style.patch(base_style)));
+        }
+        lines.push(Line::from(line_spans));
+    }
+
+    lines
+}
+
+fn heading_style_from_level(level: u8) -> Style {
+    match level {
+        1 => Style::default()
+            .fg(Color::LightBlue)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        2 => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        3 => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        4 => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::ITALIC),
+        _ => Style::default().add_modifier(Modifier::BOLD),
+    }
+}
+
+// ── Legacy event-stream renderer (kept for table/code-block helpers) ──────────
+// The blocks-based path above is the primary renderer. The struct below is
+// retained only for its table rendering and tests that assert on event-stream
+// behavior. Most rendering now goes through render_blocks_to_lines.
 
 struct MarkdownRenderer {
     width: usize,
@@ -809,5 +1123,48 @@ mod tests {
     fn render_table_fn_empty_rows_returns_empty() {
         let result = render_table(&[], &[], 80, false);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn block_quote_renders_without_list_bullet() {
+        let md = "> This is a block quote\n\nNormal paragraph";
+        let lines = render_markdown(md, 80, false);
+        let text = lines_to_text(&lines);
+        assert!(
+            text.contains("This is a block quote"),
+            "block quote content present: {text}"
+        );
+        assert!(
+            text.contains("Normal paragraph"),
+            "paragraph content present: {text}"
+        );
+        // Block quote must NOT be prefixed with list bullet (• or -)
+        let quote_line = lines
+            .iter()
+            .find(|l| {
+                let s: String = l.spans.iter().map(|x| x.content.as_ref()).collect();
+                s.contains("This is a block quote")
+            })
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        assert!(
+            !quote_line.starts_with("  • ") && !quote_line.starts_with("  - "),
+            "block quote must not have list bullet; got: {quote_line:?}"
+        );
+    }
+
+    #[test]
+    fn paragraph_and_list_rendered_distinctly() {
+        let md = "A paragraph.\n\n- List item 1\n- List item 2";
+        let lines = render_markdown(md, 80, false);
+        let text = lines_to_text(&lines);
+        assert!(text.contains("A paragraph"), "paragraph present: {text}");
+        assert!(text.contains("List item 1"), "list item 1 present: {text}");
+        assert!(text.contains("List item 2"), "list item 2 present: {text}");
     }
 }
