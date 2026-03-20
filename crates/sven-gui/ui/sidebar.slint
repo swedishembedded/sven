@@ -5,8 +5,7 @@
 // Session list sidebar with search, delete, rename, and cost display.
 
 import { Theme } from "theme.slint";
-import { Spinner } from "std-widgets.slint";
-import { IconButton, SearchInput } from "widgets.slint";
+import { IconButton, SearchInput, RotatingSpinner } from "widgets.slint";
 
 export struct SessionItem {
     id: string,
@@ -61,19 +60,14 @@ component SessionRow inherits Rectangle {
             // Left: status + title
             HorizontalLayout {
                 spacing: Theme.space-xs;
-                alignment: start;
+                alignment: center;
                 horizontal-stretch: 1;
                 min-width: 0;
 
                 // Status indicator
-                if item.busy: Rectangle {
+                if item.busy: RotatingSpinner {
                     width: 14px;
                     height: 14px;
-                    Spinner {
-                        indeterminate: true;
-                        width: parent.width;
-                        height: parent.height;
-                    }
                 }
                 if !item.busy: Text {
                     text: item.status == "completed" ? "✓" :

@@ -6,7 +6,6 @@
 // All building-block components used across multiple panels.
 
 import { Theme } from "theme.slint";
-import { Spinner } from "std-widgets.slint";
 
 // ── ModalBackdrop ─────────────────────────────────────────────────────────────
 // Dimmed full-screen backdrop. Place behind modal panels.
@@ -533,6 +532,51 @@ export component CollapsibleSection inherits Rectangle {
     }
 }
 
+// ── RotatingSpinner ───────────────────────────────────────────────────────────
+// Activity indicator: fixed arc length, continuous clockwise rotation. Slint's
+// stock Spinner in indeterminate mode varies arc length with abs(sin(…)), which
+// reads as a knob rocking back and forth instead of a loader.
+
+export component RotatingSpinner inherits Rectangle {
+    in property <brush> stroke: Theme.accent;
+    in property <length> stroke-width: 2.5px;
+
+    path := Path {
+        private property <float> radius: min(self.viewbox-width, self.viewbox-height) / 2;
+        private property <float> start-x: self.viewbox-width / 2;
+        private property <float> start-y: self.viewbox-height / 2;
+        private property <float> start: mod(animation-tick(), 900ms) / 900ms;
+        private property <float> arc: 0.72;
+
+        viewbox-width: 100;
+        viewbox-height: 100;
+        width: 100%;
+        height: 100%;
+        stroke-width: root.stroke-width;
+        stroke: root.stroke;
+        fill: transparent;
+
+        MoveTo {
+            x: start-x - radius * sin(-(path.start - 0.001) * 360deg);
+            y: start-y - radius * cos(-(path.start - 0.001) * 360deg);
+        }
+
+        LineTo {
+            x: start-x - radius * sin(-path.start * 360deg);
+            y: start-y - radius * cos(-path.start * 360deg);
+        }
+
+        ArcTo {
+            radius-x: path.radius;
+            radius-y: path.radius;
+            x: start-x - path.radius * sin(-(path.start + path.arc) * 360deg);
+            y: start-y - path.radius * cos(-(path.start + path.arc) * 360deg);
+            sweep: path.arc > 0;
+            large-arc: path.arc > 0.5;
+        }
+    }
+}
+
 // ── SpinnerRow ────────────────────────────────────────────────────────────────
 // Centered spinner with optional label for loading states.
 
@@ -542,8 +586,7 @@ export component SpinnerRow inherits Rectangle {
     HorizontalLayout {
         alignment: center;
         spacing: Theme.space-sm;
-        Spinner {
-            indeterminate: true;
+        RotatingSpinner {
             width: 16px;
             height: 16px;
         }
