@@ -113,7 +113,7 @@ component RunLine inherits Rectangle {
 
     clip: true;
     width: line-width;
-    height: Math.max(run-font-size + 4px, 20px);
+    height: Math.max(run-font-size + 6px, 21px);
 
     HorizontalLayout {
         spacing: 0;
@@ -216,6 +216,7 @@ component UserBubble inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
+            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -261,10 +262,13 @@ component RichParagraph inherits Rectangle {
         padding-right: Theme.space-md;
         padding-top: show-header ? Theme.space-md : 0;
         padding-bottom: Theme.space-xs;
+        spacing: Theme.space-xs;
 
         if show-header: HorizontalLayout {
+            spacing: Theme.space-xs;
             alignment: space-between;
             HorizontalLayout {
+                spacing: Theme.space-xs;
                 alignment: start;
                 Text {
                     text: "⬡ Sven";
@@ -282,6 +286,7 @@ component RichParagraph inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
+            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -502,11 +507,12 @@ component HeadingBlock {
     VerticalLayout {
         padding-left: Theme.space-md;
         padding-right: Theme.space-md;
-        padding-top: Theme.space-sm;
-        padding-bottom: Theme.space-xs;
+        padding-top: heading-level <= 2 ? Theme.space-md : Theme.space-sm;
+        padding-bottom: heading-level <= 2 ? Theme.space-sm : Theme.space-xs;
 
-        // Rich inline formatting when available
+        // Rich inline formatting when available (headings need more line spacing)
         if rich-lines.length > 0: VerticalLayout {
+            spacing: heading-level <= 3 ? Theme.space-sm : Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -569,6 +575,7 @@ component ListItemBlock {
 
         // Rich pre-wrapped lines
         if rich-lines.length > 0: VerticalLayout {
+            spacing: Theme.space-xs;
             alignment: start;
             width: text-width;
 
@@ -623,6 +630,7 @@ component TodoItemBlock {
 
         // Pre-wrapped lines (avoids Slint Text word-wrap line overlap)
         if rich-lines.length > 0: VerticalLayout {
+            spacing: Theme.space-xs;
             alignment: start;
             width: text-width;
 
@@ -675,6 +683,7 @@ component BlockQuoteBlock {
 
             // Rich lines when available
             if rich-lines.length > 0: VerticalLayout {
+                spacing: Theme.space-xs;
                 alignment: start;
                 width: inner-width;
 
@@ -785,8 +794,15 @@ component MarkdownContent {
         alignment: start;
         width: available-width;
 
-        for block[i] in blocks: Rectangle {
+        for block[i] in blocks: VerticalLayout {
             width: available-width;
+            alignment: start;
+            // Element-specific spacing: headings and code need more room, list items tighter
+            padding-bottom: block.kind == "heading" ? Theme.space-md :
+                            block.kind == "code-block" ? Theme.space-md :
+                            block.kind == "separator" ? Theme.space-sm :
+                            block.kind == "list-item" || block.kind == "todo-item" ? Theme.space-xs :
+                            Theme.space-sm;
 
             // paragraph
             if block.kind == "paragraph": RichParagraph {
