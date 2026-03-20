@@ -7,7 +7,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use sven_frontend::ChatSegment;
 use sven_model::{MessageContent, Role};
 
-use crate::{ChatMessage, CodeLine, RichLine, SessionItem, TextRun, ToastItem};
+use crate::{ChatMessage, CodeLine, MdBlock, RichLine, SessionItem, TextRun, ToastItem};
 
 /// Build a default (all-empty) ChatMessage value.
 pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> ChatMessage {
@@ -30,10 +30,13 @@ pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> Ch
         thinking_preview: SharedString::new(),
         language: SharedString::new(),
         heading_level: 0,
+        is_ordered_list: false,
         code_lines: ModelRc::new(VecModel::<CodeLine>::default()),
         text_runs: ModelRc::new(VecModel::<TextRun>::default()),
         rich_lines: ModelRc::new(VecModel::<RichLine>::default()),
         cells: ModelRc::new(VecModel::<SharedString>::default()),
+        sub_blocks: ModelRc::new(VecModel::<MdBlock>::default()),
+        tool_result_blocks: ModelRc::new(VecModel::<MdBlock>::default()),
     }
 }
 

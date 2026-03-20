@@ -31,15 +31,16 @@ use tokio::sync::{mpsc, Mutex as TokioMutex};
 use crate::{
     clipboard::copy_to_clipboard,
     inspector::{items_from_list, InspectorKind},
-    plain_msg::{slint_msg_to_plain, PlainChatMessage, PlainToast},
+    plain_msg::{slint_msg_to_plain, PlainChatMessage, PlainMdBlock, PlainToast},
     queue_ops::sync_queue_model,
     search::new_shared_search,
     sessions::{
         chat_document_to_plain_messages, delete_session_from_disk, format_fields_json,
-        markdown_to_plain_messages, save_session_to_disk, strip_inline_markdown,
+        markdown_to_md_blocks, markdown_to_plain_messages, save_session_to_disk,
+        strip_inline_markdown,
     },
-    ChatMessage, CompletionEntry, MainWindow, PickerItem, QuestionItem, QueueItem, SessionItem,
-    ToastItem,
+    ChatMessage, CompletionEntry, MainWindow, MdBlock, PickerItem, QuestionItem, QueueItem,
+    SessionItem, ToastItem,
 };
 
 // ── Thread-local sessions model (main thread only) ─────────────────────────────
@@ -1767,6 +1768,7 @@ impl SvenApp {
                             .find(|l| !l.trim().is_empty())
                             .unwrap_or("")
                             .to_string();
+                        let sub_blocks = markdown_to_md_blocks(&content);
                         pm.lock().unwrap().push_back(PlainChatMessage {
                             message_type: "thinking",
                             content: stripped,
@@ -1774,6 +1776,7 @@ impl SvenApp {
                             role: "thinking",
                             is_first_in_group: false,
                             is_expanded: false,
+                            sub_blocks,
                             ..Default::default()
                         });
                         let sid = streaming_sid_ev.lock().unwrap().clone();
@@ -2363,8 +2366,24 @@ fn clear_search_highlights(model: &Rc<VecModel<ChatMessage>>) {
     }
 }
 
+/// Parse a tool result string into markdown blocks, falling back to a single
+/// plain paragraph when the content doesn't parse as structured markdown.
+fn build_tool_result_blocks(result: &str) -> Vec<PlainMdBlock> {
+    let blocks = markdown_to_md_blocks(result);
+    if blocks.is_empty() {
+        vec![PlainMdBlock {
+            kind: "paragraph",
+            content: result.to_string(),
+            ..Default::default()
+        }]
+    } else {
+        blocks
+    }
+}
+
 /// Attach a tool result to the last tool-call message in the Slint window model.
 fn attach_tool_result_in_window(win: &MainWindow, result: &str, is_error: bool) {
+    let result_blocks = build_tool_result_blocks(result);
     let msgs_rc = win.get_messages();
     if let Some(vec_model) = msgs_rc.as_any().downcast_ref::<VecModel<ChatMessage>>() {
         let n = vec_model.row_count();
@@ -2373,6 +2392,12 @@ fn attach_tool_result_in_window(win: &MainWindow, result: &str, is_error: bool) 
                 if row.message_type == "tool-call" {
                     row.tool_result_content = SharedString::from(result);
                     row.tool_result_is_error = is_error;
+                    row.tool_result_blocks = ModelRc::new(VecModel::from(
+                        result_blocks
+                            .iter()
+                            .map(|b| b.to_slint())
+                            .collect::<Vec<MdBlock>>(),
+                    ));
                     vec_model.set_row_data(i, row);
                     break;
                 }
@@ -2390,6 +2415,7 @@ fn attach_tool_result_to_last_call(
     session_messages: &Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>>,
     weak: &slint::Weak<MainWindow>,
 ) {
+    let result_blocks = build_tool_result_blocks(result);
     // Update session store
     {
         let mut store = session_messages.lock().unwrap();
@@ -2398,6 +2424,7 @@ fn attach_tool_result_to_last_call(
                 if msg.message_type == "tool-call" {
                     msg.tool_result_content = result.to_string();
                     msg.tool_result_is_error = is_error;
+                    msg.tool_result_blocks = result_blocks.clone();
                     break;
                 }
             }

@@ -14,7 +14,7 @@ use sven_input::{
 
 use crate::{
     highlight::highlight_code,
-    plain_msg::{PlainChatMessage, PlainTextRun},
+    plain_msg::{PlainChatMessage, PlainMdBlock, PlainTextRun},
 };
 
 // ── Inline markdown parsing ───────────────────────────────────────────────────
@@ -233,6 +233,99 @@ pub fn format_fields_json(fields: &[(String, String)]) -> String {
         .join("\n")
 }
 
+/// Convert markdown text into a flat list of `PlainMdBlock`s suitable for use
+/// as sub-blocks inside `ThinkingBubble` or `ToolCallBubble`.
+///
+/// Applies the same pipeline as `markdown_to_plain_messages`: block parsing,
+/// inline run extraction, line wrapping, and syntax highlighting for code.
+pub fn markdown_to_md_blocks(text: &str) -> Vec<PlainMdBlock> {
+    let blocks = parse_markdown_blocks(text);
+    let mut result = Vec::with_capacity(blocks.len());
+
+    for block in blocks {
+        let mb = match block {
+            MarkdownBlock::Paragraph(text) => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs, 80);
+                PlainMdBlock {
+                    kind: "paragraph",
+                    content: text,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
+            MarkdownBlock::Heading { level, text } => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs, 80);
+                PlainMdBlock {
+                    kind: "heading",
+                    content: text,
+                    heading_level: level as i32,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
+            MarkdownBlock::CodeBlock { language, code } => {
+                let code_lines = highlight_code(&language, &code);
+                PlainMdBlock {
+                    kind: "code-block",
+                    content: code,
+                    language,
+                    code_lines,
+                    ..Default::default()
+                }
+            }
+            MarkdownBlock::ListItem {
+                depth,
+                text,
+                ordered,
+            } => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs, 72);
+                PlainMdBlock {
+                    kind: "list-item",
+                    content: text,
+                    heading_level: depth as i32,
+                    is_ordered: ordered,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
+            MarkdownBlock::BlockQuote(text) => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs, 76);
+                PlainMdBlock {
+                    kind: "block-quote",
+                    content: text,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
+            MarkdownBlock::Separator => PlainMdBlock {
+                kind: "separator",
+                ..Default::default()
+            },
+            MarkdownBlock::InlineCode(text) => PlainMdBlock {
+                kind: "inline-code",
+                content: text,
+                ..Default::default()
+            },
+            MarkdownBlock::TableRow(cells) => {
+                let content = cells.join(" │ ");
+                PlainMdBlock {
+                    kind: "table-row",
+                    content,
+                    cells,
+                    ..Default::default()
+                }
+            }
+        };
+        result.push(mb);
+    }
+
+    result
+}
+
 /// Convert markdown text into a sequence of `PlainChatMessage`s (one per block).
 /// Code blocks are syntax-highlighted; assistant paragraphs get inline run parsing.
 /// When `role == "user"`, the first block uses message_type "user" for UserBubble rendering.
@@ -273,14 +366,20 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                     ..Default::default()
                 }
             }
-            MarkdownBlock::Heading { level, text } => PlainChatMessage {
-                message_type: "heading",
-                content: text,
-                role,
-                is_first_in_group: is_first,
-                heading_level: level as i32,
-                ..Default::default()
-            },
+            MarkdownBlock::Heading { level, text } => {
+                let runs = parse_inline_runs(&text);
+                let rich_lines = split_runs_into_rich_lines(runs.clone(), 80);
+                PlainChatMessage {
+                    message_type: "heading",
+                    content: text,
+                    role,
+                    is_first_in_group: is_first,
+                    heading_level: level as i32,
+                    text_runs: runs,
+                    rich_lines,
+                    ..Default::default()
+                }
+            }
             MarkdownBlock::CodeBlock { language, code } => {
                 let code_lines = highlight_code(&language, &code);
                 PlainChatMessage {
@@ -293,7 +392,11 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                     ..Default::default()
                 }
             }
-            MarkdownBlock::ListItem { depth, text } => {
+            MarkdownBlock::ListItem {
+                depth,
+                text,
+                ordered,
+            } => {
                 let runs = parse_inline_runs(&text);
                 let rich_lines = split_runs_into_rich_lines(runs.clone(), 72);
                 PlainChatMessage {
@@ -302,6 +405,7 @@ pub fn markdown_to_plain_messages(text: &str, role: &'static str) -> Vec<PlainCh
                     role,
                     is_first_in_group: is_first,
                     heading_level: depth as i32,
+                    is_ordered_list: ordered,
                     text_runs: runs,
                     rich_lines,
                     ..Default::default()
@@ -413,7 +517,7 @@ fn strip_inline_code_backticks(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '`' {
             // Skip until next backtick or end
-            for n in chars.by_ref() {
+            while let Some(n) = chars.next() {
                 if n == '`' {
                     break;
                 }
@@ -440,11 +544,19 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                 out.extend(markdown_to_plain_messages(content, "assistant"));
             }
             TurnRecord::Thinking { content } => {
+                let sub_blocks = markdown_to_md_blocks(content);
+                let preview = content
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .to_string();
                 out.push(PlainChatMessage {
                     message_type: "thinking",
                     content: content.clone(),
+                    thinking_preview: preview,
                     role: "thinking",
                     is_first_in_group: false,
+                    sub_blocks,
                     ..Default::default()
                 });
             }
@@ -477,9 +589,11 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                 content,
             } => {
                 let preview: String = content.chars().take(500).collect();
+                let result_blocks = markdown_to_md_blocks(&preview);
                 // Attach result to the preceding tool-call message
                 if let Some(last) = out.iter_mut().rev().find(|m| m.message_type == "tool-call") {
                     last.tool_result_content = preview;
+                    last.tool_result_blocks = result_blocks;
                 }
             }
             TurnRecord::ContextCompacted {

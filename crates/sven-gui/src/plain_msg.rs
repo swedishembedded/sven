@@ -7,7 +7,7 @@
 use slint::{Color, Model, ModelRc, SharedString, VecModel};
 
 use crate::highlight::HighlightToken;
-use crate::{ChatMessage, CodeLine, CodeToken, RichLine, TextRun};
+use crate::{ChatMessage, CodeLine, CodeToken, MdBlock, RichLine, TextRun};
 
 // ── Text-run inline formatting ────────────────────────────────────────────────
 
@@ -42,6 +42,87 @@ impl PlainTextRun {
     }
 }
 
+// ── Plain markdown block (for sub-blocks inside thinking / tool results) ──────
+
+/// A single rendered markdown block, usable inside `ThinkingBubble` or
+/// `ToolCallBubble` without requiring a recursive `ChatMessage` type.
+#[derive(Clone, Default)]
+pub struct PlainMdBlock {
+    /// Block kind: "paragraph"|"code-block"|"heading"|"list-item"|"block-quote"|"separator"|"table-row"
+    pub kind: &'static str,
+    pub content: String,
+    pub language: String,
+    pub heading_level: i32,
+    pub is_ordered: bool,
+    pub code_lines: Vec<Vec<HighlightToken>>,
+    pub rich_lines: Vec<Vec<PlainTextRun>>,
+    pub cells: Vec<String>,
+}
+
+impl PlainMdBlock {
+    pub fn to_slint(&self) -> MdBlock {
+        let code_lines_model: ModelRc<CodeLine> = if self.code_lines.is_empty() {
+            ModelRc::new(VecModel::<CodeLine>::default())
+        } else {
+            let lines: Vec<CodeLine> = self
+                .code_lines
+                .iter()
+                .map(|line| {
+                    let tokens: Vec<CodeToken> = line
+                        .iter()
+                        .map(|(text, r, g, b)| CodeToken {
+                            text: SharedString::from(text.as_str()),
+                            color: Color::from_rgb_u8(*r, *g, *b),
+                        })
+                        .collect();
+                    CodeLine {
+                        tokens: ModelRc::new(VecModel::from(tokens)),
+                    }
+                })
+                .collect();
+            ModelRc::new(VecModel::from(lines))
+        };
+
+        let rich_lines_model: ModelRc<RichLine> = if self.rich_lines.is_empty() {
+            ModelRc::new(VecModel::<RichLine>::default())
+        } else {
+            let lines: Vec<RichLine> = self
+                .rich_lines
+                .iter()
+                .map(|line| {
+                    let runs: Vec<TextRun> = line.iter().map(|r| r.to_slint()).collect();
+                    RichLine {
+                        runs: ModelRc::new(VecModel::from(runs)),
+                    }
+                })
+                .collect();
+            ModelRc::new(VecModel::from(lines))
+        };
+
+        let cells_model: ModelRc<SharedString> = if self.cells.is_empty() {
+            ModelRc::new(VecModel::<SharedString>::default())
+        } else {
+            let cells: Vec<SharedString> = self
+                .cells
+                .iter()
+                .map(|c| SharedString::from(c.as_str()))
+                .collect();
+            ModelRc::new(VecModel::from(cells))
+        };
+
+        MdBlock {
+            kind: SharedString::from(self.kind),
+            content: SharedString::from(self.content.as_str()),
+            language: SharedString::from(self.language.as_str()),
+            heading_level: self.heading_level,
+            is_ordered: self.is_ordered,
+            code_lines: code_lines_model,
+            rich_lines: rich_lines_model,
+            cells: cells_model,
+        }
+    }
+}
+
 // ── Main plain message type ───────────────────────────────────────────────────
 
 /// Cross-thread message representation (no Slint / Rc types).
@@ -64,6 +145,8 @@ pub struct PlainChatMessage {
 
     pub language: String,
     pub heading_level: i32,
+    /// True when the list item belongs to an ordered (numbered) list.
+    pub is_ordered_list: bool,
 
     /// Syntax-highlighted lines for `code-block` type. Preserved across
     /// session switches so re-highlighting is not needed.
@@ -89,6 +172,13 @@ pub struct PlainChatMessage {
 
     /// First line of thinking content for the collapsed preview.
     pub thinking_preview: String,
+
+    /// Parsed markdown sub-blocks for thinking and tool-result content.
+    /// Populated after parsing so the Slint side can render them as markdown.
+    pub sub_blocks: Vec<PlainMdBlock>,
+
+    /// Parsed markdown blocks for the tool result content (used in ToolCallBubble).
+    pub tool_result_blocks: Vec<PlainMdBlock>,
 }
 
 impl PlainChatMessage {
@@ -201,10 +291,23 @@ impl PlainChatMessage {
             thinking_preview: SharedString::from(self.thinking_preview.as_str()),
             language: SharedString::from(self.language.as_str()),
             heading_level: self.heading_level,
+            is_ordered_list: self.is_ordered_list,
             code_lines: code_lines_model,
             text_runs: text_runs_model,
             rich_lines: rich_lines_model,
             cells: cells_model,
+            sub_blocks: ModelRc::new(VecModel::from(
+                self.sub_blocks
+                    .iter()
+                    .map(|b| b.to_slint())
+                    .collect::<Vec<_>>(),
+            )),
+            tool_result_blocks: ModelRc::new(VecModel::from(
+                self.tool_result_blocks
+                    .iter()
+                    .map(|b| b.to_slint())
+                    .collect::<Vec<_>>(),
+            )),
         }
     }
 }
@@ -279,6 +382,7 @@ pub fn slint_msg_to_plain(m: &ChatMessage) -> PlainChatMessage {
         thinking_preview: m.thinking_preview.to_string(),
         language: m.language.to_string(),
         heading_level: m.heading_level,
+        is_ordered_list: m.is_ordered_list,
         code_lines,
         cells,
         ..Default::default()

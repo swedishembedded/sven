@@ -30,7 +30,11 @@ pub enum MarkdownBlock {
     InlineCode(String),
 
     /// An ordered or unordered list item with nesting depth (0-based).
-    ListItem { depth: u8, text: String },
+    ListItem {
+        depth: u8,
+        text: String,
+        ordered: bool,
+    },
 
     /// A thematic break / horizontal rule.
     Separator,
@@ -63,6 +67,7 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
     let mut code_lang: String = String::new();
     let mut code_buf: String = String::new();
     let mut list_depth: i32 = -1;
+    let mut list_ordered_stack: Vec<bool> = Vec::new();
     let mut in_list_item: bool = false;
     let mut in_blockquote: bool = false;
     let mut blockquote_buf: String = String::new();
@@ -110,12 +115,14 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                     });
                 }
             }
-            Event::Start(Tag::List(_)) => {
+            Event::Start(Tag::List(start)) => {
                 flush_text(&mut current_text, &mut blocks);
                 list_depth += 1;
+                list_ordered_stack.push(start.is_some());
             }
             Event::End(TagEnd::List(_)) => {
                 list_depth -= 1;
+                list_ordered_stack.pop();
             }
             Event::Start(Tag::Item) => {
                 in_list_item = true;
@@ -125,9 +132,11 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 in_list_item = false;
                 let text = std::mem::take(&mut current_text).trim().to_string();
                 if !text.is_empty() {
+                    let ordered = list_ordered_stack.last().copied().unwrap_or(false);
                     blocks.push(MarkdownBlock::ListItem {
                         depth: list_depth.max(0) as u8,
                         text,
+                        ordered,
                     });
                 }
             }
