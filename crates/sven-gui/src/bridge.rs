@@ -36,7 +36,7 @@ use crate::{
     search::new_shared_search,
     sessions::{
         build_tool_result_blocks, chat_document_to_plain_messages, delete_session_from_disk,
-        format_fields_json, markdown_to_md_blocks, markdown_to_plain_messages,
+        format_fields_json, markdown_to_md_blocks_with_options, markdown_to_plain_messages,
         save_session_to_disk, strip_inline_markdown,
     },
     ChatMessage, CompletionEntry, MainWindow, MdBlock, PickerItem, QuestionItem, QueueItem,
@@ -1768,7 +1768,7 @@ impl SvenApp {
                             .find(|l| !l.trim().is_empty())
                             .unwrap_or("")
                             .to_string();
-                        let sub_blocks = markdown_to_md_blocks(&content);
+                        let sub_blocks = markdown_to_md_blocks_with_options(&content, true);
                         pm.lock().unwrap().push_back(PlainChatMessage {
                             message_type: "thinking",
                             content: stripped,

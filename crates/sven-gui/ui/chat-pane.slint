@@ -216,7 +216,7 @@ component UserBubble inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
-            spacing: 0;
+            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -286,7 +286,7 @@ component RichParagraph inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
-            spacing: 0;
+            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -512,7 +512,7 @@ component HeadingBlock {
 
         // Rich inline formatting when available
         if rich-lines.length > 0: VerticalLayout {
-            spacing: 0;
+            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -575,7 +575,7 @@ component ListItemBlock {
 
         // Rich pre-wrapped lines
         if rich-lines.length > 0: VerticalLayout {
-            spacing: 0;
+            spacing: Theme.space-xs;
             alignment: start;
             width: text-width;
 
@@ -668,7 +668,7 @@ component BlockQuoteBlock {
 
             // Rich lines when available
             if rich-lines.length > 0: VerticalLayout {
-                spacing: 0;
+                spacing: Theme.space-xs;
                 alignment: start;
                 width: inner-width;
 
@@ -776,7 +776,7 @@ component MarkdownContent {
     preferred-height: content-layout.preferred-height;
 
     content-layout := VerticalLayout {
-        spacing: Theme.space-xs;
+        spacing: Theme.space-sm;
         alignment: start;
         width: available-width;
 

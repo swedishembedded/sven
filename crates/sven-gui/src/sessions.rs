@@ -233,13 +233,53 @@ pub fn format_fields_json(fields: &[(String, String)]) -> String {
         .join("\n")
 }
 
+/// Normalize newlines so that each single `\n` becomes a paragraph break in markdown.
+/// In standard markdown, single newlines are soft breaks (spaces); double newlines
+/// create paragraphs. This preserves the intended line structure for thinking and
+/// tool result content.
+fn normalize_newlines_for_paragraphs(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() + text.matches('\n').count());
+    let mut prev_was_newline = false;
+    for c in text.chars() {
+        if c == '\n' {
+            result.push('\n');
+            if !prev_was_newline {
+                result.push('\n');
+            }
+            prev_was_newline = true;
+        } else {
+            result.push(c);
+            prev_was_newline = false;
+        }
+    }
+    result
+}
+
 /// Convert markdown text into a flat list of `PlainMdBlock`s suitable for use
 /// as sub-blocks inside `ThinkingBubble` or `ToolCallBubble`.
 ///
 /// Applies the same pipeline as `markdown_to_plain_messages`: block parsing,
 /// inline run extraction, line wrapping, and syntax highlighting for code.
+///
+/// When `preserve_newlines` is true (for thinking/tool-result content), single
+/// newlines are normalized to paragraph breaks so multi-line content renders
+/// with proper line spacing instead of collapsing into one line.
 pub fn markdown_to_md_blocks(text: &str) -> Vec<PlainMdBlock> {
-    let blocks = parse_markdown_blocks(text);
+    markdown_to_md_blocks_with_options(text, false)
+}
+
+/// Like `markdown_to_md_blocks` but with options. Use `preserve_newlines: true`
+/// for thinking and tool-result content to ensure proper line spacing.
+pub fn markdown_to_md_blocks_with_options(
+    text: &str,
+    preserve_newlines: bool,
+) -> Vec<PlainMdBlock> {
+    let text = if preserve_newlines {
+        normalize_newlines_for_paragraphs(text)
+    } else {
+        text.to_string()
+    };
+    let blocks = parse_markdown_blocks(&text);
     let mut result = Vec::with_capacity(blocks.len());
 
     for block in blocks {
@@ -370,7 +410,7 @@ pub fn build_tool_result_blocks(result: &str, tool_name: Option<&str>) -> Vec<Pl
             blocks
         }
     } else {
-        let blocks = markdown_to_md_blocks(result);
+        let blocks = markdown_to_md_blocks_with_options(result, true);
         if blocks.is_empty() {
             vec![PlainMdBlock {
                 kind: "paragraph",
@@ -602,7 +642,7 @@ pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessa
                 out.extend(markdown_to_plain_messages(content, "assistant"));
             }
             TurnRecord::Thinking { content } => {
-                let sub_blocks = markdown_to_md_blocks(content);
+                let sub_blocks = markdown_to_md_blocks_with_options(content, true);
                 let preview = content
                     .lines()
                     .find(|l| !l.trim().is_empty())
