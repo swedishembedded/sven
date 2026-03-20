@@ -31,13 +31,13 @@ use tokio::sync::{mpsc, Mutex as TokioMutex};
 use crate::{
     clipboard::copy_to_clipboard,
     inspector::{items_from_list, InspectorKind},
-    plain_msg::{slint_msg_to_plain, PlainChatMessage, PlainMdBlock, PlainToast},
+    plain_msg::{slint_msg_to_plain, PlainChatMessage, PlainToast},
     queue_ops::sync_queue_model,
     search::new_shared_search,
     sessions::{
-        chat_document_to_plain_messages, delete_session_from_disk, format_fields_json,
-        markdown_to_md_blocks, markdown_to_plain_messages, save_session_to_disk,
-        strip_inline_markdown,
+        build_tool_result_blocks, chat_document_to_plain_messages, delete_session_from_disk,
+        format_fields_json, markdown_to_md_blocks, markdown_to_plain_messages,
+        save_session_to_disk, strip_inline_markdown,
     },
     ChatMessage, CompletionEntry, MainWindow, MdBlock, PickerItem, QuestionItem, QueueItem,
     SessionItem, ToastItem,
@@ -2366,30 +2366,16 @@ fn clear_search_highlights(model: &Rc<VecModel<ChatMessage>>) {
     }
 }
 
-/// Parse a tool result string into markdown blocks, falling back to a single
-/// plain paragraph when the content doesn't parse as structured markdown.
-fn build_tool_result_blocks(result: &str) -> Vec<PlainMdBlock> {
-    let blocks = markdown_to_md_blocks(result);
-    if blocks.is_empty() {
-        vec![PlainMdBlock {
-            kind: "paragraph",
-            content: result.to_string(),
-            ..Default::default()
-        }]
-    } else {
-        blocks
-    }
-}
-
 /// Attach a tool result to the last tool-call message in the Slint window model.
 fn attach_tool_result_in_window(win: &MainWindow, result: &str, is_error: bool) {
-    let result_blocks = build_tool_result_blocks(result);
     let msgs_rc = win.get_messages();
     if let Some(vec_model) = msgs_rc.as_any().downcast_ref::<VecModel<ChatMessage>>() {
         let n = vec_model.row_count();
         for i in (0..n).rev() {
             if let Some(mut row) = vec_model.row_data(i) {
                 if row.message_type == "tool-call" {
+                    let tool_name = Some(row.tool_name.as_str());
+                    let result_blocks = build_tool_result_blocks(result, tool_name);
                     row.tool_result_content = SharedString::from(result);
                     row.tool_result_is_error = is_error;
                     row.tool_result_blocks = ModelRc::new(VecModel::from(
@@ -2415,16 +2401,16 @@ fn attach_tool_result_to_last_call(
     session_messages: &Arc<Mutex<HashMap<String, Vec<PlainChatMessage>>>>,
     weak: &slint::Weak<MainWindow>,
 ) {
-    let result_blocks = build_tool_result_blocks(result);
     // Update session store
     {
         let mut store = session_messages.lock().unwrap();
         if let Some(msgs) = store.get_mut(session_id) {
             for msg in msgs.iter_mut().rev() {
                 if msg.message_type == "tool-call" {
+                    let result_blocks = build_tool_result_blocks(result, Some(&msg.tool_name));
                     msg.tool_result_content = result.to_string();
                     msg.tool_result_is_error = is_error;
-                    msg.tool_result_blocks = result_blocks.clone();
+                    msg.tool_result_blocks = result_blocks;
                     break;
                 }
             }

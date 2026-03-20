@@ -38,11 +38,12 @@ export struct RichLine {
 // ── Flat markdown block (non-recursive, used inside ThinkingBubble / ToolCallBubble) ──
 
 export struct MdBlock {
-    kind: string,           // "paragraph"|"code-block"|"heading"|"list-item"|"block-quote"|"separator"|"table-row"|"inline-code"
+    kind: string,           // "paragraph"|"code-block"|"heading"|"list-item"|"block-quote"|"separator"|"table-row"|"inline-code"|"todo-item"
     content: string,
     language: string,
     heading-level: int,
     is-ordered: bool,
+    icon: string,           // For todo-item: "○"|"✓"|"→"|"✗"
     code-lines: [CodeLine],
     rich-lines: [RichLine],
     cells: [string],
@@ -104,12 +105,14 @@ export struct ChatMessage {
 
 // ── Reusable run renderer (one line's worth of inline runs) ───────────────────
 
-component RunLine {
+component RunLine inherits Rectangle {
     in property <[TextRun]> runs;
     in property <length>    line-width: 600px;
     in property <length>    run-font-size: Theme.font-size-base;
     in property <bool>      is-bold: false;
 
+    clip: true;
+    width: line-width;
     height: Math.max(run-font-size + 4px, 20px);
 
     HorizontalLayout {
@@ -594,6 +597,46 @@ component ListItemBlock {
     }
 }
 
+// ── Todo item (for todo tool result) ───────────────────────────────────────────
+
+component TodoItemBlock {
+    in property <string>  icon: "○";
+    in property <string>  content;
+    in property <length>  available-width: 600px;
+
+    property <length> text-width: available-width - Theme.space-md * 2 - 24px;
+
+    width: available-width;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        spacing: Theme.space-xs;
+        alignment: start;
+
+        Text {
+            text: icon;
+            color: icon == "✓" ? Theme.success :
+                   icon == "✗" ? Theme.error-text :
+                   icon == "→" ? Theme.accent : Theme.text-secondary;
+            font-size: Theme.font-size-base;
+            vertical-alignment: top;
+            y: 2px;
+            width: 20px;
+        }
+
+        Text {
+            text: content;
+            color: icon == "✓" ? Theme.text-dim : Theme.text-primary;
+            font-size: Theme.font-size-base;
+            wrap: word-wrap;
+            width: text-width;
+        }
+    }
+}
+
 // ── Block quote ───────────────────────────────────────────────────────────────
 
 component BlockQuoteBlock {
@@ -775,6 +818,13 @@ component MarkdownContent {
                 available-width: available-width;
             }
 
+            // todo item (from todo tool result)
+            if block.kind == "todo-item": TodoItemBlock {
+                icon: block.icon != "" ? block.icon : "○";
+                content: block.content;
+                available-width: available-width;
+            }
+
             // block quote
             if block.kind == "block-quote": BlockQuoteBlock {
                 content: block.content;
@@ -816,6 +866,7 @@ component ThinkingBubble inherits Rectangle {
     callback toggle-expanded();
     callback copy-text(string);
 
+    clip: true;
     width: available-width;
     border-radius: Theme.radius-md;
     background: Theme.thinking-bg;
@@ -916,6 +967,7 @@ component ToolCallBubble inherits Rectangle {
 
     property <bool> has-result: tool-result-content != "";
 
+    clip: true;
     width: available-width;
     border-radius: Theme.radius-md;
     background: Theme.tool-bg;
@@ -970,30 +1022,39 @@ component ToolCallBubble inherits Rectangle {
             }
         }
 
-        // Expanded: tool input fields
+        // Expanded: tool input fields (scrollable for long todo lists)
         if is-expanded && tool-fields-json != "": Rectangle {
             clip: true;
-            height: fields-text.preferred-height + Theme.space-sm;
+            height: Math.min(fields-text.preferred-height + Theme.space-sm, 280px);
             animate height { duration: Theme.duration-normal; easing: ease-in-out; }
 
-            VerticalLayout {
-                padding-top: Theme.space-xs;
-                padding-bottom: Theme.space-xs;
-                spacing: 0;
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-width: available-width - 2 * Theme.space-md;
+                viewport-height: fields-text.preferred-height;
+                interactive: true;
 
-                fields-text := Text {
-                    text: tool-fields-json;
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-size-code;
-                    font-family: Theme.font-mono;
-                    wrap: word-wrap;
-                    width: available-width - 2 * Theme.space-md;
+                VerticalLayout {
+                    padding-top: Theme.space-xs;
+                    padding-bottom: Theme.space-xs;
+                    spacing: 0;
+
+                    fields-text := Text {
+                        text: tool-fields-json;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-size-code;
+                        font-family: Theme.font-mono;
+                        wrap: word-wrap;
+                        width: available-width - 2 * Theme.space-md;
+                    }
                 }
             }
         }
 
         // Expanded: tool result section
         if is-expanded && has-result: Rectangle {
+            clip: true;
             border-radius: Theme.radius-sm;
             background: tool-result-is-error ? Theme.error-bg : Theme.bg-card;
             border-color: tool-result-is-error ? Theme.error-border : Theme.border-dim;
@@ -1013,28 +1074,55 @@ component ToolCallBubble inherits Rectangle {
                     }
                 }
 
-                // Markdown content when blocks are parsed
-                if tool-result-blocks.length > 0: MarkdownContent {
-                    blocks: tool-result-blocks;
-                    available-width: available-width - 4 * Theme.space-md;
-                    copy-text(t) => { root.copy-text(t); }
+                // Scrollable result body (max 360px to prevent overflow)
+                if tool-result-blocks.length > 0: Rectangle {
+                    clip: true;
+                    height: Math.min(result-md.preferred-height + Theme.space-xs, 360px);
+
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: available-width - 4 * Theme.space-md;
+                        viewport-height: result-md.preferred-height;
+                        interactive: true;
+
+                        result-md := MarkdownContent {
+                            blocks: tool-result-blocks;
+                            available-width: available-width - 4 * Theme.space-md;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
                 }
 
-                // Plain text fallback
-                if tool-result-blocks.length == 0: Text {
-                    text: tool-result-content;
-                    color: tool-result-is-error ? Theme.error-text : Theme.text-secondary;
-                    font-size: Theme.font-size-code;
-                    font-family: Theme.font-mono;
-                    wrap: word-wrap;
-                    width: available-width - 4 * Theme.space-md;
-                    opacity: 0.9;
+                // Plain text fallback (scrollable)
+                if tool-result-blocks.length == 0: Rectangle {
+                    clip: true;
+                    height: Math.min(result-text.preferred-height + Theme.space-xs, 360px);
+
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: available-width - 4 * Theme.space-md;
+                        viewport-height: result-text.preferred-height;
+                        interactive: true;
+
+                        result-text := Text {
+                            text: tool-result-content;
+                            color: tool-result-is-error ? Theme.error-text : Theme.text-secondary;
+                            font-size: Theme.font-size-code;
+                            font-family: Theme.font-mono;
+                            wrap: word-wrap;
+                            width: available-width - 4 * Theme.space-md;
+                            opacity: 0.9;
+                        }
+                    }
                 }
             }
         }
 
         // Error result always visible (even when collapsed)
         if !is-expanded && has-result && tool-result-is-error: Rectangle {
+            clip: true;
             border-radius: Theme.radius-sm;
             background: Theme.error-bg;
             border-color: Theme.error-border;
@@ -1043,22 +1131,48 @@ component ToolCallBubble inherits Rectangle {
             VerticalLayout {
                 padding: Theme.space-sm;
 
-                // Markdown content when blocks are parsed
-                if tool-result-blocks.length > 0: MarkdownContent {
-                    blocks: tool-result-blocks;
-                    available-width: available-width - 4 * Theme.space-md;
-                    copy-text(t) => { root.copy-text(t); }
+                // Markdown content when blocks are parsed (scrollable)
+                if tool-result-blocks.length > 0: Rectangle {
+                    clip: true;
+                    height: Math.min(err-md.preferred-height + Theme.space-xs, 240px);
+
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: available-width - 4 * Theme.space-md;
+                        viewport-height: err-md.preferred-height;
+                        interactive: true;
+
+                        err-md := MarkdownContent {
+                            blocks: tool-result-blocks;
+                            available-width: available-width - 4 * Theme.space-md;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
                 }
 
-                // Plain text fallback
-                if tool-result-blocks.length == 0: Text {
-                    text: tool-result-content;
-                    color: Theme.error-text;
-                    font-size: Theme.font-size-code;
-                    font-family: Theme.font-mono;
-                    wrap: word-wrap;
-                    width: available-width - 4 * Theme.space-md;
-                    opacity: 0.9;
+                // Plain text fallback (scrollable)
+                if tool-result-blocks.length == 0: Rectangle {
+                    clip: true;
+                    height: Math.min(err-text.preferred-height + Theme.space-xs, 240px);
+
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: available-width - 4 * Theme.space-md;
+                        viewport-height: err-text.preferred-height;
+                        interactive: true;
+
+                        err-text := Text {
+                            text: tool-result-content;
+                            color: Theme.error-text;
+                            font-size: Theme.font-size-code;
+                            font-family: Theme.font-mono;
+                            wrap: word-wrap;
+                            width: available-width - 4 * Theme.space-md;
+                            opacity: 0.9;
+                        }
+                    }
                 }
             }
         }

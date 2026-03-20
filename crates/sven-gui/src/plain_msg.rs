@@ -48,12 +48,14 @@ impl PlainTextRun {
 /// `ToolCallBubble` without requiring a recursive `ChatMessage` type.
 #[derive(Clone, Default)]
 pub struct PlainMdBlock {
-    /// Block kind: "paragraph"|"code-block"|"heading"|"list-item"|"block-quote"|"separator"|"table-row"
+    /// Block kind: "paragraph"|"code-block"|"heading"|"list-item"|"block-quote"|"separator"|"table-row"|"todo-item"
     pub kind: &'static str,
     pub content: String,
     pub language: String,
     pub heading_level: i32,
     pub is_ordered: bool,
+    /// For todo-item: icon character ("○"|"✓"|"→"|"✗")
+    pub icon: String,
     pub code_lines: Vec<Vec<HighlightToken>>,
     pub rich_lines: Vec<Vec<PlainTextRun>>,
     pub cells: Vec<String>,
@@ -116,6 +118,7 @@ impl PlainMdBlock {
             language: SharedString::from(self.language.as_str()),
             heading_level: self.heading_level,
             is_ordered: self.is_ordered,
+            icon: SharedString::from(self.icon.as_str()),
             code_lines: code_lines_model,
             rich_lines: rich_lines_model,
             cells: cells_model,
