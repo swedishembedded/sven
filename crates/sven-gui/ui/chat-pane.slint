@@ -216,7 +216,6 @@ component UserBubble inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
-            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -262,13 +261,10 @@ component RichParagraph inherits Rectangle {
         padding-right: Theme.space-md;
         padding-top: show-header ? Theme.space-md : 0;
         padding-bottom: Theme.space-xs;
-        spacing: Theme.space-xs;
 
         if show-header: HorizontalLayout {
-            spacing: Theme.space-xs;
             alignment: space-between;
             HorizontalLayout {
-                spacing: Theme.space-xs;
                 alignment: start;
                 Text {
                     text: "⬡ Sven";
@@ -286,7 +282,6 @@ component RichParagraph inherits Rectangle {
 
         // Rich rendering: pre-wrapped lines from Rust
         if rich-lines.length > 0: VerticalLayout {
-            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -512,7 +507,6 @@ component HeadingBlock {
 
         // Rich inline formatting when available
         if rich-lines.length > 0: VerticalLayout {
-            spacing: Theme.space-xs;
             alignment: start;
             width: available-width - 2 * Theme.space-md;
 
@@ -575,7 +569,6 @@ component ListItemBlock {
 
         // Rich pre-wrapped lines
         if rich-lines.length > 0: VerticalLayout {
-            spacing: Theme.space-xs;
             alignment: start;
             width: text-width;
 
@@ -600,9 +593,10 @@ component ListItemBlock {
 // ── Todo item (for todo tool result) ───────────────────────────────────────────
 
 component TodoItemBlock {
-    in property <string>  icon: "○";
-    in property <string>  content;
-    in property <length>  available-width: 600px;
+    in property <string>      icon: "○";
+    in property <string>      content;
+    in property <[RichLine]>  rich-lines;
+    in property <length>      available-width: 600px;
 
     property <length> text-width: available-width - Theme.space-md * 2 - 24px;
 
@@ -611,8 +605,8 @@ component TodoItemBlock {
     HorizontalLayout {
         padding-left: Theme.space-md;
         padding-right: Theme.space-md;
-        padding-top: 2px;
-        padding-bottom: 2px;
+        padding-top: Theme.space-xs;
+        padding-bottom: Theme.space-xs;
         spacing: Theme.space-xs;
         alignment: start;
 
@@ -627,7 +621,20 @@ component TodoItemBlock {
             width: 20px;
         }
 
-        Text {
+        // Pre-wrapped lines (avoids Slint Text word-wrap line overlap)
+        if rich-lines.length > 0: VerticalLayout {
+            alignment: start;
+            width: text-width;
+
+            for line in rich-lines: RunLine {
+                runs: line.runs;
+                line-width: text-width;
+                run-font-size: Theme.font-size-base;
+            }
+        }
+
+        // Fallback plain text
+        if rich-lines.length == 0: Text {
             text: content;
             color: icon == "✓" ? Theme.text-dim : Theme.text-primary;
             font-size: Theme.font-size-base;
@@ -668,7 +675,6 @@ component BlockQuoteBlock {
 
             // Rich lines when available
             if rich-lines.length > 0: VerticalLayout {
-                spacing: Theme.space-xs;
                 alignment: start;
                 width: inner-width;
 
@@ -776,7 +782,6 @@ component MarkdownContent {
     preferred-height: content-layout.preferred-height;
 
     content-layout := VerticalLayout {
-        spacing: Theme.space-sm;
         alignment: start;
         width: available-width;
 
@@ -822,6 +827,7 @@ component MarkdownContent {
             if block.kind == "todo-item": TodoItemBlock {
                 icon: block.icon != "" ? block.icon : "○";
                 content: block.content;
+                rich-lines: block.rich-lines;
                 available-width: available-width;
             }
 

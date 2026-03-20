@@ -371,6 +371,8 @@ pub fn markdown_to_md_blocks_with_options(
 const TODO_ICONS: &[char] = &['○', '✓', '→', '✗'];
 
 /// Parse todo tool output ("○ [1] Task\n✓ [2] Done") into todo-item blocks.
+/// Uses rich_lines for proper line wrapping; Slint Text with word-wrap has
+/// insufficient line spacing when content wraps to multiple lines.
 fn parse_todo_result(result: &str) -> Vec<PlainMdBlock> {
     result
         .lines()
@@ -386,10 +388,13 @@ fn parse_todo_result(result: &str) -> Vec<PlainMdBlock> {
                 ),
                 _ => ("○".to_string(), line.to_string()),
             };
+            let runs = vec![PlainTextRun::plain(&content)];
+            let rich_lines = split_runs_into_rich_lines(runs, 72);
             Some(PlainMdBlock {
                 kind: "todo-item",
-                content,
+                content: content.clone(),
                 icon,
+                rich_lines,
                 ..Default::default()
             })
         })
