@@ -25,6 +25,7 @@ use crate::client::McpConnection;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
 use crate::oauth::{
     discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthRedirectOptions,
+    RunOAuthFlowParams,
 };
 use crate::transport::{
     build_http_transport, AuthState, OnNotification, StdioTransport, Transport, UnauthorizedError,
@@ -762,16 +763,16 @@ impl McpManager {
         let discovery =
             discover_oauth_info(&self.http_client, &url, www_authenticate, config_scopes).await?;
 
-        let tokens = run_oauth_flow(
-            &self.http_client,
-            server,
-            &url,
+        let tokens = run_oauth_flow(RunOAuthFlowParams {
+            client: &self.http_client,
+            server_name: server,
+            server_url: &url,
             discovery,
-            client_id,
-            client_secret,
-            &self.store,
+            config_client_id: client_id,
+            config_client_secret: client_secret,
+            store: &self.store,
             redirect_opts,
-        )
+        })
         .await?;
 
         if spawn_reconnect {

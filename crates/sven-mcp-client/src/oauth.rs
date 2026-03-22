@@ -628,6 +628,18 @@ pub fn running_in_container() -> bool {
     false
 }
 
+/// Parameters for [`run_oauth_flow`].
+pub struct RunOAuthFlowParams<'a> {
+    pub client: &'a reqwest::Client,
+    pub server_name: &'a str,
+    pub server_url: &'a str,
+    pub discovery: OAuthDiscovery,
+    pub config_client_id: Option<String>,
+    pub config_client_secret: Option<String>,
+    pub store: &'a CredentialsStore,
+    pub redirect_opts: OAuthRedirectOptions,
+}
+
 /// Options for custom OAuth redirect (e.g. sven://sven.mcp, cursor://cursor.mcp).
 #[derive(Debug, Clone, Default)]
 pub struct OAuthRedirectOptions {
@@ -655,16 +667,18 @@ pub struct OAuthRedirectOptions {
 /// 5. Waits for the callback, exchanges the code for tokens, and persists them.
 ///
 /// Returns the stored tokens on success.
-pub async fn run_oauth_flow(
-    client: &reqwest::Client,
-    server_name: &str,
-    server_url: &str,
-    discovery: OAuthDiscovery,
-    config_client_id: Option<String>,
-    config_client_secret: Option<String>,
-    store: &CredentialsStore,
-    redirect_opts: OAuthRedirectOptions,
-) -> Result<StoredTokens> {
+pub async fn run_oauth_flow(params: RunOAuthFlowParams<'_>) -> Result<StoredTokens> {
+    let RunOAuthFlowParams {
+        client,
+        server_name,
+        server_url,
+        discovery,
+        config_client_id,
+        config_client_secret,
+        store,
+        redirect_opts,
+    } = params;
+
     let metadata = discovery.auth_server_metadata;
     let scopes = discovery.scopes;
 
