@@ -544,6 +544,31 @@ mod submit_integration_tests {
         }
     }
 
+    /// Receive the next `Resubmit` from the test channel. The real app sends an
+    /// optional `GenerateTitle` immediately after the first `Resubmit` in a new
+    /// chat; drain it so assertions on the channel stay unambiguous.
+    fn recv_resubmit_for_test(rx: &mut tokio::sync::mpsc::Receiver<AgentRequest>) -> AgentRequest {
+        loop {
+            match rx.try_recv() {
+                Ok(AgentRequest::GenerateTitle { .. }) => continue,
+                Ok(req) => match req {
+                    AgentRequest::Resubmit { .. } => {
+                        match rx.try_recv() {
+                            Ok(AgentRequest::GenerateTitle { .. }) => {}
+                            Ok(other) => panic!(
+                                "expected optional GenerateTitle after Resubmit, got {other:?}"
+                            ),
+                            Err(_) => {}
+                        }
+                        return req;
+                    }
+                    other => panic!("unexpected agent request in test: {other:?}"),
+                },
+                Err(_) => panic!("expected Resubmit, channel empty"),
+            }
+        }
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -552,7 +577,7 @@ mod submit_integration_tests {
         app.inject_input("hello world");
         app.dispatch_action(Action::Submit).await;
 
-        let req = rx.try_recv().expect("expected a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_content(&req), "hello world");
         assert!(resubmit_model(&req).is_none(), "no model override expected");
         assert!(resubmit_mode(&req).is_none());
@@ -568,7 +593,7 @@ mod submit_integration_tests {
         app.inject_input("hello");
         app.dispatch_action(Action::Submit).await;
 
-        let req = rx.try_recv().expect("expected a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_content(&req), "hello");
         assert_eq!(resubmit_model(&req).as_deref(), Some("openai/gpt-4o"));
     }
@@ -583,7 +608,7 @@ mod submit_integration_tests {
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
 
-        let first = rx.try_recv().expect("first request");
+        let first = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_model(&first).as_deref(), Some("openai/gpt-4o"));
 
         app.simulate_turn_complete();
@@ -591,7 +616,7 @@ mod submit_integration_tests {
         app.inject_input("second");
         app.dispatch_action(Action::Submit).await;
 
-        let second = rx.try_recv().expect("second request");
+        let second = recv_resubmit_for_test(&mut rx);
         assert!(
             resubmit_model(&second).is_none(),
             "model override must not persist to second message"
@@ -608,7 +633,7 @@ mod submit_integration_tests {
         app.inject_input("hello");
         app.dispatch_action(Action::Submit).await;
 
-        let req = rx.try_recv().expect("expected a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_mode(&req), Some(AgentMode::Research));
     }
 
@@ -638,7 +663,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first message sent");
+        let _first = recv_resubmit_for_test(&mut rx);
 
         assert!(app.is_agent_busy(), "agent should be busy after first send");
 
@@ -662,7 +687,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first message");
+        let _first = recv_resubmit_for_test(&mut rx);
 
         app.inject_input("/model anthropic/claude-opus-4-6");
         app.dispatch_action(Action::Submit).await;
@@ -694,7 +719,7 @@ mod submit_integration_tests {
         app.start_editing_segment(seg_idx, "edited message");
         app.dispatch_action(Action::EditMessageConfirm).await;
 
-        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_content(&req), "edited message");
         assert_eq!(
             resubmit_model(&req).as_deref(),
@@ -711,7 +736,7 @@ mod submit_integration_tests {
         app.start_editing_segment(seg_idx, "hello edited");
         app.dispatch_action(Action::EditMessageConfirm).await;
 
-        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_content(&req), "hello edited");
         assert!(
             resubmit_model(&req).is_none(),
@@ -735,7 +760,7 @@ mod submit_integration_tests {
         app.start_editing_segment(seg_idx, "do some research — edited");
         app.dispatch_action(Action::EditMessageConfirm).await;
 
-        let req = rx.try_recv().expect("edit-resubmit must send a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(
             resubmit_mode(&req),
             Some(AgentMode::Research),
@@ -760,7 +785,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first message sent");
+        let _first = recv_resubmit_for_test(&mut rx);
         assert!(app.is_agent_busy());
 
         app.inject_input("/abort");
@@ -777,7 +802,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first message sent");
+        let _first = recv_resubmit_for_test(&mut rx);
 
         app.simulate_aborted("partial response").await;
         app.inject_input("/abort");
@@ -804,7 +829,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first message sent");
+        let _first = recv_resubmit_for_test(&mut rx);
 
         app.inject_input("second");
         app.dispatch_action(Action::Submit).await;
@@ -833,7 +858,7 @@ mod submit_integration_tests {
 
         app.inject_input("first");
         app.dispatch_action(Action::Submit).await;
-        let _first = rx.try_recv().expect("first sent");
+        let _first = recv_resubmit_for_test(&mut rx);
 
         app.inject_input("queued message");
         app.dispatch_action(Action::Submit).await;
@@ -849,7 +874,7 @@ mod submit_integration_tests {
         app.dispatch_action(Action::FocusQueue).await;
         app.dispatch_action(Action::ForceSubmitQueuedMessage).await;
 
-        let req = rx.try_recv().expect("force-submit should send a request");
+        let req = recv_resubmit_for_test(&mut rx);
         assert_eq!(resubmit_content(&req), "queued message");
         assert_eq!(
             app.queued_len(),

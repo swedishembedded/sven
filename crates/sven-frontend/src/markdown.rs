@@ -171,6 +171,16 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
             Event::End(TagEnd::Table) => {
                 in_table = false;
             }
+            // GFM tables emit header cells under `TableHead` without wrapping them in
+            // `TableRow` (see pulldown-cmark events: TableHead → TableCell… → End(TableHead)).
+            Event::Start(Tag::TableHead) => {
+                current_row.clear();
+            }
+            Event::End(TagEnd::TableHead) => {
+                if !current_row.is_empty() {
+                    blocks.push(MarkdownBlock::TableRow(std::mem::take(&mut current_row)));
+                }
+            }
             Event::Start(Tag::TableRow) => {
                 current_row.clear();
             }
@@ -179,11 +189,11 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                     blocks.push(MarkdownBlock::TableRow(std::mem::take(&mut current_row)));
                 }
             }
-            Event::Start(Tag::TableCell) | Event::Start(Tag::TableHead) => {
+            Event::Start(Tag::TableCell) => {
                 in_cell = true;
                 cell_buf.clear();
             }
-            Event::End(TagEnd::TableCell) | Event::End(TagEnd::TableHead) => {
+            Event::End(TagEnd::TableCell) => {
                 in_cell = false;
                 current_row.push(std::mem::take(&mut cell_buf).trim().to_string());
             }
@@ -316,6 +326,26 @@ mod tests {
     #[test]
     fn empty_input_returns_empty() {
         assert!(parse_markdown_blocks("").is_empty());
+    }
+
+    #[test]
+    fn parses_gfm_table_including_header_row() {
+        let md = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n";
+        let blocks = parse_markdown_blocks(md);
+        let rows: Vec<_> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                MarkdownBlock::TableRow(cells) => Some(cells.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                vec!["Name".to_string(), "Age".to_string()],
+                vec!["Alice".to_string(), "30".to_string()],
+            ]
+        );
     }
 
     #[test]

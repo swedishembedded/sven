@@ -511,14 +511,12 @@ pub fn save_chat_atomic(doc: &mut ChatDocument) -> Result<(), FileModifiedError>
 /// Save a `ChatDocument` to a specific path atomically, checking for concurrent
 /// modifications. See [`save_chat_atomic`] for details.
 pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), FileModifiedError> {
-    use std::os::unix::fs::MetadataExt;
-
     doc.touch();
     let content = serialize_chat_document(doc).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Snapshot of target metadata before we prepare the write (no lock yet)
     let initial_metadata = match std::fs::metadata(path) {
-        Ok(m) => Some((m.ino(), m.mtime())),
+        Ok(m) => Some(file_identity_from_metadata(&m)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return Err(FileModifiedError),
     };
@@ -550,7 +548,8 @@ pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), Fi
         if let Some((initial_ino, initial_mtime)) = initial_metadata {
             match std::fs::metadata(path) {
                 Ok(m) => {
-                    if m.ino() != initial_ino || m.mtime() != initial_mtime {
+                    let (ino, mt) = file_identity_from_metadata(&m);
+                    if ino != initial_ino || mt != initial_mtime {
                         let _ = std::fs::remove_file(&temp_path);
                         return Err(FileModifiedError);
                     }
@@ -572,7 +571,8 @@ pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), Fi
         if let Some((initial_ino, initial_mtime)) = initial_metadata {
             match std::fs::metadata(path) {
                 Ok(m) => {
-                    if m.ino() != initial_ino || m.mtime() != initial_mtime {
+                    let (ino, mt) = file_identity_from_metadata(&m);
+                    if ino != initial_ino || mt != initial_mtime {
                         let _ = std::fs::remove_file(&temp_path);
                         return Err(FileModifiedError);
                     }
@@ -617,18 +617,43 @@ pub fn load_chat_from_with_metadata(path: &Path) -> Result<(ChatDocument, FileMe
 }
 
 /// File metadata used for detecting concurrent modifications.
+///
+/// On Unix, `inode` is the real inode number. On other platforms it stores a
+/// stable fingerprint (currently file size) paired with `mtime` for change detection.
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
     inode: u64,
     mtime: i64,
 }
 
+/// Identity tuple for comparing a file before/after an atomic write.
+fn file_identity_from_metadata(m: &std::fs::Metadata) -> (u64, i64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (m.ino(), m.mtime())
+    }
+    #[cfg(not(unix))]
+    {
+        let len = m.len();
+        let mt = m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        (len, mt)
+    }
+}
+
 impl FileMetadata {
     /// Check if the file has been modified since this metadata was captured.
     pub fn is_modified(&self, path: &Path) -> bool {
-        use std::os::unix::fs::MetadataExt;
         match std::fs::metadata(path) {
-            Ok(m) => m.ino() != self.inode || m.mtime() != self.mtime,
+            Ok(m) => {
+                let (ino, mt) = file_identity_from_metadata(&m);
+                ino != self.inode || mt != self.mtime
+            }
             Err(_) => true, // File doesn't exist or can't be read = modified
         }
     }
@@ -636,11 +661,8 @@ impl FileMetadata {
 
 impl From<std::fs::Metadata> for FileMetadata {
     fn from(m: std::fs::Metadata) -> Self {
-        use std::os::unix::fs::MetadataExt;
-        Self {
-            inode: m.ino(),
-            mtime: m.mtime(),
-        }
+        let (inode, mtime) = file_identity_from_metadata(&m);
+        Self { inode, mtime }
     }
 }
 
