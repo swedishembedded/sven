@@ -25,11 +25,11 @@ async-recursion = { workspace = true }
 dirs        = { workspace = true }
 similar     = { workspace = true }
 walkdir     = { workspace = true }
+memmap2     = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc        = { workspace = true }
 gdbmi       = "0.0.2"
-memmap2     = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

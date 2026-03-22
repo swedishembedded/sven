@@ -680,13 +680,27 @@ mod tests {
     #[test]
     fn from_config_openai_succeeds() {
         let cfg = minimal_config("openai", "gpt-4o");
-        assert!(from_config(&cfg).is_ok());
+        // Either succeeds (if OPENAI_API_KEY is set) or fails with a missing-key
+        // error — the provider must always be recognised.
+        match from_config(&cfg) {
+            Ok(_) => {}
+            Err(e) => assert!(
+                e.to_string().contains("API key"),
+                "unexpected error (provider should be recognized): {e}"
+            ),
+        }
     }
 
     #[test]
     fn from_config_anthropic_succeeds() {
         let cfg = minimal_config("anthropic", "claude-opus-4-5");
-        assert!(from_config(&cfg).is_ok());
+        match from_config(&cfg) {
+            Ok(_) => {}
+            Err(e) => assert!(
+                e.to_string().contains("API key"),
+                "unexpected error (provider should be recognized): {e}"
+            ),
+        }
     }
 
     #[test]
