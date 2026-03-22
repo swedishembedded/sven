@@ -23,8 +23,10 @@ use tokio::sync::{mpsc, Mutex};
 fn adversarial_agent(mode: AgentMode, max_tool_rounds: u32) -> Agent {
     let model: Arc<dyn sven_model::ModelProvider> = Arc::new(MockProvider);
     let tools = Arc::new(ToolRegistry::default());
-    let mut agent_cfg = AgentConfig::default();
-    agent_cfg.max_tool_rounds = max_tool_rounds;
+    let agent_cfg = AgentConfig {
+        max_tool_rounds,
+        ..Default::default()
+    };
     let config = Arc::new(agent_cfg);
     let mode_lock = Arc::new(Mutex::new(mode));
     let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
@@ -202,8 +204,10 @@ fn adversarial_config_default_is_valid_and_complete() {
 
 #[test]
 fn adversarial_config_zero_max_tool_rounds_accepted() {
-    let mut cfg = AgentConfig::default();
-    cfg.max_tool_rounds = 0;
+    let cfg = AgentConfig {
+        max_tool_rounds: 0,
+        ..Default::default()
+    };
     // Zero rounds is unusual but should not panic when building an agent.
     let agent = adversarial_agent(AgentMode::Agent, cfg.max_tool_rounds);
     drop(agent);
