@@ -78,6 +78,7 @@ sven-p2p       = { path = "../sven-p2p" }
 sven-team      = { path = "../sven-team" }
 sven-bootstrap = { path = "../sven-bootstrap" }
 sven-runtime   = { path = "../sven-runtime" }
+sven-channels  = { path = "../sven-channels" }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 anyhow        = { workspace = true }

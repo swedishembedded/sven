@@ -154,6 +154,7 @@ pub mod http;
 pub mod node;
 pub mod p2p;
 pub mod peer;
+pub mod telegram;
 pub mod tools;
 pub mod web;
 

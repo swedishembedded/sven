@@ -441,6 +441,28 @@ pub async fn run(
         );
     }
 
+    // ── Telegram ──────────────────────────────────────────────────────────────
+    if let Some(ref tg_cfg) = config.channels.telegram {
+        let bot_token = crate::telegram::expand_env_vars(&tg_cfg.bot_token);
+        if bot_token.is_empty() {
+            tracing::warn!(
+                "Telegram bot_token is empty after env-var expansion \
+                 (set TELEGRAM_BOT_TOKEN). Telegram integration disabled."
+            );
+        } else {
+            info!(
+                allowed_users = ?tg_cfg.allowed_users,
+                "starting Telegram bot bridge",
+            );
+            let bridge = crate::telegram::TelegramBridge::new(
+                bot_token,
+                tg_cfg.allowed_users.clone(),
+                agent_handle.clone(),
+            );
+            tokio::spawn(bridge.run());
+        }
+    }
+
     // ── Slack ─────────────────────────────────────────────────────────────────
     let mut slack_http_states = Vec::new();
 
