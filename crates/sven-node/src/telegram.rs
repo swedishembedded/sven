@@ -63,8 +63,8 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use sven_channels::channels::telegram::TelegramChannel;
 use sven_channels::channel::{Channel, InboundMessage};
+use sven_channels::channels::telegram::TelegramChannel;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -156,8 +156,7 @@ impl TelegramBridge {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<InboundMessage>(256);
 
-        let channel =
-            TelegramChannel::new(bridge.bot_token.clone(), bridge.allowed_users.clone());
+        let channel = TelegramChannel::new(bridge.bot_token.clone(), bridge.allowed_users.clone());
 
         if let Err(e) = channel.start(tx).await {
             error!("Failed to start Telegram long-poll loop: {e}");
@@ -201,7 +200,8 @@ impl TelegramBridge {
         if msg.text.trim() == "/clear" {
             self.sessions.lock().await.remove(&user_id);
             info!(user_id, "telegram: conversation cleared by user");
-            self.send_message(&chat_id, "Conversation cleared\\. Starting fresh\\.").await;
+            self.send_message(&chat_id, "Conversation cleared\\. Starting fresh\\.")
+                .await;
             return;
         }
 
@@ -278,26 +278,26 @@ impl TelegramBridge {
         {
             error!(user_id, "telegram: failed to send input: {e}");
             self.clear_handling(user_id).await;
-            self.send_message(&chat_id, "Sorry, I encountered an error sending your message\\.")
-                .await;
+            self.send_message(
+                &chat_id,
+                "Sorry, I encountered an error sending your message\\.",
+            )
+            .await;
             return;
         }
 
         // ── Collect events with periodic typing refresh ───────────────────────
-        let mut typing_interval =
-            tokio::time::interval(Duration::from_secs(TYPING_REFRESH_SECS));
+        let mut typing_interval = tokio::time::interval(Duration::from_secs(TYPING_REFRESH_SECS));
         // The first tick fires immediately; skip it since we already sent above.
         typing_interval.tick().await;
 
-        let deadline =
-            tokio::time::Instant::now() + Duration::from_secs(AGENT_TIMEOUT_SECS);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(AGENT_TIMEOUT_SECS);
 
         let mut final_text = String::new();
         let mut tool_activities: Vec<ToolActivity> = Vec::new();
 
         // Maps call_id → (tool_name, args) for correlating ToolCall/ToolResult.
-        let mut pending_tool_calls: HashMap<String, (String, serde_json::Value)> =
-            HashMap::new();
+        let mut pending_tool_calls: HashMap<String, (String, serde_json::Value)> = HashMap::new();
 
         let mut done = false;
 
@@ -405,13 +405,10 @@ impl TelegramBridge {
             // Session lifecycle.
             ControlEvent::SessionState {
                 session_id: sid,
-                state,
-            } if sid == session_id => match state {
-                SessionState::Completed | SessionState::Cancelled => {
-                    return true;
-                }
-                _ => {}
-            },
+                state: SessionState::Completed | SessionState::Cancelled,
+            } if sid == session_id => {
+                return true;
+            }
 
             // Agent-level error for our session.
             ControlEvent::AgentError {
@@ -431,8 +428,7 @@ impl TelegramBridge {
                     // The busy-flag check above should normally prevent this,
                     // but handle defensively.
                     *final_text =
-                        "I'm still processing your previous message\\. Please wait\\."
-                            .to_string();
+                        "I'm still processing your previous message\\. Please wait\\.".to_string();
                     return true;
                 }
                 if code == 404 {
@@ -474,18 +470,16 @@ impl TelegramBridge {
             // MarkdownV2 failed — strip our escape sequences and send plain.
             let plain = unescape_markdown_v2(text);
             if !self.try_send_message(chat_id, &plain, None).await {
-                warn!(chat_id, "telegram: sendMessage failed even in plain-text mode");
+                warn!(
+                    chat_id,
+                    "telegram: sendMessage failed even in plain-text mode"
+                );
             }
         }
     }
 
     /// Attempt to send a message with an optional parse_mode.  Returns true on success.
-    async fn try_send_message(
-        &self,
-        chat_id: &str,
-        text: &str,
-        parse_mode: Option<&str>,
-    ) -> bool {
+    async fn try_send_message(&self, chat_id: &str, text: &str, parse_mode: Option<&str>) -> bool {
         let mut payload = serde_json::json!({
             "chat_id": chat_id,
             "text": text,
@@ -569,11 +563,7 @@ fn format_response(activities: &[ToolActivity], final_text: &str) -> String {
         for act in activities {
             // Tool header line.
             let args_summary = format_args_summary(&act.args);
-            let tool_line = format!(
-                "🔧 `{}`{}",
-                escape_markdown_v2(&act.name),
-                args_summary
-            );
+            let tool_line = format!("🔧 `{}`{}", escape_markdown_v2(&act.name), args_summary);
             tool_section.push_str(&tool_line);
             tool_section.push('\n');
 
@@ -583,11 +573,7 @@ fn format_response(activities: &[ToolActivity], final_text: &str) -> String {
                 if !output_trimmed.is_empty() {
                     let snippet = truncate_chars(output_trimmed, MAX_TOOL_OUTPUT_CHARS);
                     let prefix = if act.is_error { "⚠️ " } else { "" };
-                    tool_section.push_str(&format!(
-                        "{}```\n{}\n```\n",
-                        prefix,
-                        snippet
-                    ));
+                    tool_section.push_str(&format!("{}```\n{}\n```\n", prefix, snippet));
                 }
             }
         }
@@ -709,17 +695,13 @@ fn unescape_markdown_v2(s: &str) -> String {
 /// Return a string slice (or owned String) truncated to at most `max_chars`
 /// Unicode scalar values.  Appends `…` when truncated.
 fn truncate_chars(s: &str, max_chars: usize) -> String {
-    let mut iter = s.char_indices();
     let mut end = s.len();
-    let mut count = 0;
 
-    for (i, _) in s.char_indices() {
+    for (count, (i, _)) in s.char_indices().enumerate() {
         if count >= max_chars {
             end = i;
             break;
         }
-        count += 1;
-        let _ = iter.next();
     }
 
     if end == s.len() {
@@ -735,18 +717,14 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 /// environment variables.  Unknown variables are replaced with an empty string.
 pub fn expand_env_vars(s: &str) -> String {
     let mut result = s.to_string();
-    loop {
-        let start = match result.find("${") {
-            Some(i) => i,
-            None => break,
-        };
+    while let Some(start) = result.find("${") {
         let after_brace = start + 2;
-        let end = match result[after_brace..].find('}') {
-            Some(i) => after_brace + i,
-            None => break, // Unclosed `${` — stop.
+        let Some(rel_end) = result[after_brace..].find('}') else {
+            break; // Unclosed `${` — stop.
         };
-        let var_name = &result[after_brace..end].to_string();
-        let value = std::env::var(var_name).unwrap_or_default();
+        let end = after_brace + rel_end;
+        let var_name = result[after_brace..end].to_string();
+        let value = std::env::var(&var_name).unwrap_or_default();
         result = format!("{}{}{}", &result[..start], value, &result[end + 1..]);
     }
     result
