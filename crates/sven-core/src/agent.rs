@@ -40,6 +40,21 @@ use crate::{
 pub type ModelResolver =
     Arc<dyn Fn(&str) -> anyhow::Result<Arc<dyn sven_model::ModelProvider>> + Send + Sync>;
 
+/// Arguments for [`Agent::new_with_params`].
+///
+/// Bundles the values previously passed separately so the constructor stays
+/// within Clippy's argument limit while remaining explicit at call sites.
+pub struct AgentNewParams {
+    pub model: Arc<dyn sven_model::ModelProvider>,
+    pub tools: Arc<ToolRegistry>,
+    pub config: Arc<AgentConfig>,
+    pub runtime: AgentRuntimeContext,
+    pub mode_lock: Arc<Mutex<AgentMode>>,
+    pub tool_event_rx: mpsc::Receiver<ToolEvent>,
+    pub max_context_tokens: usize,
+    pub model_resolver: Option<ModelResolver>,
+}
+
 /// The core agent.  Owns a session and drives the model ↔ tool loop.
 pub struct Agent {
     session: Session,
@@ -81,7 +96,7 @@ impl Agent {
         tool_event_rx: mpsc::Receiver<ToolEvent>,
         max_context_tokens: usize,
     ) -> Self {
-        Self::new_with_resolver(
+        Self::new_with_params(AgentNewParams {
             model,
             tools,
             config,
@@ -89,22 +104,23 @@ impl Agent {
             mode_lock,
             tool_event_rx,
             max_context_tokens,
-            None,
-        )
+            model_resolver: None,
+        })
     }
 
     /// Like [`new`] but accepts an optional [`ModelResolver`] that enables
     /// mid-turn model switching via the `switch_model` tool.
-    pub fn new_with_resolver(
-        model: Arc<dyn sven_model::ModelProvider>,
-        tools: Arc<ToolRegistry>,
-        config: Arc<AgentConfig>,
-        runtime: AgentRuntimeContext,
-        mode_lock: Arc<Mutex<AgentMode>>,
-        tool_event_rx: mpsc::Receiver<ToolEvent>,
-        max_context_tokens: usize,
-        model_resolver: Option<ModelResolver>,
-    ) -> Self {
+    pub fn new_with_params(params: AgentNewParams) -> Self {
+        let AgentNewParams {
+            model,
+            tools,
+            config,
+            runtime,
+            mode_lock,
+            tool_event_rx,
+            max_context_tokens,
+            model_resolver,
+        } = params;
         let max_output_tokens = model
             .config_max_output_tokens()
             .or_else(|| model.catalog_max_output_tokens())

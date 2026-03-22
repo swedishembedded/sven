@@ -15,7 +15,7 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, ModelResolver};
+use sven_core::{Agent, AgentNewParams, ModelResolver};
 use sven_mcp_client::{McpManager, McpTool};
 use sven_model::ModelProvider;
 use sven_tools::{events::ToolEvent, PermissionRequester, SharedToolDisplays, SharedTools};
@@ -261,16 +261,16 @@ impl AgentBuilder {
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
         });
 
-        let agent = Agent::new_with_resolver(
+        let agent = Agent::new_with_params(AgentNewParams {
             model,
-            Arc::new(registry),
-            Arc::new(self.config.agent.clone()),
+            tools: Arc::new(registry),
+            config: Arc::new(self.config.agent.clone()),
             runtime,
             mode_lock,
             tool_event_rx,
-            context_window,
-            Some(model_resolver),
-        );
+            max_context_tokens: context_window,
+            model_resolver: Some(model_resolver),
+        });
 
         (agent, mcp_manager, mcp_event_rx)
     }

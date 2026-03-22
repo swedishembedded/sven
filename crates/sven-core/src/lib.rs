@@ -11,7 +11,7 @@ mod session;
 mod tests;
 mod tool_slots;
 
-pub use agent::{Agent, ModelResolver};
+pub use agent::{Agent, AgentNewParams, ModelResolver};
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, smart_truncate,
 };
