@@ -10,7 +10,7 @@ ifneq ($(shell command -v sccache 2>/dev/null),)
 export RUSTC_WRAPPER = sccache
 endif
 
-NPROC := $(shell nproc)
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 CARGO_FLAGS ?= --jobs $(NPROC)
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 TAG     := v$(VERSION)

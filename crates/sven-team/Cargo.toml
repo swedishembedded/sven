@@ -8,8 +8,11 @@ description = "Agent team coordination: shared task lists, team config, and life
 sven-tools  = { path = "../sven-tools" }
 sven-p2p    = { path = "../sven-p2p" }
 
-libc        = { workspace = true }
+fs4         = { workspace = true }
 anyhow      = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc        = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }

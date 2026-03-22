@@ -1154,35 +1154,6 @@ pub fn print_completions(shell: Shell) {
     generate(shell, &mut cmd, "sven", &mut std::io::stdout());
 }
 
-// TTY detection for stdin and stdout.
-trait IsTerminal {
-    fn is_terminal(&self) -> bool;
-}
-
-impl IsTerminal for std::io::Stdin {
-    fn is_terminal(&self) -> bool {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            unsafe { libc::isatty(self.as_raw_fd()) != 0 }
-        }
-        #[cfg(not(unix))]
-        {
-            false
-        }
-    }
-}
-
-impl IsTerminal for std::io::Stdout {
-    fn is_terminal(&self) -> bool {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            unsafe { libc::isatty(self.as_raw_fd()) != 0 }
-        }
-        #[cfg(not(unix))]
-        {
-            false
-        }
-    }
-}
+// TTY detection re-uses the stdlib IsTerminal trait (stable since Rust 1.70).
+// Import it into scope so callers can call .is_terminal() on Stdin/Stdout.
+use std::io::IsTerminal as _;

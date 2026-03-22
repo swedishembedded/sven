@@ -140,8 +140,11 @@ mod tests {
 
     #[tokio::test]
     async fn directory_is_error() {
+        let dir = tempfile::tempdir().unwrap();
         let t = DeleteFileTool;
-        let out = t.execute(&call(json!({"path": "/tmp"}))).await;
+        let out = t
+            .execute(&call(json!({"path": dir.path().to_str().unwrap()})))
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("directory"));
     }

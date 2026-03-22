@@ -1665,6 +1665,13 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
             }
         }
     }
+    // On non-Unix platforms (e.g. Windows), stderr redirection via dup2 is not
+    // available without platform-specific APIs. Tracing is suppressed via
+    // LevelFilter::OFF above, which is sufficient for TUI mode.
+    #[cfg(not(unix))]
+    {
+        let _ = std::env::var("SVEN_LOG_FILE");
+    }
 
     // Spawn a background task that listens for SIGTERM / SIGINT from the OS
     // (e.g. `kill <pid>` or systemd shutdown).  These signals bypass the
@@ -1882,13 +1889,6 @@ fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
 }
 
 fn is_stdin_tty() -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe { libc::isatty(io::stdin().as_raw_fd()) != 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    use std::io::IsTerminal;
+    io::stdin().is_terminal()
 }

@@ -30,6 +30,8 @@ members = [
 
 [workspace.dependencies]
 libc         = "0.2"
+fs4          = "0.13"
+walkdir      = "2"
 tempfile     = "3"
 serde_yaml   = "0.9"
 anyhow       = "1"

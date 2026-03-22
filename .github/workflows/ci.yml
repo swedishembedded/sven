@@ -74,3 +74,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Release build
         run: make release
+
+  # Cross-platform compilation checks.  These catch ungated Unix-specific code
+  # before it blocks a Windows or macOS release build.
+  check-macos:
+    name: cargo check (macOS)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check
+        run: cargo check --workspace
+      - name: cargo test
+        run: cargo test --workspace
+
+  check-windows:
+    name: cargo check (Windows)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check
+        run: cargo check --workspace
+      - name: cargo test
+        run: cargo test --workspace

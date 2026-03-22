@@ -8,33 +8,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **OpenRouter Auto & Free routers**: `openrouter/auto` and `openrouter/free`
-  are now registered in the model catalog and resolvable via `--model
-  openrouter/auto` / `--model openrouter/free`. `openrouter/auto` is now the
-  default out-of-the-box model, replacing `openai/gpt-4o`, giving users with
-  `OPENROUTER_API_KEY` intelligent automatic model selection with no
-  configuration required. A new `auto_router_allowed_models` convenience key in
-  `driver_options` is automatically converted to the nested `plugins` structure
-  the OpenRouter Auto Router API expects.
+- **Telegram (sven-node)**: scaffolding for Telegram integration.
+
+## [1.9.0] - 2026-03-22
+
+### Added
+- **sven-frontend**: shared agent-wiring layer extracted from `sven-tui` for reuse across frontends.
+- **sven-gui**: Slint desktop GUI; **`sven-ui` merged into `sven --gui`** (single binary).
+- **GUI**: session persistence; **lazy chat loading**; **per-session token usage** persisted; full **markdown** in the chat view; markdown in **thinking and tool result** bubbles; scrollable tool bubbles; **todo** tool results in chat; vertical chat layout; sidebar **search** filter; SearchInput/SearchBar styling; Slint GUI skill.
+- **Channels (`sven-channels`)**: `Channel` trait and multi-platform adapters; E2E integration tests for channel → manager → reply.
+- **Scheduler (`sven-scheduler`)**: cron, interval, and one-shot jobs.
+- **Integrations (`sven-integrations`)**: email, calendar, and voice.
+- **Memory (`sven-memory`)**: SQLite store with FTS5 semantic search.
+- **Config**: schema for channels, scheduler, email, calendar, voice, memory, and webhooks.
+- **Node**: generic **webhook** endpoints; proactive agent integrations wired through bootstrap and tool registry.
+- **Skills**: load system-installed skills from `/usr/share` and `/usr/local`; **always reload skill content from disk** when the agent loads a skill.
 
 ### Fixed
-- **TUI drag/resize**: overhauled into a single unified system — `SplitPrefs`
-  extracted from `LayoutCache` to hold durable user-controlled split dimensions;
-  `anchor_offset` added to `ResizeDrag` variants so borders lock to the cursor's
-  grab point instead of jumping on first contact; `PeersSplitBorder` added to
-  `HitArea` and all hit detection unified through a single `hit_test()` path.
-- **Peers-split border drag direction**: drag used the wrong reference rect
-  (`chat_list_pane` bottom instead of `peers_pane` bottom), causing the border
-  to snap to its minimum position on any upward drag. Fixed to use
-  `peers_pane.y + peers_pane.height` as the true sidebar bottom.
+- **GUI**: nested-runtime panic on `--gui`; Slint layout, interaction, display, ask-question UX, picker, queue, spinners, markdown wrapping, session list busy indicator, completion, errors, clear, highlighting (multiple rounds of fixes).
+- **TUI**: markdown aligned with GUI (block quote vs list); first completed todo item no longer shows a stray bullet.
 
 ### Changed
-- **Model catalog**: `models.yaml` is now parsed exactly once per process via a
-  `OnceLock`-backed `catalog_ref()`; all lookup functions iterate the cached
-  slice instead of cloning the full `Vec` on every call.
-- **Model provider**: `check_api_key_requirement` and
-  `transform_openrouter_options` extracted as private helpers in `lib.rs` to
-  reduce the length of `from_config` and keep each concern in its own function.
+- **GUI**: large UI refactor; removed standalone “current tool” display in favor of clearer chat-centric UX.
+- **Docs**: README condensed and expanded with accurate feature lists; user guides for channels, scheduler, email, calendar, voice, memory, webhooks, and use cases; **AGENTS.md** updated for sven-frontend, sven-gui, and dual-binary layout.
+
+## [1.8.1] - 2026-03-15
+
+### Added
+- **Tests (`sven-model`)**: coverage that the full MCP tool schema is passed through to the model API.
+
+### Fixed
+- **MCP**: omit `null` `capabilities` in `initialize` for strict servers; show **disabled** status when `enabled: false` in config.
+- **MCP**: wait for tools in headless mode and refresh on `ToolsChanged`.
+- **TUI**: compile fixes for **ratatui 0.30**; `CompletionOverlay` viewport now driven by `ListState` (removed fixed `max_visible`).
+
+## [1.8.0] - 2026-03-14
+
+### Added
+- **MCP client**: broad client-side MCP server support (SSE, sessions, OAuth integration).
+- **MCP OAuth**: PKCE flow with auto-auth, token lifecycle, and **scope discovery** (no manual scope lists).
+- **CLI**: `sven mcp` auth flow; default OAuth redirect **`sven://sven.mcp`** with container fallback; **`cursor://`** support.
+- **Release**: `make` release targets accept **`--no-confirm`** for non-interactive runs.
+
+### Fixed
+- **MCP / OAuth**: RFC-compliant PKCE; stop perpetual auth loops; trigger OAuth on **401**; skip OAuth flows in **headless/CI**; improved SSE and session handling.
+- **Config**: recognize `mcp_servers`; fix **SKILL.md** frontmatter parsing.
+
+### Changed
+- **Headless**: apply settings on startup; reduce unlabelled noise; show context path.
+- **TUI**: focus the input pane when it is clicked.
+
+## [1.7.5] - 2026-03-13
+
+### Added
+- **TUI**: **conversation cost** in the status bar.
+- **GDB**: `gdb_start_server` Makefile target made target-agnostic.
+- **Docs**: `AGENTS.md` added.
+
+### Fixed
+- **Tokens / UI**: status bar token display; subagents run at correct depth; restore subagent chat hierarchy on restart with new chat at top; suppress noisy tracing when a subagent runs `acp serve`.
+- **Subagents & sessions**: subagent UX, agent error handling, and background session completeness.
+- **sven-config**: default model auto-detection priority (**OpenRouter** first) with regression test.
+
+### Changed
+- **CLI**: auto-enable **headless** mode when a **positional prompt** is provided.
+- **TUI**: focus the chat list on click so keyboard navigation applies immediately.
+
+## [1.7.4] - 2026-03-12
+
+### Added
+- **OpenRouter Auto & Free routers**: `openrouter/auto` and `openrouter/free`
+  are registered in the model catalog and resolvable via `--model
+  openrouter/auto` / `--model openrouter/free`. `openrouter/auto` is the
+  default out-of-the-box model (replacing `openai/gpt-4o`) when
+  `OPENROUTER_API_KEY` is available. `auto_router_allowed_models` in
+  `driver_options` maps to the nested `plugins` structure expected by the
+  OpenRouter Auto Router API.
+- **Benchmark**: Terminal-Bench 2.0 evaluation via Harbor.
+
+### Fixed
+- **TUI drag/resize**: unified system — `SplitPrefs` extracted from `LayoutCache` for durable split dimensions; `anchor_offset` on `ResizeDrag` so borders track the grab point; `PeersSplitBorder` in `HitArea`; single `hit_test()` path.
+- **Peers-split border drag**: use `peers_pane.y + peers_pane.height` as the sidebar bottom (fixes upward-drag snap to minimum).
+- **Subagents**: inherit the **live model** from the parent.
+- **Cache / tokens**: cache hit rate capped near ~49% from double-counted tokens — corrected.
+- **CI**: record resolved model in chat output documents.
+
+### Changed
+- **Model catalog**: `models.yaml` parsed once per process via `OnceLock` `catalog_ref()`; lookups use the cached slice instead of cloning on every call.
+- **Model provider**: `check_api_key_requirement` and `transform_openrouter_options` split into private helpers in `lib.rs`.
+- **Repository**: `.gitignore` extended for Python `__pycache__` paths.
 
 ## [1.7.3] - 2026-03-11
 
@@ -294,6 +356,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
+[Unreleased]: https://github.com/bosun-ai/sven/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/bosun-ai/sven/releases/tag/v1.9.0
+[1.8.1]: https://github.com/bosun-ai/sven/releases/tag/v1.8.1
+[1.8.0]: https://github.com/bosun-ai/sven/releases/tag/v1.8.0
+[1.7.5]: https://github.com/bosun-ai/sven/releases/tag/v1.7.5
+[1.7.4]: https://github.com/bosun-ai/sven/releases/tag/v1.7.4
 [1.7.3]: https://github.com/bosun-ai/sven/releases/tag/v1.7.3
 [1.7.2]: https://github.com/bosun-ai/sven/releases/tag/v1.7.2
 [1.7.1]: https://github.com/bosun-ai/sven/releases/tag/v1.7.1

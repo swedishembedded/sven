@@ -175,12 +175,37 @@ jobs:
           name: macos
           path: dist/
 
+  # ── Windows x86_64 ───────────────────────────────────────────────────────────
+  # continue-on-error: Windows build failures never block the Linux release.
+  build-windows:
+    name: Windows x86_64 [experimental]
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Release build
+        run: cargo build --release
+
+      - name: Stage artifacts
+        run: |
+          mkdir dist
+          copy target\release\sven.exe dist\sven-windows-x86_64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/
+
   # ── GitHub Release ────────────────────────────────────────────────────────────
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    # aarch64 and macOS are excluded from needs so their failures never block the release.
-    # e2e-basic must pass — if any basic test fails the release is aborted.
+    # aarch64, macOS, and Windows are excluded from needs so their failures
+    # never block the Linux release.  e2e-basic must pass — if any basic test
+    # fails the release is aborted.
     needs: [e2e-basic, build-linux-x86_64]
     steps:
       - uses: actions/checkout@v4
@@ -203,6 +228,13 @@ jobs:
         continue-on-error: true
         with:
           name: macos
+          path: dist
+
+      - name: Download Windows artifact (if available)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: windows
           path: dist
 
       - name: List artifacts

@@ -24,11 +24,13 @@ use tokio::sync::{mpsc, Mutex};
 use sven_config::{AgentMode, Config};
 use sven_model::ModelProvider;
 use sven_runtime::Shared;
+#[cfg(unix)]
+use sven_tools::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GdbSessionState, GrepTool,
-    MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool,
-    TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GrepTool, MemoryTool,
+    OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool, TodoTool,
+    ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -36,6 +38,7 @@ use sven_core::AgentRuntimeContext;
 use crate::context::ToolSetProfile;
 use crate::context_tool::ContextTool;
 use crate::task_tool::TaskTool;
+#[cfg(unix)]
 use crate::GdbTool;
 
 // ── Integration tool providers ────────────────────────────────────────────────
@@ -404,8 +407,12 @@ fn register_base_tools(
         ));
 
         // Compound GDB tool: start_server|connect|command|interrupt|wait_stopped|status|stop
-        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-        reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+        // GDB tools use Unix signal APIs and are only available on Unix platforms.
+        #[cfg(unix)]
+        {
+            let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+            reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+        }
     } else {
         // Suppress unused warnings for the buffer_store in SubAgent path.
         let _ = buffer_store;
@@ -460,8 +467,12 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // require a live model provider.
 
     // ── GDB ───────────────────────────────────────────────────────────────────
-    let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-    reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+    // GDB tools use Unix signal APIs and are only available on Unix platforms.
+    #[cfg(unix)]
+    {
+        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
+        reg.register(GdbTool::new(gdb_state, cfg.tools.gdb.clone()));
+    }
 
     reg
 }

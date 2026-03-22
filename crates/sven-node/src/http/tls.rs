@@ -470,7 +470,21 @@ pub fn print_install_instructions(ca_cert_path: &Path) {
         println!("  done");
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        println!("── Windows ───────────────────────────────────────────────────────────");
+        println!("  Option 1 – certutil (built-in, all browsers):");
+        println!("    certutil -addstore -f \"ROOT\" {path}");
+        println!();
+        println!("  Option 2 – PowerShell:");
+        println!("    Import-Certificate -FilePath \"{path}\" \\");
+        println!("      -CertStoreLocation Cert:\\LocalMachine\\Root");
+        println!();
+        println!("  Then restart Chrome/Edge. Firefox uses its own trust store:");
+        println!("  Settings → Privacy & Security → View Certificates → Import");
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         println!("Import {path} as a trusted root CA in your browser's certificate manager.");
     }

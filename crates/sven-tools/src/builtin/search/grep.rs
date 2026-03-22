@@ -17,14 +17,14 @@ static HAS_RG: OnceLock<bool> = OnceLock::new();
 
 /// Returns `true` if `rg` (ripgrep) is available on `$PATH`.
 ///
-/// The check is performed at most once per process; subsequent calls return
-/// the cached result without spawning a subprocess.
+/// Probes by running `rg --version` once; the result is cached for the lifetime
+/// of the process.  Does not use `which`/`where` so this works on all platforms.
 async fn has_rg() -> bool {
     if let Some(&cached) = HAS_RG.get() {
         return cached;
     }
-    let available = tokio::process::Command::new("which")
-        .arg("rg")
+    let available = tokio::process::Command::new("rg")
+        .arg("--version")
         .stdin(std::process::Stdio::null())
         .output()
         .await
@@ -198,41 +198,64 @@ async fn run_rg(
             .output()
             .await?
     } else {
-        // Fallback to grep
-        let mut args = vec!["-ran".to_string()];
-        match output_mode {
-            "files_with_matches" => {
-                args.push("-l".to_string());
+        // Fallback to the system grep (Unix/macOS).  On Windows, grep is not
+        // available by default; users should install ripgrep (`winget install BurntSushi.ripgrep`).
+        #[cfg(not(windows))]
+        {
+            let mut args = vec!["-ran".to_string()];
+            match output_mode {
+                "files_with_matches" => {
+                    args.push("-l".to_string());
+                }
+                "count" => {
+                    args.push("-c".to_string());
+                }
+                _ => {}
             }
-            "count" => {
-                args.push("-c".to_string());
+            if !case_sensitive {
+                args.push("-i".to_string());
             }
-            _ => {}
-        }
-        if !case_sensitive {
-            args.push("-i".to_string());
-        }
-        if context_lines > 0 && output_mode == "content" {
-            args.push(format!("-C{}", context_lines));
-        }
-        if whole_project {
-            for excl in &[".git", "target", "node_modules", "dist", "__pycache__"] {
-                args.push("--exclude-dir".to_string());
-                args.push(excl.to_string());
+            if context_lines > 0 && output_mode == "content" {
+                args.push(format!("-C{}", context_lines));
             }
-        }
-        if let Some(glob) = include {
-            args.push("--include".to_string());
-            args.push(glob.to_string());
-        }
-        args.push(pattern.to_string());
-        args.push(path.to_string());
+            if whole_project {
+                for excl in &[".git", "target", "node_modules", "dist", "__pycache__"] {
+                    args.push("--exclude-dir".to_string());
+                    args.push(excl.to_string());
+                }
+            }
+            if let Some(glob) = include {
+                args.push("--include".to_string());
+                args.push(glob.to_string());
+            }
+            args.push(pattern.to_string());
+            args.push(path.to_string());
 
-        tokio::process::Command::new("grep")
-            .args(&args)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .await?
+            tokio::process::Command::new("grep")
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .await?
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, grep is not available. Return an empty output so the
+            // caller surfaces a "no matches / rg not found" message.
+            // Users should install ripgrep: winget install BurntSushi.ripgrep
+            let _ = (
+                output_mode,
+                context_lines,
+                whole_project,
+                include,
+                case_sensitive,
+                pattern,
+                path,
+            );
+            return Err(anyhow::anyhow!(
+                "ripgrep (rg) is required for search on Windows. \
+                 Install it with: winget install BurntSushi.ripgrep"
+            ));
+        }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -293,10 +316,11 @@ mod tests {
 
     #[tokio::test]
     async fn no_match_returns_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "xyzzy_nonexistent_pattern_12345",
-                "path": "/tmp"
+                "path": dir.path().to_str().unwrap()
             })))
             .await;
         assert!(!out.is_error);

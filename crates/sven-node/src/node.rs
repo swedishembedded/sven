@@ -291,7 +291,15 @@ pub async fn run(
             web_cfg.session_ttl_secs,
         )?;
 
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| {
+            // Fall back to the home directory, or the root as a last resort.
+            dirs::home_dir().unwrap_or_else(|| {
+                #[cfg(windows)]
+                return std::path::PathBuf::from("C:\\");
+                #[cfg(not(windows))]
+                return std::path::PathBuf::from("/");
+            })
+        });
 
         // Build environment variables injected into every PTY session.
         // SVEN_NODE_TOKEN lets the in-terminal sven process authenticate

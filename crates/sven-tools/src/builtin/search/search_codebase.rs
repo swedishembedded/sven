@@ -77,9 +77,10 @@ impl Tool for SearchCodebaseTool {
 
         debug!(query = %query, path = %path, "search_codebase tool");
 
-        // Build rg command with exclusions
-        let has_rg = tokio::process::Command::new("which")
-            .arg("rg")
+        // Detect rg availability by probing its --version flag (cross-platform;
+        // avoids `which` which is Unix-only and `where` which is Windows-only).
+        let has_rg = tokio::process::Command::new("rg")
+            .arg("--version")
             .stdin(std::process::Stdio::null())
             .output()
             .await
@@ -122,23 +123,37 @@ impl Tool for SearchCodebaseTool {
                 .output()
                 .await
         } else {
-            let mut cmd_parts = vec!["grep -rn".to_string()];
-            if !case_sensitive {
-                cmd_parts.push("-i".to_string());
-            }
-            cmd_parts.push("--exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist".to_string());
-            if let Some(glob) = &include {
-                cmd_parts.push(format!("--include={glob}"));
-            }
-            cmd_parts.push(shell_escape(&query));
-            cmd_parts.push(shell_escape(&path));
+            // Fallback to system grep on Unix/macOS.  On Windows, ripgrep is
+            // required: install with `winget install BurntSushi.ripgrep`.
+            #[cfg(not(windows))]
+            {
+                let mut cmd_parts = vec!["grep -rn".to_string()];
+                if !case_sensitive {
+                    cmd_parts.push("-i".to_string());
+                }
+                cmd_parts.push("--exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist".to_string());
+                if let Some(glob) = &include {
+                    cmd_parts.push(format!("--include={glob}"));
+                }
+                cmd_parts.push(shell_escape(&query));
+                cmd_parts.push(shell_escape(&path));
 
-            tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd_parts.join(" "))
-                .stdin(std::process::Stdio::null())
-                .output()
-                .await
+                tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd_parts.join(" "))
+                    .stdin(std::process::Stdio::null())
+                    .output()
+                    .await
+            }
+            #[cfg(windows)]
+            {
+                let _ = (case_sensitive, &include, &query, &path);
+                return ToolOutput::err(
+                    &call.id,
+                    "ripgrep (rg) is required for search_codebase on Windows. \
+                     Install it with: winget install BurntSushi.ripgrep",
+                );
+            }
         };
 
         match output {

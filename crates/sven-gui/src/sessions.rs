@@ -620,7 +620,7 @@ fn strip_inline_code_backticks(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '`' {
             // Skip until next backtick or end
-            while let Some(n) = chars.next() {
+            for n in chars.by_ref() {
                 if n == '`' {
                     break;
                 }

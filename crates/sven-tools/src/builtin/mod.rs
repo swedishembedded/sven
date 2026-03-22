@@ -4,6 +4,7 @@
 pub mod buffer;
 pub mod context;
 pub mod file;
+#[cfg(unix)]
 pub mod gdb;
 pub mod grep_match;
 pub mod knowledge;
@@ -27,14 +28,14 @@ pub mod read_image;
 // also listed so that adding an override never silently goes un-reviewed.
 #[cfg(test)]
 mod output_category_tests {
-    use std::sync::Arc;
-    use sven_config::GdbConfig;
-    use tokio::sync::Mutex;
-
-    use super::gdb::state::GdbSessionState;
     use crate::tool::OutputCategory;
     use crate::Tool;
+    use std::sync::Arc;
 
+    #[cfg(unix)]
+    use {super::gdb::state::GdbSessionState, sven_config::GdbConfig, tokio::sync::Mutex};
+
+    #[cfg(unix)]
     fn gdb_state() -> Arc<Mutex<GdbSessionState>> {
         Arc::new(Mutex::new(GdbSessionState::default()))
     }
@@ -53,18 +54,21 @@ mod output_category_tests {
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 
+    #[cfg(unix)]
     #[test]
     fn gdb_command_is_headtail() {
         let t = super::gdb::command::GdbCommandTool::new(gdb_state(), GdbConfig::default());
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 
+    #[cfg(unix)]
     #[test]
     fn gdb_wait_stopped_is_headtail() {
         let t = super::gdb::wait_stopped::GdbWaitStoppedTool::new(gdb_state());
         assert_eq!(t.output_category(), OutputCategory::HeadTail);
     }
 
+    #[cfg(unix)]
     #[test]
     fn gdb_interrupt_is_headtail() {
         let t = super::gdb::interrupt::GdbInterruptTool::new(gdb_state());

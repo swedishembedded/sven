@@ -33,6 +33,7 @@ pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 
 // Re-export compound tools from sven-tools for convenience.
+#[cfg(unix)]
 pub use sven_tools::GdbTool;
 pub use sven_tools::MemoryTool;
 

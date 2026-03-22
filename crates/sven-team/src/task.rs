@@ -11,9 +11,9 @@
 //!
 //! # Concurrency
 //!
-//! All mutations use an exclusive `flock(2)` on the tasks file, so multiple
-//! sven node processes in the same team can safely claim and update tasks
-//! without races.  The lock is held only for the duration of a
+//! All mutations use an exclusive advisory file lock on the tasks file, so
+//! multiple sven node processes in the same team can safely claim and update
+//! tasks without races.  The lock is held only for the duration of a
 //! read-modify-write cycle (typically a few microseconds).
 
 use std::{fs, path::PathBuf};
@@ -246,20 +246,17 @@ impl TaskStore {
     where
         F: FnOnce(&mut TaskList) -> Result<R, TaskStoreError>,
     {
+        use fs4::fs_std::FileExt;
         use std::io::{Read, Seek, SeekFrom, Write};
-        use std::os::unix::io::AsRawFd;
 
         let mut file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(&self.path)?;
 
-        // Acquire exclusive lock (blocking).
-        // SAFETY: flock is a valid syscall on the file descriptor.
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-        if ret != 0 {
-            return Err(TaskStoreError::Io(std::io::Error::last_os_error()));
-        }
+        // Acquire exclusive advisory lock (blocking).  fs4 uses flock(2) on
+        // Unix and LockFileEx on Windows, so this is cross-platform.
+        file.lock_exclusive().map_err(TaskStoreError::Io)?;
 
         // Read current content.  Use a block so the BufReader (which borrows
         // `file`) is dropped before we need an exclusive `&mut file` for seek.
@@ -290,8 +287,8 @@ impl TaskStore {
         } // writer dropped here, releasing &mut file
 
         // Release lock (happens automatically when `file` drops, but explicit
-        // for clarity).
-        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        // for clarity).  The trait is already in scope from the import above.
+        let _ = file.unlock();
 
         Ok(result)
     }

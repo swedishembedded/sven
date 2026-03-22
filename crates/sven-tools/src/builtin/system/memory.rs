@@ -41,10 +41,17 @@ impl MemoryTool {
         if let Some(path) = &self.memory_file {
             return path.clone();
         }
-        let home = dirs::home_dir()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/tmp".to_string());
-        format!("{home}/.config/sven/memory.json")
+        // Use dirs::config_dir() which returns the platform-appropriate config
+        // directory (Linux: ~/.config, macOS: ~/Library/Application Support,
+        // Windows: %APPDATA%).  Fall back to the system temp dir as a last resort.
+        let config_base = dirs::config_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(std::env::temp_dir);
+        config_base
+            .join("sven")
+            .join("memory.json")
+            .to_string_lossy()
+            .to_string()
     }
 }
 

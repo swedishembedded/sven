@@ -134,7 +134,12 @@ async fn shell_tool_executes_echo() {
 async fn fs_tool_write_read_roundtrip() {
     use sven_tools::{ReadFileTool, Tool, ToolCall, WriteTool};
 
-    let path = format!("/tmp/sven_test_{}.txt", uuid::Uuid::new_v4());
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let path = tmp_dir
+        .path()
+        .join(format!("sven_test_{}.txt", uuid::Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
 
     let write_call = ToolCall {
         id: "w1".into(),

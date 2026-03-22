@@ -1,6 +1,8 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
+// GDB tooling is Unix-only (requires signal APIs unavailable on Windows).
+#![cfg(unix)]
 // Integration tests for the GDB tooling.
 //
 // Tests are organised into three groups:

@@ -767,9 +767,19 @@ pub struct HookMapping {
 
 fn config_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    // /etc/ is a Linux convention; gate it accordingly.
+    #[cfg(target_os = "linux")]
     paths.push(PathBuf::from("/etc/sven/node.yaml"));
     if let Some(home) = dirs::home_dir() {
         paths.push(home.join(".config/sven/node.yaml"));
+    }
+    // dirs::config_dir() returns the platform-appropriate config directory:
+    // macOS: ~/Library/Application Support, Windows: %APPDATA%
+    if let Some(cfg) = dirs::config_dir() {
+        let candidate = cfg.join("sven/node.yaml");
+        if !paths.contains(&candidate) {
+            paths.push(candidate);
+        }
     }
     paths.push(PathBuf::from(".sven/node.yaml"));
     paths

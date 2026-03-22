@@ -52,9 +52,12 @@ pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
 // Shell tool
 pub use builtin::shell::ShellTool;
 
-// GDB debugging tools (compound + individual kept for internal use)
+// GDB debugging tools (Unix only — GDB signal APIs are not available on Windows)
+#[cfg(unix)]
 pub use builtin::gdb::state::GdbSessionState;
+#[cfg(unix)]
 pub use builtin::gdb::GdbTool;
+#[cfg(unix)]
 pub use builtin::gdb::{
     GdbCommandTool, GdbConnectTool, GdbInterruptTool, GdbStartServerTool, GdbStatusTool,
     GdbStopTool, GdbWaitStoppedTool,

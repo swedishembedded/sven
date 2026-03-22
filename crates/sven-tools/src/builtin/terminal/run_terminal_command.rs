@@ -106,8 +106,22 @@ impl Tool for RunTerminalCommandTool {
 
         debug!(cmd = %command, "run_terminal_command tool");
 
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg(&command);
+        // Use the platform-appropriate POSIX-compatible shell.
+        // On Unix/macOS: sh -c <command>
+        // On Windows:    cmd /C <command>
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(&command);
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", &command]);
+            c
+        };
+
         // Isolate the subprocess from the TUI's terminal.  See shell.rs for
         // the detailed rationale.
         cmd.stdin(Stdio::null());

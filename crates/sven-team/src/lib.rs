@@ -13,8 +13,6 @@
 //! - [`definition`]: Declarative team definition files (`.sven/teams/*.yaml`).
 //! - [`cli`]: Implementations for the `sven team` CLI subcommands.
 
-extern crate libc;
-
 pub mod cli;
 pub mod config;
 pub mod definition;

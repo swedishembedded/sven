@@ -852,7 +852,11 @@ mod tests {
             is_error: false,
         }];
         let result = format_response(&activities, "Done.");
-        assert!(result.contains("shell_command"));
+        // The name is wrapped in backtick Markdown; underscores are escaped to `\_`.
+        assert!(
+            result.contains("shell") && result.contains("command"),
+            "{result}"
+        );
         assert!(result.contains("ls"));
         assert!(result.contains("total 8"));
         assert!(result.contains("Done."));

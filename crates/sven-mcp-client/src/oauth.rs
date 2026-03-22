@@ -612,20 +612,34 @@ impl OAuthContext {
 /// When in a container, the sven:// protocol handler (installed on the host)
 /// cannot reach our callback server. We fall back to http://127.0.0.1:PORT
 /// and bind to 0.0.0.0 so port forwarding (e.g. -p 5598:5598) works.
+///
+/// Container detection relies on Linux-specific files (`/.dockerenv`,
+/// `/proc/1/cgroup`).  On macOS and Windows, Docker containers run a Linux VM
+/// underneath, so from the host's perspective there are no container markers;
+/// this function always returns `false` on non-Linux platforms.
 pub fn running_in_container() -> bool {
-    if std::path::Path::new("/.dockerenv").exists() {
-        return true;
-    }
-    if std::path::Path::new("/run/.containerenv").exists() {
-        return true;
-    }
-    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-        if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("kubepods")
-        {
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/.dockerenv").exists() {
             return true;
         }
+        if std::path::Path::new("/run/.containerenv").exists() {
+            return true;
+        }
+        if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+            if cgroup.contains("docker")
+                || cgroup.contains("containerd")
+                || cgroup.contains("kubepods")
+            {
+                return true;
+            }
+        }
+        false
     }
-    false
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 /// Parameters for [`run_oauth_flow`].

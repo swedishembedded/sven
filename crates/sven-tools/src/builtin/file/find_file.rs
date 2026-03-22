@@ -4,86 +4,164 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
+use walkdir::WalkDir;
 
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
 pub struct FindFileTool;
 
-/// Decompose a glob pattern into `(subdirectory_suffix, name_pattern)`.
-///
-/// `find -name` matches only the filename component, so path structure in the
-/// pattern must be converted into a search root adjustment.
-///
-/// Rules (applied in order):
-///   1. Find the **last** `**/` segment — everything before it becomes the
-///      subdirectory and everything after it becomes the name pattern.
-///   2. If there's no `**` but there is a `/`, split on the last `/`.
-///   3. Otherwise the whole pattern is the name pattern.
-///
-/// Examples:
-///   `*.rs`           → ("",    "*.rs")
-///   `**/*.rs`        → ("",    "*.rs")
-///   `src/**/*.rs`    → ("src", "*.rs")
-///   `a/b/**/*.c`     → ("a/b", "*.c")
-///   `Cargo.toml`     → ("",    "Cargo.toml")
-///   `*lint*`         → ("",    "*lint*")
-fn decompose_pattern(pattern: &str) -> (String, String) {
-    if let Some(pos) = pattern.rfind("**/") {
-        let prefix = pattern[..pos].trim_end_matches('/');
-        let name_part = &pattern[pos + 3..];
-        return (prefix.to_string(), name_part.to_string());
-    }
-    if let Some(pos) = pattern.rfind('/') {
-        let prefix = &pattern[..pos];
-        let name_part = &pattern[pos + 1..];
-        return (prefix.to_string(), name_part.to_string());
-    }
-    (String::new(), pattern.to_string())
-}
+// Directories that are always excluded from search results.
+const EXCLUDED_DIRS: &[&str] = &[".git", "target", "node_modules", ".cargo"];
 
-/// Return `true` when the pattern contains wildcards in a *directory* component
-/// such that [`decompose_pattern`] would produce an unusable result (a prefix
-/// that itself contains `*`, or an empty name part).
-///
-/// These patterns require `find -path` instead of `find -name`.
-///
-/// Examples that need `-path`:
-///   `**/sven-team/**`       — all files inside any `sven-team` directory
-///   `**/sven-team/**/*.rs`  — .rs files inside any `sven-team` directory
-///
-/// Examples that stay with `-name` (decompose handles them):
-///   `*.rs`          — plain filename glob
-///   `**/*.rs`       — recursive filename glob
-///   `src/**/*.rs`   — .rs files under `src/` (prefix="src", name="*.rs")
-fn is_path_glob(pattern: &str) -> bool {
-    let (prefix, name) = decompose_pattern(pattern);
-    // decompose_pattern fails (produces an unusable command) when:
-    // 1. The derived prefix still contains a wildcard —
-    //    e.g. "**/sven-team" from "**/sven-team/**/*.rs" (rfind finds the
-    //    last **/, leaving "**/" in the prefix).
-    // 2. The derived name still contains '/' —
-    //    e.g. "sven-team/**" from "**/sven-team/**" (rfind finds the first
-    //    **/ at position 0, leaving "sven-team/**" as the name, which
-    //    `find -name` cannot handle).
-    // 3. The name is empty (nothing to search for with -name).
-    prefix.contains('*') || name.contains('/') || name.is_empty()
-}
-
-/// Translate a double-star glob pattern to a `find -path` / `find -ipath` pattern.
-///
-/// In GNU `find -path`, a single `*` already matches across `/`, so collapsing
-/// `**` → `*` is sufficient.  We also ensure the pattern starts with `*/` so
-/// that it anchors anywhere in the tree (find reports paths as `./a/b/c`).
-fn translate_to_find_path(pattern: &str) -> String {
-    // Collapse ** → * (find's * already crosses directory boundaries in -path)
-    let pat = pattern.replace("**", "*");
-    // Prepend */ if needed so the pattern matches anywhere in the reported path.
-    if pat.starts_with('/') || pat.starts_with("*/") {
-        pat
+/// Match a file path (relative to root, using `/` separators) against a glob
+/// pattern.  Supports `*` (any chars within a segment), `**` (any segments),
+/// and `?` (any single char).  Matching is done on the full relative path so
+/// patterns like `**/sven-team/**/*.rs` work correctly.
+fn glob_matches(pattern: &str, path: &str, case_insensitive: bool) -> bool {
+    // Normalise separators to `/` so patterns work on all platforms.
+    let path_norm = path.replace(std::path::MAIN_SEPARATOR, "/");
+    let path_str = if case_insensitive {
+        path_norm.to_lowercase()
     } else {
-        format!("*/{pat}")
+        path_norm
+    };
+    let pat_str = if case_insensitive {
+        pattern.to_lowercase()
+    } else {
+        pattern.to_string()
+    };
+    glob_match_impl(&pat_str, &path_str)
+}
+
+/// Recursive glob matching with `**` support.
+fn glob_match_impl(pattern: &str, text: &str) -> bool {
+    let pat: Vec<&str> = pattern.split('/').collect();
+    let txt: Vec<&str> = text.split('/').collect();
+    glob_match_segments(&pat, &txt)
+}
+
+fn glob_match_segments(pat: &[&str], txt: &[&str]) -> bool {
+    if pat.is_empty() {
+        return txt.is_empty();
     }
+    match pat[0] {
+        "**" => {
+            // ** can consume zero or more path segments.
+            // Try consuming 0 segments first, then 1, 2, …
+            if glob_match_segments(&pat[1..], txt) {
+                return true;
+            }
+            if !txt.is_empty() {
+                return glob_match_segments(pat, &txt[1..]);
+            }
+            false
+        }
+        seg => {
+            if txt.is_empty() {
+                return false;
+            }
+            glob_segment_match(seg, txt[0]) && glob_match_segments(&pat[1..], &txt[1..])
+        }
+    }
+}
+
+/// Match a single path segment (no `/` allowed) against a glob pattern using
+/// `*` and `?` wildcards.
+fn glob_segment_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    // dp[i][j] = pattern[..i] matches text[..j]
+    let mut dp = vec![vec![false; t.len() + 1]; p.len() + 1];
+    dp[0][0] = true;
+    // A pattern made only of `*`s matches an empty string.
+    for i in 1..=p.len() {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
+        }
+    }
+    for i in 1..=p.len() {
+        for j in 1..=t.len() {
+            if p[i - 1] == '*' {
+                // '*' matches empty or any number of chars.
+                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+            } else if p[i - 1] == '?' || p[i - 1] == t[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1];
+            }
+        }
+    }
+    dp[p.len()][t.len()]
+}
+
+/// Walk `root` recursively and return paths matching `pattern`, up to `max`
+/// results.  Skips excluded directories.  Times out at `deadline`.
+///
+/// Pattern matching rules:
+/// - Patterns without `/` (e.g. `*.rs`, `*lint*`) match the **filename** only,
+///   matching anywhere in the tree — equivalent to `find -name`.
+/// - Patterns with `/` (e.g. `**/*.rs`, `src/**/*.rs`, `**/sven-team/**`)
+///   match against the full relative path from `root`.
+fn find_files_walkdir(
+    root: &str,
+    pattern: &str,
+    case_insensitive: bool,
+    max: usize,
+    deadline: std::time::Instant,
+) -> anyhow::Result<Vec<String>> {
+    let has_path_sep = pattern.contains('/');
+
+    let mut results = Vec::new();
+    let walker = WalkDir::new(root).follow_links(false).into_iter();
+
+    for entry in walker.filter_entry(|e| {
+        // Prune excluded directories to avoid traversing them.
+        if e.file_type().is_dir() {
+            if let Some(name) = e.file_name().to_str() {
+                return !EXCLUDED_DIRS.contains(&name);
+            }
+        }
+        true
+    }) {
+        // Check the timeout on each entry to keep latency bounded.
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        // Compute a relative path from root using `/` separators.
+        let rel_path = match entry.path().strip_prefix(root) {
+            Ok(p) => p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"),
+            Err(_) => entry.path().to_string_lossy().to_string(),
+        };
+        // Remove a leading `./` that walkdir sometimes adds.
+        let rel_path = rel_path.trim_start_matches("./");
+
+        // Choose what to match against based on whether the pattern contains `/`:
+        // - No `/`:  match filename only (classic `find -name` semantics)
+        // - With `/`: match full relative path (supports `**/sven-team/**/*.rs`)
+        let match_target = if has_path_sep {
+            rel_path
+        } else {
+            rel_path.split('/').next_back().unwrap_or(rel_path)
+        };
+
+        if glob_matches(pattern, match_target, case_insensitive) {
+            results.push(entry.path().display().to_string());
+            if results.len() >= max {
+                break;
+            }
+        }
+    }
+
+    Ok(results)
 }
 
 #[async_trait]
@@ -94,10 +172,10 @@ impl Tool for FindFileTool {
 
     fn description(&self) -> &str {
         "Find files by name glob pattern, searching recursively under a root directory.\n\
-         Powered by 'find'; excludes .git/, target/, node_modules/, .cargo/registry/.\n\
+         Pure-Rust implementation (walkdir); excludes .git/, target/, node_modules/, .cargo/registry/.\n\
          Glob patterns:\n\
            '*.rs'               — all .rs files anywhere under root\n\
-           '**/*.rs'            — same (**/ prefix is stripped; find is always recursive)\n\
+           '**/*.rs'            — same (**/ prefix is stripped; search is always recursive)\n\
            'src/**/*.rs'        — .rs files under <root>/src/\n\
            '**/sven-team/**'    — all files inside any directory named 'sven-team'\n\
            '**/sven-team/**/*.rs' — .rs files inside any 'sven-team' directory\n\
@@ -161,77 +239,36 @@ impl Tool for FindFileTool {
             .get("max_results")
             .and_then(|v| v.as_u64())
             .unwrap_or(200) as usize;
-        let timeout = call
+        let timeout_secs = call
             .args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(10);
 
-        let cmd = if is_path_glob(&raw_pattern) {
-            // Patterns with wildcards in directory components (e.g. **/dir/**)
-            // require `find -path` because `find -name` only matches the filename.
-            // GNU find's -path treats * as matching any character including `/`.
-            let path_pat = translate_to_find_path(&raw_pattern);
-            let path_flag = if case_insensitive { "-ipath" } else { "-path" };
+        debug!(pattern = %raw_pattern, root = %root, "find_file tool");
 
-            debug!(
-                pattern = %raw_pattern,
-                path_pat = %path_pat,
-                root = %root,
-                "find_file tool (path strategy)"
-            );
+        let pattern = raw_pattern.clone();
+        let root_path = root.clone();
 
-            format!(
-                "timeout {timeout} find {root} {path_flag} '{path_pat}' \
-                 -not -path '*/.git/*' \
-                 -not -path '*/target/*' \
-                 -not -path '*/node_modules/*' \
-                 -not -path '*/.cargo/registry/*' \
-                 | head -n {max}"
-            )
-        } else {
-            let (subdir, name_pat) = decompose_pattern(&raw_pattern);
-            let search_root = if subdir.is_empty() {
-                root.clone()
-            } else {
-                format!("{}/{}", root.trim_end_matches('/'), subdir)
-            };
-            let name_flag = if case_insensitive { "-iname" } else { "-name" };
+        // Run the walkdir traversal on a blocking thread to avoid blocking
+        // the async executor.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
-            debug!(
-                pattern = %raw_pattern,
-                search_root = %search_root,
-                name_pat = %name_pat,
-                "find_file tool (name strategy)"
-            );
+        let result = tokio::task::spawn_blocking(move || {
+            find_files_walkdir(&root_path, &pattern, case_insensitive, max, deadline)
+        })
+        .await;
 
-            format!(
-                "timeout {timeout} find {search_root} {name_flag} '{name_pat}' \
-                 -not -path '*/.git/*' \
-                 -not -path '*/target/*' \
-                 -not -path '*/node_modules/*' \
-                 -not -path '*/.cargo/registry/*' \
-                 | head -n {max}"
-            )
-        };
-
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .await;
-
-        match output {
-            Ok(out) => {
-                let text = String::from_utf8_lossy(&out.stdout).to_string();
-                if text.trim().is_empty() {
+        match result {
+            Ok(Ok(matches)) => {
+                if matches.is_empty() {
                     ToolOutput::ok(&call.id, "(no matches)")
                 } else {
-                    ToolOutput::ok(&call.id, text.trim_end().to_string())
+                    ToolOutput::ok(&call.id, matches.join("\n"))
                 }
             }
-            Err(e) => ToolOutput::err(&call.id, format!("find_file error: {e}")),
+            Ok(Err(e)) => ToolOutput::err(&call.id, format!("find_file error: {e}")),
+            Err(e) => ToolOutput::err(&call.id, format!("find_file task error: {e}")),
         }
     }
 }
@@ -251,53 +288,54 @@ mod tests {
         }
     }
 
-    // ── Pattern decomposition ─────────────────────────────────────────────────
+    // ── Glob matching ─────────────────────────────────────────────────────────
 
     #[test]
-    fn decomposes_plain_pattern() {
-        assert_eq!(decompose_pattern("*.rs"), ("".into(), "*.rs".into()));
+    fn glob_matches_simple_pattern() {
+        assert!(glob_matches("*.rs", "foo.rs", false));
+        assert!(!glob_matches("*.rs", "foo.toml", false));
     }
 
     #[test]
-    fn decomposes_double_star_prefix() {
-        assert_eq!(decompose_pattern("**/*.rs"), ("".into(), "*.rs".into()));
+    fn glob_matches_case_insensitive() {
+        assert!(glob_matches("*.md", "README.MD", true));
+        assert!(!glob_matches("*.md", "README.MD", false));
     }
 
     #[test]
-    fn decomposes_path_with_double_star() {
-        assert_eq!(
-            decompose_pattern("src/**/*.rs"),
-            ("src".into(), "*.rs".into())
-        );
+    fn glob_matches_double_star() {
+        // Patterns without `/` match filename only (find -name semantics).
+        // The caller is responsible for passing the filename when has_path_sep=false.
+        assert!(glob_matches("*.rs", "lib.rs", false));
+        // With `/`, match the full path.
+        assert!(glob_matches("**/*.rs", "src/lib.rs", false));
+        assert!(glob_matches(
+            "**/*.rs",
+            "crates/sven-team/src/lib.rs",
+            false
+        ));
     }
 
     #[test]
-    fn decomposes_nested_path_with_double_star() {
-        assert_eq!(
-            decompose_pattern("a/b/**/*.c"),
-            ("a/b".into(), "*.c".into())
-        );
+    fn glob_matches_dir_pattern() {
+        // Pattern with `/`: matches against full relative path.
+        assert!(glob_matches("sven-team/**", "sven-team/src/lib.rs", false));
+        assert!(!glob_matches("sven-team/**", "other/src/lib.rs", false));
     }
 
     #[test]
-    fn decomposes_exact_filename() {
-        assert_eq!(
-            decompose_pattern("Cargo.toml"),
-            ("".into(), "Cargo.toml".into())
-        );
-    }
-
-    #[test]
-    fn decomposes_simple_path() {
-        assert_eq!(
-            decompose_pattern("crates/lib.rs"),
-            ("crates".into(), "lib.rs".into())
-        );
-    }
-
-    #[test]
-    fn decomposes_wildcard_name() {
-        assert_eq!(decompose_pattern("*lint*"), ("".into(), "*lint*".into()));
+    fn glob_matches_dir_anywhere() {
+        // Pattern with ** on both sides matches inside any directory.
+        assert!(glob_matches(
+            "**/sven-team/**",
+            "crates/sven-team/src/lib.rs",
+            false
+        ));
+        assert!(!glob_matches(
+            "**/sven-team/**",
+            "crates/other/src/lib.rs",
+            false
+        ));
     }
 
     // ── Search execution ──────────────────────────────────────────────────────
@@ -408,10 +446,11 @@ mod tests {
 
     #[tokio::test]
     async fn no_match_returns_no_matches_message() {
+        let dir = tempfile::tempdir().unwrap();
         let out = FindFileTool
             .execute(&call(json!({
                 "pattern": "*.xyz_nonexistent_ext",
-                "root": "/tmp"
+                "root": dir.path().to_str().unwrap()
             })))
             .await;
         assert!(!out.is_error);
@@ -431,57 +470,6 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert_eq!(required.len(), 1);
         assert!(required.iter().any(|v| v.as_str() == Some("pattern")));
-    }
-
-    // ── is_path_glob ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn path_glob_detects_dir_wildcard_suffix() {
-        // **/dir/** has wildcards in a directory component — needs -path
-        assert!(is_path_glob("**/sven-team/**"));
-    }
-
-    #[test]
-    fn path_glob_detects_dir_wildcard_with_name() {
-        // **/dir/**/*.rs — prefix would be "**/dir" (contains *) — needs -path
-        assert!(is_path_glob("**/sven-team/**/*.rs"));
-    }
-
-    #[test]
-    fn path_glob_false_for_plain_pattern() {
-        assert!(!is_path_glob("*.rs"));
-    }
-
-    #[test]
-    fn path_glob_false_for_double_star_filename() {
-        // **/*.rs → decompose gives ("", "*.rs") — works fine with -name
-        assert!(!is_path_glob("**/*.rs"));
-    }
-
-    #[test]
-    fn path_glob_false_for_concrete_prefix() {
-        // src/**/*.rs → decompose gives ("src", "*.rs") — prefix has no *
-        assert!(!is_path_glob("src/**/*.rs"));
-    }
-
-    // ── translate_to_find_path ────────────────────────────────────────────────
-
-    #[test]
-    fn translates_dir_glob_to_path_pattern() {
-        assert_eq!(translate_to_find_path("**/sven-team/**"), "*/sven-team/*");
-    }
-
-    #[test]
-    fn translates_dir_glob_with_extension() {
-        assert_eq!(
-            translate_to_find_path("**/sven-team/**/*.rs"),
-            "*/sven-team/*/*.rs"
-        );
-    }
-
-    #[test]
-    fn prepends_wildcard_when_no_leading_star() {
-        assert_eq!(translate_to_find_path("sven-team/**"), "*/sven-team/*");
     }
 
     // ── Execute with path-glob patterns ──────────────────────────────────────

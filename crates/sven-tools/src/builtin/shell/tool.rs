@@ -48,6 +48,7 @@ impl Tool for ShellTool {
          Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
          preserved with an omission marker in the middle — errors at the end are never lost.\n\
          Prefer non-interactive commands. Avoid commands that require a TTY.\n\
+         On Unix/macOS commands run via bash; on Windows via cmd.exe.\n\
          IMPORTANT: do NOT use shell for file operations:\n\
          - Read files  → use read_file  (not cat / head / tail)\n\
          - Search text → use grep tool  (not grep / rg / ack)\n\
@@ -114,8 +115,22 @@ impl Tool for ShellTool {
 
         debug!(cmd = %command, "executing shell tool");
 
-        let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg(&command);
+        // Use the platform-appropriate shell interpreter.
+        // On Unix/macOS: bash -c <command>
+        // On Windows:    cmd /C <command>  (PowerShell is too verbose for tool use)
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = Command::new("bash");
+            c.arg("-c").arg(&command);
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", &command]);
+            c
+        };
+
         // Isolate the subprocess from the TUI's terminal.
         //
         // `stdin(Stdio::null())` prevents the subprocess (and any programs it
@@ -284,6 +299,8 @@ mod tests {
         assert!(out.content.contains("hello"));
     }
 
+    // stderr redirection syntax (>&2) is bash-specific.
+    #[cfg(unix)]
     #[tokio::test]
     async fn stdout_and_stderr_both_captured() {
         let t = ShellTool::default();
@@ -301,18 +318,26 @@ mod tests {
 
     #[tokio::test]
     async fn workdir_changes_cwd() {
+        let dir = tempfile::tempdir().unwrap();
         let t = ShellTool::default();
+        // Use a cross-platform way to print the current directory.
+        #[cfg(unix)]
+        let cmd = "pwd";
+        #[cfg(windows)]
+        let cmd = "cd";
         let out = t
             .execute(&call(
                 "1",
                 json!({
-                    "shell_command": "pwd",
-                    "workdir": "/tmp"
+                    "shell_command": cmd,
+                    "workdir": dir.path().to_str().unwrap()
                 }),
             ))
             .await;
         assert!(!out.is_error);
-        assert!(out.content.trim().ends_with("tmp") || out.content.contains("/tmp"));
+        // Verify we're in the expected directory (path component should appear).
+        let dir_name = dir.path().file_name().unwrap().to_string_lossy();
+        assert!(out.content.contains(dir_name.as_ref()), "{}", out.content);
     }
 
     // ── Failure cases ─────────────────────────────────────────────────────────
@@ -346,6 +371,8 @@ mod tests {
         assert!(out.content.contains("shell_command"));
     }
 
+    // `sleep` is Unix-specific; on Windows use `timeout /t N`.
+    #[cfg(unix)]
     #[tokio::test]
     async fn timeout_returns_error() {
         let t = ShellTool { timeout_secs: 1 };

@@ -14,11 +14,18 @@ use crate::Config;
 fn config_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    // 1. System-wide default
-    paths.push(PathBuf::from("/etc/sven/config.yaml"));
-    paths.push(PathBuf::from("/etc/sven/config.yml"));
+    // 1. System-wide default.  /etc/ is a Linux convention; macOS and Windows
+    //    use dirs::config_dir() for system-wide configuration instead.
+    #[cfg(target_os = "linux")]
+    {
+        paths.push(PathBuf::from("/etc/sven/config.yaml"));
+        paths.push(PathBuf::from("/etc/sven/config.yml"));
+    }
 
-    // 2. XDG / home
+    // 2. XDG / home.  dirs::config_dir() returns:
+    //    Linux:   $XDG_CONFIG_HOME or ~/.config
+    //    macOS:   ~/Library/Application Support
+    //    Windows: %APPDATA% (C:\Users\<user>\AppData\Roaming)
     if let Some(home) = dirs::home_dir() {
         paths.push(home.join(".config/sven/config.yaml"));
         paths.push(home.join(".config/sven/config.yml"));

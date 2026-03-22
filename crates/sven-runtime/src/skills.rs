@@ -609,11 +609,21 @@ pub(crate) fn discover_skills_impl(
     // System paths first (lowest precedence).  Distro packages, then locally
     // installed.  Project and home skills override these on command collision.
     if include_system {
-        load(PathBuf::from("/usr/share/sven/skills"), "/usr/share/sven");
-        load(
-            PathBuf::from("/usr/local/share/sven/skills"),
-            "/usr/local/share/sven",
-        );
+        // /usr/share and /usr/local/share are Unix filesystem conventions.
+        #[cfg(unix)]
+        {
+            load(PathBuf::from("/usr/share/sven/skills"), "/usr/share/sven");
+            load(
+                PathBuf::from("/usr/local/share/sven/skills"),
+                "/usr/local/share/sven",
+            );
+        }
+        // On non-Unix platforms, use the platform data directory (e.g.
+        // %ProgramData%\sven on Windows, /Library/Application Support on macOS).
+        #[cfg(not(unix))]
+        if let Some(data_dir) = dirs::data_dir() {
+            load(data_dir.join("sven").join("skills"), "system-data");
+        }
     }
 
     // At each directory, load all five config dir types.  The within-level

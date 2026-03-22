@@ -640,6 +640,7 @@ mod tests {
 
     /// Build a `TeamConfigHandle` pre-populated with a team whose task store
     /// lives under `dir`.  The `TaskStore` is opened to initialise the file.
+    #[allow(dead_code)]
     fn config_handle(dir: &TempDir, team_name: &str) -> TeamConfigHandle {
         // Create the task store file so TaskStore::open succeeds later.
         let tasks_path = dir.path().join("tasks.json");
