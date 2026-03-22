@@ -24,10 +24,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install bats-core
+      - name: Install bats-core and Linux build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats libfontconfig-dev
 
       - name: Run basic e2e tests
         run: make tests/e2e/basic
@@ -38,6 +38,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libfontconfig-dev
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
