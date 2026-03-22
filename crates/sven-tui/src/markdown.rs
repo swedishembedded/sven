@@ -110,12 +110,10 @@ fn render_blocks_to_lines(blocks: &[MarkdownBlock], width: usize, ascii: bool) -
                                 } else {
                                     "  ☑ "
                                 }
+                            } else if ascii {
+                                "  [ ] "
                             } else {
-                                if ascii {
-                                    "  [ ] "
-                                } else {
-                                    "  ☐ "
-                                }
+                                "  ☐ "
                             },
                             text.as_str(),
                         )

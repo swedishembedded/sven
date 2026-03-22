@@ -738,7 +738,7 @@ pub fn block_to_markdown(p: &PlainChatMessage) -> String {
             s
         }
         "heading" => {
-            let n = p.heading_level.max(1).min(6) as usize;
+            let n = p.heading_level.clamp(1, 6) as usize;
             format!("{} {}", "#".repeat(n), p.content)
         }
         "list-item" => {

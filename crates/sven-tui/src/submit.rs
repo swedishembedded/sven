@@ -163,23 +163,28 @@ impl App {
                             if let Some(ref toast_tx) = self.toast_tx {
                                 let toast_tx = toast_tx.clone();
                                 // Show immediate feedback that auth is starting.
-                                let _ = toast_tx.send(crate::app::ui_state::Toast::info(format!(
-                                    "Opening browser to authenticate '{server}'…"
-                                )));
+                                let _ = toast_tx
+                                    .send(crate::app::ui_state::Toast::info(format!(
+                                        "Opening browser to authenticate '{server}'…"
+                                    )))
+                                    .await;
                                 tokio::spawn(async move {
                                     match mgr.authenticate(&server).await {
                                         Ok(_) => {
-                                            let _ = toast_tx.send(
-                                                crate::app::ui_state::Toast::success(format!(
-                                                    "'{server}' authenticated successfully"
-                                                )),
-                                            );
+                                            let _ = toast_tx
+                                                .send(crate::app::ui_state::Toast::success(
+                                                    format!(
+                                                        "'{server}' authenticated successfully"
+                                                    ),
+                                                ))
+                                                .await;
                                         }
                                         Err(e) => {
-                                            let _ =
-                                                toast_tx.send(crate::app::ui_state::Toast::error(
-                                                    format!("OAuth failed for '{server}': {e}"),
-                                                ));
+                                            let _ = toast_tx
+                                                .send(crate::app::ui_state::Toast::error(format!(
+                                                    "OAuth failed for '{server}': {e}"
+                                                )))
+                                                .await;
                                         }
                                     }
                                 });
