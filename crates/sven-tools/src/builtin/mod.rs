@@ -31,9 +31,10 @@ mod output_category_tests {
     use crate::tool::OutputCategory;
     use crate::Tool;
     use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     #[cfg(unix)]
-    use {super::gdb::state::GdbSessionState, sven_config::GdbConfig, tokio::sync::Mutex};
+    use {super::gdb::state::GdbSessionState, sven_config::GdbConfig};
 
     #[cfg(unix)]
     fn gdb_state() -> Arc<Mutex<GdbSessionState>> {

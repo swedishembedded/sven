@@ -36,14 +36,15 @@ build:
 release:
 	$(CARGO) build --release $(CARGO_FLAGS)
 
-## gui       – debug build of the desktop GUI only
+## gui       – debug build (GUI is `target/debug/sven --gui`, same binary as TUI)
 gui:
-	$(CARGO) build --bin sven-ui $(CARGO_FLAGS)
+	$(CARGO) build $(CARGO_FLAGS)
+	@echo "Run the desktop GUI with: target/debug/sven --gui"
 
-## gui-release – optimised release build of the desktop GUI only
+## gui-release – release build for desktop GUI (`target/release/sven --gui`)
 gui-release:
-	$(CARGO) build --bin sven-ui --release $(CARGO_FLAGS)
-	@echo "Desktop GUI binary: target/release/sven-ui"
+	$(CARGO) build --release $(CARGO_FLAGS)
+	@echo "Desktop GUI: target/release/sven --gui"
 
 ## test      – run all unit + integration tests
 test:

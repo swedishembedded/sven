@@ -147,10 +147,9 @@ depends       = "$auto"
 section       = "utils"
 priority      = "optional"
 assets = [
-    # CLI/TUI binary
-    ["target/release/sven",    "usr/bin/sven",    "755"],
-    # Desktop GUI binary
-    ["target/release/sven-ui", "usr/bin/sven-ui", "755"],
+    # CLI/TUI/GUI binary (`sven --gui` for Slint desktop)
+    ["target/release/sven", "usr/bin/sven", "755"],
+    ["assets/sven.desktop", "usr/share/applications/sven.desktop", "644"],
     # Shell completions (generated during the deb build — see Makefile)
     ["target/completions/sven.bash", "usr/share/bash-completion/completions/sven",    "644"],
     ["target/completions/_sven",     "usr/share/zsh/vendor-completions/_sven",        "644"],

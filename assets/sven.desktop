@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sven
+GenericName=AI Coding Agent
+Comment=Sven desktop AI coding agent
+Exec=/usr/bin/sven --gui
+Icon=sven
+Terminal=false
+Categories=Development;IDE;
+Keywords=ai;coding;agent;llm;
+StartupNotify=true
