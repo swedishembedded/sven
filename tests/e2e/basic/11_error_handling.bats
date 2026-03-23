@@ -131,10 +131,9 @@ load helpers
 
 # ── Empty stdin handling ──────────────────────────────────────────────────────
 
-@test "11.15 empty stdin in headless mode exits non-zero" {
-    # An empty workflow has nothing to run — sven should not hang and must exit.
-    run bash -c 'echo "" | "$BIN" --headless --model mock 2>/dev/null'
-    # Either exits 0 (graceful no-op) or non-zero — must not hang.
-    # The key invariant is that the process completes.
-    [ -n "${status+x}" ]
+@test "11.15 empty stdin in headless mode completes without hanging" {
+    # An empty workflow has nothing to run — sven must not hang and must exit.
+    run timeout 10 bash -c 'echo "" | "$BIN" --headless --model mock 2>/dev/null'
+    # status 124 means timeout killed the process (hang detected).
+    [ "${status}" -ne 124 ]
 }

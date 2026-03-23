@@ -84,17 +84,9 @@ setup() {
     rm -rf "${tmp_dir}"
 }
 
-@test "07.04 glob_file_search double-star pattern works" {
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    mkdir -p "${tmp_dir}/deep/nested/dir"
-    printf '\x7fELF' > "${tmp_dir}/deep/nested/dir/firmware.elf"
-
-    # The glob_file_search tool should handle **/*.elf by normalising to *.elf
-    run "${BIN}" show-config
+@test "07.04 find_file double-star glob resolves nested paths" {
+    run run_cargo_test "finds_with_double_star_pattern"
     [ "${status}" -eq 0 ]
-
-    rm -rf "${tmp_dir}"
 }
 
 @test "07.05 gdb_stop mock returns success when no session active" {
@@ -184,8 +176,8 @@ setup() {
     [ "${status}" -eq 0 ]
 }
 
-@test "07.17 glob_file_search double-star normalisation unit test" {
-    run run_cargo_test "normalise_glob_strips_double_star_prefix"
+@test "07.17 glob matching handles double-star segment" {
+    run run_cargo_test "glob_matches_double_star"
     [ "${status}" -eq 0 ]
 }
 
@@ -206,30 +198,34 @@ setup() {
 
 # ── Tier 1: Regression tests for known bugs ───────────────────────────────────
 
-@test "07.21 gdb_connect does not use await_ready before target remote" {
-    # Verify the source code uses -ex for connection (regression for await_ready timeout bug)
-    grep -q '\-ex' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/connect.rs"
+@test "07.21 gdb_connect MI output decoding strips tilde prefix" {
+    run run_cargo_test "decode_mi_output_strips_tilde_prefix"
+    [ "${status}" -eq 0 ]
 }
 
-@test "07.22 gdb_connect uses extended-remote not plain remote" {
-    grep -q 'extended-remote' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/connect.rs"
+@test "07.22 gdb_connect probe fails when nothing listening" {
+    run run_cargo_test "probe_fails_when_nothing_listening"
+    [ "${status}" -eq 0 ]
 }
 
-@test "07.23 discovery checks debugging/launch.json path" {
-    grep -q '"debugging"' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/discovery.rs"
+@test "07.23 discovery reads vscode launch.json path" {
+    run run_cargo_test "discovery_reads_vscode_launch_json"
+    [ "${status}" -eq 0 ]
 }
 
-@test "07.24 discovery includes makefile_to_server_command function" {
-    grep -q 'makefile_to_server_command' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/discovery.rs"
+@test "07.24 discovery detects device from Makefile JLink line" {
+    run run_cargo_test "makefile_detects_at32f435"
+    [ "${status}" -eq 0 ]
 }
 
-@test "07.25 find_file decomposes star-star pattern" {
-    # ** handling lives in segment-wise glob matching (replaces older decompose_pattern).
-    grep -q 'glob_match_segments' "${_REPO_ROOT}/crates/sven-tools/src/builtin/file/find_file.rs"
+@test "07.25 find_file resolves paths in nested subdirectories" {
+    run run_cargo_test "finds_in_nested_subdirectory"
+    [ "${status}" -eq 0 ]
 }
 
-@test "07.26 find_firmware_elf function is exported" {
-    grep -q 'pub fn find_firmware_elf' "${_REPO_ROOT}/crates/sven-tools/src/builtin/gdb/discovery.rs"
+@test "07.26 find_firmware_elf discovers PlatformIO structure" {
+    run run_cargo_test "find_firmware_elf_platformio_structure"
+    [ "${status}" -eq 0 ]
 }
 
 # ── Tier 2: Real hardware (requires SVEN_TEST_JLINK=1) ───────────────────────
