@@ -1,9 +1,22 @@
 name: Release
-run-name: "Release ${{ github.ref_name }}"
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && (github.event.inputs.dry_run == 'true'
+          && format('Release dry-run ({0})', github.ref_name)
+          || format('Release manual ({0})', github.ref_name))
+      || format('Release {0}', github.ref_name) }}
 
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >
+          When true, runs builds, tests, and artifact packaging but does not create
+          a GitHub Release. Turn off only if you intend to publish from this ref.
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -239,7 +252,18 @@ jobs:
           sha256sum sven-* > checksums.txt
           cat checksums.txt
 
+      - name: Dry run — skip GitHub Release
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "Dry run: pipeline succeeded; skipping Create GitHub Release."
+          echo "Run a real release by pushing a semver tag (v*.*.*) or re-run with dry_run disabled."
+
       - name: Create GitHub Release
+        if: >-
+          ${{ !(github.event_name == 'workflow_dispatch' &&
+              github.event.inputs.dry_run == 'true') }}
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
