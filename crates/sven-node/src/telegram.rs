@@ -551,7 +551,7 @@ impl TelegramBridge {
 /// 🔧 `tool_name`(arg=value, …)
 /// ```
 /// output snippet
-/// ```
+/// ```text
 ///
 /// [final LLM response]
 /// ```

@@ -10,9 +10,6 @@ sven-p2p    = { path = "../sven-p2p" }
 
 fs4         = { workspace = true }
 anyhow      = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-libc        = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
@@ -23,6 +20,9 @@ tracing     = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
 dirs        = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc        = { workspace = true }
 
 [dev-dependencies]
 tempfile    = { workspace = true }
