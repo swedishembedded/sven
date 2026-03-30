@@ -1144,8 +1144,14 @@ models:
     max_output_tokens: 4096
     description: Set model.name to any model loaded in LM Studio
 
-  # ── OpenRouter (popular gateway models) ───────────────────────────────────────
-  # OpenRouter uses dot notation for model version numbers (4.6, 3.5, etc.)
+  # ── OpenRouter ────────────────────────────────────────────────────────────────
+  # Only the two synthetic "meta-models" that do not appear in the OpenRouter
+  # /api/v1/models live response are kept here as a static fallback.
+  #
+  # All real OpenRouter models (e.g. anthropic/claude-opus-4.6, openai/gpt-4o,
+  # z-ai/glm-5, ...) are discovered automatically from the live API and cached
+  # to ~/.config/sven/model-cache/openrouter.json (TTL 24 h).  No code change
+  # is required to add new OpenRouter models.
   - id: openrouter/auto
     name: OpenRouter Auto (Auto Router)
     provider: openrouter
@@ -1170,76 +1176,6 @@ models:
       tool calling, structured outputs, etc.) and picks one at random.  Actual
       model used is reported in the response metadata.  Zero cost — no charge
       for the router or for the selected free model.
-
-  - id: anthropic/claude-opus-4.6
-    name: Claude Opus 4.6 (OpenRouter)
-    provider: openrouter
-    context_window: 200000
-    max_output_tokens: 128000
-    description: Claude Opus 4.6 via OpenRouter
-
-  - id: anthropic/claude-sonnet-4.6
-    name: Claude Sonnet 4.6 (OpenRouter)
-    provider: openrouter
-    context_window: 200000
-    max_output_tokens: 64000
-    description: Claude Sonnet 4.6 via OpenRouter
-
-  - id: anthropic/claude-haiku-4.5
-    name: Claude Haiku 4.5 (OpenRouter)
-    provider: openrouter
-    context_window: 200000
-    max_output_tokens: 64000
-    description: Claude Haiku 4.5 via OpenRouter
-
-  - id: openai/gpt-5.2
-    name: GPT-5.2 (OpenRouter)
-    provider: openrouter
-    context_window: 400000
-    max_output_tokens: 128000
-    description: OpenAI GPT-5.2 via OpenRouter
-
-  - id: openai/gpt-4o
-    name: GPT-4o (OpenRouter)
-    provider: openrouter
-    context_window: 128000
-    max_output_tokens: 16384
-    description: OpenAI GPT-4o via OpenRouter
-
-  - id: google/gemini-2.0-flash-exp:free
-    name: Gemini 2.0 Flash (OpenRouter Free)
-    provider: openrouter
-    context_window: 1048576
-    max_output_tokens: 8192
-    description: Google Gemini 2.0 Flash free tier via OpenRouter
-
-  - id: deepseek/deepseek-r1
-    name: DeepSeek R1 (OpenRouter)
-    provider: openrouter
-    context_window: 65536
-    max_output_tokens: 8192
-    description: DeepSeek R1 via OpenRouter
-
-  - id: meta-llama/llama-3.3-70b-instruct
-    name: Llama 3.3 70B (OpenRouter)
-    provider: openrouter
-    context_window: 131072
-    max_output_tokens: 8192
-    description: Meta Llama 3.3 70B via OpenRouter
-
-  - id: mistralai/mistral-large
-    name: Mistral Large (OpenRouter)
-    provider: openrouter
-    context_window: 131072
-    max_output_tokens: 4096
-    description: Mistral Large via OpenRouter
-
-  - id: x-ai/grok-3
-    name: Grok 3 (OpenRouter)
-    provider: openrouter
-    context_window: 131072
-    max_output_tokens: 8192
-    description: xAI Grok 3 via OpenRouter
 
   # ── Azure (OpenAI models via Azure deployments) ────────────────────────────────
   # Azure OpenAI identifies a model by the DEPLOYMENT NAME, not a global model

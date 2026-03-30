@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::{
-    catalog::{static_catalog, ModelCatalogEntry},
+    catalog::{self, static_catalog, InputModality, ModelCatalogEntry},
     provider::ResponseStream,
     CompletionRequest, ResponseEvent,
 };
@@ -234,9 +234,15 @@ impl crate::ModelProvider for OpenAICompatProvider {
         body["n_ctx"].as_u64().map(|v| v as u32)
     }
 
-    /// List models via `GET /models`, enriched with static catalog metadata.
-    /// Falls back to catalog-only when no API key is present or the endpoint
-    /// is unavailable.
+    /// List models via `GET /models`, enriched with metadata.
+    ///
+    /// For OpenRouter, uses the rich metadata fields the API returns
+    /// (`context_length`, `top_provider.max_completion_tokens`,
+    /// `architecture.input_modalities`).  For other OpenAI-compatible
+    /// providers, enriches bare model IDs with static catalog metadata.
+    ///
+    /// Falls back to the static catalog when no API key is present, the
+    /// endpoint is unavailable, or the response is empty.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let catalog_entries: Vec<ModelCatalogEntry> = static_catalog()
             .into_iter()
@@ -269,13 +275,12 @@ impl crate::ModelProvider for OpenAICompatProvider {
         let resp = match req.send().await {
             Ok(r) => r,
             Err(_) => {
-                // Network error (e.g. local server not running) – return catalog.
+                // Network error (e.g. local server not running) — return catalog.
                 return Ok(catalog_entries);
             }
         };
 
         if !resp.status().is_success() {
-            // Non-critical – return static catalog.
             return Ok(catalog_entries);
         }
 
@@ -284,36 +289,18 @@ impl crate::ModelProvider for OpenAICompatProvider {
             Err(_) => return Ok(catalog_entries),
         };
 
-        let mut entries: Vec<ModelCatalogEntry> = Vec::new();
-        if let Some(data) = body["data"].as_array() {
-            for item in data {
-                let id = match item["id"].as_str() {
-                    Some(s) => s.to_string(),
-                    None => continue,
-                };
-                // Enrich with static catalog if available.
-                if let Some(cat) = catalog_entries.iter().find(|e| e.id == id) {
-                    entries.push(cat.clone());
-                } else {
-                    entries.push(ModelCatalogEntry {
-                        id: id.clone(),
-                        name: id.clone(),
-                        provider: self.driver_name.to_string(),
-                        context_window: 0,
-                        max_output_tokens: 0,
-                        description: String::new(),
-                        // Unknown model: conservative default (text only).
-                        input_modalities: vec![crate::catalog::InputModality::Text],
-                    });
-                }
-            }
-        }
-
-        if entries.is_empty() {
+        let live = parse_models_response(&body, self.driver_name, &catalog_entries);
+        if live.is_empty() {
             return Ok(catalog_entries);
         }
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(entries)
+
+        // Persist live data to the catalog cache so subsequent lookups (context
+        // window, modalities) benefit from the fresh metadata.
+        if self.driver_name == "openrouter" {
+            catalog::cache_update(self.driver_name, live.clone());
+        }
+
+        Ok(live)
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
@@ -607,6 +594,105 @@ impl crate::ModelProvider for OpenAICompatProvider {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+// ── OpenRouter-specific model response parsing ────────────────────────────────
+
+/// Parse a `GET /models` response body into a list of [`ModelCatalogEntry`].
+///
+/// For OpenRouter, uses the rich metadata the API returns (`context_length`,
+/// `top_provider.max_completion_tokens`, `architecture.input_modalities`).
+/// For all other OpenAI-compatible providers, enriches bare IDs with any
+/// matching static-catalog entry; unknown IDs get zeroed placeholders.
+///
+/// Any static-catalog entries that are not in the live response (e.g. the
+/// OpenRouter synthetic `openrouter/auto` and `openrouter/free` meta-models)
+/// are appended so they remain discoverable.
+pub(crate) fn parse_models_response(
+    body: &Value,
+    driver_name: &str,
+    catalog_entries: &[ModelCatalogEntry],
+) -> Vec<ModelCatalogEntry> {
+    let Some(data) = body["data"].as_array() else {
+        return Vec::new();
+    };
+
+    let mut entries: Vec<ModelCatalogEntry> = data
+        .iter()
+        .filter_map(|item| {
+            let id = item["id"].as_str()?.to_string();
+            let entry = if driver_name == "openrouter" {
+                parse_openrouter_model_item(item, id)
+            } else if let Some(cat) = catalog_entries.iter().find(|e| e.id == id) {
+                cat.clone()
+            } else {
+                ModelCatalogEntry {
+                    id: id.clone(),
+                    name: id,
+                    provider: driver_name.to_string(),
+                    context_window: 0,
+                    max_output_tokens: 0,
+                    description: String::new(),
+                    input_modalities: vec![InputModality::Text],
+                }
+            };
+            Some(entry)
+        })
+        .collect();
+
+    // Append static-only entries not present in the live response (meta-models,
+    // custom local aliases, etc.).
+    let live_ids: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.id.clone()).collect();
+    for cat in catalog_entries {
+        if !live_ids.contains(&cat.id) {
+            entries.push(cat.clone());
+        }
+    }
+
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    entries
+}
+
+/// Parse a single model item from the OpenRouter `/models` API response.
+///
+/// Extracts the rich metadata OpenRouter provides and maps it to our
+/// [`ModelCatalogEntry`] fields.
+pub(crate) fn parse_openrouter_model_item(item: &Value, id: String) -> ModelCatalogEntry {
+    let name = item["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&id)
+        .to_string();
+    let description = item["description"].as_str().unwrap_or("").to_string();
+    let context_window = item["context_length"].as_u64().unwrap_or(0) as u32;
+    let max_output_tokens = item["top_provider"]["max_completion_tokens"]
+        .as_u64()
+        .unwrap_or(0) as u32;
+    let input_modalities =
+        parse_openrouter_input_modalities(item["architecture"]["input_modalities"].as_array());
+    ModelCatalogEntry {
+        id,
+        name,
+        provider: "openrouter".to_string(),
+        context_window,
+        max_output_tokens,
+        description,
+        input_modalities,
+    }
+}
+
+/// Map the `architecture.input_modalities` string array from the OpenRouter
+/// `/models` response to our [`InputModality`] enum values.
+fn parse_openrouter_input_modalities(arr: Option<&Vec<Value>>) -> Vec<InputModality> {
+    let mut result = vec![InputModality::Text];
+    let Some(arr) = arr else { return result };
+    for v in arr {
+        if v.as_str() == Some("image") && !result.contains(&InputModality::Image) {
+            result.push(InputModality::Image);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
