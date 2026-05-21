@@ -138,6 +138,10 @@ impl DriverTestHarness {
 
     /// Verify that the provider emits a `ToolCall` event when the model is
     /// given a tool that is directly relevant to the user message.
+    ///
+    /// The schema intentionally includes `additionalProperties` (common in sven
+    /// built-in tools) and a nested object with its own `additionalProperties`
+    /// so that any regression in Gemini schema sanitization is caught here.
     pub async fn test_tool_calling(&self) -> anyhow::Result<()> {
         let cfg = self.make_config();
         let provider = from_config(&cfg)?;
@@ -147,7 +151,18 @@ impl DriverTestHarness {
             description: "Returns the current UTC time as an ISO-8601 string.".into(),
             parameters: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "additionalProperties": false,
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": "Optional IANA timezone name, e.g. 'Europe/Stockholm'"
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Optional key-value metadata"
+                    }
+                },
                 "required": [],
             }),
             is_mcp: false,
