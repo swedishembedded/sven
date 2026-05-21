@@ -142,7 +142,7 @@ impl crate::ModelProvider for YamlMockProvider {
         // Determine whether we are responding after tool results were added.
         let has_tool_results = req.messages.iter().any(|m| m.role == Role::Tool);
 
-        // Find the last user message – this is the key we match against.
+        // Find the last user message - this is the key we match against.
         let last_user_text = req
             .messages
             .iter()
@@ -157,7 +157,7 @@ impl crate::ModelProvider for YamlMockProvider {
         let rule = self.find_rule(&last_user_text);
 
         let events = if has_tool_results {
-            // Round 2: tool results are in – respond with after_tool_reply or reply
+            // Round 2: tool results are in - respond with after_tool_reply or reply
             let text = rule
                 .and_then(|r| r.after_tool_reply.as_deref().or(r.reply.as_deref()))
                 .unwrap_or("[no after-tool reply configured]");

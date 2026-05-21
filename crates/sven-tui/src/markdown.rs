@@ -19,8 +19,8 @@ pub type StyledLines = Vec<Line<'static>>;
 /// is consistent across frontends. Each block type (paragraph, heading, list
 /// item, block quote, etc.) is rendered correctly without cross-contamination.
 ///
-/// `wrap_width` — wrap long text at this column (0 → 80).
-/// `ascii`      — use plain-ASCII box chars instead of Unicode.
+/// `wrap_width` - wrap long text at this column (0 → 80).
+/// `ascii`      - use plain-ASCII box chars instead of Unicode.
 pub fn render_markdown(md: &str, wrap_width: u16, ascii: bool) -> StyledLines {
     let width = if wrap_width == 0 {
         80
@@ -330,7 +330,7 @@ fn heading_style_from_level(level: u8) -> Style {
     }
 }
 
-/// Plain (no highlighting) code fallback — cyan text.
+/// Plain (no highlighting) code fallback - cyan text.
 ///
 /// Lines wider than `max_width` are hard-wrapped so that `chat_lines` never
 /// contains spans that exceed the visible chat pane width.  Without this,
@@ -479,7 +479,7 @@ fn render_table(
                 for ch in cell_text.chars() {
                     let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     if cur + cw > max_w.saturating_sub(1) {
-                        s.push('…');
+                        s.push_str("...");
                         break;
                     }
                     s.push(ch);

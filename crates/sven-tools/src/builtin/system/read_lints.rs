@@ -19,7 +19,7 @@ impl Tool for ReadLintsTool {
     fn description(&self) -> &str {
         "Get linter diagnostics for files or directories. No paths → whole workspace.\n\
          workdir: set to project root for correct relative path resolution.\n\
-         ONLY call on files you've just edited — pre-existing errors will also appear.\n\
+         ONLY call on files you've just edited - pre-existing errors will also appear.\n\
          Prefer paths=[specific file or dir you just changed] to avoid noise."
     }
 

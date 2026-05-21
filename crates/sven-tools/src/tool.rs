@@ -47,7 +47,7 @@ pub enum ToolOutputPart {
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
     pub call_id: String,
-    /// Plain-text content — concatenation of all Text parts.
+    /// Plain-text content - concatenation of all Text parts.
     /// Always set; always readable.  Backward-compatible field.
     pub content: String,
     /// Structured parts (text and/or images).  For tools that only return
@@ -183,7 +183,7 @@ pub trait Tool: Send + Sync {
 /// All methods have sensible defaults.  Implement only what you need.
 ///
 /// **Note:** methods must return pure data (strings, booleans).  No ratatui
-/// types here — styling lives in `sven-tui`.
+/// types here - styling lives in `sven-tui`.
 pub trait ToolDisplay: Send + Sync {
     /// Short display name shown in collapsed view (e.g., "Shell", "Read").
     fn display_name(&self) -> &str;
@@ -210,13 +210,13 @@ pub trait ToolDisplay: Send + Sync {
 
     /// Category hint used by the TUI to apply appropriate styling.
     ///
-    /// - `"file"` — file operations (read/write/edit/delete)
-    /// - `"shell"` — shell/terminal commands
-    /// - `"search"` — search and grep operations
-    /// - `"web"` — web fetch and search
-    /// - `"system"` — todos, lints, mode changes
-    /// - `"agent"` — sub-agent / delegation tools
-    /// - `""` — generic / no category
+    /// - `"file"` - file operations (read/write/edit/delete)
+    /// - `"shell"` - shell/terminal commands
+    /// - `"search"` - search and grep operations
+    /// - `"web"` - web fetch and search
+    /// - `"system"` - todos, lints, mode changes
+    /// - `"agent"` - sub-agent / delegation tools
+    /// - `""` - generic / no category
     fn category(&self) -> &str {
         ""
     }
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn output_category_copy_semantics() {
         let a = OutputCategory::HeadTail;
-        let b = a; // Copy — no move
+        let b = a; // Copy - no move
         assert_eq!(a, b);
     }
 

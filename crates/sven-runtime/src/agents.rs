@@ -141,7 +141,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
         let fm: AgentFrontmatter = match serde_yaml::from_str(yaml_block) {
             Ok(f) => f,
             Err(e) => {
-                warn!(path = %path.display(), error = %e, "failed to parse agent frontmatter — skipping");
+                warn!(path = %path.display(), error = %e, "failed to parse agent frontmatter - skipping");
                 return None;
             }
         };
@@ -201,7 +201,7 @@ fn parse_agent_file(raw: &str, stem: &str, path: &std::path::Path) -> Option<Age
             .collect();
         format!(
             "{content}\n\n---\n\
-             **Relevant knowledge docs** — call `search_knowledge \"<topic>\"` or \
+             **Relevant knowledge docs** - call `search_knowledge \"<topic>\"` or \
              `read_file` to load:\n{}",
             files.join("\n")
         )

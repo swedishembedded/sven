@@ -19,7 +19,7 @@ impl Tool for ReadImageTool {
     fn description(&self) -> &str {
         "Read an image and return it as a base64 data URL for visual analysis.\n\
          Supports: PNG, JPEG, GIF, WebP, BMP, TIFF. Auto-resized to max 2048×2048.\n\
-         Note: read_file also handles images — use read_image when you want explicit control."
+         Note: read_file also handles images - use read_image when you want explicit control."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -106,7 +106,7 @@ pub struct CiOptions {
     pub extra_prompt: Option<String>,
     /// When true, input was read from a workflow file (`-f`/`--file`); workflow
     /// parsing (## steps, preamble, frontmatter) applies.  When false, input
-    /// is from stdin or empty — no workflow parsing, plain/text is one step.
+    /// is from stdin or empty - no workflow parsing, plain/text is one step.
     pub input_from_file: bool,
     /// Absolute path to the project root (auto-detected from `.git`).
     pub project_root: Option<PathBuf>,
@@ -365,7 +365,7 @@ impl CiRunner {
 
         // ── Build step queue ─────────────────────────────────────────────────
         let mut queue: StepQueue = if opts.input.trim().is_empty() {
-            // No input at all — use the positional prompt as the sole step.
+            // No input at all - use the positional prompt as the sole step.
             let content = opts.extra_prompt.clone().unwrap_or_default();
             StepQueue::from(vec![Step {
                 label: None,
@@ -379,7 +379,7 @@ impl CiRunner {
             //   1. CLI positional prompt   (explicit task for the new turn)
             //   2. Trailing pending user   (last ## User section without a response,
             //                              only available for conversation/JSONL input)
-            //   3. Error — nothing to do
+            //   3. Error - nothing to do
             let content = opts.extra_prompt.clone().or(piped_pending.clone());
             match content {
                 Some(c) => StepQueue::from(vec![Step {
@@ -446,7 +446,7 @@ impl CiRunner {
         // ── Dry-run mode ─────────────────────────────────────────────────────
         if opts.dry_run {
             write_progress(&format!(
-                "[sven:dry-run] Workflow validated — {} step(s)",
+                "[sven:dry-run] Workflow validated - {} step(s)",
                 total
             ));
             if let Some(t) = &title {
@@ -495,7 +495,7 @@ impl CiRunner {
             model_cfg.name, opts.mode
         ));
 
-        // (turn_metadata removed — Conversation output now streams in real-time;
+        // (turn_metadata removed - Conversation output now streams in real-time;
         // no post-step metadata serialization needed)
 
         // ── Build runtime context ─────────────────────────────────────────────
@@ -972,7 +972,7 @@ impl CiRunner {
                 }
             }
 
-            // Per-step output accumulators — declared here so both the cache-hit
+            // Per-step output accumulators - declared here so both the cache-hit
             // path and the agent path share the same downstream output logic.
             let mut response_text = String::new();
             let mut tools_used: Vec<String> = Vec::new();
@@ -1054,7 +1054,7 @@ impl CiRunner {
                         }
 
                         _ = cancel_rx.recv() => {
-                            write_stderr("[sven:interrupted] Ctrl+C received — saving partial conversation");
+                            write_stderr("[sven:interrupted] Ctrl+C received - saving partial conversation");
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
                             }
@@ -1367,7 +1367,7 @@ impl CiRunner {
         }
 
         // ── Exit with tool-warning code if any non-fatal tool errors occurred ─
-        // Exit code 3 signals "run completed but with tool warnings" — the
+        // Exit code 3 signals "run completed but with tool warnings" - the
         // caller can use this to distinguish a clean run from a partially
         // successful one without treating it as a hard failure.
         if any_tool_errors {

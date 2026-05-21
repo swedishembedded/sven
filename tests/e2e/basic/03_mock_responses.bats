@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 03_mock_responses.bats – validate that the YAML mock model returns
+# 03_mock_responses.bats - validate that the YAML mock model returns
 # the correct responses for each scenario defined in mock_responses.yaml.
 #
 # Covers:

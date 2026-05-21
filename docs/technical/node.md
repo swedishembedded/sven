@@ -1,4 +1,4 @@
-# Node — Architecture
+# Node - Architecture
 
 This document explains the design concepts behind `sven-node` and `sven-p2p`:
 why components are structured the way they are, and what trade-offs drove the
@@ -13,12 +13,12 @@ For configuration, commands, and usage see [../08-node.md](../08-node.md).
 The node runs two independent libp2p swarms with different protocols,
 different keypairs, and different trust models:
 
-**Operator control channel** — connects human operators (mobile apps, CLI
+**Operator control channel** - connects human operators (mobile apps, CLI
 clients) to the agent.  Peers must be explicitly paired before they can send
 any commands.  The protocol is a simple request/poll model: the operator sends
 a command and collects any buffered events on the response.
 
-**Agent task channel** — connects this agent to peer agents for task routing.
+**Agent task channel** - connects this agent to peer agents for task routing.
 Peers announce themselves on connection and are added to a local roster.  Any
 peer in the roster can send a task; the task runs through the full agent loop
 and the result is sent back.
@@ -32,7 +32,7 @@ agent network, and vice versa.
 
 ## Single owner of the agent
 
-All transports — P2P operator channel, HTTP/WebSocket, Slack — share a single
+All transports - P2P operator channel, HTTP/WebSocket, Slack - share a single
 `ControlService` that owns the agent.  They communicate with it through a
 cheap-to-clone handle backed by an mpsc channel for commands and a broadcast
 channel for events.
@@ -40,7 +40,7 @@ channel for events.
 This means the agent is never accessed concurrently.  Each session runs
 sequentially inside `ControlService`; the transports just fan in commands and
 fan out events.  Adding a new transport requires only implementing the
-send/subscribe interface — the agent itself does not change.
+send/subscribe interface - the agent itself does not change.
 
 ---
 
@@ -53,7 +53,7 @@ response.
 
 The remote agent blocks waiting for the `TaskResult`.  This synchronous
 request/response pattern (provided by libp2p's `request_response` behaviour)
-keeps client code simple — send a task, await a response — without needing
+keeps client code simple - send a task, await a response - without needing
 streaming or polling.
 
 The one subtlety is that libp2p's `request_response` requires the response to
@@ -66,7 +66,7 @@ result back to the event loop via a command channel when done.
 
 ## Peer discovery
 
-On a local network, mDNS handles discovery automatically — no configuration
+On a local network, mDNS handles discovery automatically - no configuration
 needed.  Peers announce themselves, join the same room, and start routing
 tasks within a few seconds.
 
@@ -83,29 +83,29 @@ mDNS-only mode.
 
 ## Security design
 
-**Deny-all by default** — the allowlist starts empty.  No peer can send
+**Deny-all by default** - the allowlist starts empty.  No peer can send
 operator commands until explicitly paired.  This is an opt-in model: the user
 must take a positive action to authorise each device.
 
-**Authentication without a server** — libp2p's Noise handshake verifies every
+**Authentication without a server** - libp2p's Noise handshake verifies every
 peer's Ed25519 identity before any application data is exchanged.  By the time
 the application code sees a connection, the peer's identity is
 cryptographically established.  Authorization (is this peer in the allowlist?)
 is then a simple map lookup.
 
-**TLS provisioning tiers** — the HTTP endpoint uses TLS 1.3 with ECDSA P-256.
+**TLS provisioning tiers** - the HTTP endpoint uses TLS 1.3 with ECDSA P-256.
 The provisioning strategy is selected by `http.tls_mode` and defaults to
 `auto`:
 
 1. **Tailscale** (`tailscale cert`): calls the Tailscale CLI to fetch a real
    Let's Encrypt certificate for the machine's `*.ts.net` hostname.  Trust
-   comes from the public Web PKI — no user setup required.
+   comes from the public Web PKI - no user setup required.
 2. **Local CA** (`local-ca`): `rcgen` generates a 10-year ECDSA CA cert on
    first run (`ca-cert.pem`) and signs 90-day server certs with it.  The CA
    cert is stable across server-cert rotations; users install it once with
    `sven node install-ca`.  The CA key (`ca-key.pem`, `0o600`) is the only
    persistent secret.  On each run the CA `Certificate` object is reconstructed
-   in-memory from the stored key and a fixed DN — `rcgen 0.13` does not have a
+   in-memory from the stored key and a fixed DN - `rcgen 0.13` does not have a
    `from_ca_cert_pem` API, but the trust chain holds because the public key
    (and therefore AKI/SKI) is identical.
 3. **Self-signed**: pure self-signed cert.  Fingerprint printed at startup for
@@ -115,7 +115,7 @@ The provisioning strategy is selected by `http.tls_mode` and defaults to
 `insecure_dev_mode` drops TLS entirely and is intentionally named to make it
 uncomfortable to leave enabled.
 
-**Separate keys for separate concerns** — the operator keypair, agent task
+**Separate keys for separate concerns** - the operator keypair, agent task
 keypair, and TLS CA key are all stored separately so they can be rotated
 independently and so a compromise of one does not affect the others.
 
@@ -128,10 +128,10 @@ server-side PTY.  Key design points:
 
 **Authentication** uses [WebAuthn](https://webauthn.guide/) passkeys (FIDO2
 resident keys / platform authenticators).  Credentials are device-bound
-biometrics (Touch ID, Face ID, Windows Hello, Android fingerprint) — no
+biometrics (Touch ID, Face ID, Windows Hello, Android fingerprint) - no
 passwords are stored or transmitted.  First-time devices register a passkey and
 enter `pending` state; an admin approves them via `sven node web-devices approve`
-over the existing bearer-token WebSocket — no restart needed.
+over the existing bearer-token WebSocket - no restart needed.
 
 **PTY streaming** uses a binary WebSocket frame protocol:
 - `0x00` prefix + raw bytes → PTY stdout/stderr to the browser (xterm.js)
@@ -156,7 +156,7 @@ refresh.
 ## Task delegation loop prevention
 
 Unrestricted task forwarding between agents would allow infinite delegation
-chains (A → B → A → …) and delegation storms (a single task spawning an
+chains (A → B → A → ...) and delegation storms (a single task spawning an
 exponentially growing tree of sub-tasks).  Three independent guards prevent
 these patterns.
 
@@ -170,7 +170,7 @@ The receiver rejects the request before the LLM runs if
 `DelegateTool::execute` also checks the depth before sending, so the LLM
 receives a tool error rather than waiting for a remote rejection.
 
-`depth` is a **required** wire field — no `#[serde(default)]`.  Nodes that
+`depth` is a **required** wire field - no `#[serde(default)]`.  Nodes that
 omit it are incompatible and their requests are rejected at deserialisation.
 
 ### Chain-based cycle detection
@@ -188,7 +188,7 @@ A → B → C → A   rejected at A (A in chain)
 A → B → C → B   rejected at B (B in chain)
 ```
 
-`chain` is a **required** wire field — no `#[serde(default)]`.  Nodes that
+`chain` is a **required** wire field - no `#[serde(default)]`.  Nodes that
 omit it are rejected at deserialisation.
 
 ### Hop signature integrity
@@ -206,7 +206,7 @@ added to `permanently_rejected` and the connection being closed.
 
 ### Interaction with session depth
 
-All message channels — task delegation, session messages, and room posts —
+All message channels - task delegation, session messages, and room posts -
 share a **single unified budget**: `MAX_HOP_DEPTH = 4`.  The two counters
 are not independent; they draw from the same limit.
 
@@ -214,7 +214,7 @@ When a task agent calls `send_message` to coordinate with a peer, its
 `SessionDepthTracker` is seeded with `default_depth = task_depth` (the
 delegation depth at which the task is already executing).  This means a task
 that was delegated to depth 2 can only exchange one more session round-trip
-before the unified limit is reached — the session budget is
+before the unified limit is reached - the session budget is
 `MAX_HOP_DEPTH - task_depth`, not a fresh `MAX_HOP_DEPTH`.
 
 This cross-protocol seeding ensures that a malicious or confused peer cannot

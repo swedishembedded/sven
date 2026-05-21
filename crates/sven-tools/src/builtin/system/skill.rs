@@ -4,8 +4,8 @@
 //! Compound `skill` tool that loads and lists agent skills on demand.
 //!
 //! Actions:
-//! - `load` — load a named skill's full SKILL.md content into conversation context.
-//! - `list` — list available skills, optionally filtered by a regex.
+//! - `load` - load a named skill's full SKILL.md content into conversation context.
+//! - `list` - list available skills, optionally filtered by a regex.
 //!
 //! The model calls `load` after recognising that a user request matches one
 //! of the skills shown by `list` or listed in the system prompt's
@@ -104,7 +104,7 @@ fn build_sub_skills_hint(parent: &SkillInfo, all: &[SkillInfo]) -> String {
     )
 }
 
-/// Compound skill tool — load and list agent skills.
+/// Compound skill tool - load and list agent skills.
 pub struct SkillTool {
     /// Live-refreshable skill collection shared with the TUI.
     skills: SharedSkills,
@@ -392,7 +392,7 @@ mod tests {
     }
 
     /// Create a SkillInfo with a real SKILL.md on disk (in a temp dir).
-    /// Returns (SkillInfo, _guard) — keep the guard for the test duration.
+    /// Returns (SkillInfo, _guard) - keep the guard for the test duration.
     fn make_skill_on_disk(
         command: &str,
         description: &str,
@@ -505,8 +505,8 @@ mod tests {
         );
         let child = make_skill_on_disk(
             "sven/plan",
-            "Planning step — call this when planning.",
-            "## Planning detail — this body must NOT appear in parent load.",
+            "Planning step - call this when planning.",
+            "## Planning detail - this body must NOT appear in parent load.",
             &tmp,
         );
         let tool = make_tool(vec![parent, child]);
@@ -517,7 +517,7 @@ mod tests {
         assert!(out.content.contains("sven/plan"), "child command in hint");
         assert!(
             !out.content
-                .contains("Planning detail — this body must NOT appear"),
+                .contains("Planning detail - this body must NOT appear"),
             "child body must not be embedded"
         );
     }

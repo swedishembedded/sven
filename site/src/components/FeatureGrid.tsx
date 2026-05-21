@@ -15,7 +15,7 @@ const FEATURES: Feature[] = [
     icon: <TerminalIcon />,
     title: 'Terminal-First TUI',
     description:
-      'A full-screen, keyboard-driven interface that stays out of your way. Vim-style navigation, live streaming output, three operating modes. No browser, no Electron — just your terminal.',
+      'A full-screen, keyboard-driven interface that stays out of your way. Vim-style navigation, live streaming output, three operating modes. No browser, no Electron - just your terminal.',
   },
   {
     icon: <PipeIcon />,
@@ -27,7 +27,7 @@ const FEATURES: Feature[] = [
     icon: <ChipIcon />,
     title: 'Native GDB Integration',
     description:
-      'The first AI agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers — all from the same session where you wrote the code.',
+      'The first AI agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers - all from the same session where you wrote the code.',
     tag: 'Industry First',
     tagColor: '#e6b428',
   },
@@ -35,7 +35,7 @@ const FEATURES: Feature[] = [
     icon: <NetworkIcon />,
     title: 'Agent-to-Agent P2P',
     description:
-      'Spin up multiple agents, have them discover each other via mDNS, and delegate subtasks. One agent coordinates, others execute — no central server, no config required.',
+      'Spin up multiple agents, have them discover each other via mDNS, and delegate subtasks. One agent coordinates, others execute - no central server, no config required.',
     tag: 'Unique',
     tagColor: '#5b8dee',
   },
@@ -71,7 +71,7 @@ export default function FeatureGrid() {
           <h2 className="section-heading mb-4">Everything happens here.</h2>
           <p className="section-subheading max-w-2xl mx-auto">
             Stop bouncing between browser tabs, your IDE, a debugger, CI dashboards, and team chat.
-            Sven collapses the entire development lifecycle into a single terminal session — and
+            Sven collapses the entire development lifecycle into a single terminal session - and
             ships as one binary with no configuration required.
           </p>
         </motion.div>

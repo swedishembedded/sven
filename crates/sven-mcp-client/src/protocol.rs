@@ -102,7 +102,7 @@ pub struct InitializeParams {
 pub struct ClientCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roots: Option<RootsCapability>,
-    /// When None, omit entirely — some MCP servers (e.g. GitHub) reject null
+    /// When None, omit entirely - some MCP servers (e.g. GitHub) reject null
     /// because they expect sampling to be an object when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<Value>,

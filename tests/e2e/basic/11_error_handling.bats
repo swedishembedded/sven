@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 11_error_handling.bats – Error handling and graceful failure scenarios.
+# 11_error_handling.bats - Error handling and graceful failure scenarios.
 #
 # Validates:
 #   • Missing API keys produce clear, actionable error messages before any
@@ -17,7 +17,7 @@
 
 load helpers
 
-# ── Missing API key — OpenAI ──────────────────────────────────────────────────
+# ── Missing API key - OpenAI ──────────────────────────────────────────────────
 
 @test "11.01 missing OPENAI_API_KEY exits non-zero" {
     run bash -c 'unset OPENAI_API_KEY; echo "hi" | "$BIN" --headless --model openai 2>&1'
@@ -51,7 +51,7 @@ load helpers
     rm -f "${stderr_file}" "${stdout_file}"
 }
 
-# ── Missing API key — Anthropic ───────────────────────────────────────────────
+# ── Missing API key - Anthropic ───────────────────────────────────────────────
 
 @test "11.05 missing ANTHROPIC_API_KEY exits non-zero" {
     run bash -c 'unset ANTHROPIC_API_KEY; echo "hi" | "$BIN" --headless --model anthropic 2>&1'
@@ -105,7 +105,7 @@ load helpers
 
 # ── Config file export includes all required sections ─────────────────────────
 # Verify that show-config is a complete, consistent snapshot of the running
-# configuration — useful as a canary for config regressions.
+# configuration - useful as a canary for config regressions.
 
 @test "11.12 show-config is non-empty" {
     run "${BIN}" show-config
@@ -132,7 +132,7 @@ load helpers
 # ── Empty stdin handling ──────────────────────────────────────────────────────
 
 @test "11.15 empty stdin in headless mode completes without hanging" {
-    # An empty workflow has nothing to run — sven must not hang and must exit.
+    # An empty workflow has nothing to run - sven must not hang and must exit.
     run timeout 10 bash -c 'echo "" | "$BIN" --headless --model mock 2>/dev/null'
     # status 124 means timeout killed the process (hang detected).
     [ "${status}" -ne 124 ]

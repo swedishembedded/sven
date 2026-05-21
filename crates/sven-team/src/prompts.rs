@@ -12,7 +12,7 @@ pub fn team_lead_prompt(team_name: &str, goal: Option<&str>) -> String {
         .unwrap_or_default();
 
     format!(
-        "## Team Lead — {team_name}{goal_section}\n\n\
+        "## Team Lead - {team_name}{goal_section}\n\n\
          You are the lead of agent team '{team_name}'.  Your job is to coordinate work \
          across teammates using the shared task list.\n\n\
          **Your responsibilities:**\n\
@@ -27,9 +27,9 @@ pub fn team_lead_prompt(team_name: &str, goal: Option<&str>) -> String {
          **Rules:**\n\
          - Do NOT do implementation work yourself while teammates are actively working on assigned tasks.\n\
          - Do NOT claim tasks yourself unless no teammates are available.\n\
-         - If a teammate is stuck, use `send_message` to help — do not re-assign without communicating.\n\
+         - If a teammate is stuck, use `send_message` to help - do not re-assign without communicating.\n\
          - Keep tasks self-contained: each task should produce a clear deliverable.\n\
-         - Use 5–6 tasks per teammate as a target; too few and teammates are underutilized, \
+         - Use 5-6 tasks per teammate as a target; too few and teammates are underutilized, \
            too many and coordination overhead grows.\n\
          - Prefer assigning tasks by role: reviewers review, implementers implement, explorers explore.\n\
          - Always wait for in-progress tasks before claiming results are complete.\n\n\
@@ -53,7 +53,7 @@ pub fn team_lead_prompt(team_name: &str, goal: Option<&str>) -> String {
 /// Appended to the standard system prompt via `AgentRuntimeContext::append_system_prompt`.
 pub fn teammate_prompt(team_name: &str, role: &str, agent_name: &str) -> String {
     format!(
-        "## Teammate — {agent_name} ({role}) in team '{team_name}'\n\n\
+        "## Teammate - {agent_name} ({role}) in team '{team_name}'\n\n\
          You are a member of agent team '{team_name}' with role '{role}'.\n\n\
          **Your responsibilities:**\n\
          - Use `claim_task` to pick up the next available task assigned to you, \
@@ -66,7 +66,7 @@ pub fn teammate_prompt(team_name: &str, role: &str, agent_name: &str) -> String 
          **Rules:**\n\
          - Always claim a task before starting work (this prevents conflicts).\n\
          - Complete your current task before claiming the next one.\n\
-         - If you cannot complete a task, mark it failed with a reason — do not abandon it silently.\n\
+         - If you cannot complete a task, mark it failed with a reason - do not abandon it silently.\n\
          - Do not create tasks yourself unless the lead has explicitly asked you to.\n\
          - When all tasks are done, notify the lead using `send_message`."
     )
@@ -127,7 +127,7 @@ pub fn editor_prompt() -> &'static str {
      **Rules:**\n\
      - Follow the specification exactly.  If anything is unclear, implement the most \
        reasonable interpretation and note your assumption in the summary.\n\
-     - Do NOT redesign the solution — your job is to implement the spec, not improve it.\n\
+     - Do NOT redesign the solution - your job is to implement the spec, not improve it.\n\
      - If the spec is incorrect or impossible to implement, explain why in your response \
        instead of guessing at a different solution."
 }
@@ -141,7 +141,7 @@ pub fn editor_prompt() -> &'static str {
 /// is exhausted.
 pub fn batch_job_prompt(job_name: &str, total_tasks: usize) -> String {
     format!(
-        "## Batch Job — {job_name} ({total_tasks} tasks)\n\n\
+        "## Batch Job - {job_name} ({total_tasks} tasks)\n\n\
          You are processing a batch of {total_tasks} independent tasks.  Work through them \
          sequentially:\n\
          1. Claim the next available task with `claim_task`.\n\
@@ -150,8 +150,8 @@ pub fn batch_job_prompt(job_name: &str, total_tasks: usize) -> String {
          4. Repeat until `list_tasks` shows no more pending tasks.\n\
          5. When all tasks are done, send a final summary to the lead.\n\n\
          **Rules:**\n\
-         - Complete one task at a time — do not claim the next before finishing the current.\n\
-         - If a task fails, mark it failed with a reason and move on — do not retry more than once.\n\
-         - Keep result summaries short: 1–3 lines per task is sufficient."
+         - Complete one task at a time - do not claim the next before finishing the current.\n\
+         - If a task fails, mark it failed with a reason and move on - do not retry more than once.\n\
+         - Keep result summaries short: 1-3 lines per task is sufficient."
     )
 }

@@ -130,7 +130,7 @@ impl NodeProxyServer {
             let event: WsEvent = match serde_json::from_str(&text) {
                 Ok(ev) => ev,
                 Err(e) => {
-                    warn!("unparseable event from node: {e} — {text}");
+                    warn!("unparseable event from node: {e} - {text}");
                     continue;
                 }
             };

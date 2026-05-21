@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release-build.sh – Build release artifacts for the current platform.
+# release-build.sh - Build release artifacts for the current platform.
 #
 # Outputs binaries and (on Linux) .deb packages into dist/.
 # On Linux this requires dpkg-deb. cargo-deb is used when available, otherwise
@@ -99,8 +99,8 @@ sha256sum sven-* > checksums.txt 2>/dev/null || shasum -a 256 sven-* > checksums
 info "checksums.txt written"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
-printf "\n${BOLD}${GREEN}✔  Build complete — sven ${TAG}${RESET}\n\n"
+printf "\n${BOLD}${GREEN}✔  Build complete - sven ${TAG}${RESET}\n\n"
 ls -lh "${OUT_DIR}"/
 printf "\nNext steps:\n"
-printf "  make release/tag      — tag ${TAG} and push (triggers CI multi-arch release)\n"
-printf "  make release/publish  — publish this platform's artifacts to GitHub Releases\n\n"
+printf "  make release/tag      - tag ${TAG} and push (triggers CI multi-arch release)\n"
+printf "  make release/publish  - publish this platform's artifacts to GitHub Releases\n\n"

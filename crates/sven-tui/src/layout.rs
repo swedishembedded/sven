@@ -26,10 +26,10 @@ pub struct AppLayout {
 impl AppLayout {
     /// Calculate layout regions from a `Rect` (terminal area).
     ///
-    /// `queue_len`         — controls whether a queue panel is shown.
-    /// `input_height`      — user-preferred input pane height (clamped 3–20).
-    /// `chat_list_width`   — width of the right-side chat list pane (0 = hidden).
-    /// `peers_pane_height` — height of the peers pane at the bottom of the sidebar (0 = hidden).
+    /// `queue_len`         - controls whether a queue panel is shown.
+    /// `input_height`      - user-preferred input pane height (clamped 3-20).
+    /// `chat_list_width`   - width of the right-side chat list pane (0 = hidden).
+    /// `peers_pane_height` - height of the peers pane at the bottom of the sidebar (0 = hidden).
     pub fn compute(
         area: Rect,
         search_visible: bool,
@@ -98,7 +98,7 @@ impl AppLayout {
         }
     }
 
-    /// Convenience wrapper — derive the area from the current frame.
+    /// Convenience wrapper - derive the area from the current frame.
     pub fn new(
         frame: &Frame,
         search_visible: bool,

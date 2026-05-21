@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Channel manager — owns and drives all active channel instances.
+//! Channel manager - owns and drives all active channel instances.
 
 use std::sync::Arc;
 

@@ -130,7 +130,7 @@ impl Channel for MatrixChannel {
                 let resp: serde_json::Value = match req.send().await {
                     Ok(r) => r.json().await.unwrap_or_default(),
                     Err(e) => {
-                        error!(error = %e, "Matrix: sync error — retrying in 5s");
+                        error!(error = %e, "Matrix: sync error - retrying in 5s");
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -184,7 +184,7 @@ impl Channel for MatrixChannel {
                             };
 
                             if tx.send(inbound).await.is_err() {
-                                warn!("Matrix: inbound channel closed — stopping");
+                                warn!("Matrix: inbound channel closed - stopping");
                                 return;
                             }
                         }

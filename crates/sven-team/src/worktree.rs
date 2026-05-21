@@ -168,7 +168,7 @@ pub fn remove_worktree(repo_root: &Path, wt_path: &Path, branch: &str) -> anyhow
         .current_dir(repo_root)
         .status();
 
-    // Delete the branch (ignore errors — branch may not exist yet if the
+    // Delete the branch (ignore errors - branch may not exist yet if the
     // process crashed before the first commit).
     let _ = Command::new("git")
         .args(["branch", "-D", branch])
@@ -221,7 +221,7 @@ pub fn list_team_worktrees(
 
 /// Merge a teammate's branch into the current branch (from the lead's checkout).
 ///
-/// Uses `git merge --no-ff` so that merge commits are always created — this
+/// Uses `git merge --no-ff` so that merge commits are always created - this
 /// preserves the per-teammate commit history for audit purposes.
 ///
 /// Returns `Ok(message)` on success, `Err` with conflict details on failure.

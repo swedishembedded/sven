@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `/mode` command — switch the agent mode for the next queued message.
+//! `/mode` command - switch the agent mode for the next queued message.
 
 use sven_config::AgentMode;
 
@@ -13,7 +13,7 @@ pub struct ModeCommand;
 static MODES: &[(&str, &str)] = &[
     (
         "research",
-        "Read-only tools — explores and answers, no writes",
+        "Read-only tools - explores and answers, no writes",
     ),
     (
         "plan",

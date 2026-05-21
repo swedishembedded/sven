@@ -61,8 +61,8 @@ impl ToolPolicy {
 /// should not be able to call `write_file`, `edit_file`, or `delete_file`.
 ///
 /// Policy resolution order:
-/// 1. Role `deny_tools` — if the tool name is in this list, always deny.
-/// 2. Filesystem scope — if `fs_root` is set, file-path arguments that
+/// 1. Role `deny_tools` - if the tool name is in this list, always deny.
+/// 2. Filesystem scope - if `fs_root` is set, file-path arguments that
 ///    resolve outside the root are denied.
 /// 3. Fall through to the global [`ToolPolicy`].
 #[derive(Debug, Clone, Default)]

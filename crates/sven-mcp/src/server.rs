@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! [`SvenMcpServer`] — the rmcp [`ServerHandler`] implementation.
+//! [`SvenMcpServer`] - the rmcp [`ServerHandler`] implementation.
 //!
 //! This struct wraps a sven [`ToolRegistry`] and implements the MCP
 //! `tools/list` and `tools/call` protocol methods.  All other MCP lifecycle
@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use crate::bridge::{output_to_call_result, schema_to_mcp_tool};
 
-/// Sven MCP server — wraps a [`ToolRegistry`] and speaks the MCP protocol.
+/// Sven MCP server - wraps a [`ToolRegistry`] and speaks the MCP protocol.
 ///
 /// Create with [`SvenMcpServer::new`] and then call [`rmcp::ServiceExt::serve`]
 /// to start serving on a transport.

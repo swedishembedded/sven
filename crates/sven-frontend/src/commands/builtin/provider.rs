@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `/provider` command — switch provider while keeping current model name.
+//! `/provider` command - switch provider while keeping current model name.
 
 use sven_model::registry;
 
@@ -45,7 +45,7 @@ impl SlashCommand for ProviderCommand {
         }
 
         for driver in registry::list_drivers() {
-            let display = format!("{} — {}", driver.id, driver.name);
+            let display = format!("{} - {}", driver.id, driver.name);
             let desc = driver.description.to_string();
             items.push(CompletionItem::with_desc(driver.id, display, desc));
         }

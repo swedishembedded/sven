@@ -4,7 +4,7 @@
 //! Width-aware text utilities for terminal column calculations.
 //!
 //! All functions use standard (non-CJK) unicode display width.  East Asian
-//! Ambiguous characters (such as ⚙ U+2699, ⬡ U+2B21, … U+2026) are treated
+//! Ambiguous characters (such as ⚙ U+2699, ⬡ U+2B21, ... U+2026) are treated
 //! as width 1, matching the behaviour of most Western terminals.
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -21,16 +21,16 @@ pub fn char_width(c: char) -> usize {
     UnicodeWidthChar::width(c).unwrap_or(0)
 }
 
-/// The display width of the ellipsis character `…` (U+2026).
+/// The display width of the ellipsis character `...` (U+2026).
 ///
 /// In standard (non-CJK) mode, U+2026 is East Asian Ambiguous and treated as
 /// width 1, matching most Western terminal emulators.
 const ELLIPSIS_WIDTH: usize = 1;
-const ELLIPSIS: &str = "…";
+const ELLIPSIS: &str = "...";
 
 /// Truncate a string to fit within `max_cols` display columns.
 ///
-/// If the string is truncated, an ellipsis (`…`) is appended so that the
+/// If the string is truncated, an ellipsis (`...`) is appended so that the
 /// result still fits within `max_cols` columns.  If `max_cols` is 0, returns
 /// an empty string.
 pub fn truncate_to_width(s: &str, max_cols: usize) -> String {
@@ -42,14 +42,14 @@ pub fn truncate_to_width(s: &str, max_cols: usize) -> String {
         return s.to_string();
     }
     if max_cols <= ELLIPSIS_WIDTH {
-        // Not enough space for ellipsis — return empty or just the ellipsis.
+        // Not enough space for ellipsis - return empty or just the ellipsis.
         return if max_cols == ELLIPSIS_WIDTH {
             ELLIPSIS.to_string()
         } else {
             String::new()
         };
     }
-    // Reserve ELLIPSIS_WIDTH columns for "…".
+    // Reserve ELLIPSIS_WIDTH columns for "...".
     let target = max_cols - ELLIPSIS_WIDTH;
     let truncated = truncate_to_width_exact(s, target);
     format!("{truncated}{ELLIPSIS}")
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_display_width_gear() {
-        // ⚙ is U+2699 GEAR — East Asian Ambiguous, treated as 1 in non-CJK mode.
+        // ⚙ is U+2699 GEAR - East Asian Ambiguous, treated as 1 in non-CJK mode.
         let w = display_width("⚙");
         assert_eq!(w, 1, "gear width should be 1 in non-CJK mode, got {w}");
     }
@@ -133,7 +133,7 @@ mod tests {
         let result = truncate_to_width("hello world", 8);
         assert_eq!(display_width(&result), 8, "result: '{result}'");
         assert!(
-            result.ends_with('…'),
+            result.ends_with("..."),
             "should end with ellipsis: '{result}'"
         );
     }

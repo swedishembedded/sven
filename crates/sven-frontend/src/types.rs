@@ -51,7 +51,7 @@ impl QueuedMessage {
 ///
 /// When set, the frontend forwards all agent interactions to a running sven
 /// node over WebSocket instead of running a local agent. The node's agent has
-/// a live `P2pHandle`, so peer tools (`list_peers`, `delegate_task`, …) are
+/// a live `P2pHandle`, so peer tools (`list_peers`, `delegate_task`, ...) are
 /// available.
 #[derive(Debug, Clone)]
 pub struct NodeBackend {

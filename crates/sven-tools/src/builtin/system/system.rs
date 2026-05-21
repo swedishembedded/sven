@@ -4,10 +4,10 @@
 //! Compound `system` tool that consolidates agent self-modification capabilities.
 //!
 //! Actions:
-//! - `switch_mode`       — switch the agent's operating mode in any direction.
-//! - `switch_model`      — change the active LLM using an fzf-style fuzzy search string.
-//! - `add_mcp_server`    — add an MCP server to the nearest config file.
-//! - `remove_mcp_server` — remove an MCP server from the nearest config file.
+//! - `switch_mode`       - switch the agent's operating mode in any direction.
+//! - `switch_model`      - change the active LLM using an fzf-style fuzzy search string.
+//! - `add_mcp_server`    - add an MCP server to the nearest config file.
+//! - `remove_mcp_server` - remove an MCP server from the nearest config file.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ use crate::events::ToolEvent;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
-/// Compound system tool — mode, model, and MCP server management.
+/// Compound system tool - mode, model, and MCP server management.
 pub struct SystemTool {
     current_mode: Arc<Mutex<AgentMode>>,
     event_tx: mpsc::Sender<ToolEvent>,
@@ -414,7 +414,7 @@ fn remove_mcp_server_from_config(name: &str) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-/// Fuzzy subsequence scorer — identical algorithm to the one in `sven-tui`'s
+/// Fuzzy subsequence scorer - identical algorithm to the one in `sven-tui`'s
 /// completion module.  Inlined here so `sven-tools` does not depend on
 /// `sven-tui`.
 ///

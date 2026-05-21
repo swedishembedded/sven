@@ -126,7 +126,7 @@ impl Channel for SignalChannel {
                 };
 
                 if tx.send(inbound).await.is_err() {
-                    warn!("Signal: inbound channel closed — stopping");
+                    warn!("Signal: inbound channel closed - stopping");
                     let _ = child.kill().await;
                     return;
                 }

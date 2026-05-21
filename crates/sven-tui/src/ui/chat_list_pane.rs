@@ -113,7 +113,7 @@ impl Widget for ChatListPane<'_> {
         // ── Build ListItems with pre-computed row styles ───────────────────────
         // ratatui's List sets `buf.set_style(row_area, item_style)` for every
         // item before rendering content, which fills the entire row (including
-        // trailing empty cells) with the item's background — matching the
+        // trailing empty cells) with the item's background - matching the
         // previous manual `buf.cell_mut` background fill.
         let max_title_cols = (inner.width as usize).saturating_sub(3); // icon + space + min indent
         let list_items: Vec<ListItem> = self
@@ -199,7 +199,7 @@ impl Widget for ChatListPane<'_> {
         // We build a transient ListState here: scroll and selection are owned
         // by the app state and passed in as plain fields. List::render updates
         // the state's offset to keep the selected item visible, but since the
-        // state is local the update is discarded — the app drives navigation.
+        // state is local the update is discarded - the app drives navigation.
         let list = List::new(list_items);
         let mut list_state = ListState::default();
         *list_state.offset_mut() = self.scroll_offset;

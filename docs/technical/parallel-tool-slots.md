@@ -27,15 +27,15 @@ stream wait added up to noticeable latency.
 
 ---
 
-## The new model — streaming dispatch
+## The new model - streaming dispatch
 
 The new architecture splits tool execution into three overlapping phases:
 
 ```
 LLM stream:
-  slot 0 args stream in … { complete } ──→ spawn task A  ─────────────────┐
-  slot 1 args stream in … { complete } ──→ spawn task B  ──────────────┐  │
-  slot 2 args stream in … { complete } ──→ spawn task C  ─────────┐   │  │
+  slot 0 args stream in ... { complete } ──→ spawn task A  ─────────────────┐
+  slot 1 args stream in ... { complete } ──→ spawn task B  ──────────────┐  │
+  slot 2 args stream in ... { complete } ──→ spawn task C  ─────────┐   │  │
   stream Done                                                      │   │  │
                                                                    │   │  │
   join_all: await C ◀────────────────────────────────────────────┘   │  │
@@ -47,8 +47,8 @@ LLM stream:
 
 Each tool slot is dispatched as soon as its JSON argument object is complete.
 Slots run in parallel with the remainder of the LLM stream and with each
-other.  `join_all` awaits them all using `FuturesUnordered` — completing in
-arrival order — then sorts results back into the original slot index order
+other.  `join_all` awaits them all using `FuturesUnordered` - completing in
+arrival order - then sorts results back into the original slot index order
 before pushing them to the session.
 
 ---
@@ -74,10 +74,10 @@ Accumulating ──(JSON complete)──→ Dispatched(JoinHandle)
 
 | Method | Purpose |
 |--------|---------|
-| `feed(index, id, name, args_chunk)` | Apply a streaming chunk.  Returns `Some(ToolCall)` the first time a slot's args form valid JSON — the caller emits `AgentEvent::ToolCallStarted` at that point. |
+| `feed(index, id, name, args_chunk)` | Apply a streaming chunk.  Returns `Some(ToolCall)` the first time a slot's args form valid JSON - the caller emits `AgentEvent::ToolCallStarted` at that point. |
 | `finalize_remaining()` | Called after `ResponseEvent::Done`.  Force-finalizes any slots whose JSON was still incomplete, using the JSON repair path.  Returns newly dispatched `ToolCall`s. |
 | `insert_call(index, tc)` | Insert a pre-built `ToolCall` (used for the inline XML `<invoke>` fallback). |
-| `is_empty()` | Returns `true` when no tool calls were seen — used to decide whether to check for the XML fallback. |
+| `is_empty()` | Returns `true` when no tool calls were seen - used to decide whether to check for the XML fallback. |
 | `join_all(tx)` | Await every `JoinHandle` via `FuturesUnordered`.  Emits `AgentEvent::ToolCallFinished` for each as it completes.  Returns results sorted by slot index. |
 
 ### JSON readiness detection
@@ -112,7 +112,7 @@ runs three repair strategies in order:
 ToolCallStarted(slot 0)      ← emitted as soon as slot 0 args are complete
 ToolCallStarted(slot 1)      ← slot 1 may complete before slot 2 or after
 ToolCallStarted(slot 2)
-  … tool progress events (ProgressUpdate, TodoUpdate, ModeChanged) …
+  ... tool progress events (ProgressUpdate, TodoUpdate, ModeChanged) ...
 ToolCallFinished(slot N)     ← whichever task finishes first
 ToolCallFinished(slot M)
 ToolCallFinished(slot K)
@@ -168,9 +168,9 @@ background.
 
 Some providers emit tool calls as inline XML rather than the structured
 function-call API.  After the stream ends, if no JSON tool calls were seen,
-the agent parses `<invoke name="…">…</invoke>` blocks from the response text.
+the agent parses `<invoke name="...">...</invoke>` blocks from the response text.
 These are inserted into the same `ToolSlotManager` via `insert_call` and then
-executed through `join_all` — the same parallel pipeline with the same session
+executed through `join_all` - the same parallel pipeline with the same session
 ordering guarantees.
 
 ---

@@ -1,4 +1,4 @@
-# ACP – Agent Client Protocol integration
+# ACP - Agent Client Protocol integration
 
 Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.org) so that ACP-aware editors (JetBrains, Zed, VS Code with the ACP extension, etc.) can drive it directly over a stdio JSON-RPC 2.0 transport without any additional daemon or relay.
 
@@ -17,7 +17,7 @@ flowchart TD
         LOCAL["SvenAcpAgent\n─────────────────\nsven_core::Agent loop\nToolRegistry / sven-tools\nsven-model provider\ntokio LocalSet"]
     end
 
-    subgraph proxy ["node-proxy mode  (sven acp serve --node-url …)"]
+    subgraph proxy ["node-proxy mode  (sven acp serve --node-url ...)"]
         PROXY["SvenAcpNodeProxy"]
     end
 
@@ -34,7 +34,7 @@ The process reads the sven configuration (`~/.config/sven/config.yaml`), builds 
 
 This is the recommended mode for single-developer use.
 
-### Node-proxy mode (`sven acp serve --node-url … --token …`)
+### Node-proxy mode (`sven acp serve --node-url ... --token ...`)
 
 The process connects to a running `sven node` over WebSocket using the existing `ControlCommand`/`ControlEvent` protocol.  It translates every ACP RPC call into the corresponding node control command and forwards node events back as ACP notifications.
 
@@ -109,9 +109,9 @@ Open **Settings → Tools → ACP Agents** and add a new entry:
 | Name        | Sven                                     |
 | Command     | `sven`                                   |
 | Arguments   | `acp serve`                              |
-| Environment | *(empty for local; `SVEN_NODE_TOKEN=…` for proxy)* |
+| Environment | *(empty for local; `SVEN_NODE_TOKEN=...` for proxy)* |
 
-For node-proxy, add `--node-url wss://…` to the Arguments field.
+For node-proxy, add `--node-url wss://...` to the Arguments field.
 
 ### Zed
 
@@ -150,7 +150,7 @@ The bridge layer in `crates/sven-acp/src/bridge.rs` translates sven's internal `
 | `TextDelta(s)` / `TextComplete(s)` | `AgentMessageChunk`           |
 | `ThinkingDelta(s)` / `ThinkingComplete(s)` | `AgentThoughtChunk`  |
 | `ToolCallStarted(tc)`            | `ToolCall` (status: InProgress) |
-| `ToolCallFinished { … }`         | `ToolCall` (status: Completed/Failed) |
+| `ToolCallFinished { ... }`         | `ToolCall` (status: Completed/Failed) |
 | `TodoUpdate(todos)`              | `Plan`                          |
 | `ModeChanged(mode)`              | `CurrentModeUpdate`             |
 | `Error(msg)`                     | `AgentMessageChunk` (prefixed `[error]`) |
@@ -160,6 +160,6 @@ Events not listed above (e.g. `TokenUsage`, `ContextCompacted`, collab events) a
 
 ## Concurrency model
 
-The ACP trait requires `?Send` futures, so the entire server runs inside a `tokio::task::LocalSet`.  Session state is held in a `RefCell<HashMap<…>>` (safe because `LocalSet` is single-threaded).  Each `sven_core::Agent` is wrapped in a `tokio::sync::Mutex` to prevent concurrent prompts on the same session, and cancellation is implemented via a `oneshot` channel stored inside the session entry.
+The ACP trait requires `?Send` futures, so the entire server runs inside a `tokio::task::LocalSet`.  Session state is held in a `RefCell<HashMap<...>>` (safe because `LocalSet` is single-threaded).  Each `sven_core::Agent` is wrapped in a `tokio::sync::Mutex` to prevent concurrent prompts on the same session, and cancellation is implemented via a `oneshot` channel stored inside the session entry.
 
 Notifications flow through a `mpsc::UnboundedSender<ConnMessage>` that is shared between the agent task and the I/O forwarding task.  The I/O task calls `AgentSideConnection::session_notification` (from the `acp::Client` trait) and sends an acknowledgement back to the agent task before processing the next event.

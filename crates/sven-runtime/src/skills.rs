@@ -7,14 +7,14 @@
 //!
 //! A skill is a **directory** that contains a `SKILL.md` file.  Subdirectories
 //! of a skill package that also contain `SKILL.md` files are **sub-skills** and
-//! are discovered automatically — no frontmatter declaration is needed.
+//! are discovered automatically - no frontmatter declaration is needed.
 //!
 //! Example layout:
 //! ```text
 //! .sven/skills/
 //! ├── sven/
 //! │   ├── SKILL.md          → slash command: /sven
-//! │   ├── scripts/          → bundled scripts (not a sub-skill — no SKILL.md)
+//! │   ├── scripts/          → bundled scripts (not a sub-skill - no SKILL.md)
 //! │   ├── plan/
 //! │   │   └── SKILL.md      → slash command: /sven/plan
 //! │   ├── implement/
@@ -41,8 +41,8 @@
 //! /usr/local/share/sven/skills/  (locally installed skills)
 //! ```
 //!
-//! The ancestor walk collects two chains — one from the project root (or CWD)
-//! up to `/`, one from `~` up to `/` — deduplicated and sorted by depth
+//! The ancestor walk collects two chains - one from the project root (or CWD)
+//! up to `/`, one from `~` up to `/` - deduplicated and sorted by depth
 //! (shallowest = lowest precedence).  At every directory in the merged chain,
 //! five config dirs are checked in order:
 //!
@@ -57,11 +57,11 @@
 //! Because the chain runs from `/` down to the project root, entries closer to
 //! the project root always override farther ancestors.  In practice:
 //!
-//! - `/usr/share/sven/skills/`    — system skills (lowest precedence)
-//! - `~/.cursor/skills/`          — found because home is one of the walk roots
-//! - `/workspace/.cursor/skills/` — found when the git root is a subdirectory
+//! - `/usr/share/sven/skills/`    - system skills (lowest precedence)
+//! - `~/.cursor/skills/`          - found because home is one of the walk roots
+//! - `/workspace/.cursor/skills/` - found when the git root is a subdirectory
 //!   of the workspace, even though the workspace has no `.git`
-//! - `<project>/.sven/skills/`    — highest precedence of all
+//! - `<project>/.sven/skills/`    - highest precedence of all
 //!
 //! The `SKILL.md` filename is matched case-insensitively, so `skill.md`,
 //! `Skill.md`, and `SKILL.md` are all accepted.
@@ -72,7 +72,7 @@
 //! ---
 //! description: |
 //!   This skill should be used when the user asks to "do X", "configure Y".
-//! name: My Skill       # optional — falls back to directory name
+//! name: My Skill       # optional - falls back to directory name
 //! version: 0.1.0       # optional
 //! sven:                # optional sven-specific block
 //!   always: false
@@ -81,7 +81,7 @@
 //!   user_invocable_only: false
 //! ---
 //!
-//! # Skill body here…
+//! # Skill body here...
 //! ```
 
 use std::collections::HashMap;
@@ -138,7 +138,7 @@ pub struct SkillInfo {
     pub skill_md_path: PathBuf,
     /// Absolute path to the skill directory (parent of `SKILL.md`).
     pub skill_dir: PathBuf,
-    /// SKILL.md body — everything after the closing `---` fence.
+    /// SKILL.md body - everything after the closing `---` fence.
     pub content: String,
     /// Optional sven-specific metadata.
     pub sven_meta: Option<SvenSkillMeta>,
@@ -350,7 +350,7 @@ fn try_load_skill(
     let parsed = match parse_skill_file(&raw) {
         Some(p) => p,
         None => {
-            warn!(source, path = %skill_md.display(), "failed to parse SKILL.md frontmatter — skipping");
+            warn!(source, path = %skill_md.display(), "failed to parse SKILL.md frontmatter - skipping");
             return None;
         }
     };
@@ -432,7 +432,7 @@ fn scan_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo
             }
         }
 
-        // Recurse unconditionally — a skill directory may have sub-skill
+        // Recurse unconditionally - a skill directory may have sub-skill
         // subdirectories even if no SKILL.md exists at this level.
         scan_recursive(root, &child, source, out);
     }
@@ -686,7 +686,7 @@ fn try_load_command(md_path: &Path, command: &str, source: &str) -> Option<Skill
     let parsed = match parse_skill_file(&raw) {
         Some(p) => p,
         None => {
-            warn!(source, path = %md_path.display(), "could not extract content from command file — skipping");
+            warn!(source, path = %md_path.display(), "could not extract content from command file - skipping");
             return None;
         }
     };

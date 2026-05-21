@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! [`AgentBuilder`] — single entry point for constructing a fully wired Agent.
+//! [`AgentBuilder`] - single entry point for constructing a fully wired Agent.
 //!
 //! Callers pass a [`Config`], an optional [`RuntimeContext`], the desired
 //! mode and model, and a [`ToolSetProfile`].  The builder handles registry

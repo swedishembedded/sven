@@ -73,7 +73,7 @@ pub struct Agent {
     model: Arc<dyn sven_model::ModelProvider>,
     config: Arc<AgentConfig>,
     runtime: AgentRuntimeContext,
-    /// Shared mode lock — the same Arc given to `SwitchModeTool` so that
+    /// Shared mode lock - the same Arc given to `SwitchModeTool` so that
     /// tool-driven mode changes are immediately visible to the agent loop.
     current_mode: Arc<Mutex<AgentMode>>,
     /// Receives `ToolEvent`s emitted by stateful tools (todo updates, mode
@@ -235,7 +235,7 @@ impl Agent {
         }
 
         // All the same setup as `submit`, including compaction, system message
-        // injection, and user message push — only the final loop call differs.
+        // injection, and user message push - only the final loop call differs.
         let mode = *self.current_mode.lock().await;
 
         if let Err(e) = self.ensure_fits_budget(&tx, mode, 0).await {
@@ -335,7 +335,7 @@ impl Agent {
     /// the prior turns become context so the next `submit()` call continues
     /// the conversation rather than starting fresh.
     ///
-    /// System messages in `messages` are stripped — the correct system message
+    /// System messages in `messages` are stripped - the correct system message
     /// is injected automatically by `submit()` / `replace_history_and_submit`.
     pub async fn seed_history(&mut self, messages: Vec<Message>) {
         let mode = *self.current_mode.lock().await;
@@ -397,7 +397,7 @@ impl Agent {
             // We treat both an explicit send(()) AND a dropped sender as a
             // cancellation signal.  `send_abort_signal` drops the sender half
             // without sending, so `try_recv()` returns `Err(Closed)` in that
-            // case — which would be missed by a plain `.is_ok()` check.
+            // case - which would be missed by a plain `.is_ok()` check.
             match cancel.try_recv() {
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
                 _ => {
@@ -984,8 +984,8 @@ impl Agent {
         let chunk_timeout = stream_chunk_timeout();
 
         loop {
-            // Enforce a per-chunk idle timeout.  If the model API stalls —
-            // TCP half-open, API-side hang, network blip — without closing the
+            // Enforce a per-chunk idle timeout.  If the model API stalls -
+            // TCP half-open, API-side hang, network blip - without closing the
             // stream, `stream.next()` would block indefinitely.  The timeout
             // converts a silent stall into an explicit error so the agent loop
             // (and the ACP serve path) can surface it rather than hanging.
@@ -993,7 +993,7 @@ impl Agent {
                 .await
                 .map_err(|_| {
                     anyhow::anyhow!(
-                        "model stream idle for >{} s — stale connection",
+                        "model stream idle for >{} s - stale connection",
                         chunk_timeout.as_secs()
                     )
                 })?;
@@ -1100,7 +1100,7 @@ impl Agent {
 
         // Finalize any slots whose JSON args were still incomplete when the
         // stream ended (truncated output, slow streaming, etc.).
-        // Tool calls with an empty name cannot be dispatched and are dropped —
+        // Tool calls with an empty name cannot be dispatched and are dropped -
         // storing them would corrupt the conversation history sent back to the
         // API on the next turn.
         for tc in slot_manager.finalize_remaining() {
@@ -1198,7 +1198,7 @@ impl Agent {
 
         // Pre-compute the message split so the emergency decision can be based
         // on whether the compaction prompt (old messages only) fits within the
-        // budget — not whether the full session fits.  The compaction call only
+        // budget - not whether the full session fits.  The compaction call only
         // sends `to_compact` to the model, so checking the full session is
         // unnecessarily pessimistic: it would force information-destroying
         // emergency drops even when the old messages alone are well within the
@@ -1222,8 +1222,8 @@ impl Agent {
         // begins at a conversation-turn boundary.  If the split falls
         // inside a tool-use/tool-result group (i.e. `recent_messages[0]`
         // would be a ToolResult or ToolCall), the compacted session would
-        // contain orphaned ToolResult blocks — references to ToolCall IDs
-        // that were summarised away — causing providers like Anthropic to
+        // contain orphaned ToolResult blocks - references to ToolCall IDs
+        // that were summarised away - causing providers like Anthropic to
         // reject the next request with a 400 error.
         //
         // Moving backward past both ToolResult and ToolCall variants
@@ -1263,7 +1263,7 @@ impl Agent {
 
         let strategy_used = if compaction_would_overflow {
             // Emergency path: even the compaction call would overflow, or there
-            // is nothing to summarize.  Drop old messages without a model call —
+            // is nothing to summarize.  Drop old messages without a model call -
             // always succeeds regardless of session size.
             emergency_compact(&mut self.session.messages, Some(sys), keep_n);
             self.session.recalculate_tokens();
@@ -1350,7 +1350,7 @@ impl Agent {
 
     fn system_message(&self, mode: AgentMode) -> Message {
         let ctx = self.prompt_context();
-        // Use the STABLE portion only — volatile context (git/CI) is injected
+        // Use the STABLE portion only - volatile context (git/CI) is injected
         // per-request via `system_dynamic_suffix` so it does not break prompt
         // caching across sessions.
         let stable_ctx = ctx.stable_only();
@@ -1381,7 +1381,7 @@ impl Agent {
     /// system block.  Returns `None` when no dynamic context is configured.
     fn dynamic_context(&self) -> Option<String> {
         // When a custom system prompt override is in use, the caller controls
-        // all content — skip the dynamic injection to avoid duplication.
+        // all content - skip the dynamic injection to avoid duplication.
         if self.runtime.system_prompt_override.is_some() || self.config.system_prompt.is_some() {
             return None;
         }
@@ -1429,11 +1429,11 @@ fn extract_n_ctx_from_error(err: &anyhow::Error) -> Option<usize> {
     // Find the first '{' and try to parse the JSON fragment from there.
     let json_start = msg.find('{')?;
     let body: serde_json::Value = serde_json::from_str(&msg[json_start..]).ok()?;
-    // {"error": {"n_ctx": …}}
+    // {"error": {"n_ctx": ...}}
     if let Some(n) = body["error"]["n_ctx"].as_u64() {
         return Some(n as usize);
     }
-    // Flat format: {"n_ctx": …}
+    // Flat format: {"n_ctx": ...}
     body["n_ctx"].as_u64().map(|n| n as usize)
 }
 
@@ -1442,7 +1442,7 @@ fn extract_n_ctx_from_error(err: &anyhow::Error) -> Option<usize> {
 /// Some model servers (llama.cpp without `reasoning_format: deepseek`,
 /// certain OpenAI-compat proxies) forget to strip these tags before placing
 /// the text in `reasoning_content`.  The result is that the thinking buffer
-/// contains the raw markup, e.g. `<think>\nStep 1: …\n</think>`, instead of
+/// contains the raw markup, e.g. `<think>\nStep 1: ...\n</think>`, instead of
 /// the clean inner text.  Stripping them here keeps the thinking log readable
 /// and prevents the `<think>` noise from leaking into conversation history.
 fn strip_think_wrappers(s: String) -> String {
@@ -1456,8 +1456,8 @@ fn strip_think_wrappers(s: String) -> String {
 ///
 /// Some models emit thinking as plain text deltas (no `reasoning_content`)
 /// when the serving layer isn't configured for reasoning extraction.  If the
-/// whole text response is a `<think>` block — with or without a closing tag
-/// (the model may have been cut off) — the "response" carries no useful
+/// whole text response is a `<think>` block - with or without a closing tag
+/// (the model may have been cut off) - the "response" carries no useful
 /// content.  Return the extracted inner text so the caller can reclassify
 /// it as thinking and clear `full_text`, which causes the agent loop to
 /// treat this as a thinking-only turn and apply the empty-turn retry nudge.
@@ -1488,7 +1488,7 @@ fn extract_inline_think_block(text: &str) -> Option<String> {
 /// - `<tool_call>` / `</tool_call>` (Qwen XML format)
 /// - `<function=name>` (Hermes/Nous function tag)
 /// - `[TOOL_CALL]` (some other open-source variants)
-/// - `<invoke ` (Anthropic old XML / MiniMax format — handled by
+/// - `<invoke ` (Anthropic old XML / MiniMax format - handled by
 ///   `extract_inline_invoke_tool_calls`; listed here as a safety net)
 fn text_contains_malformed_tool_call(text: &str) -> bool {
     text.contains("<tool_call>")
@@ -1510,7 +1510,7 @@ fn text_contains_malformed_tool_call(text: &str) -> bool {
 /// </invoke>
 /// ```
 ///
-/// Returns the text with all `<invoke>…</invoke>` blocks removed and the
+/// Returns the text with all `<invoke>...</invoke>` blocks removed and the
 /// extracted [`ToolCall`] objects.  Parameter values that parse as valid JSON
 /// are stored as JSON; otherwise they are stored as plain strings.
 fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {

@@ -172,12 +172,12 @@ impl crate::ModelProvider for AnthropicProvider {
         // caching, any remaining slots can be used to cache expensive blocks
         // that persist across many turns:
         //
-        //   • Images     — hundreds of tokens each; stable once uploaded.
-        //   • Large tool results — file reads/command outputs that linger in
+        //   • Images     - hundreds of tokens each; stable once uploaded.
+        //   • Large tool results - file reads/command outputs that linger in
         //     context for many turns after the tool call that produced them.
         //
         // We walk the messages array FORWARD (oldest first) so that the oldest
-        // stable content gets cached first — it will be present the longest and
+        // stable content gets cached first - it will be present the longest and
         // therefore yield the most cache hits.
         //
         // TTL ordering is preserved: images and tool results receive the same
@@ -212,7 +212,7 @@ impl crate::ModelProvider for AnthropicProvider {
             }
         }
 
-        // Tools — optionally mark definitions with cache_control breakpoints.
+        // Tools - optionally mark definitions with cache_control breakpoints.
         //
         // Dual-breakpoint strategy (when MCP tools are present):
         //   BP1: last core tool     → stable; rarely changes
@@ -222,7 +222,7 @@ impl crate::ModelProvider for AnthropicProvider {
         // while still getting a cache hit for the MCP section between turns.
         //
         // Single-breakpoint strategy (no MCP tools):
-        //   BP: last tool — existing behaviour.
+        //   BP: last tool - existing behaviour.
         let tools: Vec<Value> = if !req.tools.is_empty() && self.cache_tools {
             let last_idx = req.tools.len() - 1;
             // BP1 = last core tool index (when there are both core and MCP tools).
@@ -279,7 +279,7 @@ impl crate::ModelProvider for AnthropicProvider {
             "stream": req.stream,
         });
 
-        // Automatic conversation caching — add a top-level cache_control block.
+        // Automatic conversation caching - add a top-level cache_control block.
         // Anthropic automatically moves the breakpoint to the last cacheable
         // block on each turn, so the growing conversation history is cached
         // incrementally with no per-message bookkeeping.
@@ -291,10 +291,10 @@ impl crate::ModelProvider for AnthropicProvider {
             if self.cache_system_prompt {
                 // Build an array of system content blocks.
                 //
-                // Block 1 — stable prefix WITH cache_control (gets cached).
-                //   • Default (5-min TTL): {"type": "ephemeral"} – no ttl field.
+                // Block 1 - stable prefix WITH cache_control (gets cached).
+                //   • Default (5-min TTL): {"type": "ephemeral"} - no ttl field.
                 //   • Extended (1-hour TTL): {"type": "ephemeral", "ttl": "1h"}.
-                // Block 2 — volatile context WITHOUT cache_control (not cached).
+                // Block 2 - volatile context WITHOUT cache_control (not cached).
                 //   Git/CI info that changes between sessions lives here so the
                 //   stable prefix can be reused across different sessions.
                 let mut system_blocks: Vec<Value> = Vec::new();
@@ -359,10 +359,10 @@ impl crate::ModelProvider for AnthropicProvider {
 
         // Build the anthropic-beta header.
         //
-        // • `prompt-caching-2024-07-31` — required for prompt caching on older
+        // • `prompt-caching-2024-07-31` - required for prompt caching on older
         //   Claude 3 / 3.5 Sonnet models.  Safe to send for all claude-3+ models;
         //   newer models silently ignore it.
-        // • `extended-cache-ttl-2025-04-11` — required when using 1-hour TTL.
+        // • `extended-cache-ttl-2025-04-11` - required when using 1-hour TTL.
         //
         // Multiple beta features are enabled via a comma-separated value.
         if any_caching {

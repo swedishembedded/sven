@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 /// An image the user attached to the current message via paste.
 ///
-/// Only image files (png, jpg, gif, …) are represented here; non-image paths
+/// Only image files (png, jpg, gif, ...) are represented here; non-image paths
 /// are inserted inline as plain text rather than being attached.
 #[derive(Debug, Clone)]
 pub struct InputAttachment {

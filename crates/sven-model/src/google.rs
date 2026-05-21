@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Google Gemini driver — native Generative Language API.
+//! Google Gemini driver - native Generative Language API.
 //!
 //! Uses the `generateContent` / `streamGenerateContent` endpoints.
 //! Supports text, tool calls, and thinking deltas via `thought` parts.
@@ -277,7 +277,7 @@ fn message_to_gemini_parts(
             tool_call_id,
             content,
         } => {
-            // Resolve the function name — Gemini matches functionResponse to
+            // Resolve the function name - Gemini matches functionResponse to
             // functionCall by the "name" field, not by an opaque ID.
             let fn_name = tc_name_map
                 .get(tool_call_id)
@@ -369,7 +369,7 @@ fn sanitize_schema_for_gemini(v: &Value) -> Value {
                 if STRIP_KEYS.contains(&k.as_str()) {
                     continue;
                 }
-                // Drop empty required arrays — Gemini rejects `required: []`.
+                // Drop empty required arrays - Gemini rejects `required: []`.
                 if k == "required" {
                     if let Value::Array(arr) = val {
                         if arr.is_empty() {
@@ -408,7 +408,7 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
     let parts = match content["parts"].as_array() {
         Some(p) => p,
         None => {
-            // End of stream signal — check whether the model ran out of tokens.
+            // End of stream signal - check whether the model ran out of tokens.
             match candidate["finishReason"].as_str() {
                 Some("MAX_TOKENS") => return Ok(ResponseEvent::MaxTokens),
                 Some(_) => return Ok(ResponseEvent::Done),

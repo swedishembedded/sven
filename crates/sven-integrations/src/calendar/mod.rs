@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Calendar integration — CalDAV and Google Calendar.
+//! Calendar integration - CalDAV and Google Calendar.
 
 pub mod caldav;
 pub mod google;

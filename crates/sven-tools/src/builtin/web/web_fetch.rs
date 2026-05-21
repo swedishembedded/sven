@@ -9,7 +9,7 @@ use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Default character ceiling for fetched page content.
-/// 20 K chars ≈ 5,000 tokens — fits comfortably within a 40 K-token context window.
+/// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
 const DEFAULT_MAX_CHARS: usize = 20_000;
 
 pub struct WebFetchTool;

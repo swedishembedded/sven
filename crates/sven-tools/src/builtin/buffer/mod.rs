@@ -8,9 +8,9 @@
 //! subprocess output.  The model uses these tools to inspect results without
 //! loading the full output into the context window:
 //!
-//! - [`BufStatusTool`] (`buf_status`) — poll status, line count, elapsed time
-//! - [`BufReadTool`]   (`buf_read`)   — read a specific line range
-//! - [`BufGrepTool`]   (`buf_grep`)   — regex search over the buffer
+//! - [`BufStatusTool`] (`buf_status`) - poll status, line count, elapsed time
+//! - [`BufReadTool`]   (`buf_read`)   - read a specific line range
+//! - [`BufGrepTool`]   (`buf_grep`)   - regex search over the buffer
 //!
 //! All three tools share one [`OutputBufferStore`] per session via
 //! `Arc<Mutex<OutputBufferStore>>`.

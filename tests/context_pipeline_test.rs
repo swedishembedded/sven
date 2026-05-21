@@ -3,17 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Full pipeline integration tests for `context_query` and `context_reduce`.
 //!
-//! These tests exercise the complete RLM workflow — from opening a handle
-//! through chunked parallel sub-queries to tree-reduced synthesis — using a
+//! These tests exercise the complete RLM workflow - from opening a handle
+//! through chunked parallel sub-queries to tree-reduced synthesis - using a
 //! deterministic `MockSubQueryRunner` that never calls a real LLM.  Every
 //! assertion is made against known fixture content so results are 100%
 //! reproducible.
 //!
 //! Test groups:
-//!   1. `MockSubQueryRunner` — the test double
-//!   2. `context_query` — chunked map step
-//!   3. `context_reduce` — reduce / synthesis step
-//!   4. End-to-end pipeline — open → query → reduce on real source files
+//!   1. `MockSubQueryRunner` - the test double
+//!   2. `context_query` - chunked map step
+//!   3. `context_reduce` - reduce / synthesis step
+//!   4. End-to-end pipeline - open → query → reduce on real source files
 
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -67,7 +67,7 @@ impl SubQueryRunner for RecordingRunner {
     }
 }
 
-/// A runner that fails on every call — used to test error propagation.
+/// A runner that fails on every call - used to test error propagation.
 #[derive(Clone)]
 struct FailingRunner;
 
@@ -240,7 +240,7 @@ mod query_tests {
             })
             .expect("results handle not found in output");
 
-        // Read the results handle through context_read — verifying both chunks appear.
+        // Read the results handle through context_read - verifying both chunks appear.
         use sven_tools::builtin::context::ContextReadTool;
         let read_tool = ContextReadTool::new(store.clone());
         let read_out = read_tool
@@ -255,7 +255,7 @@ mod query_tests {
             read_out.content
         );
 
-        // IndexEchoRunner writes "analysis for chunk N" — both should appear.
+        // IndexEchoRunner writes "analysis for chunk N" - both should appear.
         let full = {
             let store_locked = store.lock().await;
             store_locked.read_all(&res_handle).unwrap()
@@ -358,7 +358,7 @@ mod query_tests {
 
     #[tokio::test]
     async fn query_prompt_placeholders_are_substituted() {
-        // Single-chunk file.  The runner echoes the prompt — verify placeholders
+        // Single-chunk file.  The runner echoes the prompt - verify placeholders
         // were replaced before the prompt reached the runner.
         let content = "hello world\n";
         let tmp = write_tmp(content);
@@ -422,7 +422,7 @@ mod query_tests {
                 json!({"handle": handle, "prompt": "check: {chunk}"}),
             ))
             .await;
-        // The tool itself should NOT be an error — failures are embedded in results.
+        // The tool itself should NOT be an error - failures are embedded in results.
         assert!(
             !out.is_error,
             "runner failures must not crash the tool: {}",

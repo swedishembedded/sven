@@ -93,7 +93,7 @@ pub fn load(extra: Option<&Path>) -> anyhow::Result<Config> {
     // When no model has been explicitly configured, auto-select the best
     // available provider based on the API keys present in the environment.
     // Priority: OpenRouter > Anthropic > OpenAI.  OpenRouter is checked first
-    // because `openrouter/auto` is the recommended default — it routes to the
+    // because `openrouter/auto` is the recommended default - it routes to the
     // best available model automatically.
     if !has_model_config {
         if std::env::var("OPENROUTER_API_KEY").is_ok() {
@@ -419,7 +419,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
     } else if path == "tui" {
         (TUI_CONFIG_KEYS, "tui")
     } else if path == "providers" {
-        // The providers map has arbitrary provider names as keys — all are valid.
+        // The providers map has arbitrary provider names as keys - all are valid.
         // We descend into each named entry to validate its fields.
         for (key, val) in map {
             let key_str = match key {
@@ -431,7 +431,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         }
         return;
     } else if path == "mcp_servers" {
-        // The mcp_servers map has arbitrary server names as keys — all are valid.
+        // The mcp_servers map has arbitrary server names as keys - all are valid.
         for (key, val) in map {
             let key_str = match key {
                 serde_yaml::Value::String(s) => s.as_str(),
@@ -443,10 +443,10 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         return;
     } else if let Some(rest) = path.strip_prefix("providers.") {
         if rest.contains('.') {
-            // providers.<name>.models.<model_name> — per-model params
+            // providers.<name>.models.<model_name> - per-model params
             (MODEL_PARAMS_KEYS, "model params")
         } else {
-            // providers.<name> — provider entry
+            // providers.<name> - provider entry
             (PROVIDER_ENTRY_KEYS, "provider entry")
         }
     } else if let Some(_rest) = path.strip_prefix("mcp_servers.") {
@@ -455,11 +455,11 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         } else if path.ends_with(".oauth") {
             (MCP_OAUTH_CONFIG_KEYS, "mcp oauth")
         } else {
-            // mcp_servers.<name> — server entry
+            // mcp_servers.<name> - server entry
             (MCP_SERVER_CONFIG_KEYS, "mcp server")
         }
     } else {
-        // Unknown path — skip validation to avoid false positives.
+        // Unknown path - skip validation to avoid false positives.
         return;
     };
 
@@ -470,7 +470,7 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         };
         if !known.contains(&key_str) {
             warn!(
-                "Unrecognised config field `{}.{}` — check spelling or update sven",
+                "Unrecognised config field `{}.{}` - check spelling or update sven",
                 path, key_str
             );
         } else {
@@ -702,7 +702,7 @@ model:
     fn validate_unknown_fields_accepts_all_known_top_level_keys() {
         let yaml =
             val("model:\n  provider: openai\n  name: gpt-4o\nagent:\n  max_tool_rounds: 100\n");
-        // Should not produce any warnings — just verifying no panic.
+        // Should not produce any warnings - just verifying no panic.
         validate_unknown_fields(&yaml, "");
     }
 

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Normalize common non-ASCII punctuation to plain ASCII equivalents.
 # Runs as a pre-commit hook; receives staged file paths as arguments.
+#
+# Modifies files in place and exits 1 when any file was changed so that
+# pre-commit reports "files were modified" and the user re-stages them.
+# Do NOT call git-add from here - pre-commit runs hooks in parallel and
+# concurrent git-add calls deadlock on the index lock.
 set -euo pipefail
 
 if [[ $# -eq 0 ]]; then
@@ -31,14 +36,13 @@ sed_args=(
 changed=0
 for f in "$@"; do
     [[ -f "$f" ]] || continue
+    orig=$(cat "$f")
     new=$(sed "${sed_args[@]}" "$f")
-    if [[ "$new" != "$(cat "$f")" ]]; then
+    if [[ "$new" != "$orig" ]]; then
         printf '%s\n' "$new" > "$f"
-        git add "$f"
+        echo "normalize-ascii: fixed $f"
         changed=1
     fi
 done
 
-if [[ $changed -eq 1 ]]; then
-    echo "normalize-ascii: non-ASCII punctuation replaced and files re-staged."
-fi
+exit "$changed"

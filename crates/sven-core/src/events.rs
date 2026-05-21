@@ -134,7 +134,7 @@ pub enum AgentEvent {
     TitleGenerated(String),
     /// A team lifecycle event to be shown in the chat as a collapsible segment.
     CollabEvent(crate::prompts::CollabEvent),
-    /// A completed delegate subtree — rendered as a collapsible `DelegateSummary` segment.
+    /// A completed delegate subtree - rendered as a collapsible `DelegateSummary` segment.
     DelegateSummary {
         to_name: String,
         task_title: String,
@@ -171,7 +171,7 @@ pub enum AgentEvent {
 /// Every method has a default no-op implementation so new event variants can
 /// be added to [`AgentEvent`] without breaking all existing consumers at once.
 ///
-/// The trait is deliberately **synchronous** — async consumers (e.g. the TUI)
+/// The trait is deliberately **synchronous** - async consumers (e.g. the TUI)
 /// use it as a documentation contract and handle events in their own async
 /// match blocks.
 pub trait AgentEventVisitor {

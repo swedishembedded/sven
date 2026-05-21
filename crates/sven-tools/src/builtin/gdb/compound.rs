@@ -24,7 +24,7 @@ use super::{
     stop::GdbStopTool, wait_stopped::GdbWaitStoppedTool,
 };
 
-/// Compound GDB tool — all GDB actions in one tool definition.
+/// Compound GDB tool - all GDB actions in one tool definition.
 ///
 /// Each action delegates to the original single-action tool so all existing
 /// logic, error messages, and tests remain valid.
@@ -64,7 +64,7 @@ impl Tool for GdbTool {
          Workflow: start_server → connect → command (loop) → stop\n\
          - start_server: launch JLinkGDBServer/OpenOCD/pyocd in the background\n\
          - connect: spawn gdb-multiarch, load symbols, connect to server\n\
-         - command: run any GDB command (break, continue, info registers, backtrace, …)\n\
+         - command: run any GDB command (break, continue, info registers, backtrace, ...)\n\
          - interrupt: send SIGINT to halt a running target (Ctrl+C equivalent)\n\
          - wait_stopped: block until target halts after continue/step\n\
          - status: check server/client/target state without interrupting\n\

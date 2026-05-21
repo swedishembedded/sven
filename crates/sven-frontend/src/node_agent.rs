@@ -7,7 +7,7 @@
 //! When `SVEN_NODE_URL` and `SVEN_NODE_TOKEN` are set, this module replaces
 //! the local agent with a thin WebSocket bridge to the running sven node.
 //! That agent has a live `P2pHandle`, so all peer tools (`list_peers`,
-//! `delegate_task`, `send_message`, …) are available.
+//! `delegate_task`, `send_message`, ...) are available.
 //!
 //! # Protocol
 //!
@@ -18,9 +18,9 @@
 //! - `ControlEvent::OutputDelta { role: "thinking" }` → `AgentEvent::ThinkingDelta`
 //! - `ControlEvent::OutputComplete { role: "assistant" }` → `AgentEvent::TextComplete`
 //! - `ControlEvent::OutputComplete { role: "thinking" }` → `AgentEvent::ThinkingComplete`
-//! - `ControlEvent::ToolCall { … }` → `AgentEvent::ToolCallStarted`
-//! - `ControlEvent::ToolResult { … }` → `AgentEvent::ToolCallFinished`
-//! - `ControlEvent::ToolNeedsApproval { … }` → auto-approve
+//! - `ControlEvent::ToolCall { ... }` → `AgentEvent::ToolCallStarted`
+//! - `ControlEvent::ToolResult { ... }` → `AgentEvent::ToolCallFinished`
+//! - `ControlEvent::ToolNeedsApproval { ... }` → auto-approve
 //! - `ControlEvent::SessionState { Completed | Cancelled }` → `AgentEvent::TurnComplete`
 //! - `ControlEvent::AgentError` / `NodeError` → `AgentEvent::Error`
 

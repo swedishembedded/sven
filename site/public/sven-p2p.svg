@@ -1,6 +1,6 @@
 <svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
 <rect width="800" height="500" fill="#0f1117"/>
-<!-- Top status bar — blue accent for P2P/network theme -->
+<!-- Top status bar - blue accent for P2P/network theme -->
 <rect x="0" y="0" width="800" height="22" fill="#08080f"/>
 <rect x="0" y="22" width="800" height="1" fill="#14143a"/>
 <circle cx="10" cy="11" r="5" fill="#5b8dee"/>
@@ -49,7 +49,7 @@
 <text x="12" y="185" font-family="monospace" font-size="10" fill="#9aa5b8">  backend   192.168.1.42   claude-sonnet   ● online</text>
 <text x="12" y="200" font-family="monospace" font-size="10" fill="#9aa5b8">  frontend  192.168.1.55   gpt-4o          ● online</text>
 <text x="12" y="215" font-family="monospace" font-size="10" fill="#9aa5b8">  embedded  192.168.1.71   claude-haiku    ● online</text>
-<text x="12" y="230" font-family="monospace" font-size="10" fill="#9aa5b8">  relay     relay.sven.io  —               ● bridge</text>
+<text x="12" y="230" font-family="monospace" font-size="10" fill="#9aa5b8">  relay     relay.sven.io  -               ● bridge</text>
 
 <text x="12" y="250" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
 <text x="62" y="250" font-family="monospace" font-size="10" fill="#9aa5b8">Delegating the security review to backend agent:</text>

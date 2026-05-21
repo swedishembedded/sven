@@ -324,7 +324,7 @@ impl McpManager {
     ) {
         if had_auth {
             // We already had valid tokens and the server rejected them. Don't
-            // trigger OAuth again — that would loop perpetually. Clear stale
+            // trigger OAuth again - that would loop perpetually. Clear stale
             // credentials and report the error.
             let server_url = match &cfg.transport {
                 McpTransport::Http { url, .. } => url.clone(),
@@ -489,7 +489,7 @@ impl McpManager {
                     })
                     .await;
             } else {
-                // Manual auth required — user must run `/mcp auth <name>`.
+                // Manual auth required - user must run `/mcp auth <name>`.
                 let _ = this
                     .event_tx
                     .send(McpEvent::AuthRequired {
@@ -932,7 +932,7 @@ impl McpManager {
                     });
                 }
                 Err(e) => {
-                    // Refresh failed or token completely expired — clear and let
+                    // Refresh failed or token completely expired - clear and let
                     // the connection attempt trigger fresh OAuth.
                     warn!(server = %name, error = %e, "stored token invalid, will re-authenticate");
                     return None;

@@ -15,7 +15,7 @@ use crate::{Step, StepOptions, StepQueue};
 ///
 /// ## Step label                    ← first step
 /// <!-- sven: mode=research -->
-/// Step body…
+/// Step body...
 /// ```
 pub struct ParsedWorkflow {
     /// Text of the first `#` H1 heading, used as the conversation title.

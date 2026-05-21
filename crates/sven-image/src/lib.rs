@@ -76,7 +76,7 @@ impl EncodedImage {
         format!("data:{};base64,{}", self.mime_type, encoded)
     }
 
-    /// Return the base64-encoded string only (no `data:…;base64,` prefix).
+    /// Return the base64-encoded string only (no `data:...;base64,` prefix).
     pub fn to_base64(&self) -> String {
         B64.encode(&self.bytes)
     }

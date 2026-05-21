@@ -14,7 +14,7 @@ pub struct PromptContext<'a> {
     pub project_root: Option<&'a Path>,
     /// Pre-formatted git context (branch, commit, dirty status).
     ///
-    /// **Caching note**: this field is *volatile* — it changes on every commit
+    /// **Caching note**: this field is *volatile* - it changes on every commit
     /// and with every file edit (dirty count).  When prompt caching is enabled
     /// this content is placed in a *separate, uncached* system block so that
     /// the stable prefix remains cacheable across sessions.
@@ -122,7 +122,7 @@ mod guidelines {
          - Discovery workflow: `find_file` to locate files → `grep` to narrow → `read_file` with specific ranges for context.\n\
          - Use `grep` output_mode='content' + context_lines for code-level inspection; use whole_project=true for codebase-wide sweeps.\n\
          - Use `shell` one-liners (sed, awk) for replacements at scale.\n\
-         - Batch `read_file` calls in parallel — read all potentially relevant files in one turn."
+         - Batch `read_file` calls in parallel - read all potentially relevant files in one turn."
     }
 
     pub fn large_content() -> &'static str {
@@ -175,7 +175,7 @@ mod guidelines {
         "- When asked to debug, diagnose a crash, inspect runtime state, or step through code on a \
            target device: you MUST use the `gdb` compound tool \
            (`gdb(action=start_server)`, `gdb(action=connect)`, `gdb(action=command)`, `gdb(action=stop)`). \
-           Do NOT substitute reading source code for actual runtime debugging — GDB is a better source of truth."
+           Do NOT substitute reading source code for actual runtime debugging - GDB is a better source of truth."
     }
 }
 
@@ -409,7 +409,7 @@ pub fn format_collab_event(event: &CollabEvent) -> String {
             format!("💬 {from}: {preview}")
         }
         CollabEvent::TeammateIdle { name } => {
-            format!("○ {name} is idle — no more tasks")
+            format!("○ {name} is idle - no more tasks")
         }
         CollabEvent::TeamCreated { team_name } => {
             format!("⬡ team '{team_name}' created")
@@ -421,7 +421,7 @@ pub fn format_collab_event(event: &CollabEvent) -> String {
             format!("📋 {name} submitted plan for review [task {task_id}]")
         }
         CollabEvent::PlanApproved { name, task_id } => {
-            format!("✓ plan approved for {name} [task {task_id}] — implementing")
+            format!("✓ plan approved for {name} [task {task_id}] - implementing")
         }
         CollabEvent::PlanRejected {
             name,
@@ -494,11 +494,11 @@ pub enum CollabEvent {
 pub fn p2p_task_guidelines() -> &'static str {
     "## P2P Task Execution Guidelines\n\n\
      You have received this task from a peer agent in the swarm.  **Your job is \
-     to execute it — not to route it.**\n\n\
+     to execute it - not to route it.**\n\n\
      Rules you MUST follow:\n\
      - **Attempt the task locally first.**  Use your own tools (files, shell, \
        web search, etc.) before considering delegation.\n\
-     - **Only use `delegate_task` as an absolute last resort** — specifically \
+     - **Only use `delegate_task` as an absolute last resort** - specifically \
        when the task requires a capability or resource that is provably only \
        available on a different peer AND you have already attempted local \
        execution and confirmed it is impossible.\n\
@@ -510,7 +510,7 @@ pub fn p2p_task_guidelines() -> &'static str {
        maximum depth across all message channels (task delegation, session \
        messages, and room posts).  If you receive an error stating the hop-depth \
        limit is reached, you MUST complete the task with locally available \
-       information — further routing is impossible.\n\
+       information - further routing is impossible.\n\
      - If you genuinely cannot complete the task with any local approach, \
        respond with a clear failure message explaining what is missing."
 }
@@ -541,7 +541,7 @@ pub fn build_knowledge_section(knowledge: &[KnowledgeInfo]) -> String {
             let updated_hint = k
                 .updated
                 .as_deref()
-                .map(|d| format!(" — updated {d}"))
+                .map(|d| format!(" - updated {d}"))
                 .unwrap_or_default();
             format!(
                 "  <doc>\n    <subsystem>{}</subsystem>{}{}\n  </doc>",
@@ -615,7 +615,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         return custom.to_string();
     }
 
-    // Agent identity — fully static so this block is stable across turns
+    // Agent identity - fully static so this block is stable across turns
     // and can be cached by Anthropic's prompt-caching layer.
     // Volatile context (git branch, CI env, working directory) is injected
     // separately via system_dynamic_suffix and never touches this block.
@@ -697,7 +697,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         String::new()
     };
 
-    // Project context file (AGENTS.md / .sven/context.md) — referenced by
+    // Project context file (AGENTS.md / .sven/context.md) - referenced by
     // path, never inlined. Every turn used to pay for the file's full content
     // whether or not the task ever touched it; on a large file that alone can
     // be a meaningful fraction of the context window, and combined with other
@@ -720,7 +720,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         String::new()
     };
 
-    // Skills — stable, injected after project instructions and before CI/git.
+    // Skills - stable, injected after project instructions and before CI/git.
     let skills_section = {
         let s = build_skills_section(&ctx.skills);
         if s.is_empty() {
@@ -730,7 +730,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
     };
 
-    // Agents — stable, injected after skills.
+    // Agents - stable, injected after skills.
     let agents_section = {
         let s = build_agents_section(&ctx.agents);
         if s.is_empty() {
@@ -740,7 +740,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
     };
 
-    // Knowledge base overview — stable, injected after agents.
+    // Knowledge base overview - stable, injected after agents.
     let knowledge_section = {
         let s = build_knowledge_section(&ctx.knowledge);
         if s.is_empty() {
@@ -750,7 +750,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
     };
 
-    // Knowledge drift warning — stable (computed once at session start).
+    // Knowledge drift warning - stable (computed once at session start).
     let knowledge_drift_section = if let Some(note) = ctx.knowledge_drift_note {
         format!("\n\n{note}")
     } else {

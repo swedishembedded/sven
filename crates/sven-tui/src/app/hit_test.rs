@@ -63,11 +63,11 @@ pub enum HitArea {
 ///
 /// # Parameters
 ///
-/// - `layout`   — cached pane rectangles for the current frame
-/// - `col`,`row` — 0-based terminal coordinates from the mouse event
-/// - `chat_scroll_offset` — current `chat.scroll_offset`
-/// - `total_chat_lines`   — current `chat.lines.len()`
-/// - `queue_len`      — number of items in `queue.messages`
+/// - `layout`   - cached pane rectangles for the current frame
+/// - `col`,`row` - 0-based terminal coordinates from the mouse event
+/// - `chat_scroll_offset` - current `chat.scroll_offset`
+/// - `total_chat_lines`   - current `chat.lines.len()`
+/// - `queue_len`      - number of items in `queue.messages`
 pub fn hit_test(
     layout: &LayoutCache,
     col: u16,

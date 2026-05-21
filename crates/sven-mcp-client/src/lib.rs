@@ -10,10 +10,10 @@
 //!
 //! # Key types
 //!
-//! - [`McpManager`] — connects to multiple MCP servers, aggregates tools/prompts.
-//! - [`McpTool`] — implements `sven_tools::Tool`, routes calls to the MCP server.
-//! - [`McpEvent`] — lifecycle events emitted by the manager.
-//! - [`ServerStatusSummary`] — per-server status for the `/mcp` UI.
+//! - [`McpManager`] - connects to multiple MCP servers, aggregates tools/prompts.
+//! - [`McpTool`] - implements `sven_tools::Tool`, routes calls to the MCP server.
+//! - [`McpEvent`] - lifecycle events emitted by the manager.
+//! - [`ServerStatusSummary`] - per-server status for the `/mcp` UI.
 //!
 //! # Config
 //!

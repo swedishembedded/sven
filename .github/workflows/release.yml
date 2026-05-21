@@ -144,7 +144,7 @@ jobs:
   # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
   # sven-node/Cargo.toml (which owns the webauthn-rs dependency).  Cargo feature
   # unification propagates `vendored` to the single openssl-sys compile unit, so
-  # OpenSSL is always built from source — no system library or Homebrew bottle
+  # OpenSSL is always built from source - no system library or Homebrew bottle
   # required.  This is the only reliable strategy when cross-compiling from the
   # Apple Silicon (aarch64) macos-latest runner to x86_64, because Homebrew does
   # not ship x86_64 bottles on that architecture.
@@ -208,7 +208,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     # aarch64, macOS, and Windows are excluded from needs so their failures
-    # never block the Linux release.  e2e-basic must pass — if any basic test
+    # never block the Linux release.  e2e-basic must pass - if any basic test
     # fails the release is aborted.
     needs: [e2e-basic, build-linux-x86_64]
     steps:
@@ -252,7 +252,7 @@ jobs:
           sha256sum sven-* > checksums.txt
           cat checksums.txt
 
-      - name: Dry run — skip GitHub Release
+      - name: Dry run - skip GitHub Release
         if: >-
           ${{ github.event_name == 'workflow_dispatch' &&
               github.event.inputs.dry_run == 'true' }}

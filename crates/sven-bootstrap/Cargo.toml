@@ -10,7 +10,7 @@ sven-tools         = { path = "../sven-tools" }
 sven-core          = { path = "../sven-core" }
 sven-runtime       = { path = "../sven-runtime" }
 sven-mcp-client    = { path = "../sven-mcp-client" }
-# New integration crates — optional at bootstrap level
+# New integration crates - optional at bootstrap level
 sven-channels      = { path = "../sven-channels", optional = true }
 sven-scheduler     = { path = "../sven-scheduler", optional = true }
 sven-integrations  = { path = "../sven-integrations", optional = true }

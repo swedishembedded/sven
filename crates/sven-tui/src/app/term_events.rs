@@ -11,9 +11,9 @@
 //!
 //! The only direct mutations allowed here are:
 //!  1. `self.ui.show_help = false` (single-field clear, no logic)
-//!  2. `self.layout.resize_drag` and `self.prefs.*` — border-drag state machine
+//!  2. `self.layout.resize_drag` and `self.prefs.*` - border-drag state machine
 //!     that spans multiple events and cannot be expressed as a single `Action`.
-//!  3. `self.ui.pending_nav` — transient key-prefix flag.
+//!  3. `self.ui.pending_nav` - transient key-prefix flag.
 //!
 //! Everything else goes through `mouse_to_action()` → `dispatch()`.
 
@@ -42,7 +42,7 @@ impl App {
                     self.ui.show_help = false;
                     return false;
                 }
-                // Team picker overlay intercepts keys — all mutations route
+                // Team picker overlay intercepts keys - all mutations route
                 // through dispatch() so the logic lives in exactly one place.
                 if self.ui.show_team_picker {
                     use crossterm::event::{KeyCode, KeyModifiers};
@@ -177,7 +177,7 @@ impl App {
 
                 // ── Pane border resize (stateful drag; spans multiple events) ─
                 //
-                // All border hit detection goes through `hit_test` — the single
+                // All border hit detection goes through `hit_test` - the single
                 // authoritative path.  The anchor offset recorded on `Down`
                 // keeps the border locked to the exact grab point during `Drag`.
                 match mouse.kind {
@@ -279,7 +279,7 @@ impl App {
                     self.prefs.effective_chat_list_width(),
                     self.prefs.effective_peers_pane_height(),
                 );
-                // Open-border panes (TOP+BOTTOM only) — no left/right `│` chars.
+                // Open-border panes (TOP+BOTTOM only) - no left/right `│` chars.
                 self.layout.chat_inner_width = layout.chat_pane.width.max(20);
                 self.layout.chat_height = layout.chat_inner_height().max(1);
                 // Input pane: no left/right borders; reserve 2 cols for `> ` prompt.
@@ -318,8 +318,8 @@ impl App {
                 //
                 // Multi-line pastes are checked line by line.  A line that
                 // resolves as an image becomes an attachment (consumed, not
-                // inserted).  Every other line — including resolved non-image
-                // paths — is inserted into the buffer as-is.
+                // inserted).  Every other line - including resolved non-image
+                // paths - is inserted into the buffer as-is.
                 let lines: Vec<&str> = normalised.split('\n').collect();
                 let single_line = lines.len() == 1;
                 let mut any_inserted = false;
@@ -359,7 +359,7 @@ impl App {
 
     /// Translate a raw [`MouseEvent`] into a logical [`Action`].
     ///
-    /// This function is **read-only** — it never mutates `App` state.  All
+    /// This function is **read-only** - it never mutates `App` state.  All
     /// mutations happen in `dispatch` once the action is returned.
     ///
     /// The border-resize drag and overlay scroll are handled before this is

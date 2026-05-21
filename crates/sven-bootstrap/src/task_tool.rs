@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! TaskTool — spawns a full sven ACP subagent to execute a focused task.
+//! TaskTool - spawns a full sven ACP subagent to execute a focused task.
 //!
 //! # Architecture
 //!
@@ -640,7 +640,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         return ToolOutput::err(&call_id, format!("ACP initialize failed: {e}{stderr_msg}"));
     }
 
-    // NOTE: authenticate is intentionally skipped — the sven ACP server
+    // NOTE: authenticate is intentionally skipped - the sven ACP server
     // returns an empty authMethods list and the call is not required.
 
     let session_resp = match conn
@@ -689,17 +689,17 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     let mut cancel_rx = cancel_rx;
 
     // Five concurrent branches (checked in biased order):
-    //   1. Parent cancel signal  — forward ACP session/cancel, stop.
-    //   2. PromptResponse        — agent turn complete, stop.
-    //   3. Inactivity timeout    — forward ACP session/cancel, stop.
-    //   4. Child process exit    — log crash, stop.
-    //   5. Notification arrived  — reset timer, forward to TUI, continue.
+    //   1. Parent cancel signal  - forward ACP session/cancel, stop.
+    //   2. PromptResponse        - agent turn complete, stop.
+    //   3. Inactivity timeout    - forward ACP session/cancel, stop.
+    //   4. Child process exit    - log crash, stop.
+    //   5. Notification arrived  - reset timer, forward to TUI, continue.
     loop {
         tokio::select! {
             biased;
 
             _ = &mut cancel_rx => {
-                debug!(handle = %handle_id, "task: parent cancelled — forwarding ACP session/cancel");
+                debug!(handle = %handle_id, "task: parent cancelled - forwarding ACP session/cancel");
                 conn.cancel(CancelNotification::new(acp_session_id.clone())).await.ok();
                 stop_reason = StopReason::Cancelled;
                 prompt_task.abort();
@@ -721,7 +721,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             }
 
             _ = &mut inactivity => {
-                warn!(handle = %handle_id, "task: inactivity timeout — sending ACP session/cancel");
+                warn!(handle = %handle_id, "task: inactivity timeout - sending ACP session/cancel");
                 conn.cancel(CancelNotification::new(acp_session_id.clone())).await.ok();
                 timed_out = true;
                 prompt_task.abort();
@@ -770,7 +770,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             final_text.push_str(&t);
         }
         for update in updates {
-            // Use try_send: if the receiver is full, drop the update — the
+            // Use try_send: if the receiver is full, drop the update - the
             // final result already captures the accumulated text.
             let _ = tool_event_tx.try_send(ToolEvent::SubagentEvent {
                 call_id: call_id.clone(),
@@ -781,7 +781,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     }
 
     // The ACP server process does not exit on its own after a single prompt
-    // turn — kill it now that we have the result, then reap to avoid zombies.
+    // turn - kill it now that we have the result, then reap to avoid zombies.
     // Both calls are no-ops if the child has already exited.
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -904,7 +904,7 @@ async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
 /// Convert one ACP [`SessionUpdate`] into zero or more [`SubagentUpdate`]s and
 /// an optional text chunk to append to `final_text`.
 ///
-/// The function is pure — callers append the returned text to their accumulator
+/// The function is pure - callers append the returned text to their accumulator
 /// explicitly, keeping side effects visible at the call site.
 fn session_update_to_subagent_updates(
     update: &SessionUpdate,

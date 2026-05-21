@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-deb.sh – Build a Debian package for sven without cargo-deb.
+# build-deb.sh - Build a Debian package for sven without cargo-deb.
 #
 # Usage:
 #   bash scripts/build-deb.sh [OPTIONS]
@@ -102,7 +102,7 @@ if [[ -n "${COMPLETIONS_DIR_OVERRIDE}" ]]; then
     echo "  Using pre-generated completions from ${COMP_DIR}"
     GOT_COMPLETIONS=true
 elif "${BINARY}" --version >/dev/null 2>&1; then
-    # Binary is executable on this machine — generate completions from it
+    # Binary is executable on this machine - generate completions from it
     COMP_DIR="${ROOT}/target/completions"
     mkdir -p "${COMP_DIR}"
     echo "  Generating shell completions..."

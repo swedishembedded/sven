@@ -19,7 +19,7 @@ _release="${_REPO_ROOT}/target/release/sven"
 _debug="${_REPO_ROOT}/target/debug/sven"
 
 if [[ -x "${_release}" && -x "${_debug}" ]]; then
-    # Both exist — use whichever was modified more recently.
+    # Both exist - use whichever was modified more recently.
     if [[ "${_release}" -nt "${_debug}" ]]; then
         BIN="${_release}"
     else
@@ -108,6 +108,6 @@ tmp_file() {
 setup() {
     # Verify binary exists
     if [[ ! -x "${BIN}" ]]; then
-        skip "Binary not found: ${BIN} — run 'cargo build' first"
+        skip "Binary not found: ${BIN} - run 'cargo build' first"
     fi
 }

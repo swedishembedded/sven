@@ -28,7 +28,7 @@ use sven_tools::{
 
 use crate::context_query::{build_context_query_tools, ContextQueryTool, ContextReduceTool};
 
-/// Compound context tool — all RLM large-content tools in one definition.
+/// Compound context tool - all RLM large-content tools in one definition.
 pub struct ContextTool {
     open: ContextOpenTool,
     read: ContextReadTool,

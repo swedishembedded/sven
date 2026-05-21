@@ -33,7 +33,7 @@ impl Tool for ContextOpenTool {
 
     fn description(&self) -> &str {
         "Open a file or directory as a memory-mapped context for efficient analysis of content \
-         too large to fit in your context window. Returns a handle and structural metadata — \
+         too large to fit in your context window. Returns a handle and structural metadata - \
          the content itself is NOT loaded into your context.\n\n\
          After opening, interact with the handle using:\n\
          - context_read: peek at specific line ranges (random access, zero-copy)\n\
@@ -44,7 +44,7 @@ impl Tool for ContextOpenTool {
          2. Grep to locate relevant sections (cheap, keeps context window clean)\n\
          3. Read specific sections you need to understand directly\n\
          4. Query chunks when semantic analysis of many sections is needed\n\n\
-         For files under ~500 lines prefer read_file — it is simpler and sufficient.\n\
+         For files under ~500 lines prefer read_file - it is simpler and sufficient.\n\
          For build logs, CI output, large codebases, or any content over ~1000 lines, \
          always use context_open."
     }

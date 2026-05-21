@@ -5,7 +5,7 @@
 //!
 //! `SvenApp::build` sets up the window, registers all callbacks, spawns the
 //! agent task, and starts the event-bridge loop.  All heavyweight helpers
-//! live in the sibling modules (sessions, queue_ops, search, clipboard, …).
+//! live in the sibling modules (sessions, queue_ops, search, clipboard, ...).
 
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -100,7 +100,7 @@ impl SvenApp {
             total_cost_usd: 0.0,
         });
 
-        // Per-session usage map — populated from disk on startup and updated live.
+        // Per-session usage map - populated from disk on startup and updated live.
         let session_usage: Arc<Mutex<HashMap<String, ChatUsage>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
@@ -1542,7 +1542,7 @@ impl SvenApp {
                     PickerItem {
                         id: SharedString::from("research"),
                         label: SharedString::from("research"),
-                        description: SharedString::from("Read-only — explores and answers"),
+                        description: SharedString::from("Read-only - explores and answers"),
                     },
                 ];
                 *all_mc.lock().unwrap() = items.clone();
@@ -2173,7 +2173,7 @@ impl SvenApp {
                         pm.lock()
                             .unwrap()
                             .push_back(PlainChatMessage::system(format!(
-                            "Delegated \"{task_title}\" to {to_name}: {status} — {result_preview}"
+                            "Delegated \"{task_title}\" to {to_name}: {status} - {result_preview}"
                         )));
                         let sid = streaming_sid_ev.lock().unwrap().clone();
                         let sid_clone = sid.clone();

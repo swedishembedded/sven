@@ -49,7 +49,7 @@ impl crate::ModelProvider for MockProvider {
 
 /// A pre-scripted mock provider.  Each call to `complete` pops the next
 /// response script from the front of the queue.  This lets tests specify
-/// exact event sequences – including tool calls – without network access.
+/// exact event sequences - including tool calls - without network access.
 pub struct ScriptedMockProvider {
     scripts: Arc<Mutex<Vec<Vec<ResponseEvent>>>>,
     name: String,
@@ -119,7 +119,7 @@ impl ScriptedMockProvider {
         final_text: impl Into<String>,
     ) -> Self {
         Self::new(vec![
-            // Round 1 – model emits a tool call
+            // Round 1 - model emits a tool call
             vec![
                 ResponseEvent::ToolCall {
                     index: 0,
@@ -129,7 +129,7 @@ impl ScriptedMockProvider {
                 },
                 ResponseEvent::Done,
             ],
-            // Round 2 – model responds after tool result
+            // Round 2 - model responds after tool result
             vec![
                 ResponseEvent::TextDelta(final_text.into()),
                 ResponseEvent::Done,

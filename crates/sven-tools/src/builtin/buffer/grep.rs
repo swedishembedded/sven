@@ -33,7 +33,7 @@ impl Tool for BufGrepTool {
     fn description(&self) -> &str {
         "Search a streaming output buffer for lines matching a regex pattern.  Works the same \
          as `context_grep` but operates on a buffer created by `task` or `shell`.\n\n\
-         The buffer may still be growing (status: running).  Grepping while running is safe — \
+         The buffer may still be growing (status: running).  Grepping while running is safe - \
          you get matches against all bytes appended so far.\n\n\
          Use this to quickly locate errors, test results, or specific identifiers in a \
          sub-agent's output without reading the entire buffer.\n\n\

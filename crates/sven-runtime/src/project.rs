@@ -65,7 +65,7 @@ pub fn find_project_root() -> Result<PathBuf> {
 /// Workspace root markers checked in priority order.
 ///
 /// A *workspace root* is the directory that sits above one or more git
-/// repositories and contains shared tooling — knowledge bases, IDE
+/// repositories and contains shared tooling - knowledge bases, IDE
 /// configuration, build system bootstrapping, etc.  It is distinct from the
 /// *project root* (the git repository found by `find_project_root()`).
 ///
@@ -75,8 +75,8 @@ pub fn find_project_root() -> Result<PathBuf> {
 ///
 /// | Marker    | Created by                      | Reliability |
 /// |-----------|----------------------------------|-------------|
-/// | `.west`   | `west init` (Zephyr build system) | High — purpose-built workspace marker, always above git repos |
-/// | `.cursor` | Cursor IDE                        | Medium — IDE workspace dir, commonly at the repo-collection level |
+/// | `.west`   | `west init` (Zephyr build system) | High - purpose-built workspace marker, always above git repos |
+/// | `.cursor` | Cursor IDE                        | Medium - IDE workspace dir, commonly at the repo-collection level |
 ///
 /// Note: `.sven/` is intentionally **not** a workspace marker because it is
 /// a project-level directory that lives *inside* the git repository.
@@ -93,7 +93,7 @@ const WORKSPACE_MARKERS: &[&str] = &[
 /// up the hierarchy).
 const MAX_WORKSPACE_ASCENT: usize = 5;
 
-/// Heuristically locate the workspace root — the directory above the git
+/// Heuristically locate the workspace root - the directory above the git
 /// repository that contains shared tooling used by multiple projects.
 ///
 /// **This function uses heuristics** (see [`WORKSPACE_MARKERS`]) and may
@@ -127,11 +127,11 @@ pub fn find_workspace_root(project_root: &Path) -> PathBuf {
 
 /// Locate a project-level context / instructions file, without reading it.
 /// Tried in order:
-/// 1. `.sven/context.md`   — sven-specific instructions
-/// 2. `AGENTS.md`          — standard agent instructions
-/// 3. `CLAUDE.md`          — Claude Code project file
+/// 1. `.sven/context.md`   - sven-specific instructions
+/// 2. `AGENTS.md`          - standard agent instructions
+/// 3. `CLAUDE.md`          - Claude Code project file
 ///
-/// Returns the path only — the system prompt references it (see
+/// Returns the path only - the system prompt references it (see
 /// `sven_core::prompts`) rather than inlining its content on every turn, so
 /// an agent whose task doesn't touch it never pays for reading a file it
 /// never needed. An agent that decides the file is relevant reads it itself

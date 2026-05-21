@@ -20,7 +20,7 @@ impl Tool for DeleteFileTool {
 
     fn description(&self) -> &str {
         "Delete a single file. Fails gracefully if not found. NEVER delete without explicit user request.\n\
-         Permanent — no recovery. For directories use run_terminal_command with rm -r."
+         Permanent - no recovery. For directories use run_terminal_command with rm -r."
     }
 
     fn parameters_schema(&self) -> Value {

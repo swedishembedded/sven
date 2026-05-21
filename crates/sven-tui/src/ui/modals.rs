@@ -295,7 +295,7 @@ impl QuestionModalView<'_> {
                     const MAX_PREVIEW: usize = 35;
                     if display_width(self.other_input) > MAX_PREVIEW {
                         format!(
-                            "{}. Other: {}…",
+                            "{}. Other: {}...",
                             q.options.len() + 1,
                             truncate_to_width_exact(self.other_input, MAX_PREVIEW)
                         )

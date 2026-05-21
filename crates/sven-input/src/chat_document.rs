@@ -173,7 +173,7 @@ pub enum TurnRecord {
 
 // ── ChatDocument ──────────────────────────────────────────────────────────────
 
-/// Full chat document — the canonical persistence format for a conversation.
+/// Full chat document - the canonical persistence format for a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatDocument {
     /// Unique session identifier.
@@ -268,7 +268,7 @@ pub fn parse_chat_document(yaml: &str) -> Result<ChatDocument> {
 /// Convert a slice of `ConversationRecord`s to `TurnRecord`s for embedding in
 /// a `ChatDocument`.
 ///
-/// System messages are skipped — the agent regenerates the system prompt at
+/// System messages are skipped - the agent regenerates the system prompt at
 /// runtime from the current config.
 pub fn records_to_turns(records: &[ConversationRecord]) -> Vec<TurnRecord> {
     records.iter().filter_map(record_to_turn).collect()
@@ -746,7 +746,7 @@ fn parse_chat_header(yaml: &str) -> Result<(ChatDocumentHeader, usize)> {
 /// List all chat documents in the chat directory, most recently updated first.
 ///
 /// Uses lightweight header-only parsing to avoid loading full conversation
-/// histories — only the fields needed for the sidebar (`id`, `title`, `status`,
+/// histories - only the fields needed for the sidebar (`id`, `title`, `status`,
 /// `updated_at`, `usage`) are deserialized.
 pub fn list_chats(limit: Option<usize>) -> Result<Vec<ChatEntry>> {
     let dir = chat_dir();
@@ -783,7 +783,7 @@ pub fn list_chats(limit: Option<usize>) -> Result<Vec<ChatEntry>> {
                 });
             }
             None => {
-                // Unreadable / malformed — skip with a warning.
+                // Unreadable / malformed - skip with a warning.
                 tracing::warn!(path = %path.display(), stem = %stem, "skipping malformed chat document");
             }
         }

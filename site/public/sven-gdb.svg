@@ -1,6 +1,6 @@
 <svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
 <rect width="800" height="500" fill="#0f1117"/>
-<!-- Top status bar — amber accent for GDB/hardware theme -->
+<!-- Top status bar - amber accent for GDB/hardware theme -->
 <rect x="0" y="0" width="800" height="22" fill="#0e0c08"/>
 <rect x="0" y="22" width="800" height="1" fill="#2a2010"/>
 <circle cx="10" cy="11" r="5" fill="#e6b428"/>
@@ -95,10 +95,10 @@
 
 <text x="12" y="333" font-family="monospace" font-size="10" fill="#a0f0c8">Agent:</text>
 <text x="62" y="333" font-family="monospace" font-size="10" fill="#9aa5b8">Here's what I found at the breakpoint:</text>
-<text x="12" y="351" font-family="monospace" font-size="10" fill="#9aa5b8">  dev      (struct device *)  0x5e27c       — UART_0 device struct</text>
-<text x="12" y="367" font-family="monospace" font-size="10" fill="#9aa5b8">  tx_data  (uint8_t *)        0x20000c03    — 21-byte buffer</text>
+<text x="12" y="351" font-family="monospace" font-size="10" fill="#9aa5b8">  dev      (struct device *)  0x5e27c       - UART_0 device struct</text>
+<text x="12" y="367" font-family="monospace" font-size="10" fill="#9aa5b8">  tx_data  (uint8_t *)        0x20000c03    - 21-byte buffer</text>
 <text x="12" y="383" font-family="monospace" font-size="10" fill="#9aa5b8">  len                         21</text>
-<text x="12" y="401" font-family="monospace" font-size="10" fill="#607060">  buffer contents: "AT+CREG?\r\n" — Quectel EG25-G modem command</text>
+<text x="12" y="401" font-family="monospace" font-size="10" fill="#607060">  buffer contents: "AT+CREG?\r\n" - Quectel EG25-G modem command</text>
 
 <!-- Input -->
 <rect x="0" y="440" width="800" height="1" fill="#2a2010"/>

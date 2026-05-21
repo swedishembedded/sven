@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Repository context index — `sven index`.
+//! Repository context index - `sven index`.
 //!
 //! Builds a compact, searchable index of the codebase stored in `.sven/index/`.
 //!
@@ -166,7 +166,7 @@ pub fn load_index(repo_root: &Path) -> anyhow::Result<Option<RepoIndex>> {
 
 // ── CLI commands ──────────────────────────────────────────────────────────────
 
-/// `sven index build` — build or rebuild the repository index.
+/// `sven index build` - build or rebuild the repository index.
 pub fn cmd_build(repo_root: &Path, quiet: bool) -> anyhow::Result<()> {
     if !quiet {
         eprintln!("[sven:index] Scanning {} ...", repo_root.display());
@@ -192,7 +192,7 @@ pub fn cmd_build(repo_root: &Path, quiet: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `sven index query QUERY` — search the index for matching symbols.
+/// `sven index query QUERY` - search the index for matching symbols.
 pub fn cmd_query(repo_root: &Path, query: &str, limit: usize) -> anyhow::Result<()> {
     let index = load_index(repo_root)?
         .ok_or_else(|| anyhow::anyhow!("No index found. Run 'sven index build' first."))?;
@@ -222,7 +222,7 @@ pub fn cmd_query(repo_root: &Path, query: &str, limit: usize) -> anyhow::Result<
     Ok(())
 }
 
-/// `sven index stats` — show statistics about the current index.
+/// `sven index stats` - show statistics about the current index.
 pub fn cmd_stats(repo_root: &Path) -> anyhow::Result<()> {
     let index = load_index(repo_root)?
         .ok_or_else(|| anyhow::anyhow!("No index found. Run 'sven index build' first."))?;

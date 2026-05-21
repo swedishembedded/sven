@@ -5,7 +5,7 @@
 //!
 //! Knowledge documents are plain Markdown files with YAML frontmatter stored
 //! under `.sven/knowledge/` in the project root.  Each file documents one
-//! subsystem and is written for AI consumption — explicit file paths, code
+//! subsystem and is written for AI consumption - explicit file paths, code
 //! patterns, correctness invariants, and known failure modes.
 //!
 //! ## File format
@@ -56,12 +56,12 @@ pub struct KnowledgeInfo {
     /// Glob patterns for source files this document covers (from `files:`).
     pub files: Vec<String>,
     /// ISO-date string when the document was last reviewed (from `updated:`).
-    /// `None` when the `updated:` field is absent — no drift detection for
+    /// `None` when the `updated:` field is absent - no drift detection for
     /// that document.
     pub updated: Option<String>,
     /// Absolute path to the `.md` file.
     pub path: PathBuf,
-    /// Document body — everything after the closing YAML `---` fence.
+    /// Document body - everything after the closing YAML `---` fence.
     pub body: String,
 }
 
@@ -124,7 +124,7 @@ fn parse_knowledge_file(raw: &str, path: &Path) -> Option<KnowledgeInfo> {
                 warn!(
                     path = %path.display(),
                     error = %e,
-                    "failed to parse knowledge frontmatter — skipping"
+                    "failed to parse knowledge frontmatter - skipping"
                 );
                 return None;
             }
@@ -133,14 +133,14 @@ fn parse_knowledge_file(raw: &str, path: &Path) -> Option<KnowledgeInfo> {
     } else {
         warn!(
             path = %path.display(),
-            "knowledge file has no YAML frontmatter — skipping \
+            "knowledge file has no YAML frontmatter - skipping \
              (add `---\\nsubsystem: MySystem\\n---` header)"
         );
         return None;
     };
 
     if fm.subsystem.trim().is_empty() {
-        warn!(path = %path.display(), "knowledge file missing `subsystem:` field — skipping");
+        warn!(path = %path.display(), "knowledge file missing `subsystem:` field - skipping");
         return None;
     }
 
@@ -317,7 +317,7 @@ pub fn format_drift_warnings(warnings: &[DriftWarning]) -> Option<String> {
 
     for w in warnings {
         lines.push(format!(
-            "⚠ `.sven/knowledge/{}` covers `{}` — last updated {}.",
+            "⚠ `.sven/knowledge/{}` covers `{}` - last updated {}.",
             w.knowledge_file, w.subsystem, w.updated
         ));
         lines.push(format!(

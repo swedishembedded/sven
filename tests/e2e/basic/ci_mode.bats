@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# ci_mode.bats – legacy smoke tests (kept for backwards compatibility).
+# ci_mode.bats - legacy smoke tests (kept for backwards compatibility).
 # Uses the same mock-model infrastructure as the numbered test suites.
 
 load helpers
