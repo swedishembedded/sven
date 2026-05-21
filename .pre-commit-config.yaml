@@ -23,6 +23,16 @@ repos:
 
   - repo: local
     hooks:
+      # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
+      # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
+      # repository stays pure ASCII in all text and markdown files.
+      - id: normalize-ascii
+        name: normalize non-ASCII punctuation
+        entry: bash scripts/normalize-ascii.sh
+        language: system
+        types: [text]
+        pass_filenames: true
+
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --
