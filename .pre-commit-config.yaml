@@ -31,6 +31,7 @@ repos:
         entry: bash scripts/normalize-ascii.sh
         language: system
         types: [text]
+        exclude: '\.min\.(js|css)$'
         pass_filenames: true
 
       - id: cargo-fmt
