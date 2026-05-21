@@ -131,7 +131,7 @@ impl crate::ModelProvider for GoogleProvider {
                     json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters,
+                        "parameters": sanitize_schema_for_gemini(&t.parameters),
                     })
                 })
                 .collect();
@@ -338,6 +338,51 @@ fn message_to_gemini_parts(
                 }
             }
         }
+    }
+}
+
+/// Strip JSON Schema keywords that Gemini's `functionDeclarations[].parameters`
+/// validator rejects.  Gemini accepts only an OpenAPI 3 subset and errors on
+/// `additionalProperties`, `unevaluatedProperties`, `unevaluatedItems`,
+/// `patternProperties`, `$schema`, `$id`, `$ref`, `$defs`, `definitions`.
+/// It also rejects an empty `required` array.
+///
+/// The function is recursive so nested `properties`, `items`, `anyOf`, etc.
+/// are sanitized as well.
+fn sanitize_schema_for_gemini(v: &Value) -> Value {
+    const STRIP_KEYS: &[&str] = &[
+        "additionalProperties",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+        "patternProperties",
+        "$schema",
+        "$id",
+        "$ref",
+        "$defs",
+        "definitions",
+    ];
+
+    match v {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, val) in map {
+                if STRIP_KEYS.contains(&k.as_str()) {
+                    continue;
+                }
+                // Drop empty required arrays — Gemini rejects `required: []`.
+                if k == "required" {
+                    if let Value::Array(arr) = val {
+                        if arr.is_empty() {
+                            continue;
+                        }
+                    }
+                }
+                out.insert(k.clone(), sanitize_schema_for_gemini(val));
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_schema_for_gemini).collect()),
+        other => other.clone(),
     }
 }
 
@@ -624,6 +669,147 @@ mod tests {
         let raw: Vec<u8> = format!("{json_line}\n").into_bytes();
         let split_pos = raw.iter().position(|&b| b == 0xE4).expect("中 not found");
         assert_google_unicode_survives_split(content, split_pos);
+    }
+
+    // ── sanitize_schema_for_gemini ────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_strips_root_additional_properties() {
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "required": ["name"]
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        assert!(out.get("additionalProperties").is_none());
+        assert_eq!(out["type"], "object");
+        assert!(out["properties"]["name"]["type"] == "string");
+        assert_eq!(out["required"], json!(["name"]));
+    }
+
+    #[test]
+    fn sanitize_strips_nested_additional_properties_in_properties() {
+        // Mirrors the sven system.rs env field: properties.env.additionalProperties
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "env": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "env vars"
+                }
+            }
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        assert!(out.get("additionalProperties").is_none());
+        let env = &out["properties"]["env"];
+        assert!(env.get("additionalProperties").is_none());
+        assert_eq!(env["type"], "object");
+        assert_eq!(env["description"], "env vars");
+    }
+
+    #[test]
+    fn sanitize_strips_additional_properties_in_array_items() {
+        // Mirrors tools[0].function_declarations[0].parameters.properties[0].value.items
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "key": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        assert!(out.get("additionalProperties").is_none());
+        let items = &out["properties"]["values"]["items"];
+        assert!(items.get("additionalProperties").is_none());
+        assert_eq!(items["properties"]["key"]["type"], "string");
+    }
+
+    #[test]
+    fn sanitize_drops_empty_required_array() {
+        let schema = json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        assert!(out.get("required").is_none());
+    }
+
+    #[test]
+    fn sanitize_strips_dollar_keywords() {
+        let schema = json!({
+            "type": "object",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "$id": "my-schema",
+            "$ref": "#/definitions/Foo",
+            "$defs": { "Foo": { "type": "string" } },
+            "definitions": { "Foo": { "type": "string" } },
+            "patternProperties": { "^x-": {} },
+            "unevaluatedProperties": false,
+            "unevaluatedItems": false,
+            "properties": {}
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        for key in &[
+            "$schema",
+            "$id",
+            "$ref",
+            "$defs",
+            "definitions",
+            "patternProperties",
+            "unevaluatedProperties",
+            "unevaluatedItems",
+        ] {
+            assert!(
+                out.get(*key).is_none(),
+                "key {key} should have been stripped"
+            );
+        }
+        assert!(out.get("properties").is_some());
+    }
+
+    #[test]
+    fn sanitize_preserves_supported_fields() {
+        let schema = json!({
+            "type": "object",
+            "description": "a tool",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["fast", "slow"],
+                    "description": "speed",
+                    "default": "fast"
+                },
+                "count": {
+                    "type": "integer",
+                    "format": "int32",
+                    "nullable": true
+                }
+            },
+            "required": ["mode"]
+        });
+        let out = sanitize_schema_for_gemini(&schema);
+        assert_eq!(out["type"], "object");
+        assert_eq!(out["description"], "a tool");
+        assert_eq!(out["properties"]["mode"]["enum"], json!(["fast", "slow"]));
+        assert_eq!(out["properties"]["mode"]["default"], "fast");
+        assert_eq!(out["properties"]["count"]["format"], "int32");
+        assert_eq!(out["properties"]["count"]["nullable"], true);
+        assert_eq!(out["required"], json!(["mode"]));
     }
 
     #[test]
