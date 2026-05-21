@@ -143,7 +143,7 @@ impl QuestionModal {
     /// Focus stays on the "Other" row.
     pub fn deactivate_other(&mut self) {
         self.other_selected = false;
-        // Accepted — cursor moves to end so the next edit starts there.
+        // Accepted - cursor moves to end so the next edit starts there.
         self.other_cursor = self.other_input.len();
     }
 

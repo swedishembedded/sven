@@ -1,4 +1,4 @@
-# Session and Room Protocol — Technical Specification
+# Session and Room Protocol - Technical Specification
 
 This document describes the design, data structures, wire protocol, storage
 format, and execution model for agent-to-agent messaging and room broadcasts.
@@ -12,14 +12,14 @@ For user-facing documentation and tool reference see
 
 The model is deliberately minimal:
 
-- **One conversation per peer pair** — identified only by the remote peer ID.
+- **One conversation per peer pair** - identified only by the remote peer ID.
   No session IDs, no state machine, no open/close handshake.
-- **Automatic context breaks** — a gap ≥ 1 hour between two consecutive
+- **Automatic context breaks** - a gap ≥ 1 hour between two consecutive
   messages divides the log into context windows.  The agent loads only the
   messages after the most recent break.  Everything before is accessible via
   grep-style search.
-- **Append-only JSONL on disk** — simple, debuggable, grep-able.
-- **Regex search** — full Rust regex, not a query language.
+- **Append-only JSONL on disk** - simple, debuggable, grep-able.
+- **Regex search** - full Rust regex, not a query language.
 
 This is the WhatsApp model applied to agent communication: one thread per
 contact, implicit breaks, searchable history.
@@ -61,7 +61,7 @@ graph TD
 ### Transport
 
 Conversation messages use the existing `request_response` behaviour on
-`/sven-p2p/task/1.0.0` with the CBOR codec — the same transport that carries
+`/sven-p2p/task/1.0.0` with the CBOR codec - the same transport that carries
 tasks.  A new `SessionMessage` variant is added to `P2pRequest`.
 
 Room posts travel over a separate `gossipsub` behaviour subscribed to topic
@@ -88,14 +88,14 @@ pub struct SessionMessageWire {
     pub timestamp: DateTime<Utc>,
     pub role: SessionRole,     // User | Assistant
     pub content: Vec<ContentBlock>,
-    pub depth: u32,            // hop counter — see Loop prevention below
+    pub depth: u32,            // hop counter - see Loop prevention below
 }
 ```
 
 There is no `session_id`.  The implicit conversation is identified by the
 transport-level peer ID, which is cryptographically authenticated by Noise.
 
-`depth` is a **required** field on the wire — messages that omit it fail CBOR
+`depth` is a **required** field on the wire - messages that omit it fail CBOR
 deserialisation and are rejected.  See [Loop prevention](#loop-prevention) for
 details on how it is used.
 
@@ -174,11 +174,11 @@ object.  Nothing is ever modified or deleted.
 
 ```json
 {
-  "message_id": "3f6a1b20-…",
+  "message_id": "3f6a1b20-...",
   "seq": 4,
   "timestamp": "2025-03-02T14:23:01.123Z",
   "direction": "outbound",
-  "peer_id": "12D3KooWAbc…",
+  "peer_id": "12D3KooWAbc...",
   "role": "user",
   "content": [{"type": "text", "text": "check the build"}],
   "depth": 1
@@ -198,12 +198,12 @@ than resetting to `1`.  Old records on disk that predate this field default to
 
 ```json
 {
-  "message_id": "a1b2c3d4-…",
+  "message_id": "a1b2c3d4-...",
   "room": "firmware-team",
-  "sender_peer_id": "12D3KooWXyz…",
+  "sender_peer_id": "12D3KooWXyz...",
   "sender_name": "build-agent",
   "timestamp": "2025-03-02T14:25:00.000Z",
-  "content": [{"type": "text", "text": "build passed — 147 tests"}]
+  "content": [{"type": "text", "text": "build passed - 147 tests"}]
 }
 ```
 
@@ -309,7 +309,7 @@ sequenceDiagram
     else slot free
         Loop->>Loop: peer_waiters[peer] = reply_tx
 
-        Note over Loop: later — inbound SessionMessage from peer arrives
+        Note over Loop: later - inbound SessionMessage from peer arrives
 
         Loop->>Loop: remove peer_waiters[peer]
         Loop->>Handle: reply_tx.send(Ok(record))
@@ -397,7 +397,7 @@ gossipsub::ConfigBuilder::default()
     .build()
 ```
 
-`MessageAuthenticity::Anonymous` — Noise already authenticates the transport
+`MessageAuthenticity::Anonymous` - Noise already authenticates the transport
 layer, so application-level message signing is redundant.
 
 Topics are subscribed at `P2pNode::run()` startup:
@@ -415,9 +415,9 @@ for room in &config.rooms {
 
 ```rust
 struct NodeState {
-    // … existing fields …
+    // ... existing fields ...
     store: ConversationStoreHandle,
-    /// One waiter per peer — fires on next inbound message from that peer.
+    /// One waiter per peer - fires on next inbound message from that peer.
     peer_waiters: HashMap<PeerId, oneshot::Sender<Result<ConversationRecord, P2pError>>>,
     /// Gossipsub dedup set (bounded to 4096 entries).
     seen_gossip_ids: HashSet<gossipsub::MessageId>,
@@ -454,7 +454,7 @@ Every `SessionMessageWire` carries a `depth: u32` field that is **required**
 on the wire (no `#[serde(default)]`).  Missing it causes a CBOR
 deserialisation failure; messages from nodes that do not set it are rejected.
 
-All message channels — session messages, task delegation, and room posts —
+All message channels - session messages, task delegation, and room posts -
 share the **unified** constant `MAX_HOP_DEPTH = 4`.  There is no separate
 `MAX_SESSION_DEPTH` or `MAX_DELEGATION_DEPTH`; the single budget applies
 across all protocol transitions (see cross-protocol seeding in section 3).
@@ -475,7 +475,7 @@ There is a defence-in-depth duplicate check both in the executor loop and
 inside `execute_inbound_session_message` so the guard cannot be bypassed by
 calling the function directly.
 
-### 3. `SessionDepthTracker` — per-peer counters and cross-protocol seeding
+### 3. `SessionDepthTracker` - per-peer counters and cross-protocol seeding
 
 `SendMessageTool` and `WaitForMessageTool` share an
 `Arc<Mutex<SessionDepthTracker>>` called `SessionDepthHandle`.
@@ -541,7 +541,7 @@ if let Some(ref depth_handle) = self.node_session_depth {
 }
 ```
 
-`default_depth` (always `0` for the interactive node) is left untouched —
+`default_depth` (always `0` for the interactive node) is left untouched -
 only the per-peer high-water marks accumulated during the previous user turn
 are cleared.  Within a single user turn the tracker still prevents automated
 ping-pong: a depth that reaches `MAX_HOP_DEPTH` during that turn blocks
@@ -556,7 +556,7 @@ two additional structural guards:
 |---|---|
 | Depth limit | `TaskRequest.depth` is required on the wire; checked at `execute_inbound_task` and in `DelegateTool::execute` before any LLM call; rejected when `depth >= MAX_HOP_DEPTH` (= 4) |
 | Cycle detection | `TaskRequest.chain` (required on the wire) lists every peer ID that has handled the request; the receiver rejects the request if its own peer ID is already present, breaking A→B→A and ring cycles |
-| Hop signature | Forwarded requests are Ed25519-signed over `(id, depth, chain)` by the forwarding peer; the receiver verifies the signature against the Noise-authenticated sender identity — a MITM cannot silently zero the depth or truncate the chain |
+| Hop signature | Forwarded requests are Ed25519-signed over `(id, depth, chain)` by the forwarding peer; the receiver verifies the signature against the Noise-authenticated sender identity - a MITM cannot silently zero the depth or truncate the chain |
 
 Both `depth` and `chain` are required fields; old nodes that omit them are
 rejected by CBOR deserialisation.
@@ -580,13 +580,13 @@ whether to declare `WaiterConflict`:
 if existing_tx.is_closed() → evict stale entry → register new waiter
 ```
 
-Without this check the stale entry stays in `peer_waiters` indefinitely —
+Without this check the stale entry stays in `peer_waiters` indefinitely -
 causing every subsequent `wait_for_message` for that peer to return
 `WaiterConflict` until the peer coincidentally sends another message.
 
 **Fall-through on dead delivery**: When an inbound message arrives and fires a
 waiter whose `reply_rx` was already dropped (the eviction raced with delivery),
-`tx.send()` fails.  In this case the message is **not** silently discarded —
+`tx.send()` fails.  In this case the message is **not** silently discarded -
 delivery falls through to the session executor (`P2pEvent::SessionMessage`) so
 the peer's reply still gets an auto-response rather than disappearing.
 
@@ -631,7 +631,7 @@ reactive room handler must use it to enforce a hop limit (see point above).
 | `sven-p2p` | `behaviour.rs` | Add `gossipsub::Behaviour` |
 | `sven-core` | `runtime_context.rs` | Add `prior_messages: Vec<Message>` |
 | `sven-core` | `agent.rs` | Pre-populate session from `prior_messages` in `Agent::new` |
-| `sven-node` | `tools.rs` | `SessionDepthTracker` (`default_depth` + `per_peer: HashMap`) wrapped in `Arc<Mutex<…>>` as `SessionDepthHandle`; `reset_per_turn()` clears per-peer map; unified `MAX_HOP_DEPTH = 4` constant; send-side depth guard in `SendMessageTool`; depth propagation in `WaitForMessageTool` |
+| `sven-node` | `tools.rs` | `SessionDepthTracker` (`default_depth` + `per_peer: HashMap`) wrapped in `Arc<Mutex<...>>` as `SessionDepthHandle`; `reset_per_turn()` clears per-peer map; unified `MAX_HOP_DEPTH = 4` constant; send-side depth guard in `SendMessageTool`; depth propagation in `WaitForMessageTool` |
 | `sven-node` | `tools.rs` | 6 tools: `send_message`, `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` |
 | `sven-node` | `node.rs` | `run_session_executor`; `build_session_agent` with break-aware context; import `MAX_HOP_DEPTH` from `tools.rs` |
 | `sven-node` | `agent_builder.rs` | Register 6 new tools; `build_task_agent_with_runtime`; fresh `SessionDepthHandle` per agent with `default_depth` set to task's delegation depth |
@@ -645,7 +645,7 @@ reactive room handler must use it to enforce a hop limit (see point above).
 |---|---|
 | Append-only | Records are never modified or deleted |
 | Crash safety | Incomplete writes produce malformed JSON lines; silently skipped on read |
-| Deduplication | None on write — `message_id` is stored but not checked for duplicates |
+| Deduplication | None on write - `message_id` is stored but not checked for duplicates |
 | Concurrent writers | Not safe; safe in practice because each peer file is written only by the single event loop |
 
 ---

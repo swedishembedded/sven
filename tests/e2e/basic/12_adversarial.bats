@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 12_adversarial.bats – Adversarial end-to-end tests for sven.
+# 12_adversarial.bats - Adversarial end-to-end tests for sven.
 #
 # Validates that sven handles hostile or malformed inputs gracefully:
 #   • Mock model returning calls to nonexistent tools
@@ -288,7 +288,7 @@ for i in range(10000):
 
 @test "12.19 --file pointing to /dev/null exits gracefully without hang" {
     run timeout 10 bash -c '"$BIN" --headless --model mock --file /dev/null 2>&1'
-    # /dev/null is a valid file but empty — sven should not hang.
+    # /dev/null is a valid file but empty - sven should not hang.
     [ "${status}" -ne 137 ]
     [ "${status}" -ne 139 ]
 }

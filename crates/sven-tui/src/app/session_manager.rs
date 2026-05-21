@@ -351,7 +351,7 @@ impl SessionEntry {
     /// Segment-producing events (ToolCallFinished, DelegateSummary, etc.) are
     /// pushed to this session's `stored_chat` so that when the user switches
     /// back, the conversation is complete. This ensures tool results and other
-    /// content are never shown in the wrong chat view — they are always stored
+    /// content are never shown in the wrong chat view - they are always stored
     /// on the session that originated the event.
     pub fn apply_background_event(&mut self, event: &AgentEvent) {
         use sven_core::AgentEvent as Ev;
@@ -519,16 +519,16 @@ impl SessionEntry {
 
 // ── SessionManager ────────────────────────────────────────────────────────────
 
-/// TUI multi-session UI state — the **session manager** that owns the set of active
+/// TUI multi-session UI state - the **session manager** that owns the set of active
 /// [`sven_core::Session`]s and tracks which one is focused in the sidebar.
 ///
 /// # Layering note
 ///
 /// | Type | Crate | Role |
 /// |------|-------|------|
-/// | [`SessionManager`] | `sven-tui` | **TUI UI state** — tree of active sessions with sidebar selection and agent-event multiplexing. |
-/// | `sven_core::Session` | `sven-core` | **Runtime state** — one live agent session with mutable message history and token accounting. |
-/// | `ConversationFile` | `sven-input` | **Persisted format** — a parsed `.md`/`.jsonl` snapshot used to seed session history on load. |
+/// | [`SessionManager`] | `sven-tui` | **TUI UI state** - tree of active sessions with sidebar selection and agent-event multiplexing. |
+/// | `sven_core::Session` | `sven-core` | **Runtime state** - one live agent session with mutable message history and token accounting. |
+/// | `ConversationFile` | `sven-input` | **Persisted format** - a parsed `.md`/`.jsonl` snapshot used to seed session history on load. |
 ///
 /// The sidebar is a tree: roots are in `display_order`; children are in
 /// `children`. Use [`SessionManager::tree_rows`] to get a flat list for
@@ -536,7 +536,7 @@ impl SessionEntry {
 pub(crate) struct SessionManager {
     /// All session entries (active + background).
     pub entries: HashMap<SessionId, SessionEntry>,
-    /// Display order for the sidebar — root session IDs only (most recent first).
+    /// Display order for the sidebar - root session IDs only (most recent first).
     pub display_order: Vec<SessionId>,
     /// Child session IDs per parent (order = creation order).
     pub children: HashMap<SessionId, Vec<SessionId>>,
@@ -544,7 +544,7 @@ pub(crate) struct SessionManager {
     pub active_id: SessionId,
     /// Shared receiver for events from all agent tasks (tagged with session IDs).
     pub multi_event_rx: mpsc::Receiver<(SessionId, AgentEvent)>,
-    /// Shared sender — cloned into forwarding tasks when spawning agents.
+    /// Shared sender - cloned into forwarding tasks when spawning agents.
     pub multi_event_tx: mpsc::Sender<(SessionId, AgentEvent)>,
     /// Which row is highlighted in the sidebar (index into tree_rows(); may differ from active_id).
     pub list_selected: usize,
@@ -570,7 +570,7 @@ impl SessionManager {
     }
 
     /// Flat list of (session_id, depth) for sidebar: roots first (depth 0), then
-    /// each root’s children (depth 1). Used for rendering and list_selected index.
+    /// each root's children (depth 1). Used for rendering and list_selected index.
     pub fn tree_rows(&self) -> Vec<(SessionId, u16)> {
         let mut rows = Vec::new();
         for root_id in &self.display_order {

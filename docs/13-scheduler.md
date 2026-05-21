@@ -61,7 +61,7 @@ schedule create "morning-briefing" with cron "0 8 * * *" and prompt
 
 #### Examples
 
-**Every 2 hours — check competitor prices:**
+**Every 2 hours - check competitor prices:**
 
 ```json
 {
@@ -72,7 +72,7 @@ schedule create "morning-briefing" with cron "0 8 * * *" and prompt
 }
 ```
 
-**Daily at 09:00 UTC — email digest:**
+**Daily at 09:00 UTC - email digest:**
 
 ```json
 {

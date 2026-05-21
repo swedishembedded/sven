@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Serde default helper — returns `true`.
+/// Serde default helper - returns `true`.
 ///
 /// Used for config fields that should be enabled unless the user explicitly
 /// sets them to `false`.  `#[serde(default)]` on a `bool` always falls back
@@ -49,7 +49,7 @@ impl Default for McpTransport {
 /// Tokens are cached in `~/.config/sven/mcp-credentials.json` and refreshed
 /// automatically before expiry.
 ///
-/// **Scopes are optional** – sven follows the MCP Authorization spec scope
+/// **Scopes are optional** - sven follows the MCP Authorization spec scope
 /// discovery strategy and discovers them automatically:
 ///
 /// 1. `scope` parameter in the `WWW-Authenticate` header of the 401 response.
@@ -173,7 +173,7 @@ pub struct Config {
     /// available on that endpoint.  Reference a provider by name in
     /// `model.provider`, and reference one of its models in `model.name`.
     ///
-    /// **Environment variable expansion** — any string value in the config file
+    /// **Environment variable expansion** - any string value in the config file
     /// may contain `${VAR}` or `${VAR:-default}` placeholders that are expanded
     /// at load time using the process environment.  Use this to keep API keys
     /// out of version-controlled config files:
@@ -255,7 +255,7 @@ pub struct ModelParams {
     /// `max_tokens >= max_input_tokens + max_output_tokens` must hold.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_input_tokens: Option<u32>,
-    /// Sampling temperature (0.0–2.0)
+    /// Sampling temperature (0.0-2.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     /// Free-form provider-specific options forwarded as-is to the driver.
@@ -484,7 +484,7 @@ pub struct ModelConfig {
     /// compaction budget logic.  When set together with `max_tokens`, the
     /// constraint `max_tokens >= max_input_tokens + max_output_tokens` must hold.
     pub max_input_tokens: Option<u32>,
-    /// Sampling temperature (0.0–2.0)
+    /// Sampling temperature (0.0-2.0)
     pub temperature: Option<f32>,
 
     // ── Azure OpenAI ─────────────────────────────────────────────────────────
@@ -694,7 +694,7 @@ pub struct AgentConfig {
     /// Maximum number of autonomous tool-call rounds before stopping
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
-    /// Token fraction at which proactive compaction triggers (0.0–1.0).
+    /// Token fraction at which proactive compaction triggers (0.0-1.0).
     /// The budget gate compares effective tokens (calibrated estimate + schema
     /// overhead) against the model's usable input budget, which is
     /// context_window minus max_output_tokens.
@@ -777,7 +777,7 @@ impl Default for AgentConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentMode {
-    /// Pure research – read-only tools, no writes
+    /// Pure research - read-only tools, no writes
     Research,
     /// Generate a structured plan, no code changes
     Plan,
@@ -1134,7 +1134,7 @@ impl EmailConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CalendarBackend {
-    /// CalDAV — works with Nextcloud, Radicale, iCloud, and most self-hosted servers.
+    /// CalDAV - works with Nextcloud, Radicale, iCloud, and most self-hosted servers.
     #[default]
     Caldav,
     /// Google Calendar REST API with OAuth2.
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn config_default_caching_enabled_except_extended_ttl() {
-        // All caching flags default to true — sven caches comprehensively
+        // All caching flags default to true - sven caches comprehensively
         // out-of-the-box for every provider that supports explicit caching.
         // extended_cache_time stays false: the 1-hour TTL has a 2× write cost
         // and is only worthwhile when turns are more than 5 minutes apart.

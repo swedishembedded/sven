@@ -369,7 +369,7 @@ mod agent_tests {
     #[tokio::test]
     async fn max_rounds_wraps_up_and_emits_turn_complete() {
         // Rounds 1..=max: always return a tool call (will exhaust the budget).
-        // Round max+1 (wrap-up): return a plain text summary — no tools available.
+        // Round max+1 (wrap-up): return a plain text summary - no tools available.
         let max: usize = 2;
         let mut scripts: Vec<Vec<ResponseEvent>> = (0..max)
             .map(|_| {
@@ -412,7 +412,7 @@ mod agent_tests {
             events.push(ev);
         }
 
-        // Must NOT emit an Error about max rounds — the turn ends gracefully.
+        // Must NOT emit an Error about max rounds - the turn ends gracefully.
         let has_round_error = events
             .iter()
             .any(|e| matches!(e, AgentEvent::Error(msg) if msg.contains("max tool rounds")));
@@ -512,7 +512,7 @@ mod agent_tests {
 
     #[tokio::test]
     async fn session_cache_totals_accumulate_across_turns() {
-        // Two turns each with cache usage — totals must be the running sum.
+        // Two turns each with cache usage - totals must be the running sum.
         let model = ScriptedMockProvider::new(vec![
             vec![
                 ResponseEvent::Usage {
@@ -562,7 +562,7 @@ mod agent_tests {
             "after turn 1 totals should be (400, 50)"
         );
 
-        // Second turn — totals must accumulate, not reset
+        // Second turn - totals must accumulate, not reset
         let (tx2, rx2) = mpsc::channel(64);
         agent.submit("second", tx2).await.unwrap();
         let events2 = collect_events(rx2).await;
@@ -1142,7 +1142,7 @@ mod agent_tests {
         // `tokens_before` is the count of the seeded session; must be > 0.
         assert!(before > 0, "tokens_before must be positive (was {before})");
         // `tokens_after` includes the real (full) system prompt which is much
-        // larger than the tiny seeded "system" message — comparing raw totals
+        // larger than the tiny seeded "system" message - comparing raw totals
         // is not meaningful.  Instead, verify the old history was replaced by
         // checking that neither "aaaa" nor "bbbb" appear in any session message.
         let old_history_remains = agent.session().messages.iter().any(|m| {
@@ -1674,7 +1674,7 @@ mod agent_tests {
             agent_with_ctx(model, ToolRegistry::default(), config, AgentMode::Agent, 30);
 
         // Build a session where the last 2 non-system messages are a ToolCall
-        // followed by a ToolResult — exactly what keep_n=2 would preserve when
+        // followed by a ToolResult - exactly what keep_n=2 would preserve when
         // the naive split puts the boundary between them.
         // By inserting extra older messages, we push total tokens above threshold.
         let tool_call_id = "tc_boundary_test";
@@ -1819,7 +1819,7 @@ mod agent_tests {
                 MessageContent::ToolResult { tool_call_id, .. } => {
                     assert!(
                         seen_ids.contains(tool_call_id.as_str()),
-                        "orphaned ToolResult for '{tool_call_id}' — split must have moved past the full batch"
+                        "orphaned ToolResult for '{tool_call_id}' - split must have moved past the full batch"
                     );
                 }
                 _ => {}

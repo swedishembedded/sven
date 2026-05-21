@@ -1,8 +1,8 @@
 # Knowledge Base
 
 The knowledge base is a collection of Markdown specifications stored under
-`.sven/knowledge/` in a project root.  Each file documents one subsystem —
-its architecture, correctness invariants, and known failure modes — written
+`.sven/knowledge/` in a project root.  Each file documents one subsystem -
+its architecture, correctness invariants, and known failure modes - written
 explicitly for AI consumption.
 
 Unlike source code comments or README files, knowledge documents are designed
@@ -18,11 +18,11 @@ would otherwise have to be re-derived from source code every session.
 
 Knowledge documents serve three roles:
 
-1. **Coordination** — they propagate design decisions consistently across many
+1. **Coordination** - they propagate design decisions consistently across many
    independent sessions without requiring the developer to re-explain them.
-2. **Captured experience** — they encode lessons from debugging sessions so
+2. **Captured experience** - they encode lessons from debugging sessions so
    the next agent does not repeat the same trial-and-error.
-3. **On-demand context** — they are retrieved only when relevant, keeping the
+3. **On-demand context** - they are retrieved only when relevant, keeping the
    session's token budget free for actual work.
 
 ---
@@ -89,7 +89,7 @@ warnings are never emitted for it.
 ## Discovery
 
 Sven scans `<project-root>/.sven/knowledge/*.md` at session start.  No
-registration is needed — any valid Markdown file with `subsystem:` frontmatter
+registration is needed - any valid Markdown file with `subsystem:` frontmatter
 is automatically included.
 
 Files are sorted by subsystem name for deterministic output.  Files larger
@@ -130,18 +130,18 @@ search_knowledge("relay")
 ## Knowledge Search: `relay`
 Found 3 match(es) in 1 of 2 document(s):
 
-### P2P Networking — `sven-p2p.md` (updated 2026-03-01)  [3 match(es)]
+### P2P Networking - `sven-p2p.md` (updated 2026-03-01)  [3 match(es)]
 
 ```
    5 │ The node uses libp2p with Noise (Ed25519), mDNS for local discovery, and
 >  6 │ circuit relay for cross-network connectivity.
    7 │ All connections are encrypted in transit.
 ```
-…
+...
 ```
 
 Use `search_knowledge` before editing a subsystem.  If the search returns no
-results, the subsystem may not yet have a knowledge document — consider
+results, the subsystem may not yet have a knowledge document - consider
 creating one after your changes.
 
 ### `read_file`
@@ -164,7 +164,7 @@ date.  If drift is detected, a warning appears in the system prompt:
 ```
 ## Knowledge Drift Detected
 
-⚠ `.sven/knowledge/sven-p2p.md` covers `P2P Networking` — last updated 2026-01-15.
+⚠ `.sven/knowledge/sven-p2p.md` covers `P2P Networking` - last updated 2026-01-15.
   Files committed since then: crates/sven-p2p/src/node.rs
   Before editing these files, call `search_knowledge "P2P Networking"` and update the doc after changes.
 ```
@@ -215,7 +215,7 @@ high-level descriptions.
 | Crate | Responsibility |
 |-------|----------------|
 | `sven-runtime` | `KnowledgeInfo`, `SharedKnowledge`; `discover_knowledge()`; `check_knowledge_drift()`; `format_drift_warnings()` |
-| `sven-core` | `build_knowledge_section()` — knowledge overview in system prompt; `PromptContext.knowledge` and `.knowledge_drift_note` fields |
+| `sven-core` | `build_knowledge_section()` - knowledge overview in system prompt; `PromptContext.knowledge` and `.knowledge_drift_note` fields |
 | `sven-tools` | `ListKnowledgeTool`, `SearchKnowledgeTool` |
 | `sven-bootstrap` | Calls `discover_knowledge()` and `check_knowledge_drift()` in `RuntimeContext::auto_detect()`; registers both tools in `build_tool_registry()` |
 
@@ -242,7 +242,7 @@ knowledge:
   - sven-p2p.md
 ---
 
-… system prompt body …
+... system prompt body ...
 ```
 
 When the agent spec is loaded, a hint pointing to these documents is appended

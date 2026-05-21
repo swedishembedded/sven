@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Queue panel widget — compact list of pending messages above the input box.
+//! Queue panel widget - compact list of pending messages above the input box.
 
 use ratatui::{
     buffer::Buffer,
@@ -114,7 +114,7 @@ impl Widget for QueuePanel<'_> {
             })
             .collect();
 
-        // Use a transient ListState with no selection highlight — the styling
+        // Use a transient ListState with no selection highlight - the styling
         // is already baked into each ListItem's Span styles (selected/editing).
         let list = List::new(list_items);
         let mut list_state = ListState::default();

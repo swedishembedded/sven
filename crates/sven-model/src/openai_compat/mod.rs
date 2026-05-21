@@ -8,13 +8,13 @@
 //! such driver configures with its own defaults (URL, auth style, headers).
 //!
 //! # Auth styles
-//! - `Bearer` — `Authorization: Bearer <key>` (most providers)
-//! - `ApiKeyHeader` — `api-key: <key>` (Azure OpenAI)
-//! - `None` — no authentication (local servers like Ollama / LM Studio)
+//! - `Bearer` - `Authorization: Bearer <key>` (most providers)
+//! - `ApiKeyHeader` - `api-key: <key>` (Azure OpenAI)
+//! - `None` - no authentication (local servers like Ollama / LM Studio)
 //!
 //! # Usage
 //! Configure via `sven_config::ModelConfig` and call `sven_model::from_config`.
-//! This module is `pub(crate)` — direct construction is handled in
+//! This module is `pub(crate)` - direct construction is handled in
 //! `sven_model::from_config`.
 
 mod request;
@@ -42,11 +42,11 @@ use crate::{
 /// How to send the API key in HTTP requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStyle {
-    /// `Authorization: Bearer <key>` — standard for most providers.
+    /// `Authorization: Bearer <key>` - standard for most providers.
     Bearer,
-    /// `api-key: <key>` — Azure OpenAI style.
+    /// `api-key: <key>` - Azure OpenAI style.
     ApiKeyHeader,
-    /// No authentication header — local servers (Ollama, vLLM, LM Studio).
+    /// No authentication header - local servers (Ollama, vLLM, LM Studio).
     None,
 }
 
@@ -75,9 +75,9 @@ pub struct OpenAICompatProvider {
     ///
     /// Populated from `ModelConfig.driver_options`.  Use this to pass
     /// provider-specific parameters that sven does not model natively, e.g.:
-    ///   • `parse_tool_calls: false` — disable llama.cpp grammar constraints
+    ///   • `parse_tool_calls: false` - disable llama.cpp grammar constraints
     ///     so the model can emit reasoning text alongside tool calls
-    ///   • `reasoning_format: "deepseek"` — enable thinking extraction on
+    ///   • `reasoning_format: "deepseek"` - enable thinking extraction on
     ///     llama.cpp for reasoning-capable models (QwQ, DeepSeek-R1, Qwen3)
     extra_body: serde_json::Value,
     /// Server root URL for live property probing (e.g. `http://localhost:8080`).
@@ -92,16 +92,16 @@ impl OpenAICompatProvider {
     /// Construct a provider from its full endpoint URLs and auth configuration.
     ///
     /// # Parameters
-    /// - `driver_name` — stable id from the registry (e.g. `"groq"`)
-    /// - `model` — model identifier forwarded to the API
-    /// - `api_key` — pre-resolved key (may be `None` for local servers)
-    /// - `base_url` — API base that ends **before** `/chat/completions`, e.g.
+    /// - `driver_name` - stable id from the registry (e.g. `"groq"`)
+    /// - `model` - model identifier forwarded to the API
+    /// - `api_key` - pre-resolved key (may be `None` for local servers)
+    /// - `base_url` - API base that ends **before** `/chat/completions`, e.g.
     ///   `https://api.groq.com/openai/v1`
-    /// - `max_tokens` — `None` uses the catalog default or 4096
-    /// - `temperature` — `None` defaults to 0.2
-    /// - `extra_headers` — additional `(name, value)` pairs sent on every request
-    /// - `auth_style` — how the key is attached to requests
-    /// - `extra_body` — JSON object merged verbatim into the request body
+    /// - `max_tokens` - `None` uses the catalog default or 4096
+    /// - `temperature` - `None` defaults to 0.2
+    /// - `extra_headers` - additional `(name, value)` pairs sent on every request
+    /// - `auth_style` - how the key is attached to requests
+    /// - `extra_body` - JSON object merged verbatim into the request body
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver_name: &'static str,
@@ -134,9 +134,9 @@ impl OpenAICompatProvider {
     /// Construct a provider from a **pre-built** chat completions URL.
     ///
     /// Use this when the full URL cannot be derived by appending
-    /// `/chat/completions` to a base — e.g. Azure OpenAI, which encodes the
+    /// `/chat/completions` to a base - e.g. Azure OpenAI, which encodes the
     /// deployment name and API version as path/query segments:
-    /// `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=…`
+    /// `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=...`
     ///
     /// No `/models` URL is configured; the static catalog is used for model
     /// discovery.
@@ -203,7 +203,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
     /// Query the server's `/props` endpoint for the actual loaded context window.
     ///
     /// llama.cpp and compatible servers expose `GET /props` which includes
-    /// `n_ctx` — the actual KV-cache size the model was loaded with.  This
+    /// `n_ctx` - the actual KV-cache size the model was loaded with.  This
     /// value may be smaller than the catalog entry (e.g. the server was
     /// started with `--ctx-size 54272`).
     ///
@@ -257,7 +257,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
         let key = match &self.api_key {
             Some(k) => k.clone(),
             None => {
-                // Local provider with no key — just return catalog.
+                // Local provider with no key - just return catalog.
                 return Ok(catalog_entries);
             }
         };
@@ -275,7 +275,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
         let resp = match req.send().await {
             Ok(r) => r,
             Err(_) => {
-                // Network error (e.g. local server not running) — return catalog.
+                // Network error (e.g. local server not running) - return catalog.
                 return Ok(catalog_entries);
             }
         };
@@ -316,8 +316,8 @@ impl crate::ModelProvider for OpenAICompatProvider {
         // For Gemini, OpenRouter uses only the *last* breakpoint in the request;
         // the last user-message marker therefore covers the whole preceding
         // context (system + tools + conversation history).  Marking the system
-        // prompt and tools as well is harmless — Gemini ignores all but the
-        // last — and keeps the two code paths identical.
+        // prompt and tools as well is harmless - Gemini ignores all but the
+        // last - and keeps the two code paths identical.
         let use_anthropic_cache =
             self.driver_name == "openrouter" && self.model.starts_with("anthropic/");
         let use_gemini_cache =
@@ -443,9 +443,9 @@ impl crate::ModelProvider for OpenAICompatProvider {
 
         // For Anthropic and Google Gemini models via OpenRouter, rewrite the
         // system message as an array of content blocks so that:
-        //   • Block 1 — the stable system prompt gets `cache_control` and is
+        //   • Block 1 - the stable system prompt gets `cache_control` and is
         //     cached by the provider's prompt-caching layer across turns.
-        //   • Block 2 — the volatile git/CI context is a separate block WITHOUT
+        //   • Block 2 - the volatile git/CI context is a separate block WITHOUT
         //     `cache_control` so it never pollutes the cached prefix.
         //
         // OpenRouter passes `cache_control` through to the underlying provider
@@ -455,7 +455,7 @@ impl crate::ModelProvider for OpenAICompatProvider {
         //
         // Gemini note: OpenRouter uses only the *last* `cache_control` marker
         // in the request body when routing to Gemini.  Placing markers on the
-        // system prompt, tools, and the last user message is still correct —
+        // system prompt, tools, and the last user message is still correct -
         // the last one (user message) covers everything before it, caching the
         // full system prompt + tools + conversation history in one shot.
         if use_block_cache {
@@ -510,10 +510,10 @@ impl crate::ModelProvider for OpenAICompatProvider {
         // user-supplied JSON object override anything sven set above, so users
         // can fine-tune provider-specific behaviour without code changes:
         //
-        //   • `parse_tool_calls: false`      – disable llama.cpp grammar so
+        //   • `parse_tool_calls: false`      - disable llama.cpp grammar so
         //                                      the model can emit reasoning
         //                                      text alongside tool calls
-        //   • `reasoning_format: "deepseek"` – extract <think> → reasoning_content
+        //   • `reasoning_format: "deepseek"` - extract <think> → reasoning_content
         //   • any other provider-specific key that sven doesn't model natively
         if let Some(map) = self.extra_body.as_object() {
             for (k, v) in map {
@@ -1060,7 +1060,7 @@ mod tests {
     #[test]
     fn content_parts_single_text_collapses_to_string() {
         // user_with_parts(single text) collapses to MessageContent::Text for
-        // cleaner serialization — the wire format should be a plain string.
+        // cleaner serialization - the wire format should be a plain string.
         use crate::{ContentPart, Message};
         let msg = Message::user_with_parts(vec![ContentPart::Text {
             text: "describe this".into(),
@@ -1199,7 +1199,7 @@ mod tests {
 
         let mut buf = String::new();
 
-        // First chunk: no newline yet — no events emitted
+        // First chunk: no newline yet - no events emitted
         buf.push_str(chunk1);
         let events1 = drain_complete_sse_lines(&mut buf);
         assert!(events1.is_empty(), "should not emit partial event");
@@ -1498,7 +1498,7 @@ mod tests {
 
     #[test]
     fn reasoning_content_only_no_text_content() {
-        // Pure thinking chunk — no content field at all.
+        // Pure thinking chunk - no content field at all.
         let v = serde_json::json!({
             "choices": [{
                 "delta": {

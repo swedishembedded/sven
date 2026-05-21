@@ -3,7 +3,7 @@ name: p2p-loop-analysis
 description: "Analyse the sven P2P agent network for infinite message loops (echo loops, delegation storms, circular routing). Use when investigating unexpected runaway traffic between agents, infinite back-and-forth between nodes, task chains that never terminate, or when adding a new message channel/handler and needing to verify it cannot loop. Covers all three channels: Task (delegate_task), Session (send_message), and Room (post_to_room)."
 ---
 
-# P2P Loop Analysis — sven
+# P2P Loop Analysis - sven
 
 ## The Three Invariants
 
@@ -41,18 +41,18 @@ This means the combined chain across any number of protocol switches cannot exce
 
 ## Analysis Workflow
 
-### Step 1 — Map all message handlers
+### Step 1 - Map all message handlers
 
 Read these files in order:
 
 ```text
-crates/sven-p2p/src/protocol/types.rs     — wire types; MAX_ROOM_POST_DEPTH
-crates/sven-node/src/tools.rs             — MAX_HOP_DEPTH, SessionDepthTracker, all tool impls
-crates/sven-node/src/agent_builder.rs     — how depth handles are initialised per agent type
-crates/sven-node/src/node.rs              — run_task_executor, run_session_executor,
+crates/sven-p2p/src/protocol/types.rs     - wire types; MAX_ROOM_POST_DEPTH
+crates/sven-node/src/tools.rs             - MAX_HOP_DEPTH, SessionDepthTracker, all tool impls
+crates/sven-node/src/agent_builder.rs     - how depth handles are initialised per agent type
+crates/sven-node/src/node.rs              - run_task_executor, run_session_executor,
                                             execute_inbound_task, execute_inbound_session_message,
                                             build_session_agent
-crates/sven-p2p/src/node.rs               — on_gossipsub_message (room depth guard)
+crates/sven-p2p/src/node.rs               - on_gossipsub_message (room depth guard)
 ```
 
 For each handler that sends an outbound message, ask:
@@ -60,16 +60,16 @@ For each handler that sends an outbound message, ask:
 1. Under what condition does it send?
 2. What is the role/status of the outbound message?
 3. Will the receiver's handler for that message type send another message?
-4. If yes — what is the termination condition?
+4. If yes - what is the termination condition?
 
-### Step 2 — Verify the Task invariant
+### Step 2 - Verify the Task invariant
 
 Check every code path that calls `p2p.send_task()`:
 
 ```text
 [ ] depth is incremented by exactly 1 before sending
 [ ] depth check fires BEFORE the LLM runs (in execute_inbound_task, not inside the tool)
-[ ] our_peer_id_str is non-empty before the chain/cycle check — reject if empty
+[ ] our_peer_id_str is non-empty before the chain/cycle check - reject if empty
 [ ] chain.contains(&our_peer_id_str) check is NOT guarded by is_empty() (old bug pattern)
 [ ] DelegateTool::execute guards local_peer_id_string() for empty before push to chain
 [ ] MAX_HOP_DEPTH is used (not a stale MAX_DELEGATION_DEPTH reference)
@@ -78,15 +78,15 @@ Check every code path that calls `p2p.send_task()`:
 The old vulnerable pattern (replaced):
 
 ```rust
-// WRONG — skips check when peer ID is empty (startup race)
+// WRONG - skips check when peer ID is empty (startup race)
 if !our_peer_id_str.is_empty() && request.chain.contains(&our_peer_id_str) { ... }
 
-// CORRECT — fail hard if peer ID is empty
+// CORRECT - fail hard if peer ID is empty
 if our_peer_id_str.is_empty() { fail_reply(...); return; }
 if request.chain.contains(&our_peer_id_str) { fail_reply(...); return; }
 ```
 
-### Step 3 — Verify the Session invariant
+### Step 3 - Verify the Session invariant
 
 Check every code path that calls `p2p.send_session_message()` in response to an inbound event:
 
@@ -106,7 +106,7 @@ Node A: receives SessionMessage → sends reply (role: Assistant) to B
 Node B: receives role: Assistant → runs LLM → sends reply to A   ← LOOP
 ```
 
-The fix — `execute_inbound_session_message` must start with:
+The fix - `execute_inbound_session_message` must start with:
 
 ```rust
 if message.role != sven_p2p::SessionRole::User {
@@ -114,7 +114,7 @@ if message.role != sven_p2p::SessionRole::User {
 }
 ```
 
-### Step 4 — Verify the Room invariant
+### Step 4 - Verify the Room invariant
 
 Check every code path in `on_gossipsub_message`:
 
@@ -124,11 +124,11 @@ Check every code path in `on_gossipsub_message`:
 [ ] PostToRoomTool reads room_depth handle and sends at room_depth + 1
 [ ] PostToRoomTool refuses to send if outgoing_depth >= MAX_HOP_DEPTH
 [ ] A future reactive room handler MUST set room_depth = incoming_post.depth
-    before running the agent — otherwise every reactive post goes out at depth 1
+    before running the agent - otherwise every reactive post goes out at depth 1
     and the guard at MAX_ROOM_POST_DEPTH is never reached
 ```
 
-### Step 5 — Check cross-protocol depth seeding
+### Step 5 - Check cross-protocol depth seeding
 
 When an agent is constructed, verify that the depth handles are seeded correctly:
 
@@ -142,7 +142,7 @@ When an agent is constructed, verify that the depth handles are seeded correctly
 [ ] All three: room_depth = Arc::new(AtomicU32::new(0))
 ```
 
-### Step 6 — Startup race audit
+### Step 6 - Startup race audit
 
 Any code that reads `p2p.local_peer_id_string()` lazily is vulnerable to returning `""` before
 the P2P node's `OnceLock` is set. Find all call sites:
@@ -181,7 +181,7 @@ Apply this checklist when adding any new `P2pRequest` variant or auto-responder 
 
 | Symbol | Location | Purpose |
 | ------ | -------- | ------- |
-| `MAX_HOP_DEPTH` | `crates/sven-node/src/tools.rs` | Unified cap — all channels share this budget |
+| `MAX_HOP_DEPTH` | `crates/sven-node/src/tools.rs` | Unified cap - all channels share this budget |
 | `MAX_ROOM_POST_DEPTH` | `crates/sven-p2p/src/protocol/types.rs` | Must equal `MAX_HOP_DEPTH`; enforced in `on_gossipsub_message` |
 | `MAX_CONCURRENT_TASKS` | `crates/sven-node/src/node.rs` | Concurrency semaphore (separate from depth) |
 | `SessionDepthTracker` | `crates/sven-node/src/tools.rs` | Per-peer session depth; `default_depth` seeds cross-protocol budget |
@@ -201,8 +201,8 @@ Channel:           Task / Session / Room / Other
 Direction:         A→B→A (2-node) / A→B→C→A (3-node) / fan-out / cross-protocol
 Trigger:           What message or tool call initiates the chain
 Missing invariant: Which of the three invariants is absent or bypassed
-Cross-protocol:    Yes / No — does the loop require switching between Task/Session/Room?
-Startup race:      Yes / No — does the bug only appear during node startup?
+Cross-protocol:    Yes / No - does the loop require switching between Task/Session/Room?
+Startup race:      Yes / No - does the bug only appear during node startup?
 Files:             List of files and line ranges involved
 Fix:               Add role check / fix depth check / guard empty peer ID /
                    seed depth handle correctly / other

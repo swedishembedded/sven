@@ -27,7 +27,7 @@ pub struct ElevenLabsTts {
 }
 
 impl ElevenLabsTts {
-    /// Default voice ID — Rachel (clear, English, US).
+    /// Default voice ID - Rachel (clear, English, US).
     pub const DEFAULT_VOICE: &'static str = "21m00Tcm4TlvDq8ikWAM";
 
     /// Create a new ElevenLabs TTS provider.

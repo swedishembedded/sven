@@ -10,7 +10,7 @@ use crate::policy::PermissionRequester;
 use crate::tool::ToolDisplayRegistry;
 use crate::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
 
-/// A tool schema – mirrors sven_model::ToolSchema but keeps tools crate
+/// A tool schema - mirrors sven_model::ToolSchema but keeps tools crate
 /// independent from the model crate.
 #[derive(Debug, Clone)]
 pub struct ToolSchema {

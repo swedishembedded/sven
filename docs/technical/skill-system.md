@@ -44,7 +44,7 @@ root:
 ```
 
 A directory that contains only non-`SKILL.md` files (`scripts/`, `docs/`,
-`references/`) is treated as **bundled support files** for its parent skill —
+`references/`) is treated as **bundled support files** for its parent skill -
 it is not registered as a sub-skill.
 
 ---
@@ -82,7 +82,7 @@ scan_skills_dir(root, source)
               → read + parse frontmatter
               → check requires_bins / requires_env
               → build SkillInfo { command, name, description, ... }
-          recurse into child (even without SKILL.md — nested sub-skills may exist)
+          recurse into child (even without SKILL.md - nested sub-skills may exist)
 ```
 
 Key properties of the scanner:
@@ -101,7 +101,7 @@ Key properties of the scanner:
 ---
 description: |
   When to use this skill and what trigger phrases apply.
-name: Human-Readable Label   # optional — falls back to directory name
+name: Human-Readable Label   # optional - falls back to directory name
 version: 1.0.0               # optional semver
 sven:                        # optional sven-specific block
   always: false              # always include in system prompt
@@ -130,8 +130,8 @@ pub struct SkillInfo {
     pub name:          String,         // "Sven Plan" (from frontmatter or dir name)
     pub description:   String,         // frontmatter description
     pub version:       Option<String>, // frontmatter version
-    pub skill_md_path: PathBuf,        // /…/sven/plan/SKILL.md
-    pub skill_dir:     PathBuf,        // /…/sven/plan/
+    pub skill_md_path: PathBuf,        // /.../sven/plan/SKILL.md
+    pub skill_dir:     PathBuf,        // /.../sven/plan/
     pub content:       String,         // body after the closing ---
     pub sven_meta:     Option<SvenSkillMeta>,
 }
@@ -152,24 +152,24 @@ XML block that is appended to the system prompt:
 
 When you recognize that the current task matches one of the available skills
 listed below, call the `load_skill` tool to load the full skill instructions
-before proceeding. …
+before proceeding. ...
 
 <available_skills>
   <skill>
     <command>sven</command>
     <name>Sven Methodology</name>
-    <description>Use when the user asks to work on a task …</description>
+    <description>Use when the user asks to work on a task ...</description>
   </skill>
   <skill>
     <command>sven/plan</command>
     <name>Sven Plan</name>
-    <description>Use this skill for the planning phase …</description>
+    <description>Use this skill for the planning phase ...</description>
   </skill>
-  …
+  ...
 </available_skills>
 ```
 
-Only metadata (command, name, description) is injected — never the body.  This
+Only metadata (command, name, description) is injected - never the body.  This
 keeps the system prompt lean and token usage proportional to what the session
 actually needs.
 
@@ -195,14 +195,14 @@ load_skill({"name": "sven/plan"})
 
 The tool returns a `<skill_content>` block containing:
 
-1. **Full body** — the complete SKILL.md body (no frontmatter).
-2. **Base directory** — absolute path to the skill directory, so that relative
+1. **Full body** - the complete SKILL.md body (no frontmatter).
+2. **Base directory** - absolute path to the skill directory, so that relative
    references to `scripts/`, `references/`, etc. can be resolved with
    `read_file`.
-3. **Bundled files listing** — up to 20 file paths from the skill directory,
+3. **Bundled files listing** - up to 20 file paths from the skill directory,
    excluding the SKILL.md itself and any sub-skill subdirectories (they are
    separate packages).
-4. **Sub-skill navigation hint** — a compact `<sub_skills>` block listing the
+4. **Sub-skill navigation hint** - a compact `<sub_skills>` block listing the
    skill's **direct children** (one level only) by command and one-line
    description.  The model calls `load_skill` again for whichever child it
    needs next.
@@ -213,7 +213,7 @@ Example output for `load_skill("sven")`:
 <skill_content command="sven" name="Sven Methodology">
 # Skill: Sven Methodology
 
-… full body …
+... full body ...
 
 Base directory: /path/to/.sven/skills/sven
 Relative paths in this skill (scripts/, references/, assets/) are relative to
@@ -244,7 +244,7 @@ At TUI startup, `App::new()` calls `discover_skills()` and passes the slice to
 Each `SkillCommand`:
 - has `name` = sanitized command path (e.g. `"sven/plan"`), preserving `/`
 - stores the full SKILL.md body
-- when executed, sends the body — optionally followed by a user task — as the
+- when executed, sends the body - optionally followed by a user task - as the
   next agent message
 
 The sanitizer converts each `/`-separated path segment individually: spaces and
@@ -274,8 +274,8 @@ sent.  The model discovers and loads children via the sub-skill hint returned by
 | Crate | Responsibility |
 |-------|---------------|
 | `sven-runtime` | `SkillInfo`, `SvenSkillMeta`, `ParsedSkill`; `parse_skill_file()`; `discover_skills()` and the recursive scanner; requirement checking (`requires_bins`, `requires_env`) |
-| `sven-core` | `build_skills_section()` — serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
-| `sven-tools` | `LoadSkillTool` — tool implementation, child-detection logic, bundled-file collection |
+| `sven-core` | `build_skills_section()` - serialises skill metadata into the system-prompt XML block; `PromptContext.skills` field |
+| `sven-tools` | `LoadSkillTool` - tool implementation, child-detection logic, bundled-file collection |
 | `sven-bootstrap` | Calls `discover_skills()`, stores the `Arc<[SkillInfo]>` in `RuntimeContext`, wires it into `AgentRuntimeContext` and registers `LoadSkillTool` |
 | `sven-tui` | `SkillCommand`, `make_skill_commands()`, `sanitize_command_name()`; `register_skills()` in `CommandRegistry`; wires discovery into `App::new()` |
 
@@ -284,7 +284,7 @@ sent.  The model discovers and loads children via the sub-skill hint returned by
 ## Domain knowledge convention
 
 Skills and agents covering complex subsystems benefit from embedded domain
-knowledge — not just procedural instructions, but project-specific facts,
+knowledge - not just procedural instructions, but project-specific facts,
 correctness invariants, and known failure modes.
 
 ### Recommended sections for domain-rich skills
@@ -325,11 +325,11 @@ knowledge:
   - sven-node.md
 ---
 
-… procedural instructions …
+... procedural instructions ...
 
 ## Domain Knowledge
 
-… embedded domain facts that are always needed …
+... embedded domain facts that are always needed ...
 ```
 
 When an agent spec declares `knowledge:` files, `load_skill` appends a hint:
@@ -352,7 +352,7 @@ tables (loaded on demand).
 Token efficiency is a first-class concern:
 
 - **Metadata only in system prompt.** The `<available_skills>` block carries
-  command, name, and description — never the body.  A typical body is 300–2000
+  command, name, and description - never the body.  A typical body is 300-2000
   tokens; keeping only metadata saves the vast majority of that cost.
 - **Body loaded on demand.** `load_skill` is called at most once per skill per
   session, and only when the model judges it necessary.

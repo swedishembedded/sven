@@ -3,7 +3,7 @@
 **A keyboard-driven AI agent for the terminal and desktop.** Built in Rust, sven
 works as an interactive TUI, a Slint desktop GUI (`sven-ui`), a headless CI
 runner, a networked node that teams up with other sven instances, and a
-proactive personal automation platform — two binaries, one agent.
+proactive personal automation platform - two binaries, one agent.
 
 [![CI](https://github.com/swedishembedded/sven/actions/workflows/ci.yml/badge.svg)](https://github.com/swedishembedded/sven/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -12,27 +12,27 @@ proactive personal automation platform — two binaries, one agent.
 ![sven TUI showing a live chat session with streamed markdown response and vim-style navigation](docs/sven-landing.png)
 
 Give sven a task in plain English. It reads your code, runs commands, writes
-files, searches the web, and delegates subtasks to peer agents — all
+files, searches the web, and delegates subtasks to peer agents - all
 autonomously, all in your terminal. Beyond interactive sessions, sven runs 24/7
 as a proactive agent: checking email and calendar, sending briefings via
 Telegram, making voice calls, and running scheduled workflows.
 
 ## Key Features
 
-- **Interactive TUI** — Full-screen Ratatui interface with scrollable markdown chat, vim-style navigation, and live-streamed responses. Swap to an embedded Neovim buffer with `--nvim`.
-- **Desktop GUI** — `sven-ui` is a native Slint window with the full agent and tool suite, no terminal required.
-- **Headless / CI** — Reads from stdin or a markdown workflow file, writes clean text to stdout. Pipeable: chain sven instances to build multi-agent pipelines.
-- **Markdown workflow files** — `##`-headed steps, YAML frontmatter, per-step directives, and variable templating make `.md` files first-class agent programs (unique to sven).
-- **Agent networking** — Multiple sven nodes discover each other via mDNS (or a relay), and the LLM gains `list_peers` and `delegate_task` tools to route work across machines.
-- **GDB hardware debugging** — First AI agent with native GDB integration: connects to a target, loads firmware, sets breakpoints, and inspects registers, all autonomously.
-- **Proactive automation** — Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7 as a node.
-- **Skills system** — Markdown instruction files the agent loads on demand for coding standards, project conventions, or multi-step procedures.
-- **32 model providers** — OpenAI, Anthropic, Gemini, Ollama, and 28 more — no external gateway, pure Rust.
-- **MCP — server and client** — Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or connect sven to external MCP servers (including OAuth-protected ones) and use their tools directly inside any session.
-- **ACP** — Drive sven from Zed, VS Code, or JetBrains via the Agent Client Protocol; no daemon, no IDE key, sven manages its own model.
-- **Large-content analysis** — RLM context tools (`context_open`, `context_query`, `context_reduce`) memory-map files and codebases far larger than any context window and analyse them via parallel sub-agent chunking.
-- **Knowledge base** — `.sven/knowledge/*.md` documents encode project facts; sven auto-detects drift when source files change after a document's `updated:` date and warns at session start.
-- **Terminal-native, zero runtime deps** — Structured text in, structured text out. No Node.js, no Python, no screenshots, no pixel-clicking.
+- **Interactive TUI** - Full-screen Ratatui interface with scrollable markdown chat, vim-style navigation, and live-streamed responses. Swap to an embedded Neovim buffer with `--nvim`.
+- **Desktop GUI** - `sven-ui` is a native Slint window with the full agent and tool suite, no terminal required.
+- **Headless / CI** - Reads from stdin or a markdown workflow file, writes clean text to stdout. Pipeable: chain sven instances to build multi-agent pipelines.
+- **Markdown workflow files** - `##`-headed steps, YAML frontmatter, per-step directives, and variable templating make `.md` files first-class agent programs (unique to sven).
+- **Agent networking** - Multiple sven nodes discover each other via mDNS (or a relay), and the LLM gains `list_peers` and `delegate_task` tools to route work across machines.
+- **GDB hardware debugging** - First AI agent with native GDB integration: connects to a target, loads firmware, sets breakpoints, and inspects registers, all autonomously.
+- **Proactive automation** - Scheduler, email (IMAP/Gmail), calendar (CalDAV/Google), voice (TTS/STT/calls), semantic memory, and 6 messaging channels run 24/7 as a node.
+- **Skills system** - Markdown instruction files the agent loads on demand for coding standards, project conventions, or multi-step procedures.
+- **32 model providers** - OpenAI, Anthropic, Gemini, Ollama, and 28 more - no external gateway, pure Rust.
+- **MCP - server and client** - Expose sven's tools to Cursor, Claude Desktop, and other MCP hosts; or connect sven to external MCP servers (including OAuth-protected ones) and use their tools directly inside any session.
+- **ACP** - Drive sven from Zed, VS Code, or JetBrains via the Agent Client Protocol; no daemon, no IDE key, sven manages its own model.
+- **Large-content analysis** - RLM context tools (`context_open`, `context_query`, `context_reduce`) memory-map files and codebases far larger than any context window and analyse them via parallel sub-agent chunking.
+- **Knowledge base** - `.sven/knowledge/*.md` documents encode project facts; sven auto-detects drift when source files change after a document's `updated:` date and warns at session start.
+- **Terminal-native, zero runtime deps** - Structured text in, structured text out. No Node.js, no Python, no screenshots, no pixel-clicking.
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ sven --resume <ID>          # resume a specific conversation directly
 Sven is the **first AI agent with native GDB integration** for autonomous
 embedded hardware debugging. Give it a plain-English task and it will start a
 GDB server, connect to the target, load your firmware, set breakpoints, inspect
-registers and variables, and report its findings — all without leaving your
+registers and variables, and report its findings - all without leaving your
 terminal.
 
 ![sven GDB session showing autonomous breakpoint inspection on an embedded target](docs/sven-gdb-1.png)
@@ -99,8 +99,8 @@ See [Example 11](docs/06-examples.md#example-11--embedded-gdb-debugging-session)
 
 ## Agent-to-agent task routing
 
-Multiple sven nodes find each other on a local network via mDNS — or across
-networks via a relay — and each node automatically gains two tools the LLM can
+Multiple sven nodes find each other on a local network via mDNS - or across
+networks via a relay - and each node automatically gains two tools the LLM can
 use during any session:
 
 | Tool | What it does |
@@ -134,7 +134,7 @@ When running as a node (`sven node start`), sven gains a full automation stack:
 
 See [docs/19-use-cases.md](docs/19-use-cases.md) for seven complete real-world automation patterns.
 
-## Workflow files — unique to sven
+## Workflow files - unique to sven
 
 sven treats markdown files as first-class workflow definitions:
 
@@ -167,7 +167,7 @@ sven validate --file audit.md   # parse and lint a workflow file without running
 
 See [docs/04-ci-pipeline.md](docs/04-ci-pipeline.md) for output formats, exit codes, and CI integration.
 
-## Parallel pipelines — map / tee / reduce
+## Parallel pipelines - map / tee / reduce
 
 sven ships three commands for fan-out/fan-in agent pipelines:
 
@@ -200,24 +200,24 @@ sven index stats            # show index statistics
 | **Shell** | `run_terminal_command`, `shell` |
 | **Web** | `web_fetch`, `web_search` |
 | **Images** | `read_image` |
-| **Sub-agents** | `task` — spawn a focused sub-agent for a self-contained subtask |
+| **Sub-agents** | `task` - spawn a focused sub-agent for a self-contained subtask |
 | **GDB / hardware** | `gdb_start_server`, `gdb_connect`, `gdb_command`, `gdb_interrupt`, `gdb_wait_stopped`, `gdb_status`, `gdb_stop` |
 | **Agent networking** | `list_peers`, `delegate_task` *(node mode only)* |
-| **Messaging** | `send_message` — send to any configured channel |
-| **Scheduler** | `schedule` — create, list, enable, disable, delete jobs |
-| **Email** | `email` — list, read, send, reply to, and search email |
-| **Calendar** | `calendar` — query schedule, create/update/delete events |
-| **Voice** | `voice` — TTS, STT, outbound calls |
-| **Memory** | `semantic_memory` — remember, recall (BM25 + vector), forget, list, get |
-| **Large content** | `context_open`, `context_read`, `context_grep`, `context_query`, `context_reduce` — memory-map files/dirs and analyse content larger than the context window |
-| **Streaming buffers** | `buf_status`, `buf_read`, `buf_grep` — inspect live output from running sub-agents or shell commands |
-| **Knowledge** | `list_knowledge`, `search_knowledge` — query `.sven/knowledge/` project knowledge documents |
+| **Messaging** | `send_message` - send to any configured channel |
+| **Scheduler** | `schedule` - create, list, enable, disable, delete jobs |
+| **Email** | `email` - list, read, send, reply to, and search email |
+| **Calendar** | `calendar` - query schedule, create/update/delete events |
+| **Voice** | `voice` - TTS, STT, outbound calls |
+| **Memory** | `semantic_memory` - remember, recall (BM25 + vector), forget, list, get |
+| **Large content** | `context_open`, `context_read`, `context_grep`, `context_query`, `context_reduce` - memory-map files/dirs and analyse content larger than the context window |
+| **Streaming buffers** | `buf_status`, `buf_read`, `buf_grep` - inspect live output from running sub-agents or shell commands |
+| **Knowledge** | `list_knowledge`, `search_knowledge` - query `.sven/knowledge/` project knowledge documents |
 | **Collaboration** | `send_message` (peer), `wait_for_message`, `search_conversation`, `list_conversations`, `post_to_room`, `read_room_history` *(node mode only)* |
 | **Session** | `switch_mode`, `todo`, `update_memory`, `ask_question`†, `read_lints`, `load_skill` |
 
 †`ask_question` is only available in interactive TUI sessions.
 
-Each tool call goes through a configurable approval policy — auto-approved, denied, or presented for confirmation based on glob patterns.
+Each tool call goes through a configurable approval policy - auto-approved, denied, or presented for confirmation based on glob patterns.
 
 ## TUI key bindings
 
@@ -237,7 +237,7 @@ Each tool call goes through a configurable approval policy — auto-approved, de
 
 ## Model Providers
 
-Sven supports **32 model providers** natively in Rust — no external gateway required.
+Sven supports **32 model providers** natively in Rust - no external gateway required.
 
 | Category | Providers |
 |----------|-----------|
@@ -251,11 +251,11 @@ Sven supports **32 model providers** natively in Rust — no external gateway re
 
 See [docs/providers.md](docs/providers.md) for configuration details.
 
-## IDE integration — ACP
+## IDE integration - ACP
 
 Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.org),
 letting ACP-aware editors drive it directly over stdio. No daemon, no relay, no
-IDE API key required — sven manages its own model.
+IDE API key required - sven manages its own model.
 
 ```json
 // Zed: add to ~/.config/zed/settings.json
@@ -270,7 +270,7 @@ The same `sven acp serve` command works for VS Code (ACP extension) and JetBrain
 
 ## MCP integration
 
-**As a server** — expose sven's full tool suite to Cursor, Claude Desktop, opencode, and any other MCP-compatible host:
+**As a server** - expose sven's full tool suite to Cursor, Claude Desktop, opencode, and any other MCP-compatible host:
 
 ```json
 {
@@ -280,7 +280,7 @@ The same `sven acp serve` command works for VS Code (ACP extension) and JetBrain
 }
 ```
 
-**As a client** — connect sven to any external MCP server and use its tools transparently in every session. OAuth 2.0 PKCE, Dynamic Client Registration, and token refresh are handled automatically. Configure servers in `~/.config/sven/config.yaml`:
+**As a client** - connect sven to any external MCP server and use its tools transparently in every session. OAuth 2.0 PKCE, Dynamic Client Registration, and token refresh are handled automatically. Configure servers in `~/.config/sven/config.yaml`:
 
 ```yaml
 mcp_servers:

@@ -30,7 +30,7 @@ use std::collections::HashMap;
 ///
 /// Fields removed compared to the original schema (use CLI flags or config instead):
 /// - `mode` (was: override default agent mode)
-/// - `model` (was: bare model override — use `models:` map now)
+/// - `model` (was: bare model override - use `models:` map now)
 /// - `step_timeout_secs` (was: per-step timeout)
 /// - `run_timeout_secs` (was: total run timeout)
 #[derive(Debug, Clone, Default)]
@@ -114,7 +114,7 @@ fn parse_simple_yaml(src: &str) -> Option<WorkflowMetadata> {
             }
             continue;
         } else if line.starts_with(' ') || line.starts_with('\t') {
-            // Indented but no active section — ignore
+            // Indented but no active section - ignore
             continue;
         } else {
             // Non-indented line: close any open section
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn remaining_markdown_is_correct() {
-        // Verify the body split is exact — no bytes dropped or duplicated
+        // Verify the body split is exact - no bytes dropped or duplicated
         let md = "---\ntitle: T\n---\n# Heading\nContent here.";
         let (meta, rest) = parse_frontmatter(md);
         assert!(meta.is_some());
@@ -348,7 +348,7 @@ mod tests {
         let (meta, _) = parse_frontmatter(md);
         let m = meta.unwrap();
         assert_eq!(m.title.as_deref(), Some("Legacy"));
-        // Old fields are gone — not accessible
+        // Old fields are gone - not accessible
         assert!(m.models.is_none());
     }
 

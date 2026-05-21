@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn newline_resets_column_counter_for_following_text() {
         // "ab\ncde" in width=3: "ab" on line 0; after '\n' the col counter
-        // resets so "cde" (exactly 3 cols) fits entirely on line 1 —
+        // resets so "cde" (exactly 3 cols) fits entirely on line 1 -
         // no soft wrap because it doesn't *exceed* the width limit.
         // "ab\ncdef" (width=3): "cde"=3 fits, then 'f' overflows → ["ab","cde","f"].
         let s = wrap_content("ab\ncdef", 3, 0);

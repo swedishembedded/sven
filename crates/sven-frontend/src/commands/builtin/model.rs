@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `/model` command — override the model for the next queued message.
+//! `/model` command - override the model for the next queued message.
 
 use sven_model::catalog;
 
@@ -83,7 +83,7 @@ impl SlashCommand for ModelCommand {
             let display = if entry.description.is_empty() {
                 value.clone()
             } else {
-                format!("{} — {}", value, entry.description)
+                format!("{} - {}", value, entry.description)
             };
             let desc = format!(
                 "ctx:{} max_out:{}",

@@ -10,7 +10,7 @@ to reason about the configuration knobs.
 ## The problem
 
 Every LLM API enforces a hard ceiling on the number of tokens it will accept
-in a single request. That ceiling is the **context window** — typically
+in a single request. That ceiling is the **context window** - typically
 expressed as a total of input + output tokens. When a request exceeds it, the
 API returns a 400 error and the workflow fails.
 
@@ -62,7 +62,7 @@ ensure_fits_budget()          ← fires again after every batch of tool results
 
 ---
 
-## Layer 1 — Calibrated token accounting
+## Layer 1 - Calibrated token accounting
 
 ### The budget
 
@@ -72,7 +72,7 @@ Sven maintains three numbers per session:
 |---|---|
 | `max_tokens` | Total context window (input + output) from the model catalog |
 | `max_output_tokens` | Maximum output tokens per completion from the model catalog |
-| `input_budget()` | `max_tokens − max_output_tokens` — the actual usable input ceiling |
+| `input_budget()` | `max_tokens − max_output_tokens` - the actual usable input ceiling |
 
 All threshold comparisons use `input_budget()`, not the raw window size. This
 means the compaction trigger fires with enough headroom for the model to
@@ -81,7 +81,7 @@ generate a full-length reply.
 ### Effective token count
 
 The raw token estimate (`token_count`) is the sum of `approx_tokens()` for
-every message in the session — each message's character count divided by 4.
+every message in the session - each message's character count divided by 4.
 The *effective* estimate adds two corrections:
 
 ```
@@ -124,13 +124,13 @@ All threshold comparisons use this fraction.
 
 ---
 
-## Layer 2 — The budget gate (`ensure_fits_budget`)
+## Layer 2 - The budget gate (`ensure_fits_budget`)
 
 `ensure_fits_budget` is called:
 
-1. **Before every user submit** — in `submit()`, `submit_with_cancel()`,
+1. **Before every user submit** - in `submit()`, `submit_with_cancel()`,
    `submit_with_parts()`, and `replace_history_and_submit()`.
-2. **After every batch of tool results** — at the end of Phase 3 in both
+2. **After every batch of tool results** - at the end of Phase 3 in both
    agentic-loop variants, so a single large tool output cannot cause the
    *next* model call to overflow.
 
@@ -148,11 +148,11 @@ compaction prompt itself fits within the window when it is constructed.
 
 When `context_fraction ≥ trigger_threshold` and `context_fraction < 0.95`:
 
-1. **Snapshot** the current `session.messages` and `token_count` — if the
+1. **Snapshot** the current `session.messages` and `token_count` - if the
    model call for summary generation fails, these are restored.
 2. Separate non-system messages into two groups:
-   - `to_compact` — the older portion (all except the last `keep_n` messages)
-   - `recent_messages` — the last `keep_n` messages, preserved verbatim
+   - `to_compact` - the older portion (all except the last `keep_n` messages)
+   - `recent_messages` - the last `keep_n` messages, preserved verbatim
 3. **Adjust the split boundary** to avoid breaking tool-use/tool-result pairs
    (see [Split safety](#split-safety-for-tool-callresult-pairs) below).
 4. Reduce `to_compact` to a single compaction-prompt message using
@@ -172,12 +172,12 @@ When `context_fraction ≥ 0.95`:
 
 - Drop all non-system messages except the last `keep_n`.
 - Prepend a canned notice informing the model that earlier history was lost.
-- No model call — always succeeds regardless of session size.
+- No model call - always succeeds regardless of session size.
 - Emits `CompactionStrategyUsed::Emergency`.
 
 ---
 
-## Layer 3 — Compaction strategies
+## Layer 3 - Compaction strategies
 
 The strategy is selected by the `compaction_strategy` config key.
 
@@ -195,8 +195,8 @@ sections. The model is not allowed to add or remove sections:
 ## Session Narrative
 ```
 
-Technical details — file paths, function names, error messages, code snippets,
-test names — are preserved verbatim within those sections. The result is a
+Technical details - file paths, function names, error messages, code snippets,
+test names - are preserved verbatim within those sections. The result is a
 machine-parseable checkpoint that the model can reference reliably on
 subsequent turns.
 
@@ -207,7 +207,7 @@ highly conversational sessions where structured sections add little value.
 
 ---
 
-## Layer 4 — Smart tool-result truncation
+## Layer 4 - Smart tool-result truncation
 
 Large tool outputs are the primary cause of sudden context spikes. Before a
 tool result is pushed into the session, `smart_truncate` applies a
@@ -217,7 +217,7 @@ content-aware extraction based on the tool's declared `OutputCategory`.
 
 Each tool in the `Tool` trait declares its output category via
 `fn output_category(&self) -> OutputCategory`. The default is `Generic`.
-`sven-core` dispatches on the category — it never references tool names
+`sven-core` dispatches on the category - it never references tool names
 directly.
 
 | Category | Tools | Strategy |
@@ -235,7 +235,7 @@ Every truncated result ends with an explicit notice:
 ```
 
 The token cap is controlled by `tool_result_token_cap` (default 4000 tokens).
-The cap uses the same `chars / 4` approximation as `approx_tokens` — it is not
+The cap uses the same `chars / 4` approximation as `approx_tokens` - it is not
 calibrated. This means a token-dense code file might be allowed slightly more
 than 4000 tokens after truncation, but the budget gate will catch any remaining
 excess before the next model call.
@@ -277,7 +277,7 @@ while summarize_count > 0 && summarize_count < non_system.len() {
 
 This moves the split past the entire tool-interaction group (all `ToolCall`
 messages and all their `ToolResult` messages) into `recent_messages`. The split
-always lands on a user message or an assistant-text message — never mid-batch.
+always lands on a user message or an assistant-text message - never mid-batch.
 
 ---
 
@@ -384,7 +384,7 @@ session.push(user_message)
   ResponseEvent::Done   → finalize_remaining() (repair & dispatch leftovers)
         │
         ▼
-[join_all — await all in-flight tool tasks via FuturesUnordered]
+[join_all - await all in-flight tool tasks via FuturesUnordered]
         │
         ▼
 [push tool results]

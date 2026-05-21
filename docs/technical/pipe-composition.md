@@ -14,9 +14,9 @@ detection rules in priority order:
 
 | Priority | Detection criterion | Interpretation |
 |----------|---------------------|----------------|
-| 1 | Every non-empty line starts with `{` | **JSONL conversation** — produced by `--output-jsonl` |
-| 2 | Any line is exactly `## User`, `## Sven`, `## Tool`, or `## Tool Result` | **Conversation markdown** — produced by `--output-format conversation` (default) |
-| 3 | Everything else | **Plain text** — treated as a single user message (one step). Workflow parsing (## steps, preamble) is **not** used for stdin; it only applies when using `-f`/`--file` with a workflow file. |
+| 1 | Every non-empty line starts with `{` | **JSONL conversation** - produced by `--output-jsonl` |
+| 2 | Any line is exactly `## User`, `## Sven`, `## Tool`, or `## Tool Result` | **Conversation markdown** - produced by `--output-format conversation` (default) |
+| 3 | Everything else | **Plain text** - treated as a single user message (one step). Workflow parsing (## steps, preamble) is **not** used for stdin; it only applies when using `-f`/`--file` with a workflow file. |
 
 The rules are mutually exclusive and checked top-down.
 
@@ -33,7 +33,7 @@ The rules are mutually exclusive and checked top-down.
 > **Note on JSON output and JSONL detection**: `--output-format json` emits a
 > single multi-line JSON object, not one-object-per-line JSONL.  The first line
 > starts with `{` but subsequent lines do not, so the JSONL heuristic returns
-> false and the output is treated as plain text — which is correct.
+> false and the output is treated as plain text - which is correct.
 
 ---
 
@@ -60,7 +60,7 @@ sent an empty message to the model.
 
 ## Pipe patterns
 
-### Pattern 1 — Data transform (most idiomatic)
+### Pattern 1 - Data transform (most idiomatic)
 
 ```bash
 cat report.md | sven 'summarise the key findings'
@@ -75,7 +75,7 @@ user message**: the prompt, a blank line, then the stdin content.  So
 by the command output.  This mirrors `grep`, `sed`, and `awk`: CLI arguments
 specify the operation, the pipe carries the data.
 
-### Pattern 2 — Context seed with explicit task
+### Pattern 2 - Context seed with explicit task
 
 ```bash
 sven 'analyse the codebase and list all public APIs' \
@@ -100,7 +100,7 @@ stdin (conversation markdown)
 CLI prompt "write tests..."─────► step content
 ```
 
-### Pattern 3 — Relay via pending user turn
+### Pattern 3 - Relay via pending user turn
 
 A conversation file or output can end with an unanswered `## User` section.
 When such output is piped to a second sven with no CLI prompt, the pending
@@ -125,7 +125,7 @@ Now implement step 1 of the plan.
 This pattern lets one agent drive another without repeating the handoff
 instruction on the CLI.
 
-### Pattern 4 — Compact relay
+### Pattern 4 - Compact relay
 
 `--output-format compact` emits only the agent's response text.  Because
 there are no `## User`/`## Sven` markers, the receiving instance treats it
@@ -141,7 +141,7 @@ clean context (no seeded history).  This is the correct pattern when you
 want the second agent to act on the *result* of the first, not have access
 to how the first agent arrived at it.
 
-### Pattern 5 — Full-fidelity JSONL chaining
+### Pattern 5 - Full-fidelity JSONL chaining
 
 For long pipelines where you want every agent in the chain to have access
 to the complete history including tool calls and thinking blocks:
@@ -210,8 +210,8 @@ Stderr lines use structured `[sven:tag]` prefixes:
 |-----------|-----------|----------------|
 | Conversation piped, no CLI prompt, no pending user turn | `2` | `[sven:error] Piped conversation has no pending task.` |
 | JSONL piped, no CLI prompt, no pending user turn | `2` | `[sven:error] Piped JSONL has no pending task.` |
-| Piped conversation fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as conversation (…)` |
-| Piped JSONL fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as JSONL (…)` |
+| Piped conversation fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as conversation (...)` |
+| Piped JSONL fails to parse | warning + treat as plain text (single step) | `[sven:warn] Failed to parse piped input as JSONL (...)` |
 
 The error message for the "no pending task" case also prints an example
 showing how to fix it:
@@ -275,8 +275,8 @@ the only difference is the source (stdin vs file).
 
 The detection and routing live in `crates/sven-ci/src/runner.rs`:
 
-- `is_conversation_format(s)` — scans lines for reserved H2 headings
-- `is_jsonl_format(s)` — checks up to 10 non-empty lines for `{` prefix
+- `is_conversation_format(s)` - scans lines for reserved H2 headings
+- `is_jsonl_format(s)` - checks up to 10 non-empty lines for `{` prefix
 - Detection order: JSONL → conversation → plain text (first match wins). Workflow parsing (## steps) runs only when input was read from a file (`-f`/`--file`); stdin is always either conversation, JSONL, or a single plain-text step.
 - Both conversation and JSONL parsers return `(history, pending_user_input)`
 - Step content = `extra_prompt` OR `pending_user_input` OR exit(2). When stdin is plain text and a CLI prompt is given, the CLI merges them (prompt + blank line + stdin) before the runner sees input, so the runner gets one step.

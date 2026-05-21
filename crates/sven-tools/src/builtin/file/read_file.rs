@@ -16,7 +16,7 @@ const DEFAULT_LINE_LIMIT: usize = 200;
 
 /// Hard byte ceiling applied in addition to the line limit.
 /// Whichever constraint is hit first determines where the output is cut.
-/// 20 KB ≈ 5,000 tokens — safe for a 40 K-token context window.
+/// 20 KB ≈ 5,000 tokens - safe for a 40 K-token context window.
 const MAX_BYTES: usize = 20_000;
 
 pub struct ReadFileTool;
@@ -143,7 +143,7 @@ impl Tool for ReadFileTool {
             );
             if last < total {
                 content.push_str(&format!(
-                    "\n...[{} more lines — showing L{}-L{} of {}; use offset={} to continue]",
+                    "\n...[{} more lines - showing L{}-L{} of {}; use offset={} to continue]",
                     total - last,
                     offset,
                     offset + slice.len() - 1,
@@ -187,7 +187,7 @@ impl Tool for ReadFileTool {
                 format!("{} more lines", total - last_shown)
             };
             content.push_str(&format!(
-                "\n...[{} — showing L{}-L{} of {}; use offset={} to continue]",
+                "\n...[{} - showing L{}-L{} of {}; use offset={} to continue]",
                 reason,
                 offset,
                 offset + selected.len().saturating_sub(1),
@@ -267,7 +267,7 @@ fn to_ihex_lines(data: &[u8]) -> Vec<String> {
         let addr = i * BPL;
         let seg = addr >> 16;
 
-        // Extended Linear Address record — emitted when the 64 KB segment changes.
+        // Extended Linear Address record - emitted when the 64 KB segment changes.
         if seg != cur_seg {
             cur_seg = seg;
             let hi = (seg >> 8) as u8;

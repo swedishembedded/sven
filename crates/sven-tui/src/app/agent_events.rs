@@ -112,7 +112,7 @@ impl App {
         // session that originated the event may receive its content. We must never
         // add tool results, delegate summaries, or any other segment to the
         // currently focused chat (self.chat) unless this event came from that
-        // session — which is guaranteed here.
+        // session - which is guaranteed here.
         match event {
             AgentEvent::TextDelta(delta) => {
                 self.chat.streaming_is_thinking = false;
@@ -428,7 +428,7 @@ impl App {
                 if let Some(pager) = &mut self.ui.pager {
                     pager.set_lines(self.chat.lines.clone());
                 }
-                // If abort_pending is set, the user did a plain /abort — keep
+                // If abort_pending is set, the user did a plain /abort - keep
                 // the queue as-is and wait for manual submit.
                 // If abort_pending is false (force-submit path), auto-dequeue.
                 if !self.queue.abort_pending && self.edit.queue_index.is_none() {
@@ -473,7 +473,7 @@ impl App {
                             Some(format!("task [{}] {}", handle, status_line));
                     }
                 } else {
-                    // Regular progress message — just update the spinner label.
+                    // Regular progress message - just update the spinner label.
                     self.agent.current_tool = Some(message);
                 }
                 self.rerender_chat().await;
@@ -506,7 +506,7 @@ impl App {
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
                 self.chat.segments.push(ChatSegment::Thinking { content });
-                // Default expand level is 0 (summary) — no explicit insert needed.
+                // Default expand level is 0 (summary) - no explicit insert needed.
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();

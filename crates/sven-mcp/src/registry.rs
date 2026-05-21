@@ -48,7 +48,7 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
 ///
 /// `allowed_names` is an optional comma-separated list of tool names to
 /// include.  Pass `"all"` (or `None`) to include all default tools.
-/// Any name not in [`DEFAULT_TOOL_NAMES`] is silently ignored — this guards
+/// Any name not in [`DEFAULT_TOOL_NAMES`] is silently ignored - this guards
 /// against clients accidentally requesting internal tools that were never
 /// registered.
 pub fn build_mcp_registry(

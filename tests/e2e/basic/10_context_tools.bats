@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 10_context_tools.bats – End-to-end tests for the RLM memory-mapped context tools.
+# 10_context_tools.bats - End-to-end tests for the RLM memory-mapped context tools.
 #
 # Validates:
 #   • show-config exposes the tools.context configuration section
@@ -86,7 +86,7 @@ load helpers
 # ── context_open: nonexistent path ───────────────────────────────────────────
 # The tool should return an error as tool output; the agent continues and
 # delivers the after_tool_reply. Exit code 0 (clean) or 3 (tool warnings)
-# are both acceptable — the important thing is the agent does not abort.
+# are both acceptable - the important thing is the agent does not abort.
 
 @test "10.11 context_open on missing path exits 0 (agent continues)" {
     run bash -c 'echo "open context missing path" | "$BIN" --headless --model mock 2>/dev/null'

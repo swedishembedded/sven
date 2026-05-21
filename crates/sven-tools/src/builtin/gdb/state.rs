@@ -93,7 +93,7 @@ impl GdbSessionState {
     /// processes like JLinkGUIServerExe), waits briefly, then SIGKILL, and
     /// finally drops the Child handle.
     pub async fn clear(&mut self) {
-        // Drop the GDB client first – closing stdin causes gdb-multiarch to exit.
+        // Drop the GDB client first - closing stdin causes gdb-multiarch to exit.
         self.client = None;
 
         if let Some(server) = self.server.take() {

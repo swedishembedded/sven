@@ -8,7 +8,7 @@
 // Tests are organised into three groups:
 //
 // 1. Always-run tests (no ignore): use temp files or tiny helper
-//    processes (nc, sleep, false) — run in standard `cargo test`.
+//    processes (nc, sleep, false) - run in standard `cargo test`.
 //
 // 2. Probe-required tests (#[ignore]): need a live J-Link probe and a
 //    connected target. Run explicitly:

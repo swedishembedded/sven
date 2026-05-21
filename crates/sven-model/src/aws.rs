@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! AWS Bedrock driver — native Converse API with SigV4 authentication.
+//! AWS Bedrock driver - native Converse API with SigV4 authentication.
 //!
 //! Uses the non-streaming `POST /model/{modelId}/converse` endpoint and wraps
 //! the response into the standard `ResponseStream`.  The full SigV4 signing
@@ -351,7 +351,7 @@ impl crate::ModelProvider for BedrockProvider {
                         // thinking content arrives as a `reasoningContent` block
                         // containing a nested `reasoningText.text` field.
                         // The accompanying `reasoningText.signature` is an
-                        // encrypted integrity blob — not human-readable; discard it.
+                        // encrypted integrity blob - not human-readable; discard it.
                         if let Some(rc) = part.get("reasoningContent") {
                             if let Some(rt) = rc.get("reasoningText") {
                                 if let Some(text) = rt["text"].as_str() {
@@ -457,7 +457,7 @@ fn normalize_bedrock_image_format(mime: &str) -> String {
     let raw = mime.strip_prefix("image/").unwrap_or("jpeg");
     match raw {
         "jpg" => "jpeg".to_string(),
-        // gif, webp, png, jpeg — all valid Bedrock formats, pass through
+        // gif, webp, png, jpeg - all valid Bedrock formats, pass through
         other => other.to_string(),
     }
 }

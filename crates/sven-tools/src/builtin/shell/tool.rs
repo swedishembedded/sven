@@ -13,7 +13,7 @@ use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
 /// Hard byte ceiling for combined stdout + stderr returned to the model.
-/// 20 KB ≈ 5,000 tokens — keeps output well within a 40 K-token context window.
+/// 20 KB ≈ 5,000 tokens - keeps output well within a 40 K-token context window.
 const OUTPUT_LIMIT_BYTES: usize = 20_000;
 
 /// Number of lines to keep from the head of oversized output.
@@ -46,7 +46,7 @@ impl Tool for ShellTool {
          ALWAYS provide 'description': a short human-readable summary of what this command does\n\
          (shown to the user in the UI instead of the raw command).\n\
          Output is capped at ~20 KB; when larger, the first 100 and last 100 lines are\n\
-         preserved with an omission marker in the middle — errors at the end are never lost.\n\
+         preserved with an omission marker in the middle - errors at the end are never lost.\n\
          Prefer non-interactive commands. Avoid commands that require a TTY.\n\
          On Unix/macOS commands run via bash; on Windows via cmd.exe.\n\
          IMPORTANT: do NOT use shell for file operations:\n\
@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn exit_1_is_not_error_but_includes_code() {
-        // Exit code 1 is "no matches" for grep/rg and "false" for test — not a hard error.
+        // Exit code 1 is "no matches" for grep/rg and "false" for test - not a hard error.
         let t = ShellTool::default();
         let out = t
             .execute(&call("1", json!({"shell_command": "exit 1"})))

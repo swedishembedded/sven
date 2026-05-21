@@ -4,9 +4,9 @@
 //! Cached layout metrics updated each frame and durable user-controlled split
 //! size preferences.
 //!
-//! `SplitPrefs`  — durable, user-controlled split dimensions. Survives layout
+//! `SplitPrefs`  - durable, user-controlled split dimensions. Survives layout
 //!                 recompute. Only the user can change these (drag or keys).
-//! `LayoutCache` — transient, frame-derived rects and dimensions. Discardable;
+//! `LayoutCache` - transient, frame-derived rects and dimensions. Discardable;
 //!                 rebuilt every loop iteration from `SplitPrefs`.
 
 use ratatui::layout::Rect;
@@ -67,7 +67,7 @@ impl SplitPrefs {
         }
     }
 
-    /// Effective chat list width passed to `AppLayout::compute` — 0 when hidden.
+    /// Effective chat list width passed to `AppLayout::compute` - 0 when hidden.
     pub fn effective_chat_list_width(&self) -> u16 {
         if self.chat_list_visible {
             self.chat_list_width
@@ -76,7 +76,7 @@ impl SplitPrefs {
         }
     }
 
-    /// Effective peers pane height passed to `AppLayout::compute` — 0 when hidden.
+    /// Effective peers pane height passed to `AppLayout::compute` - 0 when hidden.
     pub fn effective_peers_pane_height(&self) -> u16 {
         if self.chat_list_visible && self.peers_pane_height > 0 {
             self.peers_pane_height
@@ -138,7 +138,7 @@ impl SplitPrefs {
 ///
 /// Populated at the top of the run-loop before any event processing so that
 /// event handlers can query pane dimensions without needing a live frame
-/// reference. Completely discardable — rebuilt each loop iteration from
+/// reference. Completely discardable - rebuilt each loop iteration from
 /// `SplitPrefs`.
 pub(crate) struct LayoutCache {
     /// Number of content rows visible inside the chat pane border.
@@ -159,7 +159,7 @@ pub(crate) struct LayoutCache {
     pub chat_list_pane: Rect,
     /// Last known bounding rect of the peers pane.
     pub peers_pane: Rect,
-    /// Active drag resize state — `Some` while the user holds down the mouse on a border.
+    /// Active drag resize state - `Some` while the user holds down the mouse on a border.
     pub resize_drag: Option<ResizeDrag>,
 }
 

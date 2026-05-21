@@ -66,13 +66,13 @@ responses:
     reply: |
       ## Implementation Plan
 
-      ### Phase 1 — Setup
+      ### Phase 1 - Setup
       Configure the environment and dependencies.
 
-      ### Phase 2 — Implementation
+      ### Phase 2 - Implementation
       Write the core logic following existing conventions.
 
-      ### Phase 3 — Testing
+      ### Phase 3 - Testing
       Add unit and integration tests.
 
   # ── Pipeline / summarise ────────────────────────────────────────────────────

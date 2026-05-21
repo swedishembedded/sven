@@ -1,8 +1,8 @@
 # Working with Large Content
 
 sven can analyse files and directory trees that are far too large to read
-in full — build logs, entire codebases, generated output files, firmware
-images — without ever running out of context window.  This section explains
+in full - build logs, entire codebases, generated output files, firmware
+images - without ever running out of context window.  This section explains
 how to get the most out of that capability.
 
 ---
@@ -16,7 +16,7 @@ at all.
 
 sven takes a different approach.  Large content is kept in memory **outside**
 the model's context window and accessed on demand through a set of structured
-tools.  The model sees only a small summary — a _handle_ — and then retrieves
+tools.  The model sees only a small summary - a _handle_ - and then retrieves
 exactly the parts it needs.
 
 ---
@@ -26,12 +26,12 @@ exactly the parts it needs.
 When sven encounters a large file or directory, it follows a four-step pattern
 automatically:
 
-1. **Open** — map the content into memory and get back a handle and a
+1. **Open** - map the content into memory and get back a handle and a
    structural summary (size, line count, file types).
-2. **Search** — run a regex search across the entire content to find the
+2. **Search** - run a regex search across the entire content to find the
    relevant sections, without loading anything into the model context.
-3. **Inspect** — read the specific line ranges that were found.
-4. **Analyse** — for questions that require reading many sections in parallel,
+3. **Inspect** - read the specific line ranges that were found.
+4. **Analyse** - for questions that require reading many sections in parallel,
    dispatch sub-agent queries over chunks of the content simultaneously.
 
 The model manages this loop itself.  You do not need to break up your
@@ -49,7 +49,7 @@ Summarise each unique error message, its frequency, and the first timestamp it a
 ```
 
 sven will open the log, search for `usb.*disconnect` and related patterns,
-read the matching sections, and return a structured summary — even if the log
+read the matching sections, and return a structured summary - even if the log
 is hundreds of megabytes.
 
 ### Review a large codebase for a specific concern
@@ -78,7 +78,7 @@ initiated. Focus on the interrupt handlers and the DMA callback chain.
 ```
 
 sven will index all source files in the directory, grep for DMA-related
-symbols, read the relevant code, and produce a coherent explanation — without
+symbols, read the relevant code, and produce a coherent explanation - without
 running out of context.
 
 ---
@@ -144,7 +144,7 @@ Reduce `default_chunk_lines` for dense files (e.g. minified JavaScript) where
 
 ## When sven falls back to read_file
 
-For files under roughly 500 lines, sven uses `read_file` directly — it is
+For files under roughly 500 lines, sven uses `read_file` directly - it is
 simpler and faster.  The large-content tools activate automatically when the
 file or task exceeds that threshold.  You never need to choose between them
 explicitly.
@@ -153,6 +153,6 @@ explicitly.
 
 ## See also
 
-- [Configuration reference](05-configuration.md) — full list of `tools.context` options
-- [Technical reference](technical/rlm-context-tools.md) — implementation details
+- [Configuration reference](05-configuration.md) - full list of `tools.context` options
+- [Technical reference](technical/rlm-context-tools.md) - implementation details
   for contributors and integrators

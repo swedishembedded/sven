@@ -25,10 +25,10 @@ use crate::registry::ToolSchema;
 ///
 /// ### buf
 ///
-/// **buf_grep** — Search output buffer contents with a regex pattern
+/// **buf_grep** - Search output buffer contents with a regex pattern
 /// Parameters: 3
 ///
-/// **buf_read** — Read lines from an output buffer
+/// **buf_read** - Read lines from an output buffer
 /// Parameters: 3
 /// ```
 pub fn format_tools_list(tools: &[ToolSchema]) -> String {
@@ -75,7 +75,7 @@ fn format_tool_entry(tool: &ToolSchema) -> String {
             .unwrap_or("")
             .trim()
             .replace('|', "\\|");
-        entry.push_str(&format!(" — {first_line}"));
+        entry.push_str(&format!(" - {first_line}"));
     }
     entry.push('\n');
     let param_count = tool

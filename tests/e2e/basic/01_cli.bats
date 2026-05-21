@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 01_cli.bats – CLI flag and subcommand validation.
+# 01_cli.bats - CLI flag and subcommand validation.
 #
 # Validates that the binary's interface is complete and well-formed:
 # flags, subcommands, exit codes on bad input, and generated artefacts.

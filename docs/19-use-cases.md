@@ -146,12 +146,12 @@ The agent sends you:
 Good morning! Here's your briefing for Tuesday, April 15:
 
 📅 Today's Schedule:
-• 9:00 AM — Standup with engineering team
-• 2:00 PM — Strategy call with Alice (Acme Corp)
-• 4:30 PM — 1:1 with Bob
+• 9:00 AM - Standup with engineering team
+• 2:00 PM - Strategy call with Alice (Acme Corp)
+• 4:30 PM - 1:1 with Bob
 
 📧 Urgent Emails (3):
-• Invoice from Cloudflare — due Friday
+• Invoice from Cloudflare - due Friday
 • Alice: "Can we move the call to 3pm?" → Replied ✓
 • New customer inquiry from TechCorp
 
@@ -171,7 +171,7 @@ Research existing 3D models online or generate custom ones using AI tools.
 
 ### Configuration
 
-No special integrations required — uses web search and shell tools.
+No special integrations required - uses web search and shell tools.
 
 ### Example Prompts
 
@@ -208,7 +208,7 @@ Create `/workspace/.sven/skills/3d-models.md`:
 
 ## 5. Second Brain Knowledge Management
 
-Text anything to remember — the agent builds a searchable local knowledge base.
+Text anything to remember - the agent builds a searchable local knowledge base.
 
 ### Configuration
 

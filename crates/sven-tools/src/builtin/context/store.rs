@@ -9,7 +9,7 @@
 //! handle to perform zero-copy line-range reads and regex searches.
 //!
 //! The store is created once per agent session and shared across the context
-//! tools via `Arc<Mutex<ContextStore>>` — the same pattern used by
+//! tools via `Arc<Mutex<ContextStore>>` - the same pattern used by
 //! [`GdbSessionState`].
 
 use std::collections::HashMap;

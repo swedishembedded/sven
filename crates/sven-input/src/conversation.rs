@@ -72,9 +72,9 @@ impl TurnMetadata {
 ///
 /// | Type | Crate | Role |
 /// |------|-------|------|
-/// | `ConversationFile` | `sven-input` | **Persisted format** — a `.md` or `.jsonl` file parsed into messages.  Read-only snapshot; no live session state. |
-/// | `Session` | `sven-core` | **Runtime state** — the active in-progress agent session with mutable message history, event channels, and tool state. |
-/// | `SessionManager` | `sven-tui` | **TUI multi-session UI state** — owns a list of live `Session`s and tracks which one is focused in the TUI. |
+/// | `ConversationFile` | `sven-input` | **Persisted format** - a `.md` or `.jsonl` file parsed into messages.  Read-only snapshot; no live session state. |
+/// | `Session` | `sven-core` | **Runtime state** - the active in-progress agent session with mutable message history, event channels, and tool state. |
+/// | `SessionManager` | `sven-tui` | **TUI multi-session UI state** - owns a list of live `Session`s and tracks which one is focused in the TUI. |
 ///
 /// `ConversationFile` is produced by `parse_conversation` / `parse_jsonl_conversation` and
 /// consumed by the CI runner and TUI history loader to seed an agent's initial context.
@@ -176,8 +176,8 @@ pub fn parse_conversation(markdown: &str) -> Result<ConversationFile, ParseError
 /// Split markdown into an optional H1 title and a list of H2 sections.
 ///
 /// Only the four recognized section headings (`User`, `Sven`, `Tool`,
-/// `Tool Result`) are treated as structural boundaries.  Any other `## …`
-/// line — for example a heading the agent wrote inside its own response —
+/// `Tool Result`) are treated as structural boundaries.  Any other `## ...`
+/// line - for example a heading the agent wrote inside its own response -
 /// is kept as literal content within the current section.
 fn split_sections(markdown: &str) -> (Option<String>, Vec<Section>) {
     let mut title: Option<String> = None;
@@ -187,7 +187,7 @@ fn split_sections(markdown: &str) -> (Option<String>, Vec<Section>) {
     let mut preamble = String::new();
 
     for line in markdown.lines() {
-        // H1 — title, only before any section starts
+        // H1 - title, only before any section starts
         if let Some(h1) = line.strip_prefix("# ").filter(|_| !line.starts_with("## ")) {
             if current_heading.is_none() && preamble.is_empty() && title.is_none() {
                 title = Some(h1.trim().to_string());
@@ -195,7 +195,7 @@ fn split_sections(markdown: &str) -> (Option<String>, Vec<Section>) {
             }
         }
 
-        // H2 — only start a new section if the heading is a recognized kind
+        // H2 - only start a new section if the heading is a recognized kind
         if let Some(h2) = line.strip_prefix("## ") {
             let kind = SectionKind::from_str(h2.trim());
             if !matches!(kind, SectionKind::Unknown(_)) {
@@ -212,7 +212,7 @@ fn split_sections(markdown: &str) -> (Option<String>, Vec<Section>) {
                 current_heading = Some(kind);
                 continue;
             }
-            // Unknown H2 — fall through and treat as content
+            // Unknown H2 - fall through and treat as content
         }
 
         current_content.push_str(line);
@@ -250,7 +250,7 @@ fn convert_sections_to_conversation(
                 // If this is the last section and there is no next section,
                 // we'll handle it after the loop.
                 if iter.peek().is_none() {
-                    // Last section — treat as pending input
+                    // Last section - treat as pending input
                     return Ok(ConversationFile {
                         title,
                         history,
@@ -436,7 +436,7 @@ pub fn parse_jsonl_conversation(content: &str) -> Result<ConversationFile, Parse
         .filter(|m| m.role != Role::System)
         .collect();
 
-    // If the last message is a user message it has no response yet — treat as pending.
+    // If the last message is a user message it has no response yet - treat as pending.
     let (history, pending_user_input) = match messages.last() {
         Some(m) if m.role == Role::User => {
             let pending = m.as_text().unwrap_or("").to_string();
@@ -535,7 +535,7 @@ pub fn parse_jsonl_full(content: &str) -> Result<ParsedJsonlConversation, ParseE
                 })?;
             records.push(record);
         } else {
-            // Legacy format — raw Message JSON.
+            // Legacy format - raw Message JSON.
             let msg: Message =
                 serde_json::from_value(v).map_err(|e| ParseError::InvalidJsonlLine {
                     line: line_no + 1,
@@ -676,7 +676,7 @@ fn message_to_section(msg: &Message) -> String {
 
 fn message_to_section_with_metadata(msg: &Message, metadata: Option<&TurnMetadata>) -> String {
     match (&msg.role, &msg.content) {
-        (Role::System, _) => String::new(), // skip — agent injects system message
+        (Role::System, _) => String::new(), // skip - agent injects system message
 
         (Role::User, MessageContent::Text(t)) => {
             format!("## User\n{}\n\n", t.trim())
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn trailing_whitespace_in_section_heading_is_handled() {
-        // "## User  " (trailing spaces) — should still be recognized
+        // "## User  " (trailing spaces) - should still be recognized
         let md = "## User  \nHello\n\n## Sven\nOk\n";
         let conv = parse_conversation(md).unwrap();
         assert_eq!(conv.history.len(), 2);

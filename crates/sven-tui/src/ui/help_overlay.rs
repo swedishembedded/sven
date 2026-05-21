@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Help overlay — two-column grid of key bindings, shown on F1.
+//! Help overlay - two-column grid of key bindings, shown on F1.
 
 use ratatui::{
     buffer::Buffer,
@@ -42,7 +42,7 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("^c", "Interrupt agent", false),
     ("^k / ^u", "Delete to end/start", false),
     ("^Up / ^Dn", "History older/newer", false),
-    ("/ …", "Slash commands", false),
+    ("/ ...", "Slash commands", false),
     ("── Queue panel ──", "", true),
     ("q / Esc", "Open/close queue", false),
     ("↑ ↓", "Navigate queue", false),

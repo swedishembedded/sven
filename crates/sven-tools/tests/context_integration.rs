@@ -4,17 +4,17 @@
 //! Integration tests for the RLM memory-mapped context tools.
 //!
 //! These tests exercise the full tool stack against **real source files** from
-//! the sven codebase itself — the same files that are always present during
+//! the sven codebase itself - the same files that are always present during
 //! `cargo test`.  Every assertion is derived from the known, static content of
 //! those files so that tests are self-validating without external fixtures.
 //!
 //! Test groups:
-//!   1. `ContextStore` — low-level store operations
-//!   2. `context_open` tool — mmap + metadata
-//!   3. `context_read` tool — random-access line reads
-//!   4. `context_grep` tool — regex search
-//!   5. Workflow chains — realistic multi-step patterns
-//!   6. Error handling — invalid input and boundary conditions
+//!   1. `ContextStore` - low-level store operations
+//!   2. `context_open` tool - mmap + metadata
+//!   3. `context_read` tool - random-access line reads
+//!   4. `context_grep` tool - regex search
+//!   5. Workflow chains - realistic multi-step patterns
+//!   6. Error handling - invalid input and boundary conditions
 
 use std::io::Write;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ fn write_tmp(content: &str) -> NamedTempFile {
     f
 }
 
-// ─── 1. ContextStore — low-level tests ───────────────────────────────────────
+// ─── 1. ContextStore - low-level tests ───────────────────────────────────────
 
 mod store_tests {
     use super::*;
@@ -702,7 +702,7 @@ mod open_tool_tests {
 
     #[tokio::test]
     async fn open_persists_handle_for_subsequent_reads() {
-        // Open a file, then read it through the read tool — verifying the handle
+        // Open a file, then read it through the read tool - verifying the handle
         // is shared correctly via the Arc<Mutex<ContextStore>>.
         let tmp = write_tmp("alpha\nbeta\ngamma\n");
         let store = make_store();
@@ -1037,7 +1037,7 @@ mod grep_tool_tests {
             .await;
         assert!(!grep_out.is_error, "{}", grep_out.content);
 
-        // Matches from multiple files — the output must mention at least two .rs files.
+        // Matches from multiple files - the output must mention at least two .rs files.
         let rs_file_refs = grep_out
             .content
             .lines()
@@ -1146,7 +1146,7 @@ mod workflow_tests {
         );
     }
 
-    /// Open a directory, grep for a symbol, read the matching file section —
+    /// Open a directory, grep for a symbol, read the matching file section -
     /// demonstrating cross-file analysis.
     #[tokio::test]
     async fn directory_grep_then_read_specific_file() {
@@ -1215,7 +1215,7 @@ mod workflow_tests {
         );
     }
 
-    /// Register results and read them back — simulating the context_query
+    /// Register results and read them back - simulating the context_query
     /// results-handle workflow without invoking the LLM.
     #[tokio::test]
     async fn results_handle_readable_after_registration() {

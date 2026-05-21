@@ -73,18 +73,18 @@ stdout pipeline stays clean.
 | Value | Description |
 |-------|-------------|
 | `conversation` (default) | Full `## User` / `## Sven` / `## Tool` markdown |
-| `compact` | Plain text responses only — no headings, no markup |
+| `compact` | Plain text responses only - no headings, no markup |
 | `json` | Structured JSON with step metadata |
 
 Use `--output-format compact` whenever the caller only needs the agent's answer
-text and nothing else — for example when the response is a shell command to be
+text and nothing else - for example when the response is a shell command to be
 executed, a value to be parsed, or input for another tool.
 
 ```bash
-# JSON output – useful for CI dashboards
+# JSON output - useful for CI dashboards
 sven --file workflow.md --output-format json | jq '.steps[].success'
 
-# Compact output — only the agent's response, no markdown formatting
+# Compact output - only the agent's response, no markdown formatting
 sven --headless --output-format compact "List the top 5 TODO files" 2>/dev/null
 
 # Generate a shell command and execute it directly
@@ -231,7 +231,7 @@ Uncommitted changes: 3 file(s)
 ```
 
 The agent therefore always knows which branch it is working on, the current
-commit, and whether the working tree is clean — without you having to tell it.
+commit, and whether the working tree is clean - without you having to tell it.
 
 ### Project context file
 
@@ -324,9 +324,9 @@ sven --file conversation.md --conversation --jsonl-output continued-trace.jsonl
 ```
 
 **Available formats:**
-- `openai` (default) — Compatible with OpenAI, Azure OpenAI, and most fine-tuning APIs. Uses `tool_calls` array format.
-- `anthropic` — Claude-specific format with content blocks
-- `raw` — Sven's internal format (for debugging or custom processing)
+- `openai` (default) - Compatible with OpenAI, Azure OpenAI, and most fine-tuning APIs. Uses `tool_calls` array format.
+- `anthropic` - Claude-specific format with content blocks
+- `raw` - Sven's internal format (for debugging or custom processing)
 
 The JSONL file contains one JSON object per line, where each object represents
 a message with its role and content. Unlike markdown conversation files, system
@@ -377,7 +377,7 @@ agent:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success – all steps completed |
+| `0` | Success - all steps completed |
 | `1` | Agent error (tool failure, API error, etc.) |
 | `2` | Validation error (bad workflow file, config error) |
 | `124` | Timeout exceeded (step or total run) |
@@ -621,18 +621,18 @@ Frontmatter takes precedence over config file.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--file FILE` | — | Input workflow or conversation file |
+| `--file FILE` | - | Input workflow or conversation file |
 | `--mode MODE` | `agent` | Default agent mode (`research`/`plan`/`agent`) |
 | `--model MODEL` | config | Model override (e.g. `anthropic/claude-opus-4-5`) |
 | `--output-format FMT` | `conversation` | `conversation`, `compact`, or `json` |
-| `--output-last-message PATH` | — | Write final agent response to a file |
-| `--jsonl-output PATH` | — | Write complete raw trace as JSONL (includes system prompts) |
+| `--output-last-message PATH` | - | Write final agent response to a file |
+| `--jsonl-output PATH` | - | Write complete raw trace as JSONL (includes system prompts) |
 | `--jsonl-format FMT` | `openai` | JSONL format: `openai`, `anthropic`, or `raw` |
-| `--artifacts-dir DIR` | — | Save per-step artifacts to directory |
-| `--var KEY=VALUE` | — | Template variable (repeatable) |
+| `--artifacts-dir DIR` | - | Save per-step artifacts to directory |
+| `--var KEY=VALUE` | - | Template variable (repeatable) |
 | `--step-timeout SECS` | 0 (none) | Per-step wall-clock timeout |
 | `--run-timeout SECS` | 0 (none) | Total run wall-clock timeout |
-| `--system-prompt-file PATH` | — | Replace default system prompt from file |
-| `--append-system-prompt TEXT` | — | Append text to default system prompt |
+| `--system-prompt-file PATH` | - | Replace default system prompt from file |
+| `--append-system-prompt TEXT` | - | Append text to default system prompt |
 | `--dry-run` | off | Validate workflow then exit without calling model |
 | `--headless` | auto | Force headless mode (normally auto-detected) |

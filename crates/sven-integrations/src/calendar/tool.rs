@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `calendar` tool — agent access to calendar events.
+//! `calendar` tool - agent access to calendar events.
 
 use std::sync::Arc;
 
@@ -19,12 +19,12 @@ use super::{CalendarProvider, DateRange, EventUpdate, NewEvent};
 ///
 /// # Actions
 ///
-/// - `today` — list today's events
-/// - `upcoming` — list events in the next N days
-/// - `list` — list events in a specific date range
-/// - `create` — create a new event
-/// - `update` — update an existing event
-/// - `delete` — delete an event
+/// - `today` - list today's events
+/// - `upcoming` - list events in the next N days
+/// - `list` - list events in a specific date range
+/// - `create` - create a new event
+/// - `update` - update an existing event
+/// - `delete` - delete an event
 pub struct CalendarTool {
     provider: Arc<dyn CalendarProvider>,
 }

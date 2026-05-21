@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Chat segment types and helpers — shared logic is in `sven-frontend`.
+//! Chat segment types and helpers - shared logic is in `sven-frontend`.
 //!
 //! This module re-exports the canonical `ChatSegment` type and all pure
 //! helpers from `sven_frontend::segment`. TUI-specific display helpers that
@@ -47,7 +47,7 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     };
     let first_line = raw.lines().next().unwrap_or("").trim();
     if display_width(first_line) > MAX {
-        format!("\"{}…\"", truncate_to_width_exact(first_line, MAX))
+        format!("\"{}...\"", truncate_to_width_exact(first_line, MAX))
     } else {
         format!("\"{first_line}\"")
     }

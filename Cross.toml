@@ -1,4 +1,4 @@
-# Cross.toml — configuration for `cross` (Docker-based cross-compilation).
+# Cross.toml - configuration for `cross` (Docker-based cross-compilation).
 #
 # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
 # sven-node/Cargo.toml, so openssl-sys always compiles OpenSSL from its bundled

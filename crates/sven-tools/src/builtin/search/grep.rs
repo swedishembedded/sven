@@ -264,7 +264,7 @@ async fn run_rg(
     let total_lines = stdout.lines().count();
     if total_lines > limit {
         result.push_str(&format!(
-            "\n...[{} more matches not shown — narrow with path= or include= to see all results]",
+            "\n...[{} more matches not shown - narrow with path= or include= to see all results]",
             total_lines - limit
         ));
     }

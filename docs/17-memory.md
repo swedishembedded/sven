@@ -2,7 +2,7 @@
 
 Sven's semantic memory stores facts, notes, contact details, and any information
 worth remembering across sessions. It uses SQLite with FTS5 full-text search
-(BM25 ranking), making it fast and fully local — no external vector database needed.
+(BM25 ranking), making it fast and fully local - no external vector database needed.
 
 ## How It Works
 
@@ -75,7 +75,7 @@ The legacy JSON KV store is automatically migrated to SQLite on first run.
 
 The simplest way to build a personal knowledge base:
 
-1. **Ingest via messaging**: Configure a Telegram channel. Text anything to remember — the agent saves it with `remember`.
+1. **Ingest via messaging**: Configure a Telegram channel. Text anything to remember - the agent saves it with `remember`.
 2. **Retrieve on demand**: Ask the agent to recall information; it runs a semantic search.
 3. **Automatic extraction**: During email/calendar triage, the agent extracts and saves contact details, action items, and preferences.
 

@@ -126,7 +126,7 @@ fn mime_to_audio_format(url: &str) -> &'static str {
     }
 }
 
-/// Content returned by a tool – either a plain string or structured parts.
+/// Content returned by a tool - either a plain string or structured parts.
 ///
 /// The `Parts` variant allows a tool to return text and image blocks together.
 /// Providers serialize this into their API-specific wire format.
@@ -434,10 +434,10 @@ pub enum Role {
 
 /// The content of a message.
 ///
-/// - `Text` – simple string (most messages)
-/// - `ContentParts` – mixed text + image parts for multimodal user turns
-/// - `ToolCall` – the assistant requests a tool invocation
-/// - `ToolResult` – the result of a tool call, optionally with image parts
+/// - `Text` - simple string (most messages)
+/// - `ContentParts` - mixed text + image parts for multimodal user turns
+/// - `ToolCall` - the assistant requests a tool invocation
+/// - `ToolResult` - the result of a tool call, optionally with image parts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MessageContent {
@@ -499,7 +499,7 @@ pub struct CompletionRequest {
     /// to reuse its prefix KV-cache for identical prefixes even when
     /// automatic prefix caching would not otherwise trigger.
     ///
-    /// Providers that do not use this field (OpenAI, Anthropic, Google, …)
+    /// Providers that do not use this field (OpenAI, Anthropic, Google, ...)
     /// silently ignore it.
     pub cache_key: Option<String>,
     /// Optional per-request override for max output tokens (e.g. for short
@@ -522,7 +522,7 @@ pub enum ResponseEvent {
     TextDelta(String),
     /// The model wants to call a tool.
     ///
-    /// OpenAI streams parallel tool calls interleaved by `index` — chunks for
+    /// OpenAI streams parallel tool calls interleaved by `index` - chunks for
     /// the same tool call share an index and must be accumulated separately.
     /// Providers that do not support parallel streaming (Anthropic, Cohere,
     /// AWS) always emit index 0.

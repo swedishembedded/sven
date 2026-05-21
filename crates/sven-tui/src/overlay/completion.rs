@@ -20,7 +20,7 @@ pub struct CompletionOverlay {
     /// All completions for the current command/argument (pre-filtered and ranked).
     pub items: Vec<CompletionItem>,
 
-    /// ratatui list state — owns both the selected index and the scroll offset.
+    /// ratatui list state - owns both the selected index and the scroll offset.
     pub list_state: ListState,
 }
 

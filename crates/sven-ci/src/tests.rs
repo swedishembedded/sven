@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn jsonl_detection_stops_at_10_lines() {
-        // Build a 20-line JSONL with the 11th being invalid — must still pass
+        // Build a 20-line JSONL with the 11th being invalid - must still pass
         // because we only check the first 10.
         let mut lines: Vec<String> = (0..10).map(|i| format!("{{\"i\":{i}}}")).collect();
         lines.push("not json".to_string());

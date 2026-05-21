@@ -1,7 +1,7 @@
 # Teams and Tasks
 
-When a task is too large for one agent to handle cleanly — or when you want
-different parts of a problem to run in parallel — sven supports **teams**: a
+When a task is too large for one agent to handle cleanly - or when you want
+different parts of a problem to run in parallel - sven supports **teams**: a
 lead agent that creates and assigns work, and one or more teammate agents that
 pick up and complete tasks independently.
 
@@ -62,7 +62,7 @@ with a summary.  The lead can call `list_tasks` at any time to see the board.
 ## What you actually do
 
 Teams work best when you let the agent manage the process.  Your job is to
-write one good prompt.  The agent handles everything else — creating the team,
+write one good prompt.  The agent handles everything else - creating the team,
 spawning teammates, creating tasks, assigning them, tracking completion, and
 reporting results back to you.
 
@@ -82,7 +82,7 @@ Use a team:
 
 The agent will:
 - Call `create_team` to initialise the shared task store
-- Call `spawn_teammate` twice — once for the explorer, once for the implementer
+- Call `spawn_teammate` twice - once for the explorer, once for the implementer
 - Call `create_task` for each piece of work
 - Monitor with `list_tasks` until everything is completed
 - Report back to you
@@ -144,16 +144,16 @@ immediately.
 ### Step 4: Monitor progress
 
 ```
-Check the team status — who is working on what and how far along are the tasks?
+Check the team status - who is working on what and how far along are the tasks?
 ```
 
 The agent calls `list_team` and `list_tasks` and reports back:
 
 ```
-Team 'release-prep' — 3 members | tasks: pending=0, in_progress=2, completed=0, failed=0
+Team 'release-prep' - 3 members | tasks: pending=0, in_progress=2, completed=0, failed=0
 
-● changelog-writer [Explorer] — working on: "Write CHANGELOG entry"
-● test-runner      [Tester]   — working on: "Run test suite"
+● changelog-writer [Explorer] - working on: "Write CHANGELOG entry"
+● test-runner      [Tester]   - working on: "Run test suite"
 ○ you              [Lead]
 ```
 
@@ -180,7 +180,7 @@ to remove the team directory.
 ## Roles
 
 When spawning teammates, you assign each one a **role**.  The role is a hint to
-the LLM about what the agent should focus on — it is injected into the system
+the LLM about what the agent should focus on - it is injected into the system
 prompt.
 
 | Role | Typical use |
@@ -189,7 +189,7 @@ prompt.
 | `implementer` | Write or change code based on a specification |
 | `reviewer` | Read code and produce a review report, suggest improvements |
 | `tester` | Run tests, analyse failures, suggest fixes |
-| `teammate` | General purpose — no specific focus |
+| `teammate` | General purpose - no specific focus |
 
 You can also use any custom string: `role: "documentation-writer"` or
 `role: "security-auditor"` work fine.
@@ -292,7 +292,7 @@ members:
     name: test-runner
     instructions: |
       Run the full test suite. Report any failures with test names and
-      error messages. Do not attempt fixes — only report.
+      error messages. Do not attempt fixes - only report.
 
   - role: reviewer
     name: pr-reviewer
@@ -320,7 +320,7 @@ sven team definitions
 
 ## Prompting the lead agent effectively
 
-The lead agent is the node's interactive agent — the one you talk to via the
+The lead agent is the node's interactive agent - the one you talk to via the
 web UI or `sven node exec`.  It has access to all team tools plus the full
 standard toolset.
 
@@ -340,7 +340,7 @@ If you want a summary, ask for one:
 
 ```
 After all teammates finish, read their completion summaries and write a
-consolidated 'release-notes.md'. Do not summarise the tool calls — only
+consolidated 'release-notes.md'. Do not summarise the tool calls - only
 the actual changes made.
 ```
 
@@ -429,16 +429,16 @@ The lead can observe this in real time by calling `list_tasks` and `list_team`.
 
 sven enforces hard limits to prevent runaway agent chains:
 
-- **Subprocess depth** — a teammate spawned by `TaskTool` (the local subprocess
+- **Subprocess depth** - a teammate spawned by `TaskTool` (the local subprocess
   spawner) cannot itself spawn further sub-agents.  The maximum depth is 3
   levels.
-- **P2P hop depth** — tasks delegated over the network cannot chain more than 4
+- **P2P hop depth** - tasks delegated over the network cannot chain more than 4
   hops.  A node that receives a delegated task does not get team tools, so it
   cannot create new teams or spawn new teammates.
-- **Cycle detection** — the delegation chain is tracked by peer ID.  If a task
+- **Cycle detection** - the delegation chain is tracked by peer ID.  If a task
   would loop back to a node already in the chain, it is rejected before the
   model is even invoked.
-- **SpawnTeammateTool** — only the team lead can spawn teammates.  A teammate
+- **SpawnTeammateTool** - only the team lead can spawn teammates.  A teammate
   cannot spawn sub-teams.
 
 These limits are enforced at the system level, not by the model.  No prompt
@@ -476,7 +476,7 @@ the swarm port is reachable.
 
 The teammate that claimed the task may have crashed or been killed.  Check
 with `list_team` to see if it is still marked Active.  You can update the task
-description to re-clarify requirements, then wait to see if it recovers — or
+description to re-clarify requirements, then wait to see if it recovers - or
 shut down the stuck teammate with `shutdown_teammate` and respawn it.
 
 ### `cleanup_team` refuses to run
@@ -499,7 +499,7 @@ Or call `cleanup_team` with `force: true` from the lead agent.
 
 ---
 
-## Reference — team and task tools
+## Reference - team and task tools
 
 These tools are available to the node's interactive (lead) agent.
 

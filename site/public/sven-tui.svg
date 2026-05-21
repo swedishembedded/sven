@@ -37,7 +37,7 @@
 
 <text x="12" y="115" font-family="monospace" font-size="10" fill="#5a6878">thinking</text>
 <text x="64" y="115" font-family="monospace" font-size="10" fill="#e6b428">◆</text>
-<text x="78" y="115" font-family="monospace" font-size="10" fill="#3a4455">"HS256 in use — needs keypair for RS256 rotation..."</text>
+<text x="78" y="115" font-family="monospace" font-size="10" fill="#3a4455">"HS256 in use - needs keypair for RS256 rotation..."</text>
 
 <text x="12" y="133" font-family="monospace" font-size="10" fill="#e8a030">⚙ read_file</text>
 <text x="94" y="133" font-family="monospace" font-size="10" fill="#7a8898"> src/auth/jwt.rs</text>

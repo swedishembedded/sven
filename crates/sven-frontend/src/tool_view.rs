@@ -140,7 +140,7 @@ fn format_field_value(val: &Value) -> Option<String> {
             if obj.is_empty() {
                 None
             } else {
-                Some(format!("{{…{} fields}}", obj.len()))
+                Some(format!("{{...{} fields}}", obj.len()))
             }
         }
     }

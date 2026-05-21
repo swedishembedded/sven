@@ -42,11 +42,11 @@ use sven_config::ModelConfig;
 ///
 /// All model providers share these settings:
 ///
-/// * **TCP keepalive (30 s)** — causes the OS to probe a silent connection
+/// * **TCP keepalive (30 s)** - causes the OS to probe a silent connection
 ///   after 30 seconds of inactivity.  This detects half-open TCP connections
 ///   (the remote end disappeared without a FIN/RST) and surfaces them as I/O
 ///   errors so the streaming loop can recover rather than hanging indefinitely.
-/// * **Connect timeout (30 s)** — prevents indefinite blocking if the API
+/// * **Connect timeout (30 s)** - prevents indefinite blocking if the API
 ///   endpoint is unreachable or DNS resolution stalls.
 ///
 /// No total request timeout is set because SSE streaming responses legitimately
@@ -232,8 +232,8 @@ impl ModelProvider for ConfigBoundedProvider {
 /// `sven list-providers` to see all recognised provider ids.
 ///
 /// The resolved output token limit is determined in priority order:
-/// 1. `cfg.max_output_tokens` — explicit per-request output cap
-/// 2. `cfg.max_tokens` — backward-compatible total/output cap
+/// 1. `cfg.max_output_tokens` - explicit per-request output cap
+/// 2. `cfg.max_tokens` - backward-compatible total/output cap
 /// 3. Static catalog `max_output_tokens` for the model
 /// 4. Hardcoded fallback of 4096
 ///
@@ -249,8 +249,8 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
     let key = || resolve_api_key(cfg);
 
     // Resolve the output token limit sent to the provider API:
-    //   1. cfg.max_output_tokens  — explicit per-request output cap
-    //   2. cfg.max_tokens         — backward compat: total used as output cap
+    //   1. cfg.max_output_tokens  - explicit per-request output cap
+    //   2. cfg.max_tokens         - backward compat: total used as output cap
     //   3. catalog max_output_tokens for the model
     // The final unwrap_or(4096) lives inside OpenAICompatProvider::new.
     let resolved_max_tokens = cfg
@@ -551,17 +551,17 @@ fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
 ///    older than 24 hours.
 /// 3. An API key is available (needed to authenticate the request).
 ///
-/// Errors in the background task are silently discarded — cache refresh is a
+/// Errors in the background task are silently discarded - cache refresh is a
 /// best-effort optimisation, not a critical path.
 fn maybe_spawn_openrouter_cache_refresh(api_key: Option<String>, base_url: String) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return; // No runtime active — skip (e.g. unit tests, sync callers).
+        return; // No runtime active - skip (e.g. unit tests, sync callers).
     };
     let Some(key) = api_key else {
-        return; // No key — cannot authenticate the request.
+        return; // No key - cannot authenticate the request.
     };
     if !catalog::is_cache_stale("openrouter") {
-        return; // Fresh disk cache — no need to refresh.
+        return; // Fresh disk cache - no need to refresh.
     }
     handle.spawn(async move {
         let models_url = format!("{}/models", base_url.trim_end_matches('/'));
@@ -621,18 +621,18 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
 ///
 /// Resolution happens in four ordered steps; the first one that succeeds wins:
 ///
-/// 1. **Named provider** — if the prefix of `override_str` matches a key in
+/// 1. **Named provider** - if the prefix of `override_str` matches a key in
 ///    `config.providers`, use that named config (optionally overriding the
 ///    model name with the suffix after `/`).
-/// 2. **Catalog lookup `provider/name`** — when `override_str` contains `/`
+/// 2. **Catalog lookup `provider/name`** - when `override_str` contains `/`
 ///    and the prefix is a known driver, look up `(provider, name)` in the
 ///    static model catalog.  A fresh `ModelConfig` is built from catalog
 ///    metadata; credentials are inherited only when the resolved provider
 ///    matches `config.model.provider`.
-/// 3. **Catalog lookup by bare model name** — when `override_str` has no `/`
+/// 3. **Catalog lookup by bare model name** - when `override_str` has no `/`
 ///    and is not a known provider id, search the catalog for that model name
 ///    alone (provider is inferred from the catalog entry).
-/// 4. **Fallback** — call [`resolve_model_cfg`] with `config.model` as the
+/// 4. **Fallback** - call [`resolve_model_cfg`] with `config.model` as the
 ///    base, which handles bare provider ids and custom/unknown endpoints.
 pub struct ModelResolver<'a> {
     config: &'a sven_config::Config,
@@ -751,7 +751,7 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
         cfg.provider = provider.to_string();
         cfg.name = model.to_string();
     } else if get_driver(override_str).is_some() {
-        // Bare provider id — change provider, keep the current model name.
+        // Bare provider id - change provider, keep the current model name.
         provider_changed = override_str != base.provider;
         cfg.provider = override_str.to_string();
     } else {
@@ -813,7 +813,7 @@ mod tests {
     fn from_config_openai_succeeds() {
         let cfg = minimal_config("openai", "gpt-4o");
         // Either succeeds (if OPENAI_API_KEY is set) or fails with a missing-key
-        // error — the provider must always be recognised.
+        // error - the provider must always be recognised.
         match from_config(&cfg) {
             Ok(_) => {}
             Err(e) => assert!(
@@ -839,7 +839,7 @@ mod tests {
     fn from_config_google_succeeds() {
         let cfg = minimal_config("google", "gemini-2.0-flash-exp");
         // Either succeeds (if GEMINI_API_KEY is set in env) or fails with a
-        // missing-key error — the provider must always be recognised.
+        // missing-key error - the provider must always be recognised.
         match from_config(&cfg) {
             Ok(_) => {}
             Err(e) => assert!(
@@ -1005,11 +1005,11 @@ mod tests {
         // without returning "unknown provider" (API key errors are OK).
         for meta in list_drivers() {
             if meta.id == "litellm" || meta.id == "cloudflare" {
-                // These require base_url — skip here.
+                // These require base_url - skip here.
                 continue;
             }
             if meta.id == "azure" {
-                // Azure requires resource name — skip.
+                // Azure requires resource name - skip.
                 continue;
             }
             let cfg = minimal_config(meta.id, "test-model");
@@ -1330,7 +1330,7 @@ mod tests {
     #[test]
     fn step2_unknown_provider_slash_form_falls_through_to_fallback() {
         let config = make_config("openai", "gpt-4o");
-        // "mylocal/some-model" — "mylocal" is not a known driver.
+        // "mylocal/some-model" - "mylocal" is not a known driver.
         let cfg = ModelResolver::new(&config, "mylocal/some-model").resolve();
         // Falls through to step 4 (resolve_model_cfg) which splits at "/" directly.
         assert_eq!(cfg.provider, "mylocal");
@@ -1342,7 +1342,7 @@ mod tests {
     fn step2_inherits_credentials_when_same_provider() {
         let mut config = make_config("openai", "gpt-4o");
         config.model.api_key = Some("sk-mykey".into());
-        // openai/gpt-4o-mini — same provider, should inherit api_key.
+        // openai/gpt-4o-mini - same provider, should inherit api_key.
         let cfg = ModelResolver::new(&config, "openai/gpt-4o-mini").resolve();
         assert_eq!(cfg.provider, "openai");
         assert_eq!(

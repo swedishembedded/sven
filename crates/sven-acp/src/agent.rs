@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! [`SvenAcpAgent`] — implements the ACP `Agent` trait for sven.
+//! [`SvenAcpAgent`] - implements the ACP `Agent` trait for sven.
 //!
 //! Each `new_session` call builds a fresh `sven_core::Agent` via
 //! [`sven_bootstrap::AgentBuilder`] and stores it in a [`SessionEntry`] keyed
@@ -37,7 +37,7 @@ use tracing::{debug, warn};
 /// writes to stdout.  If the IDE stops reading stdout the write stalls and
 /// the ack never arrives.  Rather than blocking the entire `prompt()` future
 /// (and therefore the whole LocalSet) indefinitely, we time-out and continue
-/// streaming — the IDE will have to cope with the dropped notification.
+/// streaming - the IDE will have to cope with the dropped notification.
 const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long to wait for the IDE to respond to a `session/request_permission`
@@ -133,7 +133,7 @@ impl sven_tools::PermissionRequester for AcpPermissionRequester {
         {
             warn!(
                 tool = %call_name,
-                "ACP permission request failed: conn_tx closed — denying"
+                "ACP permission request failed: conn_tx closed - denying"
             );
             return false;
         }
@@ -146,13 +146,13 @@ impl sven_tools::PermissionRequester for AcpPermissionRequester {
                 RequestPermissionOutcome::Cancelled | _ => false,
             },
             Ok(Err(_)) => {
-                warn!(tool = %call_name, "ACP permission response channel dropped — denying");
+                warn!(tool = %call_name, "ACP permission response channel dropped - denying");
                 false
             }
             Err(_) => {
                 warn!(
                     tool = %call_name,
-                    "ACP permission request timed out after {}s — denying",
+                    "ACP permission request timed out after {}s - denying",
                     PERMISSION_TIMEOUT.as_secs()
                 );
                 false
@@ -380,7 +380,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                     }
                 }
                 None => {
-                    // Channel closed without a terminal event — agent may have
+                    // Channel closed without a terminal event - agent may have
                     // returned Err. Await the task to confirm and surface failure.
                     break;
                 }

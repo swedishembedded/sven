@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! TUI widget library — all rendering logic lives here.
+//! TUI widget library - all rendering logic lives here.
 //!
 //! Each module contains a self-contained [`ratatui::widgets::Widget`]
 //! (or [`ratatui::widgets::StatefulWidget`]) implementor plus any data types
@@ -61,7 +61,7 @@ pub(crate) use width_utils::{
 
 /// Standard sven vertical scrollbar (right side, no begin/end symbols).
 ///
-/// Both [`ChatPane`] and [`InputPane`] use identical configuration — this
+/// Both [`ChatPane`] and [`InputPane`] use identical configuration - this
 /// keeps the look consistent and removes duplication.
 pub(crate) fn sven_scrollbar() -> Scrollbar<'static> {
     Scrollbar::new(ScrollbarOrientation::VerticalRight)

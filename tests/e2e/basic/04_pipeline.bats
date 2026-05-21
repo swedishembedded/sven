@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 04_pipeline.bats – pipeline and terminal-setting tests.
+# 04_pipeline.bats - pipeline and terminal-setting tests.
 #
 # Validates:
 #   • sven stdout pipes cleanly to a second sven instance
@@ -13,7 +13,7 @@ load helpers
 
 # ── Basic piping ──────────────────────────────────────────────────────────────
 
-@test "04.01 output of sven pipes to sven – both succeed" {
+@test "04.01 output of sven pipes to sven - both succeed" {
     run bash -c \
         'echo "make a plan" \
            | "$BIN" --headless --model mock 2>/dev/null \
@@ -116,7 +116,7 @@ EOF'
     [ "${status}" -eq 0 ]
 }
 
-# ── echo | sven – classic unix idiom ─────────────────────────────────────────
+# ── echo | sven - classic unix idiom ─────────────────────────────────────────
 
 @test "04.14 echo pipe with explicit prompt arg" {
     run bash -c \

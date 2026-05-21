@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::io::Write;
 
-/// Write clean output to stdout — suitable for piping to the next agent.
+/// Write clean output to stdout - suitable for piping to the next agent.
 pub fn write_stdout(text: &str) {
     print!("{text}");
     let _ = std::io::stdout().flush();

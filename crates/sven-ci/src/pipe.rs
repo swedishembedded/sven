@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Unix-philosophy pipe primitives for agent orchestration.
 //!
-//! These three commands — `map`, `tee`, `reduce` — complete Sven's
+//! These three commands - `map`, `tee`, `reduce` - complete Sven's
 //! pipe composition story:
 //!
 //! ```bash
@@ -184,7 +184,7 @@ pub async fn run_map(opts: MapOptions, stdin_data: String) -> anyhow::Result<()>
 /// stdin.  Outputs are collected in order and written to stdout.
 pub async fn run_tee(opts: TeeOptions, stdin_data: String) -> anyhow::Result<()> {
     if opts.commands.is_empty() {
-        // With no commands, tee acts like cat — pass stdin through.
+        // With no commands, tee acts like cat - pass stdin through.
         print!("{stdin_data}");
         return Ok(());
     }
@@ -339,7 +339,7 @@ async fn run_child_agent(
     let status = child.wait().await.context("waiting for child")?;
 
     // Accept exit code 0 (success) and 3 (tool warnings) as non-fatal.
-    // Exit code 3 means the run completed but had tool errors — we still
+    // Exit code 3 means the run completed but had tool errors - we still
     // want the output.
     if !status.success() {
         let code = status.code().unwrap_or(-1);

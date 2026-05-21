@@ -8,13 +8,13 @@
 //! Every public lookup function checks the **in-memory live cache** first.
 //! The live cache is populated from two sources:
 //!
-//! 1. **Disk cache** — a per-provider JSON file in
+//! 1. **Disk cache** - a per-provider JSON file in
 //!    `~/.config/sven/model-cache/<provider>.json` written by previous
 //!    sessions.  Loaded at most once per provider per process via
 //!    [`load_disk_cache`].  Entries are only used when the file is younger
 //!    than [`CACHE_TTL_SECS`].
 //!
-//! 2. **Background refresh** — a tokio task spawned by the model provider
+//! 2. **Background refresh** - a tokio task spawned by the model provider
 //!    after a successful live `GET /models` call.  Updates both the in-memory
 //!    cache and the on-disk file via [`cache_update`].
 //!
@@ -90,7 +90,7 @@ struct CatalogFile {
 /// Return a reference to the parsed static YAML catalog.
 ///
 /// Parsed exactly once via [`OnceLock`]; subsequent calls are zero-cost
-/// pointer returns.  This is the raw YAML-only view — callers that want
+/// pointer returns.  This is the raw YAML-only view - callers that want
 /// live-cache entries should use the public API functions.
 pub(crate) fn yaml_catalog() -> &'static [ModelCatalogEntry] {
     static CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
@@ -173,7 +173,7 @@ pub fn load_disk_cache(provider: &str) {
         Err(_) => return,
     };
     if current_unix_secs().saturating_sub(dc.fetched_at) > CACHE_TTL_SECS {
-        // Stale — skip; background refresh will repopulate.
+        // Stale - skip; background refresh will repopulate.
         return;
     }
     if let Ok(mut guard) = live_cache().write() {

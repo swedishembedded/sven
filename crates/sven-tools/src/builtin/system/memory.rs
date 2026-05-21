@@ -18,7 +18,7 @@ use crate::builtin::{
     knowledge::list_knowledge::ListKnowledgeTool, search::search_knowledge::SearchKnowledgeTool,
 };
 
-/// Compound memory tool — persistent KV store and project knowledge in one.
+/// Compound memory tool - persistent KV store and project knowledge in one.
 pub struct MemoryTool {
     /// Path override for the memory file (falls back to ~/.config/sven/memory.json)
     memory_file: Option<String>,

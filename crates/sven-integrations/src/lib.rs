@@ -6,9 +6,9 @@
 //!
 //! # Modules
 //!
-//! - [`email`] — IMAP/SMTP and Gmail API email access
-//! - [`calendar`] — CalDAV and Google Calendar access
-//! - [`voice`] — TTS (ElevenLabs/OpenAI), STT (Whisper), and voice calls (Twilio)
+//! - [`email`] - IMAP/SMTP and Gmail API email access
+//! - [`calendar`] - CalDAV and Google Calendar access
+//! - [`voice`] - TTS (ElevenLabs/OpenAI), STT (Whisper), and voice calls (Twilio)
 
 pub mod calendar;
 pub mod email;

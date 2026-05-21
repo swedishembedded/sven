@@ -10,7 +10,7 @@ use sven_config::AgentMode;
 
 /// `sven tool` subcommands.
 ///
-/// Run individual built-in tools directly from the command line — useful for
+/// Run individual built-in tools directly from the command line - useful for
 /// scripting, debugging tool behaviour, or quick one-off operations without
 /// starting an agent session.
 ///
@@ -39,15 +39,15 @@ pub enum ToolCommands {
     /// that tool's parameter schema.  Add key=value pairs to execute the tool.
     ///
     /// Parameter forms:
-    ///   key=value            — string, bool (true/false), or integer
-    ///   --json '{"k":"v"}'   — raw JSON object (overrides key=value pairs)
+    ///   key=value            - string, bool (true/false), or integer
+    ///   --json '{"k":"v"}'   - raw JSON object (overrides key=value pairs)
     ///
     /// Examples:
     ///
-    ///   sven tool call                                 — list all tools + schemas
-    ///   sven tool call --help                          — same
-    ///   sven tool call grep                            — show grep's schema
-    ///   sven tool call grep --help                     — show grep's schema
+    ///   sven tool call                                 - list all tools + schemas
+    ///   sven tool call --help                          - same
+    ///   sven tool call grep                            - show grep's schema
+    ///   sven tool call grep --help                     - show grep's schema
     ///   sven tool call grep pattern=TODO path=./src
     ///   sven tool call shell command="git status"
     ///   sven tool call write_file path=/tmp/out.txt content="hello"
@@ -84,7 +84,7 @@ pub enum McpCommands {
     ///
     /// The server blocks until stdin reaches EOF (i.e. until the host
     /// disconnects).  It does not fork, does not bind a port, and requires
-    /// no authentication — security is inherited from the host process.
+    /// no authentication - security is inherited from the host process.
     Serve {
         /// Comma-separated list of tool names to expose (local mode only).
         ///
@@ -232,7 +232,7 @@ pub enum NodeCommands {
         ///
         /// Use this when the node is running with its default local-CA TLS
         /// mode (not `insecure_dev_mode`) and you have not installed the CA
-        /// cert into the system trust store.  Must be explicitly requested —
+        /// cert into the system trust store.  Must be explicitly requested -
         /// the node never injects this flag automatically unless TLS is fully
         /// disabled via `insecure_dev_mode`.
         #[arg(long, default_value_t = false)]
@@ -289,7 +289,7 @@ pub enum NodeCommands {
 
     /// List all authorized operator devices.
     ///
-    /// Shows the devices in `authorized_peers.yaml` — the human operator
+    /// Shows the devices in `authorized_peers.yaml` - the human operator
     /// devices (phones, laptops, CLI clients) authorized to control this
     /// node via P2P.  Use `sven node pair` to add devices and
     /// `sven node revoke` to remove them.
@@ -326,7 +326,7 @@ pub enum NodeCommands {
         /// Path to the node config file (used to locate the TLS cert).
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
-        /// Skip TLS certificate verification (unsafe — for dev only).
+        /// Skip TLS certificate verification (unsafe - for dev only).
         #[arg(long)]
         insecure: bool,
     },
@@ -352,7 +352,7 @@ pub enum NodeCommands {
     ///
     /// When `tls_mode` is `local-ca` or `auto` (default), sven generates a
     /// local CA certificate on first start.  Run this command once on each
-    /// device that should trust the node — it will print the exact commands
+    /// device that should trust the node - it will print the exact commands
     /// needed for your platform (macOS, Linux, iOS, Android).
     ///
     /// Example:
@@ -383,7 +383,7 @@ pub enum NodeCommands {
 /// `sven peer` subcommands.
 ///
 /// All commands start an ephemeral P2P node using the same persistent keypair
-/// as `sven node start` — no separate daemon is needed.
+/// as `sven node start` - no separate daemon is needed.
 #[derive(Subcommand, Debug)]
 pub enum PeerCommands {
     /// List all agent peers discovered on the network.
@@ -414,7 +414,7 @@ pub enum PeerCommands {
     ///
     /// Examples:
     ///   sven peer chat backend-agent
-    ///   sven peer chat 12D3KooWAbCdEfGh…
+    ///   sven peer chat 12D3KooWAbCdEfGh...
     Chat {
         /// Peer agent name or base58 peer ID (prefix also works).
         peer: String,
@@ -429,9 +429,9 @@ pub enum PeerCommands {
     /// `~/.config/sven/conversations/peers/`.  No network connection needed.
     ///
     /// Pattern syntax: full Rust regex (same as ripgrep).
-    ///   (?i)     — case-insensitive
-    ///   ^ERROR   — lines starting with ERROR
-    ///   \d{4}    — four consecutive digits
+    ///   (?i)     - case-insensitive
+    ///   ^ERROR   - lines starting with ERROR
+    ///   \d{4}    - four consecutive digits
     ///
     /// Examples:
     ///   sven peer search "auth" --peer backend-agent
@@ -452,7 +452,7 @@ pub enum PeerCommands {
 
 // ── Index subcommand ──────────────────────────────────────────────────────────
 
-/// `sven index` subcommands — manage the repository context index.
+/// `sven index` subcommands - manage the repository context index.
 #[derive(Subcommand, Debug)]
 pub enum IndexCommands {
     /// Build or rebuild the repository context index.
@@ -487,7 +487,7 @@ pub enum IndexCommands {
 
 // ── Team subcommand ───────────────────────────────────────────────────────────
 
-/// `sven team` subcommands — manage agent teams.
+/// `sven team` subcommands - manage agent teams.
 ///
 /// Agent teams allow multiple sven instances to collaborate on a shared task
 /// list.  A team is created once (via `create` or `start`) and persists in
@@ -614,7 +614,7 @@ pub enum WebDevicesCommands {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
-        /// Skip TLS certificate verification (unsafe — for dev only).
+        /// Skip TLS certificate verification (unsafe - for dev only).
         #[arg(long)]
         insecure: bool,
     },
@@ -623,7 +623,7 @@ pub enum WebDevicesCommands {
     ///
     /// The device UUID (or a unique prefix) is shown in the browser's
     /// "awaiting approval" screen.  This command sends the approval to the
-    /// running node immediately — no restart required.
+    /// running node immediately - no restart required.
     Approve {
         /// Full device UUID or unique prefix (e.g. "abc1234" matches "abc1234ef-...").
         device_id: String,
@@ -636,7 +636,7 @@ pub enum WebDevicesCommands {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
-        /// Skip TLS certificate verification (unsafe — for dev only).
+        /// Skip TLS certificate verification (unsafe - for dev only).
         #[arg(long)]
         insecure: bool,
     },
@@ -656,7 +656,7 @@ pub enum WebDevicesCommands {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
         config: Option<PathBuf>,
-        /// Skip TLS certificate verification (unsafe — for dev only).
+        /// Skip TLS certificate verification (unsafe - for dev only).
         #[arg(long)]
         insecure: bool,
     },
@@ -872,7 +872,7 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub team_role: Option<String>,
 
-    /// Peer ID of the team lead.  Informational — used to find the team config.
+    /// Peer ID of the team lead.  Informational - used to find the team config.
     #[arg(long, hide = true)]
     pub team_lead_peer: Option<String>,
 
@@ -888,8 +888,8 @@ pub enum Commands {
     /// Useful for scripting, debugging tool behaviour, or quick one-off
     /// operations without starting an agent session.
     ///
-    ///   sven tool list                     — list all tools
-    ///   sven tool call grep --help         — show grep's parameter schema
+    ///   sven tool list                     - list all tools
+    ///   sven tool call grep --help         - show grep's parameter schema
     ///   sven tool call read_file path=src/main.rs
     Tool {
         #[command(subcommand)]
@@ -927,12 +927,12 @@ pub enum Commands {
 
     /// Peer: list agents, chat, and search conversation history.
     ///
-    /// Starts an ephemeral P2P connection — no running node required.
+    /// Starts an ephemeral P2P connection - no running node required.
     ///
-    ///   sven peer list                              — discover connected peers
-    ///   sven peer chat backend-agent                — interactive chat session
-    ///   sven peer search backend-agent "auth"       — grep conversation history
-    ///   sven peer search --all "(?i)out.of.memory"  — search across all peers
+    ///   sven peer list                              - discover connected peers
+    ///   sven peer chat backend-agent                - interactive chat session
+    ///   sven peer search backend-agent "auth"       - grep conversation history
+    ///   sven peer search --all "(?i)out.of.memory"  - search across all peers
     Peer {
         #[command(subcommand)]
         command: PeerCommands,
@@ -940,13 +940,13 @@ pub enum Commands {
 
     /// Manage agent teams.
     ///
-    ///   sven team list                     — list all teams
-    ///   sven team status <NAME>            — detailed team status
-    ///   sven team create --name <N>        — create a new team
-    ///   sven team start --file team.yaml   — spawn agents from definition
-    ///   sven team cleanup <NAME> --force   — remove team data
-    ///   sven team definitions              — list project team YAML files
-    ///   sven team init --name <N>          — generate a starter definition
+    ///   sven team list                     - list all teams
+    ///   sven team status <NAME>            - detailed team status
+    ///   sven team create --name <N>        - create a new team
+    ///   sven team start --file team.yaml   - spawn agents from definition
+    ///   sven team cleanup <NAME> --force   - remove team data
+    ///   sven team definitions              - list project team YAML files
+    ///   sven team init --name <N>          - generate a starter definition
     Team {
         #[command(subcommand)]
         command: TeamCommands,
@@ -991,9 +991,9 @@ pub enum Commands {
     /// The index captures the file tree, public API symbols, and import graph.
     /// It is stored in `.sven/index/index.json` inside the repository root.
     ///
-    ///   sven index build          — build or rebuild the index
-    ///   sven index query "auth"   — find symbols related to auth
-    ///   sven index stats          — show index statistics
+    ///   sven index build          - build or rebuild the index
+    ///   sven index query "auth"   - find symbols related to auth
+    ///   sven index stats          - show index statistics
     Index {
         #[command(subcommand)]
         command: IndexCommands,
@@ -1117,7 +1117,7 @@ impl Cli {
     ///
     /// Headless is triggered by any of:
     /// - `--headless` flag
-    /// - positional prompt (e.g. `sven "something"` — one-shot prompt implies headless)
+    /// - positional prompt (e.g. `sven "something"` - one-shot prompt implies headless)
     /// - stdin is not a terminal (piped input, e.g. `echo "task" | sven`)
     /// - stdout is not a terminal (piped output, e.g. `sven 'hi' | sven 'follow up'`)
     ///

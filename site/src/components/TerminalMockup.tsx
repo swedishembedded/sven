@@ -49,7 +49,7 @@ export default function TerminalMockup() {
         <span className="w-3 h-3 rounded-full" style={{ background: '#f59e0b' }} />
         <span className="w-3 h-3 rounded-full" style={{ background: '#4ade80' }} />
         <span className="ml-3 text-xs font-mono" style={{ color: '#555568' }}>
-          sven — research mode
+          sven - research mode
         </span>
         <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded" style={{ color: '#5b8dee', background: 'rgba(91,141,238,0.1)' }}>
           gpt-4o

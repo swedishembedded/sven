@@ -19,7 +19,7 @@ use tracing::debug;
 use super::grid::{Cell, Grid, HlAttr};
 
 /// Handles Neovim RPC notifications (redraw events).  All shared state is
-/// behind `Arc<Mutex<…>>` so it can safely be read from the TUI render loop.
+/// behind `Arc<Mutex<...>>` so it can safely be read from the TUI render loop.
 #[derive(Clone)]
 pub struct NvimHandler {
     pub(super) grid: Arc<Mutex<Grid>>,
@@ -61,7 +61,7 @@ impl NvimHandler {
             "grid_cursor_goto" => self.handle_grid_cursor_goto(args).await,
             "hl_attr_define" => self.handle_hl_attr_define(args).await,
             "flush" => {
-                debug!("Redraw flush — notifying TUI");
+                debug!("Redraw flush - notifying TUI");
                 self.flush_notify.notify_one();
             }
             _ => debug!("Unhandled redraw event: {}", event_name),

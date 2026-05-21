@@ -18,7 +18,7 @@
 //!        allowed_users: []   # empty = allow all
 //!    ```
 //! 3. Start the node: `sven node start`
-//! 4. Message your bot — sven will respond.
+//! 4. Message your bot - sven will respond.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -98,7 +98,7 @@ impl Channel for TelegramChannel {
 
                 match result {
                     Err(e) => {
-                        error!(error = %e, "Telegram getUpdates error — retrying in 5s");
+                        error!(error = %e, "Telegram getUpdates error - retrying in 5s");
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -158,7 +158,7 @@ impl Channel for TelegramChannel {
                                 };
 
                                 if tx.send(inbound).await.is_err() {
-                                    warn!("Telegram: inbound channel closed — stopping");
+                                    warn!("Telegram: inbound channel closed - stopping");
                                     return;
                                 }
                             }

@@ -38,7 +38,7 @@ fn truncate_description(s: &str, max: usize) -> String {
         trimmed.to_string()
     } else {
         format!(
-            "{}…",
+            "{}...",
             truncate_to_width_exact(trimmed, max.saturating_sub(1))
         )
     }

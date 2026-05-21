@@ -15,15 +15,15 @@ pub struct TurnRecord {
     pub content: String,
 }
 
-/// In-memory conversation session — the **runtime state** of an active agent interaction.
+/// In-memory conversation session - the **runtime state** of an active agent interaction.
 ///
 /// # Layering note
 ///
 /// | Type | Crate | Role |
 /// |------|-------|------|
-/// | [`Session`] | `sven-core` | **Runtime state** — the live, mutable agent session with message history, compaction state, and token accounting. |
-/// | `ConversationFile` | `sven-input` | **Persisted format** — a parsed `.md` or `.jsonl` snapshot consumed to seed a session's initial history. |
-/// | `SessionManager` | `sven-tui` | **TUI UI state** — a tree of active `Session`s with selection tracking for the multi-session pane. |
+/// | [`Session`] | `sven-core` | **Runtime state** - the live, mutable agent session with message history, compaction state, and token accounting. |
+/// | `ConversationFile` | `sven-input` | **Persisted format** - a parsed `.md` or `.jsonl` snapshot consumed to seed a session's initial history. |
+/// | `SessionManager` | `sven-tui` | **TUI UI state** - a tree of active `Session`s with selection tracking for the multi-session pane. |
 #[derive(Debug)]
 pub struct Session {
     pub id: String,
@@ -106,7 +106,7 @@ impl Session {
         calibrated.saturating_add(self.schema_overhead)
     }
 
-    /// Fraction of the input budget consumed (0.0–1.0), using the calibrated
+    /// Fraction of the input budget consumed (0.0-1.0), using the calibrated
     /// effective token count.
     pub fn context_fraction(&self) -> f32 {
         let budget = self.input_budget();

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 06_headless_enhancements.bats – Tests for all headless/CI enhancements.
+# 06_headless_enhancements.bats - Tests for all headless/CI enhancements.
 #
 # Covers:
 #   • Conversation-format output (## User / ## Sven sections)
@@ -526,7 +526,7 @@ EOF
     [ "${status}" -eq 2 ]
 }
 
-# ── Git context – no crash ────────────────────────────────────────────────────
+# ── Git context - no crash ────────────────────────────────────────────────────
 
 @test "06.47 run from inside a git repo does not crash" {
     # Run from the project root (which is a git repo)
@@ -587,7 +587,7 @@ EOF
     [ "${status}" -eq 0 ]
 }
 
-# ── Conversation format — tool sections ──────────────────────────────────────
+# ── Conversation format - tool sections ──────────────────────────────────────
 
 @test "06.53 tool call appears as ## Tool section in conversation output" {
     run_split_output bash -c \

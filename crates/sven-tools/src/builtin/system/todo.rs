@@ -32,12 +32,12 @@ impl Tool for TodoTool {
     fn description(&self) -> &str {
         "Read or manage the session todo list.\n\
          Actions:\n\
-         - `read`   (default) — return the current list; no other fields needed.\n\
-         - `add`    — append new items; `todos` array required (id, content, status).\n\
-         - `update` — change status of existing items by id; `todos` array of {id, status} required.\n\
-         - `set`    — replace the entire list; `todos` array required (empty list clears all).\n\
+         - `read`   (default) - return the current list; no other fields needed.\n\
+         - `add`    - append new items; `todos` array required (id, content, status).\n\
+         - `update` - change status of existing items by id; `todos` array of {id, status} required.\n\
+         - `set`    - replace the entire list; `todos` array required (empty list clears all).\n\
          At most one item may be `in_progress` at a time (enforced on add/set).\n\
-         Mark items `completed` immediately after finishing. Update silently — never announce changes.\n\
+         Mark items `completed` immediately after finishing. Update silently - never announce changes.\n\
          Use for: complex multi-step tasks (3+ steps). Skip for: trivial/single tasks.\n\
          statuses: pending | in_progress | completed | cancelled"
     }

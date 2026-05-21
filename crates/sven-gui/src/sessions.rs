@@ -131,7 +131,7 @@ pub fn split_runs_into_rich_lines(
                 });
                 current_len += run_len;
             } else if run_len > max_chars {
-                // Run is very long — split at word boundaries, filling lines
+                // Run is very long - split at word boundaries, filling lines
                 let mut remaining: String = sub.to_string();
                 while !remaining.is_empty() {
                     let available = max_chars.saturating_sub(current_len);
@@ -182,7 +182,7 @@ pub fn split_runs_into_rich_lines(
                     }
                 }
             } else {
-                // Doesn't fit — flush current line, start new one
+                // Doesn't fit - flush current line, start new one
                 if !current_line.is_empty() {
                     lines.push(std::mem::take(&mut current_line));
                     current_len = 0;
@@ -223,7 +223,7 @@ pub fn format_fields_json(fields: &[(String, String)]) -> String {
         .map(|(k, v)| {
             let v_short: String = v.chars().take(120).collect();
             let v_display = if v.len() > 120 {
-                format!("{v_short}…")
+                format!("{v_short}...")
             } else {
                 v_short
             };

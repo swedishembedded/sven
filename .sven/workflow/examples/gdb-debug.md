@@ -44,16 +44,16 @@ Priority rules for selecting among multiple matches:
 - **PlatformIO**: `.pio/build/<env>/firmware.elf`
 - When multiple candidates remain, pick the newest file
 
-Report the absolute ELF path (or "not found" — debugging without symbols is
+Report the absolute ELF path (or "not found" - debugging without symbols is
 still possible).
 
 ### 2. Find the MCU / device name
 
 Check in order (stop at first hit):
-1. `debugging/launch.json` — grep for `"device"`, strip the leading `-`
-2. `.vscode/launch.json` — grep for `"device"`
-3. `.gdbinit` — grep for `JLinkGDBServer`
-4. `Makefile` — grep for `-device`
+1. `debugging/launch.json` - grep for `"device"`, strip the leading `-`
+2. `.vscode/launch.json` - grep for `"device"`
+3. `.gdbinit` - grep for `JLinkGDBServer`
+4. `Makefile` - grep for `-device`
 
 ### 3. GDB server command
 
@@ -73,7 +73,7 @@ If not found, construct:
 
 Start the GDB server using the command discovered in the previous step.
 
-**Attempt 1 — auto-start:**
+**Attempt 1 - auto-start:**
 Call `gdb_start_server` with the discovered `command` string.
 
 **If the server exits immediately with "Port N is already in use":**
@@ -98,15 +98,15 @@ Connect gdb-multiarch to the running GDB server.
 
 Call `gdb_connect` with:
 - `port`: {{port}} (or port reported by gdb_start_server)
-- `executable`: the absolute ELF path from the discovery step (omit if not found — GDB will connect without debug symbols)
+- `executable`: the absolute ELF path from the discovery step (omit if not found - GDB will connect without debug symbols)
 
-The firmware is already on the target — do **NOT** run `load`.
+The firmware is already on the target - do **NOT** run `load`.
 
 After connecting, run these inspection commands with `gdb_command`:
-1. `monitor reset halt`   — halt the CPU at a known state
-2. `info registers`       — capture CPU registers
-3. `x/16x $sp`            — dump top of stack
-4. `info symbol $pc`      — identify current PC location
+1. `monitor reset halt`   - halt the CPU at a known state
+2. `info registers`       - capture CPU registers
+3. `x/16x $sp`            - dump top of stack
+4. `info symbol $pc`      - identify current PC location
 
 Report the register values and flag anything unexpected:
 - Fault registers (CFSR, HFSR) non-zero → hard fault in progress
@@ -120,7 +120,7 @@ Report the register values and flag anything unexpected:
 Set a breakpoint and run to it.
 
 1. `gdb_command` → `break arch_cpu_idle`
-   (Use `arch_cpu_idle` for Zephyr targets — it is called continuously during
+   (Use `arch_cpu_idle` for Zephyr targets - it is called continuously during
    idle and will be hit quickly. Alternatively use `main` for bare-metal.)
 2. `gdb_command` → `continue`
 3. Call `gdb_wait_stopped` to wait for the breakpoint to hit (up to 30 s).
@@ -140,7 +140,7 @@ Report:
 
 Call `gdb_stop` to disconnect gdb-multiarch and kill the GDB server.
 
-**Always call `gdb_stop` — even if previous steps failed.**
+**Always call `gdb_stop` - even if previous steps failed.**
 
 Summarise the debug session:
 - ELF loaded successfully: yes/no

@@ -7,7 +7,7 @@
 //! previously lived inside `stream_one_turn`.  It accumulates per-slot
 //! argument chunks from the LLM stream and dispatches each slot as a
 //! `tokio::spawn` task the moment its JSON arguments form a valid (or
-//! repairable) object — without waiting for the other slots or for the stream
+//! repairable) object - without waiting for the other slots or for the stream
 //! to finish.
 //!
 //! ## Latency model
@@ -280,7 +280,7 @@ impl ToolSlotManager {
     /// as each completes (in any order).
     ///
     /// Tool events (progress, todo updates, mode changes) are NOT drained here
-    /// — the caller is responsible for running [`Agent::drain_tool_events`]
+    /// - the caller is responsible for running [`Agent::drain_tool_events`]
     /// concurrently (e.g. via a `tokio::select!` 100 ms timer branch) so that
     /// `ModeChanged` events can also update session state.
     ///
@@ -348,7 +348,7 @@ impl ToolSlotManager {
     /// Consume `self` into a flat list of `(index, ToolCall, JoinHandle)`.
     ///
     /// The `Drop` impl is bypassed because we drain `self.slots` via
-    /// `into_iter` — the handles are moved out rather than dropped.
+    /// `into_iter` - the handles are moved out rather than dropped.
     fn into_handles(mut self) -> Vec<(u32, ToolCall, JoinHandle<ToolOutput>)> {
         let handles: Vec<_> = self
             .slots
@@ -553,7 +553,7 @@ mod tests {
         let mut mgr = ToolSlotManager::new(reg);
         // First dispatch
         assert!(mgr.feed(0, "id1", "echo", r#"{"x":1}"#).is_some());
-        // Stray trailing chunk for the same slot — must be ignored.
+        // Stray trailing chunk for the same slot - must be ignored.
         assert!(mgr.feed(0, "", "", " ").is_none());
     }
 
@@ -594,7 +594,7 @@ mod tests {
     async fn finalize_remaining_skips_empty_name() {
         let reg = make_registry();
         let mut mgr = ToolSlotManager::new(reg);
-        // Feed without a name — should be dropped during finalize.
+        // Feed without a name - should be dropped during finalize.
         mgr.feed(0, "id1", "", r#"{"x":1}"#);
         // (The slot stays Accumulating because feed() guards on empty name at dispatch.)
         let dispatched = mgr.finalize_remaining();
@@ -719,7 +719,7 @@ mod tests {
     fn adversarial_100kb_string_value_does_not_panic() {
         let big_val = "x".repeat(100_000);
         let input = format!(r#"{{"key":"{big_val}"}}"#);
-        // Valid JSON with a huge string — repair should succeed.
+        // Valid JSON with a huge string - repair should succeed.
         let result = attempt_json_repair(&input);
         assert!(
             result.is_ok(),
@@ -737,13 +737,13 @@ mod tests {
 
     #[test]
     fn adversarial_multiple_concatenated_objects_handled() {
-        // Two valid objects concatenated — not valid JSON; repair must not panic.
+        // Two valid objects concatenated - not valid JSON; repair must not panic.
         let _ = attempt_json_repair(r#"{"a":1}{"b":2}"#);
     }
 
     #[test]
     fn adversarial_trailing_garbage_after_valid_object() {
-        // Valid object followed by garbage — serde_json treats trailing bytes as
+        // Valid object followed by garbage - serde_json treats trailing bytes as
         // an error, so repair may fail, but must not panic.
         let _ = attempt_json_repair(r#"{"a":1} GARBAGE TEXT"#);
     }

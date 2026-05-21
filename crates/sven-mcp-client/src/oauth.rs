@@ -11,7 +11,7 @@
 //!
 //! # Scope discovery (per MCP spec §Authorization)
 //!
-//! Scopes are discovered automatically – you do **not** need to configure them:
+//! Scopes are discovered automatically - you do **not** need to configure them:
 //!
 //! 1. `scope` parameter in the `WWW-Authenticate` header of a 401 response.
 //! 2. `scopes_supported` in the Protected Resource Metadata document
@@ -28,7 +28,7 @@
 //!
 //! # Flow
 //!
-//! 1. Server returns HTTP 401 with `WWW-Authenticate: Bearer …`.
+//! 1. Server returns HTTP 401 with `WWW-Authenticate: Bearer ...`.
 //! 2. Call `discover_oauth_info()` to resolve the authorization server and scopes.
 //! 3. If the server advertises a registration endpoint and no client_id is configured,
 //!    perform Dynamic Client Registration (RFC 7591) to obtain a client_id.
@@ -119,7 +119,7 @@ pub struct StoredClientInfo {
     pub redirect_uri: String,
 }
 
-/// The credentials store – a JSON file mapping server keys to tokens.
+/// The credentials store - a JSON file mapping server keys to tokens.
 pub struct CredentialsStore {
     path: PathBuf,
 }
@@ -802,7 +802,7 @@ pub async fn run_oauth_flow(params: RunOAuthFlowParams<'_>) -> Result<StoredToke
 
     if received_state != state {
         return Err(anyhow!(
-            "OAuth state mismatch — possible CSRF attack (expected {state}, got {received_state})"
+            "OAuth state mismatch - possible CSRF attack (expected {state}, got {received_state})"
         ));
     }
 
@@ -881,7 +881,7 @@ async fn run_dcr(
 ///
 /// Uses the `webbrowser` crate which respects the system default and `$BROWSER`
 /// on Linux. If opening fails (e.g. in Docker, headless, or no display), we log
-/// the URL so the user can open it manually — the OAuth callback server keeps
+/// the URL so the user can open it manually - the OAuth callback server keeps
 /// waiting.
 fn open_browser(url: &str) {
     match webbrowser::open(url) {
@@ -1173,7 +1173,7 @@ fn callback_success_html() -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sven — Authenticated</title>
+  <title>Sven - Authenticated</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -1215,7 +1215,7 @@ fn callback_error_html(message: &str) -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sven — Authentication Failed</title>
+  <title>Sven - Authentication Failed</title>
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -1254,7 +1254,7 @@ fn callback_already_done_html() -> String {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Sven — Already authenticated</title>
+  <title>Sven - Already authenticated</title>
   <style>
     body {
       font-family: sans-serif; background: #0f1117; color: #a0aec0;
@@ -1383,7 +1383,7 @@ pub async fn refresh_token(
 /// Attempt to refresh the stored tokens for a server if they are expired.
 ///
 /// Returns `Ok(fresh_tokens)` on success (possibly the original if not expired).
-/// Returns `Err` if tokens are expired and refresh failed — in this case the
+/// Returns `Err` if tokens are expired and refresh failed - in this case the
 /// stored credentials are cleared so the OAuth flow is triggered anew.
 pub async fn ensure_fresh(
     client: &reqwest::Client,
@@ -1413,7 +1413,7 @@ pub async fn ensure_fresh(
             Ok(fresh)
         }
         Err(e) => {
-            // Refresh failed (revoked, server error, etc.) — clear stale credentials
+            // Refresh failed (revoked, server error, etc.) - clear stale credentials
             // so the next connection attempt triggers a full OAuth re-authorization.
             warn!(
                 server = %server_name,
@@ -1492,7 +1492,7 @@ mod tests {
             .as_secs()
     }
 
-    // ── RFC 7636 §4.1 — PKCE code verifier ───────────────────────────────────
+    // ── RFC 7636 §4.1 - PKCE code verifier ───────────────────────────────────
 
     /// RFC 7636 §4.1: code_verifier MUST use only unreserved characters
     /// from RFC 3986 §2.3: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~".
@@ -1521,7 +1521,7 @@ mod tests {
         assert_eq!(v.len(), 43, "expected 43 base64url chars for 32 bytes");
     }
 
-    /// RFC 7636 §4.1: length bounds — 43 chars minimum, 128 maximum.
+    /// RFC 7636 §4.1: length bounds - 43 chars minimum, 128 maximum.
     #[test]
     fn code_verifier_length_within_rfc7636_bounds() {
         let v = generate_code_verifier();
@@ -1567,7 +1567,7 @@ mod tests {
         );
     }
 
-    // ── RFC 7636 §4.2 — PKCE code challenge ──────────────────────────────────
+    // ── RFC 7636 §4.2 - PKCE code challenge ──────────────────────────────────
 
     /// RFC 7636 Appendix B: normative test vector. The implementation MUST
     /// produce exactly this challenge for the given verifier.
@@ -1633,7 +1633,7 @@ mod tests {
         );
     }
 
-    // ── RFC 6749 §10.12 / RFC 8252 §8.9 — CSRF state ─────────────────────────
+    // ── RFC 6749 §10.12 / RFC 8252 §8.9 - CSRF state ─────────────────────────
 
     /// RFC 6749 §10.12: state MUST be non-empty and use URL-safe characters.
     #[test]
@@ -1648,7 +1648,7 @@ mod tests {
     }
 
     /// RFC 6749 §10.12: "The probability of an attacker guessing generated
-    /// tokens … MUST be less than or equal to 2^(-128)." This requires at
+    /// tokens ... MUST be less than or equal to 2^(-128)." This requires at
     /// least 128 bits of entropy. Our implementation uses 16 random bytes
     /// (= 128 bits). This test verifies the encoded string decodes to 16 bytes.
     #[test]
@@ -1697,10 +1697,10 @@ mod tests {
         );
     }
 
-    // ── RFC 8252 §7.3 — Loopback redirect URI ────────────────────────────────
+    // ── RFC 8252 §7.3 - Loopback redirect URI ────────────────────────────────
 
     /// RFC 8252 §7.3: loopback redirect URIs MUST use the `http` scheme
-    /// (not `https` — TLS to localhost has no security benefit and causes
+    /// (not `https` - TLS to localhost has no security benefit and causes
     /// certificate validation problems).
     #[test]
     fn callback_uri_scheme_is_http_not_https() {
@@ -1741,7 +1741,7 @@ mod tests {
     }
 
     /// RFC 8252 §7.3 §8.3: "the client SHOULD use a loopback IP literal
-    /// rather than localhost … any port." The port MUST be dynamic (OS-assigned)
+    /// rather than localhost ... any port." The port MUST be dynamic (OS-assigned)
     /// rather than a fixed well-known value. Verify the URI reflects whatever
     /// port is given.
     #[test]
@@ -1761,7 +1761,7 @@ mod tests {
         );
     }
 
-    // ── RFC 6749 §4.1.1 + RFC 7636 §4.3 — Authorization URL structure ─────────
+    // ── RFC 6749 §4.1.1 + RFC 7636 §4.3 - Authorization URL structure ─────────
 
     /// RFC 6749 §4.1.1: `response_type` MUST be set to `"code"`.
     #[test]
@@ -1942,7 +1942,7 @@ mod tests {
         );
     }
 
-    // ── RFC 6749 §6 — ensure_fresh contracts ─────────────────────────────────
+    // ── RFC 6749 §6 - ensure_fresh contracts ─────────────────────────────────
 
     /// RFC 6749 §5.1: a token that has not expired MUST be returned unchanged
     /// without any network call.

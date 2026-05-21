@@ -11,9 +11,9 @@ subdirectories, each with a ``result.json`` file (a serialised TrialResult).
 Structure read:
     <jobs-dir>/
         <job-name>/
-            result.json          – JobResult (summary, optional)
+            result.json          - JobResult (summary, optional)
             <trial-name>/
-                result.json      – TrialResult per task
+                result.json      - TrialResult per task
 
 Output (stdout):
     A Markdown document suitable for committing or displaying in CI.
@@ -283,7 +283,7 @@ def _render_dataset(stats: DatasetStats) -> str:
         lines.append("| Category | Passed | Total | Rate |")
         lines.append("|---|---|---|---|")
         for cat, (p, t) in by_cat.items():
-            rate = f"{p / t * 100:.0f}%" if t else "—"
+            rate = f"{p / t * 100:.0f}%" if t else "-"
             lines.append(f"| {cat} | {p} | {t} | {rate} |")
         lines.append("")
 
@@ -298,7 +298,7 @@ def _render_dataset(stats: DatasetStats) -> str:
     if slowest:
         lines.append("- **Slowest tasks**:")
         for task, secs in slowest:
-            lines.append(f"  - `{task}` — {_fmt_seconds(secs)}")
+            lines.append(f"  - `{task}` - {_fmt_seconds(secs)}")
     lines.append("")
 
     # Cost / tokens
@@ -331,7 +331,7 @@ def generate_report(root: Path) -> str:
         )
 
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    sections: list[str] = [f"# Sven Benchmark Report — {now}\n"]
+    sections: list[str] = [f"# Sven Benchmark Report - {now}\n"]
 
     all_pass = 0
     all_total = 0

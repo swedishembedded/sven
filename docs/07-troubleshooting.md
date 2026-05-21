@@ -187,9 +187,9 @@ Headless mode is enabled automatically when stdin is a pipe.  When invoking
 sven directly from a terminal prompt you **must** pass `--headless` explicitly:
 
 ```sh
-echo "my task" | sven           # headless — auto-detected from pipe
+echo "my task" | sven           # headless - auto-detected from pipe
 sven "my task"                   # opens TUI (stdin is a TTY, no --headless)
-sven --headless "my task"        # headless — explicit flag required here
+sven --headless "my task"        # headless - explicit flag required here
 ```
 
 To also suppress conversation-format markdown and get only the agent's plain

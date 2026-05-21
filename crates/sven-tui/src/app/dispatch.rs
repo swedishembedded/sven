@@ -49,7 +49,7 @@ impl App {
 
     pub(crate) async fn dispatch(&mut self, action: Action) -> bool {
         // Route input-manipulation actions to the edit buffer whenever we are in
-        // any edit mode — both chat-segment edits and queue-item edits.
+        // any edit mode - both chat-segment edits and queue-item edits.
         if self.edit.active() {
             if let Some((buf, cur)) = self.apply_input_to_edit(&action) {
                 self.edit.buffer = buf;
@@ -440,7 +440,7 @@ impl App {
             }
 
             Action::EditMessageCancel => {
-                // Cancel queue-item edit — restore original text if available.
+                // Cancel queue-item edit - restore original text if available.
                 if self.edit.queue_index.is_some() {
                     if let (Some(q_idx), Some(original)) =
                         (self.edit.queue_index, self.edit.original_text.clone())
@@ -817,7 +817,7 @@ impl App {
                             ws.cursor_col,
                         );
                     } else {
-                        // Already on the first visual row — cycle to the older history entry.
+                        // Already on the first visual row - cycle to the older history entry.
                         if let Some(entry) = self.input.history_up() {
                             let text = entry.to_string();
                             self.input.cursor = text.len();
@@ -841,7 +841,7 @@ impl App {
                             ws.cursor_col,
                         );
                     } else {
-                        // Already on the last visual row — cycle to the newer history entry.
+                        // Already on the last visual row - cycle to the newer history entry.
                         if let Some(entry) = self.input.history_down() {
                             let text = entry.to_string();
                             self.input.cursor = text.len();
@@ -1554,7 +1554,7 @@ impl App {
         }
         // The text between `@` and the cursor is the partial name.
         let partial = &before_cursor[at_pos + 1..];
-        // Must not contain whitespace — a whitespace terminates the mention token.
+        // Must not contain whitespace - a whitespace terminates the mention token.
         if partial.contains(|c: char| c.is_whitespace()) {
             return None;
         }

@@ -9,9 +9,9 @@ use crate::{chat::segment::ChatSegment, markdown::StyledLines};
 
 /// Expand level for a collapsible segment.
 ///
-/// - `0` — one-line summary (default for tool calls, tool results, thinking)
-/// - `1` — partial view (first ~10 lines of content)
-/// - `2` — full content (default for user text, agent text)
+/// - `0` - one-line summary (default for tool calls, tool results, thinking)
+/// - `1` - partial view (first ~10 lines of content)
+/// - `2` - full content (default for user text, agent text)
 pub type ExpandLevel = u8;
 
 /// All state owned by the chat pane.

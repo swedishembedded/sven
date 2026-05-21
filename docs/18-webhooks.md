@@ -130,4 +130,4 @@ hooks:
 - The token is compared using constant-time comparison (no timing attacks).
 - TLS is on by default (self-signed cert; use `sven node install-ca` to trust it).
 - Set `insecure_dev_mode: false` (the default) in production.
-- Webhooks are only active when `hooks.token` is set — omitting the token disables all endpoints.
+- Webhooks are only active when `hooks.token` is set - omitting the token disables all endpoints.

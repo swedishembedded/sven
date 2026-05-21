@@ -13,14 +13,14 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// A parsed block of markdown content.
 ///
-/// Blocks are the unit of rendering — each frontend decides how to display
+/// Blocks are the unit of rendering - each frontend decides how to display
 /// each variant.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarkdownBlock {
     /// A paragraph of inline text (may contain inline markup).
     Paragraph(String),
 
-    /// A heading with level (1–6) and text.
+    /// A heading with level (1-6) and text.
     Heading { level: u8, text: String },
 
     /// A fenced code block with optional language tag.
@@ -172,7 +172,7 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 in_table = false;
             }
             // GFM tables emit header cells under `TableHead` without wrapping them in
-            // `TableRow` (see pulldown-cmark events: TableHead → TableCell… → End(TableHead)).
+            // `TableRow` (see pulldown-cmark events: TableHead → TableCell... → End(TableHead)).
             Event::Start(Tag::TableHead) => {
                 current_row.clear();
             }
@@ -220,7 +220,7 @@ pub fn parse_markdown_blocks(text: &str) -> Vec<MarkdownBlock> {
                 } else if in_cell {
                     cell_buf.push_str(&s);
                 } else if in_table {
-                    // text outside cells in table context — skip
+                    // text outside cells in table context - skip
                 } else {
                     current_text.push_str(&s);
                 }

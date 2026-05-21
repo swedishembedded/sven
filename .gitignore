@@ -51,3 +51,7 @@ Thumbs.db
 /site/dist/
 /site/package-lock.json
 /site/public/install
+
+# Local runtime/IDE artefacts
+.claude/
+logs/

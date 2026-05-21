@@ -19,7 +19,7 @@ sven_model::from_config()          ← single dispatch function
         ├─ "azure"     → AzureCompatProvider (Azure OpenAI: different URL/auth)
         ├─ "groq"      → OpenAICompatProvider("groq", ...)
         ├─ "ollama"    → OpenAICompatProvider("ollama", ...)
-        │  …30+ more providers…
+        │  ...30+ more providers...
         │
         ▼
     Box<dyn ModelProvider>
@@ -43,7 +43,7 @@ pub trait ModelProvider: Send + Sync {
 
     /// List available models (default: return static catalog entries).
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        // default implementation — return catalog entries filtered by provider
+        // default implementation - return catalog entries filtered by provider
     }
 }
 ```
@@ -165,7 +165,7 @@ The `BedrockProvider` reads AWS credentials from environment variables:
 - `AWS_DEFAULT_REGION` or `AWS_REGION` (default: `us-east-1`)
 
 SigV4 signing is implemented inline in `src/aws.rs` using `sha2` + `hex`
-(already workspace dependencies) — no AWS SDK crate required.
+(already workspace dependencies) - no AWS SDK crate required.
 
 The driver uses the synchronous Bedrock `POST /model/{id}/converse` endpoint
 and wraps the response in a fake stream for API compatibility.
@@ -208,8 +208,8 @@ GROQ_API_KEY=gsk_... cargo test -p sven-model test_groq -- --include-ignored
 ```
 
 Test files:
-- `tests/all_drivers_mock.rs` — unit tests for every registered driver (no network)
-- `tests/driver_tests.rs` — live API integration tests (ignored by default)
+- `tests/all_drivers_mock.rs` - unit tests for every registered driver (no network)
+- `tests/driver_tests.rs` - live API integration tests (ignored by default)
 
 ## Registry CLI
 

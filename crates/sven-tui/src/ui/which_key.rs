@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Which-key popup — shown briefly after a Ctrl+w prefix is pressed,
+//! Which-key popup - shown briefly after a Ctrl+w prefix is pressed,
 //! listing all available follow-up keys. Inspired by LazyVim / which-key.nvim.
 
 use ratatui::{
@@ -42,7 +42,7 @@ impl Widget for WhichKeyOverlay {
         let bt = border_type(self.ascii);
         let block = Block::default()
             .title(Span::styled(
-                " ^w … ",
+                " ^w ... ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),

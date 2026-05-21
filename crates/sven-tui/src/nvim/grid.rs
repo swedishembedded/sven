@@ -4,7 +4,7 @@
 //! Neovim grid and highlight-attribute data structures.
 //!
 //! These are pure data types with no async code, no RPC, and no process
-//! management — they can be created and tested entirely in isolation.
+//! management - they can be created and tested entirely in isolation.
 
 use std::collections::HashMap;
 
@@ -72,10 +72,10 @@ impl Grid {
     /// Apply a `grid_scroll` redraw event.
     ///
     /// The region `[top, bot) × [left, right)` is scrolled by `rows` rows:
-    /// - `rows > 0`: content moves **up** — lines `[top, top+rows)` are
+    /// - `rows > 0`: content moves **up** - lines `[top, top+rows)` are
     ///   discarded; lines `[top+rows, bot)` shift to `[top, bot-rows)`;
     ///   the now-empty rows at the bottom are cleared.
-    /// - `rows < 0`: content moves **down** — lines `[bot+rows, bot)` are
+    /// - `rows < 0`: content moves **down** - lines `[bot+rows, bot)` are
     ///   discarded; lines `[top, bot+rows)` shift to `[top+|rows|, bot)`;
     ///   the now-empty rows at the top are cleared.
     ///

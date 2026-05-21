@@ -84,7 +84,7 @@ impl Tool for AlwaysFailTool {
 /// reader (to read JSON-RPC responses from the server).
 ///
 /// Uses a pair of `tokio::io::duplex` streams:
-/// - `client_stream`: the client end — write here to send to the server,
+/// - `client_stream`: the client end - write here to send to the server,
 ///   read here to get server responses.
 /// - `server_stream`: passed directly to the server (DuplexStream implements
 ///   both AsyncRead and AsyncWrite).
@@ -377,7 +377,7 @@ async fn tools_call_unknown_tool_returns_is_error() {
     .await;
 
     let resp = recv_msg(&mut reader).await;
-    // The server either returns isError:true or a JSON-RPC error — both are acceptable.
+    // The server either returns isError:true or a JSON-RPC error - both are acceptable.
     let is_tool_error = resp["result"]["isError"] == true;
     let is_rpc_error = resp["error"].is_object();
     assert!(

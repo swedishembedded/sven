@@ -80,7 +80,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
         ChatSegment::Thinking { content } => {
             // Note: the **Agent:thinking** anchor is stripped by strip_display_anchors
             // before ratatui rendering but is required for nvim buffer fold detection.
-            // No leading \n here — stripping the anchor line already leaves one \n gap.
+            // No leading \n here - stripping the anchor line already leaves one \n gap.
             format!(
                 "**Agent:thinking**\n{SYM_THINK} **Thought**\n\n{}\n",
                 content.trim_end()
@@ -119,7 +119,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
     }
 }
 
-/// Render a partial view — the first `max_lines` of the full content.
+/// Render a partial view - the first `max_lines` of the full content.
 /// Used for expand tier 1 (detail view).
 pub fn partial_content(
     seg: &ChatSegment,
@@ -132,7 +132,7 @@ pub fn partial_content(
         return full;
     }
     let truncated = lines[..max_lines].join("\n");
-    format!("{truncated}\n*…{} more lines*\n", lines.len() - max_lines)
+    format!("{truncated}\n*...{} more lines*\n", lines.len() - max_lines)
 }
 
 /// Optional display registry for tool-specific labels and summaries in the chat view.
@@ -147,8 +147,8 @@ pub type ToolDisplayRegistryRef = Option<Arc<RwLock<ToolDisplayRegistry>>>;
 /// - Tool call:   `⚙  tool_name  smart_description  duration  ▶`
 /// - Tool result: `✓/✗  tool_name  duration  ▶`
 /// - Thinking:    `◆  Reasoning  ~N words  ▶`
-/// - User:        `You  first_line…  ▶`
-/// - Agent:       `first_line…  ▶`
+/// - User:        `You  first_line...  ▶`
+/// - Agent:       `first_line...  ▶`
 pub fn collapsed_preview(
     seg: &ChatSegment,
     tool_args_cache: &HashMap<String, String>,
@@ -423,7 +423,7 @@ pub fn shorten_path(path: &str, n: usize) -> String {
 }
 
 /// Strip internal anchor/role-prefix lines from a markdown string before
-/// ratatui rendering.  These lines (`**Agent:tool_call:…**`, `**Tool:…**`,
+/// ratatui rendering.  These lines (`**Agent:tool_call:...**`, `**Tool:...**`,
 /// `**Agent:thinking**`, and the role-prefix `**You:**` / `**Agent:**` inlines)
 /// are required for nvim buffer round-trip parsing but are noise in the TUI.
 ///

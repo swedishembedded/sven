@@ -13,16 +13,16 @@ copies the pre-built release binary from a bind-mount path on the host.
 
 Environment variables (read at run time, forwarded into each sandbox):
 
-    SVEN_MODEL            – model string passed to sven --model
+    SVEN_MODEL            - model string passed to sven --model
                             (default: openrouter/openrouter/free)
-    SVEN_BIN_PATH         – host path to the pre-built sven binary; the
+    SVEN_BIN_PATH         - host path to the pre-built sven binary; the
                             install template copies it into the container
                             (default: /sven-bin/sven)
-    SVEN_BENCH_TIMEOUT    – per-task timeout in seconds (default: 1800)
-    ANTHROPIC_API_KEY     – forwarded verbatim into the sandbox
-    OPENAI_API_KEY        – forwarded verbatim into the sandbox
-    OPENROUTER_API_KEY    – forwarded verbatim into the sandbox
-    GEMINI_API_KEY        – forwarded verbatim into the sandbox
+    SVEN_BENCH_TIMEOUT    - per-task timeout in seconds (default: 1800)
+    ANTHROPIC_API_KEY     - forwarded verbatim into the sandbox
+    OPENAI_API_KEY        - forwarded verbatim into the sandbox
+    OPENROUTER_API_KEY    - forwarded verbatim into the sandbox
+    GEMINI_API_KEY        - forwarded verbatim into the sandbox
 """
 
 from __future__ import annotations

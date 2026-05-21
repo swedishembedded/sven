@@ -76,7 +76,7 @@ impl TaskStatus {
 /// A single work item in the shared task list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    /// Unique identifier — stable across updates.
+    /// Unique identifier - stable across updates.
     pub id: String,
     /// Short human-readable title (1 line).
     pub title: String,
@@ -230,7 +230,7 @@ impl TaskStore {
         Ok(Self { path })
     }
 
-    /// Read the task list from disk (no lock — use for reads only).
+    /// Read the task list from disk (no lock - use for reads only).
     pub fn load(&self) -> Result<TaskList, TaskStoreError> {
         let data = fs::read_to_string(&self.path)?;
         let list: TaskList = serde_json::from_str(&data)?;

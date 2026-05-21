@@ -33,12 +33,12 @@ impl Tool for RunTerminalCommandTool {
 
     fn description(&self) -> &str {
         "For terminal operations: git, cargo, make, build tools. \
-         NEVER for file I/O — use read_file/write/edit_file/grep/glob instead. \
+         NEVER for file I/O - use read_file/write/edit_file/grep/glob instead. \
          If search is unavoidable in a command, use rg (ripgrep), never grep/find/cat/sed/awk.\n\n\
          Before mkdir: verify parent exists with ls. Quote paths with spaces. \
          Chain dependent commands with &&; call in parallel for independent ones. \
          Increase timeout_secs (default 30s) for slow builds. Output capped at ~20 KB;\n\
-         first and last 100 lines preserved when truncated — errors at the end are never lost.\n\n\
+         first and last 100 lines preserved when truncated - errors at the end are never lost.\n\n\
          ## Git Safety\n\
          - NEVER: update git config / force push / skip hooks (--no-verify/--no-gpg-sign) without explicit ask\n\
          - NEVER commit or push unless explicitly asked\n\
@@ -294,7 +294,7 @@ mod adversarial_tests {
     async fn empty_command_does_not_crash() {
         let t = RunTerminalCommandTool::default();
         let out = t.execute(&call(json!({"command": ""}))).await;
-        // Empty string: sh -c '' exits 0 — either success or error is acceptable
+        // Empty string: sh -c '' exits 0 - either success or error is acceptable
         let _ = out;
     }
 
@@ -313,14 +313,14 @@ mod adversarial_tests {
         let out = t
             .execute(&call(json!({"command": "echo $((1+1)); echo 'done'"})))
             .await;
-        // Metacharacters executed by sh — must not panic the Rust side
+        // Metacharacters executed by sh - must not panic the Rust side
         let _ = out;
     }
 
     #[tokio::test]
     async fn command_producing_large_output_is_truncated_not_oom() {
         let t = RunTerminalCommandTool::default();
-        // dd produces ~50 MB of 'A' bytes — must be truncated, not OOM
+        // dd produces ~50 MB of 'A' bytes - must be truncated, not OOM
         let out = t
             .execute(&call(
                 json!({"command": "dd if=/dev/zero bs=1M count=50 2>/dev/null | tr '\\0' 'A'"}),

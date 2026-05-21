@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Slash-command completion menu widget — floating popup above the input pane
+//! Slash-command completion menu widget - floating popup above the input pane
 //! with slash prefix and a one-row description preview.
 
 use ratatui::{
@@ -20,10 +20,10 @@ use super::width_utils::truncate_to_width_exact;
 
 // ── CompletionMenu widget ─────────────────────────────────────────────────────
 
-/// Floating completion overlay — positioned just above the input pane.
+/// Floating completion overlay - positioned just above the input pane.
 pub struct CompletionMenu<'a> {
     pub overlay: &'a mut CompletionOverlay,
-    /// The input pane rect — used to anchor the popup above it.
+    /// The input pane rect - used to anchor the popup above it.
     pub input_pane: Rect,
     pub ascii: bool,
 }

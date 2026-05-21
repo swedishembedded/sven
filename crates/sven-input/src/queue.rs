@@ -17,7 +17,7 @@ pub struct StepOptions {
     pub model: Option<String>,
     /// Step-level timeout in seconds (overrides the runner default)
     pub timeout_secs: Option<u64>,
-    /// Optional cache key — if set, a matching cached result is reused
+    /// Optional cache key - if set, a matching cached result is reused
     pub cache_key: Option<String>,
 }
 

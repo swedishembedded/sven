@@ -48,7 +48,7 @@ fn glob_match_segments(pat: &[&str], txt: &[&str]) -> bool {
     match pat[0] {
         "**" => {
             // ** can consume zero or more path segments.
-            // Try consuming 0 segments first, then 1, 2, …
+            // Try consuming 0 segments first, then 1, 2, ...
             if glob_match_segments(&pat[1..], txt) {
                 return true;
             }
@@ -98,7 +98,7 @@ fn glob_segment_match(pattern: &str, text: &str) -> bool {
 ///
 /// Pattern matching rules:
 /// - Patterns without `/` (e.g. `*.rs`, `*lint*`) match the **filename** only,
-///   matching anywhere in the tree — equivalent to `find -name`.
+///   matching anywhere in the tree - equivalent to `find -name`.
 /// - Patterns with `/` (e.g. `**/*.rs`, `src/**/*.rs`, `**/sven-team/**`)
 ///   match against the full relative path from `root`.
 fn find_files_walkdir(
@@ -174,13 +174,13 @@ impl Tool for FindFileTool {
         "Find files by name glob pattern, searching recursively under a root directory.\n\
          Pure-Rust implementation (walkdir); excludes .git/, target/, node_modules/, .cargo/registry/.\n\
          Glob patterns:\n\
-           '*.rs'               — all .rs files anywhere under root\n\
-           '**/*.rs'            — same (**/ prefix is stripped; search is always recursive)\n\
-           'src/**/*.rs'        — .rs files under <root>/src/\n\
-           '**/sven-team/**'    — all files inside any directory named 'sven-team'\n\
-           '**/sven-team/**/*.rs' — .rs files inside any 'sven-team' directory\n\
-           'Cargo.toml'         — exact filename anywhere under root\n\
-           '*lint*'             — filenames containing 'lint'\n\
+           '*.rs'               - all .rs files anywhere under root\n\
+           '**/*.rs'            - same (**/ prefix is stripped; search is always recursive)\n\
+           'src/**/*.rs'        - .rs files under <root>/src/\n\
+           '**/sven-team/**'    - all files inside any directory named 'sven-team'\n\
+           '**/sven-team/**/*.rs' - .rs files inside any 'sven-team' directory\n\
+           'Cargo.toml'         - exact filename anywhere under root\n\
+           '*lint*'             - filenames containing 'lint'\n\
          For content search use grep or search_codebase instead."
     }
 

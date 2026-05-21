@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI**: markdown aligned with GUI (block quote vs list); first completed todo item no longer shows a stray bullet.
 
 ### Changed
-- **GUI**: large UI refactor; removed standalone “current tool” display in favor of clearer chat-centric UX.
+- **GUI**: large UI refactor; removed standalone "current tool" display in favor of clearer chat-centric UX.
 - **Docs**: README condensed and expanded with accurate feature lists; user guides for channels, scheduler, email, calendar, voice, memory, webhooks, and use cases; **AGENTS.md** updated for sven-frontend, sven-gui, and dual-binary layout.
 
 ## [1.8.1] - 2026-03-15
@@ -87,10 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark**: Terminal-Bench 2.0 evaluation via Harbor.
 
 ### Fixed
-- **TUI drag/resize**: unified system — `SplitPrefs` extracted from `LayoutCache` for durable split dimensions; `anchor_offset` on `ResizeDrag` so borders track the grab point; `PeersSplitBorder` in `HitArea`; single `hit_test()` path.
+- **TUI drag/resize**: unified system - `SplitPrefs` extracted from `LayoutCache` for durable split dimensions; `anchor_offset` on `ResizeDrag` so borders track the grab point; `PeersSplitBorder` in `HitArea`; single `hit_test()` path.
 - **Peers-split border drag**: use `peers_pane.y + peers_pane.height` as the sidebar bottom (fixes upward-drag snap to minimum).
 - **Subagents**: inherit the **live model** from the parent.
-- **Cache / tokens**: cache hit rate capped near ~49% from double-counted tokens — corrected.
+- **Cache / tokens**: cache hit rate capped near ~49% from double-counted tokens - corrected.
 - **CI**: record resolved model in chat output documents.
 
 ### Changed
@@ -191,7 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleared on new session; message-edit state cleared on new session.
 - JSONL log path tracked per-session; state leakage on new sessions fixed
   (input, queue, edit state, agent state isolated).
-- Chat list click no longer triggers wrong session’s segment actions (HitArea
+- Chat list click no longer triggers wrong session's segment actions (HitArea
   hit-test); duplicate agent on initial session removed; message loss on exit
   fixed (session state saved).
 - `wait_for_message` no longer drops replies when peer responds before waiter
@@ -277,7 +277,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bats end-to-end tests for context tools and error handling
 
 ### Fixed
-- Garbled welcome logo — normalised row widths and fixed connector colours
+- Garbled welcome logo - normalised row widths and fixed connector colours
 - Welcome screen logo colours and tagline URL
 - Multiline paste display, completion double-slash, and rendering artefacts
 - Mid-turn mode consistency and mode display in status bar

@@ -94,7 +94,7 @@ impl App {
             };
 
             // Check if this is a ToolCall paired with the immediately following
-            // ToolResult — when both are at tier 0, render as a single grouped line.
+            // ToolResult - when both are at tier 0, render as a single grouped line.
             let paired_result_idx = if expand == 0 {
                 get_paired_result_idx(&self.chat.segments, i)
             } else {
@@ -191,7 +191,7 @@ impl App {
 
             // Only insert action labels when the segment is expanded (tier ≥ 1)
             // or is the currently focused segment.  Collapsed tier-0 segments
-            // should not show icons — clicking them cycles expand level instead.
+            // should not show icons - clicking them cycles expand level instead.
             let is_focused = self.chat.focused_segment == Some(i);
             if self.nvim.disabled && (expand >= 1 || is_focused) {
                 if segment_editable_text(&self.chat.segments, i).is_some() {
@@ -632,7 +632,7 @@ impl App {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    debug!("sync_nvim_buffer_to_segments: parse error — keeping existing: {e}");
+                    debug!("sync_nvim_buffer_to_segments: parse error - keeping existing: {e}");
                 }
             }
         }
@@ -990,7 +990,7 @@ fn format_streaming_preview(
     };
 
     let status_suffix = if !status_line.is_empty() {
-        format!(" — {}", status_line)
+        format!(" - {}", status_line)
     } else {
         String::new()
     };

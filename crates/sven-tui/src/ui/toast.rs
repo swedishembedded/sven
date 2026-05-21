@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Toast notification stack — brief ephemeral messages in the bottom-right corner.
+//! Toast notification stack - brief ephemeral messages in the bottom-right corner.
 
 use ratatui::{
     buffer::Buffer,

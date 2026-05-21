@@ -66,7 +66,7 @@ impl ConversationRunner {
                 Some(p) => p,
                 None => {
                     write_stderr(
-                        "[conversation] no pending ## User section found — nothing to execute",
+                        "[conversation] no pending ## User section found - nothing to execute",
                     );
                     return Ok(());
                 }
@@ -79,7 +79,7 @@ impl ConversationRunner {
                 Some(p) => p,
                 None => {
                     write_stderr(
-                        "[conversation] no pending ## User section found — nothing to execute",
+                        "[conversation] no pending ## User section found - nothing to execute",
                     );
                     return Ok(());
                 }
@@ -148,7 +148,7 @@ impl ConversationRunner {
 
             // Collect full-fidelity records including thinking blocks.
             // The pending user message is first (not yet in the file for md format;
-            // already in the file for JSONL format — handled at write time below).
+            // already in the file for JSONL format - handled at write time below).
             let mut new_records: Vec<ConversationRecord> = Vec::new();
             new_records.push(ConversationRecord::Message(Message::user(&pending)));
             let mut failed = false;
@@ -175,7 +175,7 @@ impl ConversationRunner {
                     }
                 }
             }
-            // submit_fut dropped here — mutable borrow on agent released
+            // submit_fut dropped here - mutable borrow on agent released
             (new_records, failed)
         };
 
@@ -199,7 +199,7 @@ impl ConversationRunner {
             // For JSONL: rewrite the entire file so that thinking blocks and
             // new-format records are included.  Start from the existing records
             // already in the file, then append the new turn (skip the user
-            // record — it is already present as the last line of the file).
+            // record - it is already present as the last line of the file).
             let mut all_records = existing_jsonl_records.unwrap_or_default();
             // Skip the first new_record (the user message that was already in the file)
             all_records.extend_from_slice(&new_records[1..]);

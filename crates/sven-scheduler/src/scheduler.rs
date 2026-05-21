@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Scheduler — polls job store every minute and emits due-job events.
+//! Scheduler - polls job store every minute and emits due-job events.
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -73,7 +73,7 @@ impl Scheduler {
                     };
 
                     if tx.send(event).await.is_err() {
-                        info!("Scheduler: receiver dropped — stopping");
+                        info!("Scheduler: receiver dropped - stopping");
                         return;
                     }
 

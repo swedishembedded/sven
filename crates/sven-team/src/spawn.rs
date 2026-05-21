@@ -105,7 +105,7 @@ impl Tool for CreateTeamTool {
         // rather than discarding existing members and tasks.
         if let Ok(Some(existing)) = cfg_store.load() {
             if existing.lead_peer_id == self.agent_peer_id {
-                // This node is already the lead — restore state after a restart.
+                // This node is already the lead - restore state after a restart.
                 *self.team_config.lock().await = Some(existing.clone());
                 let (p, i, c, f) = TaskStore::open(&name)
                     .ok()
@@ -115,7 +115,7 @@ impl Tool for CreateTeamTool {
                 return ToolOutput::ok(
                     &call.id,
                     format!(
-                        "Team '{name}' already exists and you are the lead — restored.\n\
+                        "Team '{name}' already exists and you are the lead - restored.\n\
                          Members: {} | tasks: pending={p}, in_progress={i}, \
                          completed={c}, failed={f}\n\
                          Use list_team and list_tasks to see current status.",
@@ -190,7 +190,7 @@ impl Tool for ListTeamTool {
 
     fn description(&self) -> &str {
         "Show team members with their role, current status, and active task. \
-         Closed and exited teammates are hidden by default — pass show_closed=true to see them. \
+         Closed and exited teammates are hidden by default - pass show_closed=true to see them. \
          Use this to monitor who is working on what and whether any teammate needs help."
     }
 
@@ -253,13 +253,13 @@ impl Tool for ListTeamTool {
             .count();
         let visible_count = all_members.len() - hidden_count;
         let hidden_note = if !show_closed && hidden_count > 0 {
-            format!(" ({hidden_count} closed/exited hidden — pass show_closed=true to see)")
+            format!(" ({hidden_count} closed/exited hidden - pass show_closed=true to see)")
         } else {
             String::new()
         };
 
         let mut lines = vec![format!(
-            "Team '{}' — {visible_count} active member(s){hidden_note} | tasks: pending={p}, in_progress={i}, completed={c}, failed={f}\n",
+            "Team '{}' - {visible_count} active member(s){hidden_note} | tasks: pending={p}, in_progress={i}, completed={c}, failed={f}\n",
             config.name,
         )];
 
@@ -281,7 +281,7 @@ impl Tool for ListTeamTool {
                 .current_task_id
                 .as_deref()
                 .and_then(|id| tasks.get(id))
-                .map(|t| format!(" — working on: \"{}\"", t.title))
+                .map(|t| format!(" - working on: \"{}\"", t.title))
                 .unwrap_or_default();
 
             let lead_marker = if config.is_lead(&m.peer_id) {
@@ -326,7 +326,7 @@ impl Tool for CleanupTeamTool {
     fn description(&self) -> &str {
         "Clean up team resources when all work is done. \
          Only the team lead can run cleanup. \
-         Fails if any teammates are still active — shut them down first with shutdown_teammate. \
+         Fails if any teammates are still active - shut them down first with shutdown_teammate. \
          This removes the shared task list and team config."
     }
 
@@ -425,7 +425,7 @@ impl Tool for LoadTeamTool {
          has not been loaded yet. \
          Only the team lead can load a team. \
          If you call create_team and the team already exists it will also be \
-         restored automatically — load_team is only needed when you want to \
+         restored automatically - load_team is only needed when you want to \
          re-attach to a team without calling create_team."
     }
 
@@ -525,7 +525,7 @@ impl Tool for RegisterTeammateTool {
         "Register an externally-discovered P2P peer as a teammate in the team config. \
          Use this ONLY when a peer has joined the P2P room on its own and you have its \
          real libp2p peer ID from list_peers. \
-         DO NOT call this after spawn_teammate — spawning already handles registration \
+         DO NOT call this after spawn_teammate - spawning already handles registration \
          automatically using a stable synthetic peer ID. \
          Calling register_teammate after spawn_teammate will create duplicate roster entries."
     }
@@ -634,12 +634,12 @@ impl Tool for RegisterTeammateTool {
 /// can track its progress.
 ///
 /// The spawned process receives:
-/// - `--team-name <name>` — the team to join
-/// - `--team-role <role>` — the role to adopt
-/// - `--team-lead-peer <peer_id>` — the lead's peer ID
-/// - `--room <room>` — gossipsub room to join
-/// - `--model <model>` — model override (optional)
-/// - `--headless` — run without a TUI
+/// - `--team-name <name>` - the team to join
+/// - `--team-role <role>` - the role to adopt
+/// - `--team-lead-peer <peer_id>` - the lead's peer ID
+/// - `--room <room>` - gossipsub room to join
+/// - `--model <model>` - model override (optional)
+/// - `--headless` - run without a TUI
 pub struct SpawnTeammateTool {
     pub config: TeamConfigHandle,
     /// Peer ID of this agent (must be lead to spawn teammates).
@@ -849,7 +849,7 @@ impl Tool for SpawnTeammateTool {
                 }
                 let mut msg = format!(
                     "Teammate '{name}' spawned (pid={pid}) with role '{role_str}' and registered in team '{team_name}'.\n\
-                     Registration is complete — do NOT call register_teammate.\n\
+                     Registration is complete - do NOT call register_teammate.\n\
                      The teammate will pick up tasks assigned to it by name '{name}'.\n\
                      Log: {}\n\
                      Use create_task with assigned_to=\"{name}\" to give it work.\n\
@@ -1092,7 +1092,7 @@ impl Tool for MergeTeammateBranchTool {
 /// The log is written by `SpawnTeammateTool` to
 /// `~/.config/sven/teams/{team}/{name}.log`.  This tool lets the lead check
 /// whether a spawned process started correctly, see its latest output, and
-/// diagnose startup failures — without needing to know the log path.
+/// diagnose startup failures - without needing to know the log path.
 pub struct ReadTeammateLogTool {
     pub config: TeamConfigHandle,
 }
@@ -1161,18 +1161,18 @@ impl Tool for ReadTeammateLogTool {
                         if alive {
                             format!("running (pid={p})")
                         } else {
-                            format!("exited (pid={p} — process no longer running)")
+                            format!("exited (pid={p} - process no longer running)")
                         },
                     )
                 }
                 None => (
                     None,
-                    "unknown (no PID recorded — manually registered peer?)".to_string(),
+                    "unknown (no PID recorded - manually registered peer?)".to_string(),
                 ),
             },
             None => (
                 None,
-                "not found in team roster — check spelling or use list_team".to_string(),
+                "not found in team roster - check spelling or use list_team".to_string(),
             ),
         };
         drop(guard);
@@ -1183,7 +1183,7 @@ impl Tool for ReadTeammateLogTool {
             return ToolOutput::ok(
                 &call.id,
                 format!(
-                    "Teammate '{name}' — process status: {process_status}\n\
+                    "Teammate '{name}' - process status: {process_status}\n\
                      No log file found at: {}\n\
                      The teammate may not have been spawned yet, or was spawned with a different name.",
                     log_path.display()
@@ -1209,7 +1209,7 @@ impl Tool for ReadTeammateLogTool {
         };
 
         let log_section = if tail.is_empty() {
-            "(log file is empty — the process may have started but produced no output yet)"
+            "(log file is empty - the process may have started but produced no output yet)"
                 .to_string()
         } else {
             tail.join("\n")
@@ -1219,7 +1219,7 @@ impl Tool for ReadTeammateLogTool {
         ToolOutput::ok(
             &call.id,
             format!(
-                "Teammate '{name}' — process status: {process_status}\n\
+                "Teammate '{name}' - process status: {process_status}\n\
                  Log: {} ({} lines total, showing last {max_lines})\n\
                  {}\n{}",
                 log_path.display(),

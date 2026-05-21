@@ -23,8 +23,8 @@ use sven_tools::{events::TodoItem, OutputBufferStore, QuestionRequest};
 /// Environment-detected context for an agent session.
 ///
 /// This is separate from [`sven_config::AgentConfig`] (which holds only
-/// config-file fields) so that the two concerns — "what the user configured"
-/// and "what we found at runtime" — stay cleanly separated.
+/// config-file fields) so that the two concerns - "what the user configured"
+/// and "what we found at runtime" - stay cleanly separated.
 #[derive(Default)]
 pub struct RuntimeContext {
     /// Absolute path to the project root (detected from `.git` walk-up).
@@ -104,7 +104,7 @@ impl RuntimeContext {
     ///
     /// The resulting context carries project/git/CI notes, skills, agents, and
     /// knowledge but leaves `append_system_prompt` and `prior_messages` at
-    /// their defaults — callers that need to inject additional prompt text or
+    /// their defaults - callers that need to inject additional prompt text or
     /// pre-loaded messages should mutate the returned struct before use.
     pub fn to_agent_runtime(&self) -> AgentRuntimeContext {
         AgentRuntimeContext {
@@ -145,7 +145,7 @@ pub enum ToolSetProfile {
         buffer_store: Arc<Mutex<OutputBufferStore>>,
     },
 
-    /// Coding profile (default — no GDB, no context). 12 tools.
+    /// Coding profile (default - no GDB, no context). 12 tools.
     ///
     /// For typical software engineering sessions without embedded debugging
     /// or large-file analysis. Leaner tools array caches more efficiently.

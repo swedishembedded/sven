@@ -57,14 +57,14 @@ fn substitute_env_vars(s: &str) -> String {
                     remaining = &after_open[close + 2..];
                     continue;
                 }
-                // Not set — fall through to verbatim copy
+                // Not set - fall through to verbatim copy
             }
-            // Not substituted — copy the whole `{{...}}` verbatim
+            // Not substituted - copy the whole `{{...}}` verbatim
             result.push_str("{{");
             result.push_str(&after_open[..close + 2]); // includes key and "}}"
             remaining = &after_open[close + 2..];
         } else {
-            // No matching `}}` found — copy the rest verbatim
+            // No matching `}}` found - copy the rest verbatim
             result.push_str("{{");
             remaining = after_open;
         }
@@ -192,7 +192,7 @@ mod tests {
         std::env::remove_var("SVEN_TEST_INNER");
         // After pass 1, "{{outer}}" → "{{SVEN_TEST_INNER}}"
         // Pass 2 should NOT further expand this since pass 1 already ran
-        // (it WILL try to expand it — this is the documented behaviour: pass 2
+        // (it WILL try to expand it - this is the documented behaviour: pass 2
         // runs on the result of pass 1, so a var value can trigger env lookup)
         // This test documents the actual behaviour rather than asserting isolation.
         // Both outcomes are acceptable; what matters is no panic and no data loss.

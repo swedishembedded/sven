@@ -32,7 +32,7 @@ impl Tool for BufReadTool {
 
     fn description(&self) -> &str {
         "Read a specific line range from a streaming output buffer created by the `task` or \
-         `shell` tool.  Returns lines formatted as `L{n}:{content}` — the same format as \
+         `shell` tool.  Returns lines formatted as `L{n}:{content}` - the same format as \
          `context_read`.\n\n\
          The buffer may still be growing (status: running).  Reading while running is safe; \
          you get a snapshot of all bytes appended so far.\n\n\
@@ -40,7 +40,7 @@ impl Tool for BufReadTool {
          1. `buf_status` to check whether the sub-agent is still running and how many lines are available.\n\
          2. `buf_grep` to locate specific sections of the output.\n\
          3. `buf_read` to inspect specific line ranges in detail.\n\n\
-         You do NOT need to read the entire buffer — grep for what you need first."
+         You do NOT need to read the entire buffer - grep for what you need first."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -23,8 +23,8 @@ use async_trait::async_trait;
 pub trait SubQueryRunner: Send + Sync {
     /// Send `prompt` to the LLM and return the text response.
     ///
-    /// * `system` — a stable system instruction passed as the system message.
-    /// * `prompt` — the user message, typically containing a chunk of content
+    /// * `system` - a stable system instruction passed as the system message.
+    /// * `prompt` - the user message, typically containing a chunk of content
     ///   followed by the analysis instruction.
     ///
     /// Returns `Ok(text)` on success, `Err(message)` on any failure.

@@ -3,7 +3,7 @@ name: repo-structure
 description: "Provides the authoritative layout of the sven repository. Load when the task involves: navigating the repo (finding where code lives), adding or moving crates/modules/files, modifying CI or release workflows, understanding build/test/release targets, restructuring directories, or any task where knowing where things are avoids a full exploration. Do NOT load for tasks that only edit code inside a single already-known file."
 ---
 
-# sven — Repository Structure
+# sven - Repository Structure
 
 ## Top-level layout
 
@@ -15,9 +15,9 @@ sven/
 ├── crates/                     # Workspace crates (see below)
 ├── tests/
 │   ├── e2e/
-│   │   └── basic/              # All bats end-to-end tests (01–08 + helpers + ci_mode)
-│   └── fixtures/               # Shared test fixtures (mock_responses.yaml, plan.md, …)
-├── docs/                       # User-facing markdown docs (00–09) + technical/ sub-dir
+│   │   └── basic/              # All bats end-to-end tests (01-08 + helpers + ci_mode)
+│   └── fixtures/               # Shared test fixtures (mock_responses.yaml, plan.md, ...)
+├── docs/                       # User-facing markdown docs (00-09) + technical/ sub-dir
 ├── scripts/
 │   ├── install.sh              # curl-pipe installer
 │   ├── release-build.sh        # local multi-platform artifact builder
@@ -53,11 +53,11 @@ sven/
 | `sven-image` | Image attachment support |
 | `sven-input` | Stdin/file/pipe input handling |
 | `sven-mcp` | MCP (Model Context Protocol) client integration |
-| `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, …) |
+| `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, ...) |
 | `sven-node` | P2P agent node: task/session/room executors, agent builder, tools |
 | `sven-p2p` | libp2p networking layer, wire types, protocol constants |
 | `sven-runtime` | Tokio runtime wiring and process lifecycle |
-| `sven-tools` | 18-tool toolkit (file, shell, grep, todo, GDB, …) |
+| `sven-tools` | 18-tool toolkit (file, shell, grep, todo, GDB, ...) |
 | `sven-tui` | Terminal UI (interactive mode) |
 
 ## Key Makefile targets
@@ -96,7 +96,7 @@ Push v*.*.* tag  →  release.yml
 ## E2E test suite (`tests/e2e/basic/`)
 
 All tests use `--model mock` (no API key or network required). Hardware-gated tests in
-`07_gdb_workflows.bats` (Tiers 2–3) self-skip unless `SVEN_TEST_JLINK=1` is set.
+`07_gdb_workflows.bats` (Tiers 2-3) self-skip unless `SVEN_TEST_JLINK=1` is set.
 
 | File | Scope |
 |------|-------|
@@ -106,7 +106,7 @@ All tests use `--model mock` (no API key or network required). Hardware-gated te
 | `04_pipeline.bats` | sven-to-sven piping, stdin sources |
 | `05_new_tools.bats` | 18-tool toolkit end-to-end |
 | `06_headless_enhancements.bats` | Output formats, frontmatter, artifacts, timeouts |
-| `07_gdb_workflows.bats` | GDB tools (Tier 1 always runs; Tiers 2–3 need hardware) |
+| `07_gdb_workflows.bats` | GDB tools (Tier 1 always runs; Tiers 2-3 need hardware) |
 | `08_trace_output.bats` | Trace tokens, tool call/result IDs, pipe chains |
 | `helpers.bash` | Shared helpers: `BIN`, `FIXTURES`, `sven_mock`, `assert_output_contains` |
 
@@ -122,4 +122,4 @@ All tests use `--model mock` (no API key or network required). Hardware-gated te
 - Add a new CI workflow or modify job dependencies in `ci.yml` / `release.yml`
 - Add or change a `Makefile` target that affects the build/test/release flow
 
-Edit only the relevant table row or section — do not rewrite sections that have not changed.
+Edit only the relevant table row or section - do not rewrite sections that have not changed.

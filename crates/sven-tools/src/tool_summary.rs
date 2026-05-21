@@ -31,13 +31,13 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
     };
 
     match name {
-        // File operations — show last 2 path components for context
+        // File operations - show last 2 path components for context
         "read_file" | "write_file" | "str_replace_editor" | "str_replace" | "delete_file"
         | "Read" | "Write" | "StrReplace" | "Delete" | "EditNotebook" => str_field("path")
             .map(|p| shorten_path(&p, 2))
             .unwrap_or_default(),
 
-        // Shell — prefer "description" (intent) for the summary; fall back to the command.
+        // Shell - prefer "description" (intent) for the summary; fall back to the command.
         // Support both "shell_command" and "command" parameter names.
         "shell" | "bash" | "Shell" | "run_terminal_command" | "RunTerminalCommand" => {
             str_field("description")
@@ -47,7 +47,7 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
                 .unwrap_or_default()
         }
 
-        // Search — pattern + optional short path
+        // Search - pattern + optional short path
         "grep" | "search" | "Grep" => {
             let pattern = str_field("pattern").unwrap_or_default();
             let path = str_field("path")
@@ -61,7 +61,7 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
             truncate_summary(&format!("{pattern}{path_short}"), 80)
         }
 
-        // Glob — show the pattern
+        // Glob - show the pattern
         "glob" | "Glob" => str_field("glob_pattern")
             .or_else(|| str_field("pattern"))
             .map(|p| truncate_summary(&p, 80))
@@ -166,7 +166,7 @@ pub fn tool_smart_summary(name: &str, args: &serde_json::Value) -> String {
             }
         }
 
-        // Internal buffer/editor tools — opaque IDs add no value
+        // Internal buffer/editor tools - opaque IDs add no value
         _ if name.starts_with("buf_") || name.starts_with("nvim_") => String::new(),
 
         // Generic fallback: first string value, no key name
@@ -217,7 +217,7 @@ fn truncate_summary(s: &str, max_chars: usize) -> String {
         s.to_string()
     } else {
         let t: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{t}…")
+        format!("{t}...")
     }
 }
 

@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     // In TUI/GUI mode writing to stderr corrupts the display.
     // Suppress all tracing output unless the caller explicitly opts in by
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
-    // (writes to stderr — only useful with headless / CI mode).
+    // (writes to stderr - only useful with headless / CI mode).
     let is_interactive = !cli.is_headless() && cli.command.is_none();
     let is_tui = is_interactive && !cli.gui;
     let is_gui = is_interactive && cli.gui;
@@ -335,10 +335,10 @@ fn print_all_tools_help(reg: &sven_tools::ToolRegistry) {
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
     println!("sven built-in tools ({} total)\n", schemas.len());
     println!(
-        "Usage:\n  sven tool call <TOOL> [key=value ...]   — execute a tool\n  \
-         sven tool call <TOOL>                    — show that tool's schema\n  \
-         sven tool call <TOOL> --json '{{...}}'   — pass raw JSON args\n  \
-         sven tool list                           — compact name+description list\n"
+        "Usage:\n  sven tool call <TOOL> [key=value ...]   - execute a tool\n  \
+         sven tool call <TOOL>                    - show that tool's schema\n  \
+         sven tool call <TOOL> --json '{{...}}'   - pass raw JSON args\n  \
+         sven tool list                           - compact name+description list\n"
     );
     println!("{}\n", "─".repeat(72));
     for schema in &schemas {
@@ -759,7 +759,7 @@ fn validate_workflow(file: &std::path::Path) -> anyhow::Result<()> {
         if !step.content.is_empty() {
             let preview = step.content.chars().take(80).collect::<String>();
             let ellipsis = if step.content.chars().count() > 80 {
-                "…"
+                "..."
             } else {
                 ""
             };
@@ -909,7 +909,7 @@ fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
 
     if verbose {
         for d in drivers {
-            println!("  {} — {}", d.id, d.name);
+            println!("  {} - {}", d.id, d.name);
             println!("    {}", d.description);
             if let Some(env) = d.default_api_key_env {
                 println!("    API key env : {env}");
@@ -948,7 +948,7 @@ fn list_providers_cmd(verbose: bool, as_json: bool) -> anyhow::Result<()> {
 
 // ── Map / Tee / Reduce command handlers ──────────────────────────────────────
 
-/// `sven map TEMPLATE` — run one agent per stdin line.
+/// `sven map TEMPLATE` - run one agent per stdin line.
 async fn run_map_command(
     template: &str,
     concurrency: usize,
@@ -971,7 +971,7 @@ async fn run_map_command(
     sven_ci::pipe::run_map(opts, stdin_data).await
 }
 
-/// `sven tee CMD...` — broadcast stdin to N parallel commands.
+/// `sven tee CMD...` - broadcast stdin to N parallel commands.
 async fn run_tee_command(
     commands: &[String],
     shell: &str,
@@ -988,7 +988,7 @@ async fn run_tee_command(
     sven_ci::pipe::run_tee(opts, stdin_data).await
 }
 
-/// `sven reduce PROMPT` — aggregate stdin into one synthesis agent.
+/// `sven reduce PROMPT` - aggregate stdin into one synthesis agent.
 async fn run_reduce_command(
     prompt: &str,
     model: Option<&str>,
@@ -1092,14 +1092,14 @@ fn print_chats(limit: usize) {
             println!("{}", "-".repeat(95));
             for e in &entries {
                 let display_id = if e.id.len() > 44 {
-                    format!("{}…", &e.id[..43])
+                    format!("{}...", &e.id[..43])
                 } else {
                     e.id.clone()
                 };
                 let date = e.timestamp.replace('T', " ");
                 let date = &date[..16.min(date.len())];
                 let title = if e.title.chars().count() > 50 {
-                    format!("{}…", e.title.chars().take(49).collect::<String>())
+                    format!("{}...", e.title.chars().take(49).collect::<String>())
                 } else {
                     e.title.clone()
                 };
@@ -1162,7 +1162,7 @@ fn pick_chat_with_fzf() -> anyhow::Result<Option<String>> {
         .stdout(Stdio::piped())
         .spawn()
         .context(
-            "failed to launch fzf — make sure fzf is installed\n\
+            "failed to launch fzf - make sure fzf is installed\n\
              (https://github.com/junegunn/fzf or `apt install fzf`)",
         )?;
 
@@ -1267,13 +1267,13 @@ async fn run_as_teammate(
                         break;
                     }
                 } else {
-                    // We were removed from the config — treat as shutdown.
+                    // We were removed from the config - treat as shutdown.
                     eprintln!("[teammate:{agent_name}] removed from team config, exiting");
                     break;
                 }
             }
             Ok(None) => {
-                // Team config deleted — team was cleaned up.
+                // Team config deleted - team was cleaned up.
                 eprintln!("[teammate:{agent_name}] team '{team_name}' no longer exists, exiting");
                 break;
             }
@@ -1351,7 +1351,7 @@ async fn run_as_teammate(
                 }
             }
             Ok(None) => {
-                // No tasks available — wait before polling again.
+                // No tasks available - wait before polling again.
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
             Err(e) => {
@@ -1612,7 +1612,7 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // Install a panic hook that restores the terminal to a usable state before
     // printing the panic message.  Without this, a panic while in raw-mode /
     // alternate-screen leaves the terminal permanently garbled.
-    // Use stdout (same fd as ratatui) — stderr may be redirected to /dev/null
+    // Use stdout (same fd as ratatui) - stderr may be redirected to /dev/null
     // below so escape sequences written there would never reach the terminal.
     {
         use ratatui::crossterm::{
@@ -1841,7 +1841,7 @@ fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
     //   • Pass --verbose (-v)              → enables debug/trace (headless only)
     let is_subagent = std::env::var(SUBAGENT_DEPTH_ENV).is_ok();
     if is_tui || is_subagent {
-        // Check for an explicit log file — advanced debugging only.
+        // Check for an explicit log file - advanced debugging only.
         if let Ok(log_path) = std::env::var("SVEN_LOG_FILE") {
             use std::sync::Mutex;
             if let Ok(file) = std::fs::OpenOptions::new()

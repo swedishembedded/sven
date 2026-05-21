@@ -2,7 +2,7 @@
 name        = "sven-acp"
 version     = "1.0.0"
 edition     = "2021"
-description = "ACP (Agent Client Protocol) server for sven – exposes sven as an ACP-compliant agent"
+description = "ACP (Agent Client Protocol) server for sven - exposes sven as an ACP-compliant agent"
 license     = "Apache-2.0"
 
 [dependencies]

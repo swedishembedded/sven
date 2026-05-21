@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 07_gdb_workflows.bats – end-to-end tests for GDB debugging tools and workflows.
+# 07_gdb_workflows.bats - end-to-end tests for GDB debugging tools and workflows.
 #
 # Tests are structured in three tiers:
 #
@@ -53,7 +53,7 @@ require_device() {
 # Skip if the sven binary is not built.
 setup() {
     if [[ ! -x "${BIN}" ]]; then
-        skip "Binary not found: ${BIN} — run 'cargo build' first"
+        skip "Binary not found: ${BIN} - run 'cargo build' first"
     fi
 }
 

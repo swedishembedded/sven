@@ -22,7 +22,7 @@ pub struct CompletionItem {
     /// Optional secondary description shown in muted style.
     pub description: Option<String>,
 
-    /// Fuzzy match score — higher is better.  Used for sorting.
+    /// Fuzzy match score - higher is better.  Used for sorting.
     pub score: usize,
 }
 

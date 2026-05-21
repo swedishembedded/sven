@@ -5,9 +5,9 @@
 //!
 //! Exposes two entry points:
 //!
-//! * [`serve_stdio`] — starts a local sven agent in-process and speaks ACP
+//! * [`serve_stdio`] - starts a local sven agent in-process and speaks ACP
 //!   over stdin/stdout.
-//! * [`serve_stdio_node_proxy`] — proxies ACP requests to a running `sven node`
+//! * [`serve_stdio_node_proxy`] - proxies ACP requests to a running `sven node`
 //!   over WebSocket.
 //!
 //! Both entry points follow the same structure as `sven-mcp::serve_stdio[_node_proxy]`
@@ -98,8 +98,8 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
 /// Start an ACP server that proxies all requests to a running `sven node`
 /// over WebSocket.
 ///
-/// `ws_url` — the WebSocket URL of the node (e.g. `wss://127.0.0.1:18790/ws`)
-/// `token`  — bearer token printed by `sven node start`
+/// `ws_url` - the WebSocket URL of the node (e.g. `wss://127.0.0.1:18790/ws`)
+/// `token`  - bearer token printed by `sven node start`
 pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()> {
     debug!("Starting ACP node-proxy server, node={ws_url}");
 

@@ -104,7 +104,7 @@ mod output_category_tests {
         assert_eq!(t.output_category(), OutputCategory::FileContent);
     }
 
-    // ── Generic tools (no override — hard truncation) ─────────────────────────
+    // ── Generic tools (no override - hard truncation) ─────────────────────────
 
     #[test]
     fn write_tool_is_generic() {

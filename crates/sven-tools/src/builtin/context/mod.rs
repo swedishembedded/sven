@@ -7,9 +7,9 @@
 //! Large content is kept outside the LLM context window.  The model receives a
 //! symbolic handle and interacts with the content through structured tools:
 //!
-//! - [`ContextOpenTool`] — opens a file or directory and returns a handle + metadata
-//! - [`ContextReadTool`] — random-access line-range read from a handle
-//! - [`ContextGrepTool`] — regex pre-filter search over a handle
+//! - [`ContextOpenTool`] - opens a file or directory and returns a handle + metadata
+//! - [`ContextReadTool`] - random-access line-range read from a handle
+//! - [`ContextGrepTool`] - regex pre-filter search over a handle
 //!
 //! The `context_query` and `context_reduce` tools live in `sven-bootstrap`
 //! because they need access to [`sven_model::ModelProvider`] for sub-queries.

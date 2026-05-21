@@ -25,11 +25,11 @@ use crate::{
 ///
 /// # Actions
 ///
-/// - `remember` — store a fact, note, or contact detail
-/// - `recall` — semantic search for relevant memories
-/// - `forget` — delete a memory by ID
-/// - `list` — list all stored memories
-/// - `get` — retrieve a specific memory by ID
+/// - `remember` - store a fact, note, or contact detail
+/// - `recall` - semantic search for relevant memories
+/// - `forget` - delete a memory by ID
+/// - `list` - list all stored memories
+/// - `get` - retrieve a specific memory by ID
 ///
 /// # Use cases
 ///
@@ -285,7 +285,7 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max])
+        format!("{}...", &s[..max])
     }
 }
 

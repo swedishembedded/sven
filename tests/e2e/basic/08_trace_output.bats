@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 08_trace_output.bats – CI trace output and multi-tier pipe chain tests.
+# 08_trace_output.bats - CI trace output and multi-tier pipe chain tests.
 #
 # Covers:
 #   • [sven:tool:call] includes id= field
@@ -74,7 +74,7 @@ load helpers
 
 @test "08.11 [sven:thinking] at default level shows full reasoning content" {
     run_split_output bash -c 'echo "think deeply about this" | "$BIN" --headless --model mock'
-    # Full content is shown by default — thinking is valuable CI signal
+    # Full content is shown by default - thinking is valuable CI signal
     [[ "${STDERR_OUT}" == *"Let me carefully reason"* ]]
 }
 
@@ -97,7 +97,7 @@ load helpers
 # ── Multi-tier pipe chain ─────────────────────────────────────────────────────
 #
 # Key invariant: when a sven stdout (conversation markdown) is piped into the
-# next sven instance, the prior conversation is parsed as history – not as a
+# next sven instance, the prior conversation is parsed as history - not as a
 # new workflow.  The positional prompt becomes the new user turn.
 
 @test "08.15 two-stage pipe succeeds" {
@@ -134,7 +134,7 @@ load helpers
     assert_output_contains "Summary"
 }
 
-@test "08.19 piped conversation format detected – [sven:info] appears on stderr" {
+@test "08.19 piped conversation format detected - [sven:info] appears on stderr" {
     # The runner should log that it loaded prior messages from the pipe.
     run_split_output bash -c \
         'echo "make a plan" \

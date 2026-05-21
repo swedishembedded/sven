@@ -130,7 +130,7 @@ impl DriverTestHarness {
         assert!(!text.is_empty(), "model must produce non-empty text");
         assert!(
             chunk_count >= 2,
-            "expected at least 2 streaming text chunks (got {chunk_count}) — \
+            "expected at least 2 streaming text chunks (got {chunk_count}) - \
              verify SSE streaming is actually enabled"
         );
         Ok(())

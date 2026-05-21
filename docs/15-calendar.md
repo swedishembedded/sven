@@ -92,8 +92,8 @@ tools:
 
 ## Use Cases
 
-- **Morning briefing** — include today's calendar in the daily summary
-- **Meeting prep** — before a meeting, look up notes and context about attendees
-- **CRM integration** — after a meeting, create follow-up events and save notes
-- **Appointment booking** — agent checks availability and creates events on request
-- **Voice call scheduling** — use `calendar create` after a voice call confirms appointment
+- **Morning briefing** - include today's calendar in the daily summary
+- **Meeting prep** - before a meeting, look up notes and context about attendees
+- **CRM integration** - after a meeting, create follow-up events and save notes
+- **Appointment booking** - agent checks availability and creates events on request
+- **Voice call scheduling** - use `calendar create` after a voice call confirms appointment

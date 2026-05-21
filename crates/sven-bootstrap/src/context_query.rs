@@ -7,16 +7,16 @@
 //! These tools implement the map and reduce steps of the RLM (Recursive
 //! Language Model) pattern described in arxiv.org/abs/2512.24601.
 //!
-//! `context_query` — dispatches a prompt to sub-agents over chunks of a
+//! `context_query` - dispatches a prompt to sub-agents over chunks of a
 //! memory-mapped context handle, storing results as a new handle.
 //!
-//! `context_reduce` — synthesizes/aggregates a results handle using a sub-
+//! `context_reduce` - synthesizes/aggregates a results handle using a sub-
 //! agent, with automatic tree reduction when results exceed the sub-query
 //! context window.
 //!
-//! `ModelSubQueryRunner` — concrete implementation of the `SubQueryRunner`
+//! `ModelSubQueryRunner` - concrete implementation of the `SubQueryRunner`
 //! trait backed by `sven_model::ModelProvider::complete`.  Each call sends a
-//! minimal `CompletionRequest` with no tools — matching the paper's
+//! minimal `CompletionRequest` with no tools - matching the paper's
 //! `llm_query()` helper.
 
 use std::sync::Arc;
@@ -71,7 +71,7 @@ impl ModelSubQueryRunner {
         // Cap the prompt to avoid exceeding the sub-query context window.
         let prompt_str = if prompt.len() > self.max_chars {
             format!(
-                "{}\n[... {} bytes omitted — prompt truncated to fit sub-query context ...]",
+                "{}\n[... {} bytes omitted - prompt truncated to fit sub-query context ...]",
                 &prompt[..self.max_chars],
                 prompt.len() - self.max_chars
             )
@@ -101,7 +101,7 @@ impl ModelSubQueryRunner {
         while let Some(event) = stream.next().await {
             match event {
                 Ok(ResponseEvent::TextDelta(delta)) => text.push_str(&delta),
-                // Break on Done or Usage — both signal the end of the response.
+                // Break on Done or Usage - both signal the end of the response.
                 // Usage often arrives last on OpenAI-compatible providers that
                 // omit an explicit Done frame.
                 Ok(ResponseEvent::Done) | Ok(ResponseEvent::Usage { .. }) => break,
@@ -175,7 +175,7 @@ impl Tool for ContextQueryTool {
     fn description(&self) -> &str {
         "Dispatch analysis to sub-agents over chunks of a memory-mapped context. Each sub-agent \
          receives one chunk of content plus your prompt, processes it independently, and returns \
-         a result. This is the map step of a map-reduce pattern — use context_reduce for the \
+         a result. This is the map step of a map-reduce pattern - use context_reduce for the \
          reduce step.\n\n\
          Results are stored as a new context handle (not loaded into your context window). \
          Use context_read to inspect specific results, context_grep to search them, or \
@@ -221,7 +221,7 @@ impl Tool for ContextQueryTool {
                 "chunk_lines": {
                     "type": "integer",
                     "description": "Lines per chunk (default: configured default_chunk_lines). \
-                                    Ignored when ranges are specified — each range is one chunk."
+                                    Ignored when ranges are specified - each range is one chunk."
                 },
                 "max_parallel": {
                     "type": "integer",
@@ -335,7 +335,7 @@ impl Tool for ContextQueryTool {
         info!(total_chunks, handle = %handle, "context_query: starting sub-queries");
         self.emit_progress(
             &call.id,
-            format!("context_query: {total_chunks} chunks, {max_parallel} parallel — starting"),
+            format!("context_query: {total_chunks} chunks, {max_parallel} parallel - starting"),
         );
 
         // ── Dispatch sub-queries in batches of max_parallel ──────────────────
@@ -618,7 +618,7 @@ async fn tree_reduce_inner(
         // At max depth: just truncate and send.
         let truncated = if content.len() > max_chars {
             format!(
-                "{}\n[... {} bytes omitted — tree reduction depth limit reached ...]",
+                "{}\n[... {} bytes omitted - tree reduction depth limit reached ...]",
                 &content[..max_chars],
                 content.len() - max_chars
             )

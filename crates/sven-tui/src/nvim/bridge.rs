@@ -363,7 +363,7 @@ mod tests {
         async fn spawn_bridge() -> NvimBridge {
             NvimBridge::spawn(80, 24)
                 .await
-                .expect("NvimBridge::spawn failed — is nvim installed?")
+                .expect("NvimBridge::spawn failed - is nvim installed?")
         }
 
         async fn spawn_configured_bridge() -> NvimBridge {

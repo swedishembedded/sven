@@ -208,7 +208,7 @@ pub fn cmd_start(file: &Path, sven_bin: Option<&str>, dry_run: bool) -> anyhow::
     let def = TeamDefinition::from_file(file)?;
 
     if def.members.is_empty() {
-        anyhow::bail!("Team definition has no members — nothing to start.");
+        anyhow::bail!("Team definition has no members - nothing to start.");
     }
 
     println!(
@@ -256,7 +256,7 @@ pub fn cmd_start(file: &Path, sven_bin: Option<&str>, dry_run: bool) -> anyhow::
             .spawn()
         {
             Ok(child) => println!(
-                "  Spawned '{}' ({}) — pid={}",
+                "  Spawned '{}' ({}) - pid={}",
                 member.name,
                 member.role,
                 child.id()
@@ -280,7 +280,7 @@ pub fn cmd_start(file: &Path, sven_bin: Option<&str>, dry_run: bool) -> anyhow::
 pub fn cmd_cleanup(team_name: &str, force: bool) -> anyhow::Result<()> {
     let dir = default_team_dir(team_name);
     if !dir.exists() {
-        println!("Team '{team_name}' not found — nothing to clean up.");
+        println!("Team '{team_name}' not found - nothing to clean up.");
         return Ok(());
     }
 

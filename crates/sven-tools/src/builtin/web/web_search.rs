@@ -23,7 +23,7 @@ impl Tool for WebSearchTool {
     fn description(&self) -> &str {
         "Real-time web search. Requires BRAVE_API_KEY env var. count: 1-10 (default 5).\n\
          Include the current year in queries for recent info (e.g., 'React docs 2026').\n\
-         Knowledge cutoff: early 2025 — use this for anything that may have changed since.\n\
+         Knowledge cutoff: early 2025 - use this for anything that may have changed since.\n\
          ALWAYS cite sources after answering:\n\
          Sources:\n\
          - [Title](URL)"

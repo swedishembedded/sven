@@ -4,7 +4,7 @@
 //!
 //! Type conversions between sven's tool types and rmcp's MCP model types.
 //!
-//! These are pure, stateless functions — no allocation beyond what the output
+//! These are pure, stateless functions - no allocation beyond what the output
 //! types require.  The bridge sits at the seam between the existing
 //! [`sven_tools`] crate and the MCP wire protocol so neither side needs to
 //! know about the other.

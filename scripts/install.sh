@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
-# install.sh — Install sven from the latest GitHub release.
+# install.sh - Install sven from the latest GitHub release.
 #
 # One-liner usage:
 #   curl -fsSL https://agentsven.com/install | sh
 #
 # Options (set as env vars before piping):
-#   SVEN_VERSION   — install a specific version (e.g. "0.2.1"), default: latest
-#   SVEN_INSTALL_DIR — install directory, default: /usr/local/bin
-#   SVEN_NO_SUDO   — set to 1 to never use sudo (fail if dir not writable)
+#   SVEN_VERSION   - install a specific version (e.g. "0.2.1"), default: latest
+#   SVEN_INSTALL_DIR - install directory, default: /usr/local/bin
+#   SVEN_NO_SUDO   - set to 1 to never use sudo (fail if dir not writable)
 set -eu
 
 REPO="swedishembedded/sven"

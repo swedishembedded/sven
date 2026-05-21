@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 02_ci_mode.bats – CI/headless mode behaviour.
+# 02_ci_mode.bats - CI/headless mode behaviour.
 #
 # Validates the contract that CI mode relies on:
 #   • piped stdin triggers headless automatically

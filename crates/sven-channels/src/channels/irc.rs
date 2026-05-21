@@ -128,7 +128,7 @@ impl Channel for IrcChannel {
                     continue;
                 }
 
-                // Detect 001 (welcome) — join channels
+                // Detect 001 (welcome) - join channels
                 if line.contains(" 001 ") {
                     for ch in &irc_channels {
                         let _ = write_tx.send(format!("JOIN {ch}")).await;
@@ -180,7 +180,7 @@ impl Channel for IrcChannel {
                 };
 
                 if tx.send(inbound).await.is_err() {
-                    warn!("IRC: inbound channel closed — stopping");
+                    warn!("IRC: inbound channel closed - stopping");
                     return;
                 }
             }

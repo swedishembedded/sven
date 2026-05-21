@@ -119,7 +119,7 @@ impl Tool for GdbInterruptTool {
             Err(e) => {
                 return ToolOutput::err(&call.id, format!("Status query failed: {e}"));
             }
-            _ => {} // Running or unstarted — proceed with interrupt
+            _ => {} // Running or unstarted - proceed with interrupt
         }
 
         // Send SIGINT to the GDB process.  This is the reliable way to halt an

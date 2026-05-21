@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Cohere driver — native Chat API v2.
+//! Cohere driver - native Chat API v2.
 //!
 //! Uses the `POST /v2/chat` endpoint with streaming.
 //! Cohere's wire format differs from OpenAI: different message structure,

@@ -54,7 +54,7 @@ impl McpTool {
         // Truncate description to keep the tools prompt compact.
         let desc = description.unwrap_or_default();
         let desc = if desc.len() > 500 {
-            format!("{}…", &desc[..497])
+            format!("{}...", &desc[..497])
         } else {
             desc
         };

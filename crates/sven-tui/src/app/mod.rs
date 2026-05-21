@@ -58,7 +58,7 @@ pub(crate) use queue_state::QueueState;
 pub(crate) use session_manager::{SessionEntry, SessionManager};
 pub(crate) use ui_state::UiState;
 
-// Re-export FocusPane at the app module level — imported from `crate::app::FocusPane`
+// Re-export FocusPane at the app module level - imported from `crate::app::FocusPane`
 // throughout the codebase.
 pub use ui_state::FocusPane;
 
@@ -109,11 +109,11 @@ pub struct App {
     pub(crate) completion_manager: CompletionManager,
     pub(crate) shared_skills: sven_runtime::SharedSkills,
     pub(crate) shared_agents: sven_runtime::SharedAgents,
-    /// Shared tool snapshot — populated by AgentBuilder after the local tool
+    /// Shared tool snapshot - populated by AgentBuilder after the local tool
     /// registry is built.  Empty in node-proxy mode (tools are fetched live
     /// from the node when `/tools` is opened).
     pub(crate) shared_tools: sven_tools::SharedTools,
-    /// MCP manager — populated in local mode after the agent is built.
+    /// MCP manager - populated in local mode after the agent is built.
     /// `None` in node-proxy mode.  Used by `/mcp` to display server status.
     pub(crate) mcp_manager: Option<Arc<McpManager>>,
     /// MCP prompt slash commands, keyed by command name.
@@ -125,15 +125,15 @@ pub struct App {
     /// Broadcast sender for MCP tool refresh. When ToolsChanged fires, we send
     /// so all agent tasks update their registries.
     pub(crate) mcp_refresh_tx: Option<tokio::sync::broadcast::Sender<()>>,
-    /// Tool display registry — set by AgentBuilder after the registry is built.
+    /// Tool display registry - set by AgentBuilder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
     pub(crate) history_path: Option<PathBuf>,
     pub(crate) jsonl_path: Option<PathBuf>,
-    /// Set to `true` after a tool call completes — triggers a terminal-state
+    /// Set to `true` after a tool call completes - triggers a terminal-state
     /// recovery pass before the next draw.
     pub(crate) needs_terminal_recover: bool,
-    /// Shared output buffer store — also held by the agent's `TaskTool` so that
+    /// Shared output buffer store - also held by the agent's `TaskTool` so that
     /// the TUI can display live subprocess buffer status via `/context` or `/peers`.
     pub(crate) buffer_store: Arc<tokio::sync::Mutex<OutputBufferStore>>,
 
@@ -147,13 +147,13 @@ pub struct App {
     pub(crate) nvim: NvimState,
     pub(crate) prefs: SplitPrefs,
     pub(crate) layout: LayoutCache,
-    /// Multi-session manager — holds all chat sessions and the shared event mux.
+    /// Multi-session manager - holds all chat sessions and the shared event mux.
     pub(crate) sessions: SessionManager,
     /// Path to the YAML chat document for the current active session.
     pub(crate) yaml_path: Option<PathBuf>,
     /// Title of the current active chat session.
     pub(crate) chat_title: String,
-    /// Shared question sender — cloned into every agent task so that question
+    /// Shared question sender - cloned into every agent task so that question
     /// requests from all sessions are routed through the single `question_rx`
     /// in `run()`.  `None` before `run()` is called (e.g. in tests).
     pub(crate) question_tx: Option<mpsc::Sender<QuestionRequest>>,
@@ -321,7 +321,7 @@ impl App {
                     .map(|dir| dir.join(format!("{}.yaml", active_session_id)))
             });
 
-        // Register the initial session entry (without stored_chat — App.chat IS the chat).
+        // Register the initial session entry (without stored_chat - App.chat IS the chat).
         session_manager.register(initial_session_entry);
 
         // Load previously saved sessions from disk into the sidebar.
@@ -405,9 +405,9 @@ impl App {
 
     /// Render the entire TUI into `frame`.
     ///
-    /// `nvim_lines`      — rendered Neovim grid lines (empty when no nvim).
-    /// `nvim_draw_scroll`— scroll offset used when drawing nvim lines.
-    /// `nvim_cursor`     — Neovim cursor position (row, col) in grid space.
+    /// `nvim_lines`      - rendered Neovim grid lines (empty when no nvim).
+    /// `nvim_draw_scroll`- scroll offset used when drawing nvim lines.
+    /// `nvim_cursor`     - Neovim cursor position (row, col) in grid space.
     pub(crate) fn view(
         &mut self,
         frame: &mut Frame,
@@ -700,7 +700,7 @@ impl App {
                 .map(|qm| QueueItem {
                     content: &qm.content,
                     model_label: qm.model_transition.as_ref().map(|d| {
-                        // Leak to 'static for the widget lifetime — the queue
+                        // Leak to 'static for the widget lifetime - the queue
                         // lives in self which outlives this frame.
                         Box::leak(d.display_label().into_boxed_str()) as &str
                     }),
@@ -894,7 +894,7 @@ impl App {
             entry.agent_tx = Some(submit_tx.clone());
             entry.agent_cancel = self.agent.cancel.clone();
         }
-        // Remove per-agent event_rx — events now flow through the mux channel.
+        // Remove per-agent event_rx - events now flow through the mux channel.
         // Set up a forwarding task: per-session events → (SessionId, AgentEvent) mux.
         let active_id = self.sessions.active_id.clone();
         let mux_tx = self.sessions.multi_event_tx.clone();
@@ -1292,7 +1292,7 @@ impl App {
 
         // If the target session has no stored chat, try to load from disk.
         // Also refresh session entry metadata (title, status, created_at) from
-        // the full document — load_from_disk only has ChatEntry approximations.
+        // the full document - load_from_disk only has ChatEntry approximations.
         let target_chat = target_chat.or_else(|| {
             let yaml_path = self.sessions.get(&target_id)?.yaml_path.clone()?;
             if yaml_path.exists() {
@@ -1571,7 +1571,7 @@ impl App {
             shared_tools,
             shared_tool_displays,
             buffer_store,
-            None, // mcp_manager_tx — not needed for sub-session restarts
+            None, // mcp_manager_tx - not needed for sub-session restarts
             mcp_refresh_rx,
         ));
     }
@@ -1723,10 +1723,10 @@ async fn mcp_event_consumer(
         }
         let toast = match event {
             McpEvent::AuthStarted { ref server } => Some(ui_state::Toast::info(format!(
-                "Opening browser to authenticate with '{server}'…"
+                "Opening browser to authenticate with '{server}'..."
             ))),
             McpEvent::AuthRequired { ref server, .. } => Some(ui_state::Toast::warning(format!(
-                "'{server}' requires authentication — run `/mcp auth {server}`"
+                "'{server}' requires authentication - run `/mcp auth {server}`"
             ))),
             McpEvent::ServerConnected(ref server) => Some(ui_state::Toast::success(format!(
                 "MCP server '{server}' connected"

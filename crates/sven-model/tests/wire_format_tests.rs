@@ -84,7 +84,7 @@ async fn mock_server_once(
             body,
         });
 
-        // Write response — Content-Length so reqwest knows when to stop
+        // Write response - Content-Length so reqwest knows when to stop
         let http_resp = format!(
             "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             resp_body.len(),
@@ -377,7 +377,7 @@ async fn azure_sends_api_key_header_not_bearer() {
     let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
 
     // Azure: specify base_url (the path up to but not including
-    // `/chat/completions`) — the driver appends `?api-version=…` itself.
+    // `/chat/completions`) - the driver appends `?api-version=...` itself.
     let cfg = ModelConfig {
         provider: "azure".into(),
         name: "gpt-4o".into(),
@@ -400,7 +400,7 @@ async fn azure_sends_api_key_header_not_bearer() {
     while stream.next().await.is_some() {}
 
     let req = req_rx.await.unwrap();
-    // Azure uses `api-key` header, NOT `Authorization: Bearer …`
+    // Azure uses `api-key` header, NOT `Authorization: Bearer ...`
     assert_eq!(
         req.headers.get("api-key").expect("api-key header"),
         "azure-secret-key"
@@ -429,7 +429,7 @@ async fn anthropic_sends_correct_request_format() {
     );
     let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
 
-    // Disable caching so the system block is a plain string — this test
+    // Disable caching so the system block is a plain string - this test
     // focuses on request routing and auth headers, not caching behaviour.
     let cfg = ModelConfig {
         provider: "anthropic".into(),
@@ -778,7 +778,7 @@ async fn anthropic_no_caching_sends_no_beta_header() {
         name: "claude-3-haiku-20240307".into(),
         api_key: Some("key".into()),
         base_url: Some(format!("http://127.0.0.1:{port}")),
-        // Explicitly disable every caching flag — defaults are now all true.
+        // Explicitly disable every caching flag - defaults are now all true.
         cache_system_prompt: false,
         cache_tools: false,
         cache_conversation: false,
@@ -1096,7 +1096,7 @@ async fn anthropic_cache_respects_4_breakpoint_budget() {
 #[tokio::test]
 async fn anthropic_cache_images_disabled_leaves_no_cache_control() {
     // Verify that a single flag can be turned off without affecting the image
-    // block — even though other caching remains active (the default).
+    // block - even though other caching remains active (the default).
     let sse = "data: {\"type\":\"message_stop\"}\n\n";
     let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
 
@@ -1131,7 +1131,7 @@ async fn anthropic_cache_images_disabled_leaves_no_cache_control() {
         "image block must NOT have cache_control when cache_images is false"
     );
     // Other caching (system, conversation) is still active so the beta header
-    // IS present — only the image block itself must be unmarked.
+    // IS present - only the image block itself must be unmarked.
     assert!(
         req.headers.contains_key("anthropic-beta"),
         "beta header must still be sent for other active caching layers"

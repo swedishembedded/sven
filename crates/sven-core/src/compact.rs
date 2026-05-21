@@ -16,7 +16,7 @@ const SUMMARIZE_PROMPT: &str =
 const STRUCTURED_COMPACTION_PROMPT: &str = "\
 You are a context compaction assistant for a software engineering agent. \
 Produce a structured state checkpoint from the conversation history below. \
-Use EXACTLY the following Markdown sections — do not add or remove sections. \
+Use EXACTLY the following Markdown sections - do not add or remove sections. \
 Be information-dense: preserve file paths, function names, error messages, \
 code snippets, test names, and technical decisions verbatim where they matter.
 
@@ -80,11 +80,11 @@ pub fn compact_session_with_strategy(
 /// a compaction prompt within the context window.
 ///
 /// Drops all but the last `keep_n` non-system messages and prepends a canned
-/// notice.  No model call is made — this is a purely deterministic operation
+/// notice.  No model call is made - this is a purely deterministic operation
 /// that always succeeds regardless of session size.
 ///
 /// The preserved slice is adjusted forward until it starts at a clean message
-/// boundary — i.e. not inside a tool-call/tool-result group.  This prevents
+/// boundary - i.e. not inside a tool-call/tool-result group.  This prevents
 /// sending orphaned `ToolResult` messages to the API without a preceding
 /// assistant `ToolCall`, which causes a 400 error.
 pub fn emergency_compact(
@@ -654,7 +654,7 @@ mod tests {
         // With 200 lines and a tight cap, middle lines (e.g. line 100) must be gone.
         let content = make_lines(200);
         let result = smart_truncate(&content, OutputCategory::HeadTail, 50);
-        // line 100 is in the middle — neither in the first 60 nor the last 40
+        // line 100 is in the middle - neither in the first 60 nor the last 40
         assert!(
             !result.contains("line 100\n") && !result.contains("\nline 100"),
             "HeadTail must drop middle lines that exceed the cap"
@@ -686,7 +686,7 @@ mod tests {
         let result = smart_truncate(&content, OutputCategory::MatchList, 50);
         assert!(
             !result.contains("match 499:"),
-            "MatchList must NOT jump to the tail — that distinguishes it from HeadTail"
+            "MatchList must NOT jump to the tail - that distinguishes it from HeadTail"
         );
     }
 
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn generic_falls_back_to_hard_cut_when_no_newline() {
-        // A single long line with no newlines — hard cut at cap_chars.
+        // A single long line with no newlines - hard cut at cap_chars.
         let content = "x".repeat(10_000);
         let result = smart_truncate(&content, OutputCategory::Generic, 10);
         // cap_chars = 40; result must be ≤ 40 chars of 'x' plus the notice

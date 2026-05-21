@@ -80,7 +80,7 @@ export default function Hero() {
               className="text-lg sm:text-xl text-text-secondary leading-relaxed mb-10 max-w-xl"
             >
               Research, code, debug hardware, run CI pipelines, and delegate to other agents
-              — without leaving your terminal.{' '}
+              - without leaving your terminal.{' '}
               <span className="text-text-primary font-medium">One binary. Zero context switches.</span>
             </motion.p>
 

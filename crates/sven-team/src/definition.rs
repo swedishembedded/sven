@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Team definition files — `.sven/teams/*.yaml`.
+//! Team definition files - `.sven/teams/*.yaml`.
 //!
 //! A team definition file describes a named team: its goal, member roles, per-member
 //! model overrides, and per-member instruction fragments.  It is the declarative
@@ -63,7 +63,7 @@ pub struct TeamMemberDef {
 /// A complete team definition loaded from a `.sven/teams/*.yaml` file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamDefinition {
-    /// Team name — also used as the directory name under `~/.config/sven/teams/`.
+    /// Team name - also used as the directory name under `~/.config/sven/teams/`.
     pub name: String,
     /// Description of the team's overall objective (shown in `sven team status`).
     #[serde(skip_serializing_if = "Option::is_none")]

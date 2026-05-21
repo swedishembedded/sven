@@ -6,7 +6,7 @@ description: |
     involving crates/sven-gui, .slint files, Slint components, or sven desktop UI changes.
 ---
 
-# Slint GUI — sven-gui
+# Slint GUI - sven-gui
 
 ## Location and structure
 
@@ -20,7 +20,7 @@ crates/sven-gui/
 └── ui/
     ├── main-window.slint # Root window, imports all components
     ├── theme.slint       # Design tokens (colors, spacing, fonts)
-    ├── widgets.slint     # Reusable widgets (IconButton, SearchInput, …)
+    ├── widgets.slint     # Reusable widgets (IconButton, SearchInput, ...)
     ├── sidebar.slint     # Session list
     ├── chat-pane.slint   # Message list
     ├── input-pane.slint  # Input area
@@ -61,7 +61,7 @@ Common tokens:
 - **Text**: `Theme.text-primary`, `Theme.text-secondary`, `Theme.text-dim`
 - **Accent**: `Theme.accent`, `Theme.accent-dim`
 - **Semantic**: `Theme.success`, `Theme.error-text`, `Theme.warning`
-- **Spacing**: `Theme.space-xs` … `Theme.space-2xl`
+- **Spacing**: `Theme.space-xs` ... `Theme.space-2xl`
 - **Layout**: `Theme.sidebar-width`, `Theme.row-height`, `Theme.status-bar-height`
 
 ## Data model: structs and properties
@@ -108,7 +108,7 @@ In Rust: `slint::include_modules!();` then `app.on_session_selected(|id| { ... }
 ## Layout patterns
 
 - **HorizontalLayout / VerticalLayout**: Use for toolbars, forms, lists. Set `spacing`, `alignment`, `padding`.
-- **Flickable**: Wrap scrollable content. Set `viewport-height` to the list’s `preferred-height`.
+- **Flickable**: Wrap scrollable content. Set `viewport-height` to the list's `preferred-height`.
 - **Conditional**: `if item.active: Rectangle { ... }` for state-dependent UI.
 - **Stretch**: `vertical-stretch: 1` or `horizontal-stretch: 1` to fill parent.
 

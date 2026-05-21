@@ -99,7 +99,7 @@ impl Widget for PeersPane<'_> {
         }
 
         // ── Build ListItems ───────────────────────────────────────────────────
-        // Layout per row:  icon(1) + space(1) + name(…) + delegate_indicator(2)
+        // Layout per row:  icon(1) + space(1) + name(...) + delegate_indicator(2)
         // The delegate indicator occupies the last 2 columns of the row.
         // We use fit_to_width to pad the name so the delegate column is always
         // at the same position, and then append the indicator at the end.

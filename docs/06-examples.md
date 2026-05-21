@@ -5,7 +5,7 @@ explanations. Each example can be adapted to your own project.
 
 ---
 
-## Example 1 — Understand an unfamiliar codebase
+## Example 1 - Understand an unfamiliar codebase
 
 You have just joined a project and want to get up to speed quickly. Use
 `research` mode so sven cannot make any accidental changes.
@@ -36,12 +36,12 @@ sven --file onboarding.md
 
 ---
 
-## Example 2 — Generate and review an implementation plan
+## Example 2 - Generate and review an implementation plan
 
 Use `plan` mode to get a written design before any code is written. Review the
 plan, then hand it to an `agent` run to implement it.
 
-**Step 1 — produce the plan:**
+**Step 1 - produce the plan:**
 
 ```sh
 sven --mode plan "Design a rate-limiting middleware for our Express API. The limit should be configurable per endpoint. Use Redis for storage." \
@@ -50,7 +50,7 @@ sven --mode plan "Design a rate-limiting middleware for our Express API. The lim
 cat rate-limiter-plan.txt
 ```
 
-**Step 2 — implement the plan:**
+**Step 2 - implement the plan:**
 
 ```sh
 cat rate-limiter-plan.txt | sven --mode agent
@@ -66,7 +66,7 @@ echo "Design a rate-limiting middleware for our Express API with configurable pe
 
 ---
 
-## Example 3 — Targeted code refactoring
+## Example 3 - Targeted code refactoring
 
 Ask sven to refactor a specific file while keeping the API intact.
 
@@ -77,12 +77,12 @@ sven "Refactor src/services/user.ts. The file is too large. Split it into separa
 To see what changes sven would make before it makes them:
 
 ```sh
-sven --mode plan "Describe the refactoring steps for src/services/user.ts — splitting auth, profile, and session into separate files."
+sven --mode plan "Describe the refactoring steps for src/services/user.ts - splitting auth, profile, and session into separate files."
 ```
 
 ---
 
-## Example 4 — Write tests for existing code
+## Example 4 - Write tests for existing code
 
 ```sh
 sven "Write unit tests for the functions in src/utils/validation.js. Use the Jest framework. Aim for at least 80% coverage of the exported functions. Place the tests in tests/utils/validation.test.js."
@@ -96,7 +96,7 @@ sven "Look at the test style in tests/utils/string.test.js and write similar tes
 
 ---
 
-## Example 5 — Review a diff and flag issues
+## Example 5 - Review a diff and flag issues
 
 A common CI task: take a diff and ask sven to find bugs or style issues.
 
@@ -119,7 +119,7 @@ In a CI workflow:
 
 ---
 
-## Example 6 — Multi-stage CI pipeline
+## Example 6 - Multi-stage CI pipeline
 
 This example shows a three-stage pipeline: research → plan → implement.
 
@@ -142,7 +142,7 @@ echo "Implement the first item from the following plan:" \
 
 ---
 
-## Example 7 — Resuming a long conversation
+## Example 7 - Resuming a long conversation
 
 For tasks that span multiple sessions (e.g. a large feature implementation),
 use `--resume` to continue where you left off.
@@ -166,7 +166,7 @@ sven --resume
 
 ---
 
-## Example 8 — Using the mock provider for testing
+## Example 8 - Using the mock provider for testing
 
 The mock provider lets you test scripts and CI jobs without making real API
 calls. It matches input messages against rules in a YAML file.
@@ -212,7 +212,7 @@ echo "Please summarise the project." | sven --model mock --headless
 
 ---
 
-## Example 9 — Conversation files for iterative development
+## Example 9 - Conversation files for iterative development
 
 This pattern works well for ongoing tasks where you want a readable record.
 
@@ -225,14 +225,14 @@ cat > feature.md << 'EOF'
 Analyse the existing product and user modules to understand what data is available.
 EOF
 
-# First pass — sven reads, analyses, and appends its response
+# First pass - sven reads, analyses, and appends its response
 sven --file feature.md --conversation
 
 # Review the response in your editor, then add the next step
 printf '\n## User\nBased on what you found, implement a basic shopping cart model in src/models/cart.ts.\n' \
   >> feature.md
 
-# Second pass — sven sees the full history and implements
+# Second pass - sven sees the full history and implements
 sven --file feature.md --conversation
 
 # Continue iterating...
@@ -244,7 +244,7 @@ The file accumulates a complete, readable history of the work.
 
 ---
 
-## Example 10 — Web research and code generation
+## Example 10 - Web research and code generation
 
 Ask sven to look something up and then write code based on what it finds.
 
@@ -260,7 +260,7 @@ sven "Fetch the API documentation from https://api.example.com/docs and generate
 
 ---
 
-## Example 11 — Embedded GDB debugging session
+## Example 11 - Embedded GDB debugging session
 
 Sven is the **first AI agent with native GDB integration** for autonomous
 embedded hardware debugging. Give it a plain-English task and it orchestrates
@@ -268,22 +268,22 @@ the entire debug lifecycle on its own.
 
 The screenshots below show a real session against an nRF-based Zephyr target.
 The user asks sven to find the parameters passed to the UART TX function the
-first time it is called — sven discovers the target configuration, starts the
+first time it is called - sven discovers the target configuration, starts the
 server, connects, sets a breakpoint, and reports back.
 
-**Task start — agent discovers the target and connects** (ratatui TUI):
+**Task start - agent discovers the target and connects** (ratatui TUI):
 
-![sven GDB session — start](sven-gdb-1.png)
+![sven GDB session - start](sven-gdb-1.png)
 
 **Agent inspects parameters with `gdb_command`, stops the session, and
 summarises findings** (ratatui TUI):
 
-![sven GDB session — result](sven-gdb-2.png)
+![sven GDB session - result](sven-gdb-2.png)
 
-**Same session in the embedded Neovim chat view** — tool calls are shown as
+**Same session in the embedded Neovim chat view** - tool calls are shown as
 collapsed single-line entries, the Neovim cursor is visible at the bottom:
 
-![sven GDB session — Neovim view](sven-gdb-nvim.png)
+![sven GDB session - Neovim view](sven-gdb-nvim.png)
 
 Flash firmware and step through an embedded target using sven's integrated GDB
 tools. The agent discovers the device automatically from project files, or you
@@ -330,14 +330,14 @@ sven --file firmware-debug.md --conversation
 
 ---
 
-## Example 12 — Generate and execute shell commands
+## Example 12 - Generate and execute shell commands
 
 Use `--headless` and `--output-format compact` together to get a response that
 contains nothing but the agent's plain-text reply.  This makes it possible to
 ask sven to produce a shell command and pipe it directly into execution.
 
 `--headless` is **required** when invoking sven from a terminal prompt without
-piping stdin — otherwise sven opens the TUI.  `--output-format compact` strips
+piping stdin - otherwise sven opens the TUI.  `--output-format compact` strips
 all conversation formatting so only the answer text reaches stdout.  Redirect
 stderr to `/dev/null` to silence diagnostic progress lines.
 
@@ -354,7 +354,7 @@ CMD=$(sven --headless --output-format compact \
 echo "Will run: $CMD"
 eval "$CMD"
 
-# Chain with other tools — ask sven to transform command output
+# Chain with other tools - ask sven to transform command output
 sven --headless --output-format compact \
      "Write a one-liner that lists the 10 largest files under /var/log. Reply with the command only." \
      2>/dev/null \
@@ -368,7 +368,7 @@ sven --headless --output-format compact \
 
 ---
 
-## Example 13 — Export conversation traces for fine-tuning
+## Example 13 - Export conversation traces for fine-tuning
 
 When building fine-tuning datasets from real agent interactions, use
 `--jsonl-output` to capture the complete conversation including system prompts:

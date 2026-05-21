@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Team picker overlay — shows team members and lets the user switch the
+//! Team picker overlay - shows team members and lets the user switch the
 //! active view to any teammate's session.
 //!
 //! Triggered by `Ctrl+a` (new `Action::OpenTeamPicker`) or `/agents`.
@@ -29,7 +29,7 @@ pub struct TeamPickerEntry {
     pub name: String,
     /// Role string (e.g. `"reviewer"`, `"lead"`).
     pub role: String,
-    /// Peer ID (base58) — used for navigation.
+    /// Peer ID (base58) - used for navigation.
     pub peer_id: String,
     /// Current status.
     pub status: AgentPickerStatus,
@@ -193,7 +193,7 @@ impl Widget for TeamPickerOverlay<'_> {
                     Span::styled(format!(" [{}]", e.role), Style::default().fg(BORDER_DIM));
                 let task_hint = if let Some(t) = &e.current_task {
                     let preview = truncate_to_width_exact(t, 32);
-                    Span::styled(format!("  — {preview}"), Style::default().fg(TEXT_DIM))
+                    Span::styled(format!("  - {preview}"), Style::default().fg(TEXT_DIM))
                 } else {
                     Span::raw("")
                 };

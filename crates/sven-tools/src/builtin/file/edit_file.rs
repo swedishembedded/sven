@@ -12,14 +12,14 @@ use sven_config::AgentMode;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
-/// Minimum similarity ratio (0–1) for a fuzzy window to be accepted.
+/// Minimum similarity ratio (0-1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
 
 // ── Hunk data structures ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 enum HunkLine {
-    /// Unchanged line — must exist in the file, kept verbatim.
+    /// Unchanged line - must exist in the file, kept verbatim.
     Context(String),
     /// Line to remove from the file.
     Del(String),
@@ -29,7 +29,7 @@ enum HunkLine {
 
 #[derive(Debug, Clone)]
 struct Hunk {
-    /// 1-based old-file start line from `@@ -N,...` — used only as an
+    /// 1-based old-file start line from `@@ -N,...` - used only as an
     /// ambiguity-breaking hint, never for primary location.
     old_start_hint: Option<usize>,
     lines: Vec<HunkLine>,
@@ -78,11 +78,11 @@ fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
     let mut current: Option<Hunk> = None;
 
     for line in diff.lines() {
-        // File header lines — skip
+        // File header lines - skip
         if line.starts_with("--- ") || line.starts_with("+++ ") {
             continue;
         }
-        // "No newline at end of file" marker — skip
+        // "No newline at end of file" marker - skip
         if line.starts_with("\\ ") {
             continue;
         }
@@ -110,7 +110,7 @@ fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
                 // A blank diff line with no prefix = context empty line
                 h.lines.push(HunkLine::Context(String::new()));
             }
-            // Unknown line type — ignore
+            // Unknown line type - ignore
         }
     }
 
@@ -205,8 +205,8 @@ fn strip_indent(lines: &[&str], indent: usize) -> Vec<String> {
 
 /// Find where `search_lines` (Context + Del lines from a hunk) appear in
 /// `file_lines`. Returns `(pos, indent_delta)` where:
-/// - `pos`  — 0-based index of the first matching line
-/// - `indent_delta` — spaces to add (positive) or remove (negative) from
+/// - `pos`  - 0-based index of the first matching line
+/// - `indent_delta` - spaces to add (positive) or remove (negative) from
 ///   Add lines when the match required indent normalisation or fuzzy logic
 ///
 /// Strategies (in order):
@@ -221,7 +221,7 @@ fn find_hunk_position(
     search_lines: &[&str],
     hint: Option<usize>,
 ) -> Result<(usize, i64), String> {
-    // Pure insertion — no context/del lines to locate
+    // Pure insertion - no context/del lines to locate
     if search_lines.is_empty() {
         let pos = hint
             .map(|h| h.saturating_sub(1).min(file_lines.len()))
@@ -312,7 +312,7 @@ fn find_hunk_position(
         return Ok((best, delta));
     }
 
-    // ── All strategies failed — build a concise, actionable error ────────────
+    // ── All strategies failed - build a concise, actionable error ────────────
     let mut msg = String::from("Context not found. Expected:\n");
     for l in search_lines {
         msg.push_str(&format!("  |{l}|\n"));
@@ -406,7 +406,7 @@ fn apply_hunk(file_lines: &[String], hunk: &Hunk, pos: usize, indent_delta: i64)
                 file_idx += 1;
             }
             HunkLine::Del(_) => {
-                // Skip file line — deleted.
+                // Skip file line - deleted.
                 file_idx += 1;
             }
             HunkLine::Add(s) => {
@@ -439,20 +439,20 @@ impl Tool for EditFileTool {
          DIFF FORMAT\n\
          Each hunk starts with @@ (line numbers are optional hints, not required):\n\
            @@ -OLD_LINE,COUNT +NEW_LINE,COUNT @@\n\
-            context line          (space prefix — unchanged)\n\
-           -removed line          (minus prefix — deleted from file)\n\
-           +added line            (plus prefix — inserted into file)\n\
+            context line          (space prefix - unchanged)\n\
+           -removed line          (minus prefix - deleted from file)\n\
+           +added line            (plus prefix - inserted into file)\n\
             context line\n\
          \n\
          Rules:\n\
          • Every change block MUST begin with an @@ hunk header line.\n\
-         • Include 2–3 unchanged context lines before and after every change.\n\
+         • Include 2-3 unchanged context lines before and after every change.\n\
          • Context lines must match the file content exactly (indentation\n\
            differences are corrected automatically).\n\
          • Multiple @@ hunks in one diff apply changes at separate locations.\n\
          • Diffs wrapped in ```diff fences are accepted.\n\
          \n\
-         Example — replace one call and add a log line:\n\
+         Example - replace one call and add a log line:\n\
          @@ -12,6 +12,7 @@\n\
           fn process(x: u32) -> u32 {\n\
          -    x * 2\n\
@@ -473,7 +473,7 @@ impl Tool for EditFileTool {
                 },
                 "diff": {
                     "type": "string",
-                    "description": "Unified diff with hunk markers. REQUIRED: must contain at least one line starting with @@ (e.g. @@ -1,3 +1,4 @@). Without @@ hunk markers the call will fail. Each hunk starts with @@; include 2–3 context lines around every change."
+                    "description": "Unified diff with hunk markers. REQUIRED: must contain at least one line starting with @@ (e.g. @@ -1,3 +1,4 @@). Without @@ hunk markers the call will fail. Each hunk starts with @@; include 2-3 context lines around every change."
                 }
             },
             "required": ["path", "diff"],
@@ -848,7 +848,7 @@ mod tests {
 
     #[tokio::test]
     async fn fuzzy_match_corrects_minor_typo_in_context() {
-        // Context has "u32" but file has "u64" — close enough for fuzzy.
+        // Context has "u32" but file has "u64" - close enough for fuzzy.
         let path = tmp_file("fn process(id: u64) {\n    validate(id);\n    update(id);\n}\n");
         let t = EditFileTool;
         let diff =
@@ -953,7 +953,7 @@ mod tests {
         let path = tmp_file("fn alpha() { one(); }\nfn beta() { two(); }\n");
         let t = EditFileTool;
 
-        // First edit — succeeds
+        // First edit - succeeds
         let out1 = t
             .execute(&call(json!({
                 "path": path,
@@ -973,7 +973,7 @@ mod tests {
             .await;
         assert!(!out_a.is_error, "{}", out_a.content);
 
-        // Second call with the OLD context — must fail and show suggestions
+        // Second call with the OLD context - must fail and show suggestions
         let out_b = t
             .execute(&call(json!({
                 "path": path2,
@@ -1116,7 +1116,7 @@ mod tests {
     async fn git_extended_header_with_section_name() {
         let path = tmp_file("fn greet() {\n    old();\n}\n");
         let t = EditFileTool;
-        // @@ -1,3 +1,3 @@ fn greet() — section name after second @@
+        // @@ -1,3 +1,3 @@ fn greet() - section name after second @@
         let diff = "@@ -1,3 +1,3 @@ fn greet()\n fn greet() {\n-    old();\n+    new();\n }\n";
         let out = t.execute(&call(json!({"path": path, "diff": diff}))).await;
         assert!(!out.is_error, "{}", out.content);
@@ -1262,7 +1262,7 @@ mod tests {
             "error should name failed hunk: {}",
             out.content
         );
-        // File must be completely unchanged — hunks are applied atomically
+        // File must be completely unchanged - hunks are applied atomically
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "line1\nline2\nline3\n",
@@ -1320,7 +1320,7 @@ mod tests {
     async fn fuzzy_below_threshold_fails() {
         let path = tmp_file("fn foo() { completely_different_content_here(); }\n");
         let t = EditFileTool;
-        // Context shares almost nothing with the file — well below 85%
+        // Context shares almost nothing with the file - well below 85%
         let out = t
             .execute(&call(json!({
                 "path": path,
@@ -1355,7 +1355,7 @@ mod tests {
     #[tokio::test]
     async fn multi_hunk_offset_tracking() {
         // Hunk 1 inserts 2 lines after "insert_after".
-        // Hunk 2 targets "target" which now sits 2 lines lower — context matching
+        // Hunk 2 targets "target" which now sits 2 lines lower - context matching
         // must find it correctly in the updated in-memory content.
         let path = tmp_file("insert_after\ntarget\nend\n");
         let t = EditFileTool;
@@ -1502,7 +1502,7 @@ mod adversarial_tests {
         p
     }
 
-    // ── Non-ASCII leading whitespace — potential byte-boundary panic ──────────
+    // ── Non-ASCII leading whitespace - potential byte-boundary panic ──────────
 
     /// `common_indent` returns the minimum byte-length of leading whitespace.
     /// When two lines use *different* multi-byte whitespace chars (e.g. one uses
@@ -1527,7 +1527,7 @@ mod adversarial_tests {
         let file_content = "\u{2003}fn alpha() {}\n\u{2003}fn beta() {}\n";
         let path = tmp(file_content);
         let diff = "@@ @@\n-    fn alpha() {}\n+    fn ALPHA() {}\n";
-        // Must complete without panic — success or failure of the diff is OK
+        // Must complete without panic - success or failure of the diff is OK
         let _ = std::panic::catch_unwind(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
@@ -1546,7 +1546,7 @@ mod adversarial_tests {
     /// guard.  The test asserts completion within a strict wall-clock budget.
     #[tokio::test]
     async fn fuzzy_match_on_large_file_completes_within_timeout() {
-        // 2000 nearly-identical lines — forces fuzzy path when hunk doesn't
+        // 2000 nearly-identical lines - forces fuzzy path when hunk doesn't
         // exact-match (we use a slightly different identifier).
         let file_content: String = (0..2000)
             .map(|i| format!("    let variable_{i:04} = compute(input_{i:04});\n"))
@@ -1562,10 +1562,10 @@ mod adversarial_tests {
         )
         .await;
         let _ = std::fs::remove_file(&path);
-        // Must complete — timeout is the bug signal
+        // Must complete - timeout is the bug signal
         assert!(
             result.is_ok(),
-            "fuzzy search on large file timed out — O(n²) hang"
+            "fuzzy search on large file timed out - O(n²) hang"
         );
         // The edit will fail (no match), but it must fail quickly, not hang
         let out = result.unwrap();
@@ -1582,7 +1582,7 @@ mod adversarial_tests {
     /// not cause OOM.  We cap this by testing that the output is sane.
     #[test]
     fn adjust_indent_with_delta_1000_does_not_allocate_gigabytes() {
-        // delta = 1000 → 1000 spaces prepended — large but not catastrophic
+        // delta = 1000 → 1000 spaces prepended - large but not catastrophic
         let result = adjust_indent("fn foo() {}", 1000);
         assert_eq!(result.len(), 1000 + "fn foo() {}".len());
         // Sanity: delta = 100_000 should also be fast (100 KB not GB)
@@ -1593,7 +1593,7 @@ mod adversarial_tests {
     // ── Tab-indented file with space-indented hunk ────────────────────────────
 
     /// A tab-indented file and a space-indented hunk should fall back to fuzzy
-    /// or fail gracefully — NOT corrupt the indentation silently without a test
+    /// or fail gracefully - NOT corrupt the indentation silently without a test
     /// showing what actually happens.
     #[tokio::test]
     async fn tab_indented_file_with_space_hunk_is_handled() {
@@ -1605,7 +1605,7 @@ mod adversarial_tests {
             .execute(&call(json!({"path": path, "diff": diff})))
             .await;
         let _ = std::fs::remove_file(&path);
-        // Either it matches via fuzzy (acceptable) or fails — must not panic
+        // Either it matches via fuzzy (acceptable) or fails - must not panic
         // and must not silently produce a mixed-indent catastrophe
         let _ = out; // Just assert no panic
     }
@@ -1616,7 +1616,7 @@ mod adversarial_tests {
     async fn hunk_with_only_blank_context_lines_does_not_corrupt_file() {
         let file_content = "fn a() {}\n\nfn b() {}\n";
         let path = tmp(file_content);
-        // A hunk where all context lines are blank — matches at position 1 (the blank line)
+        // A hunk where all context lines are blank - matches at position 1 (the blank line)
         let diff = "@@ @@\n \n-fn b() {}\n+fn B() {}\n";
         let out = EditFileTool
             .execute(&call(json!({"path": path, "diff": diff})))
@@ -1635,13 +1635,13 @@ mod adversarial_tests {
     #[tokio::test]
     async fn pure_insertion_at_start_of_file_does_not_panic() {
         let path = tmp("line1\nline2\n");
-        // @@ -0,0 +1 @@ style — pure insertion at top, no context
+        // @@ -0,0 +1 @@ style - pure insertion at top, no context
         let diff = "@@ -0,0 +1 @@\n+inserted_first\n";
         let out = EditFileTool
             .execute(&call(json!({"path": path, "diff": diff})))
             .await;
         let _ = std::fs::remove_file(&path);
-        // Must not panic — success or graceful failure both acceptable
+        // Must not panic - success or graceful failure both acceptable
         let _ = out;
     }
 
@@ -1656,7 +1656,7 @@ mod adversarial_tests {
             ))
             .await;
         // May succeed (path resolves to /etc/passwd which can't be written) or
-        // fail — must not panic, must not silently write to /etc/passwd
+        // fail - must not panic, must not silently write to /etc/passwd
         let _ = out;
     }
 

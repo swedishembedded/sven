@@ -8,7 +8,7 @@
 
 ---
 
-## Option 1 — Debian/Ubuntu package
+## Option 1 - Debian/Ubuntu package
 
 If a `.deb` package is available for your version, this is the simplest route.
 
@@ -21,7 +21,7 @@ completion scripts for bash, zsh, and fish automatically.
 
 ---
 
-## Option 2 — Build from source
+## Option 2 - Build from source
 
 ### 1. Install Rust
 
@@ -121,7 +121,7 @@ export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-You can also put the key in the sven config file — see
+You can also put the key in the sven config file - see
 [Configuration](05-configuration.md) for details.
 
 ---

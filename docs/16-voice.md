@@ -119,7 +119,7 @@ hooks:
 
 ## Use Cases
 
-- **Appointment confirmation** — call clients, confirm/reschedule appointments
-- **Daily audio briefing** — synthesize the morning summary as an MP3
-- **Meeting transcription** — transcribe recorded meetings for notes
-- **Cold outreach** — automated introductory calls with personalized scripts
+- **Appointment confirmation** - call clients, confirm/reschedule appointments
+- **Daily audio briefing** - synthesize the morning summary as an MP3
+- **Meeting transcription** - transcribe recorded meetings for notes
+- **Cold outreach** - automated introductory calls with personalized scripts

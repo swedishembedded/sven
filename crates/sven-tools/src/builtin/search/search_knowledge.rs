@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `search_knowledge` — keyword search across project knowledge documents.
+//! `search_knowledge` - keyword search across project knowledge documents.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -115,7 +115,7 @@ impl Tool for SearchKnowledgeTool {
                     .unwrap_or_default();
 
                 let mut block = vec![format!(
-                    "### {} — `{}`{}  [{} match(es)]",
+                    "### {} - `{}`{}  [{} match(es)]",
                     doc.subsystem, filename, updated_hint, match_count
                 )];
                 for excerpt in &excerpts {

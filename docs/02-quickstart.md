@@ -43,10 +43,10 @@ The screen is divided into three areas:
 └─────────────────────────────────────────────────┘
 ```
 
-- **Status bar** — shows the active model, current mode, and how much of the
+- **Status bar** - shows the active model, current mode, and how much of the
   context window is used.
-- **Chat pane** — the conversation history and streaming agent output.
-- **Input box** — where you type your messages.
+- **Chat pane** - the conversation history and streaming agent output.
+- **Input box** - where you type your messages.
 
 Focus switches between the chat pane and the input box. When the input box has
 focus (the default), your keystrokes go to the text field. When the chat pane
@@ -110,7 +110,7 @@ sven opens the TUI, pre-fills the prompt, and submits it immediately.
 
 ## Headless mode (no TUI)
 
-Sven runs headlessly — without a TUI — in two situations:
+Sven runs headlessly - without a TUI - in two situations:
 
 - **Piped stdin**: when stdin is not a terminal, sven auto-detects this and
   skips the TUI automatically.  If you also pass a positional prompt (e.g.
@@ -121,14 +121,14 @@ Sven runs headlessly — without a TUI — in two situations:
   opening the interactive TUI.
 
 ```sh
-# Piped — headless is automatic
+# Piped - headless is automatic
 echo "Summarise the README in three bullet points." | sven
 
-# Terminal prompt — --headless is mandatory to avoid the TUI
+# Terminal prompt - --headless is mandatory to avoid the TUI
 sven --headless "Summarise the README in three bullet points."
 ```
 
-The output is plain text — easy to pipe into other tools or save to a file:
+The output is plain text - easy to pipe into other tools or save to a file:
 
 ```sh
 echo "Summarise the README." | sven > summary.txt
@@ -139,7 +139,7 @@ sven --headless "Summarise the README." > summary.txt
 
 By default headless output is conversation-format markdown (with `## User` /
 `## Sven` headings).  Pass `--output-format compact` to get only the agent's
-raw response text with no surrounding markup — useful when you want to capture
+raw response text with no surrounding markup - useful when you want to capture
 or execute the result directly.
 
 Combine `--headless`, `--output-format compact`, and `2>/dev/null` to get
@@ -189,7 +189,7 @@ Open it in any text editor to read, edit, and continue:
 # Append a follow-up question
 printf '\n## User\nWhich files have the most technical debt?\n' >> work.md
 
-# Run again — sven loads the history and answers only the new question
+# Run again - sven loads the history and answers only the new question
 sven --file work.md --conversation
 ```
 
@@ -200,13 +200,13 @@ sven --file work.md --conversation
 Add `--mode` to limit what sven is allowed to do:
 
 ```sh
-# Research only — no changes to your files
+# Research only - no changes to your files
 sven --mode research "What does the auth module do?"
 
-# Plan — produces a written plan but makes no changes
+# Plan - produces a written plan but makes no changes
 sven --mode plan "Design a caching layer for the database module."
 
-# Agent (default) — full read/write access
+# Agent (default) - full read/write access
 sven "Implement the caching layer we just designed."
 ```
 
@@ -308,12 +308,12 @@ See [Sven Node](08-node.md) for the full setup guide and
 
 ## What next?
 
-- [User Guide](03-user-guide.md) — full details on the TUI, modes, tools, and
+- [User Guide](03-user-guide.md) - full details on the TUI, modes, tools, and
   conversation management
-- [CI and Pipelines](04-ci-pipeline.md) — run sven in scripts and automated
+- [CI and Pipelines](04-ci-pipeline.md) - run sven in scripts and automated
   workflows, with workflow file format reference, output formats, timeouts,
   artifacts, and CI integration guides
-- [Configuration](05-configuration.md) — change the model, set defaults, and
+- [Configuration](05-configuration.md) - change the model, set defaults, and
   tune behaviour
-- [Sven Node](08-node.md) — connect to other agents over P2P
-- [Agent Collaboration](09-collaboration.md) — peer conversations, rooms, and search
+- [Sven Node](08-node.md) - connect to other agents over P2P
+- [Agent Collaboration](09-collaboration.md) - peer conversations, rooms, and search

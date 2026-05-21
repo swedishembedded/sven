@@ -7,10 +7,10 @@
 //! both the `sven-tui` (ratatui terminal UI) and `sven-gui` (Slint desktop UI)
 //! crates. It contains:
 //!
-//! - `AgentRequest` / `agent_task` — the background task that owns the Agent
-//! - `node_agent_task` — WebSocket bridge to a running sven node
-//! - `ChatSegment` — the display-layer chat data model
-//! - `ModelDirective`, `QueuedMessage`, `NodeBackend` — shared config types
+//! - `AgentRequest` / `agent_task` - the background task that owns the Agent
+//! - `node_agent_task` - WebSocket bridge to a running sven node
+//! - `ChatSegment` - the display-layer chat data model
+//! - `ModelDirective`, `QueuedMessage`, `NodeBackend` - shared config types
 //!
 //! ## Architecture
 //!

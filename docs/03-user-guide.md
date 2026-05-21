@@ -20,19 +20,19 @@ and can be toggled with `Ctrl+B`:
 └─────────────────────────────────────────┴───────────────────┘
 ```
 
-**Status bar** — always visible at the top. Shows:
+**Status bar** - always visible at the top. Shows:
 - Model name (e.g. `gpt-4o`)
 - Current agent mode (`research`, `plan`, or `agent`)
 - Context usage as a percentage (`ctx:18%`)
 - A spinner and the name of any tool currently running
 
-**Chat pane** — the conversation history. User messages, agent responses, and
+**Chat pane** - the conversation history. User messages, agent responses, and
 collapsed tool calls are all shown here. Scrolls independently of the input box.
 
-**Input box** — a multi-line text field. Press `Enter` to send, `Shift+Enter`
+**Input box** - a multi-line text field. Press `Enter` to send, `Shift+Enter`
 to insert a newline.
 
-**Chat list sidebar** — shows all open sessions. The active session is
+**Chat list sidebar** - shows all open sessions. The active session is
 highlighted. Sessions running a background agent task show a spinner. Toggle
 with `Ctrl+B`.
 
@@ -58,7 +58,7 @@ input box has focus, all printable characters go to the text field.
 ### Chat list sidebar
 
 The chat list sidebar lets you manage multiple concurrent conversations without
-leaving the TUI. Each session runs its own independent agent task — you can
+leaving the TUI. Each session runs its own independent agent task - you can
 have one session researching a problem while another is implementing a fix.
 
 **Opening and navigating the sidebar**
@@ -183,7 +183,7 @@ collapsed by default to keep the view compact.
 Modes control what tools the agent is allowed to use. Choosing the right mode
 prevents unintended changes and makes the agent's output more predictable.
 
-### `research` — safe exploration
+### `research` - safe exploration
 
 The agent can only read. It can run commands like `ls`, `cat`, `grep`, and
 `find`, but cannot write to any file. Use this when you want to explore a
@@ -193,7 +193,7 @@ codebase without any risk of modification.
 sven --mode research "What does the authentication module do?"
 ```
 
-### `plan` — structured proposals
+### `plan` - structured proposals
 
 The agent reads freely and produces a written plan but does not write any
 files. The output is typically a list of steps or a design document. Use this
@@ -203,7 +203,7 @@ before an `agent` run to review what will happen.
 sven --mode plan "Design a rate-limiting layer for the API."
 ```
 
-### `agent` — full access
+### `agent` - full access
 
 The agent can read, write, delete files and run any command. This is the
 default mode. Use it when you want sven to implement something end-to-end.
@@ -252,8 +252,8 @@ sven has a set of built-in tools it can call to complete tasks:
 
 Sven is the **first AI agent with native GDB integration** for autonomous
 embedded hardware debugging. Give it a plain-English task and it handles the
-entire debug lifecycle — from starting the server and loading firmware through
-setting breakpoints, inspecting state, and cleaning up — without any manual
+entire debug lifecycle - from starting the server and loading firmware through
+setting breakpoints, inspecting state, and cleaning up - without any manual
 intervention.
 
 The five GDB tools form a lifecycle:
@@ -268,26 +268,26 @@ full debug cycle autonomously.
 
 **Task start and target discovery** (ratatui TUI):
 
-![sven GDB session — task start](sven-gdb-1.png)
+![sven GDB session - task start](sven-gdb-1.png)
 
 **Inspecting parameters and final summary** (ratatui TUI):
 
-![sven GDB session — result](sven-gdb-2.png)
+![sven GDB session - result](sven-gdb-2.png)
 
 **Same session in the embedded Neovim view**:
 
-![sven GDB session — Neovim](sven-gdb-nvim.png)
+![sven GDB session - Neovim](sven-gdb-nvim.png)
 
 **Starting a server**
 
 If you do not supply a command, sven searches your project for configuration
 hints in this order:
 
-1. `.gdbinit` — looks for `# JLinkGDBServer ...` comments or `target remote` lines
-2. `.vscode/launch.json` — reads `debugServerPath`, `debugServerArgs`, and `servertype`
-3. `openocd.cfg` — builds an OpenOCD command from the config file
-4. `platformio.ini` — reads `debug_server` or `debug_tool`
-5. `CMakeLists.txt` / `Cargo.toml` — matches MCU family names (STM32, AT32, NRF, …)
+1. `.gdbinit` - looks for `# JLinkGDBServer ...` comments or `target remote` lines
+2. `.vscode/launch.json` - reads `debugServerPath`, `debugServerArgs`, and `servertype`
+3. `openocd.cfg` - builds an OpenOCD command from the config file
+4. `platformio.ini` - reads `debug_server` or `debug_tool`
+5. `CMakeLists.txt` / `Cargo.toml` - matches MCU family names (STM32, AT32, NRF, ...)
 
 If discovery fails, sven asks the user for the target device name.
 
@@ -315,7 +315,7 @@ Before running a shell command, sven checks it against approval rules:
 - **Denied** patterns are blocked outright (e.g. `rm -rf /*`).
 - Everything else is presented for confirmation if the agent requests it.
 
-You can customise these patterns in the configuration file — see
+You can customise these patterns in the configuration file - see
 [Configuration](05-configuration.md).
 
 ---
@@ -416,7 +416,7 @@ for both command names and their arguments.
 | `/provider <name>` | Switch provider while keeping the current model name. |
 | `/abort` | Abort the current agent turn. Queued messages stay queued; partial output is preserved. |
 | `/refresh` | Re-scan skill directories and register any newly added skills as commands. |
-| `/skills` | Open the skills inspector — a browsable tree of all loaded skills. |
+| `/skills` | Open the skills inspector - a browsable tree of all loaded skills. |
 | `/subagents` | Show all configured subagents with their descriptions, models, and paths. |
 | `/peers` | Show active subagent subprocess buffers and configured peer agents. |
 | `/context` | Show the current agent context: project root, skill and agent counts, output buffer handles. |
@@ -430,7 +430,7 @@ for both command names and their arguments.
 ### Skill commands
 
 Every skill you have installed is also available as a slash command named after
-its directory path — for example `/sven`, `/sven/plan`, or `/git-workflow`.
+its directory path - for example `/sven`, `/sven/plan`, or `/git-workflow`.
 See the [Skills](#skills) section for details.
 
 ---
@@ -489,7 +489,7 @@ also a fully independent slash command:
 
 When the model loads a parent skill, it receives a compact list of the
 available sub-skills.  It then calls `load_skill("sven/plan")` etc. exactly
-when it enters each phase — not before.  This means sub-skill instructions are
+when it enters each phase - not before.  This means sub-skill instructions are
 loaded only when actually needed, keeping each turn's token usage minimal.
 
 ---
@@ -530,7 +530,7 @@ body:
 description: |
   Use this skill when the user asks to deploy, release, or ship the application.
   Trigger phrases: "deploy", "release", "ship to production".
-name: Deploy             # optional — defaults to directory name
+name: Deploy             # optional - defaults to directory name
 version: 1.0.0           # optional
 ---
 
@@ -576,10 +576,10 @@ description: |
 
 Follow these phases in order:
 
-1. Pre-flight checks — call `load_skill("deploy/pre-flight")` before touching
+1. Pre-flight checks - call `load_skill("deploy/pre-flight")` before touching
    any infrastructure.
 2. Deploy the artefact.
-3. If anything fails — call `load_skill("deploy/rollback")` immediately.
+3. If anything fails - call `load_skill("deploy/rollback")` immediately.
 ```
 
 Sub-skills are automatically listed to the model when the parent is loaded, so
@@ -603,7 +603,7 @@ you do not need to declare them in the frontmatter.  Just create the directory.
 
 ### Bundled files
 
-Any file in a skill directory that is not a `SKILL.md` is a **bundled file** —
+Any file in a skill directory that is not a `SKILL.md` is a **bundled file** -
 a script, reference document, template, or data file the skill's instructions
 may use.  Subdirectories without their own `SKILL.md` are support directories,
 not sub-skills.
@@ -653,7 +653,7 @@ project context file (`AGENTS.md` or `.sven/context.md`) encodes which domain
 expert to consult before editing a given area of the codebase.
 
 The agent reads this table as part of "Project Instructions" and follows it
-automatically — no additional tooling required.
+automatically - no additional tooling required.
 
 ### Format
 
@@ -699,8 +699,8 @@ touching matching files.
 
 Sven implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.org),
 so ACP-aware editors can launch it as a subprocess and interact with it as a
-first-class AI coding agent — with streaming output, tool-call visibility, plan
-updates, and mode switching — all without a separate daemon or relay.
+first-class AI coding agent - with streaming output, tool-call visibility, plan
+updates, and mode switching - all without a separate daemon or relay.
 
 > Sven manages its own language model configuration (`~/.config/sven/config.yaml`).
 > You do **not** need to configure a language model inside the IDE; the "no language

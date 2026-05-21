@@ -28,9 +28,9 @@ pub enum Schedule {
     ///
     /// Format: `"min hour dom month dow"` (UTC).
     /// Examples:
-    /// - `"0 8 * * *"` — daily at 08:00 UTC
-    /// - `"*/15 * * * *"` — every 15 minutes
-    /// - `"0 9 * * 1"` — every Monday at 09:00 UTC
+    /// - `"0 8 * * *"` - daily at 08:00 UTC
+    /// - `"*/15 * * * *"` - every 15 minutes
+    /// - `"0 9 * * 1"` - every Monday at 09:00 UTC
     Cron {
         /// 5-field cron expression.
         expr: String,

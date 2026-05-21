@@ -1,7 +1,7 @@
 # Configuration
 
 sven is configured through a YAML file. Most options have sensible defaults, so
-the config file is optional — you only need it when you want to change something.
+the config file is optional - you only need it when you want to change something.
 
 ---
 
@@ -105,10 +105,10 @@ model:
   # Sven uses all four of Anthropic's available cache breakpoints, making it
   # the most cache-efficient agent available:
   #
-  #   Breakpoint 1 (tools)        – tool definitions, stable per session
-  #   Breakpoint 2 (system)       – system prompt, stable per session
-  #   Breakpoint 3 (images/tools) – oldest image or large tool result in history
-  #   Breakpoint 4 (conversation) – automatic, advances each turn
+  #   Breakpoint 1 (tools)        - tool definitions, stable per session
+  #   Breakpoint 2 (system)       - system prompt, stable per session
+  #   Breakpoint 3 (images/tools) - oldest image or large tool result in history
+  #   Breakpoint 4 (conversation) - automatic, advances each turn
   #
   # Reading from cache costs 10% of base input-token price; writing costs 125%.
   # For a 50-turn session caching 10,000 tokens: ~88% savings on those tokens.
@@ -120,13 +120,13 @@ model:
 
   # Cache tool definitions (Anthropic only).  DEFAULT: true
   # All tool definitions are cached as a prefix when true.
-  # Ideal for saving 5,000–10,000+ tokens per request when many tools are in use.
+  # Ideal for saving 5,000-10,000+ tokens per request when many tools are in use.
   # cache_tools: true
 
   # Enable automatic conversation caching (Anthropic only).  DEFAULT: true
   # Adds a top-level cache_control marker so Anthropic automatically caches
   # conversation history up to the last message.  The cache breakpoint advances
-  # with each turn — no manual management required.
+  # with each turn - no manual management required.
   # Delivers the largest savings for multi-turn agent sessions.
   # cache_conversation: true
 
@@ -298,16 +298,16 @@ Controls which language model sven talks to and how.
 | `provider` | `"openai"` | Provider name: `"openai"`, `"anthropic"`, or `"mock"` |
 | `name` | `"gpt-4o"` | Model identifier sent to the provider |
 | `api_key_env` | `"OPENAI_API_KEY"` | Environment variable containing the API key |
-| `api_key` | — | Inline API key (use `api_key_env` instead when possible) |
-| `base_url` | — | Override the API endpoint (for proxies) |
+| `api_key` | - | Inline API key (use `api_key_env` instead when possible) |
+| `base_url` | - | Override the API endpoint (for proxies) |
 | `max_tokens` | catalog max | Maximum tokens per response (defaults to model catalog value) |
-| `temperature` | `0.2` | Sampling temperature (0.0–2.0) |
-| `mock_responses_file` | — | Path to YAML mock responses (mock provider only) |
-| `cache_system_prompt` | `true` | **(Anthropic)** Cache the stable system prompt prefix — breakpoint 2 |
-| `cache_tools` | `true` | **(Anthropic)** Cache all tool definitions as a prefix — breakpoint 1 |
-| `cache_conversation` | `true` | **(Anthropic)** Automatically cache full conversation history each turn — breakpoint 4 |
-| `cache_images` | `true` | **(Anthropic)** Cache the oldest image blocks in conversation history — breakpoint 3 |
-| `cache_tool_results` | `true` | **(Anthropic)** Cache large (>4 096 chars) tool results in conversation history — breakpoint 3 |
+| `temperature` | `0.2` | Sampling temperature (0.0-2.0) |
+| `mock_responses_file` | - | Path to YAML mock responses (mock provider only) |
+| `cache_system_prompt` | `true` | **(Anthropic)** Cache the stable system prompt prefix - breakpoint 2 |
+| `cache_tools` | `true` | **(Anthropic)** Cache all tool definitions as a prefix - breakpoint 1 |
+| `cache_conversation` | `true` | **(Anthropic)** Automatically cache full conversation history each turn - breakpoint 4 |
+| `cache_images` | `true` | **(Anthropic)** Cache the oldest image blocks in conversation history - breakpoint 3 |
+| `cache_tool_results` | `true` | **(Anthropic)** Cache large (>4 096 chars) tool results in conversation history - breakpoint 3 |
 | `extended_cache_time` | `false` | **(Anthropic)** Use 1-hour TTL for system, tools, images, and tool-result caches instead of 5 minutes |
 
 #### Provider caching behaviour
@@ -318,7 +318,7 @@ Controls which language model sven talks to and how.
 | **OpenAI / Azure** | Automatic prefix caching | No config needed. sven keeps the system message stable across turns so the model's automatic prefix cache hits reliably. Cache-read tokens appear in the `cache_read` field of `TokenUsage` events. |
 | **OpenRouter** | Automatic (gateway) + explicit cache key | sven sends the session UUID as `prompt_cache_key` in every request, pinning all turns in a session to the same cached prefix. |
 | **DeepSeek** | Automatic prefix caching | sven reads `prompt_cache_hit_tokens` from the response and surfaces it the same as other providers. |
-| **Google / Groq / Mistral / …** | Automatic or not supported | No explicit configuration required; cache savings are reflected in token usage where available. |
+| **Google / Groq / Mistral / ...** | Automatic or not supported | No explicit configuration required; cache savings are reflected in token usage where available. |
 
 #### Supported providers
 
@@ -326,7 +326,7 @@ Controls which language model sven talks to and how.
 |----------|-----------------|-----------------|
 | OpenAI | `"openai"` | `OPENAI_API_KEY` |
 | Anthropic | `"anthropic"` | `ANTHROPIC_API_KEY` |
-| Mock (offline) | `"mock"` | — |
+| Mock (offline) | `"mock"` | - |
 
 To use a proxy or local model that has an OpenAI-compatible API (such as
 LiteLLM or Ollama), set `provider: openai` and override `base_url`:
@@ -353,7 +353,7 @@ Controls the agent's autonomy and defaults.
 | `compaction_strategy` | `"structured"` | Checkpoint format: `"structured"` or `"narrative"` |
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
 | `compaction_overhead_reserve` | `0.10` | Fraction of context reserved for schemas and dynamic context |
-| `system_prompt` | — | System prompt override (leave unset to use built-in) |
+| `system_prompt` | - | System prompt override (leave unset to use built-in) |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.
@@ -363,7 +363,7 @@ Decreasing it gives you more control by forcing sven to pause and ask.
 sven uses a multi-layer system to keep sessions within the model's context
 window at all times:
 
-**Budget gate** — Before every model submission and after every batch of tool
+**Budget gate** - Before every model submission and after every batch of tool
 results, sven checks an effective token count that accounts for:
 - Calibrated message tokens (corrected from API-reported counts over time)
 - Tool schema overhead (schemas sent with every request but not stored in history)
@@ -375,8 +375,8 @@ For example, with defaults (0.85 − 0.10 = 0.75), compaction fires when
 calibrated session tokens reach 75% of the input budget
 (`context_window − max_output_tokens`).
 
-**Rolling compaction** — When the budget gate fires:
-1. The oldest `(total – compaction_keep_recent)` non-system messages are
+**Rolling compaction** - When the budget gate fires:
+1. The oldest `(total - compaction_keep_recent)` non-system messages are
    serialised and compacted by the model.
 2. The system prompt is re-issued so the model has full instructions.
 3. The `compaction_keep_recent` most recent messages are restored verbatim.
@@ -386,18 +386,18 @@ Markdown checkpoint with dedicated sections for Active Task, Key Decisions,
 Files & Artifacts, Constraints, Pending Items, and a Session Narrative.
 Set `compaction_strategy: narrative` to use the original free-form summary.
 
-**Smart tool-result truncation** — Before any tool result enters the session,
+**Smart tool-result truncation** - Before any tool result enters the session,
 `tool_result_token_cap` is applied. Truncation is content-aware:
 shell output keeps the head and tail; grep output keeps leading matches;
 file content keeps head and tail. A notice is always appended so the model
 can retrieve more with a targeted follow-up call.
 
-**Emergency fallback** — If the session is already too large to fit even the
+**Emergency fallback** - If the session is already too large to fit even the
 compaction prompt, the oldest messages are dropped deterministically (no model
 call needed). The model is notified via a canned notice and the session
 continues without crashing.
 
-**Calibration** — After every model turn, sven updates a running calibration
+**Calibration** - After every model turn, sven updates a running calibration
 factor from the API-reported input token count. This exponential moving
 average corrects the chars/4 approximation over time, so token estimates
 improve automatically within a session.
@@ -435,11 +435,11 @@ Controls what the agent is allowed to do and how.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_approve_patterns` | `["cat *", "ls *", …]` | Commands matching these run without confirmation |
-| `deny_patterns` | `["rm -rf /*", …]` | Commands matching these are always blocked |
+| `auto_approve_patterns` | `["cat *", "ls *", ...]` | Commands matching these run without confirmation |
+| `deny_patterns` | `["rm -rf /*", ...]` | Commands matching these are always blocked |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
 | `use_docker` | `false` | Sandbox shell execution in Docker |
-| `docker_image` | — | Docker image for sandboxed execution |
+| `docker_image` | - | Docker image for sandboxed execution |
 
 **Adding auto-approve patterns:**
 
@@ -471,7 +471,7 @@ tools:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `fetch_max_chars` | `50000` | Maximum characters fetched from a URL |
-| `search.api_key` | — | Brave Search API key (also `BRAVE_API_KEY` env var) |
+| `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
 
 ---
 
@@ -584,9 +584,9 @@ mcp_servers:
 
 When `redirect_uri` is not set, sven uses:
 
-- **`sven://sven.mcp/callback`** — when running natively. The Debian package installs
+- **`sven://sven.mcp/callback`** - when running natively. The Debian package installs
   a protocol handler that forwards to the local callback server. Works out of the box.
-- **`http://127.0.0.1:5598/callback`** — when running in a container (Docker, Podman).
+- **`http://127.0.0.1:5598/callback`** - when running in a container (Docker, Podman).
   The `sven://` handler on the host cannot reach the container, so sven falls back to
   localhost. Ensure port 5598 is forwarded (e.g. `-p 5598:5598`).
 
@@ -649,7 +649,7 @@ model:
   api_key_env: ANTHROPIC_API_KEY
 ```
 
-**Use Anthropic Claude — all four cache breakpoints are on by default:**
+**Use Anthropic Claude - all four cache breakpoints are on by default:**
 
 ```yaml
 model:
@@ -662,7 +662,7 @@ model:
 ```
 
 > **Cost note**: On a 10-turn agent session with 30 000 tokens of stable context,
-> full caching reduces per-turn input cost from ~$0.09 to ~$0.003 — roughly a 97%
+> full caching reduces per-turn input cost from ~$0.09 to ~$0.003 - roughly a 97%
 > reduction after the first (cache-write) request.  To opt out of a specific
 > layer, set the corresponding flag to `false` (e.g. `cache_images: false`).
 

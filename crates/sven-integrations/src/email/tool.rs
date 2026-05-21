@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `email` tool — agent access to email via any configured provider.
+//! `email` tool - agent access to email via any configured provider.
 
 use std::sync::Arc;
 
@@ -19,11 +19,11 @@ use super::{EmailProvider, EmailQuery, NewEmail};
 ///
 /// # Actions
 ///
-/// - `list` — list recent messages (optional folder, unread_only, limit)
-/// - `read` — read the full body of a message by ID
-/// - `send` — send a new email (to, subject, body)
-/// - `reply` — reply to a message by ID
-/// - `search` — search messages by keyword
+/// - `list` - list recent messages (optional folder, unread_only, limit)
+/// - `read` - read the full body of a message by ID
+/// - `send` - send a new email (to, subject, body)
+/// - `reply` - reply to a message by ID
+/// - `search` - search messages by keyword
 pub struct EmailTool {
     provider: Arc<dyn EmailProvider>,
 }

@@ -8,9 +8,9 @@ stack in a single process.  There is no separate "agent" to start.
 
 It gives you two things at once:
 
-- **Operator access** — control the agent from a mobile app, Slack, or any
+- **Operator access** - control the agent from a mobile app, Slack, or any
   browser over a secure HTTPS + P2P channel.
-- **Agent networking** — the agent automatically finds other sven agents on the
+- **Agent networking** - the agent automatically finds other sven agents on the
   same network (or via a relay) and can delegate work to them.
 
 ---
@@ -23,12 +23,12 @@ It gives you two things at once:
 sven node start
 ```
 
-On first run sven generates a TLS certificate, a bearer token (printed once —
+On first run sven generates a TLS certificate, a bearer token (printed once -
 save it), and a cryptographic identity for P2P.
 
 ```
 0.003s  INFO  =======================================================
-0.003s  INFO  HTTP bearer token (shown once — save it now!):
+0.003s  INFO  HTTP bearer token (shown once - save it now!):
 0.003s  INFO    eyJ0eXAiOiJKV1QiLCJhbGc...
 0.003s  INFO    export SVEN_NODE_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGc...
 0.003s  INFO  =======================================================
@@ -37,13 +37,13 @@ save it), and a cryptographic identity for P2P.
 ```
 
 The peer ID printed in the logs is this agent's P2P identity on the **operator
-control channel**.  It is used only for pairing human operator devices — it has
+control channel**.  It is used only for pairing human operator devices - it has
 nothing to do with agent-to-agent connectivity (that is automatic).
 
 ### 2. Connect as an operator
 
 There are **two ways** to send commands to a running node.  They are completely
-independent — use whichever fits your setup.
+independent - use whichever fits your setup.
 
 #### Option A: HTTP bearer token (recommended for CLI use)
 
@@ -76,7 +76,7 @@ Use the same port your node is listening on (default `18790`). If the node runs
 without TLS (e.g. `insecure_dev_mode: true`), use `ws://` and optionally
 `export SVEN_NODE_INSECURE=1`.
 
-When you open the node’s web terminal (`https://<node>/web`), the node injects
+When you open the node's web terminal (`https://<node>/web`), the node injects
 `SVEN_NODE_URL` and `SVEN_NODE_TOKEN` into that PTY, so the in-browser TUI is
 already connected to the node.
 
@@ -87,7 +87,7 @@ libp2p rather than HTTP.  It uses `sven node authorize` to add a device to
 the allowlist.
 
 > **This has nothing to do with agent-to-agent connections.**
-> Node-to-node connections happen automatically via mDNS or relay — there is
+> Node-to-node connections happen automatically via mDNS or relay - there is
 > no command to run and no pairing needed.
 
 The operator device displays a `sven://` URI.  Paste it:
@@ -99,17 +99,17 @@ sven node authorize "sven://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz"
 sven shows the peer ID and a short fingerprint for visual confirmation, then
 asks `[y/N]` before writing to the allowlist.
 
-> **`list-operators` vs `list_peers` (agent tool) — don't confuse them:**
+> **`list-operators` vs `list_peers` (agent tool) - don't confuse them:**
 >
-> - `sven node list-operators` — human operator devices added with
+> - `sven node list-operators` - human operator devices added with
 >   `sven node authorize`. These send commands to the agent.
-> - The `list_peers` **agent tool** — other sven nodes that found each other
+> - The `list_peers` **agent tool** - other sven nodes that found each other
 >   via mDNS or relay. These receive delegated tasks.
 >
 > A device in `list-operators` cannot receive delegated tasks.
 
 The allowlist is saved to `~/.config/sven/node/authorized_peers.yaml`.  You
-can also edit it by hand — useful for pre-provisioning or revoking access
+can also edit it by hand - useful for pre-provisioning or revoking access
 without running the CLI:
 
 ```yaml
@@ -125,14 +125,14 @@ observers:
   "12D3KooW11223344556677889900aAbBcC": "ci-runner"
 ```
 
-The file is reloaded automatically on change — no restart needed.
+The file is reloaded automatically on change - no restart needed.
 
 ### 3. Build a team of agents
 
-Agent-to-agent connections use a **deny-all allowlist** — each node must
+Agent-to-agent connections use a **deny-all allowlist** - each node must
 explicitly list the peer IDs it is willing to connect to.
 
-**Step 1 — Start each node and note its agent peer ID.**
+**Step 1 - Start each node and note its agent peer ID.**
 
 The agent peer ID is printed on startup:
 
@@ -141,40 +141,40 @@ P2pNode starting peer_id=12D3KooWQwZgQPdd4TZeputvRdmaoq2whU358qYULJMiNGvJcB98
 ```
 
 > **Note:** there are two peer IDs in the log.  Use the one from the
-> `P2pNode starting` line — that is the agent mesh identity.  The other
+> `P2pNode starting` line - that is the agent mesh identity.  The other
 > (`P2P control node identity`) is for the operator control channel.
 
-**Step 2 — Add each node's peer ID to the other's config.**
+**Step 2 - Add each node's peer ID to the other's config.**
 
 ```yaml
-# machine A — .node.yaml
+# machine A - .node.yaml
 swarm:
   peers:
     "12D3KooW<machine-B-agent-peer-id>": "machine-b"
 ```
 
 ```yaml
-# machine B — .node.yaml
+# machine B - .node.yaml
 swarm:
   peers:
     "12D3KooW<machine-A-agent-peer-id>": "machine-a"
 ```
 
-Authorization is not automatic — both sides must list each other.
+Authorization is not automatic - both sides must list each other.
 
-**Step 3 — (Re)start both nodes.**  They will connect within seconds via mDNS.
+**Step 3 - (Re)start both nodes.**  They will connect within seconds via mDNS.
 
 To give each agent a distinct identity, also set their names in the config:
 
 ```yaml
-# machine A — .node.yaml
+# machine A - .node.yaml
 swarm:
   agent:
     name: "backend-agent"
     description: "Rust and PostgreSQL specialist"
     capabilities: ["rust", "postgres"]
 
-# machine B — .node.yaml
+# machine B - .node.yaml
 swarm:
   agent:
     name: "frontend-agent"
@@ -194,7 +194,7 @@ delegation** (your local agent manages the collaboration on your behalf).
 
 `sven peer chat` opens the TUI connected to a specific remote peer.  Every
 message you type is sent as a conversation message over P2P, and the remote
-agent's replies stream back into the chat pane — exactly like a WhatsApp
+agent's replies stream back into the chat pane - exactly like a WhatsApp
 conversation, except the other party is a sven agent.
 
 ```sh
@@ -228,8 +228,8 @@ team of agents* above).
 
 ### Asking the node to handle peer collaboration
 
-When you want the local agent to manage a multi-agent workflow on your behalf —
-including the back-and-forth with one or more peers — use `sven node exec`:
+When you want the local agent to manage a multi-agent workflow on your behalf -
+including the back-and-forth with one or more peers - use `sven node exec`:
 
 ```sh
 sven node exec "Chat with backend-agent about the DB migration plan.
@@ -248,9 +248,9 @@ the conversation in real time.
 | Situation | Recommended approach |
 |---|---|
 | You want to type messages and see replies in real time | `sven peer chat <peer>` |
-| You want the agent to coordinate a workflow across peers | `sven node exec "…"` |
+| You want the agent to coordinate a workflow across peers | `sven node exec "..."` |
 | You want to recall what was discussed with a peer | `sven peer search "<pattern>" --peer <peer>` |
-| You want to broadcast a status update to the whole team | `sven node exec "post to room firmware-team: …"` |
+| You want to broadcast a status update to the whole team | `sven node exec "post to room firmware-team: ..."` |
 
 ---
 
@@ -259,7 +259,7 @@ the conversation in real time.
 When two nodes are connected, each agent gets two new tools it can use
 autonomously during any session.
 
-### `list_peers` — discover connected agents
+### `list_peers` - discover connected agents
 
 ```
 2 peer(s) connected:
@@ -275,10 +275,10 @@ autonomously during any session.
   Capabilities: typescript, react, css
 ```
 
-### `delegate_task` — send work to a peer
+### `delegate_task` - send work to a peer
 
 The agent names the peer and describes the task.  The remote agent runs it
-through its own model+tool loop and returns the full result — the calling agent
+through its own model+tool loop and returns the full result - the calling agent
 sees it as a regular tool response and can keep reasoning with it.
 
 ### How to prompt for delegation
@@ -301,7 +301,7 @@ sven handles the rest: it calls `list_peers`, picks the right peers, calls
 TLS is **on by default**.  Three provisioning modes are available, controlled
 by `http.tls_mode`.  The default (`auto`) tries them in order:
 
-### Mode 1 — Tailscale (zero setup, browser-trusted)
+### Mode 1 - Tailscale (zero setup, browser-trusted)
 
 If [Tailscale](https://tailscale.com) is installed and the machine is enrolled
 in a tailnet, sven calls `tailscale cert` automatically to obtain a real
@@ -314,10 +314,10 @@ INFO  HTTPS node listening mode="Tailscale (mybox.example.ts.net)"
 
 Access the node at `https://mybox.example.ts.net:18790`.
 
-This is the recommended setup for LAN machines — Tailscale is free, provides
+This is the recommended setup for LAN machines - Tailscale is free, provides
 end-to-end encrypted access from anywhere, and the certs just work.
 
-### Mode 2 — Local CA (trust once per device)
+### Mode 2 - Local CA (trust once per device)
 
 When Tailscale is not available, sven generates a local ECDSA P-256 Certificate
 Authority (10-year validity) and signs a 90-day server certificate with it.
@@ -338,7 +338,7 @@ sudo update-ca-certificates
 ```
 
 After that one-time step, every future 90-day rotation is completely transparent
-— no browser interaction ever again.  The same CA cert is reused across
+- no browser interaction ever again.  The same CA cert is reused across
 rotations, so you only install it once.
 
 To distribute the CA cert to a phone:
@@ -348,7 +348,7 @@ sven node export-ca > ca.pem
 python3 -m http.server 8080     # serve it; open http://<ip>:8080/ca.pem on the phone
 ```
 
-### Mode 3 — Self-signed (fingerprint pinning)
+### Mode 3 - Self-signed (fingerprint pinning)
 
 The browser shows a warning on every new cert rotation.  You can accept the
 warning once (click through "Advanced → Proceed"), or pin the fingerprint
@@ -361,7 +361,7 @@ http:
   tls_mode: self-signed
 ```
 
-### Mode 4 — Your own certificates
+### Mode 4 - Your own certificates
 
 ```yaml
 http:
@@ -398,22 +398,22 @@ be weakened by accident:
 
 | What | Default |
 |------|---------|
-| HTTP TLS | On — ECDSA P-256, 90-day auto-generated cert |
-| TLS provisioning mode | `auto` — Tailscale if available, else local CA |
+| HTTP TLS | On - ECDSA P-256, 90-day auto-generated cert |
+| TLS provisioning mode | `auto` - Tailscale if available, else local CA |
 | TLS version | TLS 1.3 only |
 | P2P encryption | Noise protocol (Ed25519), always on |
-| Agent mesh authorisation | Deny-all — every agent peer must be in `swarm.peers` |
-| Operator control node | **Disabled** by default — add `control:` section to enable |
-| Control node bind | `127.0.0.1` — loopback only by default |
-| HTTP binding | `127.0.0.1` — loopback only |
+| Agent mesh authorisation | Deny-all - every agent peer must be in `swarm.peers` |
+| Operator control node | **Disabled** by default - add `control:` section to enable |
+| Control node bind | `127.0.0.1` - loopback only by default |
+| HTTP binding | `127.0.0.1` - loopback only |
 | Rate limiting | 5 failures/min locks out the source for 60 s |
-| Bearer token storage | SHA-256 hash only — plaintext never written to disk |
+| Bearer token storage | SHA-256 hash only - plaintext never written to disk |
 | Secret file permissions | `0o600` on Unix |
 | Task timeout | 15 minutes per inbound delegated task |
 
 To expose the node beyond loopback, set `http.bind: "0.0.0.0:18790"` in
 your config.  `bind` must be an address actually assigned to a local interface
-— binding to an IP the machine does not own causes an immediate startup error
+- binding to an IP the machine does not own causes an immediate startup error
 with a clear message explaining the fix.
 
 ---
@@ -443,7 +443,7 @@ swarm:
 http:
   bind: "0.0.0.0:18790"        # listen on all interfaces
   tls_san_extra:
-    - "192.168.1.42"            # your LAN IP — added to the cert's SAN list
+    - "192.168.1.42"            # your LAN IP - added to the cert's SAN list
   # tls_mode defaults to "auto": uses Tailscale if present, else local CA
 
 web:                            # browser web terminal (optional)
@@ -467,7 +467,7 @@ http:
 
 # Agent-to-agent mesh
 swarm:
-  listen: "/ip4/0.0.0.0/tcp/4010"  # fixed port — open this in your firewall
+  listen: "/ip4/0.0.0.0/tcp/4010"  # fixed port - open this in your firewall
   keypair_path: "~/.config/sven/node/agent-keypair"
 
   # Identity this agent shows to other agents
@@ -480,12 +480,12 @@ swarm:
   rooms: ["default", "team-alpha"]
 
   # Agent peers allowed to join this node's mesh (deny-all if omitted).
-  # Use the peer_id from the other node's "P2pNode starting peer_id=…" log line.
+  # Use the peer_id from the other node's "P2pNode starting peer_id=..." log line.
   peers:
     "12D3KooWXyZaBcDeFgHiJkLmNo12345678": "frontend-agent"
     "12D3KooW11223344556677889900aAbBcC": "devops-agent"
 
-# Operator control node — omit this entire section to disable native/mobile access
+# Operator control node - omit this entire section to disable native/mobile access
 # control:
 #   listen: "/ip4/0.0.0.0/tcp/4009"  # open in firewall only if needed
 #   keypair_path: "~/.config/sven/node/control-keypair"
@@ -504,27 +504,27 @@ slack:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `bind` | `127.0.0.1:18790` | Address and port to listen on.  Use `0.0.0.0:18790` to listen on all interfaces.  Must be an IP the machine actually owns — binding to a non-local address causes an immediate startup error. |
-| `insecure_dev_mode` | `false` | Disable TLS entirely — for local development only |
+| `bind` | `127.0.0.1:18790` | Address and port to listen on.  Use `0.0.0.0:18790` to listen on all interfaces.  Must be an IP the machine actually owns - binding to a non-local address causes an immediate startup error. |
+| `insecure_dev_mode` | `false` | Disable TLS entirely - for local development only |
 | `tls_mode` | `auto` | TLS provisioning: `auto`, `tailscale`, `local-ca`, `self-signed`, or `files` |
 | `tls_san_extra` | `[]` | Extra hostnames or IPs to add to generated cert SANs (e.g. your LAN IP) |
 | `tls_cert_dir` | `~/.config/sven/node/tls` | Where to store / load certificates |
 | `token_file` | `~/.config/sven/node/token.yaml` | Hashed bearer token storage |
 | `max_body_bytes` | `4194304` | Max request body size (4 MiB) |
 
-#### `web` *(optional — disabled by default)*
+#### `web` *(optional - disabled by default)*
 
 Browser-based web terminal served at `/web`.  Authentication uses WebAuthn
 passkeys (biometric / platform authenticator).  New devices are held in
 `pending` state until approved with `sven node web-devices approve`.
 
 **WebAuthn requires HTTPS.**  `rp_id` and `rp_origin` must match the hostname
-or IP address the browser uses to reach the node — if they don't match,
+or IP address the browser uses to reach the node - if they don't match,
 registration and login will be rejected by the browser.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `rp_id` | `localhost` | WebAuthn relying party ID — the hostname/IP in the browser bar |
+| `rp_id` | `localhost` | WebAuthn relying party ID - the hostname/IP in the browser bar |
 | `rp_origin` | `https://localhost:18790` | Full origin shown in the browser address bar |
 | `rp_name` | `Sven Node` | Human-readable name shown during passkey ceremony |
 | `devices_file` | `~/.config/sven/node/web_devices.yaml` | Registered device registry |
@@ -537,15 +537,15 @@ The agent-to-agent mesh.  Handles task delegation between sven nodes.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `listen` | `/ip4/0.0.0.0/tcp/0` (random) | Listen address for the agent mesh — **set a fixed port and open it in your firewall for cross-machine use** |
+| `listen` | `/ip4/0.0.0.0/tcp/0` (random) | Listen address for the agent mesh - **set a fixed port and open it in your firewall for cross-machine use** |
 | `keypair_path` | `~/.config/sven/node/agent-keypair` | Persist the agent mesh keypair; ephemeral if unset |
 | `agent.name` | system hostname | Name shown to peer agents |
 | `agent.description` | `"General-purpose sven agent"` | Free-form description |
 | `agent.capabilities` | `[]` | Tags other agents use to choose this agent |
 | `rooms` | `["default"]` | Discovery namespaces; peers in the same room find each other |
-| `peers` | `{}` (deny-all) | Agent peers allowed to join the mesh — maps peer ID → label. Both nodes must list each other. |
+| `peers` | `{}` (deny-all) | Agent peers allowed to join the mesh - maps peer ID → label. Both nodes must list each other. |
 
-#### `control` *(optional — disabled by default)*
+#### `control` *(optional - disabled by default)*
 
 The operator control node.  Carries commands from native/mobile operator
 clients.  **Omit this section entirely** to run without a control node.
@@ -555,8 +555,8 @@ has nothing to do with agent-to-agent task delegation.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `listen` | `/ip4/127.0.0.1/tcp/0` | Listen address — defaults to loopback only. Set to `/ip4/0.0.0.0/tcp/4009` (and open the port) to allow mobile/native clients |
-| `keypair_path` | — (ephemeral) | Persist the operator control keypair; ephemeral if unset means operators must re-pair after restart |
+| `listen` | `/ip4/127.0.0.1/tcp/0` | Listen address - defaults to loopback only. Set to `/ip4/0.0.0.0/tcp/4009` (and open the port) to allow mobile/native clients |
+| `keypair_path` | - (ephemeral) | Persist the operator control keypair; ephemeral if unset means operators must re-pair after restart |
 | `authorized_peers_file` | `~/.config/sven/node/authorized_peers.yaml` | YAML file of authorized operator peer IDs |
 
 #### `slack`
@@ -564,9 +564,9 @@ has nothing to do with agent-to-agent task delegation.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `accounts[].mode` | `socket` | `socket` (outbound) or `http` (inbound webhook) |
-| `accounts[].app_token` | — | Slack app-level token (`xapp-…`), required for Socket Mode |
-| `accounts[].bot_token` | — | Slack bot token (`xoxb-…`) |
-| `accounts[].signing_secret` | — | Signing secret for HMAC verification, required for HTTP mode |
+| `accounts[].app_token` | - | Slack app-level token (`xapp-...`), required for Socket Mode |
+| `accounts[].bot_token` | - | Slack bot token (`xoxb-...`) |
+| `accounts[].signing_secret` | - | Signing secret for HMAC verification, required for HTTP mode |
 | `accounts[].webhook_path` | `/slack/events` | Path for incoming Slack events in HTTP mode |
 
 ---
@@ -581,7 +581,7 @@ sven node start [--config PATH]
 export SVEN_NODE_TOKEN=<token-from-first-startup>
 sven node exec "delegate a task to say hi to the frontend-agent"
 
-# Authorize a mobile/native operator device (P2P path — paste the sven:// URI it shows)
+# Authorize a mobile/native operator device (P2P path - paste the sven:// URI it shows)
 sven node authorize "sven://12D3KooW..." [--label "my-phone"]
 
 # Revoke an authorized device
@@ -641,7 +641,7 @@ sven node web-devices revoke <device-uuid> --token <token>
 6.  Browser:           immediately opens a full-screen tmux terminal
 ```
 
-On subsequent visits the browser logs in with the stored passkey — no approval
+On subsequent visits the browser logs in with the stored passkey - no approval
 needed.  The terminal session (tmux) persists across browser disconnects and
 can be reattached from any approved device.
 
@@ -737,12 +737,12 @@ control:
 ### Peers not appearing after `list_peers`
 
 - **swarm.peers not configured**: Each node must list the other's agent peer ID
-  under `swarm.peers` — the mesh is deny-all by default.  Check the startup log
-  for the line `P2pNode starting peer_id=…` and add that ID to the other node's
+  under `swarm.peers` - the mesh is deny-all by default.  Check the startup log
+  for the line `P2pNode starting peer_id=...` and add that ID to the other node's
   config (and vice versa).  After editing, restart both nodes.
-- **LAN**: mDNS takes 5–10 seconds.  Both nodes must be running and in the
+- **LAN**: mDNS takes 5-10 seconds.  Both nodes must be running and in the
   same room (`swarm.rooms`).  Check the logs for
-  `mDNS: discovered agent peer but swarm.peers is empty` — this confirms
+  `mDNS: discovered agent peer but swarm.peers is empty` - this confirms
   discovery works but the allowlist is the blocker.
 - **Cross-network**: configure a relay with `swarm.relays`.
 
@@ -812,13 +812,13 @@ debug-level output.
 
 ---
 
-For implementation details — wire protocols, internal architecture, the P2P
-task flow, and the WebSocket API spec — see
+For implementation details - wire protocols, internal architecture, the P2P
+task flow, and the WebSocket API spec - see
 [technical/node.md](technical/node.md).
 
-For agent-to-agent collaboration — sessions (DMs), rooms (broadcast channels),
-and the collaboration tools — see [09-collaboration.md](09-collaboration.md).
+For agent-to-agent collaboration - sessions (DMs), rooms (broadcast channels),
+and the collaboration tools - see [09-collaboration.md](09-collaboration.md).
 
-For multi-agent teams with shared task boards — spawning teammates, creating
-and assigning tasks, monitoring progress, and Git branch isolation — see
+For multi-agent teams with shared task boards - spawning teammates, creating
+and assigning tasks, monitoring progress, and Git branch isolation - see
 [11-teams-and-tasks.md](11-teams-and-tasks.md).

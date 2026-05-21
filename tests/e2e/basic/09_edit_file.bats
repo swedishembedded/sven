@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 09_edit_file.bats – Comprehensive end-to-end tests for the edit_file tool.
+# 09_edit_file.bats - Comprehensive end-to-end tests for the edit_file tool.
 #
 # Every test runs the full sven binary through the mock-model pipeline so the
 # entire stack (arg parsing, tool dispatch, file I/O, result formatting) is
@@ -9,19 +9,19 @@
 # are fully isolated from the shared fixtures and from each other.
 #
 # Edge cases covered (grouped by concern):
-#   • Parameter validation  – missing path / diff, no @@ markers
-#   • File I/O errors       – nonexistent file
-#   • Basic edits           – replace, pure insert, pure delete, multi-line ins/del
-#   • File boundary edits   – first line, last line, single-line file
-#   • Newline preservation  – trailing \n kept / absent preserved
-#   • Diff format variants  – FuDiff, --- +++ headers, markdown fence, git section name
-#   • Multi-hunk behaviour  – two hunks, offset tracking, atomicity on partial failure
-#   • Indent normalisation  – context at wrong indent level, added-line indent adjusted
-#   • Fuzzy matching        – small typo tolerated, too-different context rejected
-#   • Ambiguity resolution  – line-number hint picks correct duplicate, stale context fails
-#   • Error diagnostics     – suggestions shown, Hunk N: prefix only on multi-hunk failures
-#   • Trace output          – success=true / success=false in [sven:tool:result]
-#   • Cargo unit tests      – full unit test suite gate
+#   • Parameter validation  - missing path / diff, no @@ markers
+#   • File I/O errors       - nonexistent file
+#   • Basic edits           - replace, pure insert, pure delete, multi-line ins/del
+#   • File boundary edits   - first line, last line, single-line file
+#   • Newline preservation  - trailing \n kept / absent preserved
+#   • Diff format variants  - FuDiff, --- +++ headers, markdown fence, git section name
+#   • Multi-hunk behaviour  - two hunks, offset tracking, atomicity on partial failure
+#   • Indent normalisation  - context at wrong indent level, added-line indent adjusted
+#   • Fuzzy matching        - small typo tolerated, too-different context rejected
+#   • Ambiguity resolution  - line-number hint picks correct duplicate, stale context fails
+#   • Error diagnostics     - suggestions shown, Hunk N: prefix only on multi-hunk failures
+#   • Trace output          - success=true / success=false in [sven:tool:result]
+#   • Cargo unit tests      - full unit test suite gate
 
 load helpers
 
@@ -543,7 +543,7 @@ EOF
 @test "09.22 no-newline-at-end-of-file marker in diff is silently ignored" {
     ef_make_file "old"$'\n'
     # Use a YAML literal block scalar (|) so the backslash in
-    # "\ No newline at end of file" is stored verbatim — no YAML escape
+    # "\ No newline at end of file" is stored verbatim - no YAML escape
     # processing occurs in literal blocks, avoiding the ambiguity of \<space>
     # in a double-quoted YAML string.
     ef_use_mock <<EOF
@@ -647,7 +647,7 @@ EOF
     ef_run "ef atomic fail"
     [ "${status}" -eq 0 ] || [ "${status}" -eq 3 ]
     assert_output_contains "Atomicity checked."
-    # File must be byte-for-byte unchanged — hunks are all-or-nothing.
+    # File must be byte-for-byte unchanged - hunks are all-or-nothing.
     local checksum_after
     checksum_after="$(sha256sum "${_EF_TEST_FILE}" | cut -d' ' -f1)"
     [ "${checksum_before}" = "${checksum_after}" ]
@@ -721,7 +721,7 @@ EOF
 # ── Fuzzy matching ────────────────────────────────────────────────────────────
 
 @test "09.30 fuzzy match tolerates a small type difference in context" {
-    # 'u64' in file vs 'u32' in context — similarity well above 85 %.
+    # 'u64' in file vs 'u32' in context - similarity well above 85 %.
     ef_make_file "fn process(id: u64) {"$'\n'"    validate(id);"$'\n'"    update(id);"$'\n'"}"$'\n'
     ef_use_mock <<EOF
 responses:
@@ -852,7 +852,7 @@ EOF
 }
 
 @test "09.35 context-not-found error suggests a nearby matching block" {
-    # Context has right function name but wrong body — the error should suggest
+    # Context has right function name but wrong body - the error should suggest
     # the actual line from the file to help the agent correct its diff.
     ef_make_file "fn calculate_total(items: &[Item]) -> f64 {"$'\n'"    items.iter().map(|i| i.price).sum()"$'\n'"}"$'\n'
     ef_use_mock <<EOF

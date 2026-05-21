@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! [`SvenAcpNodeProxy`] — proxies ACP requests to a running `sven node` over WebSocket.
+//! [`SvenAcpNodeProxy`] - proxies ACP requests to a running `sven node` over WebSocket.
 //!
 //! Instead of building a local agent, every ACP method is translated into the
 //! corresponding [`ControlCommand`] and forwarded to a `sven node`.  Events
@@ -112,7 +112,7 @@ enum NodeSessionState {
 struct ProxySession {
     /// The UUID used on the node side (not the ACP session string ID).
     node_session_id: Uuid,
-    /// Cancellation channel — fires when the client sends `session/cancel`.
+    /// Cancellation channel - fires when the client sends `session/cancel`.
     cancel_tx: tokio::sync::Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -120,7 +120,7 @@ struct ProxySession {
 
 const SVEN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Notification ack timeout — mirrors the same constant in `agent.rs`.
+/// Notification ack timeout - mirrors the same constant in `agent.rs`.
 const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// ACP agent implementation that proxies all requests to a running `sven node`.

@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Input pane widget — Claude-style open layout with `>` prompt indicator,
+//! Input pane widget - Claude-style open layout with `>` prompt indicator,
 //! top/bottom HR lines only (no left/right borders for clean copy-paste),
 //! attachment bullet lines, character counter, and optional vertical scrollbar.
 
@@ -175,7 +175,7 @@ impl Widget for InputPane<'_> {
             .scroll_offset
             .min(total_lines.saturating_sub(visible_height));
 
-        // Prompt style — brand-colored `>` prompt.
+        // Prompt style - brand-colored `>` prompt.
         let prompt_focused = Style::default().fg(BAR_AGENT).add_modifier(Modifier::BOLD);
         let prompt_unfocused = Style::default().fg(TEXT_DIM);
         let prompt_str = "> ";
@@ -187,7 +187,7 @@ impl Widget for InputPane<'_> {
         // Show placeholder text when content is empty.
         if wrap.lines.is_empty() || (wrap.lines.len() == 1 && wrap.lines[0].is_empty()) {
             if text_height > 0 {
-                let placeholder = "Ask anything… (Enter to send, / for commands)";
+                let placeholder = "Ask anything... (Enter to send, / for commands)";
                 let ph_chars: String = placeholder
                     .chars()
                     .take(effective_text_width as usize)

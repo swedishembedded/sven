@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `list_knowledge` — enumerate all knowledge documents in `.sven/knowledge/`.
+//! `list_knowledge` - enumerate all knowledge documents in `.sven/knowledge/`.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -84,12 +84,12 @@ impl Tool for ListKnowledgeTool {
                 doc.files.join(", ")
             };
             let covers_display = if covers.len() > 38 {
-                format!("{}…", &covers[..37])
+                format!("{}...", &covers[..37])
             } else {
                 covers
             };
 
-            let updated = doc.updated.as_deref().unwrap_or("—");
+            let updated = doc.updated.as_deref().unwrap_or("-");
             let filename = doc.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
 
             lines.push(format!(

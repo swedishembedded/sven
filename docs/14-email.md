@@ -98,10 +98,10 @@ tools:
 
 ## Use Cases
 
-- **Daily email briefing** — schedule a cron job at 08:00 to list and summarize unread emails
-- **Auto-response** — heartbeat checks inbox, replies to common questions automatically
-- **CRM extraction** — read emails, extract contact details, save to semantic memory
-- **Gmail Pub/Sub** — use the webhook integration ([webhooks guide](18-webhooks.md)) to trigger the agent in real-time when new mail arrives
+- **Daily email briefing** - schedule a cron job at 08:00 to list and summarize unread emails
+- **Auto-response** - heartbeat checks inbox, replies to common questions automatically
+- **CRM extraction** - read emails, extract contact details, save to semantic memory
+- **Gmail Pub/Sub** - use the webhook integration ([webhooks guide](18-webhooks.md)) to trigger the agent in real-time when new mail arrives
 
 ## Gmail Real-Time Push (Pub/Sub)
 

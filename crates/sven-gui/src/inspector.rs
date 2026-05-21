@@ -47,7 +47,7 @@ impl InspectorKind {
 /// supplied data for the selected tab.
 pub fn placeholder_items(kind: InspectorKind) -> ModelRc<InspectorItem> {
     let items = vec![InspectorItem {
-        title: SharedString::from(format!("Loading {} …", kind.title())),
+        title: SharedString::from(format!("Loading {} ...", kind.title())),
         subtitle: SharedString::new(),
         tag: SharedString::new(),
     }];

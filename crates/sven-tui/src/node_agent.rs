@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Node-proxy agent backend — re-exported from `sven-frontend` for TUI use.
+//! Node-proxy agent backend - re-exported from `sven-frontend` for TUI use.
 //!
 //! The canonical implementation lives in `sven_frontend::node_agent`. This
 //! module re-exports everything needed by the TUI so that all internal

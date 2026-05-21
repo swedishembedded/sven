@@ -67,7 +67,7 @@ fn all_registered_drivers_instantiate_without_unknown_error() {
 
         match from_config(&cfg) {
             Ok(_) => {
-                // Success — driver is correctly wired up.
+                // Success - driver is correctly wired up.
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -77,7 +77,7 @@ fn all_registered_drivers_instantiate_without_unknown_error() {
                      Error: {msg}"
                 );
                 // Other errors (missing key, missing base_url, etc.) are acceptable
-                // at instantiation time — they will surface at request time.
+                // at instantiation time - they will surface at request time.
             }
         }
     }

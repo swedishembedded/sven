@@ -201,7 +201,7 @@ export component Sidebar inherits Rectangle {
                 y: Theme.space-xs;
                 width: parent.width - 2 * Theme.space-sm;
                 height: parent.height - 2 * Theme.space-xs;
-                placeholder: "Filter sessions…";
+                placeholder: "Filter sessions...";
                 text <=> root.search-text;
                 text-changed(t) => { root.search-changed(t); }
             }

@@ -7,9 +7,9 @@
 //! incrementally as a subprocess streams bytes into it.  The store is
 //! designed for two concurrent access patterns:
 //!
-//! - **Writer** — the `task` or `shell` tool appends bytes and updates status
+//! - **Writer** - the `task` or `shell` tool appends bytes and updates status
 //!   from a background tokio task.
-//! - **Reader** — the model calls `buf_read` / `buf_grep` / `buf_status` to
+//! - **Reader** - the model calls `buf_read` / `buf_grep` / `buf_status` to
 //!   inspect the buffer contents while it is still growing.
 //!
 //! Both sides share the same `Arc<Mutex<OutputBufferStore>>`.  Reads take the

@@ -132,7 +132,7 @@ pub fn segment_short_preview(seg: Option<&ChatSegment>) -> String {
     let first_line = raw.lines().next().unwrap_or("").trim();
     if first_line.chars().count() > MAX_CHARS {
         let truncated: String = first_line.chars().take(MAX_CHARS).collect();
-        format!("\"{truncated}…\"")
+        format!("\"{truncated}...\"")
     } else {
         format!("\"{first_line}\"")
     }

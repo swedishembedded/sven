@@ -6,13 +6,13 @@
 /// embedded, and CMake/Make projects.
 ///
 /// Discovery strategy (tried in order, first match wins):
-///   1. `.gdbinit`                   — explicit server comment or target remote
-///   2. `.vscode/launch.json`        — cortex-debug / debugServerPath
-///   3. `debugging/launch.json`      — alternative location (ng-iot-platform style)
-///   4. `openocd.cfg`               — OpenOCD config
-///   5. `platformio.ini`            — PlatformIO debug_server / debug_tool
-///   6. `Makefile`                  — JLinkExe / JLinkRTTLogger / flash targets
-///   7. Chip heuristics             — scan CMakeLists, Cargo.toml, board files
+///   1. `.gdbinit`                   - explicit server comment or target remote
+///   2. `.vscode/launch.json`        - cortex-debug / debugServerPath
+///   3. `debugging/launch.json`      - alternative location (ng-iot-platform style)
+///   4. `openocd.cfg`               - OpenOCD config
+///   5. `platformio.ini`            - PlatformIO debug_server / debug_tool
+///   6. `Makefile`                  - JLinkExe / JLinkRTTLogger / flash targets
+///   7. Chip heuristics             - scan CMakeLists, Cargo.toml, board files
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 

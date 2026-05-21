@@ -33,7 +33,7 @@ impl Tool for ContextReadTool {
 
     fn description(&self) -> &str {
         "Read a specific line range from a memory-mapped context handle. Only the requested range \
-         is returned — your context window stays efficient.\n\n\
+         is returned - your context window stays efficient.\n\n\
          Use this after context_open to:\n\
          - Inspect sections identified by context_grep matches\n\
          - Read file headers, imports, or struct definitions\n\
@@ -168,7 +168,7 @@ mod tests {
         tmp.write_all(content.as_bytes()).unwrap();
         tmp.flush().unwrap();
         let meta = store.lock().await.open_file(tmp.path()).unwrap();
-        // Keep tmp alive by leaking it — acceptable in tests.
+        // Keep tmp alive by leaking it - acceptable in tests.
         std::mem::forget(tmp);
         meta.handle_id
     }

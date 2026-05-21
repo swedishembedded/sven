@@ -1,4 +1,4 @@
-# RLM Context Tools — Technical Reference
+# RLM Context Tools - Technical Reference
 
 This document describes the internal architecture of sven's memory-mapped
 context tools, which implement the inference paradigm introduced in
@@ -10,7 +10,7 @@ context tools, which implement the inference paradigm introduced in
 
 A language model's context window is finite.  When an agent needs to reason
 over a large file, a build log, or an entire directory tree, naïvely reading
-the content consumes most or all of the available token budget — leaving little
+the content consumes most or all of the available token budget - leaving little
 room for tool calls, chain-of-thought, and the model's own response.  The RLM
 paper's core insight is that **large content should live outside the context
 window**; the model instead receives a symbolic handle and interacts with the
@@ -80,7 +80,7 @@ in `Arc<Mutex<ContextStore>>`.  All five tools share the same pointer.
 
 ### Line index
 
-For every mapped file sven builds a `Vec<usize>` of byte offsets — one entry
+For every mapped file sven builds a `Vec<usize>` of byte offsets - one entry
 per line start.  Line 0 always starts at byte 0; subsequent entries are
 recorded immediately after each `\n`.
 
@@ -138,7 +138,7 @@ Use context_query(handle="ctx_0001", prompt="...") for semantic analysis.
 ```
 
 The `OutputCategory` is `Generic` so the standard `smart_truncate` applies (no
-special head/tail treatment — the output is already bounded by design).
+special head/tail treatment - the output is already bounded by design).
 
 ---
 
@@ -200,7 +200,7 @@ pub trait SubQueryRunner: Send + Sync {
 ```
 
 A two-message stateless LLM call.  The model receives no conversation history,
-no tools, and no session context — only the system message and the user
+no tools, and no session context - only the system message and the user
 message.  This is the `llm_query()` function from the RLM paper.
 
 ### ModelSubQueryRunner

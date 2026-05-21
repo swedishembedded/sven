@@ -32,7 +32,7 @@ channels:
 
 1. Set the environment variable: `export TELEGRAM_BOT_TOKEN=your_token`
 2. Start the node: `sven node start`
-3. Message your bot — sven responds.
+3. Message your bot - sven responds.
 
 ### Discord
 

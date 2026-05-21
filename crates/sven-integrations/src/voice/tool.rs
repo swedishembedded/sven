@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `voice` tool — TTS synthesis, STT transcription, and voice calls.
+//! `voice` tool - TTS synthesis, STT transcription, and voice calls.
 
 use std::sync::Arc;
 
@@ -19,9 +19,9 @@ use super::{AudioBuffer, CallParams, SttProvider, TtsProvider, VoiceCallProvider
 ///
 /// # Actions
 ///
-/// - `synthesize` — convert text to speech (returns base64 audio)
-/// - `transcribe` — convert audio file to text
-/// - `call` — place an outbound voice call
+/// - `synthesize` - convert text to speech (returns base64 audio)
+/// - `transcribe` - convert audio file to text
+/// - `call` - place an outbound voice call
 pub struct VoiceTool {
     tts: Option<Arc<dyn TtsProvider>>,
     stt: Option<Arc<dyn SttProvider>>,

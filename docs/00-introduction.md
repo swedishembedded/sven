@@ -2,16 +2,16 @@
 
 ## What is sven?
 
-sven is an AI coding agent that lives in your terminal. You give it a task — in
-plain English — and it works autonomously: reading files, running commands,
+sven is an AI coding agent that lives in your terminal. You give it a task - in
+plain English - and it works autonomously: reading files, running commands,
 writing code, and reporting back as it goes. When the task is done, sven stops
 and hands control back to you.
 
 It works in two ways:
 
-- **Interactive** — a full-screen terminal interface where you chat with the
+- **Interactive** - a full-screen terminal interface where you chat with the
   agent, watch it work in real time, and steer it mid-task.
-- **Headless** — reads instructions from a file or standard input, writes clean
+- **Headless** - reads instructions from a file or standard input, writes clean
   text to standard output, and exits. Fits naturally into shell scripts, CI
   pipelines, and automated workflows.
 
@@ -31,13 +31,13 @@ code, and running shell commands. Common uses include:
 - Writing and running tests
 - Reviewing a pull request diff and suggesting improvements
 - Automating multi-step CI tasks that normally require manual intervention
-- **Autonomous embedded hardware debugging** via native GDB integration — sven
+- **Autonomous embedded hardware debugging** via native GDB integration - sven
   is the first AI agent that can start a GDB server, connect to a physical
   device, set breakpoints, inspect memory and variables, and report findings
   entirely on its own
-- **Agent-to-agent task routing** — multiple sven instances can find each other
+- **Agent-to-agent task routing** - multiple sven instances can find each other
   on a local network (or across the internet via a relay), delegate subtasks to
-  each other, and assemble the results — no human in the loop required
+  each other, and assemble the results - no human in the loop required
 
 ---
 
@@ -61,20 +61,20 @@ the TUI with `F4`.
 
 ---
 
-## Running as a node — talking to other agents
+## Running as a node - talking to other agents
 
 `sven` by itself is a local session: one agent, one conversation.
 
 `sven node start` is the peer-enabled form: the same agent runs a P2P stack
 alongside its normal session, discovers other sven nodes on the network (or via
-a relay), and gains a set of collaboration tools — `send_message`,
+a relay), and gains a set of collaboration tools - `send_message`,
 `wait_for_message`, `search_conversation`, `post_to_room`, and more.
 
 ```sh
 # Start the node (runs until Ctrl-C)
 sven node start
 
-# From another terminal — ask the node's agent to talk to a peer
+# From another terminal - ask the node's agent to talk to a peer
 sven node exec "Ask backend-agent to explain the auth module, wait for its reply."
 
 # Or open an interactive TUI session directly with a remote peer
@@ -90,12 +90,12 @@ See [Sven Node](08-node.md) and
 
 When you send a message, sven forwards it to a large language model (OpenAI
 GPT-4o by default, or Anthropic Claude). The model decides what to do and can
-ask sven to execute tools — reading files, running commands, searching the
+ask sven to execute tools - reading files, running commands, searching the
 codebase. The results go back to the model, which continues reasoning until the
 task is complete or it needs to ask you something.
 
 When the model requests multiple tools in one turn, sven executes them in
-parallel. Each tool is dispatched the moment its arguments finish streaming —
+parallel. Each tool is dispatched the moment its arguments finish streaming -
 without waiting for the other tools or for the model to finish its full
 response. This keeps long-running tools like shell commands or remote queries
 from stacking latency on top of each other.
@@ -108,13 +108,13 @@ to standard output.
 
 ## Where to go next
 
-- **[Installation](01-installation.md)** — get sven onto your machine
-- **[Quick Start](02-quickstart.md)** — run your first session in five minutes
-- **[User Guide](03-user-guide.md)** — TUI navigation, features, and tips
-- **[CI and Pipelines](04-ci-pipeline.md)** — use sven in scripts and CI
-- **[Configuration](05-configuration.md)** — customise model, tools, and appearance
-- **[Examples](06-examples.md)** — real-world use cases
-- **[Troubleshooting](07-troubleshooting.md)** — common issues and fixes
-- **[Sven Node](08-node.md)** — expose agents over HTTPS/P2P, pair devices, route tasks between agents
-- **[Agent Collaboration](09-collaboration.md)** — persistent peer conversations, rooms, and the `sven peer chat` command
-- **[Teams and Tasks](11-teams-and-tasks.md)** — form a team of agents, break work into tasks, and orchestrate parallel workstreams
+- **[Installation](01-installation.md)** - get sven onto your machine
+- **[Quick Start](02-quickstart.md)** - run your first session in five minutes
+- **[User Guide](03-user-guide.md)** - TUI navigation, features, and tips
+- **[CI and Pipelines](04-ci-pipeline.md)** - use sven in scripts and CI
+- **[Configuration](05-configuration.md)** - customise model, tools, and appearance
+- **[Examples](06-examples.md)** - real-world use cases
+- **[Troubleshooting](07-troubleshooting.md)** - common issues and fixes
+- **[Sven Node](08-node.md)** - expose agents over HTTPS/P2P, pair devices, route tasks between agents
+- **[Agent Collaboration](09-collaboration.md)** - persistent peer conversations, rooms, and the `sven peer chat` command
+- **[Teams and Tasks](11-teams-and-tasks.md)** - form a team of agents, break work into tasks, and orchestrate parallel workstreams

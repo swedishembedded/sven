@@ -301,7 +301,7 @@ models:
     provider: google
     context_window: 1048576
     max_output_tokens: 8192
-    description: Gemini 2.0 Flash — fast multimodal model
+    description: Gemini 2.0 Flash - fast multimodal model
     input_modalities: [text, image]
 
   - id: gemini-2.0-flash-exp
@@ -352,7 +352,7 @@ models:
     description: Gemini 1.0 Pro
 
   # ── AWS Bedrock ───────────────────────────────────────────────────────────────
-  # Bedrock model ID (no :0 suffix — that belongs only on `:0`-versioned snapshots
+  # Bedrock model ID (no :0 suffix - that belongs only on `:0`-versioned snapshots
   # like Sonnet 4.5).  Inference profile users prefix with us./eu./global. in config.
   - id: anthropic.claude-opus-4-6-v1
     name: Claude Opus 4.6 (Bedrock)
@@ -362,7 +362,7 @@ models:
     description: Anthropic Claude Opus 4.6 via AWS Bedrock
     input_modalities: [text, image]
 
-  # Inference profile ID — callers may prefix with us./eu./global. in their config.
+  # Inference profile ID - callers may prefix with us./eu./global. in their config.
   - id: us.anthropic.claude-sonnet-4-6
     name: Claude Sonnet 4.6 (Bedrock)
     provider: aws
@@ -392,7 +392,7 @@ models:
     provider: aws
     context_window: 300000
     max_output_tokens: 5120
-    description: Amazon Nova Pro — capable multimodal model
+    description: Amazon Nova Pro - capable multimodal model
     input_modalities: [text, image]
 
   - id: amazon.nova-lite-v1:0
@@ -400,7 +400,7 @@ models:
     provider: aws
     context_window: 300000
     max_output_tokens: 5120
-    description: Amazon Nova Lite — fast and affordable
+    description: Amazon Nova Lite - fast and affordable
     input_modalities: [text, image]
 
   - id: amazon.nova-micro-v1:0
@@ -408,7 +408,7 @@ models:
     provider: aws
     context_window: 128000
     max_output_tokens: 5120
-    description: Amazon Nova Micro — ultra-fast text-only model
+    description: Amazon Nova Micro - ultra-fast text-only model
 
   - id: amazon.titan-text-express-v1
     name: Amazon Titan Text Express
@@ -445,7 +445,7 @@ models:
     provider: cohere
     context_window: 128000
     max_output_tokens: 4096
-    description: Cohere Command R+ — most capable Command model
+    description: Cohere Command R+ - most capable Command model
 
   - id: command-r-plus
     name: Command R+
@@ -459,7 +459,7 @@ models:
     provider: cohere
     context_window: 128000
     max_output_tokens: 4096
-    description: Cohere Command R — optimized for RAG
+    description: Cohere Command R - optimized for RAG
 
   - id: command-r
     name: Command R
@@ -473,14 +473,14 @@ models:
     provider: cohere
     context_window: 128000
     max_output_tokens: 4096
-    description: Cohere Command Nightly — latest experimental
+    description: Cohere Command Nightly - latest experimental
 
   - id: command-light
     name: Command Light
     provider: cohere
     context_window: 4096
     max_output_tokens: 4096
-    description: Cohere Command Light — fast and compact
+    description: Cohere Command Light - fast and compact
 
   # ── Groq ──────────────────────────────────────────────────────────────────────
   - id: llama-3.3-70b-versatile
@@ -633,28 +633,28 @@ models:
     provider: mistral
     context_window: 131072
     max_output_tokens: 4096
-    description: Mistral Large — most capable Mistral model
+    description: Mistral Large - most capable Mistral model
 
   - id: mistral-small-latest
     name: Mistral Small
     provider: mistral
     context_window: 131072
     max_output_tokens: 4096
-    description: Mistral Small — fast and affordable
+    description: Mistral Small - fast and affordable
 
   - id: open-mistral-nemo
     name: Mistral NeMo
     provider: mistral
     context_window: 131072
     max_output_tokens: 4096
-    description: Mistral NeMo 12B — open weights
+    description: Mistral NeMo 12B - open weights
 
   - id: codestral-latest
     name: Codestral
     provider: mistral
     context_window: 262144
     max_output_tokens: 8192
-    description: Codestral — specialized code model
+    description: Codestral - specialized code model
 
   - id: pixtral-large-latest
     name: Pixtral Large
@@ -677,14 +677,14 @@ models:
     provider: xai
     context_window: 131072
     max_output_tokens: 8192
-    description: xAI Grok 3 — most capable Grok model
+    description: xAI Grok 3 - most capable Grok model
 
   - id: grok-3-mini
     name: Grok 3 Mini
     provider: xai
     context_window: 131072
     max_output_tokens: 8192
-    description: xAI Grok 3 Mini — fast and efficient
+    description: xAI Grok 3 Mini - fast and efficient
 
   - id: grok-2
     name: Grok 2
@@ -714,21 +714,21 @@ models:
     provider: perplexity
     context_window: 200000
     max_output_tokens: 8192
-    description: Advanced AI with search — Perplexity Sonar Pro
+    description: Advanced AI with search - Perplexity Sonar Pro
 
   - id: sonar
     name: Sonar
     provider: perplexity
     context_window: 127072
     max_output_tokens: 8192
-    description: Fast AI with real-time web search — Sonar
+    description: Fast AI with real-time web search - Sonar
 
   - id: sonar-reasoning-pro
     name: Sonar Reasoning Pro
     provider: perplexity
     context_window: 200000
     max_output_tokens: 8192
-    description: Sonar with chain-of-thought reasoning — Pro tier
+    description: Sonar with chain-of-thought reasoning - Pro tier
 
   - id: sonar-reasoning
     name: Sonar Reasoning
@@ -743,14 +743,14 @@ models:
     provider: deepseek
     context_window: 65536
     max_output_tokens: 8192
-    description: DeepSeek V3 — state-of-the-art chat model
+    description: DeepSeek V3 - state-of-the-art chat model
 
   - id: deepseek-reasoner
     name: DeepSeek Reasoner (R1)
     provider: deepseek
     context_window: 65536
     max_output_tokens: 8192
-    description: DeepSeek R1 — advanced reasoning model
+    description: DeepSeek R1 - advanced reasoning model
 
   # ── Moonshot AI ───────────────────────────────────────────────────────────────
   - id: moonshot-v1-8k
@@ -780,21 +780,21 @@ models:
     provider: dashscope
     context_window: 32768
     max_output_tokens: 8192
-    description: Alibaba Qwen Max — most capable Qwen model
+    description: Alibaba Qwen Max - most capable Qwen model
 
   - id: qwen-plus
     name: Qwen Plus
     provider: dashscope
     context_window: 131072
     max_output_tokens: 8192
-    description: Alibaba Qwen Plus — balanced model
+    description: Alibaba Qwen Plus - balanced model
 
   - id: qwen-turbo
     name: Qwen Turbo
     provider: dashscope
     context_window: 131072
     max_output_tokens: 8192
-    description: Alibaba Qwen Turbo — fast model
+    description: Alibaba Qwen Turbo - fast model
 
   - id: qwen2.5-72b-instruct
     name: Qwen 2.5 72B Instruct
@@ -823,7 +823,7 @@ models:
     provider: glm
     context_window: 128000
     max_output_tokens: 4096
-    description: Zhipu AI GLM-4 Plus — best GLM model
+    description: Zhipu AI GLM-4 Plus - best GLM model
 
   - id: glm-4
     name: GLM-4
@@ -844,14 +844,14 @@ models:
     provider: glm
     context_window: 128000
     max_output_tokens: 4096
-    description: Zhipu AI GLM-4 Flash — fast and free-tier
+    description: Zhipu AI GLM-4 Flash - fast and free-tier
 
   - id: glm-4-air
     name: GLM-4 Air
     provider: glm
     context_window: 128000
     max_output_tokens: 4096
-    description: Zhipu AI GLM-4 Air — lightweight model
+    description: Zhipu AI GLM-4 Air - lightweight model
 
   # ── MiniMax ───────────────────────────────────────────────────────────────────
   - id: MiniMax-Text-01
@@ -1056,14 +1056,14 @@ models:
     provider: ollama
     context_window: 131072
     max_output_tokens: 4096
-    description: Meta Llama 3.2 3B — small local model
+    description: Meta Llama 3.2 3B - small local model
 
   - id: llama3.2:1b
     name: Llama 3.2 1B
     provider: ollama
     context_window: 131072
     max_output_tokens: 4096
-    description: Meta Llama 3.2 1B — ultra-small local model
+    description: Meta Llama 3.2 1B - ultra-small local model
 
   - id: llama3.1:8b
     name: Llama 3.1 8B
@@ -1174,7 +1174,7 @@ models:
       Routes to a randomly selected free model on OpenRouter.  The router
       filters for models that support the features your request needs (vision,
       tool calling, structured outputs, etc.) and picks one at random.  Actual
-      model used is reported in the response metadata.  Zero cost — no charge
+      model used is reported in the response metadata.  Zero cost - no charge
       for the router or for the selected free model.
 
   # ── Azure (OpenAI models via Azure deployments) ────────────────────────────────

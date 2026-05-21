@@ -244,7 +244,7 @@ pub fn make_filename(first_user_message: &str) -> String {
 /// multi-line output, or other unsuitable content. Returns a short, display-safe title.
 pub fn sanitize_llm_title(raw: &str) -> String {
     let s = raw.trim();
-    // Take first line only — avoid code blocks or multi-line output.
+    // Take first line only - avoid code blocks or multi-line output.
     let first_line = s.lines().next().unwrap_or(s).trim();
     // Strip markdown code block markers (```lang or ```).
     let stripped = first_line
@@ -272,7 +272,7 @@ pub fn sanitize_llm_title(raw: &str) -> String {
 }
 
 /// Derives a human-readable title (capitalised, up to ~80 chars) from a
-/// free-form text string — used as the H1 title in saved conversation files.
+/// free-form text string - used as the H1 title in saved conversation files.
 pub fn make_title(text: &str) -> String {
     // Take up to the first sentence (stop at '.', '!', '?') or 80 chars.
     let trimmed = text.trim();
@@ -349,7 +349,7 @@ fn read_title_from_file(path: &Path) -> Option<String> {
             if !line.trim().is_empty() {
                 let s: String = line.chars().take(60).collect();
                 return Some(if line.len() > 60 {
-                    format!("{s}…")
+                    format!("{s}...")
                 } else {
                     s
                 });

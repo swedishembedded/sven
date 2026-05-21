@@ -4,7 +4,7 @@
 //! Driver registry: static metadata for every supported model provider.
 //!
 //! This module acts as the single source of truth for which provider IDs exist
-//! and what their defaults are.  It does **not** contain construction logic –
+//! and what their defaults are.  It does **not** contain construction logic -
 //! that lives in [`crate::from_config`].
 
 /// Metadata describing a registered model driver.

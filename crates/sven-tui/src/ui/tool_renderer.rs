@@ -192,7 +192,7 @@ pub fn render_tool_call_expanded(
 /// Render an expanded tool result.
 ///
 /// `expand` controls how much output is shown:
-/// - `1` (partial): first `PARTIAL_LINES` lines followed by a "… N more" hint.
+/// - `1` (partial): first `PARTIAL_LINES` lines followed by a "... N more" hint.
 /// - `2` (full): all lines, no truncation.
 pub fn render_tool_result_expanded(
     tool_name: &str,
@@ -234,7 +234,7 @@ pub fn render_tool_result_expanded(
     ]));
 
     // Output body.
-    //   expand == 1 → show first PARTIAL_LINES lines with a "… N more" hint.
+    //   expand == 1 → show first PARTIAL_LINES lines with a "... N more" hint.
     //   expand >= 2 → show everything so the user can scroll the full result.
     const PARTIAL_LINES: usize = 20;
     let avail_cols = (width as usize).saturating_sub(2);
@@ -257,7 +257,7 @@ pub fn render_tool_result_expanded(
     if show_hint {
         lines.push(Line::from(Span::styled(
             format!(
-                "  … {} more lines (press Enter again to expand)",
+                "  ... {} more lines (press Enter again to expand)",
                 total - to_show_count
             ),
             Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
@@ -353,7 +353,7 @@ fn render_file_tool_call(
             if total_lines > MAX_DIFF_LINES {
                 let remaining = total_lines - MAX_DIFF_LINES;
                 lines.push(Line::from(Span::styled(
-                    format!("  … {remaining} more lines"),
+                    format!("  ... {remaining} more lines"),
                     Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
                 )));
             }
@@ -364,7 +364,7 @@ fn render_file_tool_call(
     if let Some(offset) = args.get("offset").and_then(|v| v.as_i64()) {
         let limit = args.get("limit").and_then(|v| v.as_i64());
         let range_str = if let Some(lim) = limit {
-            format!("  lines {offset}–{}", offset + lim)
+            format!("  lines {offset}-{}", offset + lim)
         } else {
             format!("  from line {offset}")
         };
@@ -433,7 +433,7 @@ fn render_shell_tool_call(
         }
         if cmd.lines().count() > 5 {
             lines.push(Line::from(Span::styled(
-                format!("  … {} more lines", cmd.lines().count() - 5),
+                format!("  ... {} more lines", cmd.lines().count() - 5),
                 Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
             )));
         }
@@ -579,7 +579,7 @@ fn render_system_tool_call(
                 }
                 if todos.len() > 5 {
                     lines.push(Line::from(Span::styled(
-                        format!("  … {} more", todos.len() - 5),
+                        format!("  ... {} more", todos.len() - 5),
                         Style::default().fg(TEXT_DIM).add_modifier(Modifier::ITALIC),
                     )));
                 }

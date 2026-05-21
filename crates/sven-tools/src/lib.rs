@@ -58,7 +58,7 @@ pub use builtin::knowledge::list_knowledge::ListKnowledgeTool;
 // Shell tool
 pub use builtin::shell::ShellTool;
 
-// GDB debugging tools (Unix only — GDB signal APIs are not available on Windows)
+// GDB debugging tools (Unix only - GDB signal APIs are not available on Windows)
 #[cfg(unix)]
 pub use builtin::gdb::state::GdbSessionState;
 #[cfg(unix)]
@@ -82,6 +82,6 @@ pub use builtin::buffer::{
 // Image tool (still at root level)
 pub use builtin::read_image::ReadImageTool;
 
-// Data URL parsing — re-exported from sven-image so consumers (e.g. sven-mcp)
+// Data URL parsing - re-exported from sven-image so consumers (e.g. sven-mcp)
 // don't need to depend on sven-image directly.
 pub use sven_image::parse_data_url;

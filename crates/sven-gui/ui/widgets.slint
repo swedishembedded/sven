@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Sven Desktop – Reusable widget library.
+// Sven Desktop - Reusable widget library.
 // All building-block components used across multiple panels.
 
 import { Theme } from "theme.slint";
@@ -120,7 +120,7 @@ export component TextButton inherits Rectangle {
 // styling (white bg) which clashes with dark theme, so we use TextInput directly.
 
 export component SearchInput inherits Rectangle {
-    in property <string>  placeholder: "Search…";
+    in property <string>  placeholder: "Search...";
     in-out property <string> text: "";
     callback text-changed(string);
     callback accepted();
@@ -356,7 +356,7 @@ export component SelectableList inherits Rectangle {
 // Horizontal progress bar with colour thresholds.
 
 export component ProgressBar inherits Rectangle {
-    in property <int>    value: 0;     // 0–100
+    in property <int>    value: 0;     // 0-100
     in property <bool>   animate-fill: true;
 
     height: 6px;
@@ -534,7 +534,7 @@ export component CollapsibleSection inherits Rectangle {
 
 // ── RotatingSpinner ───────────────────────────────────────────────────────────
 // Activity indicator: fixed arc length, continuous clockwise rotation. Slint's
-// stock Spinner in indeterminate mode varies arc length with abs(sin(…)), which
+// stock Spinner in indeterminate mode varies arc length with abs(sin(...)), which
 // reads as a knob rocking back and forth instead of a loader.
 
 export component RotatingSpinner inherits Rectangle {

@@ -115,7 +115,7 @@ pub fn segment_to_chat_message(seg: &ChatSegment) -> Option<ChatMessage> {
         } => Some(ChatMessage {
             message_type: SharedString::from("system"),
             content: SharedString::from(format!(
-                "Delegated \"{task_title}\" to {to_name}: {status} — {result_preview}"
+                "Delegated \"{task_title}\" to {to_name}: {status} - {result_preview}"
             )),
             role: SharedString::from("system"),
             ..default_chat_message("", "", "")

@@ -1,14 +1,14 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! **sven-team** — agent team coordination library.
+//! **sven-team** - agent team coordination library.
 //!
 //! This crate provides:
 //!
 //! - [`task`]: Shared task list data model and file-locked storage.
 //! - [`config`]: Team configuration (members, roles, metadata).
-//! - [`tools`]: LLM-callable tools for the task list (`create_task`, `claim_task`, …).
-//! - [`spawn`]: LLM-callable tools for team lifecycle (`create_team`, `list_team`, …).
+//! - [`tools`]: LLM-callable tools for the task list (`create_task`, `claim_task`, ...).
+//! - [`spawn`]: LLM-callable tools for team lifecycle (`create_team`, `list_team`, ...).
 //! - [`prompts`]: Orchestrator system prompt fragments.
 //! - [`definition`]: Declarative team definition files (`.sven/teams/*.yaml`).
 //! - [`cli`]: Implementations for the `sven team` CLI subcommands.

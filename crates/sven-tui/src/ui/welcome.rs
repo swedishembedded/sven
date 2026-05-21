@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 // SPDX-License-Identifier: Apache-2.0
-//! Welcome screen — shown when the chat is empty and the agent is idle.
+//! Welcome screen - shown when the chat is empty and the agent is idle.
 
 use ratatui::{
     buffer::Buffer,
@@ -22,7 +22,7 @@ pub struct WelcomeScreen<'a> {
     pub mode_style: Style,
 }
 
-/// "sven." ASCII art logo — all five characters laid out side-by-side.
+/// "sven." ASCII art logo - all five characters laid out side-by-side.
 ///
 /// Each letter is 8 terminal columns wide; the period is 4 columns wide.
 /// Letters are separated by 2-space gaps.  Total banner width: 44 columns.

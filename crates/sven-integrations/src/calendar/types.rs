@@ -47,7 +47,7 @@ impl CalendarEvent {
             self.start.format("%Y-%m-%d (all day)").to_string()
         } else {
             format!(
-                "{} – {}",
+                "{} - {}",
                 self.start.format("%Y-%m-%d %H:%M"),
                 self.end.format("%H:%M UTC")
             )

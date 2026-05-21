@@ -20,7 +20,7 @@ use crate::{AgentInfo, SkillInfo};
 /// `title` and the total count.
 ///
 /// This is the shared engine behind `format_skills_tree`, `format_agents_list`,
-/// and `format_tools_list` (in `sven-tools`) — all three share the same
+/// and `format_tools_list` (in `sven-tools`) - all three share the same
 /// `BTreeMap` grouping + `## Title (N total)\n### ns\n` skeleton.
 pub fn format_grouped_list<T, G, F>(
     items: &[T],
@@ -73,13 +73,13 @@ where
 ///
 /// ### git
 ///
-/// **git/commit** — Commit staged changes following project conventions
+/// **git/commit** - Commit staged changes following project conventions
 /// `v1.0`  [always]
 /// /home/user/.cursor/skills/git/commit/SKILL.md
 ///
 /// ### sven
 ///
-/// **sven/plan** — Plan a development task
+/// **sven/plan** - Plan a development task
 /// /data/.cursor/skills/sven/plan/SKILL.md
 /// ```
 pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
@@ -98,7 +98,7 @@ pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
         |skill| {
             let mut entry = format!("**{}**", skill.command);
             if !skill.description.is_empty() {
-                entry.push_str(&format!(" — {}", skill.description.trim()));
+                entry.push_str(&format!(" - {}", skill.description.trim()));
             }
             entry.push('\n');
 
@@ -143,12 +143,12 @@ pub fn format_skills_tree(skills: &[SkillInfo]) -> String {
 /// ```text
 /// ## Subagents (2 total)
 ///
-/// **security-auditor** — Security specialist. Use when implementing auth.
+/// **security-auditor** - Security specialist. Use when implementing auth.
 /// Model: fast  [readonly]
 /// /data/.cursor/agents/security-auditor.md
 /// ```
 pub fn format_agents_list(agents: &[AgentInfo]) -> String {
-    // Agents are not grouped by namespace — use a single flat group.
+    // Agents are not grouped by namespace - use a single flat group.
     format_grouped_list(
         agents,
         "Subagents",
@@ -158,7 +158,7 @@ pub fn format_agents_list(agents: &[AgentInfo]) -> String {
         |agent| {
             let mut entry = format!("**{}**", agent.name);
             if !agent.description.is_empty() {
-                entry.push_str(&format!(" — {}", agent.description.trim()));
+                entry.push_str(&format!(" - {}", agent.description.trim()));
             }
             entry.push('\n');
 

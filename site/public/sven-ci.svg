@@ -1,6 +1,6 @@
 <svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
 <rect width="800" height="500" fill="#0f1117"/>
-<!-- Top status bar — green accent for CI/pipeline theme -->
+<!-- Top status bar - green accent for CI/pipeline theme -->
 <rect x="0" y="0" width="800" height="22" fill="#08100a"/>
 <rect x="0" y="22" width="800" height="1" fill="#0f2a14"/>
 <circle cx="10" cy="11" r="5" fill="#4ade80"/>
@@ -37,7 +37,7 @@
 <text x="498" y="117" font-family="monospace" font-size="10" fill="#3a6040">"3 files  +213 -89"</text>
 <text x="720" y="117" font-family="monospace" font-size="10" fill="#1a3020">0.8s</text>
 
-<text x="12" y="134" font-family="monospace" font-size="10" fill="#9aa5b8">  JWT migration in src/auth/ — replaced HMAC-SHA256 with RS256.</text>
+<text x="12" y="134" font-family="monospace" font-size="10" fill="#9aa5b8">  JWT migration in src/auth/ - replaced HMAC-SHA256 with RS256.</text>
 
 <text x="12" y="154" font-family="monospace" font-size="10" fill="#4ade80">## Step 2/4  Security check</text>
 
@@ -70,7 +70,7 @@
 <line x1="12" y1="297" x2="788" y2="297" stroke="#0f2a14" stroke-width="1"/>
 
 <text x="12" y="314" font-family="monospace" font-size="10" fill="#9aa5b8">  Security:  8/10   No hardcoded secrets · validate user_id (medium)</text>
-<text x="12" y="330" font-family="monospace" font-size="10" fill="#9aa5b8">  Coverage:  7/10   jwt.rs below threshold — add token expiry tests</text>
+<text x="12" y="330" font-family="monospace" font-size="10" fill="#9aa5b8">  Coverage:  7/10   jwt.rs below threshold - add token expiry tests</text>
 <text x="12" y="346" font-family="monospace" font-size="10" fill="#9aa5b8">  Overall:   7.5/10</text>
 
 <text x="12" y="368" font-family="monospace" font-size="10" fill="#4ade80">✓ PASS   exit code: 0   elapsed: 14.8s   4 steps completed</text>
@@ -81,7 +81,7 @@
 <text x="8" y="453" font-family="monospace" font-size="10" fill="#4ade80">Output</text>
 <line x1="52" y1="452" x2="792" y2="452" stroke="#0f2a14" stroke-width="1"/>
 <text x="8" y="468" font-family="monospace" font-size="10" fill="#22d3ee"> &gt; </text>
-<text x="32" y="468" font-family="monospace" font-size="10" fill="#1a3020">workflow complete — 0 errors  (Enter to continue)</text>
+<text x="32" y="468" font-family="monospace" font-size="10" fill="#1a3020">workflow complete - 0 errors  (Enter to continue)</text>
 <rect x="0" y="475" width="800" height="1" fill="#0f2a14"/>
 <rect x="0" y="476" width="800" height="24" fill="#08100a"/>
 <text x="400" y="491" text-anchor="middle" font-family="monospace" font-size="9" fill="#0f2010">headless · github-actions · 4 steps · exit:0</text>

@@ -77,7 +77,7 @@ pub trait ModelProvider: Send + Sync {
     /// Query the live API for the actual context window in use.
     ///
     /// Default implementation returns `None` (no live probe available).
-    /// Override in providers that expose a properties or info endpoint —
+    /// Override in providers that expose a properties or info endpoint -
     /// e.g. llama.cpp-compatible servers expose `GET /props` which includes
     /// the loaded `n_ctx` value.
     ///

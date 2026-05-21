@@ -18,7 +18,7 @@
 /// The current state of slash-command parsing for a given input string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedCommand {
-    /// Input does not start with `/` — not a slash command at all.
+    /// Input does not start with `/` - not a slash command at all.
     NotCommand,
 
     /// User has typed `/` or `/partial_name` but hasn't finished the command
@@ -79,7 +79,7 @@ pub fn parse(input: &str) -> ParsedCommand {
     let args = &tokens[1..];
 
     if args.is_empty() {
-        // Typed "/command " — completing first argument, nothing typed yet
+        // Typed "/command " - completing first argument, nothing typed yet
         return ParsedCommand::CompletingArgs {
             command: command_name.clone(),
             arg_index: 0,
@@ -126,7 +126,7 @@ pub fn tokenise(s: &str) -> Vec<String> {
             '"' => {
                 in_quotes = !in_quotes;
                 if !in_quotes && !current.is_empty() {
-                    // closing quote — the token is now complete even without a space
+                    // closing quote - the token is now complete even without a space
                 }
             }
             ' ' | '\t' if !in_quotes => {

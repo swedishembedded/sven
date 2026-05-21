@@ -58,7 +58,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             ContentChunk::new(ContentBlock::from(text.as_str())),
         )),
 
-        // Same as TextComplete – drop to avoid duplicating thought chunks.
+        // Same as TextComplete - drop to avoid duplicating thought chunks.
         AgentEvent::ThinkingComplete(_) => None,
 
         AgentEvent::ToolCallStarted(tc) => {
@@ -109,7 +109,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
 
         // ToolProgress fires while a long-running tool is executing.  Forward
         // it as an empty Plan heartbeat so the parent ACP client receives a
-        // notification and its inactivity timer is reset — without causing any
+        // notification and its inactivity timer is reset - without causing any
         // visible change in the subagent chat view.
         AgentEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 

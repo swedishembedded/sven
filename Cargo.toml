@@ -151,7 +151,7 @@ assets = [
     # CLI/TUI/GUI binary (`sven --gui` for Slint desktop)
     ["target/release/sven", "usr/bin/sven", "755"],
     ["assets/sven.desktop", "usr/share/applications/sven.desktop", "644"],
-    # Shell completions (generated during the deb build — see Makefile)
+    # Shell completions (generated during the deb build - see Makefile)
     ["target/completions/sven.bash", "usr/share/bash-completion/completions/sven",    "644"],
     ["target/completions/_sven",     "usr/share/zsh/vendor-completions/_sven",        "644"],
     ["target/completions/sven.fish", "usr/share/fish/vendor_completions.d/sven.fish", "644"],

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Agent question modal — scalable multiple-choice with optional multi-select,
+// Agent question modal - scalable multiple-choice with optional multi-select,
 // "Other" free-text, and keyboard navigation.
 
 import { Theme } from "theme.slint";
@@ -96,7 +96,7 @@ export component QuestionModal inherits Rectangle {
                     font-size: Theme.font-size-sm;
                 }
 
-                // Options area — scrollable
+                // Options area - scrollable
                 Flickable {
                     height: Math.min(parent.height - 200px, 300px);
                     viewport-height: options-layout.preferred-height;

@@ -233,7 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn include_glob_narrows_results() {
-        // Search only in .toml files — should not return .rs matches.
+        // Search only in .toml files - should not return .rs matches.
         // Use the crate root: it contains Cargo.toml which has "version".
         let crate_root = env!("CARGO_MANIFEST_DIR");
         let out = SearchCodebaseTool

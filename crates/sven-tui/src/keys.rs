@@ -207,7 +207,7 @@ pub enum Action {
         mouse_row: u16,
     },
 
-    /// Mouse button released — finalise and copy any active selection.
+    /// Mouse button released - finalise and copy any active selection.
     SelectionFinish,
 
     /// Clear any in-progress or completed selection (e.g. click outside chat).
@@ -226,12 +226,12 @@ pub enum Action {
 
 /// Map a raw key event to an [`Action`], depending on which pane has focus.
 ///
-/// `pending_nav` — true when a Ctrl+w prefix has been received but not yet
+/// `pending_nav` - true when a Ctrl+w prefix has been received but not yet
 /// resolved.  In that state only j/k/+/- (and Esc to cancel) are meaningful.
-/// `in_edit_mode` — true when editing a queued message; Enter/Esc confirm/cancel.
-/// `in_queue` — true when the queue panel has keyboard focus.
-/// `in_chat_list` — true when the chat list sidebar has keyboard focus.
-/// `in_chat_pane` — true when the chat pane has keyboard focus (so j/k move highlight, Enter shows help).
+/// `in_edit_mode` - true when editing a queued message; Enter/Esc confirm/cancel.
+/// `in_queue` - true when the queue panel has keyboard focus.
+/// `in_chat_list` - true when the chat list sidebar has keyboard focus.
+/// `in_chat_pane` - true when the chat pane has keyboard focus (so j/k move highlight, Enter shows help).
 #[allow(clippy::too_many_arguments)]
 pub fn map_key(
     event: KeyEvent,
@@ -359,7 +359,7 @@ pub fn map_key(
         KeyCode::Char('a') if ctrl => Some(Action::OpenTeamPicker),
         KeyCode::Down if shift => Some(Action::CycleTeammateForward),
         KeyCode::Up if shift => Some(Action::CycleTeammateBackward),
-        // Alt+t — task list (distinct from Ctrl+t which opens the chat pager).
+        // Alt+t - task list (distinct from Ctrl+t which opens the chat pager).
         KeyCode::Char('t') if alt => Some(Action::ToggleTaskList),
 
         // ── Input pane ────────────────────────────────────────────────────────

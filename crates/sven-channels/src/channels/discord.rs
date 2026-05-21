@@ -236,7 +236,7 @@ impl Channel for DiscordChannel {
                             };
 
                             if tx.send(inbound).await.is_err() {
-                                warn!("Discord: inbound channel closed — stopping");
+                                warn!("Discord: inbound channel closed - stopping");
                                 return;
                             }
                         }

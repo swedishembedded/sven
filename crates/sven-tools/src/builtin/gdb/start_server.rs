@@ -275,7 +275,7 @@ impl Tool for GdbStartServerTool {
                     &call.id,
                     format!(
                         "GDB server exited immediately (exit {exit_code}).\n\
-                         Port {port} is already in use — likely a zombie server from a \
+                         Port {port} is already in use - likely a zombie server from a \
                          previous session.\n\n\
                          • To kill the zombie and restart: \
                            call gdb_start_server with force=true\n\
@@ -351,7 +351,7 @@ mod tests {
         let t = make_tool();
         let out = t.execute(&call(json!({"target": "STM32F407VG"}))).await;
         // Regardless of whether the port is occupied or the binary is missing,
-        // the `target` path must never produce the "ask the user" message —
+        // the `target` path must never produce the "ask the user" message -
         // that error is only for the case where no target/command was given at all.
         assert!(
             !out.content.contains("Ask the user"),
@@ -467,7 +467,7 @@ mod tests {
 
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbStartServerTool::new(state, GdbConfig::default());
-        let cmd = "false".to_string(); // exits immediately — proves we didn't return early
+        let cmd = "false".to_string(); // exits immediately - proves we didn't return early
         let out = t
             .execute(&call(json!({"command": cmd, "force": true})))
             .await;

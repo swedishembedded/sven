@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 05_new_tools.bats – end-to-end tests for the 18-tool toolkit implemented
+# 05_new_tools.bats - end-to-end tests for the 18-tool toolkit implemented
 # in the complete toolkit refactor.
 #
 # Tests verify:

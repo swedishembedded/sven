@@ -1,43 +1,43 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Unified user-input submission path — documentation and integration tests.
+//! Unified user-input submission path - documentation and integration tests.
 //!
 //! # Message Lifecycle
 //!
 //! The journey from "user presses Enter" to "agent receives a message with the
 //! correct model configured" passes through the following steps:
 //!
-//! **Step 1** — `handle_term_event` / `Action::Submit`
+//! **Step 1** - `handle_term_event` / `Action::Submit`
 //!   (`app.rs` → `dispatch()`)
 //!   Takes the trimmed input buffer and calls `App::submit_user_input()`.
 //!
-//! **Step 2** — `App::submit_user_input()`
+//! **Step 2** - `App::submit_user_input()`
 //!   Dispatches slash commands via `dispatch_command()` (staging model/mode overrides
 //!   into `SessionState`) or falls through to the plain-text path.
 //!   For `Action::SubmitBufferToAgent`, slash commands are handled by
 //!   `App::submit_nvim_command()` (immediate apply, no staging).
 //!
-//! **Step 3** — `App::enqueue_or_send_text()`
+//! **Step 3** - `App::enqueue_or_send_text()`
 //!   Calls `SessionState::consume_staged()` which promotes the staged model to
 //!   `model_display` (status bar reflects switch immediately) and returns
 //!   `(model_cfg, mode)` for the `QueuedMessage`.
 //!
-//! **Step 4** — `QueuedMessage` construction
+//! **Step 4** - `QueuedMessage` construction
 //!   The staged model config is converted to `"{provider}/{name}"` string for
 //!   the `model_override` field.
 //!   If the agent is busy, the message is pushed to `App::queue.messages`.
 //!   If the agent is idle, `App::send_resubmit_to_agent()` is called directly.
 //!
-//! **Step 5** — `App::send_resubmit_to_agent()`
+//! **Step 5** - `App::send_resubmit_to_agent()`
 //!   Sends `AgentRequest::Resubmit { messages, new_user_content, model_override,
 //!   mode_override }` to the background agent task via `agent.tx`.
 //!
-//! **Step 6** — `agent_task` loop
+//! **Step 6** - `agent_task` loop
 //!   Receives `AgentRequest::Resubmit`.  Resolves `model_override` string to a
 //!   `ModelConfig` then to a `Box<dyn ModelProvider>` and calls `agent.set_model()`.
 //!
-//! **Step 7** — `agent.replace_history_and_submit()`
+//! **Step 7** - `agent.replace_history_and_submit()`
 //!   Replaces the agent's conversation history, appends the new user message,
 //!   and runs the agentic loop.
 
@@ -165,7 +165,7 @@ impl App {
                                 // Show immediate feedback that auth is starting.
                                 let _ = toast_tx
                                     .send(crate::app::ui_state::Toast::info(format!(
-                                        "Opening browser to authenticate '{server}'…"
+                                        "Opening browser to authenticate '{server}'..."
                                     )))
                                     .await;
                                 tokio::spawn(async move {
@@ -757,7 +757,7 @@ mod submit_integration_tests {
             "/mode alone must not send a request"
         );
 
-        app.start_editing_segment(seg_idx, "do some research — edited");
+        app.start_editing_segment(seg_idx, "do some research - edited");
         app.dispatch_action(Action::EditMessageConfirm).await;
 
         let req = recv_resubmit_for_test(&mut rx);

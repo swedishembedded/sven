@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Heartbeat — periodic agent wakeup at a configurable interval.
+//! Heartbeat - periodic agent wakeup at a configurable interval.
 //!
 //! The heartbeat is separate from the cron scheduler: it wakes the main
 //! agent session on a fixed interval using the configured prompt. If a
@@ -43,7 +43,7 @@ impl Heartbeat {
     /// Returns immediately; the task continues until the sender is dropped.
     pub async fn start(self) {
         if !self.config.enabled {
-            debug!("Heartbeat disabled — not starting");
+            debug!("Heartbeat disabled - not starting");
             return;
         }
 
@@ -53,7 +53,7 @@ impl Heartbeat {
                 tracing::error!(
                     error = %e,
                     every = %self.config.every,
-                    "Heartbeat: invalid interval — disabling"
+                    "Heartbeat: invalid interval - disabling"
                 );
                 return;
             }
@@ -86,7 +86,7 @@ impl Heartbeat {
                 };
 
                 if tx.send(event).await.is_err() {
-                    info!("Heartbeat: receiver dropped — stopping");
+                    info!("Heartbeat: receiver dropped - stopping");
                     return;
                 }
             }

@@ -78,8 +78,8 @@ impl Tool for AskQuestionTool {
     fn description(&self) -> &str {
         "Present structured multiple-choice questions to the user and collect responses.\n\
          Each question: prompt, options (≥2). allow_multiple: false by default.\n\
-         Do NOT include 'Other' in options — it is always appended automatically.\n\
-         Unavailable in headless/CI/piped mode — returns an error there.\n\
+         Do NOT include 'Other' in options - it is always appended automatically.\n\
+         Unavailable in headless/CI/piped mode - returns an error there.\n\
          Use for decisions requiring explicit choice; for yes/no just ask directly in text."
     }
 
@@ -99,7 +99,7 @@ impl Tool for AskQuestionTool {
                             "options": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "List of choices. Do NOT add 'Other' — it is appended automatically.",
+                                "description": "List of choices. Do NOT add 'Other' - it is appended automatically.",
                                 "minItems": 2
                             },
                             "allow_multiple": {

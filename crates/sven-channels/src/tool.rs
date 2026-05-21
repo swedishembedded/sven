@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `send_message` tool — lets the agent proactively send messages to any
+//! `send_message` tool - lets the agent proactively send messages to any
 //! configured messaging channel.
 
 use async_trait::async_trait;

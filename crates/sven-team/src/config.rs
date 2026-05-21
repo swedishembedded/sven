@@ -14,7 +14,7 @@ use crate::task::default_team_dir;
 
 /// Role of a peer within a team.
 ///
-/// Roles are informational — they appear in the team picker and can be
+/// Roles are informational - they appear in the team picker and can be
 /// referenced in the orchestrator prompt, but they do not restrict tool
 /// access.  The lead decides task assignments; the LLM uses role hints to
 /// pick the right teammate.
@@ -108,7 +108,7 @@ fn is_default_status(s: &MemberStatus) -> bool {
 
 /// Returns `true` when an OS process with `pid` is currently running.
 ///
-/// Uses `kill(pid, 0)` on Unix — sends no signal but returns success only if
+/// Uses `kill(pid, 0)` on Unix - sends no signal but returns success only if
 /// the process exists and we have permission to signal it.
 pub fn is_process_alive(pid: u32) -> bool {
     #[cfg(unix)]

@@ -147,7 +147,7 @@ impl Tool for GdbConnectTool {
         // before we spawn the long-lived async client.
         //
         // We use `std::process::Command` (not tokio) so we can take ownership of
-        // stdout and read it with a blocking-thread timeout — no async executor
+        // stdout and read it with a blocking-thread timeout - no async executor
         // involvement, no gdbmi internals to fight.
         let probe_output = probe_server_connection(
             &gdb_path,
@@ -422,7 +422,7 @@ fn connection_error_hint(output: &str, target_addr: &str) -> String {
     {
         format!(
             "Hint: Connection to {target_addr} timed out.\n\
-             → The GDB server may still be initialising — retry gdb_connect in a moment.\n\
+             → The GDB server may still be initialising - retry gdb_connect in a moment.\n\
              → Increase command_timeout_secs in your sven config (current default: 10s).\n\
              → Check that the target device is powered and connected."
         )
@@ -511,7 +511,7 @@ mod tests {
 
     #[tokio::test]
     async fn fails_gracefully_when_nothing_listening() {
-        // Nothing listening on port 19998 — probe returns quickly with connection refused.
+        // Nothing listening on port 19998 - probe returns quickly with connection refused.
         let state = Arc::new(Mutex::new(GdbSessionState::default()));
         let t = GdbConnectTool::new(
             state,

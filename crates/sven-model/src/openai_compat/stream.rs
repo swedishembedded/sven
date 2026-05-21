@@ -154,7 +154,7 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
 
     let delta = &choice["delta"];
 
-    // Tool call delta — OpenAI may send multiple parallel tool calls in one
+    // Tool call delta - OpenAI may send multiple parallel tool calls in one
     // chunk, each identified by an "index" field.  We only emit the first
     // element here because each SSE chunk carries exactly one tool-call delta
     // in practice; the index routes accumulation in the agent.
@@ -176,9 +176,9 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         }
     }
 
-    // Thinking delta — two common field names for chain-of-thought reasoning:
-    //   • `reasoning_content` — llama.cpp, Qwen3, DeepSeek-R1, xAI Grok-3-mini
-    //   • `reasoning`         — OpenRouter (and some other aggregators)
+    // Thinking delta - two common field names for chain-of-thought reasoning:
+    //   • `reasoning_content` - llama.cpp, Qwen3, DeepSeek-R1, xAI Grok-3-mini
+    //   • `reasoning`         - OpenRouter (and some other aggregators)
     // Both carry the same semantics: readable CoT text that arrived before the
     // final answer.  Prefer `reasoning_content`; fall back to `reasoning`.
     let thinking_text = delta

@@ -1,8 +1,8 @@
-# Sven — AI Coding Agent
+# Sven - AI Coding Agent
 
 Sven is a keyboard-driven AI coding agent built in Rust. It runs as an
 interactive TUI (`sven`), a Slint desktop GUI (`sven-ui`), a headless CI
-runner, and a networked P2P node — all from the same workspace.
+runner, and a networked P2P node - all from the same workspace.
 
 ## For AI Agents Working on This Codebase
 
@@ -10,11 +10,11 @@ runner, and a networked P2P node — all from the same workspace.
 - **Architecture**: Multi-crate workspace. See the crate table below for the full layout.
 - **Skills**: Load the relevant skill before writing code:
   - TUI work → `.cursor/skills/programming/ratatui/SKILL.md`
-  - GUI work → `.cursor/skills/programming/ratatui/SKILL.md` (patterns section) — Slint uses a declarative `.slint` DSL compiled to Rust bindings
+  - GUI work → `.cursor/skills/programming/ratatui/SKILL.md` (patterns section) - Slint uses a declarative `.slint` DSL compiled to Rust bindings
   - Rust code → `.cursor/skills/programming/rust/SKILL.md`
   - Public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`
 - **Tests**: Run `make test` before committing. E2E tests require `bats-core`: `make tests/e2e/basic`.
-- **Linting**: `make check` runs clippy with `-D warnings`. Zero warnings policy — all new code must be warning-free.
+- **Linting**: `make check` runs clippy with `-D warnings`. Zero warnings policy - all new code must be warning-free.
 
 ## Essential Commands
 
@@ -38,15 +38,15 @@ runner, and a networked P2P node — all from the same workspace.
 ## Key Directories
 
 ### Root
-- `src/` — binary entry points and shared CLI parsing (`cli.rs`, `main.rs`, `ui_main.rs`)
-- `docs/` — user-facing documentation
-- `docs/technical/` — ACP, skill system, P2P, session protocol, knowledge base
-- `tests/` — unit/integration tests; `tests/e2e/` — bats E2E tests
-- `benchmarks/` — Terminal-Bench 2.0 via Harbor
-- `site/` — marketing/landing site (Docker)
-- `scripts/` — build-deb, release-build, etc.
-- `.agents/skills/` — agent skills for this project
-- `.github/` — CI workflows and actions
+- `src/` - binary entry points and shared CLI parsing (`cli.rs`, `main.rs`, `ui_main.rs`)
+- `docs/` - user-facing documentation
+- `docs/technical/` - ACP, skill system, P2P, session protocol, knowledge base
+- `tests/` - unit/integration tests; `tests/e2e/` - bats E2E tests
+- `benchmarks/` - Terminal-Bench 2.0 via Harbor
+- `site/` - marketing/landing site (Docker)
+- `scripts/` - build-deb, release-build, etc.
+- `.agents/skills/` - agent skills for this project
+- `.github/` - CI workflows and actions
 
 ### Crates
 
@@ -62,21 +62,21 @@ runner, and a networked P2P node — all from the same workspace.
 | `sven-runtime` | Shared runtime utilities (workspace root, skill/agent discovery) |
 | `sven-bootstrap` | First-run setup helpers, `AgentBuilder` |
 | `sven-ci` | Headless CI runner and output formatting |
-| `sven-mcp-client` | MCP client — connects to external MCP servers over stdio/HTTP |
-| `sven-mcp` | MCP server — exposes sven tools to MCP clients |
+| `sven-mcp-client` | MCP client - connects to external MCP servers over stdio/HTTP |
+| `sven-mcp` | MCP server - exposes sven tools to MCP clients |
 | `sven-acp` | ACP (Agent Client Protocol) server for IDE integration |
 | `sven-p2p` | libp2p: Noise, mDNS, relay, task routing |
 | `sven-node` | HTTP/WS node + P2P + agent wiring |
 | `sven-node-client` | WebSocket client for connecting to a running node |
 | `sven-team` | Agent team coordination: task lists, config, lifecycle |
-| `sven-frontend` | **Shared frontend layer** — agent wiring, slash commands, markdown, queue, tool views (used by both TUI and GUI) |
+| `sven-frontend` | **Shared frontend layer** - agent wiring, slash commands, markdown, queue, tool views (used by both TUI and GUI) |
 | `sven-tui` | Ratatui TUI: layout, widgets, key bindings (`sven` binary) |
 | `sven-gui` | Slint desktop GUI: `.slint` UI files + Rust bridge (`sven-ui` binary) |
 
 ## Frontend Architecture
 
 Both the TUI and the GUI share a common layer in `sven-frontend`. Never duplicate
-logic between `sven-tui` and `sven-gui` — extract it to `sven-frontend` instead.
+logic between `sven-tui` and `sven-gui` - extract it to `sven-frontend` instead.
 
 ```
 sven (CLI/TUI)            sven-ui (Desktop GUI)
@@ -94,15 +94,15 @@ sven (CLI/TUI)            sven-ui (Desktop GUI)
 | Module | Contents |
 |--------|----------|
 | `agent` | `AgentRequest` enum, `agent_task` background task |
-| `node_agent` | `node_agent_task` — WebSocket bridge to a sven node |
-| `segment` | `ChatSegment` — display-layer chat data model |
+| `node_agent` | `node_agent_task` - WebSocket bridge to a sven node |
+| `segment` | `ChatSegment` - display-layer chat data model |
 | `types` | `ModelDirective`, `QueuedMessage`, `NodeBackend`, `FrontendOptions`, `SessionMeta` |
 | `commands` | Slash command system: parser, registry, completion, all built-in commands |
 | `commands::builtin` | `/model`, `/mode`, `/new`, `/abort`, `/clear`, `/inspect`, `/provider`, `/quit`, `/refresh`, `/team` |
-| `commands::skill` | `SkillCommand` and `AgentCommand` — dynamic commands from markdown skill files |
-| `commands::mcp` | `McpPromptCommand` — dynamic commands from MCP prompt registrations |
-| `queue` | `QueueState` — buffer user messages while the agent is busy |
-| `tool_view` | `ToolViewData`, `extract_tool_view()` — UI-agnostic tool display extraction |
+| `commands::skill` | `SkillCommand` and `AgentCommand` - dynamic commands from markdown skill files |
+| `commands::mcp` | `McpPromptCommand` - dynamic commands from MCP prompt registrations |
+| `queue` | `QueueState` - buffer user messages while the agent is busy |
+| `tool_view` | `ToolViewData`, `extract_tool_view()` - UI-agnostic tool display extraction |
 | `markdown` | `MarkdownBlock` enum, `parse_markdown_blocks()` via pulldown-cmark |
 
 ### `sven-gui` layout
@@ -130,6 +130,6 @@ sven (CLI/TUI)            sven-ui (Desktop GUI)
 
 ## Documentation
 
-- [README.md](README.md) — overview, features, building
-- [docs/00-introduction.md](docs/00-introduction.md) — what Sven is and how it works
-- [docs/technical/](docs/technical/) — ACP, skill system, P2P, session protocol
+- [README.md](README.md) - overview, features, building
+- [docs/00-introduction.md](docs/00-introduction.md) - what Sven is and how it works
+- [docs/technical/](docs/technical/) - ACP, skill system, P2P, session protocol

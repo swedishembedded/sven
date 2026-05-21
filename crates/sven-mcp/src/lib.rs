@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //!
-//! `sven-mcp` — MCP (Model Context Protocol) server for sven.
+//! `sven-mcp` - MCP (Model Context Protocol) server for sven.
 //!
 //! Exposes sven's built-in tools to any MCP-compatible host (Cursor, Claude
 //! Desktop, opencode, codex, etc.) over **stdio** transport using
@@ -52,7 +52,7 @@
 //!
 //! ## Local mode
 //! ```text
-//! MCP client (Cursor, Claude Desktop, …)
+//! MCP client (Cursor, Claude Desktop, ...)
 //!       │  stdin/stdout (line-delimited JSON-RPC)
 //!       ▼
 //! SvenMcpServer (rmcp ServerHandler)
@@ -63,7 +63,7 @@
 //!
 //! ## Node-proxy mode
 //! ```text
-//! MCP client (Cursor, Claude Desktop, …)
+//! MCP client (Cursor, Claude Desktop, ...)
 //!       │  stdin/stdout (line-delimited JSON-RPC)
 //!       ▼
 //! NodeProxyServer (rmcp ServerHandler)
@@ -118,13 +118,13 @@ pub async fn serve_stdio(registry: Arc<ToolRegistry>) -> Result<()> {
 /// `wss://127.0.0.1:18790/ws`.  `token` is the raw bearer token printed by
 /// `sven node start` on first launch.
 ///
-/// All tools registered on the node — including P2P tools like `list_peers`
-/// and `delegate_task` — are exposed to the MCP client transparently.
+/// All tools registered on the node - including P2P tools like `list_peers`
+/// and `delegate_task` - are exposed to the MCP client transparently.
 ///
 /// This function blocks until stdin closes or a fatal error occurs.
 pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()> {
-    eprintln!("sven mcp: node-proxy mode — forwarding tools from {ws_url}");
-    eprintln!("sven mcp: waiting for MCP client on stdin…");
+    eprintln!("sven mcp: node-proxy mode - forwarding tools from {ws_url}");
+    eprintln!("sven mcp: waiting for MCP client on stdin...");
     let server = NodeProxyServer::new(ws_url, token);
     let running = server
         .serve((tokio::io::stdin(), tokio::io::stdout()))

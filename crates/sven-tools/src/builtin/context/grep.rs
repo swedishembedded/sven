@@ -33,7 +33,7 @@ impl Tool for ContextGrepTool {
 
     fn description(&self) -> &str {
         "Search a memory-mapped context handle with regex. Returns matching lines with positions. \
-         This is a cheap pre-filter — use it to narrow down before reading or dispatching \
+         This is a cheap pre-filter - use it to narrow down before reading or dispatching \
          sub-agent queries. The full content is never loaded into your context window; only \
          matching lines (up to the limit) are returned.\n\n\
          Common workflow:\n\

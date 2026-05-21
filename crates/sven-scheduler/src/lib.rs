@@ -8,9 +8,9 @@
 //!
 //! This crate provides three building blocks:
 //!
-//! - [`JobStore`] — YAML-backed persistence for cron/interval/one-shot jobs.
-//! - [`Scheduler`] — tokio task that evaluates schedules and emits [`JobDue`] events.
-//! - [`Heartbeat`] — configurable periodic agent wakeup with a standing prompt.
+//! - [`JobStore`] - YAML-backed persistence for cron/interval/one-shot jobs.
+//! - [`Scheduler`] - tokio task that evaluates schedules and emits [`JobDue`] events.
+//! - [`Heartbeat`] - configurable periodic agent wakeup with a standing prompt.
 //!
 //! The [`ScheduleTool`] lets the agent create, list, and delete jobs at runtime.
 //!
@@ -28,7 +28,7 @@
 //! scheduler.start().await;
 //!
 //! while let Some(due) = rx.recv().await {
-//!     println!("Job due: {} — {}", due.job_id, due.prompt);
+//!     println!("Job due: {} - {}", due.job_id, due.prompt);
 //! }
 //! # Ok(())
 //! # }

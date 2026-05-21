@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `schedule` tool — lets the agent create, list, and delete cron/interval jobs.
+//! `schedule` tool - lets the agent create, list, and delete cron/interval jobs.
 
 use std::sync::Arc;
 
@@ -22,11 +22,11 @@ use crate::{
 ///
 /// # Actions
 ///
-/// - `create` — create a new cron/interval/one-shot job
-/// - `list` — list all scheduled jobs
-/// - `delete` — remove a job by ID
-/// - `enable` / `disable` — toggle a job without deleting it
-/// - `run_now` — fire a job immediately (sends a due event)
+/// - `create` - create a new cron/interval/one-shot job
+/// - `list` - list all scheduled jobs
+/// - `delete` - remove a job by ID
+/// - `enable` / `disable` - toggle a job without deleting it
+/// - `run_now` - fire a job immediately (sends a due event)
 ///
 /// # Example tool calls
 ///
@@ -150,7 +150,7 @@ impl ScheduleTool {
             if humantime::parse_duration(every).is_err() {
                 return ToolOutput::err(
                     &call.id,
-                    format!("invalid interval {every:?} — use units like '30m', '1h', '24h'"),
+                    format!("invalid interval {every:?} - use units like '30m', '1h', '24h'"),
                 );
             }
             Schedule::Interval {

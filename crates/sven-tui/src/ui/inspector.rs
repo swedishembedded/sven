@@ -59,7 +59,7 @@ impl InspectorOverlay {
         let mut md = format_skills_tree(skills);
         if is_node_proxy {
             md = format!(
-                "> **Connected to node** — skills are discovered from the local \
+                "> **Connected to node** - skills are discovered from the local \
                  filesystem and may differ from the node's skill set.\n\n{md}"
             );
         }
@@ -76,7 +76,7 @@ impl InspectorOverlay {
         let mut md = format_agents_list(agents);
         if is_node_proxy {
             md = format!(
-                "> **Connected to node** — subagents are discovered from the local \
+                "> **Connected to node** - subagents are discovered from the local \
                  filesystem and may differ from the node's subagent set.\n\n{md}"
             );
         }
@@ -130,7 +130,7 @@ impl InspectorOverlay {
     /// [`crate::node_agent::fetch_node_tools`] and passes it here.
     pub fn for_tools(tools: &[ToolSchema], is_node_proxy: bool, ascii: bool) -> Self {
         let source_note = if is_node_proxy {
-            "> **Connected to node** — showing tools registered on the node.\n\n"
+            "> **Connected to node** - showing tools registered on the node.\n\n"
         } else {
             ""
         };
@@ -156,8 +156,8 @@ impl InspectorOverlay {
 /// Render the peers view as markdown.
 ///
 /// Shows two sections:
-/// 1. Configured subagents — agents discovered from `agents/` dirs.
-/// 2. Active subprocess buffers — subagents currently running via `task`.
+/// 1. Configured subagents - agents discovered from `agents/` dirs.
+/// 2. Active subprocess buffers - subagents currently running via `task`.
 fn format_peers_markdown(
     configured_agents: &[AgentInfo],
     buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
@@ -175,7 +175,7 @@ fn format_peers_markdown(
             if !agent.description.is_empty() {
                 let short = agent.description.trim();
                 let preview = truncate_to_width_exact(short, 80);
-                out.push_str(&format!(" — {preview}"));
+                out.push_str(&format!(" - {preview}"));
             }
             let mut flags = Vec::new();
             if let Some(ref m) = agent.model {
@@ -200,7 +200,7 @@ fn format_peers_markdown(
 
     if is_node_proxy {
         out.push_str(
-            "_Subprocess buffers are not available in node-proxy mode — they live \
+            "_Subprocess buffers are not available in node-proxy mode - they live \
              in the node process. Use `/tools` to inspect the node's tool set._\n\n",
         );
         return out;
@@ -229,7 +229,7 @@ fn format_peers_markdown(
             };
             let elapsed = format_elapsed(meta.elapsed_secs);
             out.push_str(&format!(
-                "**{}** {} `{}` — {} lines, {} bytes, {}\n",
+                "**{}** {} `{}` - {} lines, {} bytes, {}\n",
                 meta.handle_id,
                 status_icon,
                 meta.status.label(),
@@ -257,7 +257,7 @@ fn format_context_markdown(
 
     if is_node_proxy {
         out.push_str(
-            "> **Connected to node** — context data below reflects the local TUI session. \
+            "> **Connected to node** - context data below reflects the local TUI session. \
              Subprocess buffers and tool calls are executed in the node process. \
              Use `/tools` to inspect the node's registered tools.\n\n",
         );
@@ -298,7 +298,7 @@ fn format_context_markdown(
 
     if is_node_proxy {
         out.push_str(
-            "_Output buffers are not available in node-proxy mode — they live \
+            "_Output buffers are not available in node-proxy mode - they live \
              in the node process._\n\n",
         );
         return out;
@@ -370,7 +370,7 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
              ```\n\n\
              **Default:** sven://sven.mcp/callback (installed by .deb). In containers,\n\
              sven falls back to localhost; forward port 5598.\n\
-             **Example (Atlassian with cursor:// — pre-allowlisted):**\n\
+             **Example (Atlassian with cursor:// - pre-allowlisted):**\n\
              ```yaml\n\
              mcp_servers:\n\
                atlassian:\n\
@@ -393,13 +393,13 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
         let status = s.status.label();
         let detail = match &s.status {
             sven_mcp_client::ServerStatus::Failed { error } => {
-                format!(" — _{}_", truncate_to_width_exact(error, 50))
+                format!(" - _{}_", truncate_to_width_exact(error, 50))
             }
             sven_mcp_client::ServerStatus::Reconnecting { attempts } => {
                 format!(" (attempt {attempts})")
             }
             sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
-                format!(" — run `/mcp auth {}`", s.name)
+                format!(" - run `/mcp auth {}`", s.name)
             }
             _ => String::new(),
         };
@@ -410,10 +410,10 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
     }
 
     out.push_str("\n**Commands:**\n");
-    out.push_str("- `/mcp` — open this inspector\n");
-    out.push_str("- `/mcp auth <name>` — authenticate with OAuth (browser will open)\n");
-    out.push_str("- `/mcp enable <name>` — enable a server\n");
-    out.push_str("- `/mcp disable <name>` — disable a server\n");
+    out.push_str("- `/mcp` - open this inspector\n");
+    out.push_str("- `/mcp auth <name>` - authenticate with OAuth (browser will open)\n");
+    out.push_str("- `/mcp enable <name>` - enable a server\n");
+    out.push_str("- `/mcp disable <name>` - disable a server\n");
 
     // Show a help hint if any server needs auth.
     let needs_auth: Vec<&str> = statuses
@@ -425,7 +425,7 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
         out.push_str("\n**Authentication required:**\n");
         for name in &needs_auth {
             out.push_str(&format!(
-                "- `/mcp auth {name}` — opens browser for OAuth login\n"
+                "- `/mcp auth {name}` - opens browser for OAuth login\n"
             ));
         }
     }

@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Status bar widget — single top row showing model, mode, context, and
+//! Status bar widget - single top row showing model, mode, context, and
 //! context-sensitive key hints.
 
 use ratatui::{
@@ -40,7 +40,7 @@ pub struct StatusBar<'a> {
     pub ascii: bool,
     /// Which pane currently has keyboard focus.
     pub focus: FocusPane,
-    /// Current spinner frame (0–9); incremented on each streaming event.
+    /// Current spinner frame (0-9); incremented on each streaming event.
     pub spinner_frame: u8,
     /// Live approximate output token count while generating (chars/4).
     /// Zero once the provider's exact output count has been received.
@@ -101,7 +101,7 @@ impl Widget for StatusBar<'_> {
         let ctx_bar_str = ctx_bar(display_ctx_pct, self.ascii);
         let ctx_pct_str = format!(" {}%", display_ctx_pct);
 
-        // Tool in progress — only shown when a tool is actually running.
+        // Tool in progress - only shown when a tool is actually running.
         let tool_sym = if self.ascii { "*" } else { "⚙" };
         let tool_span: Span<'static> = if let Some(t) = self.current_tool {
             Span::styled(format!("  {tool_sym} {t}"), Style::default().fg(BAR_TOOL))
