@@ -38,6 +38,14 @@ export BIN
 export FIXTURES="${_REPO_ROOT}/tests/fixtures"
 export MOCK_RESPONSES="${FIXTURES}/mock_responses.yaml"
 
+# ── Cargo environment ─────────────────────────────────────────────────────────
+
+# The system CARGO_HOME (/opt/rust) is read-only in this environment.  Export
+# the writable copy so any `cargo` invocation inside a bats test (e.g. the
+# `cargo test -p sven-tools` unit-test runners in 05_new_tools.bats) can
+# download and cache crates without a permission error.
+export CARGO_HOME=/data/.cargo-home
+
 # ── Environment for mock model ────────────────────────────────────────────────
 
 # Export so every sven invocation picks up the mock responses file.
