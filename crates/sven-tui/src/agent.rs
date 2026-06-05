@@ -8,4 +8,4 @@
 //! `crate::agent::AgentRequest` and `crate::agent::agent_task` continue to
 //! resolve without changes.
 
-pub use sven_frontend::agent::{agent_task, AgentRequest};
+pub use sven_frontend::agent::{kernel_session_task, AgentRequest};

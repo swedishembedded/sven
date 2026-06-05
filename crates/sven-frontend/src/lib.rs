@@ -37,7 +37,7 @@ pub mod types;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
-pub use agent::{agent_task, AgentRequest};
+pub use agent::{agent_task, kernel_session_task, AgentRequest};
 pub use node_agent::{fetch_node_tools, node_agent_task};
 pub use projection::{
     projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,

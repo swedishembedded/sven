@@ -16,7 +16,7 @@ use sven_config::{AgentMode, ModelConfig};
 use sven_core::AgentEvent;
 use sven_frontend::commands::completion::fuzzy_score;
 use sven_frontend::{
-    agent_task,
+    kernel_session_task,
     commands::{CommandContext, CommandRegistry, ImmediateAction, ParsedCommand},
     node_agent_task,
     queue::QueueState,
@@ -228,7 +228,7 @@ impl SvenApp {
             let buf = Arc::new(TokioMutex::new(OutputBufferStore::new()));
             let td = tool_displays.clone();
             tokio::spawn(async move {
-                agent_task(
+                kernel_session_task(
                     config,
                     model_cfg,
                     mode,

@@ -4,21 +4,25 @@
 //! Background agent task and request/event channel types.
 //!
 //! This module is shared by all Sven frontends (TUI and GUI). It provides the
-//! `AgentRequest` enum and the `agent_task` background task that owns the
-//! `Agent` and forwards events back to the frontend.
+//! `AgentRequest` enum, the legacy `agent_task` background task (kept for
+//! backward compatibility), and the new `kernel_session_task` that drives a
+//! full [`RuntimeBuilder`] kernel session and bridges [`UiEvent`]s back to
+//! the existing [`AgentEvent`] renderers.
 
 use std::sync::Arc;
 
 use futures::StreamExt;
-use sven_bootstrap::{AgentBuilder, McpManager, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::{AgentBuilder, McpManager, RuntimeBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_core::AgentEvent;
+use sven_core::{AgentEvent, CompactionStrategyUsed};
+use sven_hsm::UiEvent;
 use sven_input::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
-use sven_tools::Tool;
-use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools, TodoItem};
+use sven_tools::events::TodoItem;
+use sven_tools::{Tool, ToolCall};
+use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
@@ -337,4 +341,297 @@ pub async fn agent_task(
             }
         }
     }
+}
+
+// ── Kernel session task ───────────────────────────────────────────────────────
+
+/// Kernel-backed replacement for [`agent_task`].
+///
+/// Builds a full [`RuntimeBuilder`] session (reactive `agent` mode), subscribes
+/// to the outward observation bus, and bridges [`UiEvent`]s back to the
+/// existing [`AgentEvent`] renderers so the TUI/GUI requires minimal changes.
+///
+/// The function signature intentionally mirrors [`agent_task`] to allow a
+/// drop-in replacement in the callers.
+#[allow(clippy::too_many_arguments)]
+pub async fn kernel_session_task(
+    config: Arc<Config>,
+    startup_model_cfg: ModelConfig,
+    mode: AgentMode,
+    mut rx: mpsc::Receiver<AgentRequest>,
+    tx: mpsc::Sender<AgentEvent>,
+    question_tx: mpsc::Sender<QuestionRequest>,
+    _cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    _shared_skills: SharedSkills,
+    _shared_agents: SharedAgents,
+    _shared_tools: SharedTools,
+    _shared_tool_displays: SharedToolDisplays,
+    _buffer_store: Arc<Mutex<OutputBufferStore>>,
+    _mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
+    _mcp_refresh_rx: Option<broadcast::Receiver<()>>,
+) {
+    let kernel_mode = mode_to_kernel_mode(mode);
+    let ctx = RuntimeContext::auto_detect();
+    let bundle = match RuntimeBuilder::new(config.clone(), kernel_mode)
+        .with_runtime_context(ctx)
+        .with_model_config(startup_model_cfg.clone())
+        .with_tool_question_tx(question_tx)
+        .build_session()
+        .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = tx
+                .send(AgentEvent::Error(format!("kernel session init: {e:#}")))
+                .await;
+            return;
+        }
+    };
+
+    let handle = bundle.handle.clone();
+    let converse_agent = bundle.converse_agent.clone();
+    let mut obs_rx = bundle.handle.subscribe_observations();
+
+    // Drive the kernel runtime in the background (keeps it alive).
+    let _runtime = bundle.runtime;
+
+    // Auto-approve kernel-level gates (reactive mode doesn't emit AskUser /
+    // RequestHumanApproval at the HSM level; those go through the tool registry).
+    let mut channels = bundle.channels;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                q = channels.question_rx.recv() => match q {
+                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                    None => break,
+                },
+                a = channels.approval_rx.recv() => match a {
+                    Some(a) => { let _ = a.reply_tx.send(true); }
+                    None => break,
+                },
+            }
+        }
+    });
+
+    // Spawn the observation bridge: UiEvent → AgentEvent.
+    let event_tx_bridge = tx.clone();
+    tokio::spawn(async move {
+        use tokio::sync::broadcast::error::RecvError;
+        loop {
+            match obs_rx.recv().await {
+                Ok(ev) => {
+                    if let Some(ae) = ui_event_to_agent_event(ev) {
+                        let _ = event_tx_bridge.send(ae).await;
+                    }
+                }
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let current_model_cfg = Arc::new(tokio::sync::Mutex::new(startup_model_cfg));
+
+    loop {
+        let req = match rx.recv().await {
+            Some(r) => r,
+            None => break,
+        };
+
+        match req {
+            AgentRequest::Submit {
+                content,
+                model_override,
+                mode_override,
+            } => {
+                if let Some(ref model_cfg) = model_override {
+                    *current_model_cfg.lock().await = model_cfg.clone();
+                    if let Some(ref agent) = converse_agent {
+                        if let Ok(m) = sven_model::from_config(model_cfg) {
+                            agent.lock().await.set_model(Arc::from(m));
+                        }
+                    }
+                }
+                if let Some(m) = mode_override {
+                    if let Some(ref agent) = converse_agent {
+                        agent.lock().await.set_mode(m).await;
+                    }
+                }
+                debug!(msg_len = content.len(), "kernel task: posting UserMessage");
+                if !handle.send_user_message(content).await {
+                    let _ = tx.send(AgentEvent::Error("kernel queue closed".into())).await;
+                    break;
+                }
+            }
+
+            AgentRequest::Resubmit {
+                messages,
+                new_user_content,
+                model_override,
+                mode_override,
+            } => {
+                debug!("kernel task: resubmit");
+                if let Some(ref model_cfg) = model_override {
+                    *current_model_cfg.lock().await = model_cfg.clone();
+                    if let Some(ref agent) = converse_agent {
+                        if let Ok(m) = sven_model::from_config(model_cfg) {
+                            agent.lock().await.set_model(Arc::from(m));
+                        }
+                    }
+                }
+                if let Some(m) = mode_override {
+                    if let Some(ref agent) = converse_agent {
+                        agent.lock().await.set_mode(m).await;
+                    }
+                }
+                // Seed history (messages up to the edit point), then submit.
+                if let Some(ref agent) = converse_agent {
+                    agent.lock().await.seed_history(messages).await;
+                }
+                if !handle.send_user_message(new_user_content).await {
+                    let _ = tx.send(AgentEvent::Error("kernel queue closed".into())).await;
+                    break;
+                }
+            }
+
+            AgentRequest::LoadHistory(messages) => {
+                debug!(n = messages.len(), "kernel task: seeding history");
+                if let Some(ref agent) = converse_agent {
+                    agent.lock().await.seed_history(messages).await;
+                }
+            }
+
+            AgentRequest::GenerateTitle { user_text } => {
+                let cfg = current_model_cfg.lock().await.clone();
+                let event_tx = tx.clone();
+                tokio::spawn(async move {
+                    let openrouter_title = {
+                        let mut free_cfg = cfg.clone();
+                        free_cfg.provider = "openrouter".to_string();
+                        free_cfg.name = "openrouter/free".to_string();
+                        free_cfg.base_url = None;
+                        generate_title_with_config(&free_cfg, &user_text).await
+                    };
+                    let title = if openrouter_title.is_some() {
+                        openrouter_title
+                    } else {
+                        generate_title_with_config(&cfg, &user_text).await
+                    };
+                    let final_title = title.unwrap_or_else(|| make_title(&user_text));
+                    let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;
+                });
+            }
+
+            AgentRequest::ListPeers | AgentRequest::RefreshMcpTools => {
+                // Not applicable in kernel mode (MCP is initialized at session
+                // build time; peer discovery is a node-only concern).
+            }
+        }
+    }
+}
+
+/// Select the kernel mode string for a given [`AgentMode`].
+///
+/// The `"agent"` / reactive machine handles all coding-oriented modes;
+/// `"chat"` and `"sdlc"` map to their dedicated machines.
+fn mode_to_kernel_mode(mode: AgentMode) -> &'static str {
+    match mode {
+        AgentMode::Chat => "chat",
+        AgentMode::Sdlc => "sdlc",
+        _ => "agent",
+    }
+}
+
+/// Bridge a [`UiEvent`] from the outward observation plane back to the
+/// corresponding [`AgentEvent`] expected by existing TUI/GUI renderers.
+///
+/// Returns `None` for observation-only events that have no `AgentEvent`
+/// equivalent (e.g. transition traces).
+fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
+    Some(match ev {
+        UiEvent::TextDelta(d) => AgentEvent::TextDelta(d),
+        UiEvent::TextComplete(t) => AgentEvent::TextComplete(t),
+        UiEvent::ThinkingDelta(d) => AgentEvent::ThinkingDelta(d),
+        UiEvent::ThinkingComplete(c) => AgentEvent::ThinkingComplete(c),
+        UiEvent::ToolStarted { call_id, name, args } => {
+            AgentEvent::ToolCallStarted(ToolCall {
+                id: call_id,
+                name,
+                args,
+            })
+        }
+        UiEvent::ToolProgress { call_id, message } => {
+            AgentEvent::ToolProgress { call_id, message }
+        }
+        UiEvent::ToolFinished {
+            call_id,
+            name,
+            output,
+            is_error,
+        } => AgentEvent::ToolCallFinished {
+            call_id,
+            tool_name: name,
+            output,
+            is_error,
+        },
+        UiEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
+            max_output_tokens,
+            cost_usd,
+        } => AgentEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
+            max_output_tokens,
+            cost_usd,
+        },
+        UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
+            let strategy = match strategy.as_str() {
+                "emergency" => CompactionStrategyUsed::Emergency,
+                "narrative" => CompactionStrategyUsed::Narrative,
+                _ => CompactionStrategyUsed::Structured,
+            };
+            AgentEvent::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy,
+                turn,
+            }
+        }
+        UiEvent::TodoUpdate(v) => {
+            let items: Vec<TodoItem> = serde_json::from_value(v).unwrap_or_default();
+            AgentEvent::TodoUpdate(items)
+        }
+        UiEvent::ModeChanged(s) => {
+            let mode = match s.as_str() {
+                "chat" | "Chat" => AgentMode::Chat,
+                "sdlc" | "Sdlc" => AgentMode::Sdlc,
+                "plan" | "Plan" => AgentMode::Plan,
+                "research" | "Research" => AgentMode::Research,
+                _ => AgentMode::Agent,
+            };
+            AgentEvent::ModeChanged(mode)
+        }
+        UiEvent::ModelChanged(m) => AgentEvent::ModelChanged(m),
+        UiEvent::Error(e) => AgentEvent::Error(e),
+        UiEvent::TurnComplete => AgentEvent::TurnComplete,
+        UiEvent::Aborted { partial_text } => AgentEvent::Aborted { partial_text },
+        // Transition traces have no AgentEvent equivalent; skip them.
+        UiEvent::Transition { .. } => return None,
+    })
 }

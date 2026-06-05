@@ -26,8 +26,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_config::Config;
-use sven_core::ModeRegistry;
+use sven_config::{Config, ModelConfig};
+use sven_core::{Agent, ModeRegistry};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder,
@@ -35,7 +35,9 @@ use sven_executors::{
 use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, RuntimeStatus};
 use sven_llm::DefaultLlmAdapter;
 use sven_mcp_client::{McpManager, McpTool};
-use tokio::sync::{mpsc, watch};
+use sven_model::Message;
+use sven_tools::QuestionRequest;
+use tokio::sync::{mpsc, watch, Mutex};
 use tracing::{info, warn};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
@@ -124,6 +126,14 @@ pub struct RuntimeBuilder {
     runtime_ctx: RuntimeContext,
     allow_interactive_oauth: bool,
     wait_for_mcp_tools_ms: Option<u64>,
+    /// Per-session model config override (overrides `config.model`).
+    model_cfg_override: Option<ModelConfig>,
+    /// Tool-level question channel: forwarded into the tool registry so
+    /// tools that call `ask_user` can route questions to the TUI modal.
+    tool_question_tx: Option<mpsc::Sender<QuestionRequest>>,
+    /// Conversation history to seed into the converse agent before the
+    /// first turn (used when resuming or switching sessions).
+    initial_history: Vec<Message>,
 }
 
 impl RuntimeBuilder {
@@ -146,6 +156,9 @@ impl RuntimeBuilder {
             runtime_ctx: RuntimeContext::empty(),
             allow_interactive_oauth: true,
             wait_for_mcp_tools_ms: None,
+            model_cfg_override: None,
+            tool_question_tx: None,
+            initial_history: Vec::new(),
         }
     }
 
@@ -171,16 +184,40 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Override the model config for this session (instead of `config.model`).
+    pub fn with_model_config(mut self, cfg: ModelConfig) -> Self {
+        self.model_cfg_override = Some(cfg);
+        self
+    }
+
+    /// Provide a tool-level question sender so tools can route `ask_user`
+    /// calls to the TUI/GUI question modal.
+    pub fn with_tool_question_tx(mut self, tx: mpsc::Sender<QuestionRequest>) -> Self {
+        self.tool_question_tx = Some(tx);
+        self
+    }
+
+    /// Seed the converse agent with prior conversation history before the
+    /// first turn (used when resuming a saved session or switching between
+    /// multi-session tabs).
+    pub fn with_initial_history(mut self, messages: Vec<Message>) -> Self {
+        self.initial_history = messages;
+        self
+    }
+
     /// Build the runtime. Returns the [`ErasedRuntime`], a cheap
-    /// [`RuntimeHandle`] for posting events, and the [`KernelChannels`] for
-    /// the frontend.
+    /// [`RuntimeHandle`] for posting events, the [`KernelChannels`] for
+    /// the frontend, and the optional converse `Agent` (reactive mode only).
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The mode is not registered in [`ModeRegistry`].
     /// - The model provider cannot be initialised from config.
-    pub async fn build(self) -> anyhow::Result<(ErasedRuntime, RuntimeHandle, KernelChannels)> {
+    pub async fn build(
+        self,
+    ) -> anyhow::Result<(ErasedRuntime, RuntimeHandle, KernelChannels, Option<Arc<Mutex<Agent>>>)>
+    {
         // ── Look up machine ───────────────────────────────────────────────────
         let registry = ModeRegistry::default_registry();
         let factory = registry.get(&self.mode).ok_or_else(|| {
@@ -193,7 +230,7 @@ impl RuntimeBuilder {
         let machine = factory();
 
         // ── Initialise model provider ─────────────────────────────────────────
-        let model_cfg = self.config.model.clone();
+        let model_cfg = self.model_cfg_override.clone().unwrap_or(self.config.model.clone());
         let model_provider = sven_model::from_config(&model_cfg)?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
@@ -252,7 +289,7 @@ impl RuntimeBuilder {
             &self.config,
             model.clone(),
             ToolSetProfile::Full {
-                question_tx: None,
+                question_tx: self.tool_question_tx.clone(),
                 todos,
                 buffer_store,
             },
@@ -269,7 +306,7 @@ impl RuntimeBuilder {
         let tool_registry = Arc::new(tool_registry);
 
         // ── Optionally build the reactive Agent (converse engine) ─────────────
-        let converse_agent = if is_reactive {
+        let converse_agent: Option<Arc<Mutex<Agent>>> = if is_reactive {
             let context_window = match model.probe_context_window().await {
                 Some(n) if n > 0 => n as usize,
                 _ => model
@@ -283,7 +320,7 @@ impl RuntimeBuilder {
                 let provider = sven_model::from_config(&model_cfg)?;
                 Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
             });
-            let agent = sven_core::Agent::new_with_params(sven_core::AgentNewParams {
+            let mut agent = sven_core::Agent::new_with_params(sven_core::AgentNewParams {
                 model: model.clone(),
                 tools: tool_registry.clone(),
                 config: Arc::new(self.config.agent.clone()),
@@ -293,7 +330,11 @@ impl RuntimeBuilder {
                 max_context_tokens: context_window,
                 model_resolver: Some(model_resolver),
             });
-            Some(Arc::new(tokio::sync::Mutex::new(agent)))
+            // Seed prior conversation history if provided (resume / session switch).
+            if !self.initial_history.is_empty() {
+                agent.seed_history(self.initial_history.clone()).await;
+            }
+            Some(Arc::new(Mutex::new(agent)))
         } else {
             drop(tool_event_rx);
             None
@@ -332,6 +373,8 @@ impl RuntimeBuilder {
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)
             .with_audit(audit_log_path);
+        // Keep a second Arc so the bundle can expose the agent to callers.
+        let exposed_agent = converse_agent.clone();
         executor_builder = match converse_agent {
             // Reactive mode: drive the full agentic loop via the converse engine.
             Some(agent) => executor_builder.with_converse(agent),
@@ -364,24 +407,26 @@ impl RuntimeBuilder {
             approval_rx,
         };
 
-        Ok((erased_runtime, handle, channels))
+        Ok((erased_runtime, handle, channels, exposed_agent))
     }
 
     /// Build a fully-wired [`SessionBundle`] — the natural unit a
     /// [`SessionSupervisor`](crate::supervisor::SessionSupervisor) manages.
     ///
     /// This is a thin convenience wrapper over [`build`](Self::build) that
-    /// packages the runtime, handle, and channels into one owned value.
+    /// packages the runtime, handle, channels, and optional converse agent
+    /// into one owned value.
     ///
     /// # Errors
     ///
     /// Propagates any error from [`build`](Self::build).
     pub async fn build_session(self) -> anyhow::Result<SessionBundle> {
-        let (runtime, handle, channels) = self.build().await?;
+        let (runtime, handle, channels, converse_agent) = self.build().await?;
         Ok(SessionBundle {
             runtime,
             handle,
             channels,
+            converse_agent,
         })
     }
 }
@@ -400,6 +445,10 @@ pub struct SessionBundle {
     pub handle: RuntimeHandle,
     /// Question / approval request receivers for the frontend.
     pub channels: KernelChannels,
+    /// The converse agent shared with the `ConverseExecutor` (reactive mode
+    /// only). Expose so callers can seed history or swap the model without
+    /// stopping the runtime.
+    pub converse_agent: Option<Arc<Mutex<Agent>>>,
 }
 
 /// Fallback: when `from_config` fails a second time, build a no-op provider

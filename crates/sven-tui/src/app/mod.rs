@@ -34,7 +34,7 @@ use sven_bootstrap::OutputBufferStore;
 use sven_mcp_client::{McpEvent, McpManager};
 
 use crate::{
-    agent::{agent_task, AgentRequest},
+    agent::{kernel_session_task, AgentRequest},
     chat::segment::ChatSegment,
     commands::{CommandRegistry, CompletionManager},
     keys::Action,
@@ -942,7 +942,7 @@ impl App {
                 tokio::sync::mpsc::Receiver<sven_mcp_client::McpEvent>,
             )>();
             tokio::spawn(async move {
-                agent_task(
+                kernel_session_task(
                     cfg,
                     startup_model_cfg,
                     mode,
@@ -1558,7 +1558,7 @@ impl App {
         let buffer_store = Arc::clone(&self.buffer_store);
         let mcp_refresh_rx = self.mcp_refresh_tx.as_ref().map(|tx| tx.subscribe());
 
-        tokio::spawn(crate::agent::agent_task(
+        tokio::spawn(crate::agent::kernel_session_task(
             cfg,
             startup_model_cfg,
             mode,
