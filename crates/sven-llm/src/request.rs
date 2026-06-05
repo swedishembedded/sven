@@ -60,6 +60,17 @@ pub enum LlmRequest {
         question_policy: String,
     },
 
+    /// Generate a free-form conversational response to the user.
+    ///
+    /// Unlike the other variants this does not expect a JSON-shaped reply:
+    /// the model's raw assistant text becomes
+    /// [`sven_hsm::Event::LlmProposedResponse`].
+    GenerateResponse {
+        /// The interpreted intent / assessment from a prior
+        /// [`ExtractIntent`](LlmRequest::ExtractIntent) call.
+        intent: Value,
+    },
+
     /// Parse a user's answer to a clarifying question into structured data.
     InterpretUserAnswer {
         /// The question that was asked.
@@ -125,6 +136,7 @@ impl LlmRequest {
             LlmRequest::ExtractConstraints { .. } => "ExtractConstraints",
             LlmRequest::AssessCompleteness { .. } => "AssessCompleteness",
             LlmRequest::GenerateClarifyingQuestion { .. } => "GenerateClarifyingQuestion",
+            LlmRequest::GenerateResponse { .. } => "GenerateResponse",
             LlmRequest::InterpretUserAnswer { .. } => "InterpretUserAnswer",
             LlmRequest::GenerateCandidatePlan { .. } => "GenerateCandidatePlan",
             LlmRequest::DecomposeIntoTasks { .. } => "DecomposeIntoTasks",
@@ -197,6 +209,10 @@ mod tests {
                 missing: vec![],
                 known_context: Value::Null,
                 question_policy: "p".into(),
+            }
+            .kind_name(),
+            LlmRequest::GenerateResponse {
+                intent: Value::Null,
             }
             .kind_name(),
             LlmRequest::InterpretUserAnswer {

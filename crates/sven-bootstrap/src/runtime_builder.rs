@@ -217,8 +217,13 @@ impl RuntimeBuilder {
         }
 
         // ── Build tool registry ───────────────────────────────────────────────
+        // The reactive `agent`/`reactive` modes drive the full legacy agentic
+        // loop through a `ConverseExecutor`; that requires building an `Agent`
+        // (which owns the tool-event receiver and a shared mode lock).
+        let is_reactive = matches!(self.mode.as_str(), "agent" | "reactive");
+
         let mode_lock = Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
-        let (tool_event_tx, _tool_event_rx) =
+        let (tool_event_tx, tool_event_rx) =
             tokio::sync::mpsc::channel::<sven_tools::events::ToolEvent>(64);
         let mut runtime = self.runtime_ctx.to_agent_runtime();
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
@@ -237,9 +242,9 @@ impl RuntimeBuilder {
                 todos,
                 buffer_store,
             },
-            mode_lock,
+            mode_lock.clone(),
             tool_event_tx,
-            runtime,
+            runtime.clone(),
         );
 
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
@@ -248,6 +253,37 @@ impl RuntimeBuilder {
         }
 
         let tool_registry = Arc::new(tool_registry);
+
+        // ── Optionally build the reactive Agent (converse engine) ─────────────
+        let converse_agent = if is_reactive {
+            let context_window = match model.probe_context_window().await {
+                Some(n) if n > 0 => n as usize,
+                _ => model
+                    .config_context_window()
+                    .or_else(|| model.catalog_context_window())
+                    .unwrap_or(128_000) as usize,
+            };
+            let resolver_config = Arc::clone(&self.config);
+            let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
+                let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
+                let provider = sven_model::from_config(&model_cfg)?;
+                Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
+            });
+            let agent = sven_core::Agent::new_with_params(sven_core::AgentNewParams {
+                model: model.clone(),
+                tools: tool_registry.clone(),
+                config: Arc::new(self.config.agent.clone()),
+                runtime,
+                mode_lock: mode_lock.clone(),
+                tool_event_rx,
+                max_context_tokens: context_window,
+                model_resolver: Some(model_resolver),
+            });
+            Some(Arc::new(tokio::sync::Mutex::new(agent)))
+        } else {
+            drop(tool_event_rx);
+            None
+        };
 
         // ── User/approval channels ────────────────────────────────────────────
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
@@ -276,14 +312,19 @@ impl RuntimeBuilder {
         let llm_adapter = Arc::new(DefaultLlmAdapter::new(llm_model_box));
 
         // ── Assemble executor ─────────────────────────────────────────────────
-        let executor = CompositeExecutorBuilder::default()
-            .with_llm(llm_adapter)
+        let mut executor_builder = CompositeExecutorBuilder::default()
             .with_tools(tool_registry, Default::default())
             .with_user(question_tx, approval_tx)
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)
-            .with_audit(audit_log_path)
-            .build();
+            .with_audit(audit_log_path);
+        executor_builder = match converse_agent {
+            // Reactive mode: drive the full agentic loop via the converse engine.
+            Some(agent) => executor_builder.with_converse(agent),
+            // Typed-JSON modes (chat/sdlc): use the structured LLM adapter.
+            None => executor_builder.with_llm(llm_adapter),
+        };
+        let executor = executor_builder.build();
 
         // ── Permission policy (open: kernel gates per-state checks) ───────────
         let policy = PermissionPolicy::builder()

@@ -170,6 +170,18 @@ fn build_prompt(req: &LlmRequest) -> (String, String) {
             (system, user)
         }
 
+        LlmRequest::GenerateResponse { intent } => {
+            let system = "You are Sven, a helpful and concise coding assistant. \
+                          Respond to the user in natural language. Do not wrap your \
+                          answer in JSON or code fences unless the user asked for code."
+                .into();
+            let user = format!(
+                "Context / interpreted intent:\n{}",
+                serde_json::to_string_pretty(intent).unwrap_or_else(|_| intent.to_string())
+            );
+            (system, user)
+        }
+
         LlmRequest::InterpretUserAnswer {
             question,
             answer,
@@ -397,6 +409,12 @@ fn parse_response(req: &LlmRequest, raw: &str) -> Result<Event, LlmError> {
             let r: ClarifyingQuestion = serde_json::from_str(json_str).map_err(parse_err)?;
             Ok(Event::LlmProposedResponse { text: r.question })
         }
+
+        // The conversational response is plain assistant text, not JSON: return
+        // the raw (un-fenced) model output directly.
+        LlmRequest::GenerateResponse { .. } => Ok(Event::LlmProposedResponse {
+            text: raw.trim().to_string(),
+        }),
 
         LlmRequest::InterpretUserAnswer { .. } => {
             let r: AnswerInterpretation = serde_json::from_str(json_str).map_err(parse_err)?;

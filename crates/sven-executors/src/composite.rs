@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 
 use crate::audit::AuditExecutor;
 use crate::checkpoint::CheckpointExecutor;
+use crate::converse::ConverseExecutor;
 use crate::internal::InternalExecutor;
 use crate::llm::LlmExecutor;
 use crate::timer::TimerExecutor;
@@ -40,6 +41,10 @@ use crate::user::{ApprovalRequest, UserExecutor, UserQuestion};
 
 /// All sub-executors collected into one structure.
 pub struct CompositeExecutor {
+    /// Converse turn engine (reactive agent). When present it handles
+    /// `CallLlm` effects whose request `kind` is `"converse"`; all other
+    /// `CallLlm` requests fall through to [`llm`](Self::llm).
+    converse: Option<ConverseExecutor>,
     llm: Option<LlmExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
@@ -62,7 +67,23 @@ impl EffectExecutor for CompositeExecutor {
         let kind = effect.kind();
         match kind {
             EffectKind::CallLlm => {
-                if let Some(exec) = &mut self.llm {
+                // Route converse-kind requests to the converse engine when one
+                // is configured; everything else goes to the typed LLM adapter.
+                let is_converse = matches!(
+                    &effect,
+                    Effect::CallLlm { request }
+                        if request.get("kind").and_then(|v| v.as_str())
+                            == Some(crate::converse::CONVERSE_KIND)
+                );
+                if is_converse {
+                    if let Some(exec) = &mut self.converse {
+                        exec.execute(effect, sink, obs).await;
+                    } else {
+                        tracing::warn!(
+                            "CompositeExecutor: no Converse executor configured; dropping converse CallLlm"
+                        );
+                    }
+                } else if let Some(exec) = &mut self.llm {
                     exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
@@ -138,6 +159,7 @@ impl EffectExecutor for CompositeExecutor {
 /// Builds a [`CompositeExecutor`] by composing sub-executors incrementally.
 #[derive(Default)]
 pub struct CompositeExecutorBuilder {
+    converse: Option<ConverseExecutor>,
     llm: Option<LlmExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
@@ -150,6 +172,19 @@ impl CompositeExecutorBuilder {
     /// Attach the LLM executor backed by `adapter`.
     pub fn with_llm(mut self, adapter: Arc<dyn LlmAdapter>) -> Self {
         self.llm = Some(LlmExecutor::new(adapter));
+        self
+    }
+
+    /// Attach the converse turn engine backed by a shared [`sven_core::Agent`].
+    ///
+    /// When present, `CallLlm` effects whose request `kind` is `"converse"`
+    /// (emitted by `ReactiveAgentMachine`) are driven through the full legacy
+    /// agentic loop with streaming observations.
+    pub fn with_converse(
+        mut self,
+        agent: Arc<tokio::sync::Mutex<sven_core::Agent>>,
+    ) -> Self {
+        self.converse = Some(ConverseExecutor::new(agent));
         self
     }
 
@@ -194,6 +229,7 @@ impl CompositeExecutorBuilder {
     /// Finalise and return the [`CompositeExecutor`].
     pub fn build(self) -> CompositeExecutor {
         CompositeExecutor {
+            converse: self.converse,
             llm: self.llm,
             tool: self.tool,
             user: self.user,

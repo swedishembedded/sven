@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
 use crate::machines::{
-    conversation::ConversationMachine, software_development::SoftwareDevelopmentMachine,
+    conversation::ConversationMachine, reactive_agent::ReactiveAgentMachine,
+    software_development::SoftwareDevelopmentMachine,
 };
 
 /// A factory that creates a type-erased running machine.
@@ -36,13 +37,24 @@ impl Default for ModeRegistry {
 }
 
 impl ModeRegistry {
-    /// Builds the registry pre-loaded with the two built-in machines:
+    /// Builds the registry pre-loaded with the built-in machines:
+    /// - `"agent"` / `"reactive"` → [`ReactiveAgentMachine`] (the default
+    ///   streaming, native-tool-calling coding agent)
     /// - `"chat"` → [`ConversationMachine`]
     /// - `"sdlc"` → [`SoftwareDevelopmentMachine`]
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),
         };
+        let reactive_factory = || -> MachineFactory {
+            Box::new(|| -> Box<dyn ErasedMachine> {
+                Box::new(Hsm::new(ReactiveAgentMachine::new()))
+            })
+        };
+        // The general coding agent is registered under both its canonical name
+        // (`agent`) and the `reactive` alias.
+        reg.register("agent", reactive_factory());
+        reg.register("reactive", reactive_factory());
         reg.register(
             "chat",
             Box::new(|| -> Box<dyn ErasedMachine> {
@@ -85,6 +97,16 @@ mod tests {
         assert!(reg.get("chat").is_some(), "chat mode must be registered");
         assert!(reg.get("sdlc").is_some(), "sdlc mode must be registered");
         assert!(reg.get("unknown").is_none());
+    }
+
+    #[test]
+    fn default_registry_has_reactive_agent() {
+        let reg = ModeRegistry::default_registry();
+        assert!(reg.get("agent").is_some(), "agent mode must be registered");
+        assert!(
+            reg.get("reactive").is_some(),
+            "reactive alias must be registered"
+        );
     }
 
     #[test]

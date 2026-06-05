@@ -140,9 +140,14 @@ impl Machine for ConversationMachine {
             // -----------------------------------------------------------------
             Idle => match event {
                 Event::UserMessage { text } => {
+                    // The request shape must match `sven_llm::LlmRequest`'s serde
+                    // contract: `#[serde(tag = "kind", rename_all = "snake_case")]`.
+                    // The previous PascalCase tag / `user_message` field never
+                    // deserialised, so every chat turn failed at the adapter.
                     let req = json!({
-                        "kind": "ExtractIntent",
-                        "user_message": text,
+                        "kind": "extract_intent",
+                        "text": text,
+                        "allowed_intents": ["chat", "question", "code", "large_task"],
                     });
                     Reaction::transition(
                         Interpreting,
@@ -177,7 +182,7 @@ impl Machine for ConversationMachine {
                         )
                     } else {
                         let req = json!({
-                            "kind": "GenerateResponse",
+                            "kind": "generate_response",
                             "intent": assessment,
                         });
                         Reaction::transition(
@@ -312,7 +317,7 @@ mod tests {
         assert_eq!(out.effects.len(), 1);
         assert_eq!(out.effects[0].kind(), EffectKind::CallLlm);
         if let Effect::CallLlm { request } = &out.effects[0] {
-            assert_eq!(request["kind"], "ExtractIntent");
+            assert_eq!(request["kind"], "extract_intent");
         } else {
             panic!("expected CallLlm");
         }
@@ -338,7 +343,7 @@ mod tests {
         assert_eq!(out.effects.len(), 1);
         assert_eq!(out.effects[0].kind(), EffectKind::CallLlm);
         if let Effect::CallLlm { request } = &out.effects[0] {
-            assert_eq!(request["kind"], "GenerateResponse");
+            assert_eq!(request["kind"], "generate_response");
         } else {
             panic!("expected CallLlm");
         }

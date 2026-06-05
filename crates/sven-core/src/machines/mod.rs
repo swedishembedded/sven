@@ -6,4 +6,5 @@
 
 pub mod clarification;
 pub mod conversation;
+pub mod reactive_agent;
 pub mod software_development;

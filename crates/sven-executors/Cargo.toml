@@ -8,6 +8,7 @@ license      = "Apache-2.0"
 [dependencies]
 sven-hsm      = { path = "../sven-hsm" }
 sven-llm      = { path = "../sven-llm" }
+sven-core     = { path = "../sven-core" }
 sven-tools    = { path = "../sven-tools" }
 anyhow        = { workspace = true }
 thiserror     = { workspace = true }
@@ -19,5 +20,8 @@ async-trait   = { workspace = true }
 tracing       = { workspace = true }
 
 [dev-dependencies]
-tokio    = { workspace = true }
-tempfile = { workspace = true }
+tokio      = { workspace = true }
+tempfile   = { workspace = true }
+sven-config = { path = "../sven-config" }
+sven-model  = { path = "../sven-model" }
+futures     = { workspace = true }
