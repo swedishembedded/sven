@@ -660,6 +660,15 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
              - Always complete all todos before completing your turn.\n\
              - Always complete the task requested by the user before completion your turn."
         }
+        AgentMode::Chat => {
+            "You are a conversational assistant. You can read files and answer questions. \
+             Use the ConversationMachine to guide interactions."
+        }
+        AgentMode::Sdlc => {
+            "You are a software development lifecycle agent. You can read and write files, \
+             run shell commands, and manage the full development workflow from planning to delivery. \
+             Use the SoftwareDevelopmentMachine to guide the process."
+        }
     };
 
     let project_section = if let Some(root) = ctx.project_root {

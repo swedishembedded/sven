@@ -279,8 +279,8 @@ impl ToolSlotManager {
     /// Await every dispatched slot, emitting [`AgentEvent::ToolCallFinished`]
     /// as each completes (in any order).
     ///
-    /// Tool events (progress, todo updates, mode changes) are NOT drained here
-    /// - the caller is responsible for running [`Agent::drain_tool_events`]
+    /// Tool events (progress, todo updates, mode changes) are NOT drained here;
+    /// the caller is responsible for running [`Agent::drain_tool_events`]
     /// concurrently (e.g. via a `tokio::select!` 100 ms timer branch) so that
     /// `ModeChanged` events can also update session state.
     ///

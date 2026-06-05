@@ -48,6 +48,8 @@ impl SystemTool {
             "research" => AgentMode::Research,
             "plan" => AgentMode::Plan,
             "agent" => AgentMode::Agent,
+            "chat" => AgentMode::Chat,
+            "sdlc" => AgentMode::Sdlc,
             other => return ToolOutput::err(&call.id, format!("unknown mode: {other}")),
         };
 

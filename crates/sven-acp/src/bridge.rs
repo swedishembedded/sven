@@ -24,6 +24,8 @@ pub fn sven_mode_to_acp_mode_id(mode: AgentMode) -> SessionModeId {
         AgentMode::Research => SessionModeId::new("research"),
         AgentMode::Plan => SessionModeId::new("plan"),
         AgentMode::Agent => SessionModeId::new("agent"),
+        AgentMode::Chat => SessionModeId::new("chat"),
+        AgentMode::Sdlc => SessionModeId::new("sdlc"),
     }
 }
 
