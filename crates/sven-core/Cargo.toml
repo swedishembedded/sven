@@ -8,6 +8,7 @@ sven-config  = { path = "../sven-config" }
 sven-model   = { path = "../sven-model" }
 sven-tools   = { path = "../sven-tools" }
 sven-runtime = { path = "../sven-runtime" }
+sven-hsm     = { path = "../sven-hsm" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }

@@ -11,11 +11,22 @@ mod session;
 mod tests;
 mod tool_slots;
 
+// ── HSM-based machines (Phase 2) ─────────────────────────────────────────────
+pub mod completion;
+pub mod machines;
+pub mod mode;
+
 pub use agent::{Agent, AgentNewParams, ModelResolver};
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, smart_truncate,
 };
+pub use completion::development_complete;
 pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};
+pub use machines::{
+    clarification::ClarificationMachine, conversation::ConversationMachine,
+    software_development::SoftwareDevelopmentMachine,
+};
+pub use mode::ModeRegistry;
 pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;
 pub use session::{Session, TurnRecord};
