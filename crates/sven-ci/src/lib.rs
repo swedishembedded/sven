@@ -16,6 +16,7 @@ pub mod toolcall_replay;
 pub use conversation::{ConversationOptions, ConversationRunner};
 pub use pipe::{MapOptions, ReduceOptions, TeeOptions};
 pub use runner::{
+    runtime_runner::{RuntimeRunner, RuntimeRunnerOptions},
     CiOptions, CiRunner, OutputFormat, EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_INTERRUPT,
     EXIT_SUCCESS, EXIT_TIMEOUT, EXIT_TOOL_WARNINGS, EXIT_VALIDATION_ERROR,
 };

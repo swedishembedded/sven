@@ -11,6 +11,8 @@ sven-core      = { path = "../sven-core" }
 sven-input     = { path = "../sven-input" }
 sven-bootstrap = { path = "../sven-bootstrap" }
 sven-runtime   = { path = "../sven-runtime" }
+sven-hsm       = { path = "../sven-hsm" }
+sven-frontend  = { path = "../sven-frontend" }
 anyhow         = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }

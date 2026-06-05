@@ -4,6 +4,7 @@
 
 mod event;
 mod helpers;
+pub mod runtime_runner;
 
 use event::{emit_record, handle_event, StepState};
 pub(crate) use helpers::{
