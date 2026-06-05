@@ -180,14 +180,73 @@ collapsed by default to keep the view compact.
 
 ## Agent modes in practice
 
-Modes control what tools the agent is allowed to use. Choosing the right mode
-prevents unintended changes and makes the agent's output more predictable.
+Modes control both the state machine that drives the session and the tools the
+agent is allowed to use. Choosing the right mode prevents unintended changes and
+gives you the right level of formality for the task.
+
+### `chat` - conversational assistant (default)
+
+`chat` is powered by the `ConversationMachine` - a lightweight five-state HSM
+that handles normal conversation turns (Idle → Interpreting → Responding →
+AwaitingTool → Idle). For quick questions, code review, or exploratory
+analysis, this is the right mode.
+
+When the machine detects a substantial engineering task during interpretation,
+it seamlessly instantiates the `SoftwareDevelopmentMachine` as a submachine and
+suspends until it completes. You get full SDLC rigour automatically, without
+having to switch mode manually.
+
+```sh
+sven "What does the authentication module do?"
+sven "Explain the race condition in this code."
+```
+
+### `sdlc` - software development lifecycle
+
+`sdlc` is powered by the `SoftwareDevelopmentMachine` - a 57-state HSM
+encoding the full engineering lifecycle as formally-specified states with typed
+transitions:
+
+```
+Intake → Discovery → Planning → Execution → Verification → Delivery
+```
+
+The Execution loop is particularly important:
+
+```
+ProposePatch → ApplyPatch → Build
+                              ├─ success → RunTests → StaticAnalysis → ObserveResult
+                              └─ fail → Recovery → (retry / rollback / abort)
+```
+
+**Human approval gate**: before `ApplyPatch` applies any change with externally
+visible side effects, the machine enters `AwaitHumanApproval`. The TUI shows
+an approval prompt with the full patch description. You approve or reject; the
+machine proceeds or triggers `Recovery` accordingly. In CI mode
+(`RuntimeRunner`), approvals can be automatically granted.
+
+**Continuation-based clarification**: any state can ask a clarifying question
+by transitioning to `AwaitUser` with a stored continuation. When you answer,
+the machine resumes exactly where it was.
+
+**Recovery**: on build or test failure, the machine enters the `Recovery`
+superstate (`ClassifyFailure → ProposeRecoveryOptions → SelectRecoveryAction`)
+where the LLM classifies the failure and proposes retry, patch amendment, or
+rollback. Rollback uses `git stash` checkpoints created at the start of
+execution.
+
+Use `sdlc` when you want sven to implement a feature end-to-end with full
+traceability, or when you need the approval gate for safety:
+
+```sh
+sven --mode sdlc "Add rate limiting to the API."
+SVEN_MODE=sdlc sven --file plan.md
+```
 
 ### `research` - safe exploration
 
 The agent can only read. It can run commands like `ls`, `cat`, `grep`, and
-`find`, but cannot write to any file. Use this when you want to explore a
-codebase without any risk of modification.
+`find`, but cannot write to any file.
 
 ```sh
 sven --mode research "What does the authentication module do?"
@@ -196,8 +255,7 @@ sven --mode research "What does the authentication module do?"
 ### `plan` - structured proposals
 
 The agent reads freely and produces a written plan but does not write any
-files. The output is typically a list of steps or a design document. Use this
-before an `agent` run to review what will happen.
+files. Use this before an `agent` or `sdlc` run to review what will happen.
 
 ```sh
 sven --mode plan "Design a rate-limiting layer for the API."
@@ -205,8 +263,8 @@ sven --mode plan "Design a rate-limiting layer for the API."
 
 ### `agent` - full access
 
-The agent can read, write, delete files and run any command. This is the
-default mode. Use it when you want sven to implement something end-to-end.
+The agent can read, write, delete files and run any command. Use for
+general-purpose agentic tasks where the formal SDLC structure is not needed.
 
 ```sh
 sven "Implement the rate-limiting layer described in the plan."
@@ -215,8 +273,18 @@ sven "Implement the rate-limiting layer described in the plan."
 ### Cycling modes live
 
 Press `F4` inside the TUI to cycle through `research → plan → agent → research`.
-The status bar updates immediately to show the new mode. Changes take effect on
-the next message you send.
+For `chat` and `sdlc`, use the `/mode` command or restart with `--mode`.
+
+### Human approval in the TUI
+
+When the `sdlc` machine (or any machine emitting `RequestHumanApproval`)
+reaches an approval gate, the TUI enters `AwaitingApproval` mode and shows a
+modal with the proposed change description. Key bindings:
+
+| Key | Action |
+|-----|--------|
+| `y` / `Enter` | Approve - machine continues into `ApplyPatch` |
+| `n` / `Esc` | Reject - machine enters `Recovery` |
 
 ---
 

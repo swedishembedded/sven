@@ -19,6 +19,7 @@ Telegram, making voice calls, and running scheduled workflows.
 
 ## Key Features
 
+- **HSM-kernel architecture** - Control flow is a formally-specified Hierarchical State Machine; the LLM is a typed reasoning service that proposes actions but never drives execution. Deterministic, auditable, and fully testable without an API key.
 - **Interactive TUI** - Full-screen Ratatui interface with scrollable markdown chat, vim-style navigation, and live-streamed responses. Swap to an embedded Neovim buffer with `--nvim`.
 - **Desktop GUI** - `sven-ui` is a native Slint window with the full agent and tool suite, no terminal required.
 - **Headless / CI** - Reads from stdin or a markdown workflow file, writes clean text to stdout. Pipeable: chain sven instances to build multi-agent pipelines.
@@ -61,11 +62,14 @@ sven completions bash >> ~/.bashrc      # also: zsh, fish, powershell
 
 | Mode | Behaviour |
 |------|-----------|
+| `chat` | Conversational AI assistant. Handles Q&A, analysis, and exploration. Seamlessly hands off to `sdlc` for engineering tasks. Default. |
+| `sdlc` | Full software-development lifecycle machine. 57 formally-defined states covering Intake → Discovery → Planning → Execution → Verification → Delivery with approval gates and automatic recovery. |
 | `research` | Read-only tools. Good for exploration and analysis. |
 | `plan` | No file writes. Produces structured plans without side effects. |
-| `agent` | Full read/write access. Default for interactive use. |
+| `agent` | Full read/write access. |
 
-Set with `--mode` or cycle live in the TUI with `F4`.
+Set with `--mode <name>` or `SVEN_MODE=<name>`. Cycle the legacy trio live in
+the TUI with `F4`.
 
 ## Conversation history
 
@@ -190,6 +194,47 @@ sven index build            # create/update .sven/index/index.json
 sven index query "Handler"  # search symbol names and signatures
 sven index stats            # show index statistics
 ```
+
+## Architecture
+
+Sven's agent loop is a formally-specified **Hierarchical State Machine (HSM)**
+rather than a free-running LLM loop. The LLM is treated as an untrusted
+*reasoning service*: it proposes typed actions, but the HSM decides what
+happens next based on guards and current state, and all I/O is performed
+exclusively through typed *Effects* emitted by transitions.
+
+```
+  User input / tool result / timer
+         │
+         ▼  Event (typed, UUID-tagged)
+  ┌──────────────────────────────────────┐
+  │  HSM Kernel  (sven-hsm)             │
+  │  • Samek two-phase dispatch          │
+  │  • LCA-exact exit/entry sequence     │
+  │  • Permission policy check           │
+  │  • AuditRecord → JSONL log           │
+  └──────────────────────────────────────┘
+         │  Effects (pure data, no I/O)
+         ▼
+  ┌──────────────────────────────────────┐
+  │  Executors  (sven-executors)         │
+  │  LLM · Tool · User · Timer          │
+  │  Checkpoint · Audit · Internal       │
+  └──────────────────────────────────────┘
+         │  Result Events → queue
+         ▼
+  (back to HSM kernel)
+```
+
+**Why this matters:**
+
+- **Deterministic** - given `(state, event)`, the output is always `(new_state, effects)`. No surprises.
+- **Auditable** - every state transition is written to an append-only event log. Any session can be replayed exactly.
+- **Testable** - transition functions are pure Rust; unit tests need no LLM, no network, no mock I/O.
+- **Permission-safe** - `ToolCapability` sets are attached per state family. States that should not call shell commands architecturally cannot.
+- **Extensible** - adding a new machine is one `ModeRegistry::register` call.
+
+See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for the full design reference.
 
 ## Tool suite
 
@@ -316,6 +361,12 @@ mcp_servers:
 | [Webhooks](docs/18-webhooks.md) | Generic HTTP hooks for external integrations |
 | [Automation Use Cases](docs/19-use-cases.md) | Seven complete real-world automation patterns |
 | [Providers](docs/providers.md) | Model provider configuration |
+| **Technical** | |
+| [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine design: kernel, machines, effects, audit, replay |
+| [ACP](docs/technical/acp.md) | Agent Client Protocol reference |
+| [Skill system](docs/technical/skill-system.md) | Skill discovery, loading, and frontmatter reference |
+| [P2P / Node](docs/technical/node.md) | libp2p wiring, mDNS, relay, gossipsub |
+| [Session Room Protocol](docs/technical/session-room-protocol.md) | Wire protocol for agent rooms |
 
 Build the full user guide locally:
 

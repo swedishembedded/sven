@@ -46,19 +46,22 @@ sven/
 
 | Crate | Purpose |
 |-------|---------|
-| `sven-bootstrap` | First-run setup and self-update logic |
-| `sven-ci` | Headless/CI runner and output formatters |
+| `sven-hsm` | HSM kernel: `Machine` trait, Samek dispatch, Active Object runtime, `PermissionPolicy`, `AuditRecord`, replay |
+| `sven-llm` | Typed LLM reasoning service: `LlmRequest`/response contracts, `LlmAdapter`, `MockLlmAdapter` |
+| `sven-executors` | Effect executors (only I/O layer): LLM, tool, user, timer, checkpoint, audit, internal, composite |
+| `sven-bootstrap` | `RuntimeBuilder` - assembles HSM kernel from config and mode string |
+| `sven-ci` | Headless/CI runner (`CiRunner` + `RuntimeRunner`) and output formatters |
 | `sven-config` | Config file parsing (`.sven.yaml`, per-project) |
-| `sven-core` | Core agent loop, conversation model, provider abstraction |
+| `sven-core` | HSM machines: `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry` |
 | `sven-image` | Image attachment support |
 | `sven-input` | Stdin/file/pipe input handling |
 | `sven-mcp` | MCP (Model Context Protocol) client integration |
 | `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, ...) |
-| `sven-node` | P2P agent node: task/session/room executors, agent builder, tools |
+| `sven-node` | P2P agent node: kernel-wired control service, task/session/room executors |
 | `sven-p2p` | libp2p networking layer, wire types, protocol constants |
 | `sven-runtime` | Tokio runtime wiring and process lifecycle |
 | `sven-tools` | 18-tool toolkit (file, shell, grep, todo, GDB, ...) |
-| `sven-tui` | Terminal UI (interactive mode) |
+| `sven-tui` | Terminal UI: `UiMode` enum, `MachineProjection` consumer, key bindings |
 
 ## Key Makefile targets
 

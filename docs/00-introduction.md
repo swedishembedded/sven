@@ -43,21 +43,19 @@ code, and running shell commands. Common uses include:
 
 ## Agent modes
 
-Every sven session runs in one of three modes. The mode controls what the agent
-is allowed to do, so you can give it exactly the access the task needs.
+Every sven session runs in a mode that controls the machine driving it and what
+tools it is allowed to use.
 
 | Mode | What the agent can do |
 |------|----------------------|
-| `research` | Read files, run read-only commands (grep, ls, cat). No writes. |
-| `plan` | Same as research, plus it can produce structured plans. No file writes. |
-| `agent` | Full access: read and write files, run any command, use all tools. |
+| `chat` | Conversational assistant. Handles questions, analysis, and code review. Automatically hands off engineering tasks to the `sdlc` machine when needed. **Default.** |
+| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution (patch → build → test → lint) → Verification → Delivery. Requires human approval before applying changes. |
+| `research` | Read files and run read-only commands. No writes. |
+| `plan` | Reads freely, produces structured plans, no file writes. |
+| `agent` | Full read/write access. Use for general-purpose agentic tasks. |
 
-Use `research` when you want the agent to explore and report without touching
-anything. Use `plan` when you want a structured proposal you can review before
-acting. Use `agent` when you are ready to let it work.
-
-The mode can be set on the command line with `--mode` and cycled live inside
-the TUI with `F4`.
+Set with `--mode <name>` on the command line, or via `SVEN_MODE=<name>` in the
+environment. Cycle the legacy read/plan/agent trio inside the TUI with `F4`.
 
 ---
 
@@ -88,21 +86,54 @@ See [Sven Node](08-node.md) and
 
 ## How sven works
 
-When you send a message, sven forwards it to a large language model (OpenAI
-GPT-4o by default, or Anthropic Claude). The model decides what to do and can
-ask sven to execute tools - reading files, running commands, searching the
-codebase. The results go back to the model, which continues reasoning until the
-task is complete or it needs to ask you something.
+Sven's agent loop is a formally-specified **Hierarchical State Machine (HSM)**,
+not a free-running LLM loop. The distinction matters: control flow is
+deterministic and auditable; the LLM is a *reasoning service* that proposes
+typed actions but never executes anything directly.
 
-When the model requests multiple tools in one turn, sven executes them in
-parallel. Each tool is dispatched the moment its arguments finish streaming -
-without waiting for the other tools or for the model to finish its full
-response. This keeps long-running tools like shell commands or remote queries
-from stacking latency on top of each other.
+```
+  Your message
+      │
+      ▼  Event
+  ┌──────────────────────────────────┐
+  │  HSM Kernel  (pure, no I/O)     │
+  │  current state + guards decide  │
+  └──────────────────────────────────┘
+      │  Effects (data, not calls)
+      ▼
+  ┌──────────────────────────────────┐
+  │  Executors  (the only I/O layer) │
+  │  LLM · Tool · User · Timer      │
+  └──────────────────────────────────┘
+      │  Result events → queue
+      ▼
+  (back to HSM kernel)
+```
 
-All of this happens in the background. In the TUI you see the conversation and
-tool calls stream in as they happen. In headless mode the final text is written
-to standard output.
+**What the LLM does.** When the machine needs reasoning (e.g. understanding
+your intent, proposing a code patch, classifying a build failure), it emits a
+`CallLlm` effect with a typed `LlmRequest`. The LLM returns structured JSON
+parsed into a typed response. It never names a tool to invoke.
+
+**What the machine does.** Based on the LLM response and the current state,
+the machine transitions and emits further effects - perhaps `CallTool` to run
+the proposed patch through the build system, `AskUser` to ask a clarifying
+question, or `RequestHumanApproval` before applying any externally-visible
+change.
+
+**What executors do.** Executors are the only code that performs I/O. A
+`ToolExecutor` runs the requested tool and posts `ToolSucceeded` or
+`ToolFailed` back to the kernel queue. A `UserExecutor` surfaces an approval
+prompt in the TUI and waits for your decision.
+
+Every state transition is written to an append-only JSONL audit log. Any
+session can be replayed exactly - useful for debugging and for writing tests
+that assert on full session traces without needing a real LLM or network.
+
+When the model requests multiple tools in one turn, the `ToolExecutor` runs
+them in parallel and posts results back individually. In headless / CI mode,
+`RuntimeRunner` drives the same kernel with `auto_approve: true` and writes
+final output to stdout.
 
 ---
 
@@ -118,3 +149,4 @@ to standard output.
 - **[Sven Node](08-node.md)** - expose agents over HTTPS/P2P, pair devices, route tasks between agents
 - **[Agent Collaboration](09-collaboration.md)** - persistent peer conversations, rooms, and the `sven peer chat` command
 - **[Teams and Tasks](11-teams-and-tasks.md)** - form a team of agents, break work into tasks, and orchestrate parallel workstreams
+- **[HSM Architecture](technical/hsm-architecture.md)** - full technical reference for the hierarchical state machine kernel

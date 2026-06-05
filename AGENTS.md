@@ -7,12 +7,14 @@ runner, and a networked P2P node - all from the same workspace.
 ## For AI Agents Working on This Codebase
 
 - **Language**: Rust. Follow idiomatic Rust patterns, ownership rules, and error handling conventions.
-- **Architecture**: Multi-crate workspace. See the crate table below for the full layout.
+- **Architecture**: Multi-crate workspace with an HSM kernel at the core. See the crate table below and [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md) for the full design reference.
+- **Key principle**: The HSM is the deterministic process kernel; the LLM is an untrusted reasoning service; tools are invoked exclusively through typed `Effect` values emitted by HSM transitions. Transition functions must remain pure (no I/O). All I/O happens in executors (`sven-executors`).
 - **Skills**: Load the relevant skill before writing code:
   - TUI work → `.cursor/skills/programming/ratatui/SKILL.md`
   - GUI work → `.cursor/skills/programming/ratatui/SKILL.md` (patterns section) - Slint uses a declarative `.slint` DSL compiled to Rust bindings
   - Rust code → `.cursor/skills/programming/rust/SKILL.md`
   - Public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`
+  - New HSM machine → read `sven-hsm/src/machine.rs` and `sven-core/src/machines/conversation.rs` as reference
 - **Tests**: Run `make test` before committing. E2E tests require `bats-core`: `make tests/e2e/basic`.
 - **Linting**: `make check` runs clippy with `-D warnings`. Zero warnings policy - all new code must be warning-free.
 
@@ -52,42 +54,58 @@ runner, and a networked P2P node - all from the same workspace.
 
 | Crate | Purpose |
 |-------|---------|
+| `sven-hsm` | **HSM kernel**: `Machine` trait, Samek dispatch algorithm, `Runtime` (Active Object), `PermissionPolicy`, `AuditRecord`, event-sourcing replay |
+| `sven-llm` | **LLM reasoning service**: typed `LlmRequest`/response contracts, `LlmAdapter` trait, `MockLlmAdapter` for deterministic testing |
+| `sven-executors` | **Effect executors** (the only I/O layer): `LlmExecutor`, `ToolExecutor`, `UserExecutor`, `TimerExecutor`, `CheckpointExecutor`, `AuditExecutor`, `InternalExecutor`, `CompositeExecutor` |
 | `sven-config` | Config schema and loader (`sven.yaml`) |
 | `sven-model` | `ModelProvider` trait, 32+ driver implementations, catalog |
 | `sven-image` | Image reading helpers |
 | `sven-audio` | WAV decoding, resampling, and audio data-URL helpers |
 | `sven-input` | Chat document model, history, title generation heuristics |
 | `sven-tools` | Full tool suite, approval policy, `Tool`/`ToolDisplay` traits |
-| `sven-core` | Agent loop, session state, context compaction, `AgentEvent` |
+| `sven-core` | HSM machines: `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry`, completion guards |
 | `sven-runtime` | Shared runtime utilities (workspace root, skill/agent discovery) |
-| `sven-bootstrap` | First-run setup helpers, `AgentBuilder` |
-| `sven-ci` | Headless CI runner and output formatting |
+| `sven-bootstrap` | `RuntimeBuilder` - assembles the HSM kernel from config and mode string |
+| `sven-ci` | Headless CI runner (`CiRunner` + `RuntimeRunner`) and output formatting |
 | `sven-mcp-client` | MCP client - connects to external MCP servers over stdio/HTTP |
 | `sven-mcp` | MCP server - exposes sven tools to MCP clients |
 | `sven-acp` | ACP (Agent Client Protocol) server for IDE integration |
 | `sven-p2p` | libp2p: Noise, mDNS, relay, task routing |
-| `sven-node` | HTTP/WS node + P2P + agent wiring |
+| `sven-node` | HTTP/WS node + P2P + kernel wiring; `ControlService` posts kernel events for `SendInput`/`ApproveTool`/`DenyTool` |
 | `sven-node-client` | WebSocket client for connecting to a running node |
 | `sven-team` | Agent team coordination: task lists, config, lifecycle |
-| `sven-frontend` | **Shared frontend layer** - agent wiring, slash commands, markdown, queue, tool views (used by both TUI and GUI) |
-| `sven-tui` | Ratatui TUI: layout, widgets, key bindings (`sven` binary) |
+| `sven-frontend` | **Shared frontend layer** - `MachineProjection` (kernel state snapshots), agent wiring, slash commands, markdown, queue, tool views |
+| `sven-tui` | Ratatui TUI: `UiMode` enum, projection consumer, key bindings (`sven` binary) |
 | `sven-gui` | Slint desktop GUI: `.slint` UI files + Rust bridge (`sven-ui` binary) |
 
-## Frontend Architecture
+## Architecture
 
-Both the TUI and the GUI share a common layer in `sven-frontend`. Never duplicate
-logic between `sven-tui` and `sven-gui` - extract it to `sven-frontend` instead.
+Sven's agent loop is a Hierarchical State Machine (HSM). The HSM is the
+deterministic process kernel; the LLM is an untrusted reasoning service. All
+I/O flows through typed Effects emitted by the machine and executed by
+`sven-executors`. See [docs/technical/hsm-architecture.md](docs/technical/hsm-architecture.md).
 
 ```
 sven (CLI/TUI)            sven-ui (Desktop GUI)
       │                           │
  sven-tui (ratatui)       sven-gui (slint)
-      │                           │
-      └──────── sven-frontend ────┘
+      │   UiMode/Projection        │
+      └──────── sven-frontend ─────┘
+                     │  MachineProjection
+             sven-bootstrap (RuntimeBuilder)
                      │
-          ┌──────────┼──────────┐
-    sven-bootstrap  sven-core  sven-tools
+              sven-hsm (kernel)
+             /        |         \
+      sven-core   sven-llm   sven-executors
+      (machines)  (LLM SVC)  (I/O layer)
+                               |
+                          sven-tools
 ```
+
+## Frontend Architecture
+
+Both the TUI and the GUI share a common layer in `sven-frontend`. Never duplicate
+logic between `sven-tui` and `sven-gui` - extract it to `sven-frontend` instead.
 
 ### `sven-frontend` modules
 
