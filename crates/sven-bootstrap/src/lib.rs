@@ -18,6 +18,7 @@ pub mod context_query;
 pub mod context_tool;
 pub mod registry;
 pub mod runtime_builder;
+pub mod supervisor;
 pub mod task_tool;
 
 pub use agent::AgentBuilder;
@@ -30,7 +31,8 @@ pub use registry::{
     build_cli_tool_registry, build_tool_registry, build_tool_registry_with_integrations,
     IntegrationProviders,
 };
-pub use runtime_builder::{KernelChannels, RuntimeBuilder, RuntimeHandle};
+pub use runtime_builder::{KernelChannels, RuntimeBuilder, RuntimeHandle, SessionBundle};
+pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;
 

@@ -65,6 +65,7 @@ pub struct KernelChannels {
 #[derive(Clone)]
 pub struct RuntimeHandle {
     sink: EventSink,
+    obs: sven_hsm::ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
 }
 
@@ -73,6 +74,19 @@ impl RuntimeHandle {
     #[must_use]
     pub fn sink(&self) -> EventSink {
         self.sink.clone()
+    }
+
+    /// Returns a clone of the outward observation sink for this session.
+    #[must_use]
+    pub fn observations(&self) -> sven_hsm::ObservationSink {
+        self.obs.clone()
+    }
+
+    /// Subscribes a fresh receiver to the outward observation plane
+    /// (`UiEvent` stream: streamed text, tool progress, usage, transitions).
+    #[must_use]
+    pub fn subscribe_observations(&self) -> tokio::sync::broadcast::Receiver<sven_hsm::UiEvent> {
+        self.obs.subscribe()
     }
 
     /// Posts `Event::UserMessage { text }` into the kernel queue.
@@ -341,6 +355,7 @@ impl RuntimeBuilder {
 
         let handle = RuntimeHandle {
             sink: erased_runtime.sink(),
+            obs: erased_runtime.observations(),
             status_rx: erased_runtime.status_watch(),
         };
 
@@ -351,6 +366,40 @@ impl RuntimeBuilder {
 
         Ok((erased_runtime, handle, channels))
     }
+
+    /// Build a fully-wired [`SessionBundle`] — the natural unit a
+    /// [`SessionSupervisor`](crate::supervisor::SessionSupervisor) manages.
+    ///
+    /// This is a thin convenience wrapper over [`build`](Self::build) that
+    /// packages the runtime, handle, and channels into one owned value.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from [`build`](Self::build).
+    pub async fn build_session(self) -> anyhow::Result<SessionBundle> {
+        let (runtime, handle, channels) = self.build().await?;
+        Ok(SessionBundle {
+            runtime,
+            handle,
+            channels,
+        })
+    }
+}
+
+// ── SessionBundle ─────────────────────────────────────────────────────────────
+
+/// All the moving parts of one live kernel session.
+///
+/// Owns the [`ErasedRuntime`] (keeping the consumer task alive), the cheap
+/// [`RuntimeHandle`] for posting events and subscribing to observations, and
+/// the [`KernelChannels`] carrying user-question / approval requests.
+pub struct SessionBundle {
+    /// The running kernel. Dropping it shuts the session down.
+    pub runtime: ErasedRuntime,
+    /// Cheap, cloneable handle for posting events / subscribing to UiEvents.
+    pub handle: RuntimeHandle,
+    /// Question / approval request receivers for the frontend.
+    pub channels: KernelChannels,
 }
 
 /// Fallback: when `from_config` fails a second time, build a no-op provider
