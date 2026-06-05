@@ -158,7 +158,12 @@ mod tests {
         );
         let sink = rt.sink();
 
-        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(
+            Effect::PersistAudit,
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
 
         let content = std::fs::read_to_string(&log_path).unwrap();
         assert!(
@@ -189,8 +194,18 @@ mod tests {
         );
         let sink = rt.sink();
 
-        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
-        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(
+            Effect::PersistAudit,
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        exec.execute(
+            Effect::PersistAudit,
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
 
         let content = std::fs::read_to_string(&log_path).unwrap();
         assert_eq!(content.lines().count(), 2, "expected exactly 2 lines");

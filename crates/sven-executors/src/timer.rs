@@ -175,7 +175,9 @@ mod tests {
 
         // We need a TimerExecutor reference to call execute; use a second one.
         let mut exec2 = TimerExecutor::new(Arc::new(clock.clone()));
-        exec2.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec2
+            .execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
 
         clock.advance(Duration::from_secs(6));
         rt.wait_done().await;

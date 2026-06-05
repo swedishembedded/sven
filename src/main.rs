@@ -1539,6 +1539,50 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         (String::new(), cli.prompt.clone())
     };
 
+    // ── Opt-in HSM kernel path ────────────────────────────────────────────────
+    // When `SVEN_HSM` is truthy, route a single-prompt headless run through the
+    // reactive kernel agent (`RuntimeRunner`) instead of the legacy `CiRunner`.
+    // Multi-step JSONL workflows still use the legacy runner. This gate keeps
+    // the default e2e path on `CiRunner` while the kernel path is validated.
+    let hsm_enabled = std::env::var("SVEN_HSM")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    if hsm_enabled && load_jsonl.is_none() {
+        let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
+            match cli.mode {
+                AgentMode::Chat => "chat",
+                AgentMode::Sdlc => "sdlc",
+                _ => "agent",
+            }
+            .to_string()
+        });
+        let prompt = match &extra_prompt {
+            Some(p) if !input.trim().is_empty() => format!("{input}\n\n{p}"),
+            Some(p) => p.clone(),
+            None => input.clone(),
+        };
+        // Apply the `--model` override into the config the kernel builds from
+        // (the legacy CiRunner does the same before constructing its agent).
+        let kernel_config = if let Some(m) = &cli.model {
+            let mut cfg = (*config).clone();
+            cfg.model = sven_model::resolve_model_from_config(&cfg, m);
+            Arc::new(cfg)
+        } else {
+            config.clone()
+        };
+        let runner = sven_ci::RuntimeRunner::new(kernel_config);
+        let code = runner
+            .run(sven_ci::RuntimeRunnerOptions {
+                mode: kernel_mode,
+                prompt,
+                project_root: project_root.clone(),
+                timeout_secs: cli.run_timeout,
+                trace_level: cli.verbose,
+            })
+            .await;
+        std::process::exit(code);
+    }
+
     // ── Parse template variables ──────────────────────────────────────────────
     let mut vars: HashMap<String, String> = HashMap::new();
     for spec in &cli.vars {

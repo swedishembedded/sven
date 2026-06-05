@@ -155,7 +155,9 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        executor.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        executor
+            .execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report

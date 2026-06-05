@@ -1,41 +1,43 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Kernel-based CI runner that drives [`ErasedRuntime`] to completion.
+//! Kernel-based CI runner that drives a single session to completion.
 //!
 //! This is the HSM-era replacement for [`super::CiRunner`]. It:
 //!
-//! 1. Builds an [`ErasedRuntime`] via [`RuntimeBuilder`] with an auto-approving
-//!    `UserExecutor` (no interactive prompts in CI).
-//! 2. Posts the initial [`Event::UserMessage`] from the step prompt.
-//! 3. Polls [`MachineProjection`] updates until the machine reaches a terminal
-//!    state (`Done`, `Failed`, or `Cancelled`).
-//! 4. Returns exit code 0 on `Done`, non-zero otherwise.
+//! 1. Builds a kernel [`SessionBundle`] via [`RuntimeBuilder::build_session`]
+//!    in the reactive `agent` mode (the streaming, native-tool-calling coding
+//!    agent), with auto-approval for all human gates (no interactive prompts
+//!    in CI).
+//! 2. Subscribes to the outward observation plane.
+//! 3. Posts the initial [`Event::UserMessage`] from the step prompt.
+//! 4. Bridges every [`UiEvent`] to CI output: assistant text → stdout,
+//!    diagnostics (thinking, tool progress, usage, errors) → stderr.
+//! 5. Returns exit code 0 when the turn completes, non-zero on error/timeout.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use tokio::sync::broadcast::error::RecvError;
 
-use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
+use sven_bootstrap::{KernelChannels, RuntimeBuilder, RuntimeContext};
 use sven_config::Config;
-use sven_frontend::ProjectionRx;
-use sven_hsm::{Event, EventSink};
+use sven_hsm::{Event, EventSink, UiEvent};
 
-use crate::output::{write_progress, write_stderr};
+use crate::output::{
+    finalise_stdout, format_token_usage_line, write_progress, write_stderr, write_stdout,
+};
 use crate::runner::{EXIT_AGENT_ERROR, EXIT_SUCCESS, EXIT_TIMEOUT};
 
 // ── RuntimeRunner ─────────────────────────────────────────────────────────────
 
 /// Headless CI runner backed by the HSM kernel.
 ///
-/// This runner is intentionally simpler than [`super::CiRunner`]:
-/// - it does not handle multi-step workflows or JSONL/conversation piping,
-/// - it runs exactly one prompt and waits for the machine to finish,
-/// - all tool approval requests are automatically approved (CI mode).
-///
-/// Multi-step workflow support will be added in a follow-up once
-/// `CiRunner` is fully migrated onto the kernel path.
+/// Runs exactly one prompt and waits for the reactive agent turn to finish,
+/// auto-approving any tool-permission gates. Multi-step workflow / JSONL
+/// piping continues to live in [`super::CiRunner`]; this runner is the
+/// single-prompt kernel path.
 pub struct RuntimeRunner {
     config: Arc<Config>,
 }
@@ -43,7 +45,7 @@ pub struct RuntimeRunner {
 /// Options for a single kernel-driven CI run.
 #[derive(Debug)]
 pub struct RuntimeRunnerOptions {
-    /// Mode string (e.g. `"chat"`, `"code"`).
+    /// Mode string (e.g. `"agent"`, `"chat"`, `"sdlc"`).
     pub mode: String,
     /// The single user prompt to execute.
     pub prompt: String,
@@ -60,11 +62,21 @@ impl RuntimeRunner {
         Self { config }
     }
 
+    /// Map a caller mode string to a registered kernel mode. Unknown / coding
+    /// modes resolve to the reactive `agent` machine.
+    fn kernel_mode(mode: &str) -> &'static str {
+        match mode {
+            "chat" => "chat",
+            "sdlc" => "sdlc",
+            _ => "agent",
+        }
+    }
+
     /// Run the kernel to completion and return an exit code.
     ///
-    /// - `0` → machine reached `Done`.
-    /// - `1` → machine reached `Failed` or an error occurred.
-    /// - `124` → timeout expired before the machine finished.
+    /// - `0` → the turn completed.
+    /// - `1` → an error occurred.
+    /// - `124` → timeout expired before completion.
     pub async fn run(&self, opts: RuntimeRunnerOptions) -> i32 {
         match self.run_inner(opts).await {
             Ok(code) => code,
@@ -98,29 +110,26 @@ impl RuntimeRunner {
             knowledge_drift_note: None,
         };
 
+        let kernel_mode = Self::kernel_mode(&opts.mode);
         write_progress(&format!(
-            "[sven:runtime-runner] mode={} prompt_len={}",
-            opts.mode,
+            "[sven:runtime-runner] mode={kernel_mode} prompt_len={}",
             opts.prompt.len()
         ));
 
-        let (runtime, _handle, _channels) =
-            RuntimeBuilder::new(self.config.clone(), opts.mode.clone())
-                .with_runtime_context(runtime_ctx)
-                .build()
-                .await
-                .context("failed to build ErasedRuntime")?;
+        let bundle = RuntimeBuilder::new(self.config.clone(), kernel_mode)
+            .with_runtime_context(runtime_ctx)
+            .with_allow_interactive_oauth(false)
+            .build_session()
+            .await
+            .context("failed to build kernel session")?;
 
-        // Projection channel so we can observe machine state.
-        let (proj_tx, proj_rx) = sven_frontend::projection_channel(64);
+        let sink: EventSink = bundle.handle.sink();
+        let mut obs_rx = bundle.handle.subscribe_observations();
 
-        // Get the event sink from the handle (RuntimeHandle owns it).
-        let sink: EventSink = _handle.sink();
+        // Auto-approve all human gates (CI is non-interactive).
+        tokio::spawn(auto_approve(bundle.channels));
 
-        // Spawn a task that auto-approves and closes the projection when idle.
-        tokio::spawn(projection_driver(sink.clone(), proj_tx, opts.trace_level));
-
-        // Post the initial user message into the kernel.
+        // Post the user prompt.
         if !sink
             .emit(Event::UserMessage {
                 text: opts.prompt.clone(),
@@ -130,80 +139,181 @@ impl RuntimeRunner {
             anyhow::bail!("kernel event queue closed before UserMessage was delivered");
         }
 
-        // Wait for a terminal state, honouring the timeout.
-        let wait = wait_for_terminal(proj_rx, opts.trace_level);
+        let trace = opts.trace_level;
+        let drive = async {
+            let mut streamed_text = String::new();
+            let mut had_error = false;
+            loop {
+                match obs_rx.recv().await {
+                    Ok(ev) => {
+                        if let Some(done) =
+                            handle_ui_event(ev, trace, &mut streamed_text, &mut had_error)
+                        {
+                            return done;
+                        }
+                    }
+                    // The session ended and dropped the sender; treat as done.
+                    Err(RecvError::Closed) => break,
+                    // Dropped some observations under load; keep going.
+                    Err(RecvError::Lagged(_)) => continue,
+                }
+            }
+            finalise_stdout(&streamed_text);
+            if had_error {
+                EXIT_AGENT_ERROR
+            } else {
+                EXIT_SUCCESS
+            }
+        };
+
         let result = if let Some(t) = opts.timeout_secs {
             tokio::select! {
-                r = wait => r,
+                r = drive => r,
                 _ = tokio::time::sleep(Duration::from_secs(t)) => {
-                    write_stderr(&format!(
-                        "[sven:error] RuntimeRunner timed out after {t}s"
-                    ));
-                    return Ok(EXIT_TIMEOUT);
+                    write_stderr(&format!("[sven:error] RuntimeRunner timed out after {t}s"));
+                    EXIT_TIMEOUT
                 }
             }
         } else {
-            wait.await
+            drive.await
         };
 
-        // Give the runtime a moment to flush the audit log.
-        drop(runtime);
+        // Keep the runtime alive until here so the audit log flushes.
+        drop(bundle.runtime);
         Ok(result)
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Drives a [`MachineProjection`] broadcast from the kernel's audit stream.
+/// Bridge a single [`UiEvent`] to CI output.
 ///
-/// In the full implementation this reads [`AuditRecord`]s from the runtime
-/// and maps them to projections. For now it forwards approval responses
-/// automatically (auto-approve all tool calls for CI) and emits minimal
-/// projection updates so [`wait_for_terminal`] can detect completion.
-async fn projection_driver(
-    sink: EventSink,
-    proj_tx: sven_frontend::ProjectionTx,
-    _trace_level: u8,
-) {
-    // Auto-approve loop: whenever the kernel asks for approval, immediately
-    // respond with HumanApproved.  We do this by watching for a brief quiescent
-    // period between events rather than a proper channel (the UserExecutor
-    // approval channel is injected separately via KernelChannels).
-    //
-    // This is a stub; the proper wiring goes through `KernelChannels::approval_rx`
-    // once `UserExecutor` exposes it.  For now we just close the projection channel
-    // after a short idle period so `wait_for_terminal` can detect the done state.
-    drop(sink);
-    drop(proj_tx);
+/// Returns `Some(exit_code)` when the turn has settled (the caller should stop
+/// driving the loop), or `None` to keep going.
+fn handle_ui_event(
+    ev: UiEvent,
+    trace: u8,
+    streamed_text: &mut String,
+    had_error: &mut bool,
+) -> Option<i32> {
+    match ev {
+        UiEvent::TextDelta(d) => {
+            streamed_text.push_str(&d);
+            write_stdout(&d);
+        }
+        // Deltas were already streamed; only emit the complete text if nothing
+        // streamed (some providers send a single TextComplete with no deltas).
+        UiEvent::TextComplete(t) => {
+            if streamed_text.is_empty() && !t.is_empty() {
+                streamed_text.push_str(&t);
+                write_stdout(&t);
+            }
+        }
+        UiEvent::ThinkingDelta(_) => {}
+        UiEvent::ThinkingComplete(c) => {
+            if trace >= 2 && !c.is_empty() {
+                write_progress(&format!("[sven:thinking] {c}"));
+            }
+        }
+        UiEvent::ToolStarted { name, call_id, .. } => {
+            write_progress(&format!("[sven:tool:start] name={name} id={call_id}"));
+        }
+        UiEvent::ToolProgress { call_id, message } => {
+            if trace >= 1 {
+                write_progress(&format!("[sven:tool:progress] id={call_id} {message}"));
+            }
+        }
+        UiEvent::ToolFinished {
+            name,
+            is_error,
+            output,
+            ..
+        } => {
+            let status = if is_error { "error" } else { "ok" };
+            write_progress(&format!("[sven:tool:done] name={name} status={status}"));
+            if is_error {
+                write_stderr(&format!("[sven:tool:error] {name}: {output}"));
+            }
+        }
+        UiEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
+            max_output_tokens,
+            ..
+        } => {
+            if trace >= 1 {
+                write_progress(&format_token_usage_line(
+                    input,
+                    output,
+                    cache_read,
+                    cache_write,
+                    cache_read_total,
+                    cache_write_total,
+                    max_tokens,
+                    max_output_tokens,
+                ));
+            }
+        }
+        UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
+            write_progress(&format!(
+                "[sven:compact] strategy={strategy} turn={turn} {tokens_before}->{tokens_after}"
+            ));
+        }
+        UiEvent::TodoUpdate(_) => {}
+        UiEvent::ModeChanged(m) => write_progress(&format!("[sven:mode] {m}")),
+        UiEvent::ModelChanged(m) => write_progress(&format!("[sven:model] {m}")),
+        UiEvent::Transition { from, to, event } => {
+            if trace >= 2 {
+                write_progress(&format!("[sven:transition] {from} -> {to} on {event}"));
+            }
+        }
+        UiEvent::Error(e) => {
+            *had_error = true;
+            write_stderr(&format!("[sven:error] {e}"));
+        }
+        UiEvent::TurnComplete => {
+            finalise_stdout(streamed_text);
+            return Some(if *had_error {
+                EXIT_AGENT_ERROR
+            } else {
+                EXIT_SUCCESS
+            });
+        }
+        UiEvent::Aborted { partial_text } => {
+            if streamed_text.is_empty() && !partial_text.is_empty() {
+                write_stdout(&partial_text);
+            }
+            finalise_stdout(streamed_text);
+            return Some(EXIT_SUCCESS);
+        }
+    }
+    None
 }
 
-/// Wait until the projection shows the machine has reached a terminal phase.
-///
-/// Returns the appropriate exit code (`EXIT_SUCCESS` or `EXIT_AGENT_ERROR`).
-async fn wait_for_terminal(mut proj_rx: ProjectionRx, _trace_level: u8) -> i32 {
+/// Auto-approve every human gate, replying immediately so CI never blocks.
+async fn auto_approve(mut channels: KernelChannels) {
     loop {
-        match proj_rx.recv().await {
-            Ok(proj) => {
-                if proj.is_done() {
-                    if proj.phase.contains("Failed") || proj.phase.contains("Cancelled") {
-                        write_progress(&format!(
-                            "[sven:runtime-runner] machine stopped: phase={}",
-                            proj.phase
-                        ));
-                        return EXIT_AGENT_ERROR;
-                    }
-                    write_progress("[sven:runtime-runner] machine reached Done");
-                    return EXIT_SUCCESS;
-                }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                // Projection channel closed — treat as completion.
-                return EXIT_SUCCESS;
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                // Dropped some snapshots; keep polling.
-                continue;
-            }
+        tokio::select! {
+            q = channels.question_rx.recv() => match q {
+                // No interactive user in CI: reply with an empty answer.
+                Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                None => break,
+            },
+            a = channels.approval_rx.recv() => match a {
+                // Approve all tool capabilities in CI.
+                Some(a) => { let _ = a.reply_tx.send(true); }
+                None => break,
+            },
         }
     }
 }
@@ -217,12 +327,48 @@ mod tests {
     #[test]
     fn runtime_runner_options_debug() {
         let opts = RuntimeRunnerOptions {
-            mode: "chat".into(),
+            mode: "agent".into(),
             prompt: "hello".into(),
             project_root: None,
             timeout_secs: Some(30),
             trace_level: 0,
         };
-        assert!(format!("{opts:?}").contains("chat"));
+        assert!(format!("{opts:?}").contains("agent"));
+    }
+
+    #[test]
+    fn kernel_mode_maps_coding_modes_to_agent() {
+        assert_eq!(RuntimeRunner::kernel_mode("code"), "agent");
+        assert_eq!(RuntimeRunner::kernel_mode("plan"), "agent");
+        assert_eq!(RuntimeRunner::kernel_mode("research"), "agent");
+        assert_eq!(RuntimeRunner::kernel_mode("chat"), "chat");
+        assert_eq!(RuntimeRunner::kernel_mode("sdlc"), "sdlc");
+    }
+
+    #[test]
+    fn text_delta_streams_to_buffer() {
+        let mut buf = String::new();
+        let mut err = false;
+        let r = handle_ui_event(UiEvent::TextDelta("pong".into()), 0, &mut buf, &mut err);
+        assert!(r.is_none());
+        assert_eq!(buf, "pong");
+        assert!(!err);
+    }
+
+    #[test]
+    fn turn_complete_returns_success() {
+        let mut buf = String::from("pong");
+        let mut err = false;
+        let r = handle_ui_event(UiEvent::TurnComplete, 0, &mut buf, &mut err);
+        assert_eq!(r, Some(EXIT_SUCCESS));
+    }
+
+    #[test]
+    fn error_then_turn_complete_returns_agent_error() {
+        let mut buf = String::new();
+        let mut err = false;
+        handle_ui_event(UiEvent::Error("boom".into()), 0, &mut buf, &mut err);
+        let r = handle_ui_event(UiEvent::TurnComplete, 0, &mut buf, &mut err);
+        assert_eq!(r, Some(EXIT_AGENT_ERROR));
     }
 }

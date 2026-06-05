@@ -119,7 +119,8 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report
@@ -154,7 +155,8 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
 
         // The machine should NOT have transitioned since no event was emitted.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

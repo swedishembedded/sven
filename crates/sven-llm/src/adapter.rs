@@ -490,9 +490,7 @@ mod tests {
             &self,
             _req: CompletionRequest,
         ) -> anyhow::Result<
-            std::pin::Pin<
-                Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>,
-            >,
+            std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
         > {
             let events: Vec<anyhow::Result<ResponseEvent>> =
                 self.0.iter().cloned().map(Ok).collect();

@@ -180,10 +180,7 @@ impl CompositeExecutorBuilder {
     /// When present, `CallLlm` effects whose request `kind` is `"converse"`
     /// (emitted by `ReactiveAgentMachine`) are driven through the full legacy
     /// agentic loop with streaming observations.
-    pub fn with_converse(
-        mut self,
-        agent: Arc<tokio::sync::Mutex<sven_core::Agent>>,
-    ) -> Self {
+    pub fn with_converse(mut self, agent: Arc<tokio::sync::Mutex<sven_core::Agent>>) -> Self {
         self.converse = Some(ConverseExecutor::new(agent));
         self
     }
@@ -315,7 +312,8 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report
@@ -381,7 +379,8 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
 
         // Give it a moment to propagate (it should not).
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

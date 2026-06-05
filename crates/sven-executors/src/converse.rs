@@ -50,9 +50,7 @@ impl EffectExecutor for ConverseExecutor {
 
         // Only handle converse requests; anything else is a wiring error.
         if request.get("kind").and_then(|v| v.as_str()) != Some(CONVERSE_KIND) {
-            tracing::warn!(
-                "ConverseExecutor received a non-converse CallLlm request; ignoring"
-            );
+            tracing::warn!("ConverseExecutor received a non-converse CallLlm request; ignoring");
             let _ = sink
                 .emit(Event::LlmFailed {
                     error: "converse executor received a non-converse request".into(),
@@ -194,7 +192,7 @@ mod tests {
     use super::*;
 
     use sven_core::{AgentNewParams, AgentRuntimeContext};
-    use sven_hsm::{Context, Hsm, MachineId, Machine, PermissionPolicy, Reaction, Runtime};
+    use sven_hsm::{Context, Hsm, Machine, MachineId, PermissionPolicy, Reaction, Runtime};
     use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
     use sven_tools::ToolRegistry;
 
@@ -213,9 +211,7 @@ mod tests {
             &self,
             _req: CompletionRequest,
         ) -> anyhow::Result<
-            std::pin::Pin<
-                Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>,
-            >,
+            std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
         > {
             let events: Vec<anyhow::Result<ResponseEvent>> = vec![
                 Ok(ResponseEvent::TextDelta("pong".into())),
