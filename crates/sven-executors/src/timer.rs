@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Clock, Effect, EffectExecutor, EventSink, TimerService};
+use sven_hsm::{Clock, Effect, EffectExecutor, EventSink, ObservationSink, TimerService};
 
 /// Executes timer effects using an injected [`Clock`].
 ///
@@ -33,7 +33,7 @@ impl TimerExecutor {
 
 #[async_trait]
 impl EffectExecutor for TimerExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let svc = self
             .service
             .get_or_insert_with(|| TimerService::new(Arc::clone(&self.clock), sink.clone()));
@@ -175,7 +175,7 @@ mod tests {
 
         // We need a TimerExecutor reference to call execute; use a second one.
         let mut exec2 = TimerExecutor::new(Arc::new(clock.clone()));
-        exec2.execute(effect, &sink).await;
+        exec2.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
 
         clock.advance(Duration::from_secs(6));
         rt.wait_done().await;

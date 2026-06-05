@@ -31,8 +31,12 @@ use crate::effect::Effect;
 use crate::event::{Event, EventKind};
 use crate::ids::TimerId;
 use crate::machine::Machine;
+use crate::observation::{ObservationSink, UiEvent};
 use crate::permissions::{validate_effects_are_allowed, PermissionPolicy};
 use crate::Hsm;
+
+/// Default capacity of the per-runtime observation broadcast channel.
+const OBSERVATION_CAPACITY: usize = 1024;
 
 /// A clonable handle used by executors and timers to post events back into the
 /// kernel queue.
@@ -210,8 +214,14 @@ impl TimerService {
 /// [`Event`]s back through the [`EventSink`].
 #[async_trait]
 pub trait EffectExecutor: Send {
-    /// Performs `effect`. May post zero or more events back via `sink`.
-    async fn execute(&mut self, effect: Effect, sink: &EventSink);
+    /// Performs `effect`.
+    ///
+    /// May post zero or more result [`Event`]s back through `sink` (the inward
+    /// plane) and emit zero or more [`UiEvent`]s through `obs` (the outward
+    /// streaming plane). Streaming output (token deltas, tool progress, usage)
+    /// goes to `obs`; exactly the completion fact that advances the machine
+    /// goes to `sink`.
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink);
 }
 
 /// An observable snapshot of the running machine, published after every
@@ -240,6 +250,7 @@ pub struct RuntimeReport<M: Machine> {
 /// final report.
 pub struct Runtime<M: Machine> {
     sink: EventSink,
+    obs: ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
     handle: JoinHandle<RuntimeReport<M>>,
@@ -269,6 +280,7 @@ where
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
         let audit = Arc::new(Mutex::new(Vec::new()));
         let sink = EventSink { tx };
+        let obs = ObservationSink::new(OBSERVATION_CAPACITY);
 
         let handle = tokio::spawn(consumer_loop(
             hsm,
@@ -277,12 +289,14 @@ where
             executor,
             rx,
             sink.clone(),
+            obs.clone(),
             status_tx,
             Arc::clone(&audit),
         ));
 
         Self {
             sink,
+            obs,
             status_rx,
             audit,
             handle,
@@ -293,6 +307,18 @@ where
     #[must_use]
     pub fn sink(&self) -> EventSink {
         self.sink.clone()
+    }
+
+    /// A clone of this runtime's outward observation sink.
+    #[must_use]
+    pub fn observations(&self) -> ObservationSink {
+        self.obs.clone()
+    }
+
+    /// Subscribes a new receiver to this runtime's outward observation stream.
+    #[must_use]
+    pub fn subscribe_observations(&self) -> tokio::sync::broadcast::Receiver<UiEvent> {
+        self.obs.subscribe()
     }
 
     /// Posts an event, awaiting queue capacity.
@@ -357,6 +383,7 @@ async fn consumer_loop<M, E>(
     mut executor: E,
     mut rx: mpsc::Receiver<Event>,
     sink: EventSink,
+    obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
 ) -> RuntimeReport<M>
@@ -378,6 +405,7 @@ where
         &mut ctx,
         &mut executor,
         &sink,
+        &obs,
         EventKind::Init,
         init_effects,
         &mut last_error,
@@ -400,6 +428,12 @@ where
     while let Some(event) = rx.recv().await {
         let outcome = hsm.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
+        // Emit the transition trace on the outward plane after every dispatch.
+        obs.emit(UiEvent::Transition {
+            from: outcome.from.clone(),
+            to: outcome.to.clone(),
+            event: format!("{:?}", event_kind),
+        });
         run_effects(
             &policy,
             hsm.state(),
@@ -407,6 +441,7 @@ where
             &mut ctx,
             &mut executor,
             &sink,
+            &obs,
             event_kind,
             outcome.effects,
             &mut last_error,
@@ -443,6 +478,7 @@ async fn run_effects<S, E>(
     ctx: &mut Context,
     executor: &mut E,
     sink: &EventSink,
+    obs: &ObservationSink,
     event: EventKind,
     effects: Vec<Effect>,
     last_error: &mut Option<String>,
@@ -460,13 +496,14 @@ async fn run_effects<S, E>(
         Ok(()) => {
             *last_error = None;
             for effect in effects {
-                executor.execute(effect, sink).await;
+                executor.execute(effect, sink, obs).await;
             }
         }
         Err(err) => {
             let record = AuditRecord::rejected(state_label, event, &effects, err.to_string());
             ctx.audit.push(record);
             *last_error = Some(err.to_string());
+            obs.emit(UiEvent::Error(err.to_string()));
         }
     }
 }
@@ -528,6 +565,7 @@ impl std::fmt::Debug for StateLabel {
 /// `sven_core::ModeRegistry`).
 pub struct ErasedRuntime {
     sink: EventSink,
+    obs: ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
     handle: JoinHandle<ErasedReport>,
@@ -552,6 +590,7 @@ impl ErasedRuntime {
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
         let audit = Arc::new(Mutex::new(Vec::new()));
         let sink = EventSink { tx };
+        let obs = ObservationSink::new(OBSERVATION_CAPACITY);
 
         let handle = tokio::spawn(erased_consumer_loop(
             machine,
@@ -560,12 +599,14 @@ impl ErasedRuntime {
             executor,
             rx,
             sink.clone(),
+            obs.clone(),
             status_tx,
             Arc::clone(&audit),
         ));
 
         Self {
             sink,
+            obs,
             status_rx,
             audit,
             handle,
@@ -576,6 +617,18 @@ impl ErasedRuntime {
     #[must_use]
     pub fn sink(&self) -> EventSink {
         self.sink.clone()
+    }
+
+    /// A clone of this runtime's outward observation sink.
+    #[must_use]
+    pub fn observations(&self) -> ObservationSink {
+        self.obs.clone()
+    }
+
+    /// Subscribes a new receiver to this runtime's outward observation stream.
+    #[must_use]
+    pub fn subscribe_observations(&self) -> tokio::sync::broadcast::Receiver<UiEvent> {
+        self.obs.subscribe()
     }
 
     /// Posts an event, awaiting queue capacity. Returns `false` on shutdown.
@@ -639,6 +692,7 @@ async fn erased_consumer_loop<E>(
     mut executor: E,
     mut rx: mpsc::Receiver<Event>,
     sink: EventSink,
+    obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
 ) -> ErasedReport
@@ -656,6 +710,7 @@ where
         &mut ctx,
         &mut executor,
         &sink,
+        &obs,
         EventKind::Init,
         init_effects,
         &mut last_error,
@@ -682,6 +737,11 @@ where
     while let Some(event) = rx.recv().await {
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
+        obs.emit(UiEvent::Transition {
+            from: outcome.from.clone(),
+            to: outcome.to.clone(),
+            event: format!("{:?}", event_kind),
+        });
         run_effects(
             &policy,
             StateLabel(machine.state_label()),
@@ -689,6 +749,7 @@ where
             &mut ctx,
             &mut executor,
             &sink,
+            &obs,
             event_kind,
             outcome.effects,
             &mut last_error,

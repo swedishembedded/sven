@@ -54,6 +54,7 @@ pub mod error;
 pub mod event;
 pub mod ids;
 pub mod machine;
+pub mod observation;
 pub mod permissions;
 pub mod runtime;
 pub mod status;
@@ -69,6 +70,7 @@ pub use error::{MachineError, Result};
 pub use event::{Event, EventKind, InternalEvent};
 pub use ids::{ApprovalId, CorrelationId, MachineId, TaskId, TimerId, ToolCallId};
 pub use machine::Machine;
+pub use observation::{ObservationSink, UiEvent};
 pub use permissions::{
     validate_effects_are_allowed, PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
 };

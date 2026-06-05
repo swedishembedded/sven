@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ToolCapability};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCapability};
 use sven_tools::{ToolCall, ToolRegistry};
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
@@ -44,7 +44,7 @@ impl ToolExecutor {
 
 #[async_trait]
 impl EffectExecutor for ToolExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let Effect::CallTool {
             call_id,
             name,
@@ -108,8 +108,8 @@ mod tests {
     use std::sync::Arc;
 
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, PermissionPolicy,
-        Reaction, Runtime, ToolCallId, ToolCapability,
+        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
+        PermissionPolicy, Reaction, Runtime, ToolCallId, ToolCapability,
     };
     use sven_tools::ToolRegistry;
 
@@ -172,7 +172,7 @@ mod tests {
     struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _effect: Effect, _sink: &EventSink) {}
+        async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
     }
 
     async fn run_tool_effect(exec: &mut ToolExecutor, effect: Effect) -> String {
@@ -184,7 +184,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report

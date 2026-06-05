@@ -15,7 +15,7 @@
 //!   or `Event::HumanRejected`.
 
 use async_trait::async_trait;
-use sven_hsm::{ApprovalId, Effect, EffectExecutor, Event, EventSink, ToolCapability};
+use sven_hsm::{ApprovalId, Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCapability};
 use tokio::sync::{mpsc, oneshot};
 
 // ── Channel message types ─────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ impl UserExecutor {
 
 #[async_trait]
 impl EffectExecutor for UserExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         match effect {
             Effect::AskUser { prompt } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
@@ -162,7 +162,7 @@ impl EffectExecutor for UserExecutor {
 mod tests {
     use sven_hsm::{
         ApprovalId, Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId,
-        PermissionPolicy, Reaction, Runtime, ToolCapability,
+        ObservationSink, PermissionPolicy, Reaction, Runtime, ToolCapability,
     };
     use tokio::sync::mpsc;
 
@@ -222,7 +222,7 @@ mod tests {
     struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _effect: Effect, _sink: &EventSink) {}
+        async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
     }
 
     async fn run_user_effect(exec: &mut UserExecutor, effect: Effect) -> String {
@@ -234,7 +234,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report

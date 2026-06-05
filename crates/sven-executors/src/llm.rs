@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
 use sven_llm::{LlmAdapter, LlmRequest};
 
 /// Executes [`Effect::CallLlm`] by driving the injected [`LlmAdapter`].
@@ -25,7 +25,7 @@ impl LlmExecutor {
 
 #[async_trait]
 impl EffectExecutor for LlmExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let Effect::CallLlm { request } = effect else {
             return;
         };
@@ -66,8 +66,8 @@ mod tests {
 
     use serde_json::json;
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, PermissionPolicy,
-        Reaction, Runtime,
+        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
+        PermissionPolicy, Reaction, Runtime,
     };
     use sven_llm::{LlmRequest, MockLlmAdapter};
 
@@ -141,7 +141,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _effect: Effect, _sink: &EventSink) {}
+        async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
     }
 
     /// Runs the executor against a single effect using a one-shot Runtime,
@@ -155,7 +155,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        executor.execute(effect, &sink).await;
+        executor.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report

@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Clock, Effect, EffectExecutor, EffectKind, EventSink};
+use sven_hsm::{Clock, Effect, EffectExecutor, EffectKind, EventSink, ObservationSink};
 use sven_llm::LlmAdapter;
 use sven_tools::ToolRegistry;
 use tokio::sync::mpsc;
@@ -58,12 +58,12 @@ impl CompositeExecutor {
 
 #[async_trait]
 impl EffectExecutor for CompositeExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let kind = effect.kind();
         match kind {
             EffectKind::CallLlm => {
                 if let Some(exec) = &mut self.llm {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
                         "CompositeExecutor: no LLM executor configured; dropping CallLlm"
@@ -73,7 +73,7 @@ impl EffectExecutor for CompositeExecutor {
 
             EffectKind::CallTool => {
                 if let Some(exec) = &mut self.tool {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
                         "CompositeExecutor: no Tool executor configured; dropping CallTool"
@@ -83,7 +83,7 @@ impl EffectExecutor for CompositeExecutor {
 
             EffectKind::AskUser | EffectKind::RequestHumanApproval => {
                 if let Some(exec) = &mut self.user {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
                         ?kind,
@@ -94,7 +94,7 @@ impl EffectExecutor for CompositeExecutor {
 
             EffectKind::ScheduleTimeout | EffectKind::CancelTimeout => {
                 if let Some(exec) = &mut self.timer {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
                         ?kind,
@@ -105,7 +105,7 @@ impl EffectExecutor for CompositeExecutor {
 
             EffectKind::CreateCheckpoint | EffectKind::RollbackToCheckpoint => {
                 if let Some(exec) = &mut self.checkpoint {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(?kind, "CompositeExecutor: no Checkpoint executor configured; dropping checkpoint effect");
                 }
@@ -113,14 +113,14 @@ impl EffectExecutor for CompositeExecutor {
 
             EffectKind::PersistAudit => {
                 if let Some(exec) = &mut self.audit {
-                    exec.execute(effect, sink).await;
+                    exec.execute(effect, sink, obs).await;
                 } else {
                     // Silently ignore; not all deployments need file audit logs.
                 }
             }
 
             EffectKind::EmitInternal => {
-                self.internal.execute(effect, sink).await;
+                self.internal.execute(effect, sink, obs).await;
             }
 
             EffectKind::InstantiateSubmachine => {
@@ -279,7 +279,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report
@@ -345,7 +345,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
 
         // Give it a moment to propagate (it should not).
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

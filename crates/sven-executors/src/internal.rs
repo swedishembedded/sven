@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use sven_hsm::event::InternalEvent;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
 
 /// Executes [`Effect::EmitInternal`] by re-posting the signal to the kernel queue.
 pub struct InternalExecutor;
@@ -31,7 +31,7 @@ impl Default for InternalExecutor {
 
 #[async_trait]
 impl EffectExecutor for InternalExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let Effect::EmitInternal { name, payload } = effect else {
             return;
         };
@@ -47,8 +47,8 @@ impl EffectExecutor for InternalExecutor {
 mod tests {
     use serde_json::json;
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, PermissionPolicy,
-        Reaction, Runtime,
+        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
+        PermissionPolicy, Reaction, Runtime,
     };
 
     use super::InternalExecutor;
@@ -107,7 +107,7 @@ mod tests {
     struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _: Effect, _: &EventSink) {}
+        async fn execute(&mut self, _: Effect, _: &EventSink, _: &ObservationSink) {}
     }
 
     async fn run_internal_effect(exec: &mut InternalExecutor, effect: Effect) -> String {
@@ -119,7 +119,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report
@@ -154,7 +154,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
 
         // The machine should NOT have transitioned since no event was emitted.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

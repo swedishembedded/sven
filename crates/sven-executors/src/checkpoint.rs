@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
 
 /// Executes checkpoint effects using `git stash` in `repo_dir`.
 pub struct CheckpointExecutor {
@@ -28,7 +28,7 @@ impl CheckpointExecutor {
 
 #[async_trait]
 impl EffectExecutor for CheckpointExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         match effect {
             Effect::CreateCheckpoint { label } => {
                 self.create_checkpoint(&label, sink).await;
@@ -191,8 +191,8 @@ mod tests {
     use std::process::Command as StdCmd;
 
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, PermissionPolicy,
-        Reaction, Runtime,
+        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
+        PermissionPolicy, Reaction, Runtime,
     };
     use tempfile::TempDir;
 
@@ -285,7 +285,7 @@ mod tests {
     struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _: Effect, _: &EventSink) {}
+        async fn execute(&mut self, _: Effect, _: &EventSink, _: &ObservationSink) {}
     }
 
     async fn run_ckpt_effect(exec: &mut CheckpointExecutor, effect: Effect) -> bool {
@@ -297,7 +297,7 @@ mod tests {
             16,
         );
         let sink = rt.sink();
-        exec.execute(effect, &sink).await;
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default()).await;
         rt.wait_done().await;
         let report = rt.join().await.unwrap();
         report.ctx.fact("received").is_some()

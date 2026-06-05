@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sven_hsm::{Effect, EffectExecutor, EventSink};
+use sven_hsm::{Effect, EffectExecutor, EventSink, ObservationSink};
 
 /// Executes [`Effect::PersistAudit`] by appending to an append-only JSONL log.
 pub struct AuditExecutor {
@@ -39,7 +39,7 @@ impl AuditExecutor {
 
 #[async_trait]
 impl EffectExecutor for AuditExecutor {
-    async fn execute(&mut self, effect: Effect, _sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {
         if !matches!(effect, Effect::PersistAudit) {
             return;
         }
@@ -81,8 +81,8 @@ impl EffectExecutor for AuditExecutor {
 #[cfg(test)]
 mod tests {
     use sven_hsm::{
-        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, PermissionPolicy,
-        Reaction, Runtime,
+        Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
+        PermissionPolicy, Reaction, Runtime,
     };
 
     use super::AuditExecutor;
@@ -90,7 +90,7 @@ mod tests {
     struct NoOpExec;
     #[async_trait::async_trait]
     impl EffectExecutor for NoOpExec {
-        async fn execute(&mut self, _: Effect, _: &EventSink) {}
+        async fn execute(&mut self, _: Effect, _: &EventSink, _: &ObservationSink) {}
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -158,7 +158,7 @@ mod tests {
         );
         let sink = rt.sink();
 
-        exec.execute(Effect::PersistAudit, &sink).await;
+        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
 
         let content = std::fs::read_to_string(&log_path).unwrap();
         assert!(
@@ -189,8 +189,8 @@ mod tests {
         );
         let sink = rt.sink();
 
-        exec.execute(Effect::PersistAudit, &sink).await;
-        exec.execute(Effect::PersistAudit, &sink).await;
+        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
+        exec.execute(Effect::PersistAudit, &sink, &sven_hsm::ObservationSink::default()).await;
 
         let content = std::fs::read_to_string(&log_path).unwrap();
         assert_eq!(content.lines().count(), 2, "expected exactly 2 lines");
@@ -219,6 +219,7 @@ mod tests {
                 payload: serde_json::Value::Null,
             },
             &sink,
+            &sven_hsm::ObservationSink::default(),
         )
         .await;
 

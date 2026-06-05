@@ -10,8 +10,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use common::{AgentMachine, GuardMachine, TState, TimerMachine};
 use sven_hsm::{
-    Clock, Context, Effect, EffectExecutor, Event, EventSink, Hsm, PermissionPolicy, Runtime,
-    TimerService, VirtualClock,
+    Clock, Context, Effect, EffectExecutor, Event, EventSink, Hsm, ObservationSink,
+    PermissionPolicy, Runtime, TimerService, VirtualClock,
 };
 
 /// Executor that turns `ScheduleTimeout`/`CancelTimeout` into real timer tasks
@@ -23,7 +23,7 @@ struct TimerExec {
 
 #[async_trait]
 impl EffectExecutor for TimerExec {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let timer = self
             .timer
             .get_or_insert_with(|| TimerService::new(Arc::clone(&self.clock), sink.clone()));
@@ -72,7 +72,7 @@ struct RecordingExec {
 
 #[async_trait]
 impl EffectExecutor for RecordingExec {
-    async fn execute(&mut self, effect: Effect, _sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {
         self.seen.lock().unwrap().push(effect.kind());
     }
 }
@@ -127,7 +127,7 @@ struct LlmExec {
 
 #[async_trait]
 impl EffectExecutor for LlmExec {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         if let Effect::CallLlm { .. } = effect {
             *self.calls.lock().unwrap() += 1;
             sink.emit(Event::LlmProposedResponse {
