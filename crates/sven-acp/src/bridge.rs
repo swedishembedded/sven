@@ -152,13 +152,17 @@ pub fn ui_event_to_session_update(ev: &UiEvent) -> Option<SessionUpdate> {
 
         UiEvent::TextComplete(_) => None,
 
-        UiEvent::ThinkingDelta(text) => Some(SessionUpdate::AgentThoughtChunk(
-            ContentChunk::new(ContentBlock::from(text.as_str())),
-        )),
+        UiEvent::ThinkingDelta(text) => Some(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+            ContentBlock::from(text.as_str()),
+        ))),
 
         UiEvent::ThinkingComplete(_) => None,
 
-        UiEvent::ToolStarted { call_id, name, args } => {
+        UiEvent::ToolStarted {
+            call_id,
+            name,
+            args,
+        } => {
             let acp_tc = AcpToolCall::new(call_id.clone(), name.clone())
                 .kind(tool_name_to_kind(name))
                 .status(ToolCallStatus::InProgress)
@@ -187,7 +191,9 @@ pub fn ui_event_to_session_update(ev: &UiEvent) -> Option<SessionUpdate> {
 
         UiEvent::ToolProgress { .. } => Some(SessionUpdate::Plan(Plan::new(vec![]))),
 
-        UiEvent::TokenUsage { cost_usd: Some(c), .. } => Some(SessionUpdate::UsageUpdate(
+        UiEvent::TokenUsage {
+            cost_usd: Some(c), ..
+        } => Some(SessionUpdate::UsageUpdate(
             UsageUpdate::new(0, 0).cost(Cost::new(*c, "USD")),
         )),
 

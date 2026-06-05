@@ -285,6 +285,101 @@ to the right sub-executor:
 
 ---
 
+## Outward observation plane (`ObservationBus` / `UiEvent`)
+
+The kernel emits two streams outward:
+
+| Stream | Transport | Purpose |
+|--------|-----------|---------|
+| `MachineProjection` | `watch` channel | Coarse state snapshot for rendering the UI shell (mode, overlay, status) |
+| `UiEvent` | `broadcast` channel (`ObservationSink`) | Fine-grained streaming events (text deltas, tool progress, token usage) |
+
+`UiEvent` variants:
+
+```
+TextDelta(String)              // streamed text chunk
+TextComplete(String)           // full accumulated response text
+ThinkingDelta / ThinkingComplete  // extended thinking support
+ToolStarted { call_id, name, args }
+ToolProgress { call_id, message }
+ToolFinished { call_id, name, output, is_error }
+TokenUsage { input, output, cache_read, cache_write, ... }
+ContextCompacted { ... }       // after automatic context compaction
+TodoUpdate(Value)              // updated todo list (JSON array)
+ModeChanged(String)            // e.g. "plan", "agent", "research"
+ModelChanged(String)           // e.g. "claude-opus-4-5"
+Error(String)                  // recoverable error
+TurnComplete                   // the current turn is finished
+```
+
+`ObservationSink` wraps a `broadcast::Sender<UiEvent>`. Frontends subscribe
+with `handle.subscribe_observations()` and receive events until `TurnComplete`
+or `Error`. Lagged subscribers skip dropped events (the bus is lossy by
+design, just like a render-tick stream).
+
+---
+
+## `ReactiveAgentMachine` + `ConverseExecutor` (Path B architecture)
+
+Rather than reimplementing the full agentic loop as HSM states, the
+`ReactiveAgentMachine` (in `sven-core`) uses **Path B**: it wraps the
+existing `sven_core::Agent` via `ConverseExecutor` and delegates the
+LLM⇆Tool loop to it.
+
+```
+┌────────────────── HSM kernel ─────────────────────┐
+│  ReactiveAgentMachine                              │
+│    Idle ──UserMessage──► Generating                │
+│                          │ Effect::CallLlm { ... } │
+└──────────────────────────┼────────────────────────┘
+                           │
+           ┌───────────────▼─────────────────────────┐
+           │ ConverseExecutor                         │
+           │  calls Agent::submit() in a loop         │
+           │  translates AgentEvent → UiEvent         │
+           │  posts Event::TurnComplete when done     │
+           └─────────────────────────────────────────┘
+```
+
+This means the legacy `Agent` / `run_agentic_loop` is still alive **inside**
+`ConverseExecutor`, not deleted. It will be replaced by a native HSM
+implementation in a future phase when all frontends are confirmed stable on
+the kernel path.
+
+---
+
+## Multi-session supervisor (`SessionSupervisor`)
+
+`SessionSupervisor` in `sven-bootstrap` manages a registry of concurrent
+kernel sessions keyed by `SessionId`:
+
+```
+SessionId → SessionBundle {
+    runtime:        ErasedRuntime,      // kernel task (detached tokio task)
+    handle:         RuntimeHandle,      // cheap clone for posting events
+    channels:       KernelChannels,     // question_rx / approval_rx
+    converse_agent: Option<Arc<Mutex<Agent>>>  // exposed for history ops
+}
+```
+
+Each session has its own kernel, model provider, MCP manager, tool registry,
+and observation bus. Sessions share `SharedSkills`, `SharedKnowledge`, and
+`SharedAgents` (all reference-counted) to avoid redundant disk reads.
+
+`RuntimeBuilder` is the per-session factory:
+
+```rust
+let bundle = RuntimeBuilder::new(config, "agent")
+    .with_runtime_context(ctx)
+    .with_tool_question_tx(question_tx)     // TUI question modal
+    .with_permission_requester(perm)        // ACP IDE approval
+    .with_initial_history(messages)         // resume a session
+    .build_session()
+    .await?;
+```
+
+---
+
 ## UI integration
 
 The TUI is **not** part of the machine. It is a projection consumer and an
@@ -350,12 +445,15 @@ matches expectations. E2E bats tests use `--model mock` with a
 
 | Crate | Role |
 |-------|------|
-| `sven-hsm` | HSM kernel: dispatch algorithm, Machine trait, Runtime (Active Object), permissions, audit, replay |
+| `sven-hsm` | HSM kernel: dispatch, Machine trait, Runtime (Active Object), permissions, audit, replay, `ObservationSink`/`UiEvent` |
 | `sven-llm` | Typed LLM request/response contracts + `LlmAdapter` trait + `MockLlmAdapter` |
-| `sven-executors` | Effect executors: LLM, tool, user, timer, checkpoint, audit, internal, composite |
-| `sven-core` | Concrete machines: `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry` |
-| `sven-bootstrap` | `RuntimeBuilder` - assembles the kernel from config and mode string |
-| `sven-frontend` | `MachineProjection` - UI-friendly kernel state snapshot + `ProjectionTx/Rx` |
+| `sven-executors` | Effect executors: LLM (`ConverseExecutor`), tool, user, timer, checkpoint, audit, internal, composite |
+| `sven-core` | Concrete machines: `ReactiveAgentMachine`, `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry` |
+| `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor` (multi-session registry) |
+| `sven-frontend` | `kernel_session_task` - bridges kernel `UiEvent`s to `AgentEvent`s for TUI/GUI renderers |
+| `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |
+| `sven-node` | `ControlService` - routes operator commands to the kernel; `ui_event_to_control` bridge |
+| `sven-acp` | `SvenAcpAgent` - ACP server backed by a per-session kernel; `ui_event_to_session_update` bridge |
 
 ---
 

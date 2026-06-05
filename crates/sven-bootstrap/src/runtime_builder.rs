@@ -230,8 +230,12 @@ impl RuntimeBuilder {
     /// - The model provider cannot be initialised from config.
     pub async fn build(
         self,
-    ) -> anyhow::Result<(ErasedRuntime, RuntimeHandle, KernelChannels, Option<Arc<Mutex<Agent>>>)>
-    {
+    ) -> anyhow::Result<(
+        ErasedRuntime,
+        RuntimeHandle,
+        KernelChannels,
+        Option<Arc<Mutex<Agent>>>,
+    )> {
         // ── Look up machine ───────────────────────────────────────────────────
         let registry = ModeRegistry::default_registry();
         let factory = registry.get(&self.mode).ok_or_else(|| {
@@ -244,7 +248,10 @@ impl RuntimeBuilder {
         let machine = factory();
 
         // ── Initialise model provider ─────────────────────────────────────────
-        let model_cfg = self.model_cfg_override.clone().unwrap_or(self.config.model.clone());
+        let model_cfg = self
+            .model_cfg_override
+            .clone()
+            .unwrap_or(self.config.model.clone());
         let model_provider = sven_model::from_config(&model_cfg)?;
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 

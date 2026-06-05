@@ -21,8 +21,8 @@ use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::events::TodoItem;
-use sven_tools::{Tool, ToolCall};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};
+use sven_tools::{Tool, ToolCall};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
@@ -459,7 +459,9 @@ pub async fn kernel_session_task(
                 }
                 debug!(msg_len = content.len(), "kernel task: posting UserMessage");
                 if !handle.send_user_message(content).await {
-                    let _ = tx.send(AgentEvent::Error("kernel queue closed".into())).await;
+                    let _ = tx
+                        .send(AgentEvent::Error("kernel queue closed".into()))
+                        .await;
                     break;
                 }
             }
@@ -489,7 +491,9 @@ pub async fn kernel_session_task(
                     agent.lock().await.seed_history(messages).await;
                 }
                 if !handle.send_user_message(new_user_content).await {
-                    let _ = tx.send(AgentEvent::Error("kernel queue closed".into())).await;
+                    let _ = tx
+                        .send(AgentEvent::Error("kernel queue closed".into()))
+                        .await;
                     break;
                 }
             }
@@ -553,16 +557,16 @@ fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
         UiEvent::TextComplete(t) => AgentEvent::TextComplete(t),
         UiEvent::ThinkingDelta(d) => AgentEvent::ThinkingDelta(d),
         UiEvent::ThinkingComplete(c) => AgentEvent::ThinkingComplete(c),
-        UiEvent::ToolStarted { call_id, name, args } => {
-            AgentEvent::ToolCallStarted(ToolCall {
-                id: call_id,
-                name,
-                args,
-            })
-        }
-        UiEvent::ToolProgress { call_id, message } => {
-            AgentEvent::ToolProgress { call_id, message }
-        }
+        UiEvent::ToolStarted {
+            call_id,
+            name,
+            args,
+        } => AgentEvent::ToolCallStarted(ToolCall {
+            id: call_id,
+            name,
+            args,
+        }),
+        UiEvent::ToolProgress { call_id, message } => AgentEvent::ToolProgress { call_id, message },
         UiEvent::ToolFinished {
             call_id,
             name,

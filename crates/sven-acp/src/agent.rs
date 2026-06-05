@@ -408,7 +408,9 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
         }
 
-        Ok(PromptResponse::new(stop_reason.unwrap_or(StopReason::EndTurn)))
+        Ok(PromptResponse::new(
+            stop_reason.unwrap_or(StopReason::EndTurn),
+        ))
     }
 
     async fn cancel(&self, args: CancelNotification) -> AcpResult<()> {

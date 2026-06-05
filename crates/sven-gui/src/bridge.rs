@@ -16,9 +16,8 @@ use sven_config::{AgentMode, ModelConfig};
 use sven_core::AgentEvent;
 use sven_frontend::commands::completion::fuzzy_score;
 use sven_frontend::{
-    kernel_session_task,
     commands::{CommandContext, CommandRegistry, ImmediateAction, ParsedCommand},
-    node_agent_task,
+    kernel_session_task, node_agent_task,
     queue::QueueState,
     AgentRequest, NodeBackend, QueuedMessage,
 };
