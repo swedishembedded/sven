@@ -34,7 +34,7 @@ use sven_executors::{
 };
 use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, RuntimeStatus};
 use sven_llm::DefaultLlmAdapter;
-use sven_mcp_client::{McpManager, McpTool};
+use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::{PermissionRequester, QuestionRequest};
 use tokio::sync::{mpsc, watch, Mutex};
@@ -235,6 +235,8 @@ impl RuntimeBuilder {
         RuntimeHandle,
         KernelChannels,
         Option<Arc<Mutex<Agent>>>,
+        Arc<McpManager>,
+        mpsc::Receiver<McpEvent>,
     )> {
         // ── Look up machine ───────────────────────────────────────────────────
         let registry = ModeRegistry::default_registry();
@@ -256,7 +258,7 @@ impl RuntimeBuilder {
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
         // ── MCP setup ────────────────────────────────────────────────────────
-        let (mcp_event_tx, _mcp_event_rx) = tokio::sync::mpsc::channel(64);
+        let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
         let mcp_manager = McpManager::new(
             self.config.mcp_servers.clone(),
             mcp_event_tx,
@@ -432,7 +434,7 @@ impl RuntimeBuilder {
             approval_rx,
         };
 
-        Ok((erased_runtime, handle, channels, exposed_agent))
+        Ok((erased_runtime, handle, channels, exposed_agent, mcp_manager, mcp_event_rx))
     }
 
     /// Build a fully-wired [`SessionBundle`] — the natural unit a
@@ -446,12 +448,15 @@ impl RuntimeBuilder {
     ///
     /// Propagates any error from [`build`](Self::build).
     pub async fn build_session(self) -> anyhow::Result<SessionBundle> {
-        let (runtime, handle, channels, converse_agent) = self.build().await?;
+        let (runtime, handle, channels, converse_agent, mcp_manager, mcp_event_rx) =
+            self.build().await?;
         Ok(SessionBundle {
             runtime,
             handle,
             channels,
             converse_agent,
+            mcp_manager,
+            mcp_event_rx,
         })
     }
 }
@@ -474,6 +479,13 @@ pub struct SessionBundle {
     /// only). Expose so callers can seed history or swap the model without
     /// stopping the runtime.
     pub converse_agent: Option<Arc<Mutex<Agent>>>,
+    /// MCP manager for the session. Frontends that display MCP slash-commands
+    /// or toast notifications should call `McpManager::tools()` after startup
+    /// and subscribe to `mcp_event_rx` for server events.
+    pub mcp_manager: Arc<McpManager>,
+    /// Receiver for MCP server events (tools changed, server health, etc.).
+    /// Consume in the frontend or drop to silence.
+    pub mcp_event_rx: mpsc::Receiver<McpEvent>,
 }
 
 /// Fallback: when `from_config` fails a second time, build a no-op provider

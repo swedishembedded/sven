@@ -367,7 +367,7 @@ pub async fn kernel_session_task(
     _shared_tools: SharedTools,
     _shared_tool_displays: SharedToolDisplays,
     _buffer_store: Arc<Mutex<OutputBufferStore>>,
-    _mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
+    mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
     _mcp_refresh_rx: Option<broadcast::Receiver<()>>,
 ) {
     let kernel_mode = mode_to_kernel_mode(mode);
@@ -387,6 +387,12 @@ pub async fn kernel_session_task(
             return;
         }
     };
+
+    // Unblock the TUI's mcp_rx.await by sending the manager immediately.
+    // Without this the render loop never starts (blank screen).
+    if let Some(mcp_tx) = mcp_manager_tx {
+        let _ = mcp_tx.send((bundle.mcp_manager, bundle.mcp_event_rx));
+    }
 
     let handle = bundle.handle.clone();
     let converse_agent = bundle.converse_agent.clone();
