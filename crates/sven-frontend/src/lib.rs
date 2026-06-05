@@ -29,6 +29,7 @@ pub mod agent;
 pub mod commands;
 pub mod markdown;
 pub mod node_agent;
+pub mod projection;
 pub mod queue;
 pub mod segment;
 pub mod tool_view;
@@ -38,6 +39,9 @@ pub mod types;
 
 pub use agent::{agent_task, AgentRequest};
 pub use node_agent::{fetch_node_tools, node_agent_task};
+pub use projection::{
+    projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,
+};
 pub use segment::{
     messages_for_resubmit, segment_at_line, segment_editable_text, segment_is_removable,
     segment_is_rerunnable, segment_short_preview, segment_tool_call_id, ChatSegment,

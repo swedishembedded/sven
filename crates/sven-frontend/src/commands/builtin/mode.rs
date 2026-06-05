@@ -55,6 +55,8 @@ impl SlashCommand for ModeCommand {
             "research" => Some(AgentMode::Research),
             "plan" => Some(AgentMode::Plan),
             "agent" => Some(AgentMode::Agent),
+            "chat" => Some(AgentMode::Chat),
+            "sdlc" => Some(AgentMode::Sdlc),
             _ => None,
         };
         CommandResult {

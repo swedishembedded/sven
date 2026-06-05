@@ -12,6 +12,8 @@ sven-input       = { path = "../sven-input" }
 sven-tools       = { path = "../sven-tools" }
 sven-core        = { path = "../sven-core" }
 sven-bootstrap   = { path = "../sven-bootstrap" }
+sven-hsm         = { path = "../sven-hsm" }
+sven-executors   = { path = "../sven-executors" }
 sven-mcp-client  = { path = "../sven-mcp-client" }
 sven-runtime     = { path = "../sven-runtime" }
 anyhow           = { workspace = true }
