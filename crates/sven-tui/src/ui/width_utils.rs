@@ -21,11 +21,8 @@ pub fn char_width(c: char) -> usize {
     UnicodeWidthChar::width(c).unwrap_or(0)
 }
 
-/// The display width of the ellipsis character `...` (U+2026).
-///
-/// In standard (non-CJK) mode, U+2026 is East Asian Ambiguous and treated as
-/// width 1, matching most Western terminal emulators.
-const ELLIPSIS_WIDTH: usize = 1;
+/// The display width of the ASCII ellipsis sequence `...` (three full stops).
+const ELLIPSIS_WIDTH: usize = 3;
 const ELLIPSIS: &str = "...";
 
 /// Truncate a string to fit within `max_cols` display columns.

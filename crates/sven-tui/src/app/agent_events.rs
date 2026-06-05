@@ -6,6 +6,7 @@
 use std::time::Instant;
 
 use sven_core::AgentEvent;
+use sven_frontend::MachineProjection;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 use sven_tools::QuestionRequest;
@@ -620,6 +621,65 @@ impl App {
         tracing::debug!(id = %req.id, count = req.questions.len(), "question request received");
         self.ui.question_modal = Some(QuestionModal::new(req.questions, req.answer_tx));
         self.ui.focus = FocusPane::Input;
+    }
+
+    // ── Kernel projection update ──────────────────────────────────────────────
+
+    /// Handle a [`MachineProjection`] update from the kernel runtime.
+    #[allow(dead_code)]
+    ///
+    /// This is the kernel-centric replacement for [`App::handle_agent_event`].
+    /// It maps projection fields onto `App` state without touching the legacy
+    /// `AgentEvent` path so both paths can coexist during the migration.
+    pub(crate) async fn handle_projection_update(&mut self, proj: &MachineProjection) {
+        use crate::app::ui_state::UiMode;
+
+        // ── Busy / spinner ────────────────────────────────────────────────────
+        self.agent.busy = proj.is_busy || proj.is_awaiting_user || proj.is_awaiting_approval;
+
+        // ── UiMode selection ──────────────────────────────────────────────────
+        if let Some(ref question) = proj.pending_question {
+            self.ui.ui_mode = UiMode::AwaitingUserInput {
+                question: question.clone(),
+            };
+            self.ui.focus = FocusPane::Input;
+        } else if let Some(ref request) = proj.pending_approval {
+            self.ui.ui_mode = UiMode::AwaitingApproval {
+                request: request.clone(),
+            };
+        } else if proj.is_done() {
+            self.ui.ui_mode = UiMode::Normal;
+            self.agent.busy = false;
+            self.agent.current_tool = None;
+            self.agent.spinner_frame = 0;
+        } else {
+            // Preserve manually-set overlay modes (Pager, Inspector, etc.).
+            if matches!(
+                self.ui.ui_mode,
+                UiMode::AwaitingUserInput { .. } | UiMode::AwaitingApproval { .. }
+            ) {
+                self.ui.ui_mode = UiMode::Normal;
+            }
+        }
+
+        // ── Last response ─────────────────────────────────────────────────────
+        if let Some(ref text) = proj.last_response {
+            if !text.is_empty() {
+                use crate::chat::segment::ChatSegment;
+                use sven_model::Message;
+                self.chat
+                    .segments
+                    .push(ChatSegment::Message(Message::assistant(text)));
+                self.save_history_async();
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+            }
+        }
+
+        // ── Busy spinner frame ────────────────────────────────────────────────
+        if proj.is_busy {
+            self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
+        }
     }
 }
 

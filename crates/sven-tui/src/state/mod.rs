@@ -79,12 +79,14 @@ impl SessionState {
         self.staged_mode = None;
     }
 
-    /// Cycle the mode: Research → Plan → Agent → Research.
+    /// Cycle the mode: Research → Plan → Agent → Chat → Sdlc → Research.
     pub fn cycle_mode(&mut self) {
         self.mode = match self.mode {
             AgentMode::Research => AgentMode::Plan,
             AgentMode::Plan => AgentMode::Agent,
-            AgentMode::Agent => AgentMode::Research,
+            AgentMode::Agent => AgentMode::Chat,
+            AgentMode::Chat => AgentMode::Sdlc,
+            AgentMode::Sdlc => AgentMode::Research,
         };
     }
 
@@ -188,6 +190,10 @@ mod tests {
         assert_eq!(s.mode, AgentMode::Plan);
         s.cycle_mode();
         assert_eq!(s.mode, AgentMode::Agent);
+        s.cycle_mode();
+        assert_eq!(s.mode, AgentMode::Chat);
+        s.cycle_mode();
+        assert_eq!(s.mode, AgentMode::Sdlc);
         s.cycle_mode();
         assert_eq!(s.mode, AgentMode::Research);
     }

@@ -24,6 +24,7 @@ use crate::{
     app::hit_test::{hit_test, HitArea},
     app::input_state::{is_image_path, InputAttachment},
     app::layout_cache::ResizeDrag,
+    app::ui_state::UiMode,
     app::{App, FocusPane},
     input::{is_reserved_key, to_nvim_notation},
     keys::{map_key, Action},
@@ -42,6 +43,23 @@ impl App {
                     self.ui.show_help = false;
                     return false;
                 }
+
+                // ── Kernel-driven overlay modes take precedence ────────────────
+                match &self.ui.ui_mode {
+                    UiMode::AwaitingUserInput { .. } => {
+                        // Let the existing question_modal path handle this;
+                        // fall through — the modal will be set when the TUI
+                        // receives the UserQuestion from the executor channel.
+                    }
+                    UiMode::AwaitingApproval { .. } => {
+                        // Fall through to the confirm-modal handler below.
+                    }
+                    UiMode::Confirm { .. } => {
+                        // Let confirm_modal handle keys (fall through).
+                    }
+                    _ => {}
+                }
+
                 // Team picker overlay intercepts keys - all mutations route
                 // through dispatch() so the logic lives in exactly one place.
                 if self.ui.show_team_picker {

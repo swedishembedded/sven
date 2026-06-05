@@ -169,6 +169,8 @@ pub(crate) fn mode_style(mode: AgentMode) -> Style {
         AgentMode::Research => Style::default().fg(Color::Rgb(100, 200, 130)),
         AgentMode::Plan => Style::default().fg(Color::Rgb(220, 190, 80)),
         AgentMode::Agent => Style::default().fg(Color::Rgb(180, 130, 220)),
+        AgentMode::Chat => Style::default().fg(Color::Rgb(100, 180, 220)),
+        AgentMode::Sdlc => Style::default().fg(Color::Rgb(220, 140, 80)),
     }
 }
 
