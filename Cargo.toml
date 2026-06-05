@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     ".",
+    "crates/sven-hsm",
     "crates/sven-config",
     "crates/sven-model",
     "crates/sven-image",
@@ -27,6 +28,9 @@ members = [
     "crates/sven-scheduler",
     "crates/sven-integrations",
     "crates/sven-memory",
+    # HSM phase 2 crates
+    "crates/sven-llm",
+    "crates/sven-executors",
 ]
 
 [workspace.dependencies]
