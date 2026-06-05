@@ -11,7 +11,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::Value;
-use sven_hsm::Event;
+use sven_hsm::{Event, ObservationSink, UiEvent};
 use sven_model::{CompletionRequest, Message, ModelProvider, ResponseEvent};
 
 use crate::error::LlmError;
@@ -42,12 +42,32 @@ pub trait LlmAdapter: Send + Sync {
 /// Production adapter that drives a real [`ModelProvider`].
 pub struct DefaultLlmAdapter {
     provider: Box<dyn ModelProvider>,
+    /// Optional outward observation sink. When present, streamed text /
+    /// thinking deltas and usage are forwarded as [`UiEvent`]s while the
+    /// completion is in flight, instead of being silently discarded.
+    obs: Option<ObservationSink>,
 }
 
 impl DefaultLlmAdapter {
     /// Wraps any [`ModelProvider`] implementation.
     pub fn new(provider: Box<dyn ModelProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            obs: None,
+        }
+    }
+
+    /// Like [`new`](Self::new) but forwards streamed deltas / usage to `obs`.
+    ///
+    /// This is what makes the typed-JSON path observable: every `TextDelta`,
+    /// `ThinkingDelta`, and `Usage` event the provider streams is mirrored
+    /// onto the outward plane as a [`UiEvent`], so frontends can render the
+    /// model thinking in real time even for structured SDLC requests.
+    pub fn with_observation(provider: Box<dyn ModelProvider>, obs: ObservationSink) -> Self {
+        Self {
+            provider,
+            obs: Some(obs),
+        }
     }
 }
 
@@ -60,7 +80,7 @@ impl LlmAdapter for DefaultLlmAdapter {
             stream: true,
             ..Default::default()
         };
-        let raw = accumulate_stream(self.provider.as_ref(), cr).await?;
+        let raw = accumulate_stream(self.provider.as_ref(), cr, self.obs.as_ref()).await?;
         parse_response(&req, &raw)
     }
 }
@@ -256,22 +276,72 @@ fn build_prompt(req: &LlmRequest) -> (String, String) {
 // ── Stream accumulation ───────────────────────────────────────────────────────
 
 /// Drains a completion stream, collecting `TextDelta` chunks into a single
-/// string and discarding non-text events.
+/// string.
+///
+/// When `obs` is `Some`, the streamed deltas are *also* forwarded onto the
+/// outward observation plane as [`UiEvent`]s (text, thinking, usage) so the
+/// caller can render them live. Previously these events were discarded, which
+/// meant the typed-JSON path produced no streaming UX at all.
 async fn accumulate_stream(
     provider: &dyn ModelProvider,
     req: CompletionRequest,
+    obs: Option<&ObservationSink>,
 ) -> Result<String, LlmError> {
     let mut stream = provider.complete(req).await?;
     let mut text = String::new();
+    let mut thinking = String::new();
     while let Some(event) = stream.next().await {
         let event = event?;
         match event {
-            ResponseEvent::TextDelta(delta) => text.push_str(&delta),
+            ResponseEvent::TextDelta(delta) => {
+                if let Some(obs) = obs {
+                    if !thinking.is_empty() {
+                        obs.emit(UiEvent::ThinkingComplete(std::mem::take(&mut thinking)));
+                    }
+                    obs.emit(UiEvent::TextDelta(delta.clone()));
+                }
+                text.push_str(&delta);
+            }
+            ResponseEvent::ThinkingDelta(delta) => {
+                if let Some(obs) = obs {
+                    obs.emit(UiEvent::ThinkingDelta(delta.clone()));
+                }
+                thinking.push_str(&delta);
+            }
+            ResponseEvent::Usage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                cost_usd,
+            } => {
+                if let Some(obs) = obs {
+                    obs.emit(UiEvent::TokenUsage {
+                        input: input_tokens,
+                        output: output_tokens,
+                        cache_read: cache_read_tokens,
+                        cache_write: cache_write_tokens,
+                        cache_read_total: cache_read_tokens,
+                        cache_write_total: cache_write_tokens,
+                        max_tokens: 0,
+                        max_output_tokens: 0,
+                        cost_usd,
+                    });
+                }
+            }
             ResponseEvent::Done => break,
             ResponseEvent::Error(e) => {
                 tracing::warn!(error = %e, "LLM stream error (non-fatal)");
             }
             _ => {}
+        }
+    }
+    if let Some(obs) = obs {
+        if !thinking.is_empty() {
+            obs.emit(UiEvent::ThinkingComplete(thinking));
+        }
+        if !text.is_empty() {
+            obs.emit(UiEvent::TextComplete(text.clone()));
         }
     }
     Ok(text)
@@ -384,6 +454,71 @@ fn strip_code_fences(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Streaming forwarding ──────────────────────────────────────────────────
+
+    /// Minimal in-memory provider that replays a fixed event script.
+    struct ScriptProvider(Vec<ResponseEvent>);
+
+    #[async_trait]
+    impl ModelProvider for ScriptProvider {
+        fn name(&self) -> &str {
+            "script"
+        }
+        fn model_name(&self) -> &str {
+            "script"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> anyhow::Result<
+            std::pin::Pin<
+                Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>,
+            >,
+        > {
+            let events: Vec<anyhow::Result<ResponseEvent>> =
+                self.0.iter().cloned().map(Ok).collect();
+            Ok(Box::pin(futures::stream::iter(events)))
+        }
+    }
+
+    #[tokio::test]
+    async fn accumulate_stream_forwards_deltas_to_observation_sink() {
+        let provider = ScriptProvider(vec![
+            ResponseEvent::ThinkingDelta("hmm".into()),
+            ResponseEvent::TextDelta("pong".into()),
+            ResponseEvent::Done,
+        ]);
+        let obs = ObservationSink::new(16);
+        let mut rx = obs.subscribe();
+
+        let text = accumulate_stream(&provider, CompletionRequest::default(), Some(&obs))
+            .await
+            .unwrap();
+        assert_eq!(text, "pong");
+
+        let mut seen = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            seen.push(ev);
+        }
+        assert!(seen.contains(&UiEvent::ThinkingDelta("hmm".into())));
+        assert!(seen.contains(&UiEvent::ThinkingComplete("hmm".into())));
+        assert!(seen.contains(&UiEvent::TextDelta("pong".into())));
+        assert!(seen.contains(&UiEvent::TextComplete("pong".into())));
+    }
+
+    #[tokio::test]
+    async fn accumulate_stream_without_sink_still_collects_text() {
+        let provider = ScriptProvider(vec![
+            ResponseEvent::TextDelta("a".into()),
+            ResponseEvent::TextDelta("b".into()),
+            ResponseEvent::Done,
+        ]);
+        let text = accumulate_stream(&provider, CompletionRequest::default(), None)
+            .await
+            .unwrap();
+        assert_eq!(text, "ab");
+    }
 
     #[test]
     fn strip_fences_removes_json_fence() {
