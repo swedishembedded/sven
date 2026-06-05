@@ -783,6 +783,10 @@ pub enum AgentMode {
     Plan,
     /// Full agent with read/write tools
     Agent,
+    /// Conversational chat mode (HSM ConversationMachine)
+    Chat,
+    /// Software development lifecycle mode (HSM SoftwareDevelopmentMachine)
+    Sdlc,
 }
 
 impl std::fmt::Display for AgentMode {
@@ -791,6 +795,8 @@ impl std::fmt::Display for AgentMode {
             AgentMode::Research => write!(f, "research"),
             AgentMode::Plan => write!(f, "plan"),
             AgentMode::Agent => write!(f, "agent"),
+            AgentMode::Chat => write!(f, "chat"),
+            AgentMode::Sdlc => write!(f, "sdlc"),
         }
     }
 }
