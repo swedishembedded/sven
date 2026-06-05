@@ -170,6 +170,24 @@ async fn main() -> anyhow::Result<()> {
         return run_as_teammate(agent_name, team_name, role, config).await;
     }
 
+    // ── HSM mode resolution ─────────────────────────────────────────────────
+    // `SVEN_MODE` env (or `--mode` flag mapped into kernel vocabulary) selects
+    // the machine from `sven_core::ModeRegistry`.  This string is forwarded to
+    // `RuntimeBuilder::new(config, mode)` inside run_tui / run_ci / run_gui as
+    // those functions are migrated to the kernel path.
+    //
+    // Priority: SVEN_MODE env > --mode CLI flag > "chat"
+    let _hsm_mode: String = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
+        match cli.mode {
+            AgentMode::Agent => "chat",
+            AgentMode::Plan => "sdlc",
+            AgentMode::Research => "chat",
+            AgentMode::Chat => "chat",
+            AgentMode::Sdlc => "sdlc",
+        }
+        .to_string()
+    });
+
     if cli.gui {
         run_gui(cli, config).await
     } else if cli.is_headless() {
@@ -1745,6 +1763,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
                             "research" => Some(AgentMode::Research),
                             "plan" => Some(AgentMode::Plan),
                             "agent" => Some(AgentMode::Agent),
+                            "chat" => Some(AgentMode::Chat),
+                            "sdlc" => Some(AgentMode::Sdlc),
                             _ => None,
                         });
                         q.push(QueuedMessage {
