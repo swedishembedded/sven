@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! [`SvenAcpAgent`] - implements the ACP `Agent` trait for sven.
 //!
-//! Each `new_session` call builds a fresh `sven_core::Agent` via
-//! [`sven_bootstrap::AgentBuilder`] and stores it in a [`SessionEntry`] keyed
-//! by ACP [`SessionId`].  `prompt` runs the agent loop, bridges
-//! [`sven_core::AgentEvent`]s to ACP `session/update` notifications, and
-//! returns when the turn completes or is cancelled.
+//! Each `new_session` call builds a fresh kernel session via
+//! [`sven_bootstrap::RuntimeBuilder`] and stores its [`RuntimeHandle`] in a
+//! [`SessionEntry`] keyed by ACP [`SessionId`].  `prompt` posts
+//! `Event::UserMessage` to the kernel, subscribes to the [`UiEvent`]
+//! observation bus, and bridges those events to ACP `session/update`
+//! notifications, returning when the turn completes or is cancelled.
 //!
 //! The struct is intentionally `!Send` (it uses `RefCell` for interior
 //! mutability) and lives inside a `tokio::task::LocalSet` spawned by
@@ -27,7 +28,7 @@ use agent_client_protocol::{
     SessionNotification, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCallUpdate,
     ToolCallUpdateFields,
 };
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 /// How long `send_notification` waits for the I/O background task to flush a
@@ -44,13 +45,12 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// request before defaulting to denial.
 const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
-use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::{RuntimeBuilder, RuntimeContext, RuntimeHandle};
 use sven_config::{AgentMode, Config};
-use sven_core::{Agent, AgentEvent};
-use sven_tools::events::TodoItem;
+use sven_hsm::UiEvent;
 
 use crate::bridge::{
-    acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
+    acp_mode_id_to_sven_mode, sven_mode_to_acp_mode_id, ui_event_to_session_update,
 };
 
 // ─── Version string ───────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ pub enum ConnMessage {
 /// requests to the IDE over ACP via the `session/request_permission` method.
 ///
 /// Created per session in [`SvenAcpAgent::new_session`] and passed to
-/// [`AgentBuilder::with_permission_requester`] so that tools with
+/// [`RuntimeBuilder::with_permission_requester`] so that tools with
 /// `ApprovalPolicy::Ask` gate their execution on an explicit IDE approval.
 struct AcpPermissionRequester {
     session_id: String,
@@ -165,17 +165,17 @@ impl sven_tools::PermissionRequester for AcpPermissionRequester {
 
 /// Per-session state stored inside [`SvenAcpAgent`].
 struct SessionEntry {
-    /// The sven core agent for this session.
-    agent: Mutex<Agent>,
+    /// Kernel handle for posting events into the session runtime.
+    handle: RuntimeHandle,
     /// Mode lock shared between the agent loop and mode-change requests.
-    mode_lock: Arc<Mutex<AgentMode>>,
+    mode_lock: Arc<tokio::sync::Mutex<AgentMode>>,
     /// Cancellation sender; replaced on each new prompt turn.
-    cancel_tx: Mutex<Option<oneshot::Sender<()>>>,
+    cancel_tx: tokio::sync::Mutex<Option<oneshot::Sender<()>>>,
 }
 
 // ─── SvenAcpAgent ─────────────────────────────────────────────────────────────
 
-/// ACP agent implementation backed by a sven [`Agent`].
+/// ACP agent implementation backed by the HSM kernel.
 ///
 /// `!Send` due to `RefCell`; must run inside a [`tokio::task::LocalSet`].
 pub struct SvenAcpAgent {
@@ -257,43 +257,52 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let session_id = uuid::Uuid::new_v4().to_string();
         let initial_mode = AgentMode::Agent;
 
-        let model: Arc<dyn sven_model::ModelProvider> =
-            match sven_model::from_config(&self.config.model) {
-                Ok(m) => Arc::from(m),
-                Err(e) => {
-                    tracing::error!("ACP model init error: {e}");
-                    return Err(Error::internal_error());
-                }
-            };
-
-        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(vec![]));
-        let buffer_store = Arc::new(Mutex::new(sven_tools::OutputBufferStore::new()));
-        let profile = ToolSetProfile::Full {
-            question_tx: None,
-            todos: todos.clone(),
-            buffer_store,
-        };
-
-        let mut runtime_ctx = RuntimeContext::auto_detect();
-        runtime_ctx.project_root = Some(args.cwd.clone());
-
         let permission_requester = Arc::new(AcpPermissionRequester {
             session_id: session_id.clone(),
             conn_tx: self.conn_tx.clone(),
         });
 
-        let agent = AgentBuilder::new(Arc::clone(&self.config))
+        let mut runtime_ctx = RuntimeContext::auto_detect();
+        runtime_ctx.project_root = Some(args.cwd.clone());
+
+        let bundle = RuntimeBuilder::new(Arc::clone(&self.config), "agent")
             .with_runtime_context(runtime_ctx)
             .with_permission_requester(permission_requester)
-            .build(initial_mode, model, profile)
-            .await;
+            .build_session()
+            .await
+            .map_err(|e| {
+                tracing::error!("ACP kernel build error: {e:#}");
+                Error::internal_error()
+            })?;
 
-        let mode_lock = agent.current_mode_lock().clone();
+        let handle = bundle.handle.clone();
+
+        // Auto-consume kernel-level approval/question channels; tool-level
+        // approvals are handled by `AcpPermissionRequester` above.
+        let mut channels = bundle.channels;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    q = channels.question_rx.recv() => match q {
+                        Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                        None => break,
+                    },
+                    a = channels.approval_rx.recv() => match a {
+                        Some(a) => { let _ = a.reply_tx.send(true); }
+                        None => break,
+                    },
+                }
+            }
+        });
+
+        drop(bundle.runtime);
+
+        let mode_lock = Arc::new(tokio::sync::Mutex::new(initial_mode));
 
         let entry = Arc::new(SessionEntry {
-            agent: Mutex::new(agent),
+            handle,
             mode_lock,
-            cancel_tx: Mutex::new(None),
+            cancel_tx: tokio::sync::Mutex::new(None),
         });
 
         self.sessions.borrow_mut().insert(session_id.clone(), entry);
@@ -338,89 +347,68 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *entry.cancel_tx.lock().await = Some(cancel_tx);
 
-        // Event channel for streaming agent events.
-        let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(128);
+        // Subscribe to the kernel observation bus before posting the message
+        // so we don't miss the first event.
+        let mut obs_rx = entry.handle.subscribe_observations();
 
-        // Spawn the agent task.
-        let entry_for_task = Arc::clone(&entry);
-        let text_clone = text.clone();
-        let task = tokio::task::spawn_local(async move {
-            let mut agent = entry_for_task.agent.lock().await;
-            agent
-                .submit_with_cancel(&text_clone, event_tx, cancel_rx)
-                .await
-        });
+        // Post the user message to the kernel.
+        entry.handle.send_user_message(text).await;
 
-        // Bridge AgentEvents to ACP session/update notifications.
-        // When the agent returns Err without sending TurnComplete/Aborted/Error,
-        // the channel closes (None). We must treat that as failure so the task
-        // tool does not report success with empty content.
+        // Bridge UiEvents to ACP session/update notifications until the turn
+        // completes (TurnComplete), is aborted (UserCancelled), or errors.
         let mut stop_reason = None::<StopReason>;
         let mut agent_error = None::<String>;
 
+        // Pin the oneshot receiver so it can be polled repeatedly in select!
+        // without being moved on the first iteration.
+        tokio::pin!(cancel_rx);
+
         loop {
-            match event_rx.recv().await {
-                Some(AgentEvent::TurnComplete) => {
-                    stop_reason = Some(StopReason::EndTurn);
-                    break;
-                }
-                Some(AgentEvent::Aborted { .. }) => {
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    // Cancellation requested from `cancel()`.
+                    entry.handle.cancel().await;
                     stop_reason = Some(StopReason::Cancelled);
                     break;
                 }
-                Some(AgentEvent::Error(msg)) => {
-                    agent_error = Some(msg);
-                    break;
-                }
-                Some(event) => {
-                    if let Some(update) = agent_event_to_session_update(&event) {
+                result = obs_rx.recv() => {
+                    use tokio::sync::broadcast::error::RecvError;
+                    let ev = match result {
+                        Ok(ev) => ev,
+                        Err(RecvError::Lagged(_)) => continue,
+                        Err(RecvError::Closed) => break,
+                    };
+
+                    let is_turn_complete = matches!(ev, UiEvent::TurnComplete);
+                    let is_error = matches!(ev, UiEvent::Error(_));
+
+                    if is_error {
+                        if let UiEvent::Error(msg) = ev {
+                            agent_error = Some(msg);
+                        }
+                        break;
+                    }
+
+                    if let Some(update) = ui_event_to_session_update(&ev) {
                         let notification =
                             SessionNotification::new(args.session_id.clone(), update);
                         self.send_notification(notification).await;
                     }
-                }
-                None => {
-                    // Channel closed without a terminal event - agent may have
-                    // returned Err. Await the task to confirm and surface failure.
-                    break;
+
+                    if is_turn_complete {
+                        stop_reason = Some(StopReason::EndTurn);
+                        break;
+                    }
                 }
             }
         }
 
         if let Some(msg) = agent_error {
-            warn!(session = %session_id, error = %msg, "ACP prompt: agent reported error");
-            let _ = task.await;
+            warn!(session = %session_id, error = %msg, "ACP prompt: kernel reported error");
             return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
         }
 
-        let stop_reason = match stop_reason {
-            Some(r) => {
-                let _ = task.await;
-                r
-            }
-            None => {
-                // Channel closed (None). The agent task may have failed.
-                match task.await {
-                    Ok(Ok(())) => StopReason::EndTurn,
-                    Ok(Err(e)) => {
-                        warn!(session = %session_id, error = %e, "ACP prompt: agent task failed");
-                        return Err(Error::new(
-                            i32::from(ErrorCode::InternalError),
-                            e.to_string(),
-                        ));
-                    }
-                    Err(e) => {
-                        warn!(session = %session_id, error = %e, "ACP prompt: agent task join failed");
-                        return Err(Error::new(
-                            i32::from(ErrorCode::InternalError),
-                            e.to_string(),
-                        ));
-                    }
-                }
-            }
-        };
-
-        Ok(PromptResponse::new(stop_reason))
+        Ok(PromptResponse::new(stop_reason.unwrap_or(StopReason::EndTurn)))
     }
 
     async fn cancel(&self, args: CancelNotification) -> AcpResult<()> {

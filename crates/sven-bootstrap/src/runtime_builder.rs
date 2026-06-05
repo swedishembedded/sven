@@ -36,7 +36,7 @@ use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, Runti
 use sven_llm::DefaultLlmAdapter;
 use sven_mcp_client::{McpManager, McpTool};
 use sven_model::Message;
-use sven_tools::QuestionRequest;
+use sven_tools::{PermissionRequester, QuestionRequest};
 use tokio::sync::{mpsc, watch, Mutex};
 use tracing::{info, warn};
 
@@ -134,6 +134,9 @@ pub struct RuntimeBuilder {
     /// Conversation history to seed into the converse agent before the
     /// first turn (used when resuming or switching sessions).
     initial_history: Vec<Message>,
+    /// Optional permission requester for tool-call approval gating
+    /// (e.g., ACP sends `session/request_permission` to the IDE).
+    permission_requester: Option<Arc<dyn PermissionRequester>>,
 }
 
 impl RuntimeBuilder {
@@ -159,6 +162,7 @@ impl RuntimeBuilder {
             model_cfg_override: None,
             tool_question_tx: None,
             initial_history: Vec::new(),
+            permission_requester: None,
         }
     }
 
@@ -202,6 +206,16 @@ impl RuntimeBuilder {
     /// multi-session tabs).
     pub fn with_initial_history(mut self, messages: Vec<Message>) -> Self {
         self.initial_history = messages;
+        self
+    }
+
+    /// Set a [`PermissionRequester`] that gates tool-call approval via an
+    /// external channel (e.g. the ACP `session/request_permission` method).
+    ///
+    /// When set, the tool registry will call `requester.request_permission()`
+    /// before executing any tool that has `ApprovalPolicy::Ask`.
+    pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
+        self.permission_requester = Some(requester);
         self
     }
 
@@ -301,6 +315,10 @@ impl RuntimeBuilder {
         let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
         for tool in mcp_tools {
             tool_registry.register(tool);
+        }
+
+        if let Some(requester) = self.permission_requester {
+            tool_registry.set_permission_requester(requester);
         }
 
         let tool_registry = Arc::new(tool_registry);
