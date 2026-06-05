@@ -1,0 +1,344 @@
+// Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! [`RuntimeBuilder`] — constructs a kernel-based runtime from config.
+//!
+//! This is the kernel-centric replacement for [`AgentBuilder`]: instead of
+//! creating an `Agent` it produces an [`ErasedRuntime`] driven by a machine
+//! fetched from [`sven_core::ModeRegistry`].
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! let (runtime, channels) = RuntimeBuilder::new(config)
+//!     .with_mode("chat")
+//!     .build()
+//!     .await?;
+//!
+//! // Seed the machine with the first user message.
+//! runtime.post(Event::UserMessage { text: "Hello".into() }).await;
+//!
+//! // Frontend holds the other end of the channels.
+//! let question = channels.question_rx.recv().await;
+//! ```
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use sven_config::Config;
+use sven_core::ModeRegistry;
+use sven_executors::{
+    user::{ApprovalRequest, UserQuestion},
+    CompositeExecutorBuilder,
+};
+use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, RuntimeStatus};
+use sven_llm::DefaultLlmAdapter;
+use sven_mcp_client::{McpManager, McpTool};
+use tokio::sync::{mpsc, watch};
+use tracing::{info, warn};
+
+use crate::context::{RuntimeContext, ToolSetProfile};
+use crate::registry::build_tool_registry;
+
+// ── KernelChannels ────────────────────────────────────────────────────────────
+
+/// Channel endpoints returned to the caller (TUI / node / CI) so they can
+/// exchange user input and approval decisions with the running kernel.
+pub struct KernelChannels {
+    /// Receives questions the kernel's `UserExecutor` forwards from
+    /// `Effect::AskUser`. The holder must display the prompt and send the
+    /// answer through [`UserQuestion::reply_tx`].
+    pub question_rx: mpsc::Receiver<UserQuestion>,
+    /// Receives approval requests forwarded from
+    /// `Effect::RequestHumanApproval`. The holder must approve or deny via
+    /// [`ApprovalRequest::reply_tx`].
+    pub approval_rx: mpsc::Receiver<ApprovalRequest>,
+}
+
+// ── RuntimeHandle ─────────────────────────────────────────────────────────────
+
+/// A cheap-to-clone handle to a spawned [`ErasedRuntime`].
+///
+/// Provides the event sink and status watch; the caller typically also holds
+/// the [`KernelChannels`] returned alongside this handle.
+#[derive(Clone)]
+pub struct RuntimeHandle {
+    sink: EventSink,
+    status_rx: watch::Receiver<RuntimeStatus>,
+}
+
+impl RuntimeHandle {
+    /// Returns a cloneable sink for posting events into the kernel.
+    #[must_use]
+    pub fn sink(&self) -> EventSink {
+        self.sink.clone()
+    }
+
+    /// Posts `Event::UserMessage { text }` into the kernel queue.
+    pub async fn send_user_message(&self, text: String) -> bool {
+        self.sink.emit(Event::UserMessage { text }).await
+    }
+
+    /// Posts `Event::UserCancelled` into the kernel queue.
+    pub async fn cancel(&self) -> bool {
+        self.sink.emit(Event::UserCancelled).await
+    }
+
+    /// The latest published status snapshot.
+    #[must_use]
+    pub fn status(&self) -> RuntimeStatus {
+        self.status_rx.borrow().clone()
+    }
+
+    /// A fresh receiver for status updates (watch channel).
+    #[must_use]
+    pub fn status_watch(&self) -> watch::Receiver<RuntimeStatus> {
+        self.status_rx.clone()
+    }
+}
+
+// ── RuntimeBuilder ────────────────────────────────────────────────────────────
+
+/// Constructs a kernel-based [`ErasedRuntime`] from a [`Config`].
+///
+/// Mirrors the API of [`AgentBuilder`] but produces the new HSM-kernel
+/// runtime instead of the legacy `Agent`.
+pub struct RuntimeBuilder {
+    config: Arc<Config>,
+    mode: String,
+    runtime_ctx: RuntimeContext,
+    allow_interactive_oauth: bool,
+    wait_for_mcp_tools_ms: Option<u64>,
+}
+
+impl RuntimeBuilder {
+    /// Create a builder with the given configuration.
+    ///
+    /// `mode` selects the machine from [`ModeRegistry`] (e.g. `"chat"` or
+    /// `"sdlc"`). Defaults to `"chat"` if empty.
+    pub fn new(config: Arc<Config>, mode: impl Into<String>) -> Self {
+        let mode = {
+            let s = mode.into();
+            if s.is_empty() {
+                "chat".to_string()
+            } else {
+                s
+            }
+        };
+        Self {
+            config,
+            mode,
+            runtime_ctx: RuntimeContext::empty(),
+            allow_interactive_oauth: true,
+            wait_for_mcp_tools_ms: None,
+        }
+    }
+
+    /// Set the runtime context (project root, git, CI environment).
+    pub fn with_runtime_context(mut self, ctx: RuntimeContext) -> Self {
+        self.runtime_ctx = ctx;
+        self
+    }
+
+    /// Disable interactive OAuth flows for headless/CI/batch runs.
+    pub fn with_allow_interactive_oauth(mut self, allow: bool) -> Self {
+        self.allow_interactive_oauth = allow;
+        self
+    }
+
+    /// Wait up to `timeout_ms` ms for MCP tools before building.
+    pub fn with_wait_for_mcp_tools(mut self, timeout_ms: u64) -> Self {
+        self.wait_for_mcp_tools_ms = if timeout_ms > 0 {
+            Some(timeout_ms)
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Build the runtime. Returns the [`ErasedRuntime`], a cheap
+    /// [`RuntimeHandle`] for posting events, and the [`KernelChannels`] for
+    /// the frontend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The mode is not registered in [`ModeRegistry`].
+    /// - The model provider cannot be initialised from config.
+    pub async fn build(self) -> anyhow::Result<(ErasedRuntime, RuntimeHandle, KernelChannels)> {
+        // ── Look up machine ───────────────────────────────────────────────────
+        let registry = ModeRegistry::default_registry();
+        let factory = registry.get(&self.mode).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown mode {:?}; available: {:?}",
+                self.mode,
+                registry.modes()
+            )
+        })?;
+        let machine = factory();
+
+        // ── Initialise model provider ─────────────────────────────────────────
+        let model_cfg = self.config.model.clone();
+        let model_provider = sven_model::from_config(&model_cfg)?;
+        let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
+
+        // ── MCP setup ────────────────────────────────────────────────────────
+        let (mcp_event_tx, _mcp_event_rx) = tokio::sync::mpsc::channel(64);
+        let mcp_manager = McpManager::new(
+            self.config.mcp_servers.clone(),
+            mcp_event_tx,
+            self.allow_interactive_oauth,
+        );
+        mcp_manager.connect_all().await;
+        mcp_manager.start_background_tasks();
+
+        let has_enabled_servers = self.config.mcp_servers.values().any(|c| c.enabled);
+        if let Some(timeout_ms) = self.wait_for_mcp_tools_ms {
+            if has_enabled_servers {
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+                let poll_interval = Duration::from_millis(200);
+                loop {
+                    let tools = mcp_manager.tools().await;
+                    if !tools.is_empty() {
+                        info!(
+                            count = tools.len(),
+                            "MCP tools available for kernel runtime"
+                        );
+                        break;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        warn!(timeout_ms, "MCP tools not available within timeout");
+                        break;
+                    }
+                    tokio::time::sleep(poll_interval).await;
+                }
+            }
+        }
+
+        // ── Build tool registry ───────────────────────────────────────────────
+        let mode_lock = Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
+        let (tool_event_tx, _tool_event_rx) =
+            tokio::sync::mpsc::channel::<sven_tools::events::ToolEvent>(64);
+        let mut runtime = self.runtime_ctx.to_agent_runtime();
+        runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
+        runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
+
+        let todos = Arc::new(tokio::sync::Mutex::new(
+            Vec::<sven_tools::events::TodoItem>::new(),
+        ));
+        let buffer_store = Arc::new(tokio::sync::Mutex::new(sven_tools::OutputBufferStore::new()));
+
+        let mut tool_registry = build_tool_registry(
+            &self.config,
+            model.clone(),
+            ToolSetProfile::Full {
+                question_tx: None,
+                todos,
+                buffer_store,
+            },
+            mode_lock,
+            tool_event_tx,
+            runtime,
+        );
+
+        let mcp_tools: Vec<McpTool> = mcp_manager.tools().await;
+        for tool in mcp_tools {
+            tool_registry.register(tool);
+        }
+
+        let tool_registry = Arc::new(tool_registry);
+
+        // ── User/approval channels ────────────────────────────────────────────
+        let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
+        let (approval_tx, approval_rx) = mpsc::channel::<ApprovalRequest>(16);
+
+        // ── Audit log path ────────────────────────────────────────────────────
+        let audit_log_path: PathBuf = self
+            .runtime_ctx
+            .project_root
+            .as_ref()
+            .map(|r| r.join(".sven").join("audit.jsonl"))
+            .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"));
+
+        // ── Checkpoint dir ────────────────────────────────────────────────────
+        let checkpoint_dir: PathBuf = self
+            .runtime_ctx
+            .project_root
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        // ── Build LLM adapter ─────────────────────────────────────────────────
+        // Build a second model provider instance for the LlmAdapter (it takes
+        // Box<dyn ModelProvider>, while the tool registry needs Arc).
+        let llm_model_box =
+            sven_model::from_config(&model_cfg).unwrap_or_else(|_| model_provider_for_llm(&model));
+        let llm_adapter = Arc::new(DefaultLlmAdapter::new(llm_model_box));
+
+        // ── Assemble executor ─────────────────────────────────────────────────
+        let executor = CompositeExecutorBuilder::default()
+            .with_llm(llm_adapter)
+            .with_tools(tool_registry, Default::default())
+            .with_user(question_tx, approval_tx)
+            .with_timers(Arc::new(sven_hsm::SystemClock::new()))
+            .with_checkpoints(checkpoint_dir)
+            .with_audit(audit_log_path)
+            .build();
+
+        // ── Permission policy (open: kernel gates per-state checks) ───────────
+        let policy = PermissionPolicy::builder()
+            .allow_globally([
+                sven_hsm::ToolCapability::ReadFile,
+                sven_hsm::ToolCapability::WriteFile,
+                sven_hsm::ToolCapability::NetworkAccess,
+                sven_hsm::ToolCapability::GitOperation,
+            ])
+            .build();
+
+        // ── Spawn runtime ─────────────────────────────────────────────────────
+        let erased_runtime = ErasedRuntime::spawn(machine, Context::new(), policy, executor, 64);
+
+        let handle = RuntimeHandle {
+            sink: erased_runtime.sink(),
+            status_rx: erased_runtime.status_watch(),
+        };
+
+        let channels = KernelChannels {
+            question_rx,
+            approval_rx,
+        };
+
+        Ok((erased_runtime, handle, channels))
+    }
+}
+
+/// Fallback: when `from_config` fails a second time, build a no-op provider
+/// that always fails. This is only reached in misconfigured environments.
+fn model_provider_for_llm(
+    _model: &Arc<dyn sven_model::ModelProvider>,
+) -> Box<dyn sven_model::ModelProvider> {
+    // This path should never be reached in practice; `from_config` succeeds
+    // twice with the same config unless the provider has ephemeral state.
+    // Return a zero-dependency mock that always errors.
+    struct NoOpProvider;
+    #[async_trait::async_trait]
+    impl sven_model::ModelProvider for NoOpProvider {
+        fn name(&self) -> &str {
+            "noop"
+        }
+        fn model_name(&self) -> &str {
+            "noop"
+        }
+        async fn complete(
+            &self,
+            _req: sven_model::CompletionRequest,
+        ) -> anyhow::Result<
+            std::pin::Pin<
+                Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+            >,
+        > {
+            anyhow::bail!("no model provider configured for LLM executor")
+        }
+    }
+    Box::new(NoOpProvider)
+}
