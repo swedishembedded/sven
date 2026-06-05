@@ -1,0 +1,21 @@
+[package]
+name         = "sven-llm"
+version      = "0.1.0"
+edition      = "2021"
+description  = "Typed LLM operation contracts for the Sven HSM runtime"
+license      = "Apache-2.0"
+
+[dependencies]
+sven-hsm   = { path = "../sven-hsm" }
+sven-model = { path = "../sven-model" }
+anyhow     = { workspace = true }
+thiserror  = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tokio      = { workspace = true }
+async-trait = { workspace = true }
+futures    = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
