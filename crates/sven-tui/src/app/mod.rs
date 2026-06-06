@@ -1214,11 +1214,18 @@ impl App {
                     self.ui.push_toast(toast);
                 }
                 _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
-                    // Advance the clock-driven animation frame and rebuild the
-                    // display so animated indicators update at a steady 80ms rate.
+                    // Advance the clock-driven animation frame. This branch also
+                    // serves as the display refresh for streaming text: TextDelta
+                    // handlers only buffer incoming tokens; the actual render
+                    // (build_display_from_segments + Neovim sync) is rate-limited
+                    // here to 80ms so fast LLM streams don't starve keyboard events.
                     self.agent.anim_frame = self.agent.anim_frame.wrapping_add(1);
-                    self.build_display_from_segments();
-                    self.ui.search.update_matches(&self.chat.lines);
+                    self.rerender_chat().await;
+                    self.scroll_to_bottom();
+                    self.nvim_scroll_to_bottom().await;
+                    if let Some(pager) = &mut self.ui.pager {
+                        pager.set_lines(self.chat.lines.clone());
+                    }
                 }
                 _ = Self::nvim_notify_future(flush_notify_clone.as_deref()) => {}
                 _ = Self::nvim_notify_future(submit_notify_clone.as_deref()) => {

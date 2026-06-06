@@ -116,6 +116,7 @@ impl App {
         // session - which is guaranteed here.
         match event {
             AgentEvent::TextDelta(delta) => {
+                tracing::debug!(len = delta.len(), "TUI: TextDelta received");
                 self.chat.streaming_is_thinking = false;
                 // Approximate token count: ~4 chars per token.
                 self.agent.streaming_tokens = self
@@ -125,14 +126,14 @@ impl App {
                 // Advance spinner frame.
                 self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);
-                self.rerender_chat().await;
+                // Display refresh is throttled to the 80ms anim_tick to prevent
+                // per-token rendering from starving the keyboard event branch.
+                // scroll_to_bottom is sync/fast so it runs here to keep auto-scroll
+                // state accurate even between render ticks.
                 self.scroll_to_bottom();
-                self.nvim_scroll_to_bottom().await;
-                if let Some(pager) = &mut self.ui.pager {
-                    pager.set_lines(self.chat.lines.clone());
-                }
             }
             AgentEvent::TextComplete(full_text) => {
+                tracing::info!(len = full_text.len(), "TUI: TextComplete received");
                 self.chat
                     .segments
                     .push(ChatSegment::Message(Message::assistant(&full_text)));
@@ -325,6 +326,7 @@ impl App {
                 }
             }
             AgentEvent::TurnComplete => {
+                tracing::info!("TUI: TurnComplete received");
                 // Fallback only in node-proxy mode (we never send GenerateTitle there).
                 // Local agent always gets TitleGenerated from the title task (LLM or heuristic).
                 if self.is_node_proxy
@@ -353,6 +355,25 @@ impl App {
                 self.agent.busy = false;
                 self.agent.current_tool = None;
                 self.chat.tool_streaming_content.clear();
+
+                // Safety drain: if TextComplete was dropped (e.g. the broadcast
+                // channel lagged and skipped it), the streaming_buffer still holds
+                // the accumulated response text.  Commit it to segments now so the
+                // response is never lost and the buffer is cleaned up for the next
+                // turn.
+                if !self.chat.streaming_buffer.is_empty() && !self.chat.streaming_is_thinking {
+                    let leftover = std::mem::take(&mut self.chat.streaming_buffer);
+                    tracing::warn!(
+                        len = leftover.len(),
+                        "TUI: TurnComplete draining non-empty streaming_buffer (TextComplete was dropped)"
+                    );
+                    self.chat
+                        .segments
+                        .push(ChatSegment::Message(Message::assistant(&leftover)));
+                }
+                self.chat.streaming_buffer.clear();
+                self.chat.streaming_is_thinking = false;
+
                 // Preserve the final context size from this turn before reset.
                 // total_context_tokens tracks the current context window size
                 // (NOT a running sum), so use = not +=.
@@ -375,6 +396,16 @@ impl App {
                     }
                 }
                 self.save_history_async();
+                // Final render: ensures any streaming content that arrived just
+                // before TurnComplete (and was only buffered, not yet rendered by
+                // anim_tick) is visible. anim_tick stops when busy becomes false so
+                // this is the last chance to commit the display.
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+                self.nvim_scroll_to_bottom().await;
+                if let Some(pager) = &mut self.ui.pager {
+                    pager.set_lines(self.chat.lines.clone());
+                }
                 // Move this chat to top of list when the model finishes a response (not on click).
                 self.sessions.promote_to_top(&session_id);
                 // Only dequeue the next message if no queue item is being edited
@@ -500,7 +531,9 @@ impl App {
                 self.chat.streaming_is_thinking = true;
                 self.agent.spinner_frame = self.agent.spinner_frame.wrapping_add(1);
                 self.chat.streaming_buffer.push_str(&delta);
-                self.rerender_chat().await;
+                // Throttled like TextDelta: only buffer here; the 80ms anim_tick
+                // handles rendering so fast thinking streams don't back up the event
+                // pipeline and drop TextComplete/TurnComplete events.
                 self.scroll_to_bottom();
             }
             AgentEvent::ThinkingComplete(content) => {

@@ -374,13 +374,23 @@ impl App {
                     qm.mode_transition,
                 )
             };
-            let _ = tx
+            let send_result = tx
                 .send(AgentRequest::Submit {
                     content: qm.content.clone(),
                     model_override,
                     mode_override,
                 })
                 .await;
+            if send_result.is_err() {
+                tracing::warn!("send_to_agent: agent channel closed; kernel session may have exited");
+                self.chat.segments.push(crate::chat::segment::ChatSegment::Error(
+                    "Agent session has stopped — check the error above for details.\n\
+                     Verify your model config (provider / base_url) and restart sven."
+                        .into(),
+                ));
+                self.rerender_chat().await;
+                return;
+            }
             self.agent.busy = true;
             // First message in chat: request LLM-generated title (local agent only).
             if self.chat.segments.len() == 1
@@ -415,7 +425,7 @@ impl App {
             let is_first_message = messages.is_empty()
                 && (self.chat_title == "New chat" || self.chat_title.is_empty())
                 && !self.is_node_proxy;
-            let _ = tx
+            let send_result = tx
                 .send(AgentRequest::Resubmit {
                     messages,
                     new_user_content: qm.content.clone(),
@@ -423,6 +433,19 @@ impl App {
                     mode_override,
                 })
                 .await;
+            if send_result.is_err() {
+                // The kernel session exited (e.g. model config error at startup).
+                // Surface the failure as an error segment so the user sees it
+                // instead of a silent endless spinner.
+                tracing::warn!("send_resubmit_to_agent: agent channel closed; kernel session may have exited");
+                self.chat.segments.push(crate::chat::segment::ChatSegment::Error(
+                    "Agent session has stopped — check the error above for details.\n\
+                     Verify your model config (provider / base_url) and restart sven."
+                        .into(),
+                ));
+                self.rerender_chat().await;
+                return;
+            }
             self.agent.busy = true;
             if is_first_message {
                 if let Some(tx) = &self.agent.tx {
