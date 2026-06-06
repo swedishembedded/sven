@@ -268,6 +268,14 @@ pub static DRIVERS: &[DriverMeta] = &[
     },
     // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
+        id: "sven",
+        name: "Sven (custom local server)",
+        description: "User-defined OpenAI-compatible local server; set base_url in config",
+        default_api_key_env: None,
+        default_base_url: None,
+        requires_api_key: false,
+    },
+    DriverMeta {
         id: "ollama",
         name: "Ollama",
         description: "Ollama local model runner (http://localhost:11434)",

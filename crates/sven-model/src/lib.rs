@@ -413,6 +413,43 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
                 cfg.driver_options.clone(),
             ))
         }
+        // "sven" is a user-defined alias for a local OpenAI-compatible server
+        // (e.g. a vLLM / llama.cpp / Ollama instance running on a custom host).
+        // It behaves identically to "vllm" but is kept as a distinct id so
+        // users who wrote `provider: sven` in their config don't hit an
+        // "unknown provider" error.  base_url must be set in config.
+        "sven" => {
+            let base = cfg
+                .base_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!(
+                    "provider 'sven' requires base_url in config.\n\
+                     Set it to your local server, e.g.:\n\
+                     \n\
+                     model:\n\
+                       provider: sven\n\
+                       base_url: http://koala:8000/v1\n\
+                       name: <your-model-name>"
+                ))?;
+            let k = key();
+            let auth = if k.is_some() {
+                AuthStyle::Bearer
+            } else {
+                AuthStyle::None
+            };
+            Box::new(OpenAICompatProvider::new(
+                "sven",
+                cfg.name.clone(),
+                k,
+                base,
+                resolved_max_tokens,
+                cfg.temperature,
+                vec![],
+                auth,
+                cfg.driver_options.clone(),
+            ))
+        }
+
         // vLLM accepts an optional bearer token; auth style depends on whether
         // a key is actually configured.
         "vllm" => {
@@ -758,12 +795,17 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
         cfg.name = override_str.to_string();
         provider_changed = false;
     }
-    // When the provider changes the inherited api_key / api_key_env belong to
-    // the original provider.  Clear them so resolve_api_key() falls through to
-    // the new provider's registry default env var.
+    // When the provider changes, the inherited credentials and custom base_url
+    // belong to the original provider.  Clear them so resolve_api_key() falls
+    // through to the new provider's registry default env var and from_config()
+    // uses the new provider's canonical endpoint instead of the old one.
+    // Example: config.model has base_url="http://koala:8000/v1" (local GGUF)
+    // and the user runs `--model openai/gpt-5.5`; without clearing base_url the
+    // openai provider would hit the local server instead of api.openai.com.
     if provider_changed {
         cfg.api_key = None;
         cfg.api_key_env = None;
+        cfg.base_url = None;
     }
     cfg
 }
@@ -1179,6 +1221,38 @@ mod tests {
         assert!(
             cfg.base_url.is_none(),
             "custom base_url must NOT be inherited when switching to a catalog model: {:?}",
+            cfg.base_url
+        );
+    }
+
+    /// Regression: fallback path (model NOT in catalog) must also clear base_url.
+    ///
+    /// Example: config.model has `provider: sven, base_url: http://koala:8000/v1`
+    /// and the user runs `--model openai/gpt-5.5`.  gpt-5.5 is not in the
+    /// catalog so resolution falls to `resolve_model_cfg` (step 4).  The
+    /// custom base_url must not bleed over to the openai provider.
+    #[test]
+    fn fallback_path_does_not_inherit_custom_base_url_on_provider_change() {
+        use std::collections::HashMap;
+        let config = sven_config::Config {
+            model: ModelConfig {
+                provider: "sven".into(),
+                name: "Qwen3.5-35B-A3B-Q4_0.gguf".into(),
+                base_url: Some("http://koala:8000/v1".into()),
+                ..ModelConfig::default()
+            },
+            providers: HashMap::new(),
+            ..sven_config::Config::default()
+        };
+
+        // "gpt-5.5" is not in the catalog, so resolution falls to
+        // resolve_model_cfg which previously leaked base_url.
+        let cfg = resolve_model_from_config(&config, "openai/gpt-5.5");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.name, "gpt-5.5");
+        assert!(
+            cfg.base_url.is_none(),
+            "koala base_url must NOT bleed into openai provider via fallback path: {:?}",
             cfg.base_url
         );
     }
