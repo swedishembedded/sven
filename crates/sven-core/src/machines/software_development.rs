@@ -424,16 +424,28 @@ impl Machine for SoftwareDevelopmentMachine {
             AwaitUser => match event {
                 Event::UserMessage { text } => {
                     // Ask the LLM to interpret the answer; stay in AwaitUser
-                    // until the LLmProposedAssessment comes back.
+                    // until the LlmProposedAssessment comes back.
+                    let question = ctx
+                        .facts
+                        .get("await_user_prompt")
+                        .and_then(Value::as_str)
+                        .unwrap_or("(no question)")
+                        .to_string();
                     Reaction::effects(vec![Effect::CallLlm {
                         request: json!({
-                            "kind": "InterpretUserAnswer",
-                            "text": text,
+                            "kind": "interpret_user_answer",
+                            "question": question,
+                            "answer": text,
+                            "expected_answer_shape": "structured data relevant to the question",
                         }),
                     }])
                 }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("last_assessment", assessment.clone());
+                    Reaction::goto(resolve_continuation(ctx))
+                }
+                Event::LlmFailed { .. } => {
+                    // If interpretation fails, resume with empty assessment.
                     Reaction::goto(resolve_continuation(ctx))
                 }
                 Event::Timeout { .. } => {
@@ -502,6 +514,7 @@ impl Machine for SoftwareDevelopmentMachine {
                     ctx.set_fact("intent", assessment.clone());
                     Reaction::goto(ExtractProblemStatement)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Intake),
             },
 
@@ -526,6 +539,7 @@ impl Machine for SoftwareDevelopmentMachine {
                     ctx.set_fact("problem_statement", assessment.clone());
                     Reaction::goto(ExtractConstraints)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Intake),
             },
 
@@ -547,6 +561,7 @@ impl Machine for SoftwareDevelopmentMachine {
                     ctx.set_fact("constraints", assessment.clone());
                     Reaction::goto(AssessInformationCompleteness)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Intake),
             },
 
@@ -567,21 +582,41 @@ impl Machine for SoftwareDevelopmentMachine {
                     }])
                 }
                 Event::LlmProposedAssessment { assessment } => {
-                    let completeness = assessment
-                        .get("completeness")
+                    // CompletenessAssessment serialises as:
+                    //   {"status": {"status": "enough"}} or
+                    //   {"status": {"status": "missing", "fields": [...]}}
+                    // Read the discriminant from the nested status object.
+                    let status_str = assessment
+                        .get("status")
+                        .and_then(|s| s.get("status"))
                         .and_then(Value::as_str)
                         .unwrap_or("missing");
 
-                    if completeness == "enough" {
+                    if status_str == "enough" {
                         // Proceed to scope confirmation with a human sign-off.
                         Reaction::goto(ConfirmScope)
                     } else {
                         // Not enough info: ask the user for clarification.
-                        let prompt = assessment
-                            .get("missing_info")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Could you provide more details?")
-                            .to_string();
+                        let missing_fields: Vec<String> = assessment
+                            .get("status")
+                            .and_then(|s| s.get("fields"))
+                            .and_then(Value::as_array)
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|f| {
+                                        f.get("field").and_then(Value::as_str).map(str::to_string)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let prompt = if missing_fields.is_empty() {
+                            "Could you provide more details about what you need?".to_string()
+                        } else {
+                            format!(
+                                "I need more information about: {}. Could you elaborate?",
+                                missing_fields.join(", ")
+                            )
+                        };
                         ctx.set_fact("await_user_prompt", json!(prompt));
                         set_continuation(ctx, AssessInformationCompleteness);
                         Reaction::transition(
@@ -591,6 +626,7 @@ impl Machine for SoftwareDevelopmentMachine {
                         )
                     }
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Intake),
             },
 
@@ -625,13 +661,24 @@ impl Machine for SoftwareDevelopmentMachine {
             // Discovery leaf states (simplified: entry → LLM; assessment → next)
             // =================================================================
             RequestArtifacts => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "RequestArtifacts" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "constraints": ctx.facts.get("constraints"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Identify what artifacts (files, specs, docs) are needed to understand this problem. Return {\"artifacts\": [{\"name\": \"...\", \"reason\": \"...\"}]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("artifacts_requested", assessment.clone());
                     Reaction::goto(ClassifyArtifacts)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyArtifacts),
                 Event::UserProvidedArtifact { artifact } => {
                     ctx.set_fact("artifacts", artifact.clone());
                     Reaction::goto(ClassifyArtifacts)
@@ -640,13 +687,24 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             ClassifyArtifacts => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ClassifyArtifacts" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "artifacts": ctx.facts.get("artifacts"),
+                        "artifacts_requested": ctx.facts.get("artifacts_requested"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Classify the provided artifacts by type and relevance. Return {\"classified\": [{\"name\": \"...\", \"type\": \"...\", \"relevance\": \"high|medium|low\"}]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("classified_artifacts", assessment.clone());
                     Reaction::goto(InspectRepository)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(InspectRepository),
                 _ => Reaction::Super(Discovery),
             },
 
@@ -671,35 +729,72 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             BuildBaseline => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "BuildBaseline" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "repository_snapshot": ctx.facts.get("repository_snapshot"),
+                        "classified_artifacts": ctx.facts.get("classified_artifacts"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Build a baseline understanding of the codebase state. Return {\"baseline\": {\"languages\": [...], \"structure\": \"...\", \"key_components\": [...], \"relevant_files\": [...]}}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("baseline", assessment.clone());
                     Reaction::goto(ExtractTechnicalContext)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ExtractTechnicalContext),
                 _ => Reaction::Super(Discovery),
             },
 
             ExtractTechnicalContext => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ExtractTechnicalContext" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "baseline": ctx.facts.get("baseline"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "constraints": ctx.facts.get("constraints"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Extract technical context needed to implement the solution. Return {\"dependencies\": [...], \"patterns\": [...], \"risks\": [...], \"entry_points\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("technical_context", assessment.clone());
                     Reaction::goto(ProduceDiscoverySummary)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ProduceDiscoverySummary),
                 _ => Reaction::Super(Discovery),
             },
 
             ProduceDiscoverySummary => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ProduceDiscoverySummary" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "baseline": ctx.facts.get("baseline"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                        "classified_artifacts": ctx.facts.get("classified_artifacts"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Produce a concise discovery summary ready for planning. Return {\"summary\": \"...\", \"ready_to_plan\": true|false, \"blockers\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("discovery_summary", assessment.clone());
                     Reaction::goto(Planning)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(Planning),
                 _ => Reaction::Super(Discovery),
             },
 
@@ -707,57 +802,118 @@ impl Machine for SoftwareDevelopmentMachine {
             // Planning leaf states
             // =================================================================
             GenerateCandidatePlan => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "GenerateCandidatePlan" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "discovery_summary": ctx.facts.get("discovery_summary"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "constraints": ctx.facts.get("constraints"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "generate_candidate_plan",
+                            "known_context": known,
+                            "planning_policy": "prefer incremental, testable steps; low risk over speed",
+                        }),
+                    }])
+                }
                 Event::LlmProposedPlan { plan } => {
                     ctx.set_fact("candidate_plan", plan.clone());
                     Reaction::goto(DecomposeIntoTasks)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Planning),
             },
 
             DecomposeIntoTasks => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "DecomposeIntoTasks" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let selected_plan = ctx
+                        .facts
+                        .get("candidate_plan")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "decompose_into_tasks",
+                            "selected_plan": selected_plan,
+                            "task_policy": "atomic tasks, each verifiable with a single tool call",
+                        }),
+                    }])
+                }
                 Event::LlmProposedPlan { plan } => {
                     ctx.set_fact("backlog", plan.clone());
                     Reaction::goto(ValidatePlan)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Planning),
             },
 
             ValidatePlan => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ValidatePlan" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "backlog": ctx.facts.get("backlog"),
+                        "constraints": ctx.facts.get("constraints"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Validate the task backlog against constraints and technical context. Return {\"valid\": true|false, \"issues\": [...], \"suggestions\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("plan_validation", assessment.clone());
                     Reaction::goto(EstimateRisk)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(EstimateRisk),
                 _ => Reaction::Super(Planning),
             },
 
             EstimateRisk => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "EstimateRisk" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "backlog": ctx.facts.get("backlog"),
+                        "plan_validation": ctx.facts.get("plan_validation"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Estimate risks for the execution plan. Return {\"overall_risk\": \"low|medium|high\", \"risks\": [{\"description\": \"...\", \"mitigation\": \"...\"}]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("risk_estimate", assessment.clone());
                     Reaction::goto(SelectPlan)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(SelectPlan),
                 _ => Reaction::Super(Planning),
             },
 
             SelectPlan => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "SelectPlan" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "backlog": ctx.facts.get("backlog"),
+                        "risk_estimate": ctx.facts.get("risk_estimate"),
+                        "plan_validation": ctx.facts.get("plan_validation"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Select the best execution plan. Return {\"selected\": {\"summary\": \"...\", \"first_task_id\": \"...\"}, \"rationale\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("selected_plan", assessment.clone());
                     Reaction::goto(ApproveExecutionPlan)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ApproveExecutionPlan),
                 _ => Reaction::Super(Planning),
             },
 
@@ -790,9 +946,19 @@ impl Machine for SoftwareDevelopmentMachine {
             // Execution leaf states
             // =================================================================
             SelectNextTask => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "SelectNextTask" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "backlog": ctx.facts.get("backlog"),
+                        "completed_tasks": ctx.facts.get("completed_tasks"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Select the next task to execute from the backlog. Return {\"backlog_empty\": true|false, \"task_id\": \"...\", \"description\": \"...\", \"tool\": \"...\", \"args\": {}}. If all tasks are done, set backlog_empty=true.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     let backlog_empty = assessment
                         .get("backlog_empty")
@@ -807,24 +973,54 @@ impl Machine for SoftwareDevelopmentMachine {
                         Reaction::goto(PrepareTaskContext)
                     }
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Execution),
             },
 
             PrepareTaskContext => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "PrepareTaskContext" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "current_task": ctx.facts.get("current_task"),
+                        "baseline": ctx.facts.get("baseline"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Prepare the code context needed to implement the current task. Return {\"relevant_files\": [...], \"existing_code\": \"...\", \"implementation_notes\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("task_context", assessment.clone());
                     Reaction::goto(ProposePatch)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Execution),
             },
 
             ProposePatch => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ProposePatch" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let task = ctx
+                        .facts
+                        .get("current_task")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let code_context = ctx
+                        .facts
+                        .get("task_context")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "propose_patch",
+                            "task": task,
+                            "code_context": code_context,
+                            "patch_policy": "produce a minimal, correct unified diff; explain each change",
+                        }),
+                    }])
+                }
                 Event::LlmProposedPlan { plan } => {
                     ctx.set_fact("proposed_patch", plan.clone());
                     let call_id = ToolCallId::new();
@@ -840,6 +1036,7 @@ impl Machine for SoftwareDevelopmentMachine {
                         "patch proposed; applying to workspace",
                     )
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Execution),
             },
 
@@ -907,20 +1104,49 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             ObserveResult => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ObserveResult" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let raw = ctx
+                        .facts
+                        .get("last_tool_output")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let task = ctx
+                        .facts
+                        .get("current_task")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "structure_tool_observation",
+                            "task": task,
+                            "raw_output": raw,
+                            "expected_observation": "{\"success\": true|false, \"summary\": \"...\", \"details\": {...}}",
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("observation", assessment.clone());
                     Reaction::goto(DecideTaskOutcome)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(DecideTaskOutcome),
                 _ => Reaction::Super(Execution),
             },
 
             DecideTaskOutcome => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "DecideTaskOutcome" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "current_task": ctx.facts.get("current_task"),
+                        "observation": ctx.facts.get("observation"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Decide if the current task is complete based on the observation. Return {\"task_complete\": true|false, \"reason\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     let task_complete = assessment
                         .get("task_complete")
@@ -935,6 +1161,7 @@ impl Machine for SoftwareDevelopmentMachine {
                         Reaction::goto(ClassifyFailure)
                     }
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Execution),
             },
 
@@ -942,20 +1169,41 @@ impl Machine for SoftwareDevelopmentMachine {
             // Verification leaf states
             // =================================================================
             VerifyRequirements => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "VerifyRequirements" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "constraints": ctx.facts.get("constraints"),
+                        "completed_tasks": ctx.facts.get("completed_tasks"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Verify all requirements have been satisfied. Return {\"requirements_met\": true|false, \"unmet\": [...], \"notes\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("requirements_verification", assessment.clone());
                     Reaction::goto(VerifyTests)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Verification),
             },
 
             VerifyTests => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "VerifyTests" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "requirements_verification": ctx.facts.get("requirements_verification"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Verify the test suite adequately covers the changes. Return {\"tests_ok\": true|false, \"coverage_notes\": \"...\", \"missing_tests\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     let ok = assessment
                         .get("tests_ok")
@@ -967,28 +1215,53 @@ impl Machine for SoftwareDevelopmentMachine {
                         Reaction::goto(ClassifyFailure)
                     }
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ClassifyFailure),
                 _ => Reaction::Super(Verification),
             },
 
             VerifySecurityBoundaries => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "VerifySecurityBoundaries" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "baseline": ctx.facts.get("baseline"),
+                        "completed_tasks": ctx.facts.get("completed_tasks"),
+                        "technical_context": ctx.facts.get("technical_context"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Verify no security boundaries were violated by the changes. Return {\"secure\": true|false, \"issues\": [...], \"recommendations\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("security_verification", assessment.clone());
                     Reaction::goto(VerifyRegressionRisk)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(HumanAcceptanceGate),
                 _ => Reaction::Super(Verification),
             },
 
             VerifyRegressionRisk => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "VerifyRegressionRisk" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "security_verification": ctx.facts.get("security_verification"),
+                        "completed_tasks": ctx.facts.get("completed_tasks"),
+                        "baseline": ctx.facts.get("baseline"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Assess regression risk from the changes. Return {\"regression_risk\": \"low|medium|high\", \"affected_areas\": [...], \"mitigation\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("regression_risk", assessment.clone());
                     Reaction::goto(HumanAcceptanceGate)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(HumanAcceptanceGate),
                 _ => Reaction::Super(Verification),
             },
 
@@ -1020,24 +1293,48 @@ impl Machine for SoftwareDevelopmentMachine {
             // Delivery leaf states
             // =================================================================
             ProduceTechnicalSummary => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ProduceTechnicalSummary" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "completed_tasks": ctx.facts.get("completed_tasks"),
+                        "requirements_verification": ctx.facts.get("requirements_verification"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Produce a technical delivery summary for engineers. Return {\"summary\": \"...\", \"changes\": [...], \"test_coverage\": \"...\", \"known_limitations\": [...]}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("technical_summary", assessment.clone());
                     Reaction::goto(ProduceUserInstructions)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ProduceUserInstructions),
                 _ => Reaction::Super(Delivery),
             },
 
             ProduceUserInstructions => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ProduceUserInstructions" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "technical_summary": ctx.facts.get("technical_summary"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "user_request": ctx.facts.get("user_request"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Produce user-facing instructions for the delivered changes. Return {\"instructions\": \"...\", \"steps\": [...], \"notes\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("user_instructions", assessment.clone());
                     Reaction::goto(PackageArtifacts)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(PackageArtifacts),
                 _ => Reaction::Super(Delivery),
             },
 
@@ -1085,31 +1382,73 @@ impl Machine for SoftwareDevelopmentMachine {
             // Recovery leaf states
             // =================================================================
             ClassifyFailure => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ClassifyFailure" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "failure_classification": ctx.facts.get("failure_classification"),
+                        "last_tool_output": ctx.facts.get("last_tool_output"),
+                        "current_task": ctx.facts.get("current_task"),
+                        "retry_count": ctx.retry_counters.get("task_retry"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Classify the failure to determine recovery strategy. Return {\"failure_type\": \"tool_error|llm_error|logic_error|user_error\", \"severity\": \"low|medium|high\", \"recoverable\": true|false, \"description\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("failure_classification", assessment.clone());
                     Reaction::goto(ProposeRecoveryOptions)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(ProposeRecoveryOptions),
                 _ => Reaction::Super(Recovery),
             },
 
             ProposeRecoveryOptions => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ProposeRecoveryOptions" }),
-                }]),
-                Event::LlmProposedPlan { plan } => {
-                    ctx.set_fact("recovery_options", plan.clone());
+                Event::Internal(Entry) => {
+                    let failure = ctx
+                        .facts
+                        .get("failure_classification")
+                        .and_then(|v| v.get("description"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown failure")
+                        .to_string();
+                    let known = serde_json::json!({
+                        "failure_classification": ctx.facts.get("failure_classification"),
+                        "retry_count": ctx.retry_counters.get("recovery_retry"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "propose_recovery_options",
+                            "failure": failure,
+                            "known_context": known,
+                        }),
+                    }])
+                }
+                Event::LlmProposedAssessment { assessment } => {
+                    ctx.set_fact("recovery_options", assessment.clone());
                     Reaction::goto(SelectRecoveryAction)
                 }
+                Event::LlmFailed { .. } => Reaction::goto(AskUserForDecision),
                 _ => Reaction::Super(Recovery),
             },
 
             SelectRecoveryAction => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "SelectRecoveryAction" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "recovery_options": ctx.facts.get("recovery_options"),
+                        "failure_classification": ctx.facts.get("failure_classification"),
+                        "retry_count": ctx.retry_counters.get("recovery_retry"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "evaluate_context",
+                            "goal": "Select the best recovery action. Return {\"action\": \"retry|rollback|ask_user|escalate\", \"rationale\": \"...\"}.",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     let action = assessment
                         .get("action")
@@ -1123,6 +1462,7 @@ impl Machine for SoftwareDevelopmentMachine {
                         _ => Reaction::goto(Failed),
                     }
                 }
+                Event::LlmFailed { .. } => Reaction::goto(AskUserForDecision),
                 _ => Reaction::Super(Recovery),
             },
 
@@ -1403,7 +1743,7 @@ mod tests {
             json!({ "intent": "implement feature X" }),
             json!({ "problem": "users need feature X" }),
             json!({ "constraints": [] }),
-            json!({ "completeness": "enough" }),
+            json!({ "status": { "status": "enough" } }),
         ] {
             hsm.dispatch(&Event::LlmProposedAssessment { assessment }, ctx);
         }
@@ -1537,7 +1877,7 @@ mod tests {
         // AssessInformationCompleteness(enough) → ConfirmScope
         let out = hsm.dispatch(
             &Event::LlmProposedAssessment {
-                assessment: json!({ "completeness": "enough" }),
+                assessment: json!({ "status": { "status": "enough" } }),
             },
             &mut ctx,
         );
@@ -1593,8 +1933,10 @@ mod tests {
         let out = hsm.dispatch(
             &Event::LlmProposedAssessment {
                 assessment: json!({
-                    "completeness": "missing",
-                    "missing_info": "Which environment?",
+                    "status": {
+                        "status": "missing",
+                        "fields": [{"field": "environment", "reason": "Which environment?"}],
+                    },
                 }),
             },
             &mut ctx,
@@ -1622,7 +1964,7 @@ mod tests {
             json!({ "intent": "x" }),
             json!({ "problem": "x" }),
             json!({ "constraints": [] }),
-            json!({ "completeness": "enough" }),
+            json!({ "status": { "status": "enough" } }),
         ] {
             hsm.dispatch(&Event::LlmProposedAssessment { assessment }, &mut ctx);
         }

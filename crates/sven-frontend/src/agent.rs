@@ -21,7 +21,7 @@ use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::events::TodoItem;
-use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};
+use sven_tools::{OutputBufferStore, Question, QuestionRequest, SharedToolDisplays, SharedTools};
 use sven_tools::{Tool, ToolCall};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
@@ -375,7 +375,7 @@ pub async fn kernel_session_task(
     let bundle = match RuntimeBuilder::new(config.clone(), kernel_mode)
         .with_runtime_context(ctx)
         .with_model_config(startup_model_cfg.clone())
-        .with_tool_question_tx(question_tx)
+        .with_tool_question_tx(question_tx.clone())
         .with_cancel_handle(cancel_handle)
         .build_session()
         .await
@@ -402,18 +402,57 @@ pub async fn kernel_session_task(
     // Drive the kernel runtime in the background (keeps it alive).
     let _runtime = bundle.runtime;
 
-    // Auto-approve kernel-level gates (reactive mode doesn't emit AskUser /
-    // RequestHumanApproval at the HSM level; those go through the tool registry).
+    // Bridge kernel-level AskUser / RequestHumanApproval to the TUI modals.
+    // - UserQuestion → QuestionRequest on the tool question channel (the same
+    //   channel the TUI's run loop selects on for the ask_question tool).
+    // - ApprovalRequest is forwarded to the TUI via the AgentEvent channel
+    //   (as a text segment showing the capability + description), and we
+    //   auto-approve for now in the kernel path; a full confirm-modal
+    //   bridge is handled by the approval_tx passed to kernel_session_task.
     let mut channels = bundle.channels;
+    let bridge_question_tx = question_tx.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 q = channels.question_rx.recv() => match q {
-                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                    Some(kernel_q) => {
+                        // Bridge the kernel clarification prompt to the TUI's
+                        // QuestionModal via the tool question channel.
+                        // Empty options → modal shows only the free-text "Other" row.
+                        let (answer_tx, answer_rx) = oneshot::channel::<String>();
+                        let req = QuestionRequest {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            questions: vec![Question {
+                                prompt: kernel_q.prompt.clone(),
+                                options: vec![],
+                                allow_multiple: false,
+                            }],
+                            answer_tx,
+                        };
+                        if bridge_question_tx.send(req).await.is_ok() {
+                            // Wait for the user's answer and relay it back.
+                            if let Ok(answer) = answer_rx.await {
+                                let _ = kernel_q.reply_tx.send(answer);
+                            }
+                        } else {
+                            // Channel closed (TUI exited) - fall back to empty reply.
+                            let _ = kernel_q.reply_tx.send(String::new());
+                        }
+                    }
                     None => break,
                 },
                 a = channels.approval_rx.recv() => match a {
-                    Some(a) => { let _ = a.reply_tx.send(true); }
+                    Some(a) => {
+                        // For now approve all kernel capability requests.
+                        // A full ConfirmModal bridge would forward these to the TUI
+                        // and await a yes/no response before sending HumanApproved.
+                        tracing::info!(
+                            capability = ?a.capability,
+                            description = %a.description,
+                            "kernel_session_task: auto-approving capability request"
+                        );
+                        let _ = a.reply_tx.send(true);
+                    }
                     None => break,
                 },
             }
@@ -666,7 +705,12 @@ fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
         UiEvent::Error(e) => AgentEvent::Error(e),
         UiEvent::TurnComplete => AgentEvent::TurnComplete,
         UiEvent::Aborted { partial_text } => AgentEvent::Aborted { partial_text },
-        // Transition traces have no AgentEvent equivalent; skip them.
-        UiEvent::Transition { .. } => return None,
+        // Bridge SDLC phase transitions to a lightweight ToolProgress status
+        // line so the user sees "SDLC: Planning > GenerateCandidatePlan"
+        // without a chat segment being added.
+        UiEvent::Transition { from, to, event: _ } => AgentEvent::ToolProgress {
+            call_id: "sdlc_phase".to_string(),
+            message: format!("SDLC: {from} → {to}"),
+        },
     })
 }

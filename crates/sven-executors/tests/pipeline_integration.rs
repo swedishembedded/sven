@@ -390,3 +390,122 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
     // Clean up
     rt.abort();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON suppression tests (Phase 1: is_user_facing gating)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A mock adapter that always emits text deltas regardless of what the
+/// real adapter would do — used to verify gating.
+struct AlwaysStreamingAdapter {
+    text: String,
+    result: Event,
+}
+
+#[async_trait]
+impl LlmAdapter for AlwaysStreamingAdapter {
+    async fn invoke(
+        &self,
+        _req: LlmRequest,
+        obs: Option<&ObservationSink>,
+    ) -> Result<Event, LlmError> {
+        if let Some(o) = obs {
+            o.emit(UiEvent::TextDelta(self.text.clone()));
+            o.emit(UiEvent::TextComplete(self.text.clone()));
+        }
+        Ok(self.result.clone())
+    }
+}
+
+/// Structured (non-user-facing) requests must NOT emit TextDelta to the UI
+/// even when the underlying adapter streams text, because the raw output is
+/// JSON that the machine interprets internally.
+#[tokio::test]
+async fn structured_llm_request_suppresses_text_deltas() {
+    use sven_executors::LlmExecutor;
+
+    let adapter = Arc::new(AlwaysStreamingAdapter {
+        text: "{\"intent\": \"bug_fix\", \"confidence\": 0.9}".into(),
+        result: Event::LlmProposedAssessment {
+            assessment: serde_json::json!({"intent": "bug_fix", "confidence": 0.9}),
+        },
+    });
+    let mut exec = LlmExecutor::new(adapter);
+
+    // ExtractIntent is NOT user-facing → text deltas must be suppressed.
+    let req = LlmRequest::ExtractIntent {
+        text: "fix the null pointer".into(),
+        allowed_intents: vec!["bug_fix".into()],
+    };
+    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
+
+    assert!(
+        !events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
+        "TextDelta must NOT appear for structured (non-user-facing) requests: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, UiEvent::TextComplete(_))),
+        "TextComplete must NOT appear for structured requests: {events:?}"
+    );
+    // TurnComplete must still arrive.
+    assert!(
+        events.contains(&UiEvent::TurnComplete),
+        "TurnComplete must still be emitted for structured requests: {events:?}"
+    );
+}
+
+/// User-facing requests (GenerateResponse) MUST emit TextDelta so streaming
+/// works in the TUI chat view.
+#[tokio::test]
+async fn generate_response_streams_text_deltas() {
+    use sven_executors::LlmExecutor;
+
+    let response_text = "Hello! How can I help you today?";
+    let adapter = Arc::new(AlwaysStreamingAdapter {
+        text: response_text.into(),
+        result: Event::LlmProposedResponse {
+            text: response_text.into(),
+        },
+    });
+    let mut exec = LlmExecutor::new(adapter);
+
+    let req = LlmRequest::GenerateResponse {
+        intent: serde_json::json!({"intent": "question"}),
+    };
+    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
+
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
+        "TextDelta must appear for user-facing GenerateResponse: {events:?}"
+    );
+}
+
+/// EvaluateContext (used by SDLC states) is NOT user-facing and must suppress
+/// raw JSON from the observation stream.
+#[tokio::test]
+async fn evaluate_context_suppresses_json_output() {
+    use sven_executors::LlmExecutor;
+
+    let adapter = Arc::new(AlwaysStreamingAdapter {
+        text: "{\"summary\": \"baseline built\"}".into(),
+        result: Event::LlmProposedAssessment {
+            assessment: serde_json::json!({"summary": "baseline built"}),
+        },
+    });
+    let mut exec = LlmExecutor::new(adapter);
+
+    let req = LlmRequest::EvaluateContext {
+        goal: "Build a baseline understanding of the codebase.".into(),
+        known_context: serde_json::json!({}),
+    };
+    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
+
+    assert!(
+        !events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
+        "TextDelta must be suppressed for EvaluateContext: {events:?}"
+    );
+    assert!(
+        events.contains(&UiEvent::TurnComplete),
+        "TurnComplete must still arrive: {events:?}"
+    );
+}

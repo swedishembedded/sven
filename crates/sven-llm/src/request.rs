@@ -124,9 +124,37 @@ pub enum LlmRequest {
         /// Facts already known.
         known_context: Value,
     },
+
+    /// General-purpose context evaluation used by SDLC discovery, planning,
+    /// execution, verification, and delivery states.
+    ///
+    /// The LLM examines `known_context` and returns a JSON assessment whose
+    /// shape is described by `goal`. The HSM machine interprets the result
+    /// and fires `LlmProposedAssessment` with whatever JSON the model returned.
+    EvaluateContext {
+        /// Human-readable description of what the LLM should evaluate /
+        /// produce. This becomes the instruction in the system prompt.
+        goal: String,
+        /// Facts already known (serialised [`sven_hsm::Context`] subset).
+        known_context: Value,
+    },
 }
 
 impl LlmRequest {
+    /// Returns `true` for variants whose LLM output is natural-language text
+    /// meant to be shown directly to the user.
+    ///
+    /// Returning `false` means the response is a structured JSON payload that
+    /// the machine parses internally; it must **not** be streamed as raw
+    /// `TextDelta`/`TextComplete` events to the UI.
+    #[must_use]
+    pub fn is_user_facing(&self) -> bool {
+        matches!(
+            self,
+            LlmRequest::GenerateResponse { .. } | LlmRequest::GenerateClarifyingQuestion { .. }
+        )
+    }
+
     /// Short human-readable name used in error messages and traces.
     #[must_use]
     pub fn kind_name(&self) -> &'static str {
@@ -143,6 +171,7 @@ impl LlmRequest {
             LlmRequest::ProposePatch { .. } => "ProposePatch",
             LlmRequest::StructureToolObservation { .. } => "StructureToolObservation",
             LlmRequest::ProposeRecoveryOptions { .. } => "ProposeRecoveryOptions",
+            LlmRequest::EvaluateContext { .. } => "EvaluateContext",
         }
     }
 
@@ -248,8 +277,53 @@ mod tests {
                 known_context: Value::Null,
             }
             .kind_name(),
+            LlmRequest::EvaluateContext {
+                goal: "g".into(),
+                known_context: Value::Null,
+            }
+            .kind_name(),
         ];
         let unique: std::collections::HashSet<_> = names.iter().collect();
         assert_eq!(unique.len(), names.len(), "duplicate kind names");
+    }
+
+    #[test]
+    fn is_user_facing_gates_correctly() {
+        assert!(LlmRequest::GenerateResponse { intent: Value::Null }.is_user_facing());
+        assert!(LlmRequest::GenerateClarifyingQuestion {
+            missing: vec![],
+            known_context: Value::Null,
+            question_policy: "p".into(),
+        }
+        .is_user_facing());
+
+        // Structured calls must NOT be user-facing.
+        assert!(!LlmRequest::ExtractIntent {
+            text: "t".into(),
+            allowed_intents: vec![],
+        }
+        .is_user_facing());
+        assert!(!LlmRequest::AssessCompleteness {
+            known_context: Value::Null,
+            required_fields: vec![],
+        }
+        .is_user_facing());
+        assert!(!LlmRequest::EvaluateContext {
+            goal: "g".into(),
+            known_context: Value::Null,
+        }
+        .is_user_facing());
+    }
+
+    #[test]
+    fn evaluate_context_round_trips_through_json() {
+        let req = LlmRequest::EvaluateContext {
+            goal: "classify the failure".into(),
+            known_context: serde_json::json!({"failure": "tool error"}),
+        };
+        let v = req.to_value();
+        assert_eq!(v["kind"], "evaluate_context");
+        let back = LlmRequest::from_value(v).unwrap();
+        assert_eq!(back.kind_name(), "EvaluateContext");
     }
 }

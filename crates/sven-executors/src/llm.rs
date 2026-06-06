@@ -46,9 +46,11 @@ impl EffectExecutor for LlmExecutor {
         };
 
         let kind = req.kind_name();
-        // Pass `obs` so the adapter can forward streaming text/thinking deltas
-        // and usage events to the UI in real time.
-        match self.adapter.invoke(req, Some(obs)).await {
+        // Only pass the observation sink for user-facing requests so that raw
+        // structured JSON (intent classification, completeness checks, etc.)
+        // is never streamed as TextDelta events to the UI.
+        let stream_obs = if req.is_user_facing() { Some(obs) } else { None };
+        match self.adapter.invoke(req, stream_obs).await {
             Ok(event) => {
                 let _ = sink.emit(event).await;
             }

@@ -10,8 +10,7 @@ use std::collections::HashMap;
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
 use crate::machines::{
-    conversation::ConversationMachine, reactive_agent::ReactiveAgentMachine,
-    software_development::SoftwareDevelopmentMachine,
+    reactive_agent::ReactiveAgentMachine, software_development::SoftwareDevelopmentMachine,
 };
 
 /// A factory that creates a type-erased running machine.
@@ -38,10 +37,10 @@ impl Default for ModeRegistry {
 
 impl ModeRegistry {
     /// Builds the registry pre-loaded with the built-in machines:
-    /// - `"agent"` / `"reactive"` → [`ReactiveAgentMachine`] (the default
-    ///   streaming, native-tool-calling coding agent)
-    /// - `"chat"` → [`ConversationMachine`]
+    /// - `"agent"` / `"reactive"` / `"chat"` → [`ReactiveAgentMachine`]
+    ///   (streaming, native-tool-calling converse engine — ChatGPT-style)
     /// - `"sdlc"` → [`SoftwareDevelopmentMachine`]
+    ///   (structured, multi-phase software development with typed JSON LLM calls)
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),
@@ -51,16 +50,12 @@ impl ModeRegistry {
                 Box::new(Hsm::new(ReactiveAgentMachine::new()))
             })
         };
-        // The general coding agent is registered under both its canonical name
-        // (`agent`) and the `reactive` alias.
+        // agent, reactive, and chat all use the proven converse streaming engine.
+        // Chat is a natural-language conversation; the user invokes --mode sdlc
+        // explicitly when they want the structured SDLC workflow.
         reg.register("agent", reactive_factory());
         reg.register("reactive", reactive_factory());
-        reg.register(
-            "chat",
-            Box::new(|| -> Box<dyn ErasedMachine> {
-                Box::new(Hsm::new(ConversationMachine::new()))
-            }),
-        );
+        reg.register("chat", reactive_factory());
         reg.register(
             "sdlc",
             Box::new(|| -> Box<dyn ErasedMachine> {
@@ -144,7 +139,7 @@ mod tests {
         reg.register(
             "custom",
             Box::new(|| -> Box<dyn ErasedMachine> {
-                Box::new(Hsm::new(ConversationMachine::new()))
+                Box::new(Hsm::new(ReactiveAgentMachine::new()))
             }),
         );
         assert!(reg.get("custom").is_some());

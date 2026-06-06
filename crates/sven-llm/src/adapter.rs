@@ -95,6 +95,8 @@ impl LlmAdapter for DefaultLlmAdapter {
         // Caller-supplied obs takes precedence over the stored one so that the
         // executor (which knows the current observation sink) can inject it at
         // call-time even when the adapter was constructed without one.
+        // Note: the LlmExecutor already gates obs to None for non-user-facing
+        // requests, so the adapter can forward whatever is passed in.
         let effective_obs = obs.or(self.obs.as_ref());
         let raw = accumulate_stream(self.provider.as_ref(), cr, effective_obs).await?;
         parse_response(&req, &raw)
@@ -298,6 +300,20 @@ fn build_prompt(req: &LlmRequest) -> (String, String) {
             );
             (system, user)
         }
+
+        LlmRequest::EvaluateContext { goal, known_context } => {
+            let system = format!(
+                "You are a software development assistant operating inside an HSM-driven SDLC \
+                 workflow. Your task: {goal}. Respond with a JSON object relevant to the goal. \
+                 Be concise and structured."
+            );
+            let user = format!(
+                "Known context:\n{}",
+                serde_json::to_string_pretty(known_context)
+                    .unwrap_or_else(|_| known_context.to_string())
+            );
+            (system, user)
+        }
     }
 }
 
@@ -472,6 +488,12 @@ fn parse_response(req: &LlmRequest, raw: &str) -> Result<Event, LlmError> {
             Ok(to_assessment(
                 serde_json::to_value(r).expect("RecoveryOptions serialisation infallible"),
             ))
+        }
+
+        LlmRequest::EvaluateContext { .. } => {
+            // Parse as a generic JSON Value so the caller can inspect any shape.
+            let v: Value = serde_json::from_str(json_str).map_err(parse_err)?;
+            Ok(to_assessment(v))
         }
     }
 }

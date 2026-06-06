@@ -312,7 +312,8 @@ impl RuntimeBuilder {
         // The reactive `agent`/`reactive` modes drive the full legacy agentic
         // loop through a `ConverseExecutor`; that requires building an `Agent`
         // (which owns the tool-event receiver and a shared mode lock).
-        let is_reactive = matches!(self.mode.as_str(), "agent" | "reactive");
+        // "chat" uses the same converse streaming engine as "agent"/"reactive".
+        let is_reactive = matches!(self.mode.as_str(), "agent" | "reactive" | "chat");
 
         let mode_lock = Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
         let (tool_event_tx, tool_event_rx) =
