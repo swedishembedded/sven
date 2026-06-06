@@ -78,9 +78,16 @@ pub enum CompletenessStatus {
 /// Response to [`LlmRequest::AssessCompleteness`](crate::request::LlmRequest::AssessCompleteness).
 ///
 /// Carried inside `Event::LlmProposedAssessment { assessment }`.
+///
+/// Uses `#[serde(flatten)]` so the JSON shape matches what the LLM returns:
+/// `{"status":"enough"}` or `{"status":"missing","fields":[...]}`.
+/// Without flatten, the `status` field name collides with the internally-tagged
+/// enum's own `"status"` discriminant key, producing the wrong nested shape
+/// `{"status":{"status":"enough"}}` which the LLM never produces.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompletenessAssessment {
     /// Whether the context is sufficient to proceed.
+    #[serde(flatten)]
     pub status: CompletenessStatus,
 }
 

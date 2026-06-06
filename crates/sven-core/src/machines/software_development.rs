@@ -582,24 +582,20 @@ impl Machine for SoftwareDevelopmentMachine {
                     }])
                 }
                 Event::LlmProposedAssessment { assessment } => {
-                    // CompletenessAssessment serialises as:
-                    //   {"status": {"status": "enough"}} or
-                    //   {"status": {"status": "missing", "fields": [...]}}
-                    // Read the discriminant from the nested status object.
+                    // CompletenessAssessment uses #[serde(flatten)] so the JSON
+                    // is flat: {"status":"enough"} or
+                    //          {"status":"missing","fields":[{...}]}
                     let status_str = assessment
                         .get("status")
-                        .and_then(|s| s.get("status"))
                         .and_then(Value::as_str)
                         .unwrap_or("missing");
 
                     if status_str == "enough" {
-                        // Proceed to scope confirmation with a human sign-off.
                         Reaction::goto(ConfirmScope)
                     } else {
-                        // Not enough info: ask the user for clarification.
+                        // Build a clarifying prompt from the missing fields list.
                         let missing_fields: Vec<String> = assessment
-                            .get("status")
-                            .and_then(|s| s.get("fields"))
+                            .get("fields")
                             .and_then(Value::as_array)
                             .map(|arr| {
                                 arr.iter()
@@ -1743,7 +1739,7 @@ mod tests {
             json!({ "intent": "implement feature X" }),
             json!({ "problem": "users need feature X" }),
             json!({ "constraints": [] }),
-            json!({ "status": { "status": "enough" } }),
+            json!({ "status": "enough" }),
         ] {
             hsm.dispatch(&Event::LlmProposedAssessment { assessment }, ctx);
         }
@@ -1877,7 +1873,7 @@ mod tests {
         // AssessInformationCompleteness(enough) → ConfirmScope
         let out = hsm.dispatch(
             &Event::LlmProposedAssessment {
-                assessment: json!({ "status": { "status": "enough" } }),
+                assessment: json!({ "status": "enough" }),
             },
             &mut ctx,
         );
@@ -1932,11 +1928,11 @@ mod tests {
 
         let out = hsm.dispatch(
             &Event::LlmProposedAssessment {
+                // Flat schema matches CompletenessAssessment's #[serde(flatten)]:
+                // {"status":"missing","fields":[...]}
                 assessment: json!({
-                    "status": {
-                        "status": "missing",
-                        "fields": [{"field": "environment", "reason": "Which environment?"}],
-                    },
+                    "status": "missing",
+                    "fields": [{"field": "environment", "reason": "Which environment?"}],
                 }),
             },
             &mut ctx,
@@ -1964,7 +1960,7 @@ mod tests {
             json!({ "intent": "x" }),
             json!({ "problem": "x" }),
             json!({ "constraints": [] }),
-            json!({ "status": { "status": "enough" } }),
+            json!({ "status": "enough" }),
         ] {
             hsm.dispatch(&Event::LlmProposedAssessment { assessment }, &mut ctx);
         }
