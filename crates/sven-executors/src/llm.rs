@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, UiEvent};
 use sven_llm::{LlmAdapter, LlmRequest};
 
 /// Executes [`Effect::CallLlm`] by driving the injected [`LlmAdapter`].
@@ -25,7 +25,7 @@ impl LlmExecutor {
 
 #[async_trait]
 impl EffectExecutor for LlmExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let Effect::CallLlm { request } = effect else {
             return;
         };
@@ -39,24 +39,30 @@ impl EffectExecutor for LlmExecutor {
                         error: format!("failed to deserialise LlmRequest: {e}"),
                     })
                     .await;
+                // Ensure the TUI spinner stops even on deserialization failure.
+                obs.emit(UiEvent::TurnComplete);
                 return;
             }
         };
 
         let kind = req.kind_name();
-        match self.adapter.invoke(req).await {
+        // Pass `obs` so the adapter can forward streaming text/thinking deltas
+        // and usage events to the UI in real time.
+        match self.adapter.invoke(req, Some(obs)).await {
             Ok(event) => {
                 let _ = sink.emit(event).await;
             }
             Err(e) => {
-                tracing::warn!(request_kind = kind, error = %e, "LLM adapter error");
+                let error_msg = e.to_string();
+                tracing::warn!(request_kind = kind, error = %error_msg, "LLM adapter error");
+                obs.emit(UiEvent::Error(error_msg.clone()));
                 let _ = sink
-                    .emit(Event::LlmFailed {
-                        error: e.to_string(),
-                    })
+                    .emit(Event::LlmFailed { error: error_msg })
                     .await;
             }
         }
+        // Signal to the TUI that this LLM turn has completed so the spinner stops.
+        obs.emit(UiEvent::TurnComplete);
     }
 }
 
@@ -64,14 +70,56 @@ impl EffectExecutor for LlmExecutor {
 mod tests {
     use std::sync::Arc;
 
+    use async_trait::async_trait;
     use serde_json::json;
     use sven_hsm::{
         Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
-        PermissionPolicy, Reaction, Runtime,
+        PermissionPolicy, Reaction, Runtime, UiEvent,
     };
-    use sven_llm::{LlmRequest, MockLlmAdapter};
+    use sven_llm::{LlmAdapter, LlmError, LlmRequest, MockLlmAdapter};
 
     use super::LlmExecutor;
+
+    // ── Streaming mock adapter ─────────────────────────────────────────────────
+    //
+    // Unlike MockLlmAdapter (which returns a pre-programmed event without
+    // emitting any observations), StreamingMockAdapter emits UiEvent::TextDelta
+    // events onto the caller-supplied obs sink before returning the final event.
+    // This lets us verify that LlmExecutor correctly threads the obs through.
+
+    struct StreamingMockAdapter {
+        deltas: Vec<String>,
+        result_event: Event,
+    }
+
+    impl StreamingMockAdapter {
+        fn new(deltas: Vec<&str>, event: Event) -> Self {
+            Self {
+                deltas: deltas.into_iter().map(str::to_string).collect(),
+                result_event: event,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmAdapter for StreamingMockAdapter {
+        async fn invoke(
+            &self,
+            _req: LlmRequest,
+            obs: Option<&ObservationSink>,
+        ) -> Result<Event, LlmError> {
+            if let Some(o) = obs {
+                for d in &self.deltas {
+                    o.emit(UiEvent::TextDelta(d.clone()));
+                }
+                let full = self.deltas.join("");
+                if !full.is_empty() {
+                    o.emit(UiEvent::TextComplete(full));
+                }
+            }
+            Ok(self.result_event.clone())
+        }
+    }
 
     // ── Minimal one-shot test machine ─────────────────────────────────────────
     //
@@ -165,6 +213,93 @@ mod tests {
             .fact("received_event_kind")
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_else(|| "no event received".into())
+    }
+
+    // ── Observation-forwarding tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn forwards_text_deltas_to_observation_sink() {
+        let adapter = Arc::new(StreamingMockAdapter::new(
+            vec!["Hello", " world"],
+            Event::LlmProposedResponse {
+                text: "Hello world".into(),
+            },
+        ));
+        let mut exec = LlmExecutor::new(adapter);
+        let obs = ObservationSink::new(64);
+        let mut obs_rx = obs.subscribe();
+
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        let req = LlmRequest::GenerateResponse {
+            intent: json!({"intent": "greeting"}),
+        };
+        let effect = Effect::CallLlm {
+            request: req.to_value(),
+        };
+        exec.execute(effect, &sink, &obs).await;
+        rt.wait_done().await;
+        rt.join().await.unwrap();
+
+        let mut events: Vec<UiEvent> = Vec::new();
+        while let Ok(ev) = obs_rx.try_recv() {
+            events.push(ev);
+        }
+
+        assert!(
+            events.contains(&UiEvent::TextDelta("Hello".into())),
+            "expected TextDelta('Hello') but got: {events:?}"
+        );
+        assert!(
+            events.contains(&UiEvent::TextDelta(" world".into())),
+            "expected TextDelta(' world') but got: {events:?}"
+        );
+        assert!(
+            events.contains(&UiEvent::TextComplete("Hello world".into())),
+            "expected TextComplete but got: {events:?}"
+        );
+        assert!(
+            events.contains(&UiEvent::TurnComplete),
+            "expected TurnComplete but got: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_turn_complete_even_on_deserialization_failure() {
+        let adapter = Arc::new(MockLlmAdapter::empty());
+        let mut exec = LlmExecutor::new(adapter);
+        let obs = ObservationSink::new(16);
+        let mut obs_rx = obs.subscribe();
+
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        let effect = Effect::CallLlm {
+            request: json!({"kind": "totally_unknown_variant_xyz"}),
+        };
+        exec.execute(effect, &sink, &obs).await;
+        rt.wait_done().await;
+        rt.join().await.unwrap();
+
+        let mut events: Vec<UiEvent> = Vec::new();
+        while let Ok(ev) = obs_rx.try_recv() {
+            events.push(ev);
+        }
+        assert!(
+            events.contains(&UiEvent::TurnComplete),
+            "TurnComplete must be emitted even on deserialization failure: {events:?}"
+        );
     }
 
     #[tokio::test]
