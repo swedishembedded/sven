@@ -60,6 +60,9 @@ pub enum SdmState {
 
     // ── Intake ──────────────────────────────────────────────────────────
     Intake,
+    /// Waits for the first `UserMessage` before starting the intake process.
+    /// The SDLC machine must not fire LLM calls before the user has spoken.
+    Idle,
     InterpretUserIntent,
     ExtractProblemStatement,
     ExtractConstraints,
@@ -144,7 +147,8 @@ pub(crate) fn super_of(state: SdmState) -> SdmState {
             Top
         }
         // Children of Intake
-        InterpretUserIntent
+        Idle
+        | InterpretUserIntent
         | ExtractProblemStatement
         | ExtractConstraints
         | AssessInformationCompleteness
@@ -203,6 +207,7 @@ fn state_from_str(s: &str) -> Option<SdmState> {
     Some(match s {
         "Top" => Top,
         "Intake" => Intake,
+        "Idle" => Idle,
         "InterpretUserIntent" => InterpretUserIntent,
         "ExtractProblemStatement" => ExtractProblemStatement,
         "ExtractConstraints" => ExtractConstraints,
@@ -364,10 +369,23 @@ impl Machine for SoftwareDevelopmentMachine {
             // Composite state: Init transitions
             // =================================================================
             Intake => match event {
-                Event::Internal(Init) => Reaction::goto(InterpretUserIntent),
+                // Drill into Idle first so the machine waits for a UserMessage
+                // before issuing any LLM call.  This prevents the machine from
+                // firing CallLlm on startup before the user has typed anything.
+                Event::Internal(Init) => Reaction::goto(Idle),
                 // Track exit for cross-superstate ordering tests.
                 Event::Internal(Exit) => Reaction::effects(vec![Effect::PersistAudit]),
                 _ => Reaction::Super(Top),
+            },
+
+            // Wait for the first user message, then begin intake.
+            Idle => match event {
+                Event::UserMessage { text } => {
+                    // Store the original request so LLM states can access it.
+                    ctx.set_fact("user_request", json!(text));
+                    Reaction::goto(InterpretUserIntent)
+                }
+                _ => Reaction::Super(Intake),
             },
             Discovery => match event {
                 Event::Internal(Init) => Reaction::goto(RequestArtifacts),
@@ -461,9 +479,25 @@ impl Machine for SoftwareDevelopmentMachine {
             // Intake leaf states
             // =================================================================
             InterpretUserIntent => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "InterpretUserIntent" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let text = ctx
+                        .facts
+                        .get("user_request")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "extract_intent",
+                            "text": text,
+                            "allowed_intents": [
+                                "new_feature", "bug_fix", "refactor",
+                                "documentation", "test", "infrastructure",
+                                "question", "other"
+                            ],
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("intent", assessment.clone());
                     Reaction::goto(ExtractProblemStatement)
@@ -472,9 +506,22 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             ExtractProblemStatement => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ExtractProblemStatement" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let intent = ctx
+                        .facts
+                        .get("intent")
+                        .cloned()
+                        .and_then(|v| v.get("intent").and_then(Value::as_str).map(str::to_string))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let known = ctx.facts.get("intent").cloned().unwrap_or(Value::Null);
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "extract_problem_statement",
+                            "intent": intent,
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("problem_statement", assessment.clone());
                     Reaction::goto(ExtractConstraints)
@@ -483,9 +530,19 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             ExtractConstraints => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "ExtractConstraints" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "intent": ctx.facts.get("intent"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "user_request": ctx.facts.get("user_request"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "extract_constraints",
+                            "known_context": known,
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     ctx.set_fact("constraints", assessment.clone());
                     Reaction::goto(AssessInformationCompleteness)
@@ -494,9 +551,21 @@ impl Machine for SoftwareDevelopmentMachine {
             },
 
             AssessInformationCompleteness => match event {
-                Event::Internal(Entry) => Reaction::effects(vec![Effect::CallLlm {
-                    request: json!({ "kind": "AssessCompleteness" }),
-                }]),
+                Event::Internal(Entry) => {
+                    let known = serde_json::json!({
+                        "intent": ctx.facts.get("intent"),
+                        "problem_statement": ctx.facts.get("problem_statement"),
+                        "constraints": ctx.facts.get("constraints"),
+                        "user_request": ctx.facts.get("user_request"),
+                    });
+                    Reaction::effects(vec![Effect::CallLlm {
+                        request: json!({
+                            "kind": "assess_completeness",
+                            "known_context": known,
+                            "required_fields": ["intent", "problem_statement"],
+                        }),
+                    }])
+                }
                 Event::LlmProposedAssessment { assessment } => {
                     let completeness = assessment
                         .get("completeness")
@@ -1160,6 +1229,7 @@ impl Machine for SoftwareDevelopmentMachine {
         vec![
             Top,
             Intake,
+            Idle,
             InterpretUserIntent,
             ExtractProblemStatement,
             ExtractConstraints,
@@ -1272,9 +1342,23 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn initial_state_is_interpret_user_intent() {
+    fn initial_state_is_idle() {
         let (hsm, _) = make_hsm();
+        // The machine now waits in Idle for the first UserMessage before
+        // beginning the intake process.  This prevents LLM calls on startup.
+        assert_eq!(hsm.state(), SdmState::Idle);
+    }
+
+    #[test]
+    fn user_message_transitions_idle_to_interpret_user_intent() {
+        let (mut hsm, mut ctx) = make_hsm();
+        assert_eq!(hsm.state(), SdmState::Idle);
+
+        let out = hsm.dispatch(&Event::UserMessage { text: "add feature X".into() }, &mut ctx);
         assert_eq!(hsm.state(), SdmState::InterpretUserIntent);
+        // The transition to InterpretUserIntent must emit a CallLlm effect.
+        assert!(out.effects.iter().any(|e| e.kind() == EffectKind::CallLlm),
+            "expected CallLlm after transition to InterpretUserIntent: {:?}", out.effects);
     }
 
     // ------------------------------------------------------------------
@@ -1284,6 +1368,8 @@ mod tests {
     #[test]
     fn user_cancelled_from_interpret_user_intent_reaches_rolling_back() {
         let (mut hsm, mut ctx) = make_hsm();
+        // Transition through Idle first.
+        hsm.dispatch(&Event::UserMessage { text: "some request".into() }, &mut ctx);
         assert_eq!(hsm.state(), SdmState::InterpretUserIntent);
 
         let out = hsm.dispatch(&Event::UserCancelled, &mut ctx);
@@ -1310,6 +1396,9 @@ mod tests {
 
     /// Drive the Hsm through the four Intake states and stop at ConfirmScope.
     fn drive_to_confirm_scope(hsm: &mut Hsm<SoftwareDevelopmentMachine>, ctx: &mut Context) {
+        // Machine starts in Idle; send a user message to begin intake.
+        hsm.dispatch(&Event::UserMessage { text: "implement feature X".into() }, ctx);
+        assert_eq!(hsm.state(), SdmState::InterpretUserIntent);
         for assessment in [
             json!({ "intent": "implement feature X" }),
             json!({ "problem": "users need feature X" }),
@@ -1414,6 +1503,10 @@ mod tests {
     fn intake_happy_path() {
         let (mut hsm, mut ctx) = make_hsm();
 
+        // Machine starts in Idle; send UserMessage to begin intake.
+        hsm.dispatch(&Event::UserMessage { text: "add feature X".into() }, &mut ctx);
+        assert_eq!(hsm.state(), SdmState::InterpretUserIntent);
+
         // InterpretUserIntent → assessment → ExtractProblemStatement
         hsm.dispatch(
             &Event::LlmProposedAssessment {
@@ -1473,6 +1566,9 @@ mod tests {
     fn assess_completeness_missing_enters_await_user() {
         let (mut hsm, mut ctx) = make_hsm();
 
+        // Machine starts in Idle; send UserMessage to begin intake.
+        hsm.dispatch(&Event::UserMessage { text: "?".into() }, &mut ctx);
+
         // Drive to AssessInformationCompleteness
         hsm.dispatch(
             &Event::LlmProposedAssessment {
@@ -1519,6 +1615,8 @@ mod tests {
     #[test]
     fn confirm_scope_rejection_enters_recovery() {
         let (mut hsm, mut ctx) = make_hsm();
+        // Machine starts in Idle; send UserMessage first.
+        hsm.dispatch(&Event::UserMessage { text: "x".into() }, &mut ctx);
         // Drive to ConfirmScope
         for assessment in [
             json!({ "intent": "x" }),
