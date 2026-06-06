@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use sven_hsm::Event;
+use sven_hsm::{Event, ObservationSink};
 
 use crate::adapter::LlmAdapter;
 use crate::error::LlmError;
@@ -59,7 +59,7 @@ impl MockLlmAdapter {
 
 #[async_trait]
 impl LlmAdapter for MockLlmAdapter {
-    async fn invoke(&self, req: LlmRequest) -> Result<Event, LlmError> {
+    async fn invoke(&self, req: LlmRequest, _obs: Option<&ObservationSink>) -> Result<Event, LlmError> {
         // Record the request for inspection.
         *self.last_request.lock().expect("mock lock poisoned") = Some(req.clone());
 
@@ -99,13 +99,13 @@ mod tests {
             allowed_intents: vec!["bugfix".into(), "feature".into()],
         };
 
-        let e1 = adapter.invoke(req.clone()).await.unwrap();
-        let e2 = adapter.invoke(req.clone()).await.unwrap();
+        let e1 = adapter.invoke(req.clone(), None).await.unwrap();
+        let e2 = adapter.invoke(req.clone(), None).await.unwrap();
 
         assert_eq!(e1.kind(), EventKind::LlmProposedAssessment);
         assert_eq!(e2.kind(), EventKind::LlmProposedAssessment);
         // Third invoke returns LlmFailed
-        let e3 = adapter.invoke(req).await.unwrap();
+        let e3 = adapter.invoke(req, None).await.unwrap();
         assert_eq!(e3.kind(), EventKind::LlmFailed);
     }
 
@@ -115,7 +115,7 @@ mod tests {
         let req = LlmRequest::ExtractConstraints {
             known_context: json!({"goal": "test"}),
         };
-        let _ = adapter.invoke(req).await.unwrap();
+        let _ = adapter.invoke(req, None).await.unwrap();
         let last = adapter.last_request.lock().unwrap();
         assert!(matches!(
             last.as_ref(),
@@ -130,7 +130,7 @@ mod tests {
             text: "x".into(),
             allowed_intents: vec![],
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmFailed);
     }
 }

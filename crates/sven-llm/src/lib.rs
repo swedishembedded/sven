@@ -81,7 +81,7 @@ mod tests {
             text: "fix the crash in auth".into(),
             allowed_intents: vec!["bugfix".into(), "feature".into()],
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
         assert_eq!(event, expected);
     }
@@ -99,7 +99,7 @@ mod tests {
             intent: "bugfix".into(),
             known_context: json!({"description": "auth crashes on nil user"}),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -112,7 +112,7 @@ mod tests {
         let req = LlmRequest::ExtractConstraints {
             known_context: json!({"goal": "refactor auth"}),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -126,7 +126,7 @@ mod tests {
             known_context: json!({"goal": "done", "repo": "https://github.com/x/y"}),
             required_fields: vec!["goal".into(), "repo".into()],
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -141,7 +141,7 @@ mod tests {
             known_context: json!({"goal": "fix bug"}),
             required_fields: vec!["goal".into(), "repo".into()],
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -156,7 +156,7 @@ mod tests {
             known_context: json!({}),
             question_policy: "one sentence".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedResponse);
         assert_eq!(event, expected);
     }
@@ -175,7 +175,7 @@ mod tests {
             answer: "It's at https://github.com/x/y".into(),
             expected_answer_shape: "{\"repo_url\": \"string\"}".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -193,7 +193,7 @@ mod tests {
             known_context: json!({"goal": "fix crash", "repo": "https://github.com/x/y"}),
             planning_policy: "conservative".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedPlan);
     }
 
@@ -212,7 +212,7 @@ mod tests {
             selected_plan: json!({"title": "Minimal fix", "steps": ["read", "fix"]}),
             task_policy: "atomic tasks".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedPlan);
     }
 
@@ -230,7 +230,7 @@ mod tests {
             code_context: json!({"file": "src/auth.rs", "content": "let x = nil;"}),
             patch_policy: "minimal diff".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedPlan);
     }
 
@@ -248,7 +248,7 @@ mod tests {
             raw_output: "test result: ok. 5 passed".into(),
             expected_observation: "{\"passed\": int, \"failed\": int}".into(),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -267,7 +267,7 @@ mod tests {
             failure: "build failed: missing symbol".into(),
             known_context: json!({"checkpoint": "cp1"}),
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmProposedAssessment);
     }
 
@@ -280,7 +280,7 @@ mod tests {
             text: "x".into(),
             allowed_intents: vec!["a".into()],
         };
-        let event = adapter.invoke(req).await.unwrap();
+        let event = adapter.invoke(req, None).await.unwrap();
         assert_eq!(event.kind(), EventKind::LlmFailed);
     }
 }

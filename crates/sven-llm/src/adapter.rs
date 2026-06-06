@@ -30,11 +30,19 @@ use crate::response::{
 pub trait LlmAdapter: Send + Sync {
     /// Invoke the LLM with the given request and return the resulting event.
     ///
+    /// If `obs` is provided, streaming text/thinking deltas and usage events
+    /// are forwarded onto the outward observation plane as [`UiEvent`]s so
+    /// frontends can render progress in real time.
+    ///
     /// # Errors
     ///
     /// Returns [`LlmError`] if the provider fails or the response cannot be
     /// parsed into the expected shape.
-    async fn invoke(&self, req: LlmRequest) -> Result<Event, LlmError>;
+    async fn invoke(
+        &self,
+        req: LlmRequest,
+        obs: Option<&ObservationSink>,
+    ) -> Result<Event, LlmError>;
 }
 
 // ── DefaultLlmAdapter ─────────────────────────────────────────────────────────
@@ -73,14 +81,22 @@ impl DefaultLlmAdapter {
 
 #[async_trait]
 impl LlmAdapter for DefaultLlmAdapter {
-    async fn invoke(&self, req: LlmRequest) -> Result<Event, LlmError> {
+    async fn invoke(
+        &self,
+        req: LlmRequest,
+        obs: Option<&ObservationSink>,
+    ) -> Result<Event, LlmError> {
         let (system_prompt, user_prompt) = build_prompt(&req);
         let cr = CompletionRequest {
             messages: vec![Message::system(system_prompt), Message::user(user_prompt)],
             stream: true,
             ..Default::default()
         };
-        let raw = accumulate_stream(self.provider.as_ref(), cr, self.obs.as_ref()).await?;
+        // Caller-supplied obs takes precedence over the stored one so that the
+        // executor (which knows the current observation sink) can inject it at
+        // call-time even when the adapter was constructed without one.
+        let effective_obs = obs.or(self.obs.as_ref());
+        let raw = accumulate_stream(self.provider.as_ref(), cr, effective_obs).await?;
         parse_response(&req, &raw)
     }
 }
