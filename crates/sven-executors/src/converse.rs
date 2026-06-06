@@ -8,21 +8,36 @@
 //! fidelity (streaming text/thinking deltas, native parallel tool calls,
 //! XML/Hermes fallback, empty-turn retries, `max_tool_rounds` wrap-up, mid-loop
 //! compaction, model/mode switching) by delegating to
-//! [`Agent::submit`]. Every [`AgentEvent`] the loop produces is bridged onto
-//! the outward [`ObservationSink`] as a [`UiEvent`] while the turn is in
-//! flight; when the loop settles, exactly one inward completion [`Event`]
-//! (`LlmProposedResponse` on success, `LlmFailed` on error) is posted so the
-//! machine can advance.
+//! [`Agent::submit_with_cancel`]. Every [`AgentEvent`] the loop produces is
+//! bridged onto the outward [`ObservationSink`] as a [`UiEvent`] while the
+//! turn is in flight; when the loop settles, exactly one inward completion
+//! [`Event`] (`LlmProposedResponse` on success, `LlmFailed` on error) is
+//! posted so the machine can advance, followed by `UiEvent::TurnComplete`
+//! on the outward plane so the TUI can update its busy state.
 //!
-//! This keeps run-to-completion intact: the heavy streaming pipeline lives on
-//! the outward plane and never re-enters the inward event queue.
+//! # TurnComplete ordering guarantee
+//!
+//! `UiEvent::TurnComplete` is emitted **after** the inward completion event
+//! (`LlmProposedResponse` / `LlmFailed`) is already in the kernel queue.
+//! This prevents the TUI from marking the turn complete and dequeuing the
+//! next message before the machine has transitioned back to `Idle`, which
+//! would cause the second message to be silently dropped.
+//!
+//! # Cancellation
+//!
+//! `ConverseExecutor` holds a shared cancel slot
+//! (`Arc<Mutex<Option<oneshot::Sender<()>>>>`). Before each LLM submission
+//! it creates a fresh oneshot pair, stores the sender in the slot, and
+//! passes the receiver to [`Agent::submit_with_cancel`]. The TUI's
+//! `/abort` command drops the sender from the slot, which cancels the
+//! in-flight LLM call.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use sven_core::{Agent, AgentEvent};
 use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, UiEvent};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// The JSON `kind` tag that selects the converse turn engine.
 pub const CONVERSE_KIND: &str = "converse";
@@ -30,14 +45,28 @@ pub const CONVERSE_KIND: &str = "converse";
 /// Executes converse turns by driving a shared [`Agent`].
 pub struct ConverseExecutor {
     agent: Arc<Mutex<Agent>>,
+    /// Shared cancel slot. Before each submission the executor stores the
+    /// sender half of a fresh oneshot here; the TUI's abort handler drops
+    /// it to cancel the in-flight call.
+    cancel_handle: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl ConverseExecutor {
     /// Wraps a shared agent. The same `Arc` may be held elsewhere (e.g. to
     /// inspect the session), but only one converse turn runs at a time because
     /// `execute` holds the lock for the whole turn (respecting RTC).
-    pub fn new(agent: Arc<Mutex<Agent>>) -> Self {
-        Self { agent }
+    ///
+    /// `cancel_handle` is the shared slot the TUI uses to cancel an in-flight
+    /// turn. Pass the same `Arc` that `App::agent.cancel` points to so that
+    /// the TUI's `/abort` command reaches this executor directly.
+    pub fn new(
+        agent: Arc<Mutex<Agent>>,
+        cancel_handle: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    ) -> Self {
+        Self {
+            agent,
+            cancel_handle,
+        }
     }
 }
 
@@ -56,6 +85,7 @@ impl EffectExecutor for ConverseExecutor {
                     error: "converse executor received a non-converse request".into(),
                 })
                 .await;
+            obs.emit(UiEvent::TurnComplete);
             return;
         }
 
@@ -65,13 +95,21 @@ impl EffectExecutor for ConverseExecutor {
             .unwrap_or("")
             .to_string();
 
+        tracing::info!(text_len = text.len(), "ConverseExecutor: starting LLM turn");
+
         // Bridge AgentEvents → UiEvents while the loop runs, and capture the
         // final assistant text for the inward completion event.
+        // NOTE: TurnComplete is filtered here and emitted below, AFTER the
+        // kernel completion event, to prevent the race where the TUI dequeues
+        // the next message before the machine transitions back to Idle.
         let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
         let obs_fwd = obs.clone();
         let forwarder = tokio::spawn(async move {
             let mut final_text = String::new();
+            let mut event_count = 0u32;
             while let Some(ev) = rx.recv().await {
+                event_count += 1;
+                tracing::debug!(event_count, kind = ?std::mem::discriminant(&ev), "ConverseExecutor forwarder: got event");
                 if let AgentEvent::TextComplete(t) = &ev {
                     if !t.is_empty() {
                         final_text = t.clone();
@@ -81,30 +119,56 @@ impl EffectExecutor for ConverseExecutor {
                     obs_fwd.emit(ui);
                 }
             }
+            tracing::info!(event_count, final_text_len = final_text.len(), "ConverseExecutor forwarder: done");
             final_text
         });
 
+        // Install a fresh cancel channel so the TUI can abort this turn.
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        *self.cancel_handle.lock().await = Some(cancel_tx);
+
+        tracing::info!("ConverseExecutor: calling submit_with_cancel");
         let result = {
             let mut agent = self.agent.lock().await;
-            agent.submit(&text, tx).await
+            agent.submit_with_cancel(&text, tx, cancel_rx).await
         };
+        tracing::info!(ok = result.is_ok(), "ConverseExecutor: submit_with_cancel returned");
+
+        // Clear the cancel slot so a stale abort doesn't leak into the next turn.
+        self.cancel_handle.lock().await.take();
 
         let final_text = forwarder.await.unwrap_or_default();
+        tracing::info!(final_text_len = final_text.len(), "ConverseExecutor: forwarder joined");
 
+        // Post the inward completion event FIRST, then emit TurnComplete outward.
+        // The kernel consumer processes LlmProposedResponse / LlmFailed and
+        // transitions the machine to Idle before the TUI sees TurnComplete and
+        // potentially dequeues the next user message.
         match result {
             Ok(()) => {
+                tracing::info!("ConverseExecutor: emitting LlmProposedResponse");
                 let _ = sink
                     .emit(Event::LlmProposedResponse { text: final_text })
                     .await;
             }
             Err(e) => {
+                let error_msg = format!("{e:#}");
+                tracing::warn!(error = %error_msg, "ConverseExecutor: emitting LlmFailed");
                 let _ = sink
                     .emit(Event::LlmFailed {
-                        error: format!("{e:#}"),
+                        error: error_msg.clone(),
                     })
                     .await;
+                // Forward the error to the TUI so it is rendered as a visible
+                // error segment.  Without this the user sees nothing - the
+                // machine silently transitions back to Idle and TurnComplete
+                // fires but no response or error is displayed.
+                obs.emit(UiEvent::Error(error_msg));
             }
         }
+
+        tracing::info!("ConverseExecutor: emitting TurnComplete");
+        obs.emit(UiEvent::TurnComplete);
     }
 }
 
@@ -112,6 +176,10 @@ impl EffectExecutor for ConverseExecutor {
 ///
 /// Returns `None` for events that have no renderable observation counterpart
 /// (e.g. internal question/answer plumbing handled by other channels).
+///
+/// `TurnComplete` is intentionally excluded here and emitted directly by
+/// [`ConverseExecutor::execute`] after the inward completion event is in the
+/// kernel queue, preventing the TUI from dequeuing the next message prematurely.
 fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
     Some(match ev {
         AgentEvent::TextDelta(d) => UiEvent::TextDelta(d),
@@ -167,7 +235,8 @@ fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
             max_output_tokens,
             cost_usd,
         },
-        AgentEvent::TurnComplete => UiEvent::TurnComplete,
+        // TurnComplete is handled by execute() directly (ordering guarantee).
+        AgentEvent::TurnComplete => return None,
         AgentEvent::Aborted { partial_text } => UiEvent::Aborted { partial_text },
         AgentEvent::Error(e) => UiEvent::Error(e),
         AgentEvent::TodoUpdate(items) => {
@@ -284,10 +353,15 @@ mod tests {
         async fn execute(&mut self, _e: Effect, _s: &EventSink, _o: &ObservationSink) {}
     }
 
+    fn make_executor() -> ConverseExecutor {
+        let agent = Arc::new(Mutex::new(build_agent()));
+        let cancel_handle = Arc::new(Mutex::new(None));
+        ConverseExecutor::new(agent, cancel_handle)
+    }
+
     #[tokio::test]
     async fn converse_streams_text_and_posts_response() {
-        let agent = Arc::new(Mutex::new(build_agent()));
-        let mut exec = ConverseExecutor::new(agent);
+        let mut exec = make_executor();
 
         let rt = Runtime::spawn(
             Hsm::new(OneShot(MachineId::new())),
@@ -318,18 +392,25 @@ mod tests {
 
         // The streamed text delta reached the outward observation plane.
         let mut saw_delta = false;
+        let mut saw_turn_complete = false;
         while let Ok(ev) = obs_rx.try_recv() {
             if ev == UiEvent::TextDelta("pong".into()) {
                 saw_delta = true;
             }
+            if ev == UiEvent::TurnComplete {
+                saw_turn_complete = true;
+            }
         }
         assert!(saw_delta, "expected a TextDelta('pong') observation");
+        assert!(
+            saw_turn_complete,
+            "expected TurnComplete on the observation plane"
+        );
     }
 
     #[tokio::test]
     async fn non_converse_request_fails_gracefully() {
-        let agent = Arc::new(Mutex::new(build_agent()));
-        let mut exec = ConverseExecutor::new(agent);
+        let mut exec = make_executor();
 
         let rt = Runtime::spawn(
             Hsm::new(OneShot(MachineId::new())),

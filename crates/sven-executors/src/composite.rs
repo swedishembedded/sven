@@ -180,8 +180,16 @@ impl CompositeExecutorBuilder {
     /// When present, `CallLlm` effects whose request `kind` is `"converse"`
     /// (emitted by `ReactiveAgentMachine`) are driven through the full legacy
     /// agentic loop with streaming observations.
-    pub fn with_converse(mut self, agent: Arc<tokio::sync::Mutex<sven_core::Agent>>) -> Self {
-        self.converse = Some(ConverseExecutor::new(agent));
+    ///
+    /// `cancel_handle` is the shared abort slot the TUI uses to cancel an
+    /// in-flight turn. Pass the same `Arc` that `App::agent.cancel` points to
+    /// so the TUI's `/abort` command reaches the executor directly.
+    pub fn with_converse(
+        mut self,
+        agent: Arc<tokio::sync::Mutex<sven_core::Agent>>,
+        cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    ) -> Self {
+        self.converse = Some(ConverseExecutor::new(agent, cancel_handle));
         self
     }
 
