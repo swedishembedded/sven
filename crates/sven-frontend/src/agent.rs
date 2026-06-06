@@ -361,7 +361,7 @@ pub async fn kernel_session_task(
     mut rx: mpsc::Receiver<AgentRequest>,
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
-    _cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     _shared_skills: SharedSkills,
     _shared_agents: SharedAgents,
     _shared_tools: SharedTools,
@@ -376,6 +376,7 @@ pub async fn kernel_session_task(
         .with_runtime_context(ctx)
         .with_model_config(startup_model_cfg.clone())
         .with_tool_question_tx(question_tx)
+        .with_cancel_handle(cancel_handle)
         .build_session()
         .await
     {
@@ -426,12 +427,31 @@ pub async fn kernel_session_task(
         loop {
             match obs_rx.recv().await {
                 Ok(ev) => {
+                    let is_turn_complete = matches!(ev, sven_hsm::UiEvent::TurnComplete);
+                    let is_text_complete = matches!(ev, sven_hsm::UiEvent::TextComplete(_));
+                    let is_text_delta = matches!(ev, sven_hsm::UiEvent::TextDelta(_));
+                    if is_turn_complete || is_text_complete || is_text_delta {
+                        tracing::info!(
+                            turn_complete = is_turn_complete,
+                            text_complete = is_text_complete,
+                            text_delta = is_text_delta,
+                            "bridge: received UiEvent from kernel"
+                        );
+                    }
                     if let Some(ae) = ui_event_to_agent_event(ev) {
-                        let _ = event_tx_bridge.send(ae).await;
+                        if let Err(e) = event_tx_bridge.send(ae).await {
+                            tracing::warn!("bridge: failed to send AgentEvent to TUI: {e}");
+                        }
                     }
                 }
-                Err(RecvError::Lagged(_)) => continue,
-                Err(RecvError::Closed) => break,
+                Err(RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "bridge: lagged, skipped events");
+                    continue;
+                }
+                Err(RecvError::Closed) => {
+                    tracing::info!("bridge: observation channel closed, bridge exiting");
+                    break;
+                }
             }
         }
     });
@@ -463,13 +483,15 @@ pub async fn kernel_session_task(
                         agent.lock().await.set_mode(m).await;
                     }
                 }
-                debug!(msg_len = content.len(), "kernel task: posting UserMessage");
+                debug!(msg_len = content.len(), "kernel task: posting UserMessage (Submit)");
+                tracing::info!(msg_len = content.len(), "kernel_session_task: sending UserMessage to HSM (Submit)");
                 if !handle.send_user_message(content).await {
                     let _ = tx
                         .send(AgentEvent::Error("kernel queue closed".into()))
                         .await;
                     break;
                 }
+                tracing::info!("kernel_session_task: UserMessage queued");
             }
 
             AgentRequest::Resubmit {
@@ -479,6 +501,7 @@ pub async fn kernel_session_task(
                 mode_override,
             } => {
                 debug!("kernel task: resubmit");
+                tracing::info!(history_len = messages.len(), "kernel_session_task: Resubmit received");
                 if let Some(ref model_cfg) = model_override {
                     *current_model_cfg.lock().await = model_cfg.clone();
                     if let Some(ref agent) = converse_agent {
@@ -496,12 +519,14 @@ pub async fn kernel_session_task(
                 if let Some(ref agent) = converse_agent {
                     agent.lock().await.seed_history(messages).await;
                 }
+                tracing::info!("kernel_session_task: sending UserMessage to HSM (Resubmit)");
                 if !handle.send_user_message(new_user_content).await {
                     let _ = tx
                         .send(AgentEvent::Error("kernel queue closed".into()))
                         .await;
                     break;
                 }
+                tracing::info!("kernel_session_task: UserMessage queued");
             }
 
             AgentRequest::LoadHistory(messages) => {
