@@ -137,6 +137,9 @@ pub struct RuntimeBuilder {
     /// Optional permission requester for tool-call approval gating
     /// (e.g., ACP sends `session/request_permission` to the IDE).
     permission_requester: Option<Arc<dyn PermissionRequester>>,
+    /// Shared abort slot wired into the `ConverseExecutor`. The TUI drops
+    /// the sender (via `send_abort_signal`) to cancel an in-flight LLM turn.
+    cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
 }
 
 impl RuntimeBuilder {
@@ -163,6 +166,7 @@ impl RuntimeBuilder {
             tool_question_tx: None,
             initial_history: Vec::new(),
             permission_requester: None,
+            cancel_handle: None,
         }
     }
 
@@ -216,6 +220,20 @@ impl RuntimeBuilder {
     /// before executing any tool that has `ApprovalPolicy::Ask`.
     pub fn with_permission_requester(mut self, requester: Arc<dyn PermissionRequester>) -> Self {
         self.permission_requester = Some(requester);
+        self
+    }
+
+    /// Provide the TUI's shared abort slot so the `ConverseExecutor` can
+    /// be cancelled via the existing `/abort` command.
+    ///
+    /// The slot is the same `Arc` held in `App::agent.cancel`. Before each
+    /// LLM submission the executor stores its cancel sender there; the TUI's
+    /// `send_abort_signal()` drops it to interrupt the in-flight call.
+    pub fn with_cancel_handle(
+        mut self,
+        handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    ) -> Self {
+        self.cancel_handle = Some(handle);
         self
     }
 
@@ -404,7 +422,12 @@ impl RuntimeBuilder {
         let exposed_agent = converse_agent.clone();
         executor_builder = match converse_agent {
             // Reactive mode: drive the full agentic loop via the converse engine.
-            Some(agent) => executor_builder.with_converse(agent),
+            Some(agent) => {
+                let cancel_handle = self
+                    .cancel_handle
+                    .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
+                executor_builder.with_converse(agent, cancel_handle)
+            }
             // Typed-JSON modes (chat/sdlc): use the structured LLM adapter.
             None => executor_builder.with_llm(llm_adapter),
         };
