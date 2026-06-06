@@ -1,7 +1,16 @@
 CARGO   ?= cargo
-# Use the user-writable registry when the system CARGO_HOME is read-only.
-# Override with: make CARGO_HOME=/path/to/cargo
-export CARGO_HOME = $(HOME)/.cargo
+# CARGO_HOME selects where registry caches, compiled crates, and binaries are
+# stored.  ALL build paths (make, cargo, CI, agent) MUST use the same value
+# or Cargo will see different absolute source paths in its fingerprint files
+# and perform a full rebuild every time you switch.
+#
+# Rule: never override this with a different directory between invocations.
+# The ?= lets the caller / CI override it; the default is the conventional
+# writable home.  If the system CARGO_HOME is read-only (e.g. /opt/rust) set
+# the variable before calling make:
+#   CARGO_HOME=~/.cargo make build/debug
+CARGO_HOME = $(HOME)/.cargo
+export CARGO_HOME
 
 # Wrap rustc with sccache when available for shared compilation caching across builds.
 # Install with: cargo install sccache
