@@ -1540,13 +1540,15 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     };
 
     // ── Opt-in HSM kernel path ────────────────────────────────────────────────
-    // When `SVEN_HSM` is truthy, route a single-prompt headless run through the
-    // reactive kernel agent (`RuntimeRunner`) instead of the legacy `CiRunner`.
-    // Multi-step JSONL workflows still use the legacy runner. This gate keeps
-    // the default e2e path on `CiRunner` while the kernel path is validated.
+    // Route headless runs through the HSM kernel (`RuntimeRunner`) when:
+    //  • `SVEN_HSM=1` is set (explicit opt-in for any mode), OR
+    //  • the mode is `sdlc` or `chat` (these have no legacy CiRunner
+    //    implementation; CiRunner only knows the old agentic loop).
+    // Multi-step JSONL workflows always use the legacy runner regardless.
     let hsm_enabled = std::env::var("SVEN_HSM")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
     if hsm_enabled && load_jsonl.is_none() {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
             match cli.mode {
