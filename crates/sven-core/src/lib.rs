@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod agent;
 mod compact;
+mod deliberator;
 mod events;
 pub mod prompts;
 mod runtime_context;
@@ -20,6 +21,7 @@ pub use agent::{Agent, AgentNewParams, ModelResolver};
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, smart_truncate,
 };
+pub use deliberator::{to_model_schemas, DeliberationParams, Deliberator};
 pub use completion::development_complete;
 pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};
 pub use machines::{

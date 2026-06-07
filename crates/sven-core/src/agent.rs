@@ -1447,7 +1447,7 @@ fn extract_n_ctx_from_error(err: &anyhow::Error) -> Option<usize> {
 /// contains the raw markup, e.g. `<think>\nStep 1: ...\n</think>`, instead of
 /// the clean inner text.  Stripping them here keeps the thinking log readable
 /// and prevents the `<think>` noise from leaking into conversation history.
-fn strip_think_wrappers(s: String) -> String {
+pub(crate) fn strip_think_wrappers(s: String) -> String {
     let trimmed = s.trim();
     let inner = trimmed.strip_prefix("<think>").unwrap_or(trimmed);
     let inner = inner.strip_suffix("</think>").unwrap_or(inner);
@@ -1465,7 +1465,7 @@ fn strip_think_wrappers(s: String) -> String {
 /// treat this as a thinking-only turn and apply the empty-turn retry nudge.
 ///
 /// Returns `None` when the text contains content outside the `<think>` block.
-fn extract_inline_think_block(text: &str) -> Option<String> {
+pub(crate) fn extract_inline_think_block(text: &str) -> Option<String> {
     let trimmed = text.trim();
     // Must start with <think>
     let inner = trimmed.strip_prefix("<think>")?;
@@ -1492,7 +1492,7 @@ fn extract_inline_think_block(text: &str) -> Option<String> {
 /// - `[TOOL_CALL]` (some other open-source variants)
 /// - `<invoke ` (Anthropic old XML / MiniMax format - handled by
 ///   `extract_inline_invoke_tool_calls`; listed here as a safety net)
-fn text_contains_malformed_tool_call(text: &str) -> bool {
+pub(crate) fn text_contains_malformed_tool_call(text: &str) -> bool {
     text.contains("<tool_call>")
         || text.contains("</tool_call>")
         || text.contains("<function=")
@@ -1515,7 +1515,7 @@ fn text_contains_malformed_tool_call(text: &str) -> bool {
 /// Returns the text with all `<invoke>...</invoke>` blocks removed and the
 /// extracted [`ToolCall`] objects.  Parameter values that parse as valid JSON
 /// are stored as JSON; otherwise they are stored as plain strings.
-fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     use regex::Regex;
 
     let invoke_re = Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#).unwrap();
@@ -1554,7 +1554,7 @@ fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
 /// Both types share the same fields; this conversion bridges the tool-registry
 /// representation to the model-API representation without introducing a direct
 /// dependency between `sven-tools` and `sven-model`.
-fn tool_schema_to_model(s: sven_tools::ToolSchema) -> sven_model::ToolSchema {
+pub(crate) fn tool_schema_to_model(s: sven_tools::ToolSchema) -> sven_model::ToolSchema {
     sven_model::ToolSchema {
         name: s.name,
         description: s.description,
