@@ -89,6 +89,7 @@ impl ModelSubQueryRunner {
             cache_key: None,
             max_output_tokens_override: None,
             core_tool_count: 0,
+            response_format: None,
         };
 
         let mut stream = self

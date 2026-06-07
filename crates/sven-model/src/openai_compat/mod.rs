@@ -428,6 +428,25 @@ impl crate::ModelProvider for OpenAICompatProvider {
             body["tools"] = json!(tools);
         }
 
+        // Structured-output: drivers that speak the OpenAI wire format accept a
+        // `response_format` field that constrains the model to valid JSON (and,
+        // for `json_schema`, to a specific schema).  Callers still post-parse,
+        // so this is a best-effort optimisation.  Placed before the extra_body
+        // merge so users can still override it via driver_options.
+        if let Some(rf) = &req.response_format {
+            body["response_format"] = match rf {
+                crate::ResponseFormat::JsonObject => json!({ "type": "json_object" }),
+                crate::ResponseFormat::JsonSchema { name, schema } => json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": name,
+                        "schema": schema,
+                        "strict": false,
+                    }
+                }),
+            };
+        }
+
         // OpenRouter supports a `prompt_cache_key` body field that pins all
         // requests sharing the same key to the same cached KV prefix.  Using
         // the session ID ensures every turn within a session benefits from the

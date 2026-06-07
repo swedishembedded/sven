@@ -460,6 +460,25 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+/// How the model should constrain its response format.
+///
+/// Used by drivers that support structured output (OpenAI / OpenRouter
+/// `response_format`).  Providers that do not support it ignore the field; the
+/// caller is expected to *also* describe the schema in the prompt and always
+/// post-parse the result, so structured output works uniformly across drivers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResponseFormat {
+    /// Constrain output to a syntactically valid JSON object (no schema).
+    JsonObject,
+    /// Constrain output to a specific JSON schema (OpenAI strict mode).
+    JsonSchema {
+        /// A short name identifying the schema (required by OpenAI).
+        name: String,
+        /// The JSON Schema the response must conform to.
+        schema: serde_json::Value,
+    },
+}
+
 /// A tool schema provided to the model.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -513,6 +532,13 @@ pub struct CompletionRequest {
     /// another after `tools.last()` (BP2).  When 0, only one breakpoint is
     /// placed at the end of the entire tools list (existing behavior).
     pub core_tool_count: usize,
+    /// Optional structured-output constraint.
+    ///
+    /// When set, drivers that support it (OpenAI / OpenRouter) add a
+    /// `response_format` field to the request body so the model returns valid
+    /// JSON (optionally matching a schema).  Drivers that do not support it
+    /// ignore the field; callers must always post-parse to stay portable.
+    pub response_format: Option<ResponseFormat>,
 }
 
 /// A single streamed event from the model.

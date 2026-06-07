@@ -86,6 +86,7 @@ async fn generate_title_with_config(cfg: &ModelConfig, user_text: &str) -> Optio
         cache_key: None,
         max_output_tokens_override: Some(TITLE_MAX_TOKENS),
         core_tool_count: 0,
+        response_format: None,
     };
 
     match title_model.complete(req).await {

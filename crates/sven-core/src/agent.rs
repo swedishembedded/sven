@@ -909,6 +909,7 @@ impl Agent {
             cache_key: Some(self.session.id.clone()),
             max_output_tokens_override: None,
             core_tool_count,
+            response_format: None,
         };
 
         let mut stream = match self.model.complete(req).await {
@@ -960,6 +961,7 @@ impl Agent {
                         cache_key: Some(self.session.id.clone()),
                         max_output_tokens_override: None,
                         core_tool_count,
+                        response_format: None,
                     };
                     self.model
                         .complete(req2)
