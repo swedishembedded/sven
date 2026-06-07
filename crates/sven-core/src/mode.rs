@@ -9,9 +9,7 @@ use std::collections::HashMap;
 
 use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
-use crate::machines::{
-    reactive_agent::ReactiveAgentMachine, software_development::SoftwareDevelopmentMachine,
-};
+use crate::machines::{reactive_agent::ReactiveAgentMachine, sdlc::SdlcMachine};
 
 /// A factory that creates a type-erased running machine.
 pub type MachineFactory = Box<dyn Fn() -> Box<dyn ErasedMachine> + Send + Sync>;
@@ -58,9 +56,7 @@ impl ModeRegistry {
         reg.register("chat", reactive_factory());
         reg.register(
             "sdlc",
-            Box::new(|| -> Box<dyn ErasedMachine> {
-                Box::new(Hsm::new(SoftwareDevelopmentMachine::new()))
-            }),
+            Box::new(|| -> Box<dyn ErasedMachine> { Box::new(Hsm::new(SdlcMachine::new())) }),
         );
         reg
     }

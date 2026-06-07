@@ -26,7 +26,8 @@ pub use completion::development_complete;
 pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
     clarification::ClarificationMachine, conversation::ConversationMachine,
-    reactive_agent::ReactiveAgentMachine, software_development::SoftwareDevelopmentMachine,
+    reactive_agent::ReactiveAgentMachine, sdlc::task::TaskMachine, sdlc::SdlcMachine,
+    software_development::SoftwareDevelopmentMachine,
 };
 pub use mode::ModeRegistry;
 pub use prompts::{system_prompt, CollabEvent};
