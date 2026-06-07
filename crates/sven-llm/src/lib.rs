@@ -31,13 +31,15 @@
 //! required.
 
 pub mod adapter;
+pub mod conversation;
 pub mod error;
 pub mod mock;
 pub mod request;
 pub mod response;
 
 // Re-export the most important types at the crate root.
-pub use adapter::{DefaultLlmAdapter, LlmAdapter};
+pub use adapter::{strip_code_fences, DefaultLlmAdapter, LlmAdapter};
+pub use conversation::{ConversationStore, DeliberationRequest, ThreadId, DELIBERATE_KIND};
 pub use error::LlmError;
 pub use mock::MockLlmAdapter;
 pub use request::LlmRequest;

@@ -499,7 +499,7 @@ fn parse_response(req: &LlmRequest, raw: &str) -> Result<Event, LlmError> {
 }
 
 /// Strip optional Markdown code fences (` ```json ... ``` `) from LLM output.
-fn strip_code_fences(s: &str) -> &str {
+pub fn strip_code_fences(s: &str) -> &str {
     let s = s.trim();
     let s = s.strip_prefix("```json").unwrap_or(s);
     let s = s.strip_prefix("```").unwrap_or(s);
