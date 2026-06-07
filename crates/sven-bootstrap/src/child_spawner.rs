@@ -6,24 +6,34 @@
 //! [`SdlcChildSpawner`] services `Effect::InstantiateSubmachine` (emitted by
 //! [`SdlcMachine`](sven_core::SdlcMachine) when an approved plan decomposes into
 //! independent tasks). For each task it builds a **fully isolated** child
-//! kernel: a fresh [`Context`], a fresh [`DeliberationExecutor`] (hence a fresh
+//! kernel: a fresh [`Context`], a fresh [`TurnExecutor`] (hence a fresh
 //! append-only conversation store), running a one-shot
 //! [`TaskMachine`](sven_core::TaskMachine). The children run concurrently on
 //! their own tokio tasks; when one terminates, its structured result is posted
 //! back to the parent as `Event::Internal(SubmachineCompleted { result })` so
 //! the parent can aggregate it (append-only) on the execution thread.
+//!
+//! # Policy
+//!
+//! Children receive a **tightened** policy: read/write/shell/git are allowed
+//! globally, but `Rollback` is not included so any approval-gated call the
+//! child emits is rejected immediately by the kernel (child kernels have no
+//! human approver). The `TaskMachine` itself auto-denies `ToolApprovalRequired`
+//! events that reach it via the `RunningTools` state.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use sven_config::Config;
 use sven_core::TaskMachine;
-use sven_executors::{CompositeExecutorBuilder, DeliberationExecutor};
+use sven_executors::{CompositeExecutorBuilder, TurnExecutor};
 use sven_hsm::{
     event::InternalEvent, ChildSpawner, Context, Event, EventSink, Hsm, MachineId,
-    PermissionPolicy, Runtime, SystemClock,
+    PermissionPolicy, Runtime, SystemClock, ToolCallId, ToolCapability,
 };
+use sven_llm::ConversationStore;
 use sven_tools::ToolRegistry;
 
 /// Spawns isolated child task kernels for parallel SDLC execution.
@@ -48,13 +58,19 @@ impl SdlcChildSpawner {
         }
     }
 
-    /// Permissive policy for a child: the kernel gates capabilities per state,
-    /// but the deliberation loop runs tools *internally*, so the only kernel
-    /// effect a child emits is the (capability-free) deliberation `CallLlm`.
+    /// Tightened policy for a child kernel: basic read/write/shell/git allowed,
+    /// `Rollback` excluded so no approval-gated call can stall the child.
+    /// The kernel gates every `CallTool` effect; if a capability falls outside
+    /// this policy the kernel emits `ToolFailed{..}` immediately.
     fn child_policy() -> PermissionPolicy {
-        use sven_hsm::ToolCapability::{ExecuteShell, GitOperation, NetworkAccess, ReadFile, WriteFile};
         PermissionPolicy::builder()
-            .allow_globally([ReadFile, WriteFile, GitOperation, ExecuteShell, NetworkAccess])
+            .allow_globally([
+                ToolCapability::ReadFile,
+                ToolCapability::WriteFile,
+                ToolCapability::GitOperation,
+                ToolCapability::ExecuteShell,
+                ToolCapability::NetworkAccess,
+            ])
             .build()
     }
 }
@@ -68,23 +84,32 @@ impl ChildSpawner for SdlcChildSpawner {
             .unwrap_or_default()
             .to_string();
 
-        // Fresh per-child deliberation executor → isolated conversation store.
+        // Each child gets its own fresh conversation store (append-only thread).
+        let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        let call_id_to_thread = Arc::new(std::sync::Mutex::new(
+            HashMap::<ToolCallId, String>::new(),
+        ));
+        // Each child gets its own cancel slot so siblings never clobber each other.
+        let cancel_handle = Arc::new(tokio::sync::Mutex::new(None));
+
         let resolver_config = Arc::clone(&self.config);
         let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
             let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
             let provider = sven_model::from_config(&model_cfg)?;
             Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
         });
-        // Each child gets its own cancel slot so siblings never clobber each other.
-        let cancel_handle = Arc::new(tokio::sync::Mutex::new(None));
-        let deliberation = DeliberationExecutor::new(
+
+        let turn_executor = TurnExecutor::new(
             self.default_model.clone(),
             Some(model_resolver),
             Arc::clone(&self.tool_registry),
+            conv_store,
+            call_id_to_thread,
             cancel_handle,
         );
+
         let executor = CompositeExecutorBuilder::default()
-            .with_deliberation(deliberation)
+            .with_turn(turn_executor)
             .with_tools(Arc::clone(&self.tool_registry), Default::default())
             .with_timers(Arc::new(SystemClock::new()))
             .build();

@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use super::decisions::decision_schema;
 
 /// Read-only investigation tools (discovery, planning, verification).
-const READ_TOOLS: &[&str] = &[
+pub const READ_TOOLS: &[&str] = &[
     "read_file",
     "find_file",
     "grep",
@@ -30,7 +30,7 @@ const READ_TOOLS: &[&str] = &[
 ];
 
 /// Mutating tools available during execution (plus the read tools).
-const WRITE_TOOLS: &[&str] = &[
+pub const WRITE_TOOLS: &[&str] = &[
     "read_file",
     "find_file",
     "grep",
@@ -45,7 +45,7 @@ const WRITE_TOOLS: &[&str] = &[
 ];
 
 /// Build-and-test tools (verification / delivery).
-const BUILD_TOOLS: &[&str] = &[
+pub const BUILD_TOOLS: &[&str] = &[
     "read_file",
     "grep",
     "search_codebase",
@@ -55,7 +55,7 @@ const BUILD_TOOLS: &[&str] = &[
 ];
 
 /// Shared tail appended to every instruction: how to answer.
-fn answer_contract() -> &'static str {
+pub const ANSWER_CONTRACT: &str =
     "Respond with a single JSON object matching the decision schema. Set \
      `status` to exactly one of: `proceed` (you are confident and the phase is \
      complete), `need_user_input` (you must ask the developer something — put \
@@ -64,11 +64,18 @@ fn answer_contract() -> &'static str {
      (you still need to investigate further), or `failed` (you cannot proceed). \
      Put a concise human summary in `summary`, any user-facing text in \
      `message`, and structured results in `payload`. Do not output anything \
-     except the JSON object."
+     except the JSON object.";
+
+/// Shared tail appended to every instruction: how to answer.
+pub fn answer_contract() -> &'static str {
+    ANSWER_CONTRACT
 }
 
-/// Assemble a deliberation request value.
-fn deliberate(
+/// Assemble a kernel-native turn request for an SDLC phase.
+///
+/// The `system_role` is prepended to the `instruction` as context so the model
+/// understands its role without a separate system-message API parameter.
+fn turn_request(
     thread: &str,
     system_role: &str,
     instruction: String,
@@ -76,15 +83,18 @@ fn deliberate(
     schema_name: &str,
     max_tool_rounds: u32,
 ) -> Value {
+    let full_instruction = if system_role.is_empty() {
+        instruction
+    } else {
+        format!("{system_role}\n\n{instruction}")
+    };
     json!({
-        "kind": "deliberate",
+        "kind": "turn",
         "thread": thread,
-        "system_role": system_role,
-        "instruction": instruction,
+        "instruction": full_instruction,
         "tools": tools,
         "schema": decision_schema(),
         "schema_name": schema_name,
-        "model": Value::Null,
         "max_tool_rounds": max_tool_rounds,
     })
 }
@@ -111,7 +121,7 @@ pub fn intake_request(user_request: &str) -> Value {
            asks the developer to confirm before you begin discovery.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "intake",
         "You are Sven, a meticulous senior software engineer who never starts work \
          before understanding the request.",
@@ -130,7 +140,7 @@ pub fn followup_request(thread: &str, system_role: &str, tools: &[&str], answer:
          Incorporate this and continue the current phase. {}",
         answer_contract()
     );
-    deliberate(thread, system_role, instruction, tools, "decision", 6)
+    turn_request(thread, system_role, instruction, tools, "decision", 6)
 }
 
 /// Generic follow-up after a rejected approval — ask the model to revise.
@@ -141,7 +151,7 @@ pub fn revise_request(thread: &str, system_role: &str, tools: &[&str], reason: &
          approach to address their concern and continue. {}",
         answer_contract()
     );
-    deliberate(thread, system_role, instruction, tools, "decision", 6)
+    turn_request(thread, system_role, instruction, tools, "decision", 6)
 }
 
 /// Discovery: explore the repository and produce a discovery summary.
@@ -158,7 +168,7 @@ pub fn discovery_request(scope_summary: &str) -> Value {
          essential is missing, or `failed` if you cannot understand the project.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "discovery",
         "You are Sven performing repository discovery. Use tools to gather facts; \
          never guess when you can read.",
@@ -184,7 +194,7 @@ pub fn planning_request(discovery_summary: &str) -> Value {
          if you need a decision from the developer first.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "planning",
         "You are Sven, an engineer who plans minimal, low-risk changes and \
          decomposes work into small verifiable tasks.",
@@ -210,7 +220,7 @@ pub fn execution_request(plan_summary: &str) -> Value {
          `failed` if you cannot complete the work.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "execution",
         "You are Sven implementing changes carefully: smallest viable diffs, \
          always verify by building and testing.",
@@ -239,7 +249,7 @@ pub fn task_request(task: &str) -> Value {
          cannot complete it.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "task",
         "You are Sven implementing one isolated task with the smallest viable diff.",
         instruction,
@@ -263,7 +273,7 @@ pub fn verification_request(execution_summary: &str) -> Value {
          `need_user_input` if you need guidance.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "verification",
         "You are Sven acting as an independent reviewer; you trust evidence from \
          builds and tests over claims.",
@@ -287,7 +297,7 @@ pub fn delivery_request(verification_summary: &str) -> Value {
          developer to accept the delivered work.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "delivery",
         "You are Sven wrapping up an engagement with a clear, honest handover.",
         instruction,
@@ -309,7 +319,7 @@ pub fn recovery_request(failure_context: &str) -> Value {
          `failed`.\n\n{}",
         answer_contract()
     );
-    deliberate(
+    turn_request(
         "recovery",
         "You are Sven diagnosing a failure calmly and proposing the smallest safe \
          corrective action.",
@@ -363,8 +373,8 @@ pub fn tools_for_thread(thread: &str) -> &'static [&'static str] {
 mod tests {
     use super::*;
 
-    fn assert_deliberate(v: &Value, thread: &str) {
-        assert_eq!(v["kind"], "deliberate");
+    fn assert_turn_request(v: &Value, thread: &str) {
+        assert_eq!(v["kind"], "turn", "SDLC prompts must use kind=turn");
         assert_eq!(v["thread"], thread);
         assert!(v["instruction"].as_str().unwrap().len() > 50);
         assert!(v["tools"].as_array().unwrap().len() >= 3);
@@ -374,17 +384,17 @@ mod tests {
     #[test]
     fn intake_request_is_well_formed() {
         let v = intake_request("fix the auth bug");
-        assert_deliberate(&v, "intake");
+        assert_turn_request(&v, "intake");
         assert!(v["instruction"].as_str().unwrap().contains("fix the auth bug"));
     }
 
     #[test]
     fn all_phase_requests_well_formed() {
-        assert_deliberate(&discovery_request("scope"), "discovery");
-        assert_deliberate(&planning_request("disc"), "planning");
-        assert_deliberate(&execution_request("plan"), "execution");
-        assert_deliberate(&verification_request("exec"), "verification");
-        assert_deliberate(&delivery_request("ver"), "delivery");
+        assert_turn_request(&discovery_request("scope"), "discovery");
+        assert_turn_request(&planning_request("disc"), "planning");
+        assert_turn_request(&execution_request("plan"), "execution");
+        assert_turn_request(&verification_request("exec"), "verification");
+        assert_turn_request(&delivery_request("ver"), "delivery");
     }
 
     #[test]

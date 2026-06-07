@@ -27,17 +27,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sven_config::{Config, ModelConfig};
-use sven_core::{Agent, ModeRegistry};
+use sven_core::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
-    CompositeExecutorBuilder, DeliberationExecutor,
+    CompositeExecutorBuilder, DeliberationExecutor, TurnExecutor,
 };
-use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, RuntimeStatus};
-use sven_llm::DefaultLlmAdapter;
+use sven_hsm::{Context, ErasedRuntime, Event, EventSink, RuntimeStatus, ToolCallId};
+use sven_llm::ConversationStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
 use sven_tools::{PermissionRequester, QuestionRequest};
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 use crate::context::{RuntimeContext, ToolSetProfile};
@@ -239,7 +239,7 @@ impl RuntimeBuilder {
 
     /// Build the runtime. Returns the [`ErasedRuntime`], a cheap
     /// [`RuntimeHandle`] for posting events, the [`KernelChannels`] for
-    /// the frontend, and the optional converse `Agent` (reactive mode only).
+    /// the frontend, the [`McpManager`], and the MCP event receiver.
     ///
     /// # Errors
     ///
@@ -252,7 +252,6 @@ impl RuntimeBuilder {
         ErasedRuntime,
         RuntimeHandle,
         KernelChannels,
-        Option<Arc<Mutex<Agent>>>,
         Arc<McpManager>,
         mpsc::Receiver<McpEvent>,
     )> {
@@ -309,12 +308,6 @@ impl RuntimeBuilder {
         }
 
         // ── Build tool registry ───────────────────────────────────────────────
-        // The reactive `agent`/`reactive` modes drive the full legacy agentic
-        // loop through a `ConverseExecutor`; that requires building an `Agent`
-        // (which owns the tool-event receiver and a shared mode lock).
-        // "chat" uses the same converse streaming engine as "agent"/"reactive".
-        let is_reactive = matches!(self.mode.as_str(), "agent" | "reactive" | "chat");
-
         let mode_lock = Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
         let (tool_event_tx, tool_event_rx) =
             tokio::sync::mpsc::channel::<sven_tools::events::ToolEvent>(64);
@@ -351,40 +344,16 @@ impl RuntimeBuilder {
 
         let tool_registry = Arc::new(tool_registry);
 
-        // ── Optionally build the reactive Agent (converse engine) ─────────────
-        let converse_agent: Option<Arc<Mutex<Agent>>> = if is_reactive {
-            let context_window = match model.probe_context_window().await {
-                Some(n) if n > 0 => n as usize,
-                _ => model
-                    .config_context_window()
-                    .or_else(|| model.catalog_context_window())
-                    .unwrap_or(128_000) as usize,
-            };
-            let resolver_config = Arc::clone(&self.config);
-            let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
-                let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
-                let provider = sven_model::from_config(&model_cfg)?;
-                Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
-            });
-            let mut agent = sven_core::Agent::new_with_params(sven_core::AgentNewParams {
-                model: model.clone(),
-                tools: tool_registry.clone(),
-                config: Arc::new(self.config.agent.clone()),
-                runtime,
-                mode_lock: mode_lock.clone(),
-                tool_event_rx,
-                max_context_tokens: context_window,
-                model_resolver: Some(model_resolver),
-            });
-            // Seed prior conversation history if provided (resume / session switch).
-            if !self.initial_history.is_empty() {
-                agent.seed_history(self.initial_history.clone()).await;
-            }
-            Some(Arc::new(Mutex::new(agent)))
-        } else {
-            drop(tool_event_rx);
-            None
-        };
+        // All modes now use TurnExecutor; drop the legacy tool_event_rx.
+        drop(tool_event_rx);
+
+        // ── Shared TurnExecutor resources ─────────────────────────────────────
+        // Conversation store and call-id registry are shared between TurnExecutor
+        // and ToolExecutor so appended tool results can be retrieved per-thread.
+        let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        let call_id_to_thread = Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::<ToolCallId, String>::new(),
+        ));
 
         // ── User/approval channels ────────────────────────────────────────────
         let (question_tx, question_rx) = mpsc::channel::<UserQuestion>(16);
@@ -404,13 +373,6 @@ impl RuntimeBuilder {
             .project_root
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
-
-        // ── Build LLM adapter ─────────────────────────────────────────────────
-        // Build a second model provider instance for the LlmAdapter (it takes
-        // Box<dyn ModelProvider>, while the tool registry needs Arc).
-        let llm_model_box =
-            sven_model::from_config(&model_cfg).unwrap_or_else(|_| model_provider_for_llm(&model));
-        let llm_adapter = Arc::new(DefaultLlmAdapter::new(llm_model_box));
 
         // ── Assemble executor ─────────────────────────────────────────────────
         // Shared cancel slot the TUI uses to abort an in-flight turn/deliberation.
@@ -452,34 +414,36 @@ impl RuntimeBuilder {
             None
         };
 
+        // ── TurnExecutor (kernel-native single-turn LLM+tools loop) ──────────
+        // All modes now use TurnExecutor for kind="turn" effects.
+        let turn_executor = TurnExecutor::new(
+            model.clone(),
+            None,
+            Arc::clone(&tool_registry),
+            conv_store,
+            call_id_to_thread,
+            cancel_handle.clone(),
+        );
+
         let mut executor_builder = CompositeExecutorBuilder::default()
             .with_tools(tool_registry, Default::default())
             .with_user(question_tx, approval_tx)
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)
-            .with_audit(audit_log_path);
+            .with_audit(audit_log_path)
+            .with_turn(turn_executor);
         if let Some(delib) = deliberation_executor {
             executor_builder = executor_builder.with_deliberation(delib);
         }
-        // Keep a second Arc so the bundle can expose the agent to callers.
-        let exposed_agent = converse_agent.clone();
-        executor_builder = match converse_agent {
-            // Reactive mode: drive the full agentic loop via the converse engine.
-            Some(agent) => executor_builder.with_converse(agent, cancel_handle),
-            // Typed-JSON modes (chat/sdlc): use the structured LLM adapter.
-            None => executor_builder.with_llm(llm_adapter),
-        };
         let executor = executor_builder.build();
 
-        // ── Permission policy (open: kernel gates per-state checks) ───────────
-        let policy = PermissionPolicy::builder()
-            .allow_globally([
-                sven_hsm::ToolCapability::ReadFile,
-                sven_hsm::ToolCapability::WriteFile,
-                sven_hsm::ToolCapability::NetworkAccess,
-                sven_hsm::ToolCapability::GitOperation,
-            ])
-            .build();
+        // ── Permission policy — per-machine real policy ───────────────────────
+        // Use the machine's declared policy so the kernel enforces capability
+        // restrictions per state (e.g. SDLC disallows writes outside Execution).
+        let policy = match self.mode.as_str() {
+            "sdlc" => SdlcMachine::permission_policy(),
+            _ => ReactiveAgentMachine::permission_policy(),
+        };
 
         // ── Spawn runtime ─────────────────────────────────────────────────────
         // Seed the parallel-execution flag so the SDLC machine only fans out
@@ -509,27 +473,25 @@ impl RuntimeBuilder {
             approval_rx,
         };
 
-        Ok((erased_runtime, handle, channels, exposed_agent, mcp_manager, mcp_event_rx))
+        Ok((erased_runtime, handle, channels, mcp_manager, mcp_event_rx))
     }
 
     /// Build a fully-wired [`SessionBundle`] — the natural unit a
     /// [`SessionSupervisor`](crate::supervisor::SessionSupervisor) manages.
     ///
     /// This is a thin convenience wrapper over [`build`](Self::build) that
-    /// packages the runtime, handle, channels, and optional converse agent
-    /// into one owned value.
+    /// packages the runtime, handle, channels, and MCP manager into one owned
+    /// value.
     ///
     /// # Errors
     ///
     /// Propagates any error from [`build`](Self::build).
     pub async fn build_session(self) -> anyhow::Result<SessionBundle> {
-        let (runtime, handle, channels, converse_agent, mcp_manager, mcp_event_rx) =
-            self.build().await?;
+        let (runtime, handle, channels, mcp_manager, mcp_event_rx) = self.build().await?;
         Ok(SessionBundle {
             runtime,
             handle,
             channels,
-            converse_agent,
             mcp_manager,
             mcp_event_rx,
         })
@@ -550,10 +512,6 @@ pub struct SessionBundle {
     pub handle: RuntimeHandle,
     /// Question / approval request receivers for the frontend.
     pub channels: KernelChannels,
-    /// The converse agent shared with the `ConverseExecutor` (reactive mode
-    /// only). Expose so callers can seed history or swap the model without
-    /// stopping the runtime.
-    pub converse_agent: Option<Arc<Mutex<Agent>>>,
     /// MCP manager for the session. Frontends that display MCP slash-commands
     /// or toast notifications should call `McpManager::tools()` after startup
     /// and subscribe to `mcp_event_rx` for server events.
@@ -563,33 +521,3 @@ pub struct SessionBundle {
     pub mcp_event_rx: mpsc::Receiver<McpEvent>,
 }
 
-/// Fallback: when `from_config` fails a second time, build a no-op provider
-/// that always fails. This is only reached in misconfigured environments.
-fn model_provider_for_llm(
-    _model: &Arc<dyn sven_model::ModelProvider>,
-) -> Box<dyn sven_model::ModelProvider> {
-    // This path should never be reached in practice; `from_config` succeeds
-    // twice with the same config unless the provider has ephemeral state.
-    // Return a zero-dependency mock that always errors.
-    struct NoOpProvider;
-    #[async_trait::async_trait]
-    impl sven_model::ModelProvider for NoOpProvider {
-        fn name(&self) -> &str {
-            "noop"
-        }
-        fn model_name(&self) -> &str {
-            "noop"
-        }
-        async fn complete(
-            &self,
-            _req: sven_model::CompletionRequest,
-        ) -> anyhow::Result<
-            std::pin::Pin<
-                Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
-            >,
-        > {
-            anyhow::bail!("no model provider configured for LLM executor")
-        }
-    }
-    Box::new(NoOpProvider)
-}

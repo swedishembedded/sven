@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use sven_tools::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
+use sven_tools::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolOutput};
 
 use crate::manager::McpManager;
 
@@ -102,6 +102,9 @@ impl Tool for McpTool {
 
     fn is_mcp(&self) -> bool {
         true
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::NetworkAccess
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

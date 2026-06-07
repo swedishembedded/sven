@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Unit + integration tests for the deliberation SDLC machine.
+//! Unit + integration tests for the kernel-native SDLC machine.
 
 use serde_json::json;
 use sven_hsm::{
@@ -36,8 +36,8 @@ fn submachine_completed(result: serde_json::Value) -> Event {
     })
 }
 
-/// Extract the `thread` of the first `CallLlm` deliberation request in `effects`.
-fn first_deliberation_thread(effects: &[Effect]) -> Option<String> {
+/// Extract the `thread` of the first `CallLlm` request in `effects`.
+fn first_turn_thread(effects: &[Effect]) -> Option<String> {
     effects.iter().find_map(|e| match e {
         Effect::CallLlm { request } => request
             .get("thread")
@@ -47,23 +47,29 @@ fn first_deliberation_thread(effects: &[Effect]) -> Option<String> {
     })
 }
 
-/// Find the first `CallLlm` request value in a reaction's effects.
-fn reaction_call_llm(r: &Reaction<SdlcState>) -> Option<serde_json::Value> {
-    let effects = match r {
-        Reaction::Handled(e) => e,
-        Reaction::Transition { effects, .. } => effects,
-        _ => return None,
-    };
+/// Find the first `CallLlm` request value in an effects slice.
+fn reaction_call_llm(effects: &[Effect]) -> Option<serde_json::Value> {
     effects.iter().find_map(|e| match e {
         Effect::CallLlm { request } => Some(request.clone()),
         _ => None,
     })
 }
 
-fn deliberation_complete(thread: &str, decision: serde_json::Value) -> Event {
-    Event::DeliberationComplete {
+/// Collect effects from a `Reaction`.
+fn reaction_effects(r: &Reaction<SdlcState>) -> Vec<Effect> {
+    match r {
+        Reaction::Handled(e) => e.clone(),
+        Reaction::Transition { effects, .. } => effects.clone(),
+        _ => vec![],
+    }
+}
+
+/// Build an `LlmTurnComplete` event carrying a JSON decision as text (no tool calls).
+fn lm_turn_complete(thread: &str, decision: serde_json::Value) -> Event {
+    Event::LlmTurnComplete {
         thread: thread.into(),
-        decision,
+        text: decision.to_string(),
+        tool_calls: vec![],
     }
 }
 
@@ -89,9 +95,12 @@ fn first_user_message_enters_intake_and_deliberates() {
     let out = hsm.dispatch(&Event::user_message("hi"), &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Intake);
     assert_eq!(
-        first_deliberation_thread(&out.effects).as_deref(),
+        first_turn_thread(&out.effects).as_deref(),
         Some("intake")
     );
+    // Must use kind="turn" (kernel-native).
+    let req = reaction_call_llm(&out.effects).unwrap();
+    assert_eq!(req["kind"], "turn", "SDLC must emit kind=turn");
 }
 
 #[test]
@@ -101,7 +110,7 @@ fn intake_chitchat_stays_in_intake_and_asks_user() {
     hsm.init(&mut ctx);
     hsm.dispatch(&Event::user_message("hi"), &mut ctx);
     let out = hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "intake",
             json!({"status": "need_user_input", "message": "Hello! What can I build for you?"}),
         ),
@@ -120,7 +129,7 @@ fn intake_need_approval_requests_human_approval() {
     hsm.init(&mut ctx);
     hsm.dispatch(&Event::user_message("fix the bug"), &mut ctx);
     let out = hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "intake",
             json!({"status": "need_approval", "summary": "Fix the auth bug", "approval_prompt": "Proceed?"}),
         ),
@@ -144,7 +153,7 @@ fn intake_approved_advances_to_discovery_and_deliberates() {
     hsm.init(&mut ctx);
     hsm.dispatch(&Event::user_message("fix the bug"), &mut ctx);
     hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "intake",
             json!({"status": "need_approval", "summary": "scope", "approval_prompt": "ok?"}),
         ),
@@ -154,7 +163,7 @@ fn intake_approved_advances_to_discovery_and_deliberates() {
     let out = hsm.dispatch(&Event::HumanApproved { approval_id }, &mut ctx);
     assert_eq!(hsm.state(), SdlcState::Discovery);
     assert_eq!(
-        first_deliberation_thread(&out.effects).as_deref(),
+        first_turn_thread(&out.effects).as_deref(),
         Some("discovery")
     );
 }
@@ -170,7 +179,7 @@ fn user_answer_in_discovery_redeliberates_same_thread() {
         &Event::user_message("the entrypoint is src/main.rs"),
         &mut ctx,
     );
-    let req = reaction_call_llm(&r).expect("a follow-up deliberation must be issued");
+    let req = reaction_call_llm(&reaction_effects(&r)).expect("a follow-up turn must be issued");
     assert_eq!(req["thread"], "discovery");
     assert!(req["instruction"].as_str().unwrap().contains("src/main.rs"));
 }
@@ -179,9 +188,12 @@ fn user_answer_in_discovery_redeliberates_same_thread() {
 fn discovery_proceed_transitions_to_planning() {
     let mut m = SdlcMachine::new();
     let mut ctx = Context::new();
+    // init_loop so continuation turn can find the thread.
+    let tools: Vec<String> = super::prompts::READ_TOOLS.iter().map(|s| s.to_string()).collect();
+    crate::machines::loop_core::init_loop(&mut ctx, "discovery", &tools, "", 20);
     let r = m.dispatch_state(
         SdlcState::Discovery,
-        &deliberation_complete("discovery", json!({"status": "proceed", "summary": "ok"})),
+        &lm_turn_complete("discovery", json!({"status": "proceed", "summary": "ok"})),
         &mut ctx,
     );
     assert!(matches!(
@@ -207,7 +219,7 @@ fn full_pipeline_drives_intake_to_done() {
 
     hsm.dispatch(&Event::user_message("add a hello function"), &mut ctx);
     hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "intake",
             json!({"status": "need_approval", "summary": "add hello()", "approval_prompt": "ok?"}),
         ),
@@ -218,13 +230,13 @@ fn full_pipeline_drives_intake_to_done() {
     assert_eq!(hsm.state(), SdlcState::Discovery);
 
     hsm.dispatch(
-        &deliberation_complete("discovery", json!({"status": "proceed", "summary": "small crate"})),
+        &lm_turn_complete("discovery", json!({"status": "proceed", "summary": "small crate"})),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Planning);
 
     hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "planning",
             json!({"status": "need_approval", "summary": "1 task", "approval_prompt": "approve?"}),
         ),
@@ -235,19 +247,19 @@ fn full_pipeline_drives_intake_to_done() {
     assert_eq!(hsm.state(), SdlcState::Execution);
 
     hsm.dispatch(
-        &deliberation_complete("execution", json!({"status": "proceed", "summary": "implemented"})),
+        &lm_turn_complete("execution", json!({"status": "proceed", "summary": "implemented"})),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Verification);
 
     hsm.dispatch(
-        &deliberation_complete("verification", json!({"status": "proceed", "summary": "tests pass"})),
+        &lm_turn_complete("verification", json!({"status": "proceed", "summary": "tests pass"})),
         &mut ctx,
     );
     assert_eq!(hsm.state(), SdlcState::Delivery);
 
     hsm.dispatch(
-        &deliberation_complete(
+        &lm_turn_complete(
             "delivery",
             json!({"status": "need_approval", "summary": "handover", "approval_prompt": "accept?"}),
         ),
@@ -265,9 +277,11 @@ fn full_pipeline_drives_intake_to_done() {
 fn failed_decision_routes_to_recovery() {
     let mut m = SdlcMachine::new();
     let mut ctx = Context::new();
+    let tools: Vec<String> = super::prompts::READ_TOOLS.iter().map(|s| s.to_string()).collect();
+    crate::machines::loop_core::init_loop(&mut ctx, "discovery", &tools, "", 20);
     let r = m.dispatch_state(
         SdlcState::Discovery,
-        &deliberation_complete("discovery", json!({"status": "failed", "summary": "cannot read"})),
+        &lm_turn_complete("discovery", json!({"status": "failed", "summary": "cannot read"})),
         &mut ctx,
     );
     assert!(matches!(
@@ -300,7 +314,7 @@ fn llm_failed_routes_to_recovery() {
 }
 
 #[test]
-fn recovery_entry_fires_deliberation_then_failed_after_limit() {
+fn recovery_entry_fires_turn_then_failed_after_limit() {
     let mut hsm = Hsm::new(SdlcMachine::new());
     let mut ctx = Context::new();
     hsm.init(&mut ctx);
@@ -314,7 +328,7 @@ fn recovery_entry_fires_deliberation_then_failed_after_limit() {
     );
     assert_eq!(hsm.state(), SdlcState::Recovery);
     assert_eq!(
-        first_deliberation_thread(&out.effects).as_deref(),
+        first_turn_thread(&out.effects).as_deref(),
         Some("recovery")
     );
 }
@@ -352,9 +366,9 @@ fn execution_stays_single_track_without_spawner_flag() {
     );
     assert_eq!(count_instantiate(&r), 0, "must not emit submachines");
     assert_eq!(
-        reaction_call_llm(&r).map(|req| req["thread"].as_str().unwrap().to_string()),
+        reaction_call_llm(&reaction_effects(&r)).map(|req| req["thread"].as_str().unwrap().to_string()),
         Some("execution".to_string()),
-        "falls back to a single execution deliberation"
+        "falls back to a single execution turn"
     );
 }
 
@@ -376,21 +390,21 @@ fn execution_aggregates_all_children_then_synthesises_on_thread() {
         &submachine_completed(json!({"summary": "did a"})),
         &mut ctx,
     );
-    assert!(reaction_call_llm(&r1).is_none(), "wait for all children");
+    assert!(reaction_call_llm(&reaction_effects(&r1)).is_none(), "wait for all children");
     let r2 = m.dispatch_state(
         SdlcState::Execution,
         &submachine_completed(json!({"summary": "did b"})),
         &mut ctx,
     );
-    assert!(reaction_call_llm(&r2).is_none());
+    assert!(reaction_call_llm(&reaction_effects(&r2)).is_none());
 
-    // Final completion: append-only synthesis deliberation on execution thread.
+    // Final completion: append-only synthesis turn on execution thread.
     let r3 = m.dispatch_state(
         SdlcState::Execution,
         &submachine_completed(json!({"summary": "did c"})),
         &mut ctx,
     );
-    let req = reaction_call_llm(&r3).expect("synthesis deliberation must fire");
+    let req = reaction_call_llm(&reaction_effects(&r3)).expect("synthesis turn must fire");
     assert_eq!(req["thread"], "execution");
     let instruction = req["instruction"].as_str().unwrap();
     assert!(instruction.contains("did a"));
