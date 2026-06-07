@@ -66,6 +66,19 @@ pub enum Event {
         error: String,
     },
 
+    /// A state-scoped *deliberation* finished and produced a structured decision.
+    ///
+    /// Emitted by the deliberation executor after running the model↔tool agentic
+    /// loop against a state's append-only conversation thread.  The HSM reads
+    /// `decision` (validated against that state's schema) to choose its
+    /// transition; the raw final JSON never reaches the observation plane.
+    DeliberationComplete {
+        /// The conversation thread id this decision belongs to (e.g. `intake`).
+        thread: String,
+        /// The structured decision payload (already parsed from the model JSON).
+        decision: Value,
+    },
+
     /// A tool invocation completed successfully.
     ToolSucceeded {
         /// Matches the [`ToolCallId`] of the originating `CallTool` effect.
@@ -123,6 +136,13 @@ pub enum InternalEvent {
     SubmachineCompleted {
         /// The machine instance that completed (as a UUID string for serde).
         machine: String,
+        /// Result payload the child produced for the parent to consume.
+        ///
+        /// Carries the child's summary / decision so the parent can enrich its
+        /// own thread (append-only).  Defaults to `Null` for children that do
+        /// not produce a structured result.
+        #[serde(default)]
+        result: Value,
     },
     /// A generic, domain-defined internal signal carrying an opaque payload.
     Custom {
@@ -188,6 +208,7 @@ impl Event {
             Event::LlmProposedPlan { .. } => EventKind::LlmProposedPlan,
             Event::LlmProposedAssessment { .. } => EventKind::LlmProposedAssessment,
             Event::LlmFailed { .. } => EventKind::LlmFailed,
+            Event::DeliberationComplete { .. } => EventKind::DeliberationComplete,
             Event::ToolSucceeded { .. } => EventKind::ToolSucceeded,
             Event::ToolFailed { .. } => EventKind::ToolFailed,
             Event::HumanApproved { .. } => EventKind::HumanApproved,
@@ -227,6 +248,8 @@ pub enum EventKind {
     LlmProposedAssessment,
     /// See [`Event::LlmFailed`].
     LlmFailed,
+    /// See [`Event::DeliberationComplete`].
+    DeliberationComplete,
     /// See [`Event::ToolSucceeded`].
     ToolSucceeded,
     /// See [`Event::ToolFailed`].

@@ -153,6 +153,7 @@ impl<P: Machine> Submachine<P> {
                 child_completed = true;
                 let completed = Event::Internal(InternalEvent::SubmachineCompleted {
                     machine: id.as_uuid().to_string(),
+                    result: serde_json::Value::Null,
                 });
                 let parent_out = self.parent.dispatch(&completed, ctx);
                 effects.extend(parent_out.effects);
