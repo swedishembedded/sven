@@ -75,8 +75,8 @@ pub use permissions::{
     validate_effects_are_allowed, PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
 };
 pub use runtime::{
-    Clock, EffectExecutor, ErasedReport, ErasedRuntime, EventSink, Runtime, RuntimeReport,
-    RuntimeStatus, StateLabel, SystemClock, TimerService, VirtualClock,
+    ChildSpawner, Clock, EffectExecutor, ErasedReport, ErasedRuntime, EventSink, Runtime,
+    RuntimeReport, RuntimeStatus, StateLabel, SystemClock, TimerService, VirtualClock,
 };
 pub use status::Reaction;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};

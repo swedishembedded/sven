@@ -25,11 +25,13 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use serde_json::Value;
+
 use crate::audit::AuditRecord;
 use crate::context::Context;
 use crate::effect::Effect;
-use crate::event::{Event, EventKind};
-use crate::ids::TimerId;
+use crate::event::{Event, EventKind, InternalEvent};
+use crate::ids::{MachineId, TimerId};
 use crate::machine::Machine;
 use crate::observation::{ObservationSink, UiEvent};
 use crate::permissions::{validate_effects_are_allowed, PermissionPolicy};
@@ -224,6 +226,75 @@ pub trait EffectExecutor: Send {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink);
 }
 
+/// Spawns child submachines in response to [`Effect::InstantiateSubmachine`].
+///
+/// The kernel itself is machine-agnostic, so it cannot build a concrete child
+/// from an opaque descriptor. A `ChildSpawner` bridges that gap: given the
+/// parent-assigned [`MachineId`], the descriptor, and a clone of the parent's
+/// [`EventSink`], it must run the child **concurrently on its own task with an
+/// isolated [`Context`]** and, when the child reaches a terminal state, post
+/// `Event::Internal(InternalEvent::SubmachineCompleted { machine, result })`
+/// back to the parent so the parent can aggregate the result (append-only).
+///
+/// `spawn_child` should return promptly (spawn-and-forget); long-running child
+/// work belongs on the task it spawns, never inline, so the parent's single
+/// consumer loop is never blocked. This is what makes fan-out *parallel*.
+#[async_trait]
+pub trait ChildSpawner: Send + Sync {
+    /// Builds and starts the child identified by `machine`.
+    ///
+    /// Implementations post the terminal [`InternalEvent::SubmachineCompleted`]
+    /// (carrying the child's result payload) into `parent` when done.
+    async fn spawn_child(&self, machine: MachineId, descriptor: Value, parent: EventSink);
+}
+
+/// Tracks the set of child submachines currently in flight for a parent loop.
+///
+/// The parent machine drives aggregation (it owns the append-only thread), so
+/// the kernel only needs a lightweight liveness map: insert on spawn, remove on
+/// [`InternalEvent::SubmachineCompleted`]. Keeping it here gives the runtime an
+/// authoritative concurrent-child count for observability and shutdown.
+type ChildRegistry = HashMap<MachineId, ()>;
+
+/// Pulls [`Effect::InstantiateSubmachine`] out of an effect batch and hands each
+/// to the `spawner`, returning the remaining (non-child) effects for the normal
+/// validate-then-execute path.
+///
+/// When no spawner is configured the instantiate effects are left in place so
+/// they flow to the [`EffectExecutor`] (preserving the historical no-op), which
+/// keeps every existing `Runtime`/`ErasedRuntime` caller behaving unchanged.
+async fn spawn_children(
+    effects: Vec<Effect>,
+    spawner: &Option<Arc<dyn ChildSpawner>>,
+    children: &mut ChildRegistry,
+    sink: &EventSink,
+) -> Vec<Effect> {
+    let Some(spawner) = spawner else {
+        return effects;
+    };
+    let mut remaining = Vec::with_capacity(effects.len());
+    for effect in effects {
+        match effect {
+            Effect::InstantiateSubmachine { machine, descriptor } => {
+                children.insert(machine, ());
+                spawner.spawn_child(machine, descriptor, sink.clone()).await;
+            }
+            other => remaining.push(other),
+        }
+    }
+    remaining
+}
+
+/// Drops a completed child from the registry so the parent's concurrent-child
+/// count stays accurate.
+fn note_child_completion(children: &mut ChildRegistry, event: &Event) {
+    if let Event::Internal(InternalEvent::SubmachineCompleted { machine, .. }) = event {
+        if let Ok(uuid) = uuid::Uuid::parse_str(machine) {
+            children.remove(&MachineId::from_uuid(uuid));
+        }
+    }
+}
+
 /// An observable snapshot of the running machine, published after every
 /// dispatch.
 #[derive(Clone, Debug, Default)]
@@ -276,6 +347,23 @@ where
     where
         E: EffectExecutor + 'static,
     {
+        Self::spawn_with_children(hsm, ctx, policy, executor, queue_depth, None)
+    }
+
+    /// Like [`spawn`](Self::spawn) but with an optional [`ChildSpawner`] that
+    /// services [`Effect::InstantiateSubmachine`] by running children
+    /// concurrently. Pass `None` for the historical (no submachine) behavior.
+    pub fn spawn_with_children<E>(
+        hsm: Hsm<M>,
+        ctx: Context,
+        policy: PermissionPolicy,
+        executor: E,
+        queue_depth: usize,
+        child_spawner: Option<Arc<dyn ChildSpawner>>,
+    ) -> Self
+    where
+        E: EffectExecutor + 'static,
+    {
         let (tx, rx) = mpsc::channel::<Event>(queue_depth.max(1));
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
         let audit = Arc::new(Mutex::new(Vec::new()));
@@ -292,6 +380,7 @@ where
             obs.clone(),
             status_tx,
             Arc::clone(&audit),
+            child_spawner,
         ));
 
         Self {
@@ -386,6 +475,7 @@ async fn consumer_loop<M, E>(
     obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
+    child_spawner: Option<Arc<dyn ChildSpawner>>,
 ) -> RuntimeReport<M>
 where
     M: Machine + Send + 'static,
@@ -394,10 +484,13 @@ where
 {
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
+    let mut children: ChildRegistry = HashMap::new();
 
     // Initial transitions run inside the single consumer task, so their entry
     // effects go through the same validate-then-execute path as everything else.
     let init_effects = hsm.init(&mut ctx);
+    let init_effects =
+        spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     run_effects(
         &policy,
         hsm.state(),
@@ -426,6 +519,7 @@ where
     }
 
     while let Some(event) = rx.recv().await {
+        note_child_completion(&mut children, &event);
         let outcome = hsm.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
         // Emit the transition trace on the outward plane after every dispatch.
@@ -434,6 +528,8 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
+        let effects =
+            spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
         run_effects(
             &policy,
             hsm.state(),
@@ -443,7 +539,7 @@ where
             &sink,
             &obs,
             event_kind,
-            outcome.effects,
+            effects,
             &mut last_error,
         )
         .await;
@@ -586,6 +682,23 @@ impl ErasedRuntime {
     where
         E: EffectExecutor + 'static,
     {
+        Self::spawn_with_children(machine, ctx, policy, executor, queue_depth, None)
+    }
+
+    /// Like [`spawn`](Self::spawn) but with an optional [`ChildSpawner`] that
+    /// services [`Effect::InstantiateSubmachine`] by running children
+    /// concurrently. Pass `None` for the historical (no submachine) behavior.
+    pub fn spawn_with_children<E>(
+        machine: Box<dyn crate::submachine::ErasedMachine>,
+        ctx: Context,
+        policy: PermissionPolicy,
+        executor: E,
+        queue_depth: usize,
+        child_spawner: Option<Arc<dyn ChildSpawner>>,
+    ) -> Self
+    where
+        E: EffectExecutor + 'static,
+    {
         let (tx, rx) = mpsc::channel::<Event>(queue_depth.max(1));
         let (status_tx, status_rx) = watch::channel(RuntimeStatus::default());
         let audit = Arc::new(Mutex::new(Vec::new()));
@@ -602,6 +715,7 @@ impl ErasedRuntime {
             obs.clone(),
             status_tx,
             Arc::clone(&audit),
+            child_spawner,
         ));
 
         Self {
@@ -695,14 +809,18 @@ async fn erased_consumer_loop<E>(
     obs: ObservationSink,
     status_tx: watch::Sender<RuntimeStatus>,
     audit: Arc<Mutex<Vec<AuditRecord>>>,
+    child_spawner: Option<Arc<dyn ChildSpawner>>,
 ) -> ErasedReport
 where
     E: EffectExecutor + 'static,
 {
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
+    let mut children: ChildRegistry = HashMap::new();
 
     let init_effects = machine.init(&mut ctx);
+    let init_effects =
+        spawn_children(init_effects, &child_spawner, &mut children, &sink).await;
     run_effects(
         &policy,
         StateLabel(machine.state_label()),
@@ -735,6 +853,7 @@ where
     }
 
     while let Some(event) = rx.recv().await {
+        note_child_completion(&mut children, &event);
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
         obs.emit(UiEvent::Transition {
@@ -742,6 +861,8 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
+        let effects =
+            spawn_children(outcome.effects, &child_spawner, &mut children, &sink).await;
         run_effects(
             &policy,
             StateLabel(machine.state_label()),
@@ -751,7 +872,7 @@ where
             &sink,
             &obs,
             event_kind,
-            outcome.effects,
+            effects,
             &mut last_error,
         )
         .await;
