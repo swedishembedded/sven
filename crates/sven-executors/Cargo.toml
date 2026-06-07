@@ -6,6 +6,7 @@ description  = "Effect executors for the Sven HSM runtime"
 license      = "Apache-2.0"
 
 [dependencies]
+sven-config   = { path = "../sven-config" }
 sven-hsm      = { path = "../sven-hsm" }
 sven-llm      = { path = "../sven-llm" }
 sven-core     = { path = "../sven-core" }
