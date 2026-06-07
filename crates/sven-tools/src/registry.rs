@@ -163,6 +163,34 @@ impl ToolRegistry {
         self.schemas_filtered(|t| t.modes().contains(&mode))
     }
 
+    /// Produce schemas only for the named subset of tools.
+    ///
+    /// Used by the SDLC deliberation engine to give each state a *state-scoped*
+    /// tool subset (e.g. discovery may read/grep but not write).  Unknown names
+    /// are silently skipped so a state can request a superset without erroring.
+    /// Ordering follows [`schemas_filtered`]: core tools first (sorted), then
+    /// MCP tools (sorted), preserving stable cache breakpoints.
+    pub fn schemas_for_names(&self, names: &[String]) -> Vec<ToolSchema> {
+        let allow: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        self.schemas_filtered(|t| allow.contains(t.name()))
+    }
+
+    /// Of the requested `names`, return those that are actually registered.
+    ///
+    /// Lets a deliberation report (and a caller validate) which of its
+    /// state-scoped tools are available in the current runtime.
+    pub fn known_names<'a>(&self, names: &'a [String]) -> Vec<&'a str> {
+        let guard = match self.tools.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        names
+            .iter()
+            .map(String::as_str)
+            .filter(|n| guard.contains_key(*n))
+            .collect()
+    }
+
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let tool = match self
             .tools
@@ -398,6 +426,38 @@ mod tests {
         reg.register(EchoTool { name: "my_tool" });
         let schemas = reg.schemas();
         assert!(schemas.iter().any(|s| s.name == "my_tool"));
+    }
+
+    #[test]
+    fn schemas_for_names_returns_only_requested_subset() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "a" });
+        reg.register(EchoTool { name: "b" });
+        reg.register(EchoTool { name: "c" });
+        let subset = reg.schemas_for_names(&["a".to_string(), "c".to_string()]);
+        let mut names: Vec<&str> = subset.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn schemas_for_names_skips_unknown() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "a" });
+        let subset = reg.schemas_for_names(&["a".to_string(), "missing".to_string()]);
+        assert_eq!(subset.len(), 1);
+        assert_eq!(subset[0].name, "a");
+    }
+
+    #[test]
+    fn known_names_filters_to_registered() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "a" });
+        reg.register(EchoTool { name: "b" });
+        let req = vec!["a".to_string(), "x".to_string(), "b".to_string()];
+        let mut known = reg.known_names(&req);
+        known.sort_unstable();
+        assert_eq!(known, vec!["a", "b"]);
     }
 
     #[test]
