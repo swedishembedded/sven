@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::events::{TodoItem, TodoStatus, ToolEvent};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
@@ -75,6 +77,9 @@ impl Tool for TodoTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::WriteFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

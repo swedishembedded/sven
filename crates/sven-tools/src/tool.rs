@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use sven_config::AgentMode;
+use sven_hsm::ToolCapability;
 
 use crate::policy::ApprovalPolicy;
 
@@ -174,6 +175,15 @@ pub trait Tool: Send + Sync {
     /// Built-in tools always return `false`.  [`McpTool`] returns `true`.
     fn is_mcp(&self) -> bool {
         false
+    }
+    /// The kernel-level capability bucket this tool exercises.
+    ///
+    /// The kernel uses this for permission gating and audit.  Every built-in
+    /// tool overrides this to return the tightest fitting bucket.  The default
+    /// (`ReadFile`) is the most conservative non-dangerous capability; MCP
+    /// tools override to `NetworkAccess`.
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
     /// Execute the tool.  Errors should be wrapped in [`ToolOutput::err`].
     async fn execute(&self, call: &ToolCall) -> ToolOutput;

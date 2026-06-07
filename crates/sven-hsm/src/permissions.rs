@@ -137,6 +137,73 @@ impl PermissionPolicyBuilder {
     }
 }
 
+/// Outcome of classifying a single [`Effect`] against the policy.
+#[derive(Debug, Clone)]
+pub enum EffectDisposition {
+    /// The effect is permitted; execute it immediately.
+    Allowed,
+    /// The capability is not in the state's allow-set; synthesize a failure.
+    Forbidden(String),
+    /// The capability is allowed but requires a human approval grant before
+    /// execution.  The kernel emits [`crate::event::Event::ToolApprovalRequired`]
+    /// and the machine handles the approval flow.
+    NeedsApproval(ToolCapability),
+}
+
+/// Classifies a single [`Effect`] against the policy and context.
+///
+/// This is the per-effect equivalent of [`validate_effects_are_allowed`].
+/// The runtime calls this for each `CallTool` effect individually so it can
+/// take graceful per-call actions (execute, deny with `ToolFailed`, or gate
+/// with `ToolApprovalRequired`) rather than rejecting the whole batch.
+///
+/// Non-`CallTool` effects always return [`EffectDisposition::Allowed`] (the
+/// all-or-nothing batch check in `validate_effects_are_allowed` still guards
+/// those).
+pub fn classify<S: Debug>(
+    policy: &PermissionPolicy,
+    state: &S,
+    ctx: &Context,
+    effect: &Effect,
+) -> EffectDisposition {
+    let Some(cap) = effect.required_capability() else {
+        return EffectDisposition::Allowed;
+    };
+    if !policy.is_allowed_in(state, cap) {
+        return EffectDisposition::Forbidden(format!(
+            "capability {cap:?} is not permitted in state {:?}",
+            PermissionPolicy::state_label(state)
+        ));
+    }
+    if policy.requires_approval(cap) && !ctx.has_granted(cap) {
+        return EffectDisposition::NeedsApproval(cap);
+    }
+    EffectDisposition::Allowed
+}
+
+/// Infers a [`ToolCapability`] from a tool name using naming conventions.
+///
+/// Used by machines that do not have access to a `ToolRegistry` (e.g.
+/// legacy machines that receive `LlmProposedToolCall { name }` and must emit
+/// `Effect::CallTool` with a capability).  The mapping is best-effort;
+/// `ToolRegistry::capability_of` (which calls `Tool::kernel_capability`) is
+/// authoritative when a registry is available.
+#[must_use]
+pub fn capability_for_tool_name(name: &str) -> ToolCapability {
+    match name {
+        n if n.starts_with("delete_") => ToolCapability::DeleteFile,
+        n if n.starts_with("write_") || n.starts_with("edit_") => ToolCapability::WriteFile,
+        n if n.starts_with("read_") || n.starts_with("find_") || n.starts_with("search_")
+            || n.starts_with("grep") || n.starts_with("list_") || n.starts_with("buf_")
+            || n.starts_with("context_") => ToolCapability::ReadFile,
+        n if n.starts_with("shell") || n.starts_with("run_terminal")
+            || n.starts_with("gdb") => ToolCapability::ExecuteShell,
+        n if n.starts_with("web_") || n.starts_with("fetch") => ToolCapability::NetworkAccess,
+        n if n.starts_with("git_") => ToolCapability::GitOperation,
+        _ => ToolCapability::NetworkAccess,
+    }
+}
+
 /// Validates that every effect produced by a dispatch is permitted in the
 /// current state.
 ///

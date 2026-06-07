@@ -7,6 +7,8 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
@@ -50,6 +52,9 @@ impl Tool for WriteTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Ask
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::WriteFile
     }
 
     fn modes(&self) -> &[AgentMode] {

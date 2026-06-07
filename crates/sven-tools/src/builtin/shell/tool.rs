@@ -9,6 +9,8 @@ use std::process::Stdio;
 use tokio::process::Command;
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
 
@@ -89,6 +91,9 @@ impl Tool for ShellTool {
     }
     fn output_category(&self) -> OutputCategory {
         OutputCategory::HeadTail
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ExecuteShell
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

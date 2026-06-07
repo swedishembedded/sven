@@ -26,6 +26,8 @@ use tracing::debug;
 
 use sven_runtime::{load_skill_content_from_disk, SharedSkills, SkillInfo};
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
@@ -161,6 +163,9 @@ impl Tool for SkillTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
@@ -123,6 +125,9 @@ impl Tool for AskQuestionTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

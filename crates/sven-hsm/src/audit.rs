@@ -12,7 +12,9 @@ use crate::context::Context;
 use crate::dispatch::Hsm;
 use crate::effect::{Effect, EffectKind};
 use crate::event::{Event, EventKind};
+use crate::ids::ToolCallId;
 use crate::machine::Machine;
+use crate::permissions::ToolCapability;
 
 /// What a dispatch ultimately did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +122,100 @@ impl AuditRecord {
             rationale: None,
             outcome: AuditOutcome::Rejected,
             error: Some(error.into()),
+        }
+    }
+}
+
+/// Lifecycle outcome for a single tool-call execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolAuditOutcome {
+    /// Tool was dispatched to the executor.
+    Started,
+    /// Tool was denied by the permission gate (not executed).
+    Denied,
+    /// Tool is awaiting human approval.
+    ApprovalRequired,
+    /// Tool completed successfully.
+    Succeeded,
+    /// Tool completed with an error.
+    Failed,
+}
+
+/// A per-tool-call audit entry recording what happened to a single
+/// `Effect::CallTool` before and after execution.
+///
+/// These sit alongside the dispatch-level [`AuditRecord`]s in the context's
+/// tool audit log and provide the complete tool I/O trace needed for replay,
+/// debugging, and policy review.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolAuditRecord {
+    /// State label at the time this call was classified.
+    pub state: String,
+    /// The tool-call identifier (matches `Effect::CallTool.call_id`).
+    pub call_id: ToolCallId,
+    /// Tool name.
+    pub name: String,
+    /// Capability bucket required.
+    pub capability: ToolCapability,
+    /// Outcome of classification / execution.
+    pub outcome: ToolAuditOutcome,
+    /// Error or denial reason; `None` for `Started` / `ApprovalRequired`.
+    pub message: Option<String>,
+}
+
+impl ToolAuditRecord {
+    /// Builds a "started" record (tool dispatched to executor).
+    #[must_use]
+    pub fn started(
+        state: impl Into<String>,
+        call_id: ToolCallId,
+        name: impl Into<String>,
+        capability: ToolCapability,
+    ) -> Self {
+        Self {
+            state: state.into(),
+            call_id,
+            name: name.into(),
+            capability,
+            outcome: ToolAuditOutcome::Started,
+            message: None,
+        }
+    }
+
+    /// Builds a "denied" record (permission gate rejected the call).
+    #[must_use]
+    pub fn denied(
+        state: impl Into<String>,
+        call_id: ToolCallId,
+        name: impl Into<String>,
+        capability: ToolCapability,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            state: state.into(),
+            call_id,
+            name: name.into(),
+            capability,
+            outcome: ToolAuditOutcome::Denied,
+            message: Some(reason.into()),
+        }
+    }
+
+    /// Builds an "approval-required" record.
+    #[must_use]
+    pub fn approval_required(
+        state: impl Into<String>,
+        call_id: ToolCallId,
+        name: impl Into<String>,
+        capability: ToolCapability,
+    ) -> Self {
+        Self {
+            state: state.into(),
+            call_id,
+            name: name.into(),
+            capability,
+            outcome: ToolAuditOutcome::ApprovalRequired,
+            message: None,
         }
     }
 }

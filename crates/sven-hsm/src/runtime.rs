@@ -27,14 +27,14 @@ use tokio::task::JoinHandle;
 
 use serde_json::Value;
 
-use crate::audit::AuditRecord;
+use crate::audit::{AuditRecord, ToolAuditRecord};
 use crate::context::Context;
 use crate::effect::Effect;
 use crate::event::{Event, EventKind, InternalEvent};
 use crate::ids::{MachineId, TimerId};
 use crate::machine::Machine;
 use crate::observation::{ObservationSink, UiEvent};
-use crate::permissions::{validate_effects_are_allowed, PermissionPolicy};
+use crate::permissions::{classify, validate_effects_are_allowed, EffectDisposition, PermissionPolicy};
 use crate::Hsm;
 
 /// Default capacity of the per-runtime observation broadcast channel.
@@ -563,9 +563,18 @@ where
 }
 
 /// Validates a batch of effects against the policy (for the machine's current
-/// state) and, if allowed, hands each to the executor. On rejection, records a
-/// `Rejected` audit entry and surfaces the error; **no** effect in the batch
-/// executes.
+/// state) and executes them.
+///
+/// * `CallTool` effects are classified **per-call**:
+///   - `Allowed` → dispatched to executor immediately (spawn-like; the executor
+///     is responsible for its own concurrency).
+///   - `Forbidden` → `Event::ToolFailed` is emitted directly into the sink so
+///     the machine sees the denial as a normal tool result (graceful, no abort).
+///   - `NeedsApproval` → `Event::ToolApprovalRequired` is emitted; the machine
+///     handles the approval flow (`RequestHumanApproval` → `HumanApproved` →
+///     re-emit `CallTool`).
+/// * All other effects are validated all-or-nothing (batch reject) as before,
+///   because non-tool effects cannot fail gracefully mid-stream.
 #[allow(clippy::too_many_arguments)]
 async fn run_effects<S, E>(
     policy: &PermissionPolicy,
@@ -585,21 +594,99 @@ async fn run_effects<S, E>(
     if effects.is_empty() {
         return;
     }
-    // The permission gate is keyed on the machine's *current* state (the state
-    // that now owns these in-flight effects). `state` is owned (not borrowed
-    // from the Hsm) so the future stays `Send` across the executor await.
-    match validate_effects_are_allowed(policy, &state, &effects, ctx) {
-        Ok(()) => {
-            *last_error = None;
-            for effect in effects {
-                executor.execute(effect, sink, obs).await;
+
+    // Partition effects: CallTool are handled per-call; the rest go through
+    // the all-or-nothing batch check (unchanged behaviour).
+    let mut tool_effects: Vec<Effect> = Vec::new();
+    let mut other_effects: Vec<Effect> = Vec::new();
+    for eff in effects {
+        if matches!(eff, Effect::CallTool { .. }) {
+            tool_effects.push(eff);
+        } else {
+            other_effects.push(eff);
+        }
+    }
+
+    // ── Non-tool effects: all-or-nothing batch check (unchanged) ──────────────
+    if !other_effects.is_empty() {
+        match validate_effects_are_allowed(policy, &state, &other_effects, ctx) {
+            Ok(()) => {
+                *last_error = None;
+                for effect in other_effects {
+                    executor.execute(effect, sink, obs).await;
+                }
+            }
+            Err(err) => {
+                let record =
+                    AuditRecord::rejected(&state_label, event, &other_effects, err.to_string());
+                ctx.audit.push(record);
+                *last_error = Some(err.to_string());
+                obs.emit(UiEvent::Error(err.to_string()));
             }
         }
-        Err(err) => {
-            let record = AuditRecord::rejected(state_label, event, &effects, err.to_string());
-            ctx.audit.push(record);
-            *last_error = Some(err.to_string());
-            obs.emit(UiEvent::Error(err.to_string()));
+    }
+
+    // ── Tool effects: per-call graceful gating ─────────────────────────────────
+    for effect in tool_effects {
+        let Effect::CallTool {
+            ref call_id,
+            ref name,
+            capability,
+            ..
+        } = effect
+        else {
+            unreachable!("filtered above");
+        };
+        match classify(policy, &state, ctx, &effect) {
+            EffectDisposition::Allowed => {
+                ctx.tool_audit.push(ToolAuditRecord::started(
+                    &state_label,
+                    *call_id,
+                    name,
+                    capability,
+                ));
+                *last_error = None;
+                executor.execute(effect, sink, obs).await;
+            }
+            EffectDisposition::Forbidden(reason) => {
+                ctx.tool_audit.push(ToolAuditRecord::denied(
+                    &state_label,
+                    *call_id,
+                    name,
+                    capability,
+                    &reason,
+                ));
+                // Also push to the main audit trail so callers using
+                // `audit_snapshot()` can detect the rejection.
+                ctx.audit.push(AuditRecord::rejected(
+                    &state_label,
+                    event,
+                    std::slice::from_ref(&effect),
+                    reason.clone(),
+                ));
+                *last_error = Some(reason.clone());
+                let _ = sink
+                    .emit(Event::ToolFailed {
+                        call_id: *call_id,
+                        error: format!("permission denied: {reason}"),
+                    })
+                    .await;
+            }
+            EffectDisposition::NeedsApproval(cap) => {
+                ctx.tool_audit.push(ToolAuditRecord::approval_required(
+                    &state_label,
+                    *call_id,
+                    name,
+                    capability,
+                ));
+                let _ = sink
+                    .emit(Event::ToolApprovalRequired {
+                        call_id: *call_id,
+                        capability: cap,
+                        description: format!("tool '{}' requires approval for {cap:?}", name),
+                    })
+                    .await;
+            }
         }
     }
 }

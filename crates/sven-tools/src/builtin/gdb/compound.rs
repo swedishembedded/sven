@@ -15,6 +15,8 @@ use tokio::sync::Mutex;
 
 use sven_config::{AgentMode, GdbConfig};
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
@@ -120,6 +122,9 @@ impl Tool for GdbTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Ask
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ExecuteShell
     }
 
     fn output_category(&self) -> OutputCategory {

@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::params::{opt_u64, require_str};
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput, ToolOutputPart};
@@ -66,6 +68,9 @@ impl Tool for ReadFileTool {
     }
     fn output_category(&self) -> OutputCategory {
         OutputCategory::FileContent
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

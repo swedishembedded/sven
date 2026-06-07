@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use sven_config::AgentMode;
+use sven_hsm::ToolCapability;
 
 use crate::policy::PermissionRequester;
 use crate::tool::ToolDisplayRegistry;
@@ -189,6 +190,19 @@ impl ToolRegistry {
             .map(String::as_str)
             .filter(|n| guard.contains_key(*n))
             .collect()
+    }
+
+    /// Returns the [`ToolCapability`] for the named tool.
+    ///
+    /// Calls [`Tool::kernel_capability`] on the registered tool instance.
+    /// Returns [`ToolCapability::NetworkAccess`] for unknown tools (MCP default
+    /// and safe fallback so callers never silently grant narrower permissions).
+    pub fn capability_of(&self, name: &str) -> ToolCapability {
+        self.tools
+            .read()
+            .ok()
+            .and_then(|g| g.get(name).map(|t| t.kernel_capability()))
+            .unwrap_or(ToolCapability::NetworkAccess)
     }
 
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {

@@ -11,6 +11,8 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
+use sven_hsm::ToolCapability;
+
 use crate::builtin::shell::head_tail_truncate;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
@@ -82,6 +84,9 @@ impl Tool for RunTerminalCommandTool {
     }
     fn output_category(&self) -> OutputCategory {
         OutputCategory::HeadTail
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ExecuteShell
     }
 
     fn modes(&self) -> &[AgentMode] {

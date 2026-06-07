@@ -20,6 +20,8 @@ use tracing::debug;
 use sven_config::{AgentMode, McpOAuthConfig, McpServerConfig, McpTransport};
 use sven_model::catalog::static_catalog;
 
+use sven_hsm::ToolCapability;
+
 use crate::events::ToolEvent;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
@@ -232,6 +234,9 @@ impl Tool for SystemTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     // Available in all modes: switch_model has no mode restriction, and

@@ -36,6 +36,18 @@ macro_rules! uuid_newtype {
             pub const fn as_uuid(&self) -> Uuid {
                 self.0
             }
+
+            /// Create an ID from a string: parse as UUID when the string is a
+            /// valid UUID, otherwise generate a fresh random identifier.
+            ///
+            /// The resulting `ToolCallId` is stored by the TurnExecutor into
+            /// the `call_id → thread` registry and forwarded inside
+            /// [`ProposedToolCall`] so machines can reference the same ID when
+            /// emitting `Effect::CallTool`.
+            #[must_use]
+            pub fn from_str_lossy(s: &str) -> Self {
+                s.parse::<Uuid>().map(Self).unwrap_or_else(|_| Self::new())
+            }
         }
 
         impl Default for $name {

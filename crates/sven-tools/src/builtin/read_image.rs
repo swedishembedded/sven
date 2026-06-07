@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput, ToolOutputPart};
 
@@ -38,6 +40,9 @@ impl Tool for ReadImageTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use sven_config::AgentMode;
 use sven_runtime::SharedKnowledge;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
@@ -57,6 +59,9 @@ impl Tool for SearchKnowledgeTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     fn modes(&self) -> &[AgentMode] {

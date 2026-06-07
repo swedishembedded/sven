@@ -14,6 +14,7 @@ pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use policy::{ApprovalPolicy, PermissionRequester, RolePolicy, ToolPolicy};
 pub use registry::{SharedToolDisplays, SharedTools, ToolRegistry, ToolSchema};
+pub use sven_hsm::ToolCapability;
 pub use tool::{
     OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry, ToolOutput, ToolOutputPart,
 };

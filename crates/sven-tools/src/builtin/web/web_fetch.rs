@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
@@ -46,6 +48,9 @@ impl Tool for WebFetchTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::NetworkAccess
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

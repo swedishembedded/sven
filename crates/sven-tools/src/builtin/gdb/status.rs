@@ -12,6 +12,8 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
@@ -52,6 +54,9 @@ impl Tool for GdbStatusTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ExecuteShell
     }
 
     fn modes(&self) -> &[AgentMode] {

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::audit::AuditRecord;
+use crate::audit::{AuditRecord, ToolAuditRecord};
 use crate::ids::ApprovalId;
 use crate::permissions::ToolCapability;
 
@@ -63,6 +63,12 @@ pub struct Context {
     pub permissions: PermissionState,
     /// Append-only audit trail of every dispatch (the event-sourcing spine).
     pub audit: Vec<AuditRecord>,
+    /// Per-tool-call audit records (start, denied, approval-required, result).
+    ///
+    /// Separate from the dispatch audit so tool I/O is auditable independently
+    /// of machine transitions.  Does not participate in `replay` (replay only
+    /// replays state transitions).
+    pub tool_audit: Vec<ToolAuditRecord>,
 }
 
 impl Context {

@@ -21,6 +21,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ids::{ApprovalId, TimerId, ToolCallId};
+use crate::permissions::ToolCapability;
+
+/// A single tool call proposed by the LLM in a `LlmTurnComplete` event.
+///
+/// The executor (which has registry access) annotates `capability` so machines
+/// stay pure and domain-only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProposedToolCall {
+    /// Call identifier assigned by the model (forwarded to `Effect::CallTool`).
+    pub call_id: ToolCallId,
+    /// Tool name the LLM suggested.
+    pub name: String,
+    /// Arguments as a JSON object.
+    pub args: Value,
+    /// Kernel capability bucket (annotated by `TurnExecutor`, not by the machine).
+    pub capability: ToolCapability,
+}
 
 /// Everything the outside world can tell a machine.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -66,6 +83,25 @@ pub enum Event {
         error: String,
     },
 
+    /// A single streaming LLM turn completed: the model produced text and/or
+    /// proposed tool calls.
+    ///
+    /// Emitted by `TurnExecutor` after the stream ends.  The machine reads
+    /// `tool_calls` to decide whether to emit `Effect::CallTool` effects
+    /// (entering `RunningTools`) or to finalize with the `text` response (going
+    /// to `Idle`).  Live text deltas have already been streamed via `UiEvent`s
+    /// on the outward plane; `text` is the complete concatenation for the
+    /// machine's logic.
+    LlmTurnComplete {
+        /// The conversation thread this turn belongs to (e.g. `"chat"`,
+        /// `"discovery"`).
+        thread: String,
+        /// Complete assistant text, or empty string if the turn was tool-only.
+        text: String,
+        /// All tool calls proposed by the LLM, capability-annotated.
+        tool_calls: Vec<ProposedToolCall>,
+    },
+
     /// A state-scoped *deliberation* finished and produced a structured decision.
     ///
     /// Emitted by the deliberation executor after running the model↔tool agentic
@@ -92,6 +128,23 @@ pub enum Event {
         call_id: ToolCallId,
         /// Human-readable error.
         error: String,
+    },
+
+    /// The permission gate requires approval before a tool call can proceed.
+    ///
+    /// Emitted by `run_effects` when a `CallTool` effect classifies as
+    /// `NeedsApproval`.  The machine should transition to `AwaitingApproval`,
+    /// emit `Effect::RequestHumanApproval`, and on `HumanApproved` re-emit the
+    /// `CallTool` (which will then classify as `Allowed` because `ctx.grant`
+    /// has been called).  On `HumanRejected` the machine synthesizes a
+    /// `ToolFailed` result back into the agentic loop.
+    ToolApprovalRequired {
+        /// Matches the [`ToolCallId`] of the pending `CallTool` effect.
+        call_id: ToolCallId,
+        /// The capability bucket that needs approval.
+        capability: ToolCapability,
+        /// Human-readable description of the operation requesting approval.
+        description: String,
     },
 
     /// A human approved a pending request.
@@ -208,9 +261,11 @@ impl Event {
             Event::LlmProposedPlan { .. } => EventKind::LlmProposedPlan,
             Event::LlmProposedAssessment { .. } => EventKind::LlmProposedAssessment,
             Event::LlmFailed { .. } => EventKind::LlmFailed,
+            Event::LlmTurnComplete { .. } => EventKind::LlmTurnComplete,
             Event::DeliberationComplete { .. } => EventKind::DeliberationComplete,
             Event::ToolSucceeded { .. } => EventKind::ToolSucceeded,
             Event::ToolFailed { .. } => EventKind::ToolFailed,
+            Event::ToolApprovalRequired { .. } => EventKind::ToolApprovalRequired,
             Event::HumanApproved { .. } => EventKind::HumanApproved,
             Event::HumanRejected { .. } => EventKind::HumanRejected,
             Event::Timeout { .. } => EventKind::Timeout,
@@ -248,12 +303,16 @@ pub enum EventKind {
     LlmProposedAssessment,
     /// See [`Event::LlmFailed`].
     LlmFailed,
+    /// See [`Event::LlmTurnComplete`].
+    LlmTurnComplete,
     /// See [`Event::DeliberationComplete`].
     DeliberationComplete,
     /// See [`Event::ToolSucceeded`].
     ToolSucceeded,
     /// See [`Event::ToolFailed`].
     ToolFailed,
+    /// See [`Event::ToolApprovalRequired`].
+    ToolApprovalRequired,
     /// See [`Event::HumanApproved`].
     HumanApproved,
     /// See [`Event::HumanRejected`].

@@ -10,6 +10,8 @@ use tracing::debug;
 
 use sven_config::AgentMode;
 
+use sven_hsm::ToolCapability;
+
 use crate::policy::ApprovalPolicy;
 use crate::tool::{OutputCategory, Tool, ToolCall, ToolOutput};
 
@@ -73,6 +75,9 @@ impl Tool for ContextReadTool {
 
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
     }
 
     fn output_category(&self) -> OutputCategory {
