@@ -33,6 +33,7 @@ use tokio::sync::mpsc;
 use crate::audit::AuditExecutor;
 use crate::checkpoint::CheckpointExecutor;
 use crate::converse::ConverseExecutor;
+use crate::deliberation::DeliberationExecutor;
 use crate::internal::InternalExecutor;
 use crate::llm::LlmExecutor;
 use crate::timer::TimerExecutor;
@@ -45,6 +46,9 @@ pub struct CompositeExecutor {
     /// `CallLlm` effects whose request `kind` is `"converse"`; all other
     /// `CallLlm` requests fall through to [`llm`](Self::llm).
     converse: Option<ConverseExecutor>,
+    /// Deliberation engine (SDLC mode). When present it handles `CallLlm`
+    /// effects whose request `kind` is `"deliberate"`.
+    deliberation: Option<DeliberationExecutor>,
     llm: Option<LlmExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
@@ -69,18 +73,29 @@ impl EffectExecutor for CompositeExecutor {
             EffectKind::CallLlm => {
                 // Route converse-kind requests to the converse engine when one
                 // is configured; everything else goes to the typed LLM adapter.
-                let is_converse = matches!(
-                    &effect,
-                    Effect::CallLlm { request }
-                        if request.get("kind").and_then(|v| v.as_str())
-                            == Some(crate::converse::CONVERSE_KIND)
-                );
+                let request_kind = match &effect {
+                    Effect::CallLlm { request } => {
+                        request.get("kind").and_then(|v| v.as_str()).map(str::to_string)
+                    }
+                    _ => None,
+                };
+                let is_converse = request_kind.as_deref() == Some(crate::converse::CONVERSE_KIND);
+                let is_deliberate =
+                    request_kind.as_deref() == Some(crate::deliberation::DELIBERATE_KIND);
                 if is_converse {
                     if let Some(exec) = &mut self.converse {
                         exec.execute(effect, sink, obs).await;
                     } else {
                         tracing::warn!(
                             "CompositeExecutor: no Converse executor configured; dropping converse CallLlm"
+                        );
+                    }
+                } else if is_deliberate {
+                    if let Some(exec) = &mut self.deliberation {
+                        exec.execute(effect, sink, obs).await;
+                    } else {
+                        tracing::warn!(
+                            "CompositeExecutor: no Deliberation executor configured; dropping deliberate CallLlm"
                         );
                     }
                 } else if let Some(exec) = &mut self.llm {
@@ -160,6 +175,7 @@ impl EffectExecutor for CompositeExecutor {
 #[derive(Default)]
 pub struct CompositeExecutorBuilder {
     converse: Option<ConverseExecutor>,
+    deliberation: Option<DeliberationExecutor>,
     llm: Option<LlmExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
@@ -190,6 +206,16 @@ impl CompositeExecutorBuilder {
         cancel_handle: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     ) -> Self {
         self.converse = Some(ConverseExecutor::new(agent, cancel_handle));
+        self
+    }
+
+    /// Attach the deliberation engine (SDLC mode).
+    ///
+    /// When present, `CallLlm` effects whose request `kind` is `"deliberate"`
+    /// run a state-scoped model↔tool agentic loop against an append-only
+    /// conversation thread and post `DeliberationComplete` back to the machine.
+    pub fn with_deliberation(mut self, exec: DeliberationExecutor) -> Self {
+        self.deliberation = Some(exec);
         self
     }
 
@@ -235,6 +261,7 @@ impl CompositeExecutorBuilder {
     pub fn build(self) -> CompositeExecutor {
         CompositeExecutor {
             converse: self.converse,
+            deliberation: self.deliberation,
             llm: self.llm,
             tool: self.tool,
             user: self.user,

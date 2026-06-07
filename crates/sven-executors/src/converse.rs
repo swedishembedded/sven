@@ -180,7 +180,7 @@ impl EffectExecutor for ConverseExecutor {
 /// `TurnComplete` is intentionally excluded here and emitted directly by
 /// [`ConverseExecutor::execute`] after the inward completion event is in the
 /// kernel queue, preventing the TUI from dequeuing the next message prematurely.
-fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
+pub(crate) fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
     Some(match ev {
         AgentEvent::TextDelta(d) => UiEvent::TextDelta(d),
         AgentEvent::TextComplete(t) => UiEvent::TextComplete(t),
