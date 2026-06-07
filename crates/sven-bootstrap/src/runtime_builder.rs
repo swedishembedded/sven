@@ -30,7 +30,7 @@ use sven_config::{Config, ModelConfig};
 use sven_core::{Agent, ModeRegistry};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
-    CompositeExecutorBuilder,
+    CompositeExecutorBuilder, DeliberationExecutor,
 };
 use sven_hsm::{Context, ErasedRuntime, Event, EventSink, PermissionPolicy, RuntimeStatus};
 use sven_llm::DefaultLlmAdapter;
@@ -413,22 +413,59 @@ impl RuntimeBuilder {
         let llm_adapter = Arc::new(DefaultLlmAdapter::new(llm_model_box));
 
         // ── Assemble executor ─────────────────────────────────────────────────
+        // Shared cancel slot the TUI uses to abort an in-flight turn/deliberation.
+        let cancel_handle = self
+            .cancel_handle
+            .clone()
+            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
+
+        // SDLC mode runs the deliberation engine: each state issues a
+        // state-scoped model↔tool agentic loop against an append-only thread.
+        let is_sdlc = self.mode.as_str() == "sdlc";
+        let deliberation_executor = if is_sdlc {
+            let resolver_config = Arc::clone(&self.config);
+            let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
+                let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
+                let provider = sven_model::from_config(&model_cfg)?;
+                Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
+            });
+            Some(DeliberationExecutor::new(
+                model.clone(),
+                Some(model_resolver),
+                Arc::clone(&tool_registry),
+                cancel_handle.clone(),
+            ))
+        } else {
+            None
+        };
+
+        // Parallel-execution fan-out: in SDLC mode install a child spawner so
+        // the kernel can service `Effect::InstantiateSubmachine` by running each
+        // decomposed task as an isolated concurrent child kernel.
+        let child_spawner: Option<Arc<dyn sven_hsm::ChildSpawner>> = if is_sdlc {
+            Some(Arc::new(crate::child_spawner::SdlcChildSpawner::new(
+                model.clone(),
+                Arc::clone(&self.config),
+                Arc::clone(&tool_registry),
+            )))
+        } else {
+            None
+        };
+
         let mut executor_builder = CompositeExecutorBuilder::default()
             .with_tools(tool_registry, Default::default())
             .with_user(question_tx, approval_tx)
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)
             .with_audit(audit_log_path);
+        if let Some(delib) = deliberation_executor {
+            executor_builder = executor_builder.with_deliberation(delib);
+        }
         // Keep a second Arc so the bundle can expose the agent to callers.
         let exposed_agent = converse_agent.clone();
         executor_builder = match converse_agent {
             // Reactive mode: drive the full agentic loop via the converse engine.
-            Some(agent) => {
-                let cancel_handle = self
-                    .cancel_handle
-                    .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
-                executor_builder.with_converse(agent, cancel_handle)
-            }
+            Some(agent) => executor_builder.with_converse(agent, cancel_handle),
             // Typed-JSON modes (chat/sdlc): use the structured LLM adapter.
             None => executor_builder.with_llm(llm_adapter),
         };
@@ -445,7 +482,21 @@ impl RuntimeBuilder {
             .build();
 
         // ── Spawn runtime ─────────────────────────────────────────────────────
-        let erased_runtime = ErasedRuntime::spawn(machine, Context::new(), policy, executor, 64);
+        // Seed the parallel-execution flag so the SDLC machine only fans out
+        // when a child spawner is actually installed (otherwise it stays
+        // single-track and never emits orphaned InstantiateSubmachine effects).
+        let mut init_ctx = Context::new();
+        if child_spawner.is_some() {
+            init_ctx.set_fact("parallel_execution", serde_json::json!(true));
+        }
+        let erased_runtime = ErasedRuntime::spawn_with_children(
+            machine,
+            init_ctx,
+            policy,
+            executor,
+            64,
+            child_spawner,
+        );
 
         let handle = RuntimeHandle {
             sink: erased_runtime.sink(),

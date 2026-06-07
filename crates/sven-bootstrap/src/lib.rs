@@ -13,6 +13,7 @@
 //! inlining their own registry-building loops.
 
 pub mod agent;
+pub mod child_spawner;
 pub mod context;
 pub mod context_query;
 pub mod context_tool;
