@@ -19,6 +19,7 @@
 
 use serde_json::{json, Value};
 use sven_hsm::{
+    capability_for_tool_name,
     context::Context,
     effect::Effect,
     event::{Event, InternalEvent},
@@ -217,8 +218,8 @@ impl Machine for ConversationMachine {
                         AwaitingTool,
                         vec![Effect::CallTool {
                             call_id,
+                            capability: capability_for_tool_name(name),
                             name: name.clone(),
-                            capability: ToolCapability::ReadFile,
                             args: args.clone(),
                         }],
                         "LLM proposed tool call",

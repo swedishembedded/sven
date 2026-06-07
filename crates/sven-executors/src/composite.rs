@@ -9,7 +9,7 @@
 //!
 //! ```rust,ignore
 //! let executor = CompositeExecutor::builder()
-//!     .with_llm(Arc::new(DefaultLlmAdapter::new(provider)))
+//!     .with_turn(TurnExecutor::new(model, registry, conv_store, call_registry, cancel_handle))
 //!     .with_tools(registry, HashSet::new())
 //!     .with_user(q_tx, a_tx)
 //!     .with_timers(Arc::new(SystemClock::new()))
@@ -26,7 +26,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sven_hsm::{Clock, Effect, EffectExecutor, EffectKind, EventSink, ObservationSink};
-use sven_llm::LlmAdapter;
 use sven_tools::ToolRegistry;
 use tokio::sync::mpsc;
 
@@ -35,21 +34,22 @@ use crate::checkpoint::CheckpointExecutor;
 use crate::converse::ConverseExecutor;
 use crate::deliberation::DeliberationExecutor;
 use crate::internal::InternalExecutor;
-use crate::llm::LlmExecutor;
 use crate::timer::TimerExecutor;
 use crate::tool::ToolExecutor;
+use crate::turn::TurnExecutor;
 use crate::user::{ApprovalRequest, UserExecutor, UserQuestion};
 
 /// All sub-executors collected into one structure.
 pub struct CompositeExecutor {
     /// Converse turn engine (reactive agent). When present it handles
-    /// `CallLlm` effects whose request `kind` is `"converse"`; all other
-    /// `CallLlm` requests fall through to [`llm`](Self::llm).
+    /// `CallLlm` effects whose request `kind` is `"converse"`.
     converse: Option<ConverseExecutor>,
     /// Deliberation engine (SDLC mode). When present it handles `CallLlm`
     /// effects whose request `kind` is `"deliberate"`.
     deliberation: Option<DeliberationExecutor>,
-    llm: Option<LlmExecutor>,
+    /// Single-turn engine (kernel-native loop). When present it handles
+    /// `CallLlm` effects whose request `kind` is `"turn"`.
+    turn: Option<TurnExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
     timer: Option<TimerExecutor>,
@@ -82,7 +82,16 @@ impl EffectExecutor for CompositeExecutor {
                 let is_converse = request_kind.as_deref() == Some(crate::converse::CONVERSE_KIND);
                 let is_deliberate =
                     request_kind.as_deref() == Some(crate::deliberation::DELIBERATE_KIND);
-                if is_converse {
+                let is_turn = request_kind.as_deref() == Some(crate::turn::TURN_KIND);
+                if is_turn {
+                    if let Some(exec) = &mut self.turn {
+                        exec.execute(effect, sink, obs).await;
+                    } else {
+                        tracing::warn!(
+                            "CompositeExecutor: no Turn executor configured; dropping turn CallLlm"
+                        );
+                    }
+                } else if is_converse {
                     if let Some(exec) = &mut self.converse {
                         exec.execute(effect, sink, obs).await;
                     } else {
@@ -98,11 +107,10 @@ impl EffectExecutor for CompositeExecutor {
                             "CompositeExecutor: no Deliberation executor configured; dropping deliberate CallLlm"
                         );
                     }
-                } else if let Some(exec) = &mut self.llm {
-                    exec.execute(effect, sink, obs).await;
                 } else {
                     tracing::warn!(
-                        "CompositeExecutor: no LLM executor configured; dropping CallLlm"
+                        kind = ?request_kind,
+                        "CompositeExecutor: unrecognised CallLlm kind; dropping (use kind=turn)"
                     );
                 }
             }
@@ -176,7 +184,7 @@ impl EffectExecutor for CompositeExecutor {
 pub struct CompositeExecutorBuilder {
     converse: Option<ConverseExecutor>,
     deliberation: Option<DeliberationExecutor>,
-    llm: Option<LlmExecutor>,
+    turn: Option<TurnExecutor>,
     tool: Option<ToolExecutor>,
     user: Option<UserExecutor>,
     timer: Option<TimerExecutor>,
@@ -185,12 +193,6 @@ pub struct CompositeExecutorBuilder {
 }
 
 impl CompositeExecutorBuilder {
-    /// Attach the LLM executor backed by `adapter`.
-    pub fn with_llm(mut self, adapter: Arc<dyn LlmAdapter>) -> Self {
-        self.llm = Some(LlmExecutor::new(adapter));
-        self
-    }
-
     /// Attach the converse turn engine backed by a shared [`sven_core::Agent`].
     ///
     /// When present, `CallLlm` effects whose request `kind` is `"converse"`
@@ -216,6 +218,16 @@ impl CompositeExecutorBuilder {
     /// conversation thread and post `DeliberationComplete` back to the machine.
     pub fn with_deliberation(mut self, exec: DeliberationExecutor) -> Self {
         self.deliberation = Some(exec);
+        self
+    }
+
+    /// Attach the single-turn engine (kernel-native loop).
+    ///
+    /// When present, `CallLlm` effects whose request `kind` is `"turn"` are
+    /// handled by `TurnExecutor`, which streams a single model response,
+    /// appends to the ConversationStore, and posts `LlmTurnComplete`.
+    pub fn with_turn(mut self, exec: TurnExecutor) -> Self {
+        self.turn = Some(exec);
         self
     }
 
@@ -262,7 +274,7 @@ impl CompositeExecutorBuilder {
         CompositeExecutor {
             converse: self.converse,
             deliberation: self.deliberation,
-            llm: self.llm,
+            turn: self.turn,
             tool: self.tool,
             user: self.user,
             timer: self.timer,
@@ -281,7 +293,6 @@ mod tests {
     use sven_hsm::{
         Context, Effect, EffectExecutor, Event, Hsm, MachineId, PermissionPolicy, Reaction, Runtime,
     };
-    use sven_llm::MockLlmAdapter;
     use sven_tools::ToolRegistry;
 
     use super::{CompositeExecutor, CompositeExecutorBuilder};
@@ -343,7 +354,7 @@ mod tests {
             Hsm::new(OneShotMachine::new()),
             Context::new(),
             PermissionPolicy::builder().build(),
-            super::CompositeExecutor::builder().build(), // NoOp for the runtime's own executor
+            super::CompositeExecutor::builder().build(),
             16,
         );
         let sink = rt.sink();
@@ -359,30 +370,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composite_routes_call_llm_to_llm_executor() {
-        let adapter = Arc::new(MockLlmAdapter::new(vec![Event::LlmProposedAssessment {
-            assessment: json!({"intent": "bugfix", "confidence": 0.9}),
-        }]));
-        let (q_tx, _q_rx) = tokio::sync::mpsc::channel::<UserQuestion>(4);
-        let (a_tx, _a_rx) = tokio::sync::mpsc::channel::<ApprovalRequest>(4);
-        let mut exec = CompositeExecutorBuilder::default()
-            .with_llm(adapter)
-            .with_user(q_tx, a_tx)
-            .with_tools(Arc::new(ToolRegistry::new()), Default::default())
-            .build();
-
-        let req = sven_llm::LlmRequest::ExtractIntent {
-            text: "fix it".into(),
-            allowed_intents: vec!["bugfix".into()],
-        };
-        let effect = Effect::CallLlm {
-            request: req.to_value(),
-        };
-        let kind = run_composite_effect(&mut exec, effect).await;
-        assert_eq!(kind, "LlmProposedAssessment");
-    }
-
-    #[tokio::test]
     async fn composite_routes_emit_internal_to_internal_executor() {
         let mut exec = CompositeExecutorBuilder::default().build();
         let effect = Effect::EmitInternal {
@@ -395,15 +382,12 @@ mod tests {
 
     #[tokio::test]
     async fn composite_no_llm_executor_logs_and_noops() {
-        // Without an LLM executor, the machine never receives an event and
-        // stays in Idle. We assert Done=false after a short delay.
+        // Without a turn executor, CallLlm with unrecognised kind is dropped
+        // and the machine stays in Idle.
         let mut exec = CompositeExecutorBuilder::default().build();
 
-        let req = sven_llm::LlmRequest::ExtractConstraints {
-            known_context: json!({}),
-        };
         let effect = Effect::CallLlm {
-            request: req.to_value(),
+            request: json!({"kind": "unknown_kind_xyz"}),
         };
 
         let rt = Runtime::spawn(
@@ -423,6 +407,40 @@ mod tests {
             !rt.status().done,
             "machine should remain in Idle with no executor"
         );
+        rt.abort();
+    }
+
+    /// Tools must still be callable even when no LLM executor is wired.
+    #[tokio::test]
+    async fn composite_routes_call_tool_to_tool_executor() {
+        let (q_tx, _q_rx) = tokio::sync::mpsc::channel::<UserQuestion>(4);
+        let (a_tx, _a_rx) = tokio::sync::mpsc::channel::<ApprovalRequest>(4);
+
+        // Tool calls route through the tool executor even if no LLM is wired.
+        let effect = Effect::CallTool {
+            call_id: sven_hsm::ToolCallId::new(),
+            name: "nonexistent_tool".into(),
+            args: json!({}),
+            capability: sven_hsm::ToolCapability::ReadFile,
+        };
+
+        let mut exec = CompositeExecutorBuilder::default()
+            .with_user(q_tx, a_tx)
+            .with_tools(Arc::new(ToolRegistry::new()), Default::default())
+            .build();
+
+        // Just ensure no panic; the registry has no tools so ToolFailed is emitted.
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            super::CompositeExecutorBuilder::default().build(),
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         rt.abort();
     }
 }

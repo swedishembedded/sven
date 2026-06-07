@@ -1,20 +1,34 @@
 //! Tool effect executor.
 //!
 //! Handles [`Effect::CallTool`]: performs a second-line capability check,
-//! invokes the tool registry, and emits [`Event::ToolSucceeded`] or
-//! [`Event::ToolFailed`].
+//! spawns the tool execution on a dedicated tokio task (spawn-and-forget so a
+//! batch of `CallTool` effects runs concurrently), and emits
+//! [`Event::ToolSucceeded`] or [`Event::ToolFailed`] when the task completes.
 //!
-//! The kernel's `validate_effects_are_allowed` is the primary permission gate;
-//! this executor performs a lightweight redundant check as a defence-in-depth
-//! measure (it cannot check per-state policy or approval state since neither
-//! are available at execution time — it only rejects capabilities that are not
-//! in the globally-allowed set).
+//! ## Concurrency
+//!
+//! Each `CallTool` effect spawns an independent task — there is no sequential
+//! waiting.  The kernel's single consumer loop returns immediately after
+//! dispatching all effects, and tool results arrive back as events in whatever
+//! order the tasks finish.  This restores the parallel-tools behaviour that was
+//! lost when the old agent loop awaited each tool sequentially.
+//!
+//! ## `call_id → thread` registry
+//!
+//! An optional [`Arc<Mutex<HashMap<ToolCallId, String>>>`] maps call IDs to
+//! conversation thread IDs.  When set and a mapping exists for the completing
+//! call, the tool result is also appended to that thread in the shared
+//! [`ConversationStore`] (append-only; never mutates prior messages).  This
+//! registry is populated by the `TurnExecutor` in Phase B.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCapability};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability};
+use sven_llm::ConversationStore;
+use sven_model::Message;
 use sven_tools::{ToolCall, ToolRegistry};
 
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
@@ -22,6 +36,11 @@ pub struct ToolExecutor {
     registry: Arc<ToolRegistry>,
     /// Globally-allowed capabilities (second-line defence check).
     allowed_capabilities: HashSet<ToolCapability>,
+    /// Maps `call_id → thread_id`; populated by `TurnExecutor`.
+    pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+    /// Shared conversation store; tool results are appended here when a
+    /// thread mapping exists.
+    pub store: Arc<Mutex<ConversationStore>>,
 }
 
 impl ToolExecutor {
@@ -33,12 +52,32 @@ impl ToolExecutor {
         Self {
             registry,
             allowed_capabilities,
+            call_id_to_thread: Arc::new(Mutex::new(HashMap::new())),
+            store: Arc::new(Mutex::new(ConversationStore::new())),
         }
     }
 
     /// Creates an executor with no additional capability restrictions.
     pub fn unrestricted(registry: Arc<ToolRegistry>) -> Self {
         Self::new(registry, HashSet::new())
+    }
+
+    /// Creates an executor with a pre-shared call_id registry and store.
+    ///
+    /// Used when `TurnExecutor` (Phase B) needs to share its registry with this
+    /// executor so that tool results land on the right conversation thread.
+    pub fn with_shared_store(
+        registry: Arc<ToolRegistry>,
+        allowed_capabilities: HashSet<ToolCapability>,
+        call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+        store: Arc<Mutex<ConversationStore>>,
+    ) -> Self {
+        Self {
+            registry,
+            allowed_capabilities,
+            call_id_to_thread,
+            store,
+        }
     }
 }
 
@@ -74,31 +113,58 @@ impl EffectExecutor for ToolExecutor {
             return;
         }
 
-        let tool_call = ToolCall {
-            id: call_id.as_uuid().to_string(),
-            name: name.clone(),
-            args,
-        };
+        let registry = Arc::clone(&self.registry);
+        let call_id_to_thread = Arc::clone(&self.call_id_to_thread);
+        let store = Arc::clone(&self.store);
+        let sink = sink.clone();
 
-        tracing::debug!(tool = %name, "ToolExecutor: invoking tool");
-        let output = self.registry.execute(&tool_call).await;
+        // Spawn-and-forget: the task runs concurrently with other effects.
+        tokio::spawn(async move {
+            let tool_call = ToolCall {
+                id: call_id.as_uuid().to_string(),
+                name: name.clone(),
+                args,
+            };
 
-        if output.is_error {
-            let _ = sink
-                .emit(Event::ToolFailed {
-                    call_id,
-                    error: output.content,
-                })
-                .await;
-        } else {
-            let observation = serde_json::Value::String(output.content);
-            let _ = sink
-                .emit(Event::ToolSucceeded {
-                    call_id,
-                    observation,
-                })
-                .await;
-        }
+            tracing::debug!(tool = %name, "ToolExecutor: invoking tool (spawned)");
+            let output = registry.execute(&tool_call).await;
+
+            // Append to conversation thread if a mapping exists.
+            let thread_id = call_id_to_thread
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&call_id).cloned());
+            if let Some(tid) = thread_id {
+                if let Ok(mut s) = store.lock() {
+                    let msg = if output.is_error {
+                        Message::tool_result(
+                            call_id.as_uuid().to_string(),
+                            format!("error: {}", output.content),
+                        )
+                    } else {
+                        Message::tool_result(call_id.as_uuid().to_string(), &output.content)
+                    };
+                    s.append(&tid, msg);
+                }
+            }
+
+            if output.is_error {
+                let _ = sink
+                    .emit(Event::ToolFailed {
+                        call_id,
+                        error: output.content,
+                    })
+                    .await;
+            } else {
+                let observation = serde_json::Value::String(output.content);
+                let _ = sink
+                    .emit(Event::ToolSucceeded {
+                        call_id,
+                        observation,
+                    })
+                    .await;
+            }
+        });
     }
 }
 

@@ -1,51 +1,27 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Parallel tool slot manager for streaming tool execution.
+//! Tool-call slot accumulator for LLM streaming.
 //!
-//! [`ToolSlotManager`] replaces the flat `HashMap<u32, PendingToolCall>` that
-//! previously lived inside `stream_one_turn`.  It accumulates per-slot
-//! argument chunks from the LLM stream and dispatches each slot as a
-//! `tokio::spawn` task the moment its JSON arguments form a valid (or
-//! repairable) object - without waiting for the other slots or for the stream
-//! to finish.
+//! [`ToolSlotManager`] accumulates per-slot JSON argument chunks from the LLM
+//! stream without executing any tools. Once the stream ends, callers use
+//! [`ToolSlotManager::drain_calls`] to collect the proposed [`ToolCall`]s.
 //!
-//! ## Latency model
-//!
-//! ```text
-//! Old:  stream fully done → all tools start → all tools done
-//! New:  slot N args done → slot N starts immediately (overlaps with stream)
-//! ```
-//!
-//! For long-running tools (shell, context_query, delegate_task) the savings
-//! equal `exec_time_of_slot_N - (stream_end_time - slot_N_ready_time)`.
+//! Tool execution is the sole responsibility of the HSM kernel (`ToolExecutor`);
+//! this module only handles JSON accumulation and repair.
 //!
 //! ## Session ordering invariant
 //!
 //! OpenAI's API requires all assistant `ToolCall` messages to appear before
 //! any `ToolResult` messages in a single turn.  This constraint is preserved:
-//! [`ToolSlotManager::join_all`] returns results sorted by slot index, and
-//! the caller pushes all `ToolCall` session messages first, then all
-//! `ToolResult` messages.
-//!
-//! ## Cancellation
-//!
-//! When a [`ToolSlotManager`] is dropped (e.g. because the parent future was
-//! cancelled via `tokio::select!`), its `Drop` impl calls `abort()` on every
-//! in-flight [`tokio::task::JoinHandle`] so spawned tasks are cleaned up
-//! rather than running detached indefinitely.
+//! [`ToolSlotManager::drain_calls`] returns calls sorted by slot index.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::stream::{FuturesUnordered, StreamExt};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tracing::warn;
 
-use sven_tools::{ToolCall, ToolOutput, ToolRegistry};
-
-use crate::events::AgentEvent;
+use sven_tools::{ToolCall, ToolRegistry};
 
 // ─── PendingSlot ─────────────────────────────────────────────────────────────
 
@@ -141,34 +117,30 @@ impl PendingSlot {
 enum SlotState {
     /// Still receiving streaming chunks from the LLM.
     Accumulating(PendingSlot),
-    /// Args complete; execution task spawned and in flight.
-    Dispatched {
-        tc: ToolCall,
-        handle: JoinHandle<ToolOutput>,
-    },
+    /// Args complete and accumulated; ready to be drained by the caller.
+    Ready(ToolCall),
 }
 
 // ─── ToolSlotManager ─────────────────────────────────────────────────────────
 
-/// Manages per-slot parallel tool execution during LLM streaming.
+/// Accumulates per-slot tool-call JSON during LLM streaming.
 ///
 /// Create one per `stream_one_turn` call.  Feed streaming chunks via
 /// [`feed`].  After the stream finishes call [`finalize_remaining`] for any
-/// slots whose JSON args were still incomplete.  Then call [`join_all`] to
-/// await every in-flight task, draining tool events in real time.
+/// slots whose JSON args were still incomplete.  Then call [`drain_calls`] to
+/// collect all accumulated [`ToolCall`]s in slot-index order.
 ///
-/// Dropping a `ToolSlotManager` aborts every in-flight task; see [`Drop`].
+/// Tool execution is the responsibility of the HSM kernel (`ToolExecutor`);
+/// this manager only accumulates and exposes the proposed calls.
 pub(crate) struct ToolSlotManager {
     /// Per-slot state keyed by the parallel-tool-call index from the provider.
     slots: HashMap<u32, SlotState>,
-    registry: Arc<ToolRegistry>,
 }
 
 impl ToolSlotManager {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
+    pub fn new(_registry: Arc<ToolRegistry>) -> Self {
         Self {
             slots: HashMap::new(),
-            registry,
         }
     }
 
@@ -179,8 +151,8 @@ impl ToolSlotManager {
     /// `None` on every subsequent chunk for the same slot or when args are
     /// still accumulating.
     pub fn feed(&mut self, index: u32, id: &str, name: &str, args_chunk: &str) -> Option<ToolCall> {
-        // If already dispatched (e.g. a stray trailing chunk), ignore.
-        if matches!(self.slots.get(&index), Some(SlotState::Dispatched { .. })) {
+        // If already ready (e.g. a stray trailing chunk), ignore.
+        if matches!(self.slots.get(&index), Some(SlotState::Ready(_))) {
             return None;
         }
 
@@ -199,17 +171,13 @@ impl ToolSlotManager {
                     if tc.name.is_empty() {
                         return None;
                     }
-                    let dispatched_tc = tc.clone();
-                    let handle = Self::spawn_task(Arc::clone(&self.registry), tc);
-                    *slot = SlotState::Dispatched {
-                        tc: dispatched_tc.clone(),
-                        handle,
-                    };
-                    return Some(dispatched_tc);
+                    let ready_tc = tc.clone();
+                    *slot = SlotState::Ready(tc);
+                    return Some(ready_tc);
                 }
                 None
             }
-            SlotState::Dispatched { .. } => None,
+            SlotState::Ready(_) => None,
         }
     }
 
@@ -247,13 +215,8 @@ impl ToolSlotManager {
 
                 let tc = pending.finalize();
                 let tc_with_synthetic_id = ensure_non_empty_id(tc, slot_count);
-                let dispatched_tc = tc_with_synthetic_id.clone();
-                let handle = Self::spawn_task(Arc::clone(&self.registry), tc_with_synthetic_id);
-                *state = SlotState::Dispatched {
-                    tc: dispatched_tc.clone(),
-                    handle,
-                };
-                dispatched.push(dispatched_tc);
+                dispatched.push(tc_with_synthetic_id.clone());
+                *state = SlotState::Ready(tc_with_synthetic_id);
             }
         }
 
@@ -266,120 +229,63 @@ impl ToolSlotManager {
     }
 
     /// Insert a pre-built [`ToolCall`] directly (e.g. from the inline XML
-    /// `<invoke>` fallback path).  The call is dispatched immediately.
+    /// `<invoke>` fallback path).
     ///
     /// `index` must be unique per slot; use the call's position in the
     /// extracted list so ordering is preserved.
     pub fn insert_call(&mut self, index: u32, tc: ToolCall) {
-        let handle = Self::spawn_task(Arc::clone(&self.registry), tc.clone());
-        self.slots
-            .insert(index, SlotState::Dispatched { tc, handle });
+        self.slots.insert(index, SlotState::Ready(tc));
     }
 
-    /// Await every dispatched slot, emitting [`AgentEvent::ToolCallFinished`]
-    /// as each completes (in any order).
+    /// Drain all ready tool calls, sorted by slot index.
     ///
-    /// Tool events (progress, todo updates, mode changes) are NOT drained here;
-    /// the caller is responsible for running [`Agent::drain_tool_events`]
-    /// concurrently (e.g. via a `tokio::select!` 100 ms timer branch) so that
-    /// `ModeChanged` events can also update session state.
-    ///
-    /// Returns `(ToolCall, ToolOutput)` pairs sorted by slot index for correct
-    /// session message ordering (OpenAI wire format: all `ToolCall` assistant
-    /// messages before any `ToolResult` messages).  Consumes `self`.
-    pub async fn join_all(self, tx: &mpsc::Sender<AgentEvent>) -> Vec<(ToolCall, ToolOutput)> {
-        let mut futs: FuturesUnordered<_> = self
-            .into_handles()
-            .into_iter()
-            .map(|(idx, tc, handle)| {
-                let call_id = tc.id.clone();
-                async move {
-                    let output = match handle.await {
-                        Ok(o) => o,
-                        Err(e) => {
-                            ToolOutput::err(&call_id, format!("tool execution panicked: {e}"))
-                        }
-                    };
-                    (idx, tc, output)
-                }
-            })
-            .collect();
-
-        let mut results: Vec<(u32, ToolCall, ToolOutput)> = Vec::with_capacity(futs.len());
-
-        while let Some((idx, tc, output)) = futs.next().await {
-            let _ = tx
-                .send(AgentEvent::ToolCallFinished {
-                    call_id: tc.id.clone(),
-                    tool_name: tc.name.clone(),
-                    output: output.content.clone(),
-                    is_error: output.is_error,
-                })
-                .await;
-            results.push((idx, tc, output));
-        }
-
-        // Sort by slot index so session messages are pushed in the order the
-        // LLM emitted them, satisfying the OpenAI wire format constraint.
-        results.sort_by_key(|(idx, _, _)| *idx);
-        results
-            .into_iter()
-            .map(|(_, tc, output)| (tc, output))
-            .collect()
-    }
-
-    /// Abort every in-flight task without awaiting results.
-    ///
-    /// Called explicitly when a cancellation signal is received so that
-    /// spawned tasks are cleaned up promptly rather than running to completion
-    /// detached.  The [`Drop`] implementation calls this automatically.
-    #[allow(dead_code)]
-    pub fn abort_all(self) {
-        // Explicit drop: the Drop impl below handles the actual abort() calls.
-        drop(self);
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    fn spawn_task(registry: Arc<ToolRegistry>, tc: ToolCall) -> JoinHandle<ToolOutput> {
-        tokio::spawn(async move { registry.execute(&tc).await })
-    }
-
-    /// Consume `self` into a flat list of `(index, ToolCall, JoinHandle)`.
-    ///
-    /// The `Drop` impl is bypassed because we drain `self.slots` via
-    /// `into_iter` - the handles are moved out rather than dropped.
-    fn into_handles(mut self) -> Vec<(u32, ToolCall, JoinHandle<ToolOutput>)> {
-        let handles: Vec<_> = self
+    /// Returns `ToolCall`s in slot-index order. Tool execution is the
+    /// responsibility of the HSM kernel (`ToolExecutor`); this method only
+    /// returns the accumulated proposals.  Consumes `self`.
+    pub fn drain_calls(self) -> Vec<ToolCall> {
+        let mut calls: Vec<(u32, ToolCall)> = self
             .slots
-            .drain()
+            .into_iter()
             .filter_map(|(idx, state)| match state {
-                SlotState::Dispatched { tc, handle } => Some((idx, tc, handle)),
+                SlotState::Ready(tc) => Some((idx, tc)),
                 SlotState::Accumulating(_) => {
                     // finalize_remaining() should have been called first.
-                    warn!(idx, "slot still accumulating at join_all; skipping");
+                    warn!(idx, "slot still accumulating at drain_calls; skipping");
                     None
                 }
             })
             .collect();
-        // slots is now empty so Drop won't try to abort anything.
-        handles
+        calls.sort_by_key(|(idx, _)| *idx);
+        calls.into_iter().map(|(_, tc)| tc).collect()
     }
-}
 
-impl Drop for ToolSlotManager {
-    /// Abort every in-flight task when the manager is dropped.
+    /// Legacy compatibility shim — returns accumulated tool calls with empty
+    /// (error) outputs. Real execution now happens in the HSM kernel.
     ///
-    /// This fires when `stream_one_turn` is cancelled (e.g. by a
-    /// `tokio::select!` cancel branch) so that tools that started early during
-    /// streaming do not continue running detached.
-    fn drop(&mut self) {
-        for (_, state) in self.slots.drain() {
-            if let SlotState::Dispatched { handle, .. } = state {
-                handle.abort();
-            }
-        }
+    /// This method exists only so the legacy `Agent::run_agentic_loop_*` paths
+    /// continue to compile; they are no longer invoked at runtime because
+    /// `ConverseExecutor` is no longer wired into any `RuntimeBuilder`.
+    pub async fn join_all(
+        self,
+        tx: &tokio::sync::mpsc::Sender<crate::events::AgentEvent>,
+    ) -> Vec<(ToolCall, sven_tools::ToolOutput)> {
+        let _ = tx;
+        self.drain_calls()
+            .into_iter()
+            .map(|tc| {
+                let output = sven_tools::ToolOutput::err(
+                    &tc.id,
+                    "tool execution is now kernel-mediated; legacy loop is inactive",
+                );
+                (tc, output)
+            })
+            .collect()
     }
+
+    /// Legacy no-op — previously aborted in-flight tasks. No-op now since no
+    /// tasks are spawned.
+    #[allow(dead_code)]
+    pub fn abort_all(self) {}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -476,7 +382,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use serde_json::{json, Value};
-    use sven_tools::{policy::ApprovalPolicy, tool::Tool, ToolRegistry};
+    use sven_tools::{policy::ApprovalPolicy, tool::Tool, ToolOutput, ToolRegistry};
 
     // ── Mock tool ─────────────────────────────────────────────────────────────
 
@@ -505,10 +411,6 @@ mod tests {
         let mut reg = ToolRegistry::new();
         reg.register(EchoTool);
         Arc::new(reg)
-    }
-
-    fn make_tx() -> (mpsc::Sender<AgentEvent>, mpsc::Receiver<AgentEvent>) {
-        mpsc::channel(64)
     }
 
     // ── feed() / single slot ──────────────────────────────────────────────────
@@ -581,11 +483,11 @@ mod tests {
         assert_eq!(dispatched[0].id, "id1");
     }
 
-    #[tokio::test]
-    async fn finalize_remaining_skips_already_dispatched() {
+    #[test]
+    fn finalize_remaining_skips_already_ready() {
         let reg = make_registry();
         let mut mgr = ToolSlotManager::new(reg);
-        mgr.feed(0, "id1", "echo", r#"{"x":1}"#); // already dispatched
+        mgr.feed(0, "id1", "echo", r#"{"x":1}"#); // already ready
         let dispatched = mgr.finalize_remaining();
         assert!(dispatched.is_empty());
     }
@@ -620,67 +522,40 @@ mod tests {
         assert!(!mgr.is_empty());
     }
 
-    // ── join_all() ────────────────────────────────────────────────────────────
+    // ── drain_calls() ─────────────────────────────────────────────────────────
 
-    #[tokio::test]
-    async fn join_all_single_slot_returns_output() {
+    #[test]
+    fn drain_calls_single_slot_returns_tool_call() {
         let reg = make_registry();
         let mut mgr = ToolSlotManager::new(reg);
         mgr.feed(0, "id1", "echo", r#"{"x":1}"#);
-
-        let (tx, _rx) = make_tx();
-
-        let results = mgr.join_all(&tx).await;
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0.id, "id1");
-        assert!(!results[0].1.is_error);
+        let calls = mgr.drain_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "id1");
     }
 
-    #[tokio::test]
-    async fn join_all_two_slots_ordered_by_index() {
+    #[test]
+    fn drain_calls_two_slots_ordered_by_index() {
         let reg = make_registry();
         let mut mgr = ToolSlotManager::new(reg);
         // Feed slot 1 first (it arrives complete before slot 0).
         mgr.feed(1, "id1", "echo", r#"{"y":2}"#);
         mgr.feed(0, "id0", "echo", r#"{"x":1}"#);
-
-        let (tx, _rx) = make_tx();
-
-        let results = mgr.join_all(&tx).await;
-        assert_eq!(results.len(), 2);
+        let calls = mgr.drain_calls();
+        assert_eq!(calls.len(), 2);
         // Must be returned in slot-index order (0 then 1).
-        assert_eq!(results[0].0.id, "id0");
-        assert_eq!(results[1].0.id, "id1");
+        assert_eq!(calls[0].id, "id0");
+        assert_eq!(calls[1].id, "id1");
     }
 
-    #[tokio::test]
-    async fn join_all_emits_tool_call_finished_events() {
+    // ── abort_all() ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn abort_all_does_not_panic() {
         let reg = make_registry();
         let mut mgr = ToolSlotManager::new(reg);
         mgr.feed(0, "id1", "echo", r#"{"x":1}"#);
-
-        let (tx, mut rx) = make_tx();
-
-        mgr.join_all(&tx).await;
-
-        // Drain received events.
-        let mut finished_count = 0;
-        while let Ok(ev) = rx.try_recv() {
-            if matches!(ev, AgentEvent::ToolCallFinished { .. }) {
-                finished_count += 1;
-            }
-        }
-        assert_eq!(finished_count, 1);
-    }
-
-    // ── abort_all() / Drop ────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn abort_all_does_not_panic() {
-        let reg = make_registry();
-        let mut mgr = ToolSlotManager::new(reg);
-        mgr.feed(0, "id1", "echo", r#"{"x":1}"#);
-        // abort_all should be callable without panicking.
+        // abort_all is a no-op now; should not panic.
         mgr.abort_all();
     }
 

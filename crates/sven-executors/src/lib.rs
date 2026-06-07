@@ -11,7 +11,7 @@
 //!
 //! | Module | Effect(s) handled | Events emitted |
 //! |--------|-------------------|----------------|
-//! | [`llm`] | `CallLlm` | `LlmProposed*`, `LlmFailed` |
+//! | [`turn`] | `CallLlm` (kind=turn) | `LlmTurnComplete`, `LlmFailed` |
 //! | [`tool`] | `CallTool` | `ToolSucceeded`, `ToolFailed` |
 //! | [`user`] | `AskUser`, `RequestHumanApproval` | `UserMessage`, `HumanApproved`, `HumanRejected` |
 //! | [`timer`] | `ScheduleTimeout`, `CancelTimeout` | `Timeout` |
@@ -28,7 +28,7 @@
 //! use sven_hsm::{Runtime, Hsm, Context, PermissionPolicy};
 //!
 //! let executor = CompositeExecutor::builder()
-//!     .with_llm(adapter)
+//!     .with_turn(turn_executor)
 //!     .with_tools(registry, Default::default())
 //!     .with_user(question_tx, approval_tx)
 //!     .with_timers(Arc::new(sven_hsm::SystemClock::new()))
@@ -45,9 +45,9 @@ pub mod composite;
 pub mod converse;
 pub mod deliberation;
 pub mod internal;
-pub mod llm;
 pub mod timer;
 pub mod tool;
+pub mod turn;
 pub mod user;
 
 // Re-exports
@@ -57,7 +57,7 @@ pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use converse::ConverseExecutor;
 pub use deliberation::DeliberationExecutor;
 pub use internal::InternalExecutor;
-pub use llm::LlmExecutor;
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
+pub use turn::TurnExecutor;
 pub use user::{ApprovalRequest, UserExecutor, UserQuestion};
