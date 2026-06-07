@@ -397,7 +397,6 @@ pub async fn kernel_session_task(
     }
 
     let handle = bundle.handle.clone();
-    let converse_agent = bundle.converse_agent.clone();
     let mut obs_rx = bundle.handle.subscribe_observations();
 
     // Drive the kernel runtime in the background (keeps it alive).
@@ -406,10 +405,10 @@ pub async fn kernel_session_task(
     // Bridge kernel-level AskUser / RequestHumanApproval to the TUI modals.
     // - UserQuestion → QuestionRequest on the tool question channel (the same
     //   channel the TUI's run loop selects on for the ask_question tool).
-    // - ApprovalRequest is forwarded to the TUI via the AgentEvent channel
-    //   (as a text segment showing the capability + description), and we
-    //   auto-approve for now in the kernel path; a full confirm-modal
-    //   bridge is handled by the approval_tx passed to kernel_session_task.
+    // - ApprovalRequest → forwarded to the TUI as a QuestionRequest with
+    //   yes/no options (ConfirmModal routing). The user must explicitly approve
+    //   or deny each capability request; no blanket auto-approve in interactive
+    //   sessions.
     let mut channels = bundle.channels;
     let bridge_question_tx = question_tx.clone();
     tokio::spawn(async move {
@@ -444,15 +443,29 @@ pub async fn kernel_session_task(
                 },
                 a = channels.approval_rx.recv() => match a {
                     Some(a) => {
-                        // For now approve all kernel capability requests.
-                        // A full ConfirmModal bridge would forward these to the TUI
-                        // and await a yes/no response before sending HumanApproved.
-                        tracing::info!(
-                            capability = ?a.capability,
-                            description = %a.description,
-                            "kernel_session_task: auto-approving capability request"
+                        // Forward the approval request to the TUI as a ConfirmModal
+                        // question (yes = allow, no = deny). The user must explicitly
+                        // approve or deny in interactive sessions.
+                        let prompt = format!(
+                            "Allow {:?} capability?\n\nAction: {}",
+                            a.capability, a.description
                         );
-                        let _ = a.reply_tx.send(true);
+                        let (answer_tx, answer_rx) = oneshot::channel::<String>();
+                        let req = QuestionRequest {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            questions: vec![Question {
+                                prompt,
+                                options: vec!["yes".to_string(), "no".to_string()],
+                                allow_multiple: false,
+                            }],
+                            answer_tx,
+                        };
+                        let approved = if bridge_question_tx.send(req).await.is_ok() {
+                            answer_rx.await.map(|r| r.trim().to_lowercase() == "yes").unwrap_or(false)
+                        } else {
+                            false
+                        };
+                        let _ = a.reply_tx.send(approved);
                     }
                     None => break,
                 },
@@ -512,17 +525,8 @@ pub async fn kernel_session_task(
             } => {
                 if let Some(ref model_cfg) = model_override {
                     *current_model_cfg.lock().await = model_cfg.clone();
-                    if let Some(ref agent) = converse_agent {
-                        if let Ok(m) = sven_model::from_config(model_cfg) {
-                            agent.lock().await.set_model(Arc::from(m));
-                        }
-                    }
                 }
-                if let Some(m) = mode_override {
-                    if let Some(ref agent) = converse_agent {
-                        agent.lock().await.set_mode(m).await;
-                    }
-                }
+                let _ = mode_override;
                 debug!(msg_len = content.len(), "kernel task: posting UserMessage (Submit)");
                 tracing::info!(msg_len = content.len(), "kernel_session_task: sending UserMessage to HSM (Submit)");
                 if !handle.send_user_message(content).await {
@@ -544,21 +548,10 @@ pub async fn kernel_session_task(
                 tracing::info!(history_len = messages.len(), "kernel_session_task: Resubmit received");
                 if let Some(ref model_cfg) = model_override {
                     *current_model_cfg.lock().await = model_cfg.clone();
-                    if let Some(ref agent) = converse_agent {
-                        if let Ok(m) = sven_model::from_config(model_cfg) {
-                            agent.lock().await.set_model(Arc::from(m));
-                        }
-                    }
                 }
-                if let Some(m) = mode_override {
-                    if let Some(ref agent) = converse_agent {
-                        agent.lock().await.set_mode(m).await;
-                    }
-                }
-                // Seed history (messages up to the edit point), then submit.
-                if let Some(ref agent) = converse_agent {
-                    agent.lock().await.seed_history(messages).await;
-                }
+                let _ = mode_override;
+                // History seeding for resubmit is handled by the kernel's ConversationStore.
+                let _ = messages;
                 tracing::info!("kernel_session_task: sending UserMessage to HSM (Resubmit)");
                 if !handle.send_user_message(new_user_content).await {
                     let _ = tx
@@ -570,10 +563,8 @@ pub async fn kernel_session_task(
             }
 
             AgentRequest::LoadHistory(messages) => {
-                debug!(n = messages.len(), "kernel task: seeding history");
-                if let Some(ref agent) = converse_agent {
-                    agent.lock().await.seed_history(messages).await;
-                }
+                debug!(n = messages.len(), "kernel task: load history (no-op in kernel mode)");
+                let _ = messages;
             }
 
             AgentRequest::GenerateTitle { user_text } => {
