@@ -40,17 +40,17 @@ each to an executor. Executors run the actual work on their own tasks and post
 result `Event`s back into the queue. This gives deterministic, auditable,
 testable control flow with intelligence injected at well-defined points.
 
-> **Where does the LLM "decide to call a tool"?** That depends on which engine
-> a state uses. The kernel's typed `Effect::CallLlm` path treats the model as a
-> pure reasoning service that returns *structured data*, never a tool name. But
-> the two engines that actually drive the shipped modes - the **converse**
-> engine (chat/agent) and the **deliberation** engine (sdlc) - run a real
-> model↔tool agentic loop *inside an executor*: there the model emits native
-> tool calls, the executor runs them and feeds results back, and only the final
-> settled outcome re-enters the kernel as a single event. The kernel stays the
-> authority over transitions; the loop is an implementation detail of one
-> effect. See [Deliberation Engine](deliberation-engine.md) for the precise
-> model.
+> **Where does the LLM "decide to call a tool"?** In the **unified
+> kernel-mediated model** (both `ReactiveAgentMachine` and `SdlcMachine`), the
+> model *proposes* tool calls inside a single streaming pass run by `TurnExecutor`
+> (`kind: "turn"`). Those proposals are returned as `ProposedToolCall`s in
+> `Event::LlmTurnComplete`; the machine emits one `Effect::CallTool` per proposal;
+> the kernel gates each call through the `PermissionPolicy`; and `ToolExecutor`
+> executes allowed calls concurrently (spawn-and-forget). The machine drives the
+> multi-round loop as explicit state transitions (`Generating → RunningTools →
+> Generating`), not as hidden executor-internal iteration. No executor runs a
+> multi-step tool loop or calls `registry.execute` on behalf of the kernel.
+> See [Deliberation Engine](deliberation-engine.md) for the SDLC-specific model.
 
 ---
 
@@ -104,7 +104,7 @@ The complete effect vocabulary (11 variants):
 
 | Effect | Purpose |
 |--------|---------|
-| `CallLlm { request }` | Ask the reasoning service / loop engine for a result. `request` is opaque JSON; a `kind` discriminator selects the engine (`"converse"`, `"deliberate"`, or a typed `LlmRequest`) |
+| `CallLlm { request }` | Ask the reasoning service for a result. `request` is opaque JSON; a `kind` discriminator selects the engine (`"turn"` for all shipped modes; legacy `"converse"` and `"deliberate"` also exist) |
 | `CallTool { call_id, name, capability, args }` | Invoke a tool through the kernel. Requires the named `capability` to be permitted in the current state |
 | `AskUser { prompt }` | Ask the human a question (non-blocking; the answer arrives as a later event) |
 | `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
@@ -129,13 +129,18 @@ Before any effect in a batch is executed, `validate_effects_are_allowed`
 The policy is keyed by the `Debug` label of the current state, so it works for
 any machine's opaque state type without the kernel knowing the concrete type.
 
-Two failure modes, both fatal to the *entire* batch (no effect in a rejected
-batch runs):
+For `CallTool` effects the gate is **per-call** (not batch-wide). Each effect
+independently receives one of three verdicts:
 
-- `ForbiddenToolCall` - the capability is not in the state's allow-set (and not
-  globally allowed).
-- `HumanApprovalRequired` - the capability is dangerous or approval-gated and
-  the human has not granted it (`Context::has_granted`).
+- `Allowed` → `ToolExecutor` executes the call (spawned concurrently).
+- `Forbidden` → `Event::ToolFailed { call_id, error: "denied" }` is emitted
+  immediately; the call never reaches the registry.
+- `NeedsApproval` → `Effect::RequestHumanApproval { call_id, capability,
+  description }` is emitted; on `HumanApproved` the call proceeds, on
+  `HumanRejected` a `ToolFailed` is emitted.
+
+Non-tool effects (`AskUser`, `PersistAudit`, timers, checkpoints, etc.) remain
+all-or-nothing: a forbidden batch is recorded in the audit trail but not executed.
 
 Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
 `DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `Rollback`.
@@ -144,18 +149,12 @@ always require a granted approval regardless of the per-state allow-set. A
 `PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
 `require_approval`).
 
-> **Important nuance about the shipped engines.** The permission gate only sees
-> *kernel-level* effects. In the converse and deliberation engines, tools are
-> executed **inside the executor's agentic loop** (via the `ToolRegistry`), not
-> as `Effect::CallTool`. So for those engines the kernel permission policy gates
-> almost nothing tool-related; tool approval is instead enforced by the
-> `ToolRegistry`'s own `ApprovalPolicy` / `PermissionRequester` (the IDE/ACP
-> approval round-trip). The per-state `PermissionPolicy` is fully exercised only
-> by machines that emit `Effect::CallTool` directly. In production,
-> `RuntimeBuilder` installs an *open* policy (read/write/network/git allowed
-> globally; shell and rollback still require approval) for every mode; the
-> finer-grained `SdlcMachine::permission_policy()` exists in code but is not the
-> policy the production runtime is built with.
+In production, `RuntimeBuilder` uses each machine's own `permission_policy()`
+(`SdlcMachine::permission_policy()` / `ReactiveAgentMachine::permission_policy()`)
+rather than a blanket open policy, giving each mode the minimum-required
+capability set. This means the kernel permission gate is now **fully exercised**
+for every tool call in every mode - there is no longer a separate
+`ToolRegistry::ApprovalPolicy` / `PermissionRequester` path for kernel sessions.
 
 ---
 
@@ -317,19 +316,16 @@ by the mode string and builds an `ErasedRuntime` around it.
 
 | Mode string | Machine | Engine |
 |-------------|---------|--------|
-| `"agent"` | `ReactiveAgentMachine` | converse loop (`ConverseExecutor`) |
-| `"reactive"` | `ReactiveAgentMachine` | converse loop |
-| `"chat"` | `ReactiveAgentMachine` | converse loop |
-| `"sdlc"` | `SdlcMachine` | deliberation loop (`DeliberationExecutor`) |
+| `"agent"` | `ReactiveAgentMachine` | kernel-mediated turns (`TurnExecutor` + `loop_core`) |
+| `"reactive"` | `ReactiveAgentMachine` | kernel-mediated turns |
+| `"chat"` | `ReactiveAgentMachine` | kernel-mediated turns |
+| `"sdlc"` | `SdlcMachine` | kernel-mediated turns + phase deliberations (`TurnExecutor` + `loop_core`) |
 
-> **Stale-doc correction.** Earlier revisions of this document claimed `chat`
-> ran a `ConversationMachine` and `sdlc` ran a 57-state
-> `SoftwareDevelopmentMachine`. That is no longer how modes are wired.
-> `ConversationMachine`, `SoftwareDevelopmentMachine`, and `ClarificationMachine`
-> still exist in `sven-core` (and are exported) but are **not registered in the
-> `ModeRegistry`** - they are legacy and not used by any shipped mode. The
-> registry binds `agent`/`reactive`/`chat` to `ReactiveAgentMachine` and `sdlc`
-> to the new deliberation-driven `SdlcMachine`.
+All modes use `TurnExecutor` (`kind: "turn"`) as the single LLM call engine.
+`SdlcMachine` additionally routes each phase's decision parsing through its own
+`loop_core`-derived state handlers (parsing structured JSON from the final
+tool-free text). `DeliberationExecutor` and `ConverseExecutor` exist in the crate
+for backward compatibility but are not wired into any production runtime.
 
 Mode selection at startup (see `src/main.rs`) is, in priority order:
 
@@ -340,24 +336,24 @@ Mode selection at startup (see `src/main.rs`) is, in priority order:
 ### `ReactiveAgentMachine` (modes `agent` / `reactive` / `chat`)
 
 The default streaming coding agent (`sven-core/src/machines/reactive_agent.rs`).
-A small turn-lifecycle machine that delegates the actual model↔tool round loop
-to the converse executor:
+A turn-lifecycle machine driven by the shared `loop_core` state handlers:
 
 ```
 Top
 └── Session
-    ├── Idle        ← waiting for the user's next message
-    └── Generating  ← a converse turn (streaming + tool rounds) is in flight
+    ├── Idle              ← waiting for the user's next message
+    ├── Generating        ← TurnExecutor streaming a single model pass
+    ├── RunningTools      ← waiting for concurrent ToolExecutor results
+    └── AwaitingApproval  ← waiting for HumanApproved/Rejected on a tool call
 ```
 
-On a `UserMessage` in `Idle`, it emits one `Effect::CallLlm { request: { kind:
-"converse", text } }` and moves to `Generating`. The `ConverseExecutor` drives
-the entire multi-round agentic loop (streaming, native parallel tool calls, XML
-`<invoke>` fallback, compaction, cancellation) against a shared `sven_core::Agent`,
-streams `UiEvent`s outward, and posts exactly one `LlmProposedResponse` (or
-`LlmFailed`) back inward to settle the turn and return to `Idle`. Within that
-loop the model **does** make native tool calls - the machine just owns turn
-lifecycle and cancellation, not the individual tool decisions.
+On a `UserMessage` in `Idle`, it emits one `Effect::CallLlm { kind: "turn" }` and
+moves to `Generating`. `TurnExecutor` streams the model response and posts
+`Event::LlmTurnComplete { text, tool_calls }` back. If `tool_calls` is non-empty
+the machine transitions to `RunningTools` and emits one `Effect::CallTool` per
+call. Results arrive as `ToolSucceeded` / `ToolFailed` events; when all calls are
+settled the machine re-enters `Generating` for the next round. A final
+tool-call-free turn posts `LlmProposedResponse` and returns to `Idle`.
 
 ### `SdlcMachine` (mode `sdlc`)
 
@@ -396,21 +392,21 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 
 | Executor | Effects handled |
 |----------|-----------------|
-| `ConverseExecutor` | `CallLlm` with `kind: "converse"` - drives the reactive agent loop |
-| `DeliberationExecutor` | `CallLlm` with `kind: "deliberate"` - drives one SDLC deliberation |
-| `LlmExecutor` | `CallLlm` for any other request (a typed `LlmRequest` via `DefaultLlmAdapter`) |
-| `ToolExecutor` | `CallTool` (capability-checked) |
+| `TurnExecutor` | `CallLlm` with `kind: "turn"` - single-pass model streaming; accumulates tool proposals; posts `LlmTurnComplete` |
+| `ConverseExecutor` | `CallLlm` with `kind: "converse"` - legacy shim; no active machine emits this |
+| `DeliberationExecutor` | `CallLlm` with `kind: "deliberate"` - legacy shim; superseded by `TurnExecutor` + `loop_core` |
+| `ToolExecutor` | `CallTool` - kernel-gated, spawn-and-forget; the **only** executor that calls `registry.execute` |
 | `UserExecutor` | `AskUser`, `RequestHumanApproval` |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
 | `CheckpointExecutor` | `CreateCheckpoint`, `RollbackToCheckpoint` |
 | `AuditExecutor` | `PersistAudit` |
 | `InternalExecutor` | `EmitInternal` |
 
-`CallLlm` routing is by the request's `kind` field: `"converse"` →
-`ConverseExecutor`, `"deliberate"` → `DeliberationExecutor`, anything else →
-`LlmExecutor`. The reactive modes wire a converse executor; `sdlc` wires a
-deliberation executor; the typed `LlmExecutor` path is the fallback for machines
-that emit plain typed `LlmRequest`s.
+`CallLlm` routing is by the request's `kind` field: `"turn"` → `TurnExecutor`
+(all shipped modes), `"converse"` → `ConverseExecutor` (legacy), `"deliberate"` →
+`DeliberationExecutor` (legacy). `RuntimeBuilder` wires only `TurnExecutor` in
+production; the legacy shims remain in the crate for backward compatibility but
+are not dispatched to.
 
 `InstantiateSubmachine` is **not** handled by the `CompositeExecutor` - the
 runtime intercepts it before the executor and hands it to the `ChildSpawner`
@@ -451,25 +447,21 @@ Fan-out](parallel-submachines.md)**.
 
 ## LLM contracts (`sven-llm`)
 
-`sven-llm` wraps `sven-model` (the stateless provider abstraction) behind two
-things:
+`sven-llm` provides the conversation primitives shared by all engines:
 
-1. **Typed `LlmRequest` operations** (`request.rs`) - 13 named operations
-   (`ExtractIntent`, `AssessCompleteness`, `GenerateClarifyingQuestion`,
-   `ProposePatch`, `EvaluateContext`, …). Each serialises to a structured prompt
-   plus an output schema. `DefaultLlmAdapter` (`adapter.rs`) builds the prompt,
-   streams the model, accumulates the JSON, and maps it to the correct typed
-   `Event` (`LlmProposedAssessment` / `LlmProposedPlan` / `LlmProposedResponse`).
-   On this path the model **only fills in fields of a known response struct - it
-   never names a tool.** `MockLlmAdapter` replays a scripted `Vec<Event>` for
-   tests. This path is used by the fallback `LlmExecutor`; the shipped modes use
-   the converse/deliberation engines instead.
+- **`ConversationStore`** (`conversation.rs`) - append-only per-thread
+  `Vec<Message>` history with a cache-safety invariant. Each thread's prefix is
+  immutable; new messages are only ever appended. This keeps provider prompt
+  caches valid across successive turns on the same thread.
+- **`TurnRequest`** (`conversation.rs`) - the `kind: "turn"` request shape used
+  by every machine for a single model pass. See
+  **[Deliberation Engine](deliberation-engine.md)** for the field reference.
+- **`strip_code_fences`** - utility to strip Markdown code fences from model
+  output before structured-JSON parsing.
 
-2. **The deliberation contract** (`conversation.rs`) - `ConversationStore`
-   (append-only per-thread `Vec<Message>` history with a cache-safety invariant)
-   and `DeliberationRequest` (the `kind: "deliberate"` request shape). These
-   underpin the SDLC engine and are documented in
-   **[Deliberation Engine](deliberation-engine.md)**.
+The older typed `LlmRequest` / `DefaultLlmAdapter` / `MockLlmAdapter` /
+`LlmExecutor` path has been removed; `sven-llm` no longer carries request or
+adapter modules.
 
 The model layer (`sven-model`) carries the streaming primitives the engines
 share: `CompletionRequest` (now including an optional `response_format` for
@@ -519,11 +511,11 @@ let bundle = RuntimeBuilder::new(config, "sdlc")
 ```
 
 `build_session` returns a `SessionBundle` holding the `ErasedRuntime`, a cheap
-`RuntimeHandle` (sink + observation + status), the `KernelChannels`
-(question/approval receivers), and the optional converse `Agent` (reactive modes
-only, exposed so callers can seed history or swap the model). A
+`RuntimeHandle` (sink + observation + status), and the `KernelChannels`
+(question/approval receivers). The legacy converse `Agent` is no longer part of
+the bundle - all modes drive the model through `TurnExecutor`. A
 `SessionSupervisor` manages a registry of such bundles keyed by `SessionId`,
-sharing reference-counted skills, knowledge, and agents across sessions.
+sharing reference-counted skills and knowledge across sessions.
 
 ---
 
@@ -579,10 +571,10 @@ E2E bats tests use `--model mock` so no real API key is required.
 |-------|------|
 | `sven-hsm` | HSM kernel: dispatch, `Machine` trait, `Runtime`/`ErasedRuntime` (Active Object), permissions, audit/replay, `Clock`/timers, `Submachine`/`ChildSpawner`, `ObservationSink`/`UiEvent` |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
-| `sven-llm` | Typed `LlmRequest`/response contracts + `LlmAdapter`/`MockLlmAdapter`; `ConversationStore` + `DeliberationRequest` |
+| `sven-llm` | Conversation primitives: `ConversationStore` (append-only per-thread history), `TurnRequest`, `strip_code_fences`. (Typed `LlmRequest` / `LlmAdapter` / `DefaultLlmAdapter` paths removed.) |
 | `sven-tools` | `ToolRegistry` (incl. tool-subset API), `Tool` trait, approval policy / `PermissionRequester` |
-| `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`; legacy `ConversationMachine`/`SoftwareDevelopmentMachine`/`ClarificationMachine`), the reusable `Deliberator`, `Agent`, `Session`, `ModeRegistry` |
-| `sven-executors` | Effect executors: converse, deliberation, llm, tool, user, timer, checkpoint, audit, internal, and the composite |
+| `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`), `loop_core` shared state handlers, `stream_turn`, `Agent` (legacy), `Session`, `ModeRegistry` |
+| `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the composite (converse/deliberation are legacy shims) |
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
 | `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |
 | `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |

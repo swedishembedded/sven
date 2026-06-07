@@ -3,12 +3,13 @@
 The deliberation engine is how sven's `sdlc` mode does real engineering work
 while keeping the [HSM kernel](hsm-architecture.md) as the deterministic
 authority over control flow. Each state of the `SdlcMachine` runs a *scoped*
-LLM↔tool agentic loop - a **deliberation** - and returns a single structured
-decision. The kernel reads that decision and chooses the next transition.
+LLM turn followed by kernel-dispatched tool calls - a **turn round** - and
+returns a single structured decision. The kernel reads that decision and chooses
+the next transition.
 
 This document explains the model precisely: the HSM-as-authority / LLM-as-tool
 split, the append-only conversation store and its cache-safety invariant, the
-`DeliberationRequest` shape, the `Deliberator` loop, structured output, per-state
+`TurnRequest` shape, the kernel-mediated turn loop, structured output, per-state
 tool subsets and models, the decision envelope and how `status` drives
 transitions, the SDLC phase walk (including the "hi" intake guard), and the human
 question/approval gates.
@@ -20,31 +21,45 @@ question/approval gates.
 In a free-running agent, the model decides everything: what to do, which tools to
 call, and when to stop. In sven's SDLC mode the responsibility is split:
 
-- **The LLM runs the loop *within* a state.** Inside a deliberation the model
-  streams reasoning and makes **native tool calls** (read, grep, edit, shell, …)
-  that are executed and fed back into the conversation, just like any agentic
-  coding assistant. This is genuine tool use - not the older "the LLM only fills
-  in a JSON field and never names a tool" model.
-- **The HSM decides what happens *between* states.** A deliberation does not
-  transition the machine. It ends by emitting a structured **decision** whose
-  `status` field is the only authority signal. The HSM reads `status` and picks
-  the transition (advance, ask the user, request approval, re-deliberate, or
+- **The LLM proposes tool calls within a state.** On each model turn the
+  `TurnExecutor` streams a single model response, accumulates proposed tool calls
+  (`ProposedToolCall`s), and posts `Event::LlmTurnComplete { text, tool_calls }`.
+  The machine then emits one `Effect::CallTool` per proposed call. All tool
+  execution happens through the kernel's `ToolExecutor` - not inside any executor
+  loop.
+- **The HSM decides what happens *between* states and between tool calls.** A
+  turn's result does not transition the machine directly. Tool calls come back as
+  `ToolSucceeded` / `ToolFailed` events. Only when the model produces a final
+  tool-free turn does the machine parse the text as a structured **decision**
+  whose `status` field is the only authority signal. The HSM reads `status` and
+  picks the transition (advance, ask the user, request approval, re-deliberate, or
   recover).
 
 So the model is powerful *inside* a phase and powerless *across* phases. The
-state graph, the gates, and the recovery hierarchy remain deterministic,
-auditable, and testable.
+state graph, the gates, the permission policy, the audit trail, and the recovery
+hierarchy remain deterministic, auditable, and testable.
 
 ```
-            Effect::CallLlm { kind: "deliberate", ... }
-   SdlcMachine ───────────────────────────────────────► DeliberationExecutor
-   (HSM state)                                                    │
-        ▲                                                         │ runs Deliberator loop
-        │                                                         │ (stream + native tools)
-        │   Event::DeliberationComplete { thread, decision }      ▼
-        └───────────────────────────────────────────────  structured decision (JSON)
-        the HSM reads decision.status and transitions
+        Effect::CallLlm { kind: "turn", ... }
+SdlcMachine ──────────────────────────────────► TurnExecutor
+(HSM state)                                         │
+     ▲                                              │ streams model response
+     │                                              │ accumulates tool_calls
+     │  Event::LlmTurnComplete { text, tool_calls } │
+     ◄──────────────────────────────────────────────┘
+     │
+     │  emits Effect::CallTool per proposed call
+     ▼
+     kernel permission gate (PermissionPolicy)
+     │  Allowed → ToolExecutor.execute (spawn-and-forget)
+     │  Forbidden → Event::ToolFailed { reason: "denied" }
+     │  NeedsApproval → Effect::RequestHumanApproval
+     ▼
+     Event::ToolSucceeded / ToolFailed → machine re-prompts or parses decision
 ```
+
+No executor runs a multi-step tool loop or executes tools off-book. The kernel is
+the single policy evaluator and the audit trail captures every tool I/O entry.
 
 ---
 
@@ -80,26 +95,25 @@ tool-call messages, and tool-result messages.
 
 ---
 
-## The `DeliberationRequest`
+## The `TurnRequest`
 
-A state asks for a deliberation by emitting `Effect::CallLlm` whose opaque
-`request` value carries a `kind: "deliberate"` discriminator. The wire shape
-mirrors `DeliberationRequest` (`sven-llm/src/conversation.rs`):
+A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
+`request` value carries a `kind: "turn"` discriminator. The wire shape mirrors
+`TurnRequest` (`sven-llm/src/conversation.rs`):
 
 | Field | Meaning |
 |-------|---------|
 | `thread` | Stable thread id (e.g. `"intake"`) selecting which append-only history to use |
 | `system_role` | Stable system-role framing for the thread (pushed once, cached) |
 | `instruction` | The comprehensive per-turn command, appended as a new user turn |
-| `tools` | Names of the tools this deliberation may call (the state-scoped subset) |
-| `schema` | JSON Schema the structured decision must conform to (may be null) |
+| `tools` | Names of the tools available to the model this turn (state-scoped subset) |
+| `schema` | JSON Schema the final response must conform to (may be null) |
 | `schema_name` | Short schema name (used for OpenAI strict mode) |
 | `model` | Optional per-state model override (resolved via the model resolver) |
-| `max_tool_rounds` | Maximum model↔tool rounds before a forced wrap-up turn |
+| `max_tool_rounds` | Maximum `Generating→RunningTools` rounds before a forced wrap-up |
 
-`DeliberationRequest::is_deliberation` checks the `kind` tag; the
-`CompositeExecutor` uses it to route the effect to the `DeliberationExecutor`
-rather than the converse or typed-LLM executors.
+`TurnRequest::is_turn` checks the `kind` tag; the `CompositeExecutor` uses it to
+route the effect to the `TurnExecutor`.
 
 The `SdlcMachine`'s prompts (`sven-core/src/machines/sdlc/prompts.rs`) build
 these values directly with the same wire shape. The **instruction is a real
@@ -108,62 +122,71 @@ the explicit task, and tells the model how to answer.
 
 ---
 
-## The `Deliberator` loop
+## The kernel-mediated turn loop
 
-`DeliberationExecutor` (`sven-executors/src/deliberation.rs`) deserialises the
-request, resolves the model (honouring a per-state override when a resolver is
-present, else the default), resolves the tool subset against the live registry
-(`ToolRegistry::schemas_for_names`), builds a `ResponseFormat` from the schema,
-and runs the reusable `Deliberator` (`sven-core/src/deliberator.rs`) against the
-thread.
+`TurnExecutor` (`sven-executors/src/turn.rs`) deserialises the request, resolves
+the model (honouring a per-state override when a resolver is present), resolves
+the tool subset against the live registry (`ToolRegistry::schemas_for_names`),
+builds a `ResponseFormat` from the schema, and calls `stream_turn`
+(`sven-core/src/stream_turn.rs`) against the thread.
 
-The `Deliberator` generalises the same model↔tool loop that drives the converse
-`Agent`, keeping only what a short, single-model, state-scoped deliberation
-needs: streaming, parallel tool dispatch (via `ToolSlotManager`),
-`max_tool_rounds` wrap-up, tool-output truncation, and cancellation.
+`stream_turn` performs a **single model pass**: it streams `TextDelta` /
+`ThinkingDelta` as `UiEvent`s and accumulates proposed tool calls - it does
+**not** dispatch tools. Accumulated calls come back as `ProposedToolCall`s in
+`LlmTurnComplete`.
+
+The machine (`SdlcMachine` / `TaskMachine`) then drives the loop using the shared
+`loop_core` state handlers (`sven-core/src/machines/loop_core.rs`):
 
 ```mermaid
 flowchart TD
-    A[Append system role once + instruction user turn] --> B{cancelled?}
-    B -- yes --> Z[return accumulated text + Aborted]
-    B -- no --> C[Stream one model turn]
-    C --> D[Stream TextDelta / ThinkingDelta as UiEvents]
-    C --> E{model emitted<br/>native tool calls?}
-    E -- no --> F[append assistant text] --> G[TurnComplete<br/>return final text]
-    E -- yes --> H[append assistant text]
-    H --> I[Run all tool calls in parallel<br/>ToolSlotManager.join_all]
-    I --> J[Append assistant tool-call msgs<br/>then tool-result msgs append-only]
-    J --> K{rounds > max_tool_rounds?}
-    K -- yes --> L[Append wrap-up user turn:<br/>'no more tools, decide now']
-    K -- no --> B
-    L --> B
-    G --> M[DeliberationExecutor:<br/>parse final text → decision JSON]
-    M --> N[emit Event::DeliberationComplete<br/>thread + decision]
+    A[State: Generating<br/>Entry → emit Effect::CallLlm kind=turn] --> B[TurnExecutor streams response]
+    B --> C{proposed tool calls?}
+    C -- no --> D[parse text as decision<br/>emit LlmTurnComplete]
+    D --> E[machine reads status → phase transition]
+    C -- yes --> F[emit LlmTurnComplete with tool_calls]
+    F --> G[State: RunningTools<br/>machine emits Effect::CallTool per call]
+    G --> H[kernel permission gate]
+    H -- Allowed --> I[ToolExecutor spawns task]
+    H -- Forbidden --> J[Event::ToolFailed reason=denied]
+    H -- NeedsApproval --> K[Effect::RequestHumanApproval]
+    I --> L[Event::ToolSucceeded / ToolFailed]
+    J --> L
+    K --> M{HumanApproved / Rejected}
+    M -- Approved --> I
+    M -- Rejected --> J
+    L --> N{all calls done?}
+    N -- no --> N
+    N -- yes --> O{rounds > max_tool_rounds?}
+    O -- yes --> P[append wrap-up turn] --> A
+    O -- no --> A
 ```
 
 Key behaviours:
 
-- **Streaming.** Each model turn streams `TextDelta`/`ThinkingDelta` and tool
-  progress as `AgentEvent`s, which the executor bridges to `UiEvent`s on the
-  observation plane. The **final tool-free text is *not* forwarded** as
-  `TextComplete` - it is the raw structured decision and must not leak to the UI.
-- **Parallel tools.** When a turn contains multiple tool calls they are
-  dispatched and awaited concurrently; an Anthropic-style inline `<invoke>`
-  fallback recovers tool calls from models that emit XML.
-- **Append-only.** Assistant text, assistant tool-call messages, and tool
-  results are only ever pushed onto the thread (tool results are smart-truncated
-  to a per-result token cap first).
-- **Round budget.** Once `rounds` exceeds `max_tool_rounds`, the loop appends a
-  wrap-up user turn instructing the model to stop calling tools and emit its
-  final decision, then runs one tool-free turn.
-- **Cancellation.** A shared cancel slot (the same mechanism the TUI uses for the
-  converse engine) aborts the in-flight deliberation; the loop returns whatever
-  text it had accumulated and emits `Aborted`.
+- **Streaming.** Each `TurnExecutor` pass streams `TextDelta`/`ThinkingDelta` and
+  tool progress as `UiEvent`s on the outward observation plane. The **final
+  tool-free text is *not* forwarded** as `TextComplete` when it is the raw
+  structured decision - the machine parses it internally.
+- **Parallel tools.** All `Effect::CallTool`s emitted by the machine in one
+  `RunningTools` entry are handed concurrently to the `ToolExecutor`'s
+  spawn-and-forget tasks. Results arrive back as `ToolSucceeded` / `ToolFailed`
+  events in whatever order the tasks finish.
+- **Kernel-gated.** Every tool call passes through the `PermissionPolicy` before
+  `ToolExecutor` sees it. Forbidden calls produce `ToolFailed{reason:"denied"}`
+  without touching the registry. The kernel is the single policy evaluator.
+- **Append-only.** `TurnExecutor` appends the assistant turn (text + tool-call
+  messages) to the thread. `ToolExecutor` appends tool-result messages when a
+  `call_id → thread` mapping exists. Neither ever mutates prior messages.
+- **Round budget.** The machine's `loop_core` tracks a round counter; when
+  `rounds` exceeds `max_tool_rounds`, it appends a wrap-up user turn
+  instructing the model to stop calling tools and emit its final decision.
+- **Cancellation.** A shared cancel slot allows the TUI to abort an in-flight
+  turn; the machine transitions to `Idle` / `Cancelled` on `UserCancelled`.
 
-When the loop returns the final tool-free text, the executor parses it into the
-decision JSON and posts `Event::DeliberationComplete { thread, decision }` back
-into the kernel. On a model error or unparsable decision it instead posts
-`Event::LlmFailed`, which the machine routes to recovery.
+When the final tool-free turn arrives, the machine parses the accumulated text
+into the decision JSON and drives its phase transition. On a model error it routes
+to recovery via `Event::LlmFailed`.
 
 ---
 
@@ -211,12 +234,12 @@ Each state restricts what the model can touch:
   error. (The shipped prompts leave it null, so every phase uses the session
   default, but the mechanism is wired end to end.)
 
-Because deliberation tools run *inside the loop* via the `ToolRegistry`, they are
-not gated by the kernel's per-state `PermissionPolicy` (which only sees
-kernel-level `Effect::CallTool`). Tool approval for these calls is enforced by
-the registry's own `ApprovalPolicy` / `PermissionRequester`. The kernel's gates
-that *do* fire in SDLC mode are the `AskUser` and `RequestHumanApproval` effects
-the machine emits between deliberations.
+Tool calls now flow through the kernel as `Effect::CallTool` and are fully gated
+by the per-state `PermissionPolicy` before `ToolExecutor` executes them. There is
+no longer a separate `ApprovalPolicy` / `PermissionRequester` path on the
+registry for SDLC tool use; the kernel permission gate is the single enforcer.
+`AskUser` and `RequestHumanApproval` effects continue to gate phase-level
+decisions (scope confirmation, plan approval, delivery sign-off).
 
 ---
 
@@ -258,7 +281,7 @@ routes `DeliberationComplete` by `status`, re-deliberates on a developer
 `UserMessage` (carrying the answer forward append-only via `followup_request`),
 and handles approval replies inline.
 
-### Idle - the "hi" intake guard
+### `Idle` - the "hi" intake guard
 
 The machine's initial state is `Idle`, and it fires **no LLM call** until the
 developer actually speaks. The first `UserMessage` stores the text as the
@@ -356,9 +379,13 @@ Source of truth in code:
 - `sven-core/src/machines/sdlc/` - `mod.rs` (the machine), `prompts.rs`
   (instructions + subsets), `decisions.rs` (the envelope + schema), `task.rs`
   (the fan-out child).
-- `sven-core/src/deliberator.rs` - the reusable loop.
-- `sven-executors/src/deliberation.rs` - the executor + decision parsing.
-- `sven-llm/src/conversation.rs` - `ConversationStore` + `DeliberationRequest`.
+- `sven-core/src/machines/loop_core.rs` - `Generating`, `RunningTools`,
+  `AwaitingApproval` shared state handlers.
+- `sven-core/src/stream_turn.rs` - `stream_turn` (single-pass model streaming).
+- `sven-executors/src/turn.rs` - `TurnExecutor` + decision parsing.
+- `sven-executors/src/tool.rs` - `ToolExecutor` (spawn-and-forget, appends
+  results to the right thread via the `call_id → thread` registry).
+- `sven-llm/src/conversation.rs` - `ConversationStore` + `TurnRequest`.
 - `sven-model/src/types.rs` - `ResponseFormat` + `response_format` on
   `CompletionRequest`.
 - `sven-tools/src/registry.rs` - `schemas_for_names` (the tool-subset API).

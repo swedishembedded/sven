@@ -3,61 +3,20 @@
 //! These tests verify the complete path from a user message through the HSM
 //! kernel, through the executor, and out to the observation plane as `UiEvent`s.
 //!
-//! They use only the in-process mock model/adapter so no network access is
-//! needed.  The goal is to prove that text deltas and `TurnComplete` reach the
-//! observation sink correctly — which is the root cause of the "no response
-//! visible in TUI" bug.
+//! They use only the in-process mock model so no network access is needed.
+//! The goal is to prove that text deltas and `TurnComplete` reach the
+//! observation sink correctly.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::json;
 use sven_hsm::{
     Context, Effect, EffectExecutor, ErasedRuntime, Event, EventSink, Hsm, MachineId,
     ObservationSink, PermissionPolicy, Reaction, UiEvent,
 };
-use sven_llm::{LlmAdapter, LlmError, LlmRequest, MockLlmAdapter};
 use tokio::sync::Mutex;
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
-
-/// A streaming-mock LLM adapter that emits TextDelta observations before
-/// returning the pre-programmed event.
-struct StreamingMock {
-    deltas: Vec<String>,
-    event: Event,
-}
-
-impl StreamingMock {
-    fn new(deltas: Vec<&str>, event: Event) -> Self {
-        Self {
-            deltas: deltas.iter().map(|s| s.to_string()).collect(),
-            event,
-        }
-    }
-}
-
-#[async_trait]
-impl LlmAdapter for StreamingMock {
-    async fn invoke(
-        &self,
-        _req: LlmRequest,
-        obs: Option<&ObservationSink>,
-    ) -> Result<Event, LlmError> {
-        if let Some(o) = obs {
-            for d in &self.deltas {
-                o.emit(UiEvent::TextDelta(d.clone()));
-            }
-            let full = self.deltas.join("");
-            if !full.is_empty() {
-                o.emit(UiEvent::TextComplete(full));
-            }
-        }
-        Ok(self.event.clone())
-    }
-}
-
-// ── LlmExecutor pipeline ───────────────────────────────────────────────────────
 
 /// Minimal one-shot machine that transitions to a terminal state on the first
 /// non-lifecycle event, recording the event kind as a context fact.
@@ -97,7 +56,7 @@ impl sven_hsm::Machine for OneShotMachine {
         &mut self,
         s: OneShotState,
         e: &Event,
-        ctx: &mut Context,
+        ctx: &mut sven_hsm::Context,
     ) -> Reaction<OneShotState> {
         match s {
             OneShotState::Idle if !e.is_lifecycle() => {
@@ -154,110 +113,10 @@ async fn drive_effect(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LlmExecutor tests
+// PongProvider: mock ModelProvider for tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[tokio::test]
-async fn llm_executor_forwards_text_deltas_to_obs_sink() {
-    use sven_executors::LlmExecutor;
-
-    let adapter = Arc::new(StreamingMock::new(
-        vec!["Hello", " world"],
-        Event::LlmProposedResponse {
-            text: "Hello world".into(),
-        },
-    ));
-    let mut exec = LlmExecutor::new(adapter);
-
-    let req = LlmRequest::GenerateResponse {
-        intent: json!({"intent": "greeting"}),
-    };
-    let (events, kind) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
-
-    assert_eq!(kind, "LlmProposedResponse", "machine must receive LlmProposedResponse");
-    assert!(
-        events.contains(&UiEvent::TextDelta("Hello".into())),
-        "TextDelta('Hello') missing from observation sink: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TextDelta(" world".into())),
-        "TextDelta(' world') missing from observation sink: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TextComplete("Hello world".into())),
-        "TextComplete missing from observation sink: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete missing from observation sink: {events:?}"
-    );
-}
-
-#[tokio::test]
-async fn llm_executor_emits_turn_complete_on_deserialization_failure() {
-    use sven_executors::LlmExecutor;
-
-    let adapter = Arc::new(MockLlmAdapter::empty());
-    let mut exec = LlmExecutor::new(adapter);
-
-    let (events, kind) = drive_effect(
-        &mut exec,
-        Effect::CallLlm {
-            request: json!({"kind": "unknown_variant_xyz"}),
-        },
-    )
-    .await;
-
-    assert_eq!(kind, "LlmFailed");
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete must arrive even on deserialization failure: {events:?}"
-    );
-}
-
-#[tokio::test]
-async fn llm_executor_emits_error_and_turn_complete_on_adapter_error() {
-    use sven_executors::LlmExecutor;
-
-    // An adapter that always returns an error.
-    struct FailAdapter;
-    #[async_trait]
-    impl LlmAdapter for FailAdapter {
-        async fn invoke(
-            &self,
-            _req: LlmRequest,
-            _obs: Option<&ObservationSink>,
-        ) -> Result<Event, LlmError> {
-            Err(LlmError::ProviderError("injected failure".into()))
-        }
-    }
-
-    let adapter = Arc::new(FailAdapter);
-    let mut exec = LlmExecutor::new(adapter);
-
-    let req = LlmRequest::ExtractIntent {
-        text: "anything".into(),
-        allowed_intents: vec!["bugfix".into()],
-    };
-    let (events, kind) =
-        drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
-
-    assert_eq!(kind, "LlmFailed");
-    assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Error(_))),
-        "UiEvent::Error must be emitted on adapter failure: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete must arrive after adapter failure: {events:?}"
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ConverseExecutor pipeline test
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Streams "pong" then Done — used to test the ConverseExecutor path.
+/// Streams "pong" then Done — used to test TurnExecutor and ConverseExecutor paths.
 struct PongProvider;
 
 #[async_trait]
@@ -299,8 +158,13 @@ fn make_agent() -> sven_core::Agent {
     })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ConverseExecutor pipeline test
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn converse_executor_streams_text_deltas_to_obs_sink() {
+    use serde_json::json;
     use sven_executors::ConverseExecutor;
 
     let agent = Arc::new(Mutex::new(make_agent()));
@@ -333,13 +197,23 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
     use sven_executors::CompositeExecutorBuilder;
     use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
 
-    let agent = Arc::new(Mutex::new(make_agent()));
+    // Build a TurnExecutor backed by PongProvider so the machine's
+    // kind="turn" CallLlm effect is handled end-to-end without a real LLM.
+    let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::<sven_hsm::ToolCallId, String>::new(),
+    ));
     let cancel_handle = Arc::new(Mutex::new(None));
-
-    // Build a composite executor with only the converse sub-executor
-    // (no tool registry, user approval, etc. needed for this test).
+    let turn_exec = sven_executors::TurnExecutor::new(
+        Arc::new(PongProvider),
+        None,
+        Arc::new(sven_tools::ToolRegistry::new()),
+        store,
+        call_id_to_thread,
+        cancel_handle,
+    );
     let executor = CompositeExecutorBuilder::default()
-        .with_converse(agent, cancel_handle)
+        .with_turn(turn_exec)
         .build();
 
     // The ErasedRuntime requires a `Box<dyn ErasedMachine>`, which is
@@ -380,7 +254,7 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
 
     assert!(
         events.contains(&UiEvent::TextDelta("pong".into())),
-        "TextDelta('pong') must arrive via ReactiveAgentMachine → ConverseExecutor path: {events:?}"
+        "TextDelta('pong') must arrive via ReactiveAgentMachine → TurnExecutor path: {events:?}"
     );
     assert!(
         events.contains(&UiEvent::TurnComplete),
@@ -389,123 +263,4 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
 
     // Clean up
     rt.abort();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// JSON suppression tests (Phase 1: is_user_facing gating)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// A mock adapter that always emits text deltas regardless of what the
-/// real adapter would do — used to verify gating.
-struct AlwaysStreamingAdapter {
-    text: String,
-    result: Event,
-}
-
-#[async_trait]
-impl LlmAdapter for AlwaysStreamingAdapter {
-    async fn invoke(
-        &self,
-        _req: LlmRequest,
-        obs: Option<&ObservationSink>,
-    ) -> Result<Event, LlmError> {
-        if let Some(o) = obs {
-            o.emit(UiEvent::TextDelta(self.text.clone()));
-            o.emit(UiEvent::TextComplete(self.text.clone()));
-        }
-        Ok(self.result.clone())
-    }
-}
-
-/// Structured (non-user-facing) requests must NOT emit TextDelta to the UI
-/// even when the underlying adapter streams text, because the raw output is
-/// JSON that the machine interprets internally.
-#[tokio::test]
-async fn structured_llm_request_suppresses_text_deltas() {
-    use sven_executors::LlmExecutor;
-
-    let adapter = Arc::new(AlwaysStreamingAdapter {
-        text: "{\"intent\": \"bug_fix\", \"confidence\": 0.9}".into(),
-        result: Event::LlmProposedAssessment {
-            assessment: serde_json::json!({"intent": "bug_fix", "confidence": 0.9}),
-        },
-    });
-    let mut exec = LlmExecutor::new(adapter);
-
-    // ExtractIntent is NOT user-facing → text deltas must be suppressed.
-    let req = LlmRequest::ExtractIntent {
-        text: "fix the null pointer".into(),
-        allowed_intents: vec!["bug_fix".into()],
-    };
-    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
-
-    assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
-        "TextDelta must NOT appear for structured (non-user-facing) requests: {events:?}"
-    );
-    assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::TextComplete(_))),
-        "TextComplete must NOT appear for structured requests: {events:?}"
-    );
-    // TurnComplete must still arrive.
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete must still be emitted for structured requests: {events:?}"
-    );
-}
-
-/// User-facing requests (GenerateResponse) MUST emit TextDelta so streaming
-/// works in the TUI chat view.
-#[tokio::test]
-async fn generate_response_streams_text_deltas() {
-    use sven_executors::LlmExecutor;
-
-    let response_text = "Hello! How can I help you today?";
-    let adapter = Arc::new(AlwaysStreamingAdapter {
-        text: response_text.into(),
-        result: Event::LlmProposedResponse {
-            text: response_text.into(),
-        },
-    });
-    let mut exec = LlmExecutor::new(adapter);
-
-    let req = LlmRequest::GenerateResponse {
-        intent: serde_json::json!({"intent": "question"}),
-    };
-    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
-
-    assert!(
-        events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
-        "TextDelta must appear for user-facing GenerateResponse: {events:?}"
-    );
-}
-
-/// EvaluateContext (used by SDLC states) is NOT user-facing and must suppress
-/// raw JSON from the observation stream.
-#[tokio::test]
-async fn evaluate_context_suppresses_json_output() {
-    use sven_executors::LlmExecutor;
-
-    let adapter = Arc::new(AlwaysStreamingAdapter {
-        text: "{\"summary\": \"baseline built\"}".into(),
-        result: Event::LlmProposedAssessment {
-            assessment: serde_json::json!({"summary": "baseline built"}),
-        },
-    });
-    let mut exec = LlmExecutor::new(adapter);
-
-    let req = LlmRequest::EvaluateContext {
-        goal: "Build a baseline understanding of the codebase.".into(),
-        known_context: serde_json::json!({}),
-    };
-    let (events, _) = drive_effect(&mut exec, Effect::CallLlm { request: req.to_value() }).await;
-
-    assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::TextDelta(_))),
-        "TextDelta must be suppressed for EvaluateContext: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete must still arrive: {events:?}"
-    );
 }

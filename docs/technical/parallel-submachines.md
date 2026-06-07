@@ -106,18 +106,21 @@ flowchart TD
 ## The `TaskMachine`
 
 `TaskMachine` (`sven-core/src/machines/sdlc/task.rs`) is the one-shot child the
-SDLC parent fans out to. It runs exactly one deliberation for a single task on
-its own isolated `task` conversation thread, then completes:
+SDLC parent fans out to. It uses the `loop_core` state handlers to run a
+kernel-mediated multi-round turn loop for a single task on its own isolated
+`task` conversation thread, then completes:
 
 ```
 Top
-├── Run    ← deliberates the task on Entry
+├── Run (Generating / RunningTools / AwaitingApproval)  ← loop_core turn loop
 └── Done   ← terminal; stores the result fact "out"
 ```
 
-On `Entry`, `Run` emits a `task` deliberation (`prompts::task_request`, with the
-write/build tool subset). On `DeliberationComplete` it writes its result to the
-`out` fact (the `RESULT_FACT`):
+On `Entry`, `Run` emits a `task` turn request (`prompts::task_request`, with the
+write/build tool subset) via `Effect::CallLlm { kind: "turn" }`. Tool calls come
+back through the kernel as `ToolSucceeded` / `ToolFailed` events, each gated by
+the child's permission policy. When the model produces a final tool-free turn,
+`TaskMachine` writes its result to the `out` fact (the `RESULT_FACT`):
 
 ```json
 { "task": "...", "summary": "...", "ok": true, "payload": { ... } }
@@ -136,13 +139,17 @@ a terminal state with a harvestable `out` fact.
 kernel**:
 
 - a fresh `Context`,
-- a fresh `DeliberationExecutor` (hence a fresh, isolated append-only
-  `ConversationStore` per child),
-- a `CompositeExecutor` with deliberation + tools + timers,
-- a one-shot `TaskMachine` running under its own `Runtime`,
-- a permissive child policy (the kernel gates per state, but tools run inside the
-  deliberation loop, so the only kernel effect the child emits is the
-  capability-free deliberation `CallLlm`),
+- a `TurnExecutor` with its own isolated `ConversationStore` and
+  `call_id → thread` registry,
+- a `CompositeExecutor` with `TurnExecutor` + `ToolExecutor` + timers,
+- a one-shot `TaskMachine` (using `loop_core` state handlers) running under its
+  own `Runtime`,
+- a **tightened child policy** that allows all core capabilities (`ReadFile`,
+  `WriteFile`, `ExecuteShell`, `GitOperation`, `NetworkAccess`, `Rollback`)
+  globally, but installs **no `UserExecutor`** - so any approval-gated call
+  results in `ToolFailed` rather than blocking on a human. The kernel still gates
+  every tool call through the permission policy; children are simply headless
+  (auto-deny on approval requests).
 - its own cancel slot so siblings never clobber each other.
 
 It spawns the child runtime and a **spawn-and-forget** harvester task that waits
@@ -213,9 +220,12 @@ or recovery phases rather than relied upon to pause inside a child.
 - `sven-hsm/src/submachine.rs` - the synchronous in-process `Submachine<P>` path.
 - `sven-hsm/tests/child_spawner.rs` - proves concurrent fan-out and result
   aggregation (peak concurrent children ≥ 2; summed child results).
+- `sven-core/src/machines/loop_core.rs` - shared `Generating` / `RunningTools` /
+  `AwaitingApproval` state handlers used by `TaskMachine` and `SdlcMachine`.
 - `sven-core/src/machines/sdlc/task.rs` - `TaskMachine`.
 - `sven-core/src/machines/sdlc/mod.rs` - the Execution fan-out/aggregation logic
   (`tasks_of`, `should_fan_out`, `merge_child_results`).
-- `sven-bootstrap/src/child_spawner.rs` - `SdlcChildSpawner`.
+- `sven-bootstrap/src/child_spawner.rs` - `SdlcChildSpawner` (uses `TurnExecutor`
+  + `ToolExecutor` with tightened child policy).
 - `sven-bootstrap/src/runtime_builder.rs` - installs the spawner and the
   `parallel_execution` fact in `sdlc` mode.
