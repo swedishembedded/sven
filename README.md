@@ -197,11 +197,13 @@ sven index stats            # show index statistics
 
 ## Architecture
 
-Sven's agent loop is a formally-specified **Hierarchical State Machine (HSM)**
-rather than a free-running LLM loop. The LLM is treated as an untrusted
-*reasoning service*: it proposes typed actions, but the HSM decides what
-happens next based on guards and current state, and all I/O is performed
-exclusively through typed *Effects* emitted by transitions.
+Sven's agent runtime is built on a formally-specified **Hierarchical State
+Machine (HSM)** kernel rather than a free-running LLM loop. The kernel owns
+control flow: a machine reacts to a typed *Event*, updates its state, and emits
+typed *Effects*, which are the only way I/O happens. The model's reasoning and
+native tool use run *inside* an executor (the chat/agent converse loop, or a
+per-state SDLC deliberation) and report back a single completion event; the
+kernel stays the deterministic authority over every transition.
 
 ```
   User input / tool result / timer
@@ -362,7 +364,9 @@ mcp_servers:
 | [Automation Use Cases](docs/19-use-cases.md) | Seven complete real-world automation patterns |
 | [Providers](docs/providers.md) | Model provider configuration |
 | **Technical** | |
-| [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine design: kernel, machines, effects, audit, replay |
+| [HSM Architecture](docs/technical/hsm-architecture.md) | Hierarchical state machine kernel: events, effects, permissions, audit/replay, runtime, dispatch, ModeRegistry |
+| [Deliberation Engine](docs/technical/deliberation-engine.md) | SDLC mode: per-state LLM↔tool loops, append-only threads, structured decisions, phases, and human gates |
+| [Parallel Submachine Fan-out](docs/technical/parallel-submachines.md) | Concurrent child kernels: ChildSpawner, TaskMachine, isolated contexts, Execution fan-out |
 | [ACP](docs/technical/acp.md) | Agent Client Protocol reference |
 | [Skill system](docs/technical/skill-system.md) | Skill discovery, loading, and frontmatter reference |
 | [P2P / Node](docs/technical/node.md) | libp2p wiring, mDNS, relay, gossipsub |

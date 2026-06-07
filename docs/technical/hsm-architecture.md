@@ -1,281 +1,404 @@
 # Hierarchical State Machine Architecture
 
-Sven's agent loop is a formally-specified **Hierarchical State Machine (HSM)**,
-not a free-running LLM loop. This document explains the design, why it was
-chosen, and how every major component fits into it.
+Sven's agent runtime is built on a formally-specified **Hierarchical State
+Machine (HSM)** kernel, not a free-running LLM loop. This document is the
+reference for the kernel itself - its events, effects, permission model, audit
+and replay, the Active Object runtime, the two-phase dispatch algorithm, the
+observation plane, the crate map, and the `ModeRegistry` that decides which
+machine drives each mode.
+
+Two larger subsystems are layered on top of the kernel and have their own
+dedicated documents:
+
+- The **[Deliberation Engine](deliberation-engine.md)** - how each SDLC state
+  runs a scoped LLM↔tool agentic loop and returns a structured decision that
+  drives the next transition.
+- **[Parallel Submachine Fan-out](parallel-submachines.md)** - how the kernel
+  spawns isolated child kernels to run plan tasks concurrently.
 
 ---
 
 ## The core insight
 
-Calling an LLM in a loop resembles the old embedded-systems *superloop*
-architecture: a single `while true` that polls everything and hopes nothing
-blocks. That style scales poorly because control flow is implicit, testing
-requires mocking I/O, and any new capability has to be wired directly into the
-loop body.
+Calling an LLM in a loop resembles the old embedded-systems *superloop*: a
+single `while true` that polls everything and hopes nothing blocks. Control
+flow is implicit, testing requires mocking I/O, and every new capability has to
+be wired directly into the loop body.
 
-The HSM architecture inverts this:
+The HSM architecture inverts this by separating three concerns:
 
 | Concern | Owner |
 |---------|-------|
 | **What state the session is in** | HSM kernel (deterministic, pure) |
-| **What to do next** | LLM reasoning service (untrusted, typed) |
 | **How to perform I/O** | Effect executors (the only place I/O happens) |
+| **What to reason about next** | The LLM, invoked from inside an executor |
 
-The LLM never decides to call a tool. It produces a typed *proposal* (e.g.
-`IntentExtraction` or `PatchProposal`), the HSM decides what to do with it
-based on the current state and guards, and the resulting *Effects* are
-dispatched to executors. This gives deterministic, auditable, testable control
-flow with LLM intelligence at the right inflection points.
+The kernel never performs I/O. A machine reacts to a typed `Event`, mutates its
+extended state, and **returns** a `Vec<Effect>` describing the side effects it
+wants. The runtime validates those effects against a permission policy and hands
+each to an executor. Executors run the actual work on their own tasks and post
+result `Event`s back into the queue. This gives deterministic, auditable,
+testable control flow with intelligence injected at well-defined points.
 
----
-
-## Key concepts
-
-### Events
-
-Events are the sole input to the HSM. Every user keystroke, LLM response, tool
-result, timer expiry, and network message becomes a typed `Event` before it
-touches the machine. The `Event` enum is defined in `sven-hsm` and carries a
-`SessionId`, `EventId` (UUID), `timestamp`, and an `EventKind` payload.
-
-```
-UserMessage(text)          HumanApproved / HumanRejected
-LlmResponse(typed payload) UserCancelled
-ToolSucceeded / ToolFailed TimeoutFired
-TeamEvent(gossip)          Internal(Custom)
-```
-
-### Effects
-
-Transitions emit `Vec<Effect>`. Effects are the only mechanism for I/O. An
-effect is data, not a function call - executors perform the actual work after
-the machine has advanced its state. This keeps transition functions *pure*:
-given `(state, event)` → `(new_state, effects)`.
-
-Common effects:
-
-```
-CallLlm { request: LlmRequest }          AskUser { question }
-CallTool { name, args }                  RequestHumanApproval { description }
-ScheduleTimeout / CancelTimeout          CreateCheckpoint / RollbackToCheckpoint
-PersistAudit { record }                  EmitInternal { event }
-InstantiateSubmachine { machine_id }     SubmachineCompleted { result }
-```
-
-### Permission policy
-
-Before any effect is executed, `validate_effects_are_allowed` checks every
-`Effect` against the active `PermissionPolicy` for the current machine. A
-`ToolCapability` set is attached per state family; states that should never call
-shell commands simply do not have that capability. This makes forbidden tool
-calls architecturally impossible, not just conventionally avoided.
-
-### Audit and replay
-
-Every `(session_id, event_id, state_before, state_after, effects)` tuple is
-written as an `AuditRecord` to an append-only JSONL log. The `replay` function
-in `sven-hsm` can reconstruct any machine state deterministically from the
-log, enabling post-mortem debugging and regression tests without mocking.
+> **Where does the LLM "decide to call a tool"?** That depends on which engine
+> a state uses. The kernel's typed `Effect::CallLlm` path treats the model as a
+> pure reasoning service that returns *structured data*, never a tool name. But
+> the two engines that actually drive the shipped modes - the **converse**
+> engine (chat/agent) and the **deliberation** engine (sdlc) - run a real
+> model↔tool agentic loop *inside an executor*: there the model emits native
+> tool calls, the executor runs them and feeds results back, and only the final
+> settled outcome re-enters the kernel as a single event. The kernel stays the
+> authority over transitions; the loop is an implementation detail of one
+> effect. See [Deliberation Engine](deliberation-engine.md) for the precise
+> model.
 
 ---
 
-## Runtime: the Active Object
+## Events - the only input
 
-The HSM runs inside a tokio Active Object - a single consumer task that owns
-the machine and processes events sequentially. This guarantees **Run-to-
-Completion (RTC)** semantics: one event is fully processed (transition executed,
-effects collected) before the next is dispatched.
+Events are the sole input to a machine. User messages, LLM/loop completions,
+tool results, approvals, and timers all become a typed `Event`
+(`sven-hsm/src/event.rs`) before they touch the machine. Payloads that are
+domain-specific are carried as opaque `serde_json::Value` so the kernel stays
+domain-agnostic.
 
-```
-  ┌─────────────────────────────────────────────────────────────┐
-  │  tokio::sync::mpsc  ←─ EventSink (cloneable, multi-producer) │
-  │                                                              │
-  │  Consumer task                                               │
-  │    1. pop Event from queue                                   │
-  │    2. dispatch_event(machine, event) → effects               │
-  │    3. validate_effects_are_allowed(policy, effects)?         │
-  │    4. executor.execute(effects, event_sink.clone())          │
-  │    5. emit AuditRecord                                       │
-  └─────────────────────────────────────────────────────────────┘
-```
+| Event | Meaning |
+|-------|---------|
+| `UserMessage { text }` | A human sent a chat/instruction message |
+| `UserProvidedArtifact { artifact }` | A human attached an opaque artifact |
+| `UserCancelled` | The human asked to cancel in-flight work |
+| `LlmProposedResponse { text }` | The model proposed natural-language text |
+| `LlmProposedToolCall { name, args }` | The model proposed running a tool (it only proposes; the HSM decides) |
+| `LlmProposedPlan { plan }` | The model proposed a plan / task decomposition |
+| `LlmProposedAssessment { assessment }` | The model returned a structured assessment |
+| `LlmFailed { error }` | The model failed to produce a usable result |
+| `DeliberationComplete { thread, decision }` | A state-scoped deliberation finished and produced a structured decision |
+| `ToolSucceeded { call_id, observation }` | A kernel-dispatched tool call succeeded |
+| `ToolFailed { call_id, error }` | A kernel-dispatched tool call failed |
+| `HumanApproved { approval_id }` | A human approved a pending request |
+| `HumanRejected { approval_id }` | A human rejected a pending request |
+| `Timeout { timer_id }` | A scheduled timer elapsed |
+| `Internal(InternalEvent)` | A kernel-internal lifecycle or composition signal |
 
-Executors run their work on separate tokio tasks and post result events back
-to the same queue via `EventSink`. This means all async I/O is outside the
-machine; the machine itself is always synchronous.
+`InternalEvent` carries the reserved framework signals plus composition signals:
 
----
+| `InternalEvent` | Meaning |
+|-----------------|---------|
+| `Entry` / `Exit` / `Init` | Reserved HSM lifecycle signals (dispatched to a single handler by the engine, never propagated to a superstate) |
+| `SubmachineCompleted { machine, result }` | A child submachine reached a terminal state; `result` carries the child's structured result payload for the parent to aggregate |
+| `Custom { name, payload }` | A generic domain-internal signal |
 
-## Dispatch algorithm
-
-Sven uses Samek's two-phase HSM algorithm from *Practical UML Statecharts in
-C/C++* (implemented in pure Rust in `sven-hsm/src/dispatch.rs`):
-
-1. **Super-chain walk**: find the innermost ancestor that handles the event.
-2. **LCA computation**: find the Least Common Ancestor of the source and
-   target states.
-3. **Exit sequence**: call exit actions for every state from the source up to
-   (but not including) the LCA.
-4. **Entry sequence**: call entry actions for every state from the LCA down to
-   the target.
-5. **Init drilling**: if the target is a composite, keep calling `initial()`
-   until a leaf state is reached.
-
-Entry and exit handlers may emit effects but may never cause a transition
-(enforced by `debug_assert`). All effects are collected into a single
-`Vec<Effect>` returned by `dispatch_event`.
+Every event also has a payload-free `EventKind` discriminant used for audit
+records and transition-coverage assertions.
 
 ---
 
-## Machines
+## Effects - the only output
 
-Two machines ship out of the box, both implemented in `sven-core/src/machines/`.
+Transitions return `Vec<Effect>` (`sven-hsm/src/effect.rs`). An effect is pure
+data, not a function call; executors perform the work *after* the machine has
+advanced. This keeps transition functions pure: `(state, event) → (new_state,
+effects)`.
 
-### ConversationMachine (mode: `chat`)
+The complete effect vocabulary (11 variants):
 
-The default interactive chat machine. Five states:
+| Effect | Purpose |
+|--------|---------|
+| `CallLlm { request }` | Ask the reasoning service / loop engine for a result. `request` is opaque JSON; a `kind` discriminator selects the engine (`"converse"`, `"deliberate"`, or a typed `LlmRequest`) |
+| `CallTool { call_id, name, capability, args }` | Invoke a tool through the kernel. Requires the named `capability` to be permitted in the current state |
+| `AskUser { prompt }` | Ask the human a question (non-blocking; the answer arrives as a later event) |
+| `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
+| `ScheduleTimeout { timer_id, duration }` | Schedule a one-shot timer that posts `Timeout` |
+| `CancelTimeout { timer_id }` | Cancel a scheduled timer |
+| `CreateCheckpoint { label }` | Create a rollback checkpoint (e.g. a git snapshot) |
+| `RollbackToCheckpoint { label }` | Roll back to a checkpoint (reports the `Rollback` capability) |
+| `PersistAudit` | Persist the audit log to durable storage |
+| `EmitInternal { name, payload }` | Re-enter a domain-internal event into the queue |
+| `InstantiateSubmachine { machine, descriptor }` | Spawn a child submachine and route its lifecycle through the runtime (see [Parallel Submachine Fan-out](parallel-submachines.md)) |
+
+Each effect exposes `kind()` (a payload-free `EffectKind` for audit/coverage)
+and `required_capability()` - only `CallTool` and `RollbackToCheckpoint` report
+a capability, so only they are gated by the permission check.
+
+---
+
+## Permission policy - the single choke point
+
+Before any effect in a batch is executed, `validate_effects_are_allowed`
+(`sven-hsm/src/permissions.rs`) checks it against the active `PermissionPolicy`.
+The policy is keyed by the `Debug` label of the current state, so it works for
+any machine's opaque state type without the kernel knowing the concrete type.
+
+Two failure modes, both fatal to the *entire* batch (no effect in a rejected
+batch runs):
+
+- `ForbiddenToolCall` - the capability is not in the state's allow-set (and not
+  globally allowed).
+- `HumanApprovalRequired` - the capability is dangerous or approval-gated and
+  the human has not granted it (`Context::has_granted`).
+
+Capabilities are coarse buckets (`ToolCapability`): `ReadFile`, `WriteFile`,
+`DeleteFile`, `ExecuteShell`, `NetworkAccess`, `GitOperation`, `Rollback`.
+`ExecuteShell`, `DeleteFile`, and `Rollback` are *inherently dangerous* - they
+always require a granted approval regardless of the per-state allow-set. A
+`PermissionPolicy` is assembled with a builder (`allow_in`, `allow_globally`,
+`require_approval`).
+
+> **Important nuance about the shipped engines.** The permission gate only sees
+> *kernel-level* effects. In the converse and deliberation engines, tools are
+> executed **inside the executor's agentic loop** (via the `ToolRegistry`), not
+> as `Effect::CallTool`. So for those engines the kernel permission policy gates
+> almost nothing tool-related; tool approval is instead enforced by the
+> `ToolRegistry`'s own `ApprovalPolicy` / `PermissionRequester` (the IDE/ACP
+> approval round-trip). The per-state `PermissionPolicy` is fully exercised only
+> by machines that emit `Effect::CallTool` directly. In production,
+> `RuntimeBuilder` installs an *open* policy (read/write/network/git allowed
+> globally; shell and rollback still require approval) for every mode; the
+> finer-grained `SdlcMachine::permission_policy()` exists in code but is not the
+> policy the production runtime is built with.
+
+---
+
+## Audit and replay - the event-sourcing spine
+
+Every dispatch appends exactly one `AuditRecord` (`sven-hsm/src/audit.rs`) to
+the `Context`. A record captures `from_state`, `to_state`, the `EventKind`, the
+payload-free `EffectKind`s emitted, an optional rationale, and an `AuditOutcome`
+(`Transition`, `InternalHandled`, `Ignored`, or `Rejected`). Rejected batches
+are recorded for forensics but never executed.
+
+Because the dispatch engine is pure (it returns effects rather than performing
+them), `replay(factory, events)` deterministically reconstructs any machine's
+state from the recorded input events. Lifecycle signals in the log are skipped
+(the engine regenerates them). This enables post-mortem debugging and
+regression tests that assert on whole session traces without a real LLM or
+network.
+
+The runtime mirrors the in-`Context` audit trail into a shared snapshot
+(`audit_snapshot()`) and, when an `AuditExecutor` is wired, persists records to
+an append-only JSONL log on the `PersistAudit` effect.
+
+---
+
+## Runtime - the Active Object
+
+The kernel runs inside a tokio **Active Object** (`sven-hsm/src/runtime.rs`): a
+single consumer task that owns the machine and drains an `mpsc` event queue.
+That single task is what guarantees **Run-to-Completion (RTC)**: one event is
+fully processed (dispatched, effects validated, effects executed) before the
+next is pulled.
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │  EventSink (cloneable, multi-producer)  ──►  mpsc queue        │
+  │                                                                │
+  │  Consumer task (single):                                       │
+  │    1. recv Event                                               │
+  │    2. note child completion (submachine registry bookkeeping)  │
+  │    3. machine.dispatch(event) → DispatchOutcome { effects }    │
+  │    4. emit UiEvent::Transition on the observation plane        │
+  │    5. spawn_children(): peel off InstantiateSubmachine effects │
+  │    6. validate_effects_are_allowed(policy, state, effects)?    │
+  │    7. executor.execute(effect, sink, obs)  for each effect     │
+  │    8. publish RuntimeStatus + audit snapshot                   │
+  └──────────────────────────────────────────────────────────────┘
+```
+
+Executors run their work on separate tasks and post result events back through
+a cloned `EventSink`. All async I/O is therefore outside the machine; the
+machine itself is always synchronous.
+
+There are two runtime flavours:
+
+- `Runtime<M>` - generic over a concrete `Machine` type. Used in tests and
+  wherever the machine type is known at compile time.
+- `ErasedRuntime` - drives a `Box<dyn ErasedMachine>` whose state type is erased.
+  Used in production where the machine is selected at runtime from the
+  `ModeRegistry`.
+
+Both expose `spawn` and `spawn_with_children` (the latter installs an optional
+`ChildSpawner`), plus `post`, `status`/`status_watch`, `subscribe_observations`,
+`wait_for_state`, `wait_done`, `audit_snapshot`, `abort`, and `join`.
+
+Timers are deterministic in tests via the `Clock` abstraction: a `SystemClock`
+for production and a `VirtualClock` whose time only advances when a test calls
+`advance`. `TimerService` computes the absolute deadline synchronously at
+schedule time so advancing virtual time before the sleeping task starts is never
+missed.
+
+---
+
+## Dispatch algorithm - two phases and a real LCA
+
+Dispatch (`sven-hsm/src/dispatch.rs`) is a faithful implementation of Samek's
+two-phase HSM algorithm (from *Practical UML Statecharts in C/C++*), in pure
+Rust:
+
+1. **Phase 1 - find the handler.** Starting at the active leaf, call
+   `dispatch_state`. While it returns `Reaction::Super(parent)`, re-dispatch to
+   that parent. This walks the super-chain until some state handles the event
+   (with a transition or an internal `Handled`) or the root ignores it.
+2. **Phase 2 - execute the transition.** Compute the genuine **Least Common
+   Ancestor** of the transition source and target by walking both ancestor
+   chains (no depth-counting shortcut). Then, in order:
+   - **Exit** actions bottom-up from the active leaf to the LCA (exclusive),
+   - the **transition action** effects,
+   - **Entry** actions top-down from below the LCA to the target,
+   - **Init drilling**: repeatedly fire the target's `Init` transition until a
+     leaf is reached.
+
+Self-transitions are handled by treating the LCA as `superstate(source)`, which
+forces exactly one exit/re-enter cycle.
+
+A handler returns a `Reaction`:
+
+- `Handled(effects)` - consumed the event, stay put, emit effects (internal
+  transition).
+- `Ignored` - not applicable here.
+- `Transition { target, effects, rationale }` - take a transition.
+- `Super(parent)` - defer to the superstate.
+
+Entry/exit handlers may emit effects but must **never** transition (enforced by
+a `debug_assert!`); only the `Init` signal may return a transition. Effects are
+collected in execution order into a single `Vec<Effect>` returned by
+`dispatch`, alongside the `AuditRecord` and `from`/`to` labels.
+
+---
+
+## The two data planes
+
+A session is driven by two strictly separated planes (`sven-hsm/src/observation.rs`):
+
+| Plane | Direction | Transport | Purpose |
+|-------|-----------|-----------|---------|
+| **Inward (RTC)** | into the kernel | `mpsc` event queue via `EventSink` | One `Event` fully dispatched at a time; the source of truth |
+| **Outward (observation)** | out of the kernel | `broadcast` channel via `ObservationSink` | Streaming `UiEvent`s for rendering: text deltas, tool progress, usage, transition trace |
+
+The outward plane is **lossy by design** - a lagging subscriber observes a
+`Lagged` error and skips dropped events, exactly like a render-tick stream. RTC
+is preserved because streaming output never re-enters the inward queue: an
+executor streams many `UiEvent`s while an effect is in flight, then posts
+exactly one completion `Event` back inward.
+
+`UiEvent` variants:
+
+```
+TextDelta / TextComplete            // streamed + final assistant text
+ThinkingDelta / ThinkingComplete    // extended thinking
+ToolStarted { call_id, name, args }
+ToolProgress { call_id, message }
+ToolFinished { call_id, name, output, is_error }
+TokenUsage { input, output, cache_read, cache_write, ... , cost_usd }
+ContextCompacted { tokens_before, tokens_after, strategy, turn }
+TodoUpdate(Value)
+ModeChanged(String) / ModelChanged(String)
+Transition { from, to, event }      // full transition trace, emitted after every dispatch
+Error(String)
+TurnComplete
+Aborted { partial_text }            // run aborted; carries streamed-but-uncommitted text
+```
+
+There is also a coarse `MachineProjection`-style snapshot published on a `watch`
+channel after every dispatch (`RuntimeStatus`: `state_label`, `done`,
+`last_error`, `processed`). Frontends render from these snapshots and from
+`UiEvent`s; they never inspect internal machine state.
+
+---
+
+## Machines and the `ModeRegistry`
+
+A `Machine` (`sven-hsm/src/machine.rs`) describes a state hierarchy: its states
+(`type State`), each state's `superstate`, and a single `dispatch_state`
+handler. The kernel's `Hsm<M>` drives any `Machine` generically.
+
+`ModeRegistry` (`sven-core/src/mode.rs`) maps a mode **string** to a machine
+factory. This is the authoritative wiring; `RuntimeBuilder` looks up the machine
+by the mode string and builds an `ErasedRuntime` around it.
+
+| Mode string | Machine | Engine |
+|-------------|---------|--------|
+| `"agent"` | `ReactiveAgentMachine` | converse loop (`ConverseExecutor`) |
+| `"reactive"` | `ReactiveAgentMachine` | converse loop |
+| `"chat"` | `ReactiveAgentMachine` | converse loop |
+| `"sdlc"` | `SdlcMachine` | deliberation loop (`DeliberationExecutor`) |
+
+> **Stale-doc correction.** Earlier revisions of this document claimed `chat`
+> ran a `ConversationMachine` and `sdlc` ran a 57-state
+> `SoftwareDevelopmentMachine`. That is no longer how modes are wired.
+> `ConversationMachine`, `SoftwareDevelopmentMachine`, and `ClarificationMachine`
+> still exist in `sven-core` (and are exported) but are **not registered in the
+> `ModeRegistry`** - they are legacy and not used by any shipped mode. The
+> registry binds `agent`/`reactive`/`chat` to `ReactiveAgentMachine` and `sdlc`
+> to the new deliberation-driven `SdlcMachine`.
+
+Mode selection at startup (see `src/main.rs`) is, in priority order:
+
+1. `SVEN_MODE` environment variable,
+2. the `--mode` CLI flag (mapped into kernel vocabulary; e.g. `plan` → `sdlc`),
+3. default `chat`.
+
+### `ReactiveAgentMachine` (modes `agent` / `reactive` / `chat`)
+
+The default streaming coding agent (`sven-core/src/machines/reactive_agent.rs`).
+A small turn-lifecycle machine that delegates the actual model↔tool round loop
+to the converse executor:
 
 ```
 Top
-└── Active
-    ├── Idle              ← awaiting user input
-    ├── Interpreting      ← LLM extracting intent from message
-    ├── Responding        ← LLM generating a response / tool calls
-    ├── AwaitingTool      ← waiting for one or more tool results
-    └── AwaitingUser      ← agent asked a clarifying question
+└── Session
+    ├── Idle        ← waiting for the user's next message
+    └── Generating  ← a converse turn (streaming + tool rounds) is in flight
 ```
 
-When the LLM identifies a large engineering task during `Interpreting`, the
-machine emits `InstantiateSubmachine(SoftwareDevelopmentMachine)` and suspends
-until the submachine completes.
+On a `UserMessage` in `Idle`, it emits one `Effect::CallLlm { request: { kind:
+"converse", text } }` and moves to `Generating`. The `ConverseExecutor` drives
+the entire multi-round agentic loop (streaming, native parallel tool calls, XML
+`<invoke>` fallback, compaction, cancellation) against a shared `sven_core::Agent`,
+streams `UiEvent`s outward, and posts exactly one `LlmProposedResponse` (or
+`LlmFailed`) back inward to settle the turn and return to `Idle`. Within that
+loop the model **does** make native tool calls - the machine just owns turn
+lifecycle and cancellation, not the individual tool decisions.
 
-### SoftwareDevelopmentMachine (mode: `sdlc`)
+### `SdlcMachine` (mode `sdlc`)
 
-The full software-development lifecycle machine. 57 states encoding a
-formal engineering workflow:
+The deliberation-driven software-development lifecycle machine
+(`sven-core/src/machines/sdlc/`). Every phase is a *deliberation*: the state
+issues one comprehensive instruction on its own append-only conversation thread
+with a state-scoped tool subset, and the model returns a structured decision
+whose `status` drives the transition.
 
 ```
 Top
-├── Intake
-│   ├── InterpretUserIntent
-│   ├── ExtractProblemStatement
-│   ├── ExtractConstraints
-│   ├── AssessInformationCompleteness
-│   └── ConfirmScope
-├── Discovery
-├── Planning
-├── Execution
-│   ├── ProposePatch
-│   ├── ApplyPatch
-│   ├── Build
-│   ├── RunTests
-│   ├── StaticAnalysis
-│   ├── ObserveResult
-│   └── DecideTaskOutcome
-├── Verification
-├── Delivery
-├── Recovery
-│   ├── ClassifyFailure
-│   ├── ProposeRecoveryOptions
-│   └── SelectRecoveryAction
-├── RollingBack
-├── AwaitUser             ← Continuation-based: resumes prior state after answer
-├── AwaitHumanApproval    ← gate before any destructive change
-├── AwaitTool
-├── Done
-├── Failed
-└── Cancelled
+├── Idle          ← waits for the first UserMessage (the "hi" intake guard)
+├── Intake        ← classify intent; chit-chat/clarify or confirm scope
+├── Discovery     ← explore the repo (read-only tools)
+├── Planning      ← produce + get approval for a plan
+├── Execution     ← implement (write/build tools); may fan out per task
+├── Verification  ← independent build/test verification
+├── Delivery      ← summarise + final sign-off
+├── Recovery      ← diagnose failures and retry/escalate
+├── Done / Failed / Cancelled  ← terminal
 ```
 
-**Execution loop detail:**
-
-```
-ProposePatch → ApplyPatch → Build
-                              ├─ success → RunTests
-                              │              ├─ pass → StaticAnalysis → ObserveResult
-                              │              └─ fail → Recovery
-                              └─ fail → Recovery
-```
-
-**Continuation-based `AwaitUser`:** when any state needs more information, it
-stores a `Continuation { return_to_state, context_key }` in extended state and
-transitions to `AwaitUser`. When the user answers, the machine restores the
-continuation and re-enters the correct state, never losing track of where it
-was.
-
-**`AwaitHumanApproval`:** entered before applying any patch with externally
-visible effects. The `RequestHumanApproval` effect reaches the `UserExecutor`,
-which surfaces a prompt in the TUI (`UiMode::AwaitingApproval`). Approval
-resumes execution; rejection triggers `Recovery`.
-
-### ClarificationMachine (submachine)
-
-A reusable five-state submachine used by any state needing more information:
-
-```
-GeneratingQuestion → AwaitingAnswer → InterpretingAnswer → Deciding → Done
-```
-
-Any state can emit `InstantiateSubmachine(ClarificationMachine)`. When it
-reaches `Done`, it posts `SubmachineCompleted` back to the parent, which
-resumes from wherever it was waiting.
+The full lifecycle, the "hi" guard, the decision envelope, the human gates, and
+recovery are documented in the **[Deliberation Engine](deliberation-engine.md)**.
+The parallel fan-out used by `Execution` is documented in **[Parallel Submachine
+Fan-out](parallel-submachines.md)**.
 
 ---
 
-## ModeRegistry
+## Effect executors
 
-`ModeRegistry` maps mode strings to `Machine` factories. Adding a new machine
-is a single `registry.register("my-mode", || Box::new(MyMachine::new()))` call.
-Pre-registered modes:
-
-| Mode string | Machine |
-|-------------|---------|
-| `"chat"` | `ConversationMachine` |
-| `"sdlc"` | `SoftwareDevelopmentMachine` |
-
-The mode is selected at startup from (in priority order):
-1. `--mode <name>` CLI flag
-2. `SVEN_MODE` environment variable
-3. Default: `"chat"`
-
----
-
-## LLM as an untrusted reasoning service (`sven-llm`)
-
-The `sven-llm` crate defines 11 named `LlmRequest` operations. Each serialises
-to a structured prompt plus a JSON output schema. The LLM returns a structured
-JSON value, which is parsed into a typed response and wrapped in the appropriate
-`Event` variant. The LLM never names a tool; it only fills in fields of known
-response structs.
-
-| Request | Response type | Purpose |
-|---------|--------------|---------|
-| `ExtractIntent` | `IntentExtraction` | Classify user message, detect if SDLC task |
-| `AssessCompleteness` | `CompletenessAssessment` | Decide if enough info to start |
-| `GenerateClarifyingQuestion` | `ClarifyingQuestion` | Ask targeted follow-ups |
-| `ProposePatch` | `PatchProposal` | Produce a unified diff |
-| `AssessBuildResult` | `BuildAssessment` | Interpret compiler output |
-| `AssessTestResult` | `TestAssessment` | Classify pass/fail/flaky |
-| `ProposeRecovery` | `RecoveryProposal` | Suggest retry/rollback/abort |
-| `GenerateDeliveryNote` | `DeliveryNote` | Write a change summary |
-| `ClassifyFailure` | `FailureClassification` | Root-cause a failure |
-| `SummarizeDiscovery` | `DiscoverySummary` | Summarise findings for planning |
-| `ValidatePlan` | `PlanValidation` | Critique a proposed plan |
-
-`MockLlmAdapter` is a scripted queue of pre-programmed events. All machine
-unit tests use it - no real LLM or network call is needed.
-
----
-
-## Effect executors (`sven-executors`)
-
-Each executor implements `EffectExecutor` and handles a subset of `EffectKind`
-values. The `CompositeExecutor` (built by `RuntimeBuilder`) routes each effect
-to the right sub-executor:
+Each executor implements `EffectExecutor` and performs the I/O for a subset of
+effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
+`CompositeExecutor` (`sven-executors/src/composite.rs`), built by
+`RuntimeBuilder`, routes each effect to the right sub-executor.
 
 | Executor | Effects handled |
-|----------|----------------|
-| `LlmExecutor` | `CallLlm` |
+|----------|-----------------|
+| `ConverseExecutor` | `CallLlm` with `kind: "converse"` - drives the reactive agent loop |
+| `DeliberationExecutor` | `CallLlm` with `kind: "deliberate"` - drives one SDLC deliberation |
+| `LlmExecutor` | `CallLlm` for any other request (a typed `LlmRequest` via `DefaultLlmAdapter`) |
 | `ToolExecutor` | `CallTool` (capability-checked) |
 | `UserExecutor` | `AskUser`, `RequestHumanApproval` |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
@@ -283,186 +406,203 @@ to the right sub-executor:
 | `AuditExecutor` | `PersistAudit` |
 | `InternalExecutor` | `EmitInternal` |
 
----
+`CallLlm` routing is by the request's `kind` field: `"converse"` →
+`ConverseExecutor`, `"deliberate"` → `DeliberationExecutor`, anything else →
+`LlmExecutor`. The reactive modes wire a converse executor; `sdlc` wires a
+deliberation executor; the typed `LlmExecutor` path is the fallback for machines
+that emit plain typed `LlmRequest`s.
 
-## Outward observation plane (`ObservationBus` / `UiEvent`)
-
-The kernel emits two streams outward:
-
-| Stream | Transport | Purpose |
-|--------|-----------|---------|
-| `MachineProjection` | `watch` channel | Coarse state snapshot for rendering the UI shell (mode, overlay, status) |
-| `UiEvent` | `broadcast` channel (`ObservationSink`) | Fine-grained streaming events (text deltas, tool progress, token usage) |
-
-`UiEvent` variants:
-
-```
-TextDelta(String)              // streamed text chunk
-TextComplete(String)           // full accumulated response text
-ThinkingDelta / ThinkingComplete  // extended thinking support
-ToolStarted { call_id, name, args }
-ToolProgress { call_id, message }
-ToolFinished { call_id, name, output, is_error }
-TokenUsage { input, output, cache_read, cache_write, ... }
-ContextCompacted { ... }       // after automatic context compaction
-TodoUpdate(Value)              // updated todo list (JSON array)
-ModeChanged(String)            // e.g. "plan", "agent", "research"
-ModelChanged(String)           // e.g. "claude-opus-4-5"
-Error(String)                  // recoverable error
-TurnComplete                   // the current turn is finished
-```
-
-`ObservationSink` wraps a `broadcast::Sender<UiEvent>`. Frontends subscribe
-with `handle.subscribe_observations()` and receive events until `TurnComplete`
-or `Error`. Lagged subscribers skip dropped events (the bus is lossy by
-design, just like a render-tick stream).
+`InstantiateSubmachine` is **not** handled by the `CompositeExecutor` - the
+runtime intercepts it before the executor and hands it to the `ChildSpawner`
+(see below). The composite's `InstantiateSubmachine` branch only warns and is a
+no-op for that legacy path.
 
 ---
 
-## `ReactiveAgentMachine` + `ConverseExecutor` (Path B architecture)
+## Submachine composition and parallel fan-out
 
-Rather than reimplementing the full agentic loop as HSM states, the
-`ReactiveAgentMachine` (in `sven-core`) uses **Path B**: it wraps the
-existing `sven_core::Agent` via `ConverseExecutor` and delegates the
-LLM⇆Tool loop to it.
+The kernel supports two forms of composition:
 
-```
-┌────────────────── HSM kernel ─────────────────────┐
-│  ReactiveAgentMachine                              │
-│    Idle ──UserMessage──► Generating                │
-│                          │ Effect::CallLlm { ... } │
-└──────────────────────────┼────────────────────────┘
-                           │
-           ┌───────────────▼─────────────────────────┐
-           │ ConverseExecutor                         │
-           │  calls Agent::submit() in a loop         │
-           │  translates AgentEvent → UiEvent         │
-           │  posts Event::TurnComplete when done     │
-           └─────────────────────────────────────────┘
-```
+- **In-process child (`Submachine<P>`, `sven-hsm/src/submachine.rs`).** A parent
+  holds an optional active child behind the object-safe `ErasedMachine` trait.
+  While a child is active, events route to it first and bubble unhandled events
+  to the parent; on child completion the parent receives
+  `InternalEvent::SubmachineCompleted` and the child is dropped. This path is
+  synchronous and runs the child inside the parent's dispatch.
 
-This means the legacy `Agent` / `run_agentic_loop` is still alive **inside**
-`ConverseExecutor`, not deleted. It will be replaced by a native HSM
-implementation in a future phase when all frontends are confirmed stable on
-the kernel path.
+- **Concurrent child kernels (`ChildSpawner` + `spawn_with_children`).** This is
+  the production fan-out path. When a machine emits
+  `Effect::InstantiateSubmachine`, the runtime peels it out of the effect batch
+  (`spawn_children`), records it in a lightweight child registry, and hands it to
+  the installed `ChildSpawner`, which runs the child as its **own concurrent
+  kernel with an isolated `Context`**. When a child finishes it posts
+  `InternalEvent::SubmachineCompleted { machine, result }` back to the parent,
+  carrying the child's structured result for append-only aggregation. The runtime
+  drops the child from its registry on completion.
+
+`Effect::InstantiateSubmachine` used to be a no-op; it is now genuinely
+implemented at the runtime layer, and `InternalEvent::SubmachineCompleted`
+carries a `result` payload. The full design, the `TaskMachine`, the
+`SdlcChildSpawner`, the Execution fan-out/aggregation flow, and the documented
+child user-gate limitation are in **[Parallel Submachine
+Fan-out](parallel-submachines.md)**.
 
 ---
 
-## Multi-session supervisor (`SessionSupervisor`)
+## LLM contracts (`sven-llm`)
 
-`SessionSupervisor` in `sven-bootstrap` manages a registry of concurrent
-kernel sessions keyed by `SessionId`:
+`sven-llm` wraps `sven-model` (the stateless provider abstraction) behind two
+things:
 
-```
-SessionId → SessionBundle {
-    runtime:        ErasedRuntime,      // kernel task (detached tokio task)
-    handle:         RuntimeHandle,      // cheap clone for posting events
-    channels:       KernelChannels,     // question_rx / approval_rx
-    converse_agent: Option<Arc<Mutex<Agent>>>  // exposed for history ops
-}
-```
+1. **Typed `LlmRequest` operations** (`request.rs`) - 13 named operations
+   (`ExtractIntent`, `AssessCompleteness`, `GenerateClarifyingQuestion`,
+   `ProposePatch`, `EvaluateContext`, …). Each serialises to a structured prompt
+   plus an output schema. `DefaultLlmAdapter` (`adapter.rs`) builds the prompt,
+   streams the model, accumulates the JSON, and maps it to the correct typed
+   `Event` (`LlmProposedAssessment` / `LlmProposedPlan` / `LlmProposedResponse`).
+   On this path the model **only fills in fields of a known response struct - it
+   never names a tool.** `MockLlmAdapter` replays a scripted `Vec<Event>` for
+   tests. This path is used by the fallback `LlmExecutor`; the shipped modes use
+   the converse/deliberation engines instead.
 
-Each session has its own kernel, model provider, MCP manager, tool registry,
-and observation bus. Sessions share `SharedSkills`, `SharedKnowledge`, and
-`SharedAgents` (all reference-counted) to avoid redundant disk reads.
+2. **The deliberation contract** (`conversation.rs`) - `ConversationStore`
+   (append-only per-thread `Vec<Message>` history with a cache-safety invariant)
+   and `DeliberationRequest` (the `kind: "deliberate"` request shape). These
+   underpin the SDLC engine and are documented in
+   **[Deliberation Engine](deliberation-engine.md)**.
 
-`RuntimeBuilder` is the per-session factory:
+The model layer (`sven-model`) carries the streaming primitives the engines
+share: `CompletionRequest` (now including an optional `response_format` for
+structured output), `Message` / `MessageContent` (text, multimodal parts, tool
+calls, tool results), `ResponseEvent` (the streamed `TextDelta` /
+`ThinkingDelta` / `ToolCall` / `Usage` / `Done` / `MaxTokens` events), and
+`ResponseFormat` (`JsonObject` or `JsonSchema { name, schema }`).
 
-```rust
-let bundle = RuntimeBuilder::new(config, "agent")
+---
+
+## Tools (`sven-tools`)
+
+`ToolRegistry` (`sven-tools/src/registry.rs`) holds all available tools behind a
+`RwLock` (so MCP tools can be swapped at runtime). Beyond execution it provides
+the **tool-subset API** the deliberation engine relies on:
+
+- `schemas()` / `schemas_for_mode(mode)` - all tools, or those for a mode.
+- `schemas_for_names(&[String])` - only the named subset (unknown names are
+  silently skipped), used to give each SDLC state a *state-scoped* tool set.
+- `known_names(&[String])` - which requested names are actually registered.
+
+Schemas are always ordered core-tools-first (sorted), then MCP tools (sorted),
+to keep provider cache breakpoints stable. `execute` honours an optional
+`PermissionRequester` so tools whose policy is `Ask` are gated by an IDE/ACP
+`request_permission` round-trip before running.
+
+---
+
+## Multi-session supervisor and `RuntimeBuilder`
+
+`RuntimeBuilder` (`sven-bootstrap/src/runtime_builder.rs`) is the per-session
+factory. It looks up the machine from the `ModeRegistry`, builds the model
+provider, tool registry, and MCP manager, assembles the `CompositeExecutor`
+(installing a converse executor for reactive modes or a deliberation executor +
+`SdlcChildSpawner` for `sdlc`), and spawns an `ErasedRuntime` via
+`spawn_with_children`. For `sdlc` it seeds the `parallel_execution` fact so the
+machine only fans out when a spawner is actually installed.
+
+```rust,ignore
+let bundle = RuntimeBuilder::new(config, "sdlc")
     .with_runtime_context(ctx)
-    .with_tool_question_tx(question_tx)     // TUI question modal
-    .with_permission_requester(perm)        // ACP IDE approval
-    .with_initial_history(messages)         // resume a session
+    .with_tool_question_tx(question_tx)   // TUI question modal
+    .with_permission_requester(perm)      // ACP IDE approval
+    .with_initial_history(messages)       // resume a session
     .build_session()
     .await?;
 ```
+
+`build_session` returns a `SessionBundle` holding the `ErasedRuntime`, a cheap
+`RuntimeHandle` (sink + observation + status), the `KernelChannels`
+(question/approval receivers), and the optional converse `Agent` (reactive modes
+only, exposed so callers can seed history or swap the model). A
+`SessionSupervisor` manages a registry of such bundles keyed by `SessionId`,
+sharing reference-counted skills, knowledge, and agents across sessions.
 
 ---
 
 ## UI integration
 
-The TUI is **not** part of the machine. It is a projection consumer and an
+The TUI is **not** part of the machine - it is a projection consumer and an
 event source:
 
 - **Event source**: keystrokes, approval decisions, and user text are posted to
-  the kernel queue as typed `Event` values via `EventSink`.
-- **Projection consumer**: the runtime broadcasts `MachineProjection` snapshots
-  (a UI-friendly view of kernel state) after every dispatch. The TUI renders
-  from snapshots, never by inspecting internal machine state.
-
-`UiMode` in `sven-tui` is a single enum that covers every overlay the TUI can
-show. It is set directly from the incoming `MachineProjection`:
-
-```rust
-enum UiMode {
-    Normal,
-    AwaitingUserInput { question: String },
-    AwaitingApproval  { request: ApprovalRequest },
-    Pager,
-    Inspector,
-    SearchActive,
-    EditSegment,
-    EditQueue,
-    TeamPicker,
-    Confirm { action: ConfirmAction },
-}
-```
+  the kernel queue as typed `Event`s via `EventSink`.
+- **Projection consumer**: the TUI subscribes to the observation `UiEvent`
+  stream and renders the coarse `RuntimeStatus` snapshot; it never inspects
+  internal machine state.
 
 ---
 
 ## CI / headless mode
 
-`RuntimeRunner` in `sven-ci` drives the kernel without any UI. It:
-1. Posts the initial prompt as `Event::UserMessage`.
-2. Auto-responds to every `RequestHumanApproval` effect (configurable via
-   `RuntimeRunnerOptions::auto_approve`).
-3. Collects `MachineProjection` updates until the machine reaches `Done`,
-   `Failed`, or `Cancelled`.
-4. Returns exit code 0 for `Done`, non-zero otherwise.
+`RuntimeRunner` (`sven-ci/src/runner/runtime_runner.rs`) drives the kernel with
+no UI. It builds a `SessionBundle` (mapping the caller's mode to a registered
+kernel mode - coding/plan/research all resolve to `agent`, `chat`→`chat`,
+`sdlc`→`sdlc`), **auto-approves every human gate** (questions get an empty
+answer, approvals get `true`), posts the prompt as `Event::UserMessage`, bridges
+each `UiEvent` to stdout/stderr, and returns exit code `0` on `TurnComplete`,
+non-zero on error or timeout. The CI auto-approve behaviour preserves the same
+human-gate flow as interactive mode without blocking.
 
 ---
 
 ## Testing
 
-Because transition functions are pure, unit tests need only construct an event
-and assert on the resulting `(new_state, effects)` tuple:
+Because transition functions are pure, unit tests construct an event and assert
+on the resulting `(new_state, effects)`:
 
-```rust
-let mut machine = ConversationMachine::new();
-let effects = dispatch_event(&mut machine, Event::user_message("Fix the bug"));
-assert_eq!(machine.state(), State::Interpreting);
-assert!(effects.iter().any(|e| matches!(e, Effect::CallLlm { .. })));
+```rust,ignore
+let mut hsm = Hsm::new(ReactiveAgentMachine::new());
+let mut ctx = Context::new();
+hsm.init(&mut ctx);
+let out = hsm.dispatch(&Event::user_message("fix the bug"), &mut ctx);
+assert_eq!(hsm.state(), ReactiveState::Generating);
+assert!(out.effects.iter().any(|e| matches!(e, Effect::CallLlm { .. })));
 ```
 
-Integration tests replay an `AuditRecord` log and assert that the final state
-matches expectations. E2E bats tests use `--model mock` with a
-`MockLlmAdapter` scripted response queue - no real LLM or API key required.
+Integration tests replay an event log and assert on the final state.
+Deliberation/converse executors are tested with scripted `ModelProvider`s, and
+E2E bats tests use `--model mock` so no real API key is required.
 
 ---
 
-## Crates
+## Crate map
 
 | Crate | Role |
 |-------|------|
-| `sven-hsm` | HSM kernel: dispatch, Machine trait, Runtime (Active Object), permissions, audit, replay, `ObservationSink`/`UiEvent` |
-| `sven-llm` | Typed LLM request/response contracts + `LlmAdapter` trait + `MockLlmAdapter` |
-| `sven-executors` | Effect executors: LLM (`ConverseExecutor`), tool, user, timer, checkpoint, audit, internal, composite |
-| `sven-core` | Concrete machines: `ReactiveAgentMachine`, `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry` |
-| `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor` (multi-session registry) |
-| `sven-frontend` | `kernel_session_task` - bridges kernel `UiEvent`s to `AgentEvent`s for TUI/GUI renderers |
+| `sven-hsm` | HSM kernel: dispatch, `Machine` trait, `Runtime`/`ErasedRuntime` (Active Object), permissions, audit/replay, `Clock`/timers, `Submachine`/`ChildSpawner`, `ObservationSink`/`UiEvent` |
+| `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
+| `sven-llm` | Typed `LlmRequest`/response contracts + `LlmAdapter`/`MockLlmAdapter`; `ConversationStore` + `DeliberationRequest` |
+| `sven-tools` | `ToolRegistry` (incl. tool-subset API), `Tool` trait, approval policy / `PermissionRequester` |
+| `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`; legacy `ConversationMachine`/`SoftwareDevelopmentMachine`/`ClarificationMachine`), the reusable `Deliberator`, `Agent`, `Session`, `ModeRegistry` |
+| `sven-executors` | Effect executors: converse, deliberation, llm, tool, user, timer, checkpoint, audit, internal, and the composite |
+| `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
+| `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |
 | `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |
-| `sven-node` | `ControlService` - routes operator commands to the kernel; `ui_event_to_control` bridge |
-| `sven-acp` | `SvenAcpAgent` - ACP server backed by a per-session kernel; `ui_event_to_session_update` bridge |
+| `sven-node` | Routes operator commands to the kernel; `ui_event` bridges |
+| `sven-acp` | ACP server backed by a per-session kernel |
 
 ---
 
 ## Further reading
 
-- Miro Samek, *Practical UML Statecharts in C/C++, 2nd ed.* (the dispatch
-  algorithm implemented in `sven-hsm/src/dispatch.rs` follows Chapter 2-4)
-- [sven-hsm tests](../../crates/sven-hsm/tests/) - 31 pure unit/integration
-  tests covering LCA ordering, permission rejection, replay equality, and
-  virtual-time timeout behaviour
-- [ConversationMachine source](../../crates/sven-core/src/machines/conversation.rs)
-- [SoftwareDevelopmentMachine source](../../crates/sven-core/src/machines/software_development.rs)
+- **[Deliberation Engine](deliberation-engine.md)** - the HSM-as-authority +
+  LLM-as-tool model, append-only conversation threads, the `Deliberator` loop,
+  structured-output decisions, per-state tool subsets and models, and the full
+  SDLC phase walk.
+- **[Parallel Submachine Fan-out](parallel-submachines.md)** - `ChildSpawner`,
+  isolated child kernels, `TaskMachine`, `SdlcChildSpawner`, and the Execution
+  fan-out/aggregation flow.
+- Miro Samek, *Practical UML Statecharts in C/C++, 2nd ed.* - the dispatch
+  algorithm in `sven-hsm/src/dispatch.rs` follows its two-phase design.
+- [sven-hsm tests](../../crates/sven-hsm/tests/) - LCA ordering, permission
+  rejection, replay equality, virtual-time timeouts, and child-spawner fan-out.
+- [SdlcMachine source](../../crates/sven-core/src/machines/sdlc/) ·
+  [ReactiveAgentMachine source](../../crates/sven-core/src/machines/reactive_agent.rs)

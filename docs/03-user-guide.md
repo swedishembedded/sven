@@ -184,56 +184,55 @@ Modes control both the state machine that drives the session and the tools the
 agent is allowed to use. Choosing the right mode prevents unintended changes and
 gives you the right level of formality for the task.
 
-### `chat` - conversational assistant (default)
+### `chat` - conversational coding assistant (default)
 
-`chat` is powered by the `ConversationMachine` - a lightweight five-state HSM
-that handles normal conversation turns (Idle → Interpreting → Responding →
-AwaitingTool → Idle). For quick questions, code review, or exploratory
-analysis, this is the right mode.
-
-When the machine detects a substantial engineering task during interpretation,
-it seamlessly instantiates the `SoftwareDevelopmentMachine` as a submachine and
-suspends until it completes. You get full SDLC rigour automatically, without
-having to switch mode manually.
+`chat` (along with `agent` and `reactive`) is powered by the
+`ReactiveAgentMachine`. It runs a streaming, native-tool-calling agent loop: the
+model reasons, calls tools (read, search, edit, shell, …) that are executed and
+fed back, and streams its answer. For quick questions, code review, exploratory
+analysis, and edits, this is the right mode.
 
 ```sh
 sven "What does the authentication module do?"
 sven "Explain the race condition in this code."
 ```
 
+The agentic model↔tool loop that powers a single turn is the same reusable
+`Deliberator` engine described in
+[Deliberation Engine](technical/deliberation-engine.md).
+
 ### `sdlc` - software development lifecycle
 
-`sdlc` is powered by the `SoftwareDevelopmentMachine` - a 57-state HSM
-encoding the full engineering lifecycle as formally-specified states with typed
-transitions:
+`sdlc` is powered by the `SdlcMachine` - a deliberation-driven HSM that encodes
+the engineering lifecycle as a sequence of phases, each of which runs its own
+scoped LLM↔tool deliberation on an append-only conversation thread and returns a
+structured decision that drives the next transition:
 
 ```
-Intake → Discovery → Planning → Execution → Verification → Delivery
+Idle → Intake → Discovery → Planning → Execution → Verification → Delivery
+                   │                                                  │
+                   └──────────────── Recovery ◀──────────────────────┘
 ```
 
-The Execution loop is particularly important:
+**Intake guard**: `Intake` classifies your request before any work happens.
+Chit-chat or under-specified requests keep the machine in `Intake` and ask
+clarifying questions; only a confirmed, actionable scope advances to `Discovery`.
 
-```
-ProposePatch → ApplyPatch → Build
-                              ├─ success → RunTests → StaticAnalysis → ObserveResult
-                              └─ fail → Recovery → (retry / rollback / abort)
-```
+**Human gates**: phases pause for you via real question and approval gates
+(scope, plan, and delivery). The TUI shows the prompt; you answer or
+approve/reject. In CI / headless mode (`RuntimeRunner`) these gates are
+auto-approved so a run completes unattended.
 
-**Human approval gate**: before `ApplyPatch` applies any change with externally
-visible side effects, the machine enters `AwaitHumanApproval`. The TUI shows
-an approval prompt with the full patch description. You approve or reject; the
-machine proceeds or triggers `Recovery` accordingly. In CI mode
-(`RuntimeRunner`), approvals can be automatically granted.
+**Parallel execution**: `Execution` decomposes the plan and fans out one
+concurrent child kernel per task, then merges the child summaries back into the
+parent thread. See [Parallel Submachine Fan-out](technical/parallel-submachines.md).
 
-**Continuation-based clarification**: any state can ask a clarifying question
-by transitioning to `AwaitUser` with a stored continuation. When you answer,
-the machine resumes exactly where it was.
+**Recovery**: when a deliberation reports failure, the hierarchy routes to a
+`Recovery` phase that diagnoses and decides whether to retry or abort.
 
-**Recovery**: on build or test failure, the machine enters the `Recovery`
-superstate (`ClassifyFailure → ProposeRecoveryOptions → SelectRecoveryAction`)
-where the LLM classifies the failure and proposes retry, patch amendment, or
-rollback. Rollback uses `git stash` checkpoints created at the start of
-execution.
+For the full design - the decision envelope, per-state tools and models, and the
+append-only / cache-safe thread invariant - see the
+[Deliberation Engine](technical/deliberation-engine.md) reference.
 
 Use `sdlc` when you want sven to implement a feature end-to-end with full
 traceability, or when you need the approval gate for safety:

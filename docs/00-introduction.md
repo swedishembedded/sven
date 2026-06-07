@@ -48,8 +48,8 @@ tools it is allowed to use.
 
 | Mode | What the agent can do |
 |------|----------------------|
-| `chat` | Conversational assistant. Handles questions, analysis, and code review. Automatically hands off engineering tasks to the `sdlc` machine when needed. **Default.** |
-| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution (patch → build → test → lint) → Verification → Delivery. Requires human approval before applying changes. |
+| `chat` | Conversational coding assistant. A streaming, native-tool-calling agent (the same engine as `agent`/`reactive`) for questions, analysis, code review, and edits. **Default.** |
+| `sdlc` | Full software-development lifecycle. Formally structured: Intake → Discovery → Planning → Execution → Verification → Delivery, with a Recovery path. Each phase runs a scoped LLM↔tool deliberation and pauses for human approval at scope, plan, and delivery. |
 | `research` | Read files and run read-only commands. No writes. |
 | `plan` | Reads freely, produces structured plans, no file writes. |
 | `agent` | Full read/write access. Use for general-purpose agentic tasks. |
@@ -86,54 +86,58 @@ See [Sven Node](08-node.md) and
 
 ## How sven works
 
-Sven's agent loop is a formally-specified **Hierarchical State Machine (HSM)**,
-not a free-running LLM loop. The distinction matters: control flow is
-deterministic and auditable; the LLM is a *reasoning service* that proposes
-typed actions but never executes anything directly.
+Sven's agent runtime is built on a formally-specified **Hierarchical State
+Machine (HSM)** kernel, not a free-running LLM loop. The distinction matters:
+the kernel owns control flow deterministically and auditably, while the LLM does
+its reasoning and tool use *inside* a well-defined step.
 
 ```
   Your message
       │
       ▼  Event
   ┌──────────────────────────────────┐
-  │  HSM Kernel  (pure, no I/O)     │
-  │  current state + guards decide  │
+  │  HSM Kernel  (pure, no I/O)      │
+  │  current state decides what next │
   └──────────────────────────────────┘
       │  Effects (data, not calls)
       ▼
   ┌──────────────────────────────────┐
   │  Executors  (the only I/O layer) │
-  │  LLM · Tool · User · Timer      │
+  │  LLM-loop · Tool · User · Timer  │
   └──────────────────────────────────┘
-      │  Result events → queue
+      │  one completion event → queue
       ▼
   (back to HSM kernel)
 ```
 
-**What the LLM does.** When the machine needs reasoning (e.g. understanding
-your intent, proposing a code patch, classifying a build failure), it emits a
-`CallLlm` effect with a typed `LlmRequest`. The LLM returns structured JSON
-parsed into a typed response. It never names a tool to invoke.
+**What the kernel does.** A machine reacts to a typed `Event`, updates its
+state, and *returns* `Effect`s describing the side effects it wants. The kernel
+itself never performs I/O. It validates every effect against a permission policy,
+hands each to an executor, and records every transition to an append-only audit
+log so any session can be replayed exactly - useful for debugging and for tests
+that assert on whole session traces without a real LLM or network.
 
-**What the machine does.** Based on the LLM response and the current state,
-the machine transitions and emits further effects - perhaps `CallTool` to run
-the proposed patch through the build system, `AskUser` to ask a clarifying
-question, or `RequestHumanApproval` before applying any externally-visible
-change.
+**What the LLM does.** This depends on the mode. In the default chat/agent modes
+and in each SDLC phase, an executor runs a real model↔tool agentic loop: the
+model streams reasoning and makes **native tool calls** (read, search, edit,
+shell, …) that are executed and fed back, exactly like a modern coding agent.
+The kernel stays the authority over *transitions* - the loop runs inside a single
+`CallLlm` effect and reports back exactly one completion event when the step
+settles. In `sdlc` mode that completion is a structured **decision** whose status
+(proceed / need user input / need approval / re-deliberate / failed) drives the
+next transition.
 
-**What executors do.** Executors are the only code that performs I/O. A
-`ToolExecutor` runs the requested tool and posts `ToolSucceeded` or
-`ToolFailed` back to the kernel queue. A `UserExecutor` surfaces an approval
-prompt in the TUI and waits for your decision.
+**What executors do.** Executors are the only code that performs I/O. They stream
+live progress (text, thinking, tool starts/finishes, token usage) outward for
+the UI to render, then post one result event back into the kernel queue. A
+`UserExecutor` surfaces a question or approval prompt and waits for your
+decision.
 
-Every state transition is written to an append-only JSONL audit log. Any
-session can be replayed exactly - useful for debugging and for writing tests
-that assert on full session traces without needing a real LLM or network.
-
-When the model requests multiple tools in one turn, the `ToolExecutor` runs
-them in parallel and posts results back individually. In headless / CI mode,
-`RuntimeRunner` drives the same kernel with `auto_approve: true` and writes
-final output to stdout.
+In headless / CI mode the same kernel runs with every human gate auto-approved,
+writing final output to stdout. For the full technical design see
+**[HSM Architecture](technical/hsm-architecture.md)**, the **[Deliberation
+Engine](technical/deliberation-engine.md)**, and **[Parallel Submachine
+Fan-out](technical/parallel-submachines.md)**.
 
 ---
 
@@ -150,3 +154,5 @@ final output to stdout.
 - **[Agent Collaboration](09-collaboration.md)** - persistent peer conversations, rooms, and the `sven peer chat` command
 - **[Teams and Tasks](11-teams-and-tasks.md)** - form a team of agents, break work into tasks, and orchestrate parallel workstreams
 - **[HSM Architecture](technical/hsm-architecture.md)** - full technical reference for the hierarchical state machine kernel
+- **[Deliberation Engine](technical/deliberation-engine.md)** - how each SDLC phase runs a scoped LLM↔tool loop and returns a decision that drives the machine
+- **[Parallel Submachine Fan-out](technical/parallel-submachines.md)** - how sven runs plan tasks concurrently in isolated child kernels
