@@ -4,59 +4,133 @@
 //! Shared agentic loop state-machine helpers.
 //!
 //! Every machine that runs the HSM-native model↔tool loop composes this module
-//! rather than duplicating the logic.  The loop states are:
+//! rather than duplicating the logic.  The loop pattern is now **in-state**:
+//! the active phase/state emits `CallTool` effects and **stays put** (via
+//! `Reaction::Handled`) while tools execute.  There are no more shared
+//! `RunningTools` / `AwaitingApproval` sibling states.
 //!
-//! ```text
-//! Idle → Generating → RunningTools ↔ AwaitingApproval → Generating → … → Idle
-//! ```
+//! # How it works
 //!
-//! # Context keys
+//! 1. On phase entry the machine calls [`init_loop`] and emits `CallLlm`.
+//! 2. On `LlmTurnComplete`, the machine calls [`on_llm_turn_complete`] and acts
+//!    on the returned [`GeneratingAction`].
+//! 3. If tools were proposed, the machine emits `CallTool` effects and stays
+//!    (the [`LoopState::pending`] set is updated inside `on_llm_turn_complete`).
+//! 4. On `ToolSucceeded` / `ToolFailed` / `ToolApprovalRequired` /
+//!    `HumanApproved` (tool) / `HumanRejected` (tool), the machine delegates to
+//!    [`handle_tool_event`].  It returns `None` for non-tool events so the phase
+//!    can handle decision-level approvals itself.
 //!
-//! `loop_core` stores its bookkeeping under well-known keys in the kernel
-//! [`Context`] so machines stay pure and don't carry ad-hoc fields:
+//! # `LoopState` — one typed fact key
 //!
-//! - [`KEY_PENDING_CALLS`]  — JSON array of pending `ToolCallId` UUIDs
-//! - [`KEY_TOOL_ROUND`]     — current tool-call round counter (u64)
-//! - [`KEY_MAX_ROUNDS`]     — configured round limit (u64)
-//! - [`KEY_THREAD`]         — current conversation thread id (string)
-//! - [`KEY_TOOLS`]          — JSON array of allowed tool names (strings)
-//!
-//! # Usage
-//!
-//! A machine's `Generating` state calls [`on_llm_turn_complete`] and acts on
-//! the returned [`GeneratingAction`]; `RunningTools` calls [`on_tool_result`]
-//! and checks [`all_tools_done`].  [`build_turn_effect`] produces the correct
-//! `CallLlm` effect for the next (or first) turn.
+//! All bookkeeping lives in a single [`LoopState`] value serialized under
+//! [`LOOP_STATE_KEY`].  This replaces the six `KEY_*` string-keyed JSON facts
+//! used previously and makes state access type-safe and refactor-friendly.
 
-use serde_json::{json, Value};
+use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sven_hsm::{
-    context::Context,
+    context::{Context, PendingApproval},
     effect::Effect,
     event::Event,
-    ids::ToolCallId,
+    ids::{ApprovalId, ToolCallId},
+    status::Reaction,
     ProposedToolCall,
 };
 
 use sven_llm::TurnRequest;
 
-// ─── Context key constants ────────────────────────────────────────────────────
+/// The single context key under which [`LoopState`] is serialized.
+pub const LOOP_STATE_KEY: &str = "lc_state";
 
-/// JSON array of pending ToolCallId UUIDs (as strings).
-pub const KEY_PENDING_CALLS: &str = "lc_pending_calls";
-/// Current tool-call round counter.
-pub const KEY_TOOL_ROUND: &str = "lc_tool_round";
-/// Configured maximum tool-call rounds.
-pub const KEY_MAX_ROUNDS: &str = "lc_max_rounds";
-/// The conversation thread this loop is running against.
-pub const KEY_THREAD: &str = "lc_thread";
-/// JSON array of allowed tool names for this loop.
-pub const KEY_TOOLS: &str = "lc_tools";
-/// Mode string for "all tools" resolution (empty = use `KEY_TOOLS`).
-pub const KEY_ALL_TOOLS_MODE: &str = "lc_all_tools_mode";
+// ─── Typed loop bookkeeping ───────────────────────────────────────────────────
 
-// ─── Turn effect builder ─────────────────────────────────────────────────────
+/// All loop bookkeeping in one serializable struct.
+///
+/// Stored under [`LOOP_STATE_KEY`] via [`LoopState::load`] / [`LoopState::store`].
+/// Type-safe and refactor-friendly compared to the previous six `KEY_*` JSON
+/// string keys.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LoopState {
+    /// Conversation thread id (e.g. `"chat"`, `"intake"`).
+    pub thread: String,
+    /// Tool names allowed in this loop (passed to `TurnRequest`).
+    pub tools: Vec<String>,
+    /// `all_tools_mode` passed to `TurnRequest` when `tools` is empty.
+    pub all_tools_mode: String,
+    /// Current tool-call round counter (incremented on each `LlmTurnComplete`).
+    pub round: u32,
+    /// Maximum tool-call rounds before a wrap-up nudge.
+    pub max_rounds: u32,
+    /// In-flight `CallTool` call IDs.  Drained as results arrive.
+    pub pending: HashSet<ToolCallId>,
+    /// When set, a tool-level `RequestHumanApproval` is in flight under this
+    /// `ApprovalId`.  `HumanApproved`/`HumanRejected` matching this ID are
+    /// tool-loop events (stay in phase); those without it are decision-level
+    /// approvals the phase handles itself.
+    pub awaiting_tool_approval: Option<ApprovalId>,
+}
 
-/// Build a `CallLlm { kind: "turn" }` effect for the given parameters.
+impl LoopState {
+    /// Load from context, returning a default value if not yet initialised.
+    #[must_use]
+    pub fn load(ctx: &Context) -> Self {
+        ctx.fact(LOOP_STATE_KEY)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// Persist to context.
+    pub fn store(&self, ctx: &mut Context) {
+        if let Ok(v) = serde_json::to_value(self) {
+            ctx.set_fact(LOOP_STATE_KEY, v);
+        }
+    }
+
+    /// `true` when there are no pending tool calls and no approval in flight.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        self.pending.is_empty() && self.awaiting_tool_approval.is_none()
+    }
+
+    /// Build a continuation `CallLlm { kind:"turn" }` from the current state.
+    #[must_use]
+    pub fn continuation_turn(&self) -> Effect {
+        build_turn_effect(
+            &self.thread,
+            &self.tools,
+            &self.all_tools_mode,
+            None,
+            None,
+            None,
+            self.max_rounds,
+            None,
+            None,
+        )
+    }
+
+    /// Build a continuation turn that also enforces a JSON response schema.
+    #[must_use]
+    pub fn continuation_turn_with_schema(&self, schema: Value, schema_name: &str) -> Effect {
+        build_turn_effect(
+            &self.thread,
+            &self.tools,
+            &self.all_tools_mode,
+            None,
+            None,
+            None,
+            self.max_rounds,
+            Some(schema),
+            Some(schema_name),
+        )
+    }
+}
+
+// ─── Turn effect builder ──────────────────────────────────────────────────────
+
+/// Build a `CallLlm { kind: "turn" }` effect.
 ///
 /// This is the single canonical way machines produce a turn effect so the
 /// `TurnRequest` shape stays consistent.
@@ -87,12 +161,12 @@ pub fn build_turn_effect(
     }
 }
 
-// ─── Context helpers ──────────────────────────────────────────────────────────
+// ─── Loop initialisation ──────────────────────────────────────────────────────
 
-/// Initialise loop bookkeeping in context when entering `Generating`.
+/// Initialise loop bookkeeping when a phase is entered for the first time.
 ///
-/// Call this once when the machine first transitions from `Idle` to
-/// `Generating` to set the thread, tools, and round limit.
+/// Call this once from the phase entry handler before emitting the first
+/// `CallLlm` effect.
 pub fn init_loop(
     ctx: &mut Context,
     thread: &str,
@@ -100,152 +174,57 @@ pub fn init_loop(
     all_tools_mode: &str,
     max_rounds: u32,
 ) {
-    ctx.set_fact(KEY_THREAD, json!(thread));
-    ctx.set_fact(KEY_TOOLS, json!(tools));
-    ctx.set_fact(KEY_ALL_TOOLS_MODE, json!(all_tools_mode));
-    ctx.set_fact(KEY_MAX_ROUNDS, json!(max_rounds));
-    ctx.set_fact(KEY_TOOL_ROUND, json!(0u64));
-    ctx.set_fact(KEY_PENDING_CALLS, json!([]));
+    let ls = LoopState {
+        thread: thread.to_string(),
+        tools: tools.to_vec(),
+        all_tools_mode: all_tools_mode.to_string(),
+        round: 0,
+        max_rounds,
+        pending: HashSet::new(),
+        awaiting_tool_approval: None,
+    };
+    ls.store(ctx);
 }
 
-/// Read the `all_tools_mode` string from context.
-pub fn all_tools_mode(ctx: &Context) -> String {
-    ctx.fact(KEY_ALL_TOOLS_MODE)
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_default()
-}
+// ─── `LlmTurnComplete` handler ────────────────────────────────────────────────
 
-/// Record the start of a new tool-call round in context.
-///
-/// Returns the new round counter.
-pub fn increment_round(ctx: &mut Context) -> u64 {
-    let round = ctx
-        .fact(KEY_TOOL_ROUND)
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        + 1;
-    ctx.set_fact(KEY_TOOL_ROUND, json!(round));
-    round
-}
-
-/// Register a batch of pending call IDs in context (entering `RunningTools`).
-///
-/// The IDs are stored as UUID strings; when a `ToolSucceeded`/`ToolFailed`
-/// event arrives they are removed via [`on_tool_result`].
-pub fn mark_calls_pending(ctx: &mut Context, calls: &[ProposedToolCall]) {
-    let ids: Vec<Value> = calls
-        .iter()
-        .map(|c| json!(c.call_id.as_uuid().to_string()))
-        .collect();
-    ctx.set_fact(KEY_PENDING_CALLS, json!(ids));
-}
-
-/// Remove a completed call from the pending set.
-///
-/// Returns `true` when the pending set is now empty (all tools done).
-pub fn on_tool_result(ctx: &mut Context, call_id: &ToolCallId) -> bool {
-    let id_str = call_id.as_uuid().to_string();
-    let mut pending: Vec<Value> = ctx
-        .fact(KEY_PENDING_CALLS)
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-    pending.retain(|v| v.as_str() != Some(&id_str));
-    ctx.set_fact(KEY_PENDING_CALLS, json!(pending));
-    pending.is_empty()
-}
-
-/// `true` when the pending call set is empty.
-pub fn all_tools_done(ctx: &Context) -> bool {
-    ctx.fact(KEY_PENDING_CALLS)
-        .and_then(|v| v.as_array())
-        .map(Vec::is_empty)
-        .unwrap_or(true)
-}
-
-/// Read the current round counter from context.
-pub fn current_round(ctx: &Context) -> u64 {
-    ctx.fact(KEY_TOOL_ROUND)
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-}
-
-/// Read the configured maximum round limit from context.
-pub fn max_rounds(ctx: &Context) -> u64 {
-    ctx.fact(KEY_MAX_ROUNDS)
-        .and_then(Value::as_u64)
-        .unwrap_or(16)
-}
-
-/// Read the current thread id from context.
-pub fn current_thread(ctx: &Context) -> String {
-    ctx.fact(KEY_THREAD)
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_default()
-}
-
-/// Read the configured tool names from context.
-pub fn current_tools(ctx: &Context) -> Vec<String> {
-    ctx.fact(KEY_TOOLS)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-// ─── LlmTurnComplete handler ─────────────────────────────────────────────────
-
-/// The action the machine should take in response to [`Event::LlmTurnComplete`].
+/// The action the machine should take after [`Event::LlmTurnComplete`].
 pub enum GeneratingAction {
-    /// The model produced no tool calls — the text is the final answer.
-    ///
-    /// The machine should transition to `Idle` and surface `text`.
-    FinalAnswer {
-        thread: String,
-        text: String,
-    },
+    /// The model produced no tool calls — `text` is the final answer.
+    FinalAnswer { thread: String, text: String },
 
-    /// The model proposed one or more tool calls.
-    ///
-    /// The machine should emit each [`Effect::CallTool`] effect, store the
-    /// pending call IDs, and transition to `RunningTools`.
+    /// The model proposed tool calls.  The machine should emit `tool_effects`
+    /// (one `CallTool` per call) and **stay** in the current state.
     CallTools {
         thread: String,
         tool_effects: Vec<Effect>,
         calls: Vec<ProposedToolCall>,
     },
 
-    /// The model produced neither text nor tool calls (empty turn).
-    ///
-    /// The machine should emit a nudge turn effect and stay in `Generating`.
-    EmptyTurn {
-        nudge_effect: Effect,
-    },
+    /// The model produced neither text nor tool calls.  Emit the nudge turn
+    /// and **stay**.
+    EmptyTurn { nudge_effect: Effect },
 
-    /// The configured `max_tool_rounds` was reached while tool calls were
-    /// still present; the wrap-up turn instructs the model to conclude.
-    MaxRoundsReached {
-        wrapup_effect: Effect,
-    },
+    /// `max_rounds` was exceeded while tool calls were still present.  Emit the
+    /// wrap-up turn and **stay** (or bail to `Failed`/`Recovery`).
+    MaxRoundsReached { wrapup_effect: Effect },
 }
 
-/// Nudge message appended when the model emits an empty turn.
+/// Nudge instruction appended when the model emits an empty turn.
 const EMPTY_TURN_NUDGE: &str =
     "Your last response was empty. Please provide your analysis, answer, or \
      use one of the available tools to make progress.";
 
-/// Wrap-up nudge appended when `max_tool_rounds` is exceeded.
+/// Instruction appended when `max_tool_rounds` is exceeded.
 const MAX_ROUNDS_NUDGE: &str =
     "You have reached the maximum tool-call budget. Do not call any more tools. \
      Respond now with your final structured decision per the required schema.";
 
-/// Decide what the machine in `Generating` should do after receiving
+/// Decide what the machine in its generating state should do after receiving
 /// [`Event::LlmTurnComplete`].
 ///
-/// Increments the round counter and checks against `max_rounds`.  Returns a
-/// [`GeneratingAction`] the caller converts into effects and a state transition.
+/// Increments the round counter, updates `pending` (for tool calls), and
+/// returns a [`GeneratingAction`] for the machine to convert to effects.
 pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingAction {
     let (thread, text, tool_calls) = match event {
         Event::LlmTurnComplete {
@@ -254,18 +233,18 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             tool_calls,
         } => (thread.clone(), text.clone(), tool_calls.clone()),
         _ => {
+            let ls = LoopState::load(ctx);
             return GeneratingAction::FinalAnswer {
-                thread: current_thread(ctx),
+                thread: ls.thread.clone(),
                 text: String::new(),
             };
         }
     };
 
-    let round = increment_round(ctx);
-    let max = max_rounds(ctx);
-    let tools = current_tools(ctx);
-
-    let mode = all_tools_mode(ctx);
+    let mut ls = LoopState::load(ctx);
+    ls.round += 1;
+    let round = ls.round;
+    let max = ls.max_rounds;
 
     // Max rounds exceeded AND there are tool calls → force a wrap-up turn.
     if round > max && !tool_calls.is_empty() {
@@ -280,20 +259,21 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             None,
             None,
         );
+        ls.store(ctx);
         return GeneratingAction::MaxRoundsReached { wrapup_effect };
     }
 
     if tool_calls.is_empty() {
+        ls.store(ctx);
         if text.is_empty() {
-            // Empty turn: nudge the model.
             let nudge_effect = build_turn_effect(
                 &thread,
-                &tools,
-                &mode,
+                &ls.tools,
+                &ls.all_tools_mode,
                 None,
                 Some(EMPTY_TURN_NUDGE),
                 None,
-                (max.saturating_sub(round)) as u32,
+                max.saturating_sub(round),
                 None,
                 None,
             );
@@ -302,7 +282,10 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
         return GeneratingAction::FinalAnswer { thread, text };
     }
 
-    // The model proposed tool calls — build one `Effect::CallTool` per call.
+    // Tool calls proposed: register them as pending and return their effects.
+    ls.pending = tool_calls.iter().map(|tc| tc.call_id).collect();
+    ls.store(ctx);
+
     let tool_effects: Vec<Effect> = tool_calls
         .iter()
         .map(|tc| Effect::CallTool {
@@ -317,5 +300,279 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
         thread,
         tool_effects,
         calls: tool_calls,
+    }
+}
+
+// ─── Shared in-state tool-loop helper ─────────────────────────────────────────
+
+/// Handle a tool-related event while the phase is running its tool loop.
+///
+/// Returns `Some(reaction)` when the event was handled as a tool/approval
+/// event; returns `None` for all other events so the phase's own arms can
+/// handle decision-level approvals (advancing to the next phase).
+///
+/// `make_turn` is a closure that builds the continuation `CallLlm` effect.
+/// SDLC phases pass a closure that includes the decision schema; the reactive
+/// agent passes a plain `continuation_turn`.
+pub fn handle_tool_event<S>(
+    ctx: &mut Context,
+    make_turn: impl Fn(&LoopState) -> Effect,
+    event: &Event,
+) -> Option<Reaction<S>> {
+    match event {
+        // ── Tool results: drain pending, emit continuation when all done ──────
+        Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
+            let mut ls = LoopState::load(ctx);
+            ls.pending.remove(call_id);
+            if ls.is_idle() {
+                let cont = make_turn(&ls);
+                ls.store(ctx);
+                Some(Reaction::effects(vec![cont]))
+            } else {
+                ls.store(ctx);
+                Some(Reaction::handled())
+            }
+        }
+
+        // ── Tool approval required: request human consent, stay in phase ──────
+        Event::ToolApprovalRequired {
+            call_id,
+            capability,
+            description,
+        } => {
+            let mut ls = LoopState::load(ctx);
+            // Remove from pending — it won't produce a ToolSucceeded.
+            ls.pending.remove(call_id);
+            let approval_id = ApprovalId::new();
+            ls.awaiting_tool_approval = Some(approval_id);
+            ctx.set_pending_approval(PendingApproval {
+                approval_id,
+                capability: *capability,
+                description: description.clone(),
+            });
+            ls.store(ctx);
+            Some(Reaction::effects(vec![Effect::RequestHumanApproval {
+                approval_id,
+                capability: *capability,
+                description: description.clone(),
+            }]))
+        }
+
+        // ── Approval resolved: grant / no-grant, resume loop if idle ─────────
+        Event::HumanApproved { approval_id } => {
+            let mut ls = LoopState::load(ctx);
+            if ls.awaiting_tool_approval == Some(*approval_id) {
+                // Grant the capability so the continuation turn can use it.
+                ctx.approve(*approval_id);
+                ls.awaiting_tool_approval = None;
+                if ls.is_idle() {
+                    let cont = make_turn(&ls);
+                    ls.store(ctx);
+                    Some(Reaction::effects(vec![cont]))
+                } else {
+                    ls.store(ctx);
+                    Some(Reaction::handled())
+                }
+            } else {
+                // Decision-level approval (not tool-level) — let phase handle it.
+                None
+            }
+        }
+
+        Event::HumanRejected { approval_id } => {
+            let mut ls = LoopState::load(ctx);
+            if ls.awaiting_tool_approval == Some(*approval_id) {
+                ls.awaiting_tool_approval = None;
+                // Rejected tool: resume loop (LLM sees the failure result).
+                if ls.is_idle() {
+                    let cont = make_turn(&ls);
+                    ls.store(ctx);
+                    Some(Reaction::effects(vec![cont]))
+                } else {
+                    ls.store(ctx);
+                    Some(Reaction::handled())
+                }
+            } else {
+                // Decision-level rejection — let phase handle it.
+                None
+            }
+        }
+
+        _ => None,
+    }
+}
+
+// ─── Backward-compat helpers (thin wrappers) ──────────────────────────────────
+// Kept so callers that have not yet been migrated compile without changes.
+
+/// Read `all_tools_mode` from context.
+pub fn all_tools_mode(ctx: &Context) -> String {
+    LoopState::load(ctx).all_tools_mode
+}
+
+/// `true` when the pending call set is empty and no approval is in flight.
+pub fn all_tools_done(ctx: &Context) -> bool {
+    LoopState::load(ctx).is_idle()
+}
+
+/// Read the current round counter.
+pub fn current_round(ctx: &Context) -> u64 {
+    LoopState::load(ctx).round as u64
+}
+
+/// Read the configured maximum round limit.
+pub fn max_rounds(ctx: &Context) -> u64 {
+    LoopState::load(ctx).max_rounds as u64
+}
+
+/// Read the current thread id.
+pub fn current_thread(ctx: &Context) -> String {
+    LoopState::load(ctx).thread
+}
+
+/// Read the configured tool names.
+pub fn current_tools(ctx: &Context) -> Vec<String> {
+    LoopState::load(ctx).tools
+}
+
+/// Register a batch of pending call IDs (compat; `on_llm_turn_complete` now
+/// does this automatically).
+pub fn mark_calls_pending(ctx: &mut Context, calls: &[ProposedToolCall]) {
+    let mut ls = LoopState::load(ctx);
+    ls.pending = calls.iter().map(|c| c.call_id).collect();
+    ls.store(ctx);
+}
+
+/// Remove a completed call.  Returns `true` when the pending set is empty.
+pub fn on_tool_result(ctx: &mut Context, call_id: &ToolCallId) -> bool {
+    let mut ls = LoopState::load(ctx);
+    ls.pending.remove(call_id);
+    let done = ls.is_idle();
+    ls.store(ctx);
+    done
+}
+
+/// Increment the round counter and return the new value.
+pub fn increment_round(ctx: &mut Context) -> u64 {
+    let mut ls = LoopState::load(ctx);
+    ls.round += 1;
+    let r = ls.round;
+    ls.store(ctx);
+    r as u64
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_hsm::{context::Context, permissions::ToolCapability};
+
+    fn make_ctx() -> Context {
+        Context::new()
+    }
+
+    #[test]
+    fn loop_state_round_trips() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &["read_file".to_string()], "agent", 16);
+        let ls = LoopState::load(&ctx);
+        assert_eq!(ls.thread, "chat");
+        assert_eq!(ls.max_rounds, 16);
+        assert!(ls.pending.is_empty());
+        assert!(ls.is_idle());
+    }
+
+    #[test]
+    fn on_llm_turn_complete_increments_round() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let call_id = ToolCallId::new();
+        let event = Event::LlmTurnComplete {
+            thread: "chat".to_string(),
+            text: String::new(),
+            tool_calls: vec![sven_hsm::ProposedToolCall {
+                call_id,
+                name: "read_file".to_string(),
+                args: serde_json::json!({}),
+                capability: ToolCapability::ReadFile,
+            }],
+        };
+        let action = on_llm_turn_complete(&mut ctx, &event);
+        assert!(matches!(action, GeneratingAction::CallTools { .. }));
+        let ls = LoopState::load(&ctx);
+        assert_eq!(ls.round, 1);
+        assert!(ls.pending.contains(&call_id));
+    }
+
+    #[test]
+    fn handle_tool_event_drains_pending_and_continues() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let call_id = ToolCallId::new();
+        // Simulate pending call registered
+        {
+            let mut ls = LoopState::load(&ctx);
+            ls.pending.insert(call_id);
+            ls.store(&mut ctx);
+        }
+        let event = Event::ToolSucceeded {
+            call_id,
+            observation: serde_json::json!("ok"),
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &event);
+        assert!(reaction.is_some());
+        let ls = LoopState::load(&ctx);
+        assert!(ls.pending.is_empty());
+    }
+
+    #[test]
+    fn handle_tool_event_returns_none_for_unrelated_events() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        let event = Event::UserMessage { text: "hi".into() };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &event);
+        assert!(reaction.is_none());
+    }
+
+    #[test]
+    fn handle_tool_event_approval_roundtrip() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        let call_id = ToolCallId::new();
+        // ToolApprovalRequired sets awaiting_tool_approval
+        let approval_event = Event::ToolApprovalRequired {
+            call_id,
+            capability: ToolCapability::ExecuteShell,
+            description: "run tests".into(),
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &approval_event);
+        assert!(reaction.is_some());
+        let ls = LoopState::load(&ctx);
+        let approval_id = ls.awaiting_tool_approval.expect("should be set");
+
+        // HumanApproved with matching id → clears awaiting and emits continuation
+        let approved = Event::HumanApproved { approval_id };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &approved);
+        assert!(reaction.is_some());
+        let ls2 = LoopState::load(&ctx);
+        assert!(ls2.awaiting_tool_approval.is_none());
+    }
+
+    #[test]
+    fn human_approved_without_tool_approval_returns_none() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "", 16);
+        // No awaiting_tool_approval set — this is a decision-level event
+        let event = Event::HumanApproved {
+            approval_id: ApprovalId::new(),
+        };
+        let reaction: Option<Reaction<u8>> =
+            handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &event);
+        assert!(reaction.is_none());
     }
 }
