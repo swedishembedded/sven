@@ -422,3 +422,96 @@ fn user_cancel_goes_to_cancelled() {
     assert_eq!(hsm.state(), SdlcState::Cancelled);
     assert!(hsm.is_done());
 }
+
+// ── Permission regression: Execution allows WriteFile / ExecuteShell ──────────
+//
+// This is the authoritative guard for the permission bug that was introduced
+// when tool loops ran through the now-deleted shared `RunningTools` state.
+// In that model, `CallTool` effects were gated against `RunningTools` (which
+// only allowed `ReadFile`) instead of the originating phase state.  Now that
+// each phase owns its tool loop the `classify` function sees `Execution`, and
+// the policy below must return `Allowed` for `WriteFile` and `ExecuteShell`.
+
+#[test]
+fn execution_policy_allows_write_file_and_needs_approval_for_execute_shell() {
+    use sven_hsm::permissions::{classify, EffectDisposition, ToolCapability};
+
+    let policy = SdlcMachine::permission_policy();
+    let ctx = Context::new();
+
+    // WriteFile is the critical regression: before the in-state tool loop fix,
+    // CallTool effects were gated against the deleted shared `RunningTools` state
+    // which only allowed ReadFile. WriteFile was therefore Forbidden. Now it must
+    // be Allowed because the gate sees Execution (which grants WriteFile).
+    let write_effect = Effect::CallTool {
+        call_id: sven_hsm::ids::ToolCallId::new(),
+        name: "write_file".into(),
+        args: serde_json::json!({}),
+        capability: ToolCapability::WriteFile,
+    };
+    assert!(
+        matches!(
+            classify(&policy, &SdlcState::Execution, &ctx, &write_effect),
+            EffectDisposition::Allowed
+        ),
+        "WriteFile must be Allowed in Execution state (regression guard for RunningTools bug)"
+    );
+
+    // ExecuteShell is inherently dangerous so it returns NeedsApproval (not
+    // Forbidden). This verifies that Execution has the capability in its allow-set
+    // (a Forbidden result would mean the capability is not granted at all).
+    let shell_effect = Effect::CallTool {
+        call_id: sven_hsm::ids::ToolCallId::new(),
+        name: "run_command".into(),
+        args: serde_json::json!({}),
+        capability: ToolCapability::ExecuteShell,
+    };
+    assert!(
+        matches!(
+            classify(&policy, &SdlcState::Execution, &ctx, &shell_effect),
+            EffectDisposition::NeedsApproval(_)
+        ),
+        "ExecuteShell must be NeedsApproval (not Forbidden) in Execution — policy grants it but \
+         requires human consent because it is inherently dangerous"
+    );
+}
+
+#[test]
+fn running_tools_state_removed_write_file_was_forbidden_there() {
+    // Regression: verify that ReadFile is allowed globally (in any state),
+    // while WriteFile is NOT allowed in Discovery (read-only phase).
+    use sven_hsm::permissions::{classify, EffectDisposition, ToolCapability};
+
+    let policy = SdlcMachine::permission_policy();
+    let ctx = Context::new();
+
+    let read_effect = Effect::CallTool {
+        call_id: sven_hsm::ids::ToolCallId::new(),
+        name: "read_file".into(),
+        args: serde_json::json!({}),
+        capability: ToolCapability::ReadFile,
+    };
+    let write_effect = Effect::CallTool {
+        call_id: sven_hsm::ids::ToolCallId::new(),
+        name: "write_file".into(),
+        args: serde_json::json!({}),
+        capability: ToolCapability::WriteFile,
+    };
+
+    // ReadFile allowed in all phases (global).
+    assert!(
+        matches!(
+            classify(&policy, &SdlcState::Discovery, &ctx, &read_effect),
+            EffectDisposition::Allowed
+        ),
+        "ReadFile must be globally allowed"
+    );
+    // WriteFile must NOT be allowed in Discovery (read-only phase).
+    assert!(
+        matches!(
+            classify(&policy, &SdlcState::Discovery, &ctx, &write_effect),
+            EffectDisposition::Forbidden(_)
+        ),
+        "WriteFile must be Forbidden in Discovery"
+    );
+}

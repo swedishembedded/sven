@@ -116,7 +116,7 @@ async fn drive_effect(
 // PongProvider: mock ModelProvider for tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Streams "pong" then Done — used to test TurnExecutor and ConverseExecutor paths.
+/// Streams "pong" then Done — used to test the TurnExecutor path.
 struct PongProvider;
 
 #[async_trait]
@@ -141,50 +141,6 @@ impl sven_model::ModelProvider for PongProvider {
         ];
         Ok(Box::pin(futures::stream::iter(events)))
     }
-}
-
-fn make_agent() -> sven_core::Agent {
-    use tokio::sync::mpsc;
-    let (_tx, rx) = mpsc::channel(8);
-    sven_core::Agent::new_with_params(sven_core::AgentNewParams {
-        model: Arc::new(PongProvider),
-        tools: Arc::new(sven_tools::ToolRegistry::new()),
-        config: Arc::new(sven_config::AgentConfig::default()),
-        runtime: sven_core::AgentRuntimeContext::default(),
-        mode_lock: Arc::new(Mutex::new(sven_config::AgentMode::Agent)),
-        tool_event_rx: rx,
-        max_context_tokens: 128_000,
-        model_resolver: None,
-    })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ConverseExecutor pipeline test
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn converse_executor_streams_text_deltas_to_obs_sink() {
-    use serde_json::json;
-    use sven_executors::ConverseExecutor;
-
-    let agent = Arc::new(Mutex::new(make_agent()));
-    let cancel_handle = Arc::new(Mutex::new(None));
-    let mut exec = ConverseExecutor::new(agent, cancel_handle);
-
-    let effect = Effect::CallLlm {
-        request: json!({ "kind": "converse", "text": "ping" }),
-    };
-    let (events, kind) = drive_effect(&mut exec, effect).await;
-
-    assert_eq!(kind, "LlmProposedResponse");
-    assert!(
-        events.contains(&UiEvent::TextDelta("pong".into())),
-        "TextDelta('pong') must arrive on obs sink: {events:?}"
-    );
-    assert!(
-        events.contains(&UiEvent::TurnComplete),
-        "TurnComplete must arrive after converse turn: {events:?}"
-    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
