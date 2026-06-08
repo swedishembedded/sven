@@ -9,32 +9,30 @@
 //! state-scoped tool subset and a structured decision schema.  The
 //! [`TurnExecutor`](sven_executors) streams a single response; if the model
 //! proposes tool calls they are dispatched as `Effect::CallTool` effects
-//! (kernel-gated, concurrent) and the machine re-prompts after all results
-//! arrive.  Once the model produces a final tool-free response, its text is
-//! parsed as the JSON decision ([`decisions`]) whose `status` the machine maps
-//! to a transition.
+//! (kernel-gated, concurrent) and the machine **stays in the current phase state**
+//! (`Reaction::Handled`) while tools execute.  Once the model produces a
+//! tool-free response, its text is parsed as a JSON decision ([`decisions`])
+//! whose `status` the machine maps to a transition.
 //!
 //! ```text
 //! Top
-//! ├── Idle          ← waits for the first UserMessage (the "hi" guard)
+//! ├── Idle          ← waits for the first UserMessage
 //! ├── Intake        ← classify intent; chat/clarify or confirm scope
 //! ├── Discovery     ← explore repo (read-only tools)
 //! ├── Planning      ← produce + approve a plan
-//! ├── Execution     ← implement (write/build tools)
+//! ├── Execution     ← implement (write/build tools); fan-out to child tasks
 //! ├── Verification  ← independent build/test verification
 //! ├── Delivery      ← summarise + final sign-off
 //! ├── Recovery      ← diagnose failures and retry/escalate
-//! ├── RunningTools  ← parallel tool calls dispatched (shared across phases)
-//! ├── AwaitingApproval ← tool-level approval gate (shared across phases)
-//! ├── Done / Failed / Cancelled  ← terminal
+//! └── Done / Failed / Cancelled  ── terminal
 //! ```
 //!
-//! # Re-entry guard
-//!
-//! When `RunningTools` finishes and transitions back to a phase state, the
-//! Entry action is suppressed via the `sdlc_in_continuation` context flag so
-//! the initial instruction is not repeated.  The continuation turn effect is
-//! emitted by `RunningTools` as part of the transition.
+//! Each phase **owns its tool loop** via in-state handling: `LlmTurnComplete`
+//! fires `CallTool` effects and returns `Reaction::Handled`; `ToolSucceeded` /
+//! `ToolFailed` drain the pending set and emit a continuation turn when all are
+//! done, again returning `Reaction::Handled`.  This means `CallTool` effects are
+//! always permission-gated against the *real* phase (e.g. `Execution`), fixing
+//! the latent bug where gating happened against the removed `RunningTools` state.
 
 pub mod decisions;
 pub mod prompts;
@@ -57,14 +55,18 @@ use decisions::{
 };
 
 use super::loop_core::{
-    all_tools_done, build_turn_effect, current_thread, current_tools, init_loop, mark_calls_pending,
-    max_rounds, on_llm_turn_complete, on_tool_result, GeneratingAction,
+    handle_tool_event, init_loop, on_llm_turn_complete, GeneratingAction, LoopState,
 };
 
 /// Maximum number of recovery attempts before giving up.
 const MAX_RECOVERY: u32 = 3;
 
+// ─── State enum ───────────────────────────────────────────────────────────────
+
 /// States of the kernel-native SDLC machine.
+///
+/// Each phase state owns its tool loop — there are no shared `RunningTools` or
+/// `AwaitingApproval` states.
 #[allow(missing_docs)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SdlcState {
@@ -77,14 +79,114 @@ pub enum SdlcState {
     Verification,
     Delivery,
     Recovery,
-    /// Tool calls dispatched for the current phase; shared across all phases.
-    RunningTools,
-    /// Tool-level approval gate; shared across all phases.
-    AwaitingApproval,
     Done,
     Failed,
     Cancelled,
 }
+
+// ─── PhaseSpec table ──────────────────────────────────────────────────────────
+
+/// What happens at the decision level when the developer rejects the phase.
+#[derive(Clone, Copy)]
+enum OnReject {
+    /// Transition to Recovery.
+    ToRecovery(&'static str),
+    /// Emit a revision follow-up turn (LLM revises and continues in this phase).
+    Revise(&'static str),
+}
+
+/// Declarative per-phase configuration used by the generic dispatcher.
+struct PhaseSpec {
+    /// The conversation thread id for this phase.
+    thread: &'static str,
+    /// Tool names available in this phase.
+    tools: &'static [&'static str],
+    /// Maximum tool-call rounds before a wrap-up nudge.
+    max_rounds: u32,
+    /// Context fact key holding the input summary passed to the prompt fn.
+    input_key: &'static str,
+    /// Build the initial instruction for this phase.
+    prompt_fn: fn(&str) -> Value,
+    /// Context fact key under which to store the phase result.
+    result_key: &'static str,
+    /// Where to advance on `proceed` or decision-level `HumanApproved`.
+    proceed_to: SdlcState,
+    /// Name of this phase for recovery messages.
+    phase_name: &'static str,
+    /// What to do when the developer rejects at decision level.
+    on_reject: OnReject,
+}
+
+/// Look up the [`PhaseSpec`] for a standard phase state.
+///
+/// Returns `None` for `Execution` (custom fan-out) and `Recovery` (custom).
+fn phase_spec(state: SdlcState) -> Option<&'static PhaseSpec> {
+    use SdlcState::*;
+    match state {
+        Intake => Some(&PhaseSpec {
+            thread: "intake",
+            tools: prompts::READ_TOOLS,
+            max_rounds: 6,
+            input_key: "user_request",
+            prompt_fn: |s| prompts::intake_request(s),
+            result_key: "scope",
+            proceed_to: Discovery,
+            phase_name: "intake",
+            on_reject: OnReject::Revise(
+                "The developer did NOT approve. Revise your approach and continue.",
+            ),
+        }),
+        Discovery => Some(&PhaseSpec {
+            thread: "discovery",
+            tools: prompts::READ_TOOLS,
+            max_rounds: 20,
+            input_key: "scope_summary",
+            prompt_fn: |s| prompts::discovery_request(s),
+            result_key: "discovery",
+            proceed_to: Planning,
+            phase_name: "discovery",
+            on_reject: OnReject::ToRecovery("discovery rejected"),
+        }),
+        Planning => Some(&PhaseSpec {
+            thread: "planning",
+            tools: prompts::READ_TOOLS,
+            max_rounds: 16,
+            input_key: "discovery_summary",
+            prompt_fn: |s| prompts::planning_request(s),
+            result_key: "plan",
+            proceed_to: Execution,
+            phase_name: "planning",
+            on_reject: OnReject::Revise(
+                "The developer did NOT approve the plan. Revise and continue.",
+            ),
+        }),
+        Verification => Some(&PhaseSpec {
+            thread: "verification",
+            tools: prompts::BUILD_TOOLS,
+            max_rounds: 20,
+            input_key: "execution_summary",
+            prompt_fn: |s| prompts::verification_request(s),
+            result_key: "verification",
+            proceed_to: Delivery,
+            phase_name: "verification",
+            on_reject: OnReject::ToRecovery("verification rejected"),
+        }),
+        Delivery => Some(&PhaseSpec {
+            thread: "delivery",
+            tools: prompts::READ_TOOLS,
+            max_rounds: 12,
+            input_key: "verification_summary",
+            prompt_fn: |s| prompts::delivery_request(s),
+            result_key: "delivery",
+            proceed_to: Done,
+            phase_name: "delivery",
+            on_reject: OnReject::Revise("Delivery not accepted. Revise and continue."),
+        }),
+        _ => None,
+    }
+}
+
+// ─── Machine ──────────────────────────────────────────────────────────────────
 
 /// The kernel-native SDLC machine.
 pub struct SdlcMachine {
@@ -106,6 +208,11 @@ impl SdlcMachine {
 
     /// Permission policy: reads everywhere; writes/shell during execution and
     /// verification.  The kernel gates capabilities per state.
+    ///
+    /// Because each phase now owns its tool loop (no more shared `RunningTools`),
+    /// `CallTool` effects are always gated against the *real* phase state,
+    /// so this policy works correctly — `WriteFile`/`ExecuteShell` in `Execution`
+    /// are `Allowed`, not `Forbidden`.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
         use SdlcState::{Delivery, Discovery, Execution, Planning, Verification};
@@ -155,7 +262,7 @@ fn request_approval(ctx: &mut Context, decision: &Value) -> Effect {
     }
 }
 
-/// Read a fact as a string, defaulting to `(none)`.
+/// Read a context fact as a string, defaulting to `"(none)"`.
 fn fact_str(ctx: &Context, key: &str) -> String {
     ctx.facts
         .get(key)
@@ -222,7 +329,11 @@ fn should_fan_out(ctx: &Context, tasks: &[String]) -> bool {
 }
 
 /// Transition into Recovery, recording where the failure happened.
-fn to_recovery(ctx: &mut Context, failed_phase: SdlcState, context_note: &str) -> Reaction<SdlcState> {
+fn to_recovery(
+    ctx: &mut Context,
+    failed_phase: SdlcState,
+    context_note: &str,
+) -> Reaction<SdlcState> {
     ctx.set_fact("failed_phase", json!(format!("{failed_phase:?}")));
     ctx.set_fact("failure_context", json!(context_note));
     Reaction::goto(SdlcState::Recovery)
@@ -233,7 +344,6 @@ fn to_recovery(ctx: &mut Context, failed_phase: SdlcState, context_note: &str) -
 pub(super) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
     let stripped = sven_llm::strip_code_fences(raw);
     serde_json::from_str::<Value>(stripped).ok().or_else(|| {
-        // Fall back to first balanced { } object.
         let start = stripped.find('{')?;
         let bytes = stripped.as_bytes();
         let mut depth = 0i32;
@@ -241,7 +351,13 @@ pub(super) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
         let mut escaped = false;
         for (i, &b) in bytes.iter().enumerate().skip(start) {
             if in_str {
-                if escaped { escaped = false; } else if b == b'\\' { escaped = true; } else if b == b'"' { in_str = false; }
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_str = false;
+                }
                 continue;
             }
             match b {
@@ -260,56 +376,21 @@ pub(super) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
     })
 }
 
-/// Build a continuation turn for the current phase (after tool results arrive).
-fn sdlc_continuation_turn(ctx: &Context) -> Effect {
-    build_turn_effect(
-        &current_thread(ctx),
-        &current_tools(ctx),
-        "",
-        None,
-        None,
-        None,
-        max_rounds(ctx) as u32,
-        Some(decision_schema()),
-        Some("decision"),
-    )
+/// Build a continuation turn for a phase with the decision schema.
+fn phase_continuation_turn(ls: &LoopState) -> Effect {
+    ls.continuation_turn_with_schema(decision_schema(), "decision")
 }
 
-/// Read the current SDLC phase state from context.
-fn current_sdlc_phase_state(ctx: &Context) -> SdlcState {
-    ctx.fact("sdlc_current_phase")
-        .and_then(Value::as_str)
-        .and_then(state_from_str)
-        .unwrap_or(SdlcState::Intake)
-}
-
-/// Initialise loop_core for a phase entry.
+/// Initialise `LoopState` for a phase entry.
 fn phase_init_loop(ctx: &mut Context, thread: &str, tools: &[&str], max_tool_rounds: u32) {
     let tools_owned: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
     init_loop(ctx, thread, &tools_owned, "", max_tool_rounds);
 }
 
-/// Build the initial turn effect for a phase.
-#[allow(dead_code)]
-fn phase_initial_turn(thread: &str, tools: &[&str], instruction: &str, max_tool_rounds: u32) -> Effect {
-    let tools_owned: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
-    build_turn_effect(
-        thread,
-        &tools_owned,
-        "",
-        None,
-        Some(instruction),
-        None,
-        max_tool_rounds,
-        Some(decision_schema()),
-        Some("decision"),
-    )
-}
-
 /// Build a follow-up turn on a phase thread (after a developer message or revision).
 fn phase_followup_turn(thread: &str, tools: &[&str], instruction: &str, max_tool_rounds: u32) -> Effect {
     let tools_owned: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
-    build_turn_effect(
+    super::loop_core::build_turn_effect(
         thread,
         &tools_owned,
         "",
@@ -322,258 +403,120 @@ fn phase_followup_turn(thread: &str, tools: &[&str], instruction: &str, max_tool
     )
 }
 
-/// `true` if `Entry` should be suppressed because we are re-entering from `RunningTools`.
-fn is_continuation(ctx: &mut Context) -> bool {
-    if ctx.facts.get("sdlc_in_continuation").and_then(Value::as_bool).unwrap_or(false) {
-        ctx.facts.remove("sdlc_in_continuation");
-        true
-    } else {
-        false
-    }
-}
+// ── Generic phase dispatcher ───────────────────────────────────────────────────
 
-// ── Per-phase LlmTurnComplete handlers ────────────────────────────────────────
-
-/// Dispatch the result of an `on_llm_turn_complete` call for the Intake phase.
-fn intake_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
+/// Handle a `GeneratingAction` uniformly for any standard phase.
+fn handle_phase_action(
+    ctx: &mut Context,
+    state: SdlcState,
+    spec: &PhaseSpec,
+    action: GeneratingAction,
+) -> Reaction<SdlcState> {
     match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "scope", &decision);
-                        Reaction::goto(Discovery)
-                    }
-                    DecisionStatus::NeedApproval => {
-                        store_phase_result(ctx, "scope", &decision);
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Intake, "intake failed"),
-                },
-                None => to_recovery(ctx, Intake, "intake: failed to parse decision"),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Intake"));
-            Reaction::transition(RunningTools, tool_effects, "intake: dispatching tool calls")
-        }
+        GeneratingAction::FinalAnswer { text, .. } => match parse_sdlc_decision(&text) {
+            Some(decision) => match status_of(&decision) {
+                DecisionStatus::Proceed => {
+                    store_phase_result(ctx, spec.result_key, &decision);
+                    Reaction::goto(spec.proceed_to)
+                }
+                DecisionStatus::NeedApproval => {
+                    store_phase_result(ctx, spec.result_key, &decision);
+                    Reaction::effects(vec![request_approval(ctx, &decision)])
+                }
+                DecisionStatus::NeedUserInput => {
+                    Reaction::effects(vec![ask_user_effect(&decision)])
+                }
+                DecisionStatus::NeedTools => {
+                    let ls = LoopState::load(ctx);
+                    Reaction::effects(vec![phase_continuation_turn(&ls)])
+                }
+                DecisionStatus::Failed => {
+                    to_recovery(ctx, state, &format!("{} failed", spec.phase_name))
+                }
+            },
+            None => to_recovery(
+                ctx,
+                state,
+                &format!("{}: failed to parse decision", spec.phase_name),
+            ),
+        },
+        // Tool calls: emit effects and **stay** in this phase.
+        GeneratingAction::CallTools { tool_effects, .. } => Reaction::effects(tool_effects),
         GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
+        GeneratingAction::MaxRoundsReached { wrapup_effect } => {
+            Reaction::effects(vec![wrapup_effect])
+        }
     }
 }
 
-fn discovery_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "discovery", &decision);
-                        Reaction::goto(Planning)
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedApproval => {
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Discovery, "discovery failed"),
-                },
-                None => to_recovery(ctx, Discovery, "discovery: failed to parse decision"),
+/// Dispatch all events for a standard (non-Execution, non-Recovery) phase.
+fn dispatch_phase(
+    state: SdlcState,
+    spec: &PhaseSpec,
+    event: &Event,
+    ctx: &mut Context,
+) -> Reaction<SdlcState> {
+    // ── 1. Try the shared tool-loop helper first ─────────────────────────────
+    // Returns Some for ToolSucceeded/ToolFailed/ToolApprovalRequired and for
+    // HumanApproved/HumanRejected when `awaiting_tool_approval` is set.
+    if let Some(r) = handle_tool_event(ctx, phase_continuation_turn, event) {
+        return r;
+    }
+
+    // ── 2. Phase-specific events ─────────────────────────────────────────────
+    match event {
+        Event::Internal(InternalEvent::Entry) => {
+            phase_init_loop(ctx, spec.thread, spec.tools, spec.max_rounds);
+            let input = fact_str(ctx, spec.input_key);
+            let req = (spec.prompt_fn)(&input);
+            Reaction::effects(vec![Effect::CallLlm { request: req }])
+        }
+
+        Event::LlmTurnComplete { .. } => {
+            let action = on_llm_turn_complete(ctx, event);
+            handle_phase_action(ctx, state, spec, action)
+        }
+
+        Event::UserMessage { text } => {
+            let instruction = format!(
+                "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
+                prompts::ANSWER_CONTRACT
+            );
+            Reaction::effects(vec![phase_followup_turn(
+                spec.thread,
+                spec.tools,
+                &instruction,
+                spec.max_rounds,
+            )])
+        }
+
+        // Decision-level approval (not tool-level — those were caught above).
+        // The phase result was already stored when `NeedApproval` was returned.
+        Event::HumanApproved { approval_id } => {
+            ctx.approve(*approval_id);
+            Reaction::goto(spec.proceed_to)
+        }
+
+        Event::HumanRejected { .. } => match spec.on_reject {
+            OnReject::ToRecovery(msg) => to_recovery(ctx, state, msg),
+            OnReject::Revise(msg) => {
+                let instruction = format!("{msg} {}", prompts::ANSWER_CONTRACT);
+                Reaction::effects(vec![phase_followup_turn(
+                    spec.thread,
+                    spec.tools,
+                    &instruction,
+                    spec.max_rounds,
+                )])
             }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Discovery"));
-            Reaction::transition(RunningTools, tool_effects, "discovery: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
+        },
+
+        Event::LlmFailed { error } => to_recovery(ctx, state, error),
+
+        _ => Reaction::Super(SdlcState::Top),
     }
 }
 
-fn planning_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "plan", &decision);
-                        Reaction::goto(Execution)
-                    }
-                    DecisionStatus::NeedApproval => {
-                        store_phase_result(ctx, "plan", &decision);
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Planning, "planning failed"),
-                },
-                None => to_recovery(ctx, Planning, "planning: failed to parse decision"),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Planning"));
-            Reaction::transition(RunningTools, tool_effects, "planning: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
-    }
-}
-
-fn execution_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "execution", &decision);
-                        Reaction::goto(Verification)
-                    }
-                    DecisionStatus::NeedApproval => {
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Execution, "execution failed"),
-                },
-                None => to_recovery(ctx, Execution, "execution: failed to parse decision"),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Execution"));
-            Reaction::transition(RunningTools, tool_effects, "execution: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
-    }
-}
-
-fn verification_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "verification", &decision);
-                        Reaction::goto(Delivery)
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedApproval => {
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Verification, "verification failed"),
-                },
-                None => to_recovery(ctx, Verification, "verification: failed to parse decision"),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Verification"));
-            Reaction::transition(RunningTools, tool_effects, "verification: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
-    }
-}
-
-fn delivery_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        store_phase_result(ctx, "delivery", &decision);
-                        Reaction::goto(Done)
-                    }
-                    DecisionStatus::NeedApproval => {
-                        store_phase_result(ctx, "delivery", &decision);
-                        Reaction::effects(vec![request_approval(ctx, &decision)])
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    DecisionStatus::NeedTools => {
-                        Reaction::effects(vec![sdlc_continuation_turn(ctx)])
-                    }
-                    DecisionStatus::Failed => to_recovery(ctx, Delivery, "delivery failed"),
-                },
-                None => to_recovery(ctx, Delivery, "delivery: failed to parse decision"),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Delivery"));
-            Reaction::transition(RunningTools, tool_effects, "delivery: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { wrapup_effect } => Reaction::effects(vec![wrapup_effect]),
-    }
-}
-
-fn recovery_handle_action(ctx: &mut Context, action: GeneratingAction) -> Reaction<SdlcState> {
-    use SdlcState::*;
-    match action {
-        GeneratingAction::FinalAnswer { text, .. } => {
-            match parse_sdlc_decision(&text) {
-                Some(decision) => match status_of(&decision) {
-                    DecisionStatus::Proceed => {
-                        let target = ctx
-                            .facts
-                            .get("failed_phase")
-                            .and_then(Value::as_str)
-                            .and_then(state_from_str)
-                            .unwrap_or(Intake);
-                        Reaction::goto(target)
-                    }
-                    DecisionStatus::NeedUserInput => {
-                        Reaction::effects(vec![ask_user_effect(&decision)])
-                    }
-                    _ => Reaction::goto(Failed),
-                },
-                None => Reaction::goto(Failed),
-            }
-        }
-        GeneratingAction::CallTools { calls, tool_effects, .. } => {
-            mark_calls_pending(ctx, &calls);
-            ctx.set_fact("sdlc_current_phase", json!("Recovery"));
-            Reaction::transition(RunningTools, tool_effects, "recovery: dispatching tool calls")
-        }
-        GeneratingAction::EmptyTurn { nudge_effect } => Reaction::effects(vec![nudge_effect]),
-        GeneratingAction::MaxRoundsReached { .. } => Reaction::goto(SdlcState::Failed),
-    }
-}
+// ─── Machine impl ─────────────────────────────────────────────────────────────
 
 impl Machine for SdlcMachine {
     type State = SdlcState;
@@ -595,7 +538,10 @@ impl Machine for SdlcMachine {
     }
 
     fn is_terminal(&self, state: SdlcState) -> bool {
-        matches!(state, SdlcState::Done | SdlcState::Failed | SdlcState::Cancelled)
+        matches!(
+            state,
+            SdlcState::Done | SdlcState::Failed | SdlcState::Cancelled
+        )
     }
 
     #[allow(clippy::too_many_lines)]
@@ -607,14 +553,19 @@ impl Machine for SdlcMachine {
     ) -> Reaction<SdlcState> {
         use SdlcState::*;
 
+        // Standard phases are fully table-driven.
+        if let Some(spec) = phase_spec(state) {
+            return dispatch_phase(state, spec, event, ctx);
+        }
+
         match state {
-            // ── Root ──────────────────────────────────────────────────────
+            // ── Root ──────────────────────────────────────────────────────────
             Top => match event {
                 Event::UserCancelled => Reaction::goto(Cancelled),
                 _ => Reaction::Ignored,
             },
 
-            // ── Idle: the "hi" guard ───────────────────────────────────────
+            // ── Idle ──────────────────────────────────────────────────────────
             Idle => match event {
                 Event::UserMessage { text } => {
                     ctx.set_fact("user_request", json!(text));
@@ -623,341 +574,221 @@ impl Machine for SdlcMachine {
                 _ => Reaction::Super(Top),
             },
 
-            // ── Intake ──────────────────────────────────────────────────────
-            Intake => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    phase_init_loop(ctx, "intake", prompts::READ_TOOLS, 6);
-                    let req = prompts::intake_request(&fact_str(ctx, "user_request"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
+            // ── Execution ─────────────────────────────────────────────────────
+            // Custom: fan-out + parallel child task tracking + in-state tool loop.
+            Execution => {
+                // Tool-loop events handled in-state (fixes WriteFile permission bug).
+                if let Some(r) = handle_tool_event(ctx, phase_continuation_turn, event) {
+                    return r;
                 }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); intake_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("intake", prompts::READ_TOOLS, &instruction, 6)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    Reaction::goto(Discovery)
-                }
-                Event::HumanRejected { .. } => {
-                    let instruction = format!(
-                        "The developer did NOT approve. Revise your approach and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("intake", prompts::READ_TOOLS, &instruction, 6)])
-                }
-                Event::LlmFailed { error } => to_recovery(ctx, Intake, error),
-                _ => Reaction::Super(Top),
-            },
 
-            // ── Discovery ───────────────────────────────────────────────────
-            Discovery => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    phase_init_loop(ctx, "discovery", prompts::READ_TOOLS, 20);
-                    let req = prompts::discovery_request(&fact_str(ctx, "scope_summary"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); discovery_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("discovery", prompts::READ_TOOLS, &instruction, 20)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    Reaction::goto(Planning)
-                }
-                Event::HumanRejected { .. } => to_recovery(ctx, Discovery, "discovery rejected"),
-                Event::LlmFailed { error } => to_recovery(ctx, Discovery, error),
-                _ => Reaction::Super(Top),
-            },
-
-            // ── Planning ────────────────────────────────────────────────────
-            Planning => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    phase_init_loop(ctx, "planning", prompts::READ_TOOLS, 16);
-                    let req = prompts::planning_request(&fact_str(ctx, "discovery_summary"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); planning_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("planning", prompts::READ_TOOLS, &instruction, 16)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    Reaction::goto(Execution)
-                }
-                Event::HumanRejected { .. } => {
-                    let instruction = format!(
-                        "The developer did NOT approve the plan. Revise and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("planning", prompts::READ_TOOLS, &instruction, 16)])
-                }
-                Event::LlmFailed { error } => to_recovery(ctx, Planning, error),
-                _ => Reaction::Super(Top),
-            },
-
-            // ── Execution ───────────────────────────────────────────────────
-            Execution => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    // Fan-out: if the approved plan decomposes into independent tasks
-                    // (and a child spawner is wired), instantiate one per task.
-                    let plan_payload =
-                        ctx.facts.get("plan_payload").cloned().unwrap_or(Value::Null);
-                    let tasks = tasks_of(&plan_payload);
-                    if should_fan_out(ctx, &tasks) {
-                        ctx.set_fact("exec_remaining", json!(tasks.len() as i64));
-                        ctx.set_fact("exec_results", json!([]));
-                        let effects: Vec<Effect> = tasks
-                            .iter()
-                            .enumerate()
-                            .map(|(i, task)| Effect::InstantiateSubmachine {
-                                machine: MachineId::new(),
-                                descriptor: json!({ "index": i, "task": task }),
-                            })
-                            .collect();
-                        return Reaction::effects(effects);
+                match event {
+                    Event::Internal(InternalEvent::Entry) => {
+                        let plan_payload =
+                            ctx.facts.get("plan_payload").cloned().unwrap_or(Value::Null);
+                        let tasks = tasks_of(&plan_payload);
+                        if should_fan_out(ctx, &tasks) {
+                            ctx.set_fact("exec_remaining", json!(tasks.len() as i64));
+                            ctx.set_fact("exec_results", json!([]));
+                            let effects: Vec<Effect> = tasks
+                                .iter()
+                                .enumerate()
+                                .map(|(i, task)| Effect::InstantiateSubmachine {
+                                    machine: MachineId::new(),
+                                    descriptor: json!({ "index": i, "task": task }),
+                                })
+                                .collect();
+                            return Reaction::effects(effects);
+                        }
+                        phase_init_loop(ctx, "execution", prompts::WRITE_TOOLS, 40);
+                        let req =
+                            prompts::execution_request(&fact_str(ctx, "plan_summary"));
+                        Reaction::effects(vec![Effect::CallLlm { request: req }])
                     }
-                    phase_init_loop(ctx, "execution", prompts::WRITE_TOOLS, 40);
-                    let req = prompts::execution_request(&fact_str(ctx, "plan_summary"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::Internal(InternalEvent::SubmachineCompleted { result, .. }) => {
-                    let mut results = ctx
-                        .facts
-                        .get("exec_results")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    results.push(result.clone());
-                    ctx.set_fact("exec_results", json!(results));
-                    let remaining = ctx
-                        .facts
-                        .get("exec_remaining")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(0)
-                        - 1;
-                    ctx.set_fact("exec_remaining", json!(remaining));
-                    if remaining > 0 {
-                        return Reaction::handled();
+
+                    Event::Internal(InternalEvent::SubmachineCompleted { result, .. }) => {
+                        let mut results = ctx
+                            .facts
+                            .get("exec_results")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        results.push(result.clone());
+                        ctx.set_fact("exec_results", json!(results));
+                        let remaining = ctx
+                            .facts
+                            .get("exec_remaining")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0)
+                            - 1;
+                        ctx.set_fact("exec_remaining", json!(remaining));
+                        if remaining > 0 {
+                            return Reaction::handled();
+                        }
+                        let merged = merge_child_results(&results);
+                        ctx.set_fact("execution_summary", json!(merged));
+                        phase_init_loop(ctx, "execution", prompts::WRITE_TOOLS, 40);
+                        let instruction = format!(
+                            "All parallel tasks have finished. Their results:\n{merged}\n\n\
+                             Integrate them, resolve any conflicts, and confirm the \
+                             implementation is complete. {}",
+                            prompts::ANSWER_CONTRACT
+                        );
+                        Reaction::effects(vec![phase_followup_turn(
+                            "execution",
+                            prompts::WRITE_TOOLS,
+                            &instruction,
+                            40,
+                        )])
                     }
-                    let merged = merge_child_results(&results);
-                    ctx.set_fact("execution_summary", json!(merged));
-                    phase_init_loop(ctx, "execution", prompts::WRITE_TOOLS, 40);
-                    let instruction = format!(
-                        "All parallel tasks have finished. Their results:\n{merged}\n\n\
-                         Integrate them, resolve any conflicts, and confirm the \
-                         implementation is complete. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("execution", prompts::WRITE_TOOLS, &instruction, 40)])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); execution_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("execution", prompts::WRITE_TOOLS, &instruction, 40)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    let instruction = format!("Approved. Continue implementing. {}", prompts::ANSWER_CONTRACT);
-                    Reaction::effects(vec![phase_followup_turn("execution", prompts::WRITE_TOOLS, &instruction, 40)])
-                }
-                Event::HumanRejected { .. } => to_recovery(ctx, Execution, "execution step rejected"),
-                Event::LlmFailed { error } => to_recovery(ctx, Execution, error),
-                _ => Reaction::Super(Top),
-            },
 
-            // ── Verification ────────────────────────────────────────────────
-            Verification => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    phase_init_loop(ctx, "verification", prompts::BUILD_TOOLS, 20);
-                    let req = prompts::verification_request(&fact_str(ctx, "execution_summary"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); verification_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("verification", prompts::BUILD_TOOLS, &instruction, 20)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    Reaction::goto(Delivery)
-                }
-                Event::HumanRejected { .. } => to_recovery(ctx, Verification, "verification rejected"),
-                Event::LlmFailed { error } => to_recovery(ctx, Verification, error),
-                _ => Reaction::Super(Top),
-            },
-
-            // ── Delivery ────────────────────────────────────────────────────
-            Delivery => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    phase_init_loop(ctx, "delivery", prompts::READ_TOOLS, 12);
-                    let req = prompts::delivery_request(&fact_str(ctx, "verification_summary"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); delivery_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("delivery", prompts::READ_TOOLS, &instruction, 12)])
-                }
-                Event::HumanApproved { approval_id } => {
-                    ctx.approve(*approval_id);
-                    Reaction::goto(Done)
-                }
-                Event::HumanRejected { .. } => {
-                    let instruction = format!(
-                        "Delivery not accepted. Revise and continue. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("delivery", prompts::READ_TOOLS, &instruction, 12)])
-                }
-                Event::LlmFailed { error } => to_recovery(ctx, Delivery, error),
-                _ => Reaction::Super(Top),
-            },
-
-            // ── Recovery ────────────────────────────────────────────────────
-            Recovery => match event {
-                Event::Internal(InternalEvent::Entry) => {
-                    if is_continuation(ctx) { return Reaction::handled(); }
-                    let attempts = ctx.bump_retry("recovery");
-                    if attempts > MAX_RECOVERY {
-                        return Reaction::goto(Failed);
+                    Event::LlmTurnComplete { .. } => {
+                        let action = on_llm_turn_complete(ctx, event);
+                        let spec = &PhaseSpec {
+                            thread: "execution",
+                            tools: prompts::WRITE_TOOLS,
+                            max_rounds: 40,
+                            input_key: "plan_summary",
+                            prompt_fn: |s| prompts::execution_request(s),
+                            result_key: "execution",
+                            proceed_to: Verification,
+                            phase_name: "execution",
+                            on_reject: OnReject::ToRecovery("execution step rejected"),
+                        };
+                        handle_phase_action(ctx, Execution, spec, action)
                     }
-                    phase_init_loop(ctx, "recovery", prompts::READ_TOOLS, 12);
-                    let req = prompts::recovery_request(&fact_str(ctx, "failure_context"));
-                    Reaction::effects(vec![Effect::CallLlm { request: req }])
-                }
-                Event::LlmTurnComplete { .. } => {
-                    { let a = on_llm_turn_complete(ctx, event); recovery_handle_action(ctx, a) }
-                }
-                Event::UserMessage { text } => {
-                    let instruction = format!(
-                        "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue diagnosing. {}",
-                        prompts::ANSWER_CONTRACT
-                    );
-                    Reaction::effects(vec![phase_followup_turn("recovery", prompts::READ_TOOLS, &instruction, 12)])
-                }
-                Event::LlmFailed { .. } => Reaction::goto(Failed),
-                _ => Reaction::Super(Top),
-            },
 
-            // ── RunningTools ─────────────────────────────────────────────────
-            RunningTools => match event {
-                Event::ToolSucceeded { call_id, .. } | Event::ToolFailed { call_id, .. } => {
-                    let all_done = on_tool_result(ctx, call_id);
-                    if all_done {
-                        let next_turn = sdlc_continuation_turn(ctx);
-                        let phase = current_sdlc_phase_state(ctx);
-                        ctx.set_fact("sdlc_in_continuation", json!(true));
-                        Reaction::transition(phase, vec![next_turn], "all tools done; resuming phase")
-                    } else {
-                        Reaction::handled()
+                    Event::UserMessage { text } => {
+                        let instruction = format!(
+                            "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue. {}",
+                            prompts::ANSWER_CONTRACT
+                        );
+                        Reaction::effects(vec![phase_followup_turn(
+                            "execution",
+                            prompts::WRITE_TOOLS,
+                            &instruction,
+                            40,
+                        )])
                     }
-                }
-                Event::ToolApprovalRequired { call_id, capability, description } => {
-                    let _ = on_tool_result(ctx, call_id);
-                    ctx.set_fact("approval_pending_call_id", json!(call_id.as_uuid().to_string()));
-                    Reaction::transition(
-                        AwaitingApproval,
-                        vec![Effect::RequestHumanApproval {
-                            approval_id: ApprovalId::new(),
-                            capability: *capability,
-                            description: description.clone(),
-                        }],
-                        "tool approval required",
-                    )
-                }
-                _ => Reaction::Super(Top),
-            },
 
-            // ── AwaitingApproval ─────────────────────────────────────────────
-            AwaitingApproval => match event {
-                Event::HumanApproved { .. } => {
-                    if all_tools_done(ctx) {
-                        let next_turn = sdlc_continuation_turn(ctx);
-                        let phase = current_sdlc_phase_state(ctx);
-                        ctx.set_fact("sdlc_in_continuation", json!(true));
-                        Reaction::transition(phase, vec![next_turn], "tool approved; all done; resuming")
-                    } else {
-                        Reaction::goto(RunningTools)
+                    Event::HumanApproved { approval_id } => {
+                        ctx.approve(*approval_id);
+                        let instruction = format!(
+                            "Approved. Continue implementing. {}",
+                            prompts::ANSWER_CONTRACT
+                        );
+                        Reaction::effects(vec![phase_followup_turn(
+                            "execution",
+                            prompts::WRITE_TOOLS,
+                            &instruction,
+                            40,
+                        )])
                     }
-                }
-                Event::HumanRejected { .. } => {
-                    if all_tools_done(ctx) {
-                        let next_turn = sdlc_continuation_turn(ctx);
-                        let phase = current_sdlc_phase_state(ctx);
-                        ctx.set_fact("sdlc_in_continuation", json!(true));
-                        Reaction::transition(phase, vec![next_turn], "tool rejected; all done; resuming")
-                    } else {
-                        Reaction::goto(RunningTools)
-                    }
-                }
-                _ => Reaction::Super(Top),
-            },
 
-            // ── Terminal states ─────────────────────────────────────────────
+                    Event::HumanRejected { .. } => {
+                        to_recovery(ctx, Execution, "execution step rejected")
+                    }
+                    Event::LlmFailed { error } => to_recovery(ctx, Execution, error),
+                    _ => Reaction::Super(Top),
+                }
+            }
+
+            // ── Recovery ──────────────────────────────────────────────────────
+            Recovery => {
+                if let Some(r) = handle_tool_event(ctx, phase_continuation_turn, event) {
+                    return r;
+                }
+
+                match event {
+                    Event::Internal(InternalEvent::Entry) => {
+                        let attempts = ctx.bump_retry("recovery");
+                        if attempts > MAX_RECOVERY {
+                            return Reaction::goto(Failed);
+                        }
+                        phase_init_loop(ctx, "recovery", prompts::READ_TOOLS, 12);
+                        let req = prompts::recovery_request(&fact_str(ctx, "failure_context"));
+                        Reaction::effects(vec![Effect::CallLlm { request: req }])
+                    }
+
+                    Event::LlmTurnComplete { .. } => {
+                        let action = on_llm_turn_complete(ctx, event);
+                        match action {
+                            GeneratingAction::FinalAnswer { text, .. } => {
+                                match parse_sdlc_decision(&text) {
+                                    Some(decision) => match status_of(&decision) {
+                                        DecisionStatus::Proceed => {
+                                            // Re-enter the failed phase (no state_from_str needed:
+                                            // recovery stores the failed_phase string as Debug).
+                                            let target = failed_phase_state(ctx);
+                                            Reaction::goto(target)
+                                        }
+                                        DecisionStatus::NeedUserInput => {
+                                            Reaction::effects(vec![ask_user_effect(&decision)])
+                                        }
+                                        _ => Reaction::goto(Failed),
+                                    },
+                                    None => Reaction::goto(Failed),
+                                }
+                            }
+                            GeneratingAction::CallTools { tool_effects, .. } => {
+                                Reaction::effects(tool_effects)
+                            }
+                            GeneratingAction::EmptyTurn { nudge_effect } => {
+                                Reaction::effects(vec![nudge_effect])
+                            }
+                            GeneratingAction::MaxRoundsReached { .. } => Reaction::goto(Failed),
+                        }
+                    }
+
+                    Event::UserMessage { text } => {
+                        let instruction = format!(
+                            "The developer responded:\n\n\"{text}\"\n\nIncorporate this and continue diagnosing. {}",
+                            prompts::ANSWER_CONTRACT
+                        );
+                        Reaction::effects(vec![phase_followup_turn(
+                            "recovery",
+                            prompts::READ_TOOLS,
+                            &instruction,
+                            12,
+                        )])
+                    }
+
+                    Event::LlmFailed { .. } => Reaction::goto(Failed),
+                    _ => Reaction::Super(Top),
+                }
+            }
+
+            // ── Terminal states ───────────────────────────────────────────────
             Done | Failed | Cancelled => Reaction::Ignored,
+
+            // Already handled above via `phase_spec`; these arms are unreachable
+            // but needed for exhaustiveness.
+            Intake | Discovery | Planning | Verification | Delivery => {
+                unreachable!("phase_spec covers these states")
+            }
         }
     }
 }
 
-/// Map a state `Debug` label back to its variant (used by recovery routing).
-fn state_from_str(s: &str) -> Option<SdlcState> {
+/// Map the stored `failed_phase` debug string back to a state variant.
+/// Falls back to `Intake` for unknown/missing values.
+fn failed_phase_state(ctx: &Context) -> SdlcState {
     use SdlcState::*;
-    Some(match s {
-        "Top" => Top,
-        "Idle" => Idle,
-        "Intake" => Intake,
-        "Discovery" => Discovery,
-        "Planning" => Planning,
-        "Execution" => Execution,
-        "Verification" => Verification,
-        "Delivery" => Delivery,
-        "Recovery" => Recovery,
-        "RunningTools" => RunningTools,
-        "AwaitingApproval" => AwaitingApproval,
-        "Done" => Done,
-        "Failed" => Failed,
-        "Cancelled" => Cancelled,
-        _ => return None,
-    })
+    ctx.fact("failed_phase")
+        .and_then(Value::as_str)
+        .and_then(|s| {
+            Some(match s {
+                "Intake" => Intake,
+                "Discovery" => Discovery,
+                "Planning" => Planning,
+                "Execution" => Execution,
+                "Verification" => Verification,
+                "Delivery" => Delivery,
+                "Recovery" => Recovery,
+                _ => return None,
+            })
+        })
+        .unwrap_or(Intake)
 }
 
 #[cfg(test)]
