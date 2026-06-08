@@ -36,9 +36,9 @@ impl Default for ModeRegistry {
 impl ModeRegistry {
     /// Builds the registry pre-loaded with the built-in machines:
     /// - `"agent"` / `"reactive"` / `"chat"` → [`ReactiveAgentMachine`]
-    ///   (streaming, native-tool-calling converse engine — ChatGPT-style)
-    /// - `"sdlc"` → [`SoftwareDevelopmentMachine`]
-    ///   (structured, multi-phase software development with typed JSON LLM calls)
+    ///   (streaming, native-tool-calling agent — ChatGPT-style)
+    /// - `"sdlc"` → [`SdlcMachine`]
+    ///   (multi-phase software-development lifecycle with in-state tool loops)
     pub fn default_registry() -> Self {
         let mut reg = Self {
             factories: HashMap::new(),

@@ -662,12 +662,13 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
         AgentMode::Chat => {
             "You are a conversational assistant. You can read files and answer questions. \
-             Use the ConversationMachine to guide interactions."
+             Respond naturally to user messages; the ReactiveAgentMachine drives the chat loop."
         }
         AgentMode::Sdlc => {
             "You are a software development lifecycle agent. You can read and write files, \
              run shell commands, and manage the full development workflow from planning to delivery. \
-             Use the SoftwareDevelopmentMachine to guide the process."
+             The SdlcMachine drives the process through Intake → Discovery → Planning → Execution \
+             → Verification → Delivery phases."
         }
     };
 

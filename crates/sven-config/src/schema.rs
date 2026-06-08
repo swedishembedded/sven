@@ -783,9 +783,9 @@ pub enum AgentMode {
     Plan,
     /// Full agent with read/write tools
     Agent,
-    /// Conversational chat mode (HSM ConversationMachine)
+    /// Conversational chat mode (HSM ReactiveAgentMachine in chat mode)
     Chat,
-    /// Software development lifecycle mode (HSM SoftwareDevelopmentMachine)
+    /// Software development lifecycle mode (HSM SdlcMachine)
     Sdlc,
 }
 
