@@ -7,12 +7,10 @@ and replay, the Active Object runtime, the two-phase dispatch algorithm, the
 observation plane, the crate map, and the `ModeRegistry` that decides which
 machine drives each mode.
 
-Two larger subsystems are layered on top of the kernel and have their own
-dedicated documents:
+Two companion documents cover the concrete machines and subsystems:
 
-- The **[Deliberation Engine](deliberation-engine.md)** - how each SDLC state
-  runs a scoped LLM↔tool agentic loop and returns a structured decision that
-  drives the next transition.
+- **[State Machine Reference](state-machines.md)** - complete states, events,
+  effects, and transition tables for every machine in sven.
 - **[Parallel Submachine Fan-out](parallel-submachines.md)** - how the kernel
   spawns isolated child kernels to run plan tasks concurrently.
 
@@ -46,11 +44,10 @@ testable control flow with intelligence injected at well-defined points.
 > (`kind: "turn"`). Those proposals are returned as `ProposedToolCall`s in
 > `Event::LlmTurnComplete`; the machine emits one `Effect::CallTool` per proposal;
 > the kernel gates each call through the `PermissionPolicy`; and `ToolExecutor`
-> executes allowed calls concurrently (spawn-and-forget). The machine drives the
-> multi-round loop as explicit state transitions (`Generating → RunningTools →
-> Generating`), not as hidden executor-internal iteration. No executor runs a
-> multi-step tool loop or calls `registry.execute` on behalf of the kernel.
-> See [Deliberation Engine](deliberation-engine.md) for the SDLC-specific model.
+> executes allowed calls concurrently (spawn-and-forget). Each phase state handles
+> the tool loop **in-state** (`Reaction::Handled`) - there are no separate
+> `RunningTools` or `AwaitingApproval` states. No executor runs a multi-step tool
+> loop or calls `registry.execute` on behalf of the kernel.
 
 ---
 
@@ -67,14 +64,11 @@ domain-agnostic.
 | `UserMessage { text }` | A human sent a chat/instruction message |
 | `UserProvidedArtifact { artifact }` | A human attached an opaque artifact |
 | `UserCancelled` | The human asked to cancel in-flight work |
-| `LlmProposedResponse { text }` | The model proposed natural-language text |
-| `LlmProposedToolCall { name, args }` | The model proposed running a tool (it only proposes; the HSM decides) |
-| `LlmProposedPlan { plan }` | The model proposed a plan / task decomposition |
-| `LlmProposedAssessment { assessment }` | The model returned a structured assessment |
+| `LlmTurnComplete { thread, text, tool_calls }` | A `TurnExecutor` streaming pass finished; carries proposed tool calls |
 | `LlmFailed { error }` | The model failed to produce a usable result |
-| `DeliberationComplete { thread, decision }` | A state-scoped deliberation finished and produced a structured decision |
 | `ToolSucceeded { call_id, observation }` | A kernel-dispatched tool call succeeded |
 | `ToolFailed { call_id, error }` | A kernel-dispatched tool call failed |
+| `ToolApprovalRequired { call_id, capability, description }` | A tool call needs human approval before executing |
 | `HumanApproved { approval_id }` | A human approved a pending request |
 | `HumanRejected { approval_id }` | A human rejected a pending request |
 | `Timeout { timer_id }` | A scheduled timer elapsed |
@@ -104,7 +98,7 @@ The complete effect vocabulary (11 variants):
 
 | Effect | Purpose |
 |--------|---------|
-| `CallLlm { request }` | Ask the reasoning service for a result. `request` is opaque JSON; a `kind` discriminator selects the engine (`"turn"` for all shipped modes; legacy `"converse"` and `"deliberate"` also exist) |
+| `CallLlm { request }` | Ask the reasoning service for a result. `request` is opaque JSON; the `kind` field must be `"turn"` (handled by `TurnExecutor` - the only wired executor in production) |
 | `CallTool { call_id, name, capability, args }` | Invoke a tool through the kernel. Requires the named `capability` to be permitted in the current state |
 | `AskUser { prompt }` | Ask the human a question (non-blocking; the answer arrives as a later event) |
 | `RequestHumanApproval { approval_id, capability, description }` | Request explicit approval before a dangerous capability is used |
@@ -316,16 +310,14 @@ by the mode string and builds an `ErasedRuntime` around it.
 
 | Mode string | Machine | Engine |
 |-------------|---------|--------|
-| `"agent"` | `ReactiveAgentMachine` | kernel-mediated turns (`TurnExecutor` + `loop_core`) |
-| `"reactive"` | `ReactiveAgentMachine` | kernel-mediated turns |
-| `"chat"` | `ReactiveAgentMachine` | kernel-mediated turns |
-| `"sdlc"` | `SdlcMachine` | kernel-mediated turns + phase deliberations (`TurnExecutor` + `loop_core`) |
+| `"agent"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
+| `"reactive"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
+| `"chat"` | `ReactiveAgentMachine` | `TurnExecutor` + `loop_core` in-state tool loop |
+| `"sdlc"` | `SdlcMachine` | `TurnExecutor` + `loop_core`; per-phase in-state tool loops + structured JSON decisions |
 
 All modes use `TurnExecutor` (`kind: "turn"`) as the single LLM call engine.
-`SdlcMachine` additionally routes each phase's decision parsing through its own
-`loop_core`-derived state handlers (parsing structured JSON from the final
-tool-free text). `DeliberationExecutor` and `ConverseExecutor` exist in the crate
-for backward compatibility but are not wired into any production runtime.
+`SdlcMachine` routes each phase's decision parsing through its own `loop_core`
+state handlers (parsing structured JSON from the final tool-free text).
 
 Mode selection at startup (see `src/main.rs`) is, in priority order:
 
@@ -341,19 +333,18 @@ A turn-lifecycle machine driven by the shared `loop_core` state handlers:
 ```
 Top
 └── Session
-    ├── Idle              ← waiting for the user's next message
-    ├── Generating        ← TurnExecutor streaming a single model pass
-    ├── RunningTools      ← waiting for concurrent ToolExecutor results
-    └── AwaitingApproval  ← waiting for HumanApproved/Rejected on a tool call
+    ├── Idle       ← waiting for the user's next message
+    └── Generating ← LLM turn in flight; tool loop handled in-state
 ```
 
 On a `UserMessage` in `Idle`, it emits one `Effect::CallLlm { kind: "turn" }` and
 moves to `Generating`. `TurnExecutor` streams the model response and posts
 `Event::LlmTurnComplete { text, tool_calls }` back. If `tool_calls` is non-empty
-the machine transitions to `RunningTools` and emits one `Effect::CallTool` per
-call. Results arrive as `ToolSucceeded` / `ToolFailed` events; when all calls are
-settled the machine re-enters `Generating` for the next round. A final
-tool-call-free turn posts `LlmProposedResponse` and returns to `Idle`.
+the machine emits one `Effect::CallTool` per call **and stays in `Generating`**
+(via `Reaction::Handled`). Tool results arrive as `ToolSucceeded` / `ToolFailed`;
+when all pending calls are settled the machine emits a continuation `CallLlm` and
+stays in `Generating`. A final tool-call-free turn stores the response and
+returns to `Idle`.
 
 ### `SdlcMachine` (mode `sdlc`)
 
@@ -376,8 +367,9 @@ Top
 ├── Done / Failed / Cancelled  ← terminal
 ```
 
-The full lifecycle, the "hi" guard, the decision envelope, the human gates, and
-recovery are documented in the **[Deliberation Engine](deliberation-engine.md)**.
+**Each phase owns its tool loop in-state** - there are no separate
+`RunningTools` or `AwaitingApproval` states. See
+**[State Machine Reference](state-machines.md)** for the full transition tables.
 The parallel fan-out used by `Execution` is documented in **[Parallel Submachine
 Fan-out](parallel-submachines.md)**.
 
@@ -393,8 +385,6 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 | Executor | Effects handled |
 |----------|-----------------|
 | `TurnExecutor` | `CallLlm` with `kind: "turn"` - single-pass model streaming; accumulates tool proposals; posts `LlmTurnComplete` |
-| `ConverseExecutor` | `CallLlm` with `kind: "converse"` - legacy shim; no active machine emits this |
-| `DeliberationExecutor` | `CallLlm` with `kind: "deliberate"` - legacy shim; superseded by `TurnExecutor` + `loop_core` |
 | `ToolExecutor` | `CallTool` - kernel-gated, spawn-and-forget; the **only** executor that calls `registry.execute` |
 | `UserExecutor` | `AskUser`, `RequestHumanApproval` |
 | `TimerExecutor` | `ScheduleTimeout`, `CancelTimeout` |
@@ -402,11 +392,8 @@ effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
 | `AuditExecutor` | `PersistAudit` |
 | `InternalExecutor` | `EmitInternal` |
 
-`CallLlm` routing is by the request's `kind` field: `"turn"` → `TurnExecutor`
-(all shipped modes), `"converse"` → `ConverseExecutor` (legacy), `"deliberate"` →
-`DeliberationExecutor` (legacy). `RuntimeBuilder` wires only `TurnExecutor` in
-production; the legacy shims remain in the crate for backward compatibility but
-are not dispatched to.
+All `CallLlm` effects use `kind: "turn"` and are routed to `TurnExecutor`.
+`CompositeExecutor` warns and no-ops on any unrecognised `kind` value.
 
 `InstantiateSubmachine` is **not** handled by the `CompositeExecutor` - the
 runtime intercepts it before the executor and hands it to the `ChildSpawner`
@@ -454,8 +441,8 @@ Fan-out](parallel-submachines.md)**.
   immutable; new messages are only ever appended. This keeps provider prompt
   caches valid across successive turns on the same thread.
 - **`TurnRequest`** (`conversation.rs`) - the `kind: "turn"` request shape used
-  by every machine for a single model pass. See
-  **[Deliberation Engine](deliberation-engine.md)** for the field reference.
+  by every machine for a single model pass. Fields include `thread`, `tools`,
+  `all_tools_mode`, `model_override`, and `instruction`.
 - **`strip_code_fences`** - utility to strip Markdown code fences from model
   output before structured-JSON parsing.
 
@@ -476,7 +463,7 @@ calls, tool results), `ResponseEvent` (the streamed `TextDelta` /
 
 `ToolRegistry` (`sven-tools/src/registry.rs`) holds all available tools behind a
 `RwLock` (so MCP tools can be swapped at runtime). Beyond execution it provides
-the **tool-subset API** the deliberation engine relies on:
+the **tool-subset API** the `SdlcMachine` relies on:
 
 - `schemas()` / `schemas_for_mode(mode)` - all tools, or those for a mode.
 - `schemas_for_names(&[String])` - only the named subset (unknown names are
@@ -495,10 +482,10 @@ to keep provider cache breakpoints stable. `execute` honours an optional
 `RuntimeBuilder` (`sven-bootstrap/src/runtime_builder.rs`) is the per-session
 factory. It looks up the machine from the `ModeRegistry`, builds the model
 provider, tool registry, and MCP manager, assembles the `CompositeExecutor`
-(installing a converse executor for reactive modes or a deliberation executor +
-`SdlcChildSpawner` for `sdlc`), and spawns an `ErasedRuntime` via
-`spawn_with_children`. For `sdlc` it seeds the `parallel_execution` fact so the
-machine only fans out when a spawner is actually installed.
+(wiring `TurnExecutor` for all modes; for `sdlc` also installs `SdlcChildSpawner`),
+and spawns an `ErasedRuntime` via `spawn_with_children`. For `sdlc` it seeds the
+`parallel_execution` fact so the machine only fans out when a spawner is actually
+installed.
 
 ```rust,ignore
 let bundle = RuntimeBuilder::new(config, "sdlc")
@@ -512,8 +499,7 @@ let bundle = RuntimeBuilder::new(config, "sdlc")
 
 `build_session` returns a `SessionBundle` holding the `ErasedRuntime`, a cheap
 `RuntimeHandle` (sink + observation + status), and the `KernelChannels`
-(question/approval receivers). The legacy converse `Agent` is no longer part of
-the bundle - all modes drive the model through `TurnExecutor`. A
+(question/approval receivers). All modes drive the model through `TurnExecutor`. A
 `SessionSupervisor` manages a registry of such bundles keyed by `SessionId`,
 sharing reference-counted skills and knowledge across sessions.
 
@@ -560,7 +546,7 @@ assert!(out.effects.iter().any(|e| matches!(e, Effect::CallLlm { .. })));
 ```
 
 Integration tests replay an event log and assert on the final state.
-Deliberation/converse executors are tested with scripted `ModelProvider`s, and
+The `TurnExecutor` is tested with scripted `ModelProvider`s, and
 E2E bats tests use `--model mock` so no real API key is required.
 
 ---
@@ -574,7 +560,7 @@ E2E bats tests use `--model mock` so no real API key is required.
 | `sven-llm` | Conversation primitives: `ConversationStore` (append-only per-thread history), `TurnRequest`, `strip_code_fences`. (Typed `LlmRequest` / `LlmAdapter` / `DefaultLlmAdapter` paths removed.) |
 | `sven-tools` | `ToolRegistry` (incl. tool-subset API), `Tool` trait, approval policy / `PermissionRequester` |
 | `sven-core` | Concrete machines (`ReactiveAgentMachine`, `SdlcMachine` + `TaskMachine`), `loop_core` shared state handlers, `stream_turn`, `Agent` (legacy), `Session`, `ModeRegistry` |
-| `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the composite (converse/deliberation are legacy shims) |
+| `sven-executors` | Effect executors: `TurnExecutor`, tool, user, timer, checkpoint, audit, internal, and the `CompositeExecutor` router |
 | `sven-bootstrap` | `RuntimeBuilder` (per-session factory), `SessionSupervisor`, `SdlcChildSpawner` |
 | `sven-frontend` | Bridges kernel `UiEvent`s to renderer events for TUI/GUI |
 | `sven-ci` | `RuntimeRunner` - headless kernel driver for batch/CI runs |
@@ -585,10 +571,9 @@ E2E bats tests use `--model mock` so no real API key is required.
 
 ## Further reading
 
-- **[Deliberation Engine](deliberation-engine.md)** - the HSM-as-authority +
-  LLM-as-tool model, append-only conversation threads, the `Deliberator` loop,
-  structured-output decisions, per-state tool subsets and models, and the full
-  SDLC phase walk.
+- **[State Machine Reference](state-machines.md)** - complete states, events,
+  effects, transition tables, loop-core API, and `LoopState` struct for every
+  machine in sven. Start here for machine-level details.
 - **[Parallel Submachine Fan-out](parallel-submachines.md)** - `ChildSpawner`,
   isolated child kernels, `TaskMachine`, `SdlcChildSpawner`, and the Execution
   fan-out/aggregation flow.

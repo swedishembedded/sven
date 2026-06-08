@@ -1,5 +1,14 @@
 # The SDLC Deliberation Engine
 
+> **This document describes the architectural design intent.** The
+> `DeliberationExecutor` and `Deliberator` components described here have been
+> superseded by per-phase in-state tool loops (see
+> [State Machine Reference](state-machines.md) and
+> [HSM Architecture](hsm-architecture.md)). The design principles - HSM as
+> authority, LLM as scoped tool, per-phase conversation threads, structured
+> decision schema - are still fully in effect and implemented in `SdlcMachine`
+> via `loop_core` and `TurnExecutor`.
+
 The deliberation engine is how sven's `sdlc` mode does real engineering work
 while keeping the [HSM kernel](hsm-architecture.md) as the deterministic
 authority over control flow. Each state of the `SdlcMachine` runs a *scoped*
