@@ -89,7 +89,86 @@ use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tools::ToolRegistry;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
-use crate::converse::agent_event_to_ui;
+/// Convert an [`AgentEvent`] to a [`UiEvent`] for the outward observation plane.
+///
+/// Returns `None` for events that have no renderable UI equivalent or that are
+/// handled directly by the executor (`TurnComplete`).
+fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
+    use sven_core::AgentEvent as AE;
+    Some(match ev {
+        AE::TextDelta(d) => UiEvent::TextDelta(d),
+        AE::TextComplete(t) => UiEvent::TextComplete(t),
+        AE::ThinkingDelta(d) => UiEvent::ThinkingDelta(d),
+        AE::ThinkingComplete(c) => UiEvent::ThinkingComplete(c),
+        AE::ToolCallStarted(tc) => UiEvent::ToolStarted {
+            call_id: tc.id,
+            name: tc.name,
+            args: tc.args,
+        },
+        AE::ToolCallFinished {
+            call_id,
+            tool_name,
+            output,
+            is_error,
+        } => UiEvent::ToolFinished {
+            call_id,
+            name: tool_name,
+            output,
+            is_error,
+        },
+        AE::ToolProgress { call_id, message } => UiEvent::ToolProgress { call_id, message },
+        AE::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy: strategy.to_string(),
+            turn,
+        },
+        AE::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
+            max_output_tokens,
+            cost_usd,
+        } => UiEvent::TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cache_read_total,
+            cache_write_total,
+            max_tokens,
+            max_output_tokens,
+            cost_usd,
+        },
+        // TurnComplete is handled by execute() directly (ordering guarantee).
+        AE::TurnComplete => return None,
+        AE::Aborted { partial_text } => UiEvent::Aborted { partial_text },
+        AE::Error(e) => UiEvent::Error(e),
+        AE::TodoUpdate(items) => {
+            UiEvent::TodoUpdate(serde_json::to_value(&items).unwrap_or(serde_json::Value::Null))
+        }
+        AE::ModeChanged(mode) => UiEvent::ModeChanged(format!("{mode:?}")),
+        AE::ModelChanged(m) => UiEvent::ModelChanged(m),
+        // No renderable observation equivalent for these.
+        AE::Question { .. }
+        | AE::QuestionAnswer { .. }
+        | AE::TitleGenerated(_)
+        | AE::CollabEvent(_)
+        | AE::DelegateSummary { .. }
+        | AE::SubagentStarted { .. }
+        | AE::SubagentEvent { .. }
+        | AE::PeerList(_) => return None,
+    })
+}
 
 /// The JSON `kind` tag that selects the single-turn engine.
 pub use sven_llm::TURN_KIND;

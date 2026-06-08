@@ -12,9 +12,7 @@ pub mod conversation;
 pub mod error;
 
 // Re-export the most important types at the crate root.
-pub use conversation::{
-    ConversationStore, DeliberationRequest, ThreadId, TurnRequest, DELIBERATE_KIND, TURN_KIND,
-};
+pub use conversation::{ConversationStore, ThreadId, TurnRequest, TURN_KIND};
 pub use error::LlmError;
 
 /// Strip leading/trailing markdown code fences from a string.

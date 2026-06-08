@@ -72,9 +72,6 @@ impl ConversationStore {
     }
 }
 
-/// The JSON `kind` tag that selects the deliberation engine in the executor.
-pub const DELIBERATE_KIND: &str = "deliberate";
-
 /// The JSON `kind` tag that selects the single-turn streaming engine.
 pub const TURN_KIND: &str = "turn";
 
@@ -163,70 +160,6 @@ impl TurnRequest {
     }
 }
 
-/// A request for the HSM to run a *deliberation*: one comprehensive embedded
-/// instruction sent against a state-scoped conversation thread with a
-/// state-scoped tool subset and a structured-output schema.
-///
-/// Serialised into [`sven_hsm::Effect::CallLlm`]'s opaque `request` value with
-/// an added `kind: "deliberate"` discriminator (see [`to_value`]).
-///
-/// [`to_value`]: DeliberationRequest::to_value
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct DeliberationRequest {
-    /// Stable thread id (e.g. `"intake"`, `"discovery"`, `"task:t1"`).
-    pub thread: String,
-    /// Stable system-role framing for this thread (cached; set once per thread).
-    pub system_role: String,
-    /// The comprehensive per-turn command (appended as a new user turn).
-    pub instruction: String,
-    /// Names of the tools this deliberation is allowed to call.
-    #[serde(default)]
-    pub tools: Vec<String>,
-    /// JSON Schema the structured decision must conform to (may be `Null`).
-    #[serde(default)]
-    pub schema: Value,
-    /// Short name identifying the schema (for OpenAI strict mode).
-    #[serde(default)]
-    pub schema_name: String,
-    /// Optional per-state model override (resolved via the model resolver).
-    #[serde(default)]
-    pub model: Option<String>,
-    /// Maximum tool-call rounds before the loop is forced to conclude.
-    #[serde(default)]
-    pub max_tool_rounds: Option<u32>,
-}
-
-impl DeliberationRequest {
-    /// Serialise to a [`serde_json::Value`] with the `kind: "deliberate"` tag
-    /// added so the composite executor can route it.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if serialisation fails, which cannot happen for this type.
-    #[must_use]
-    pub fn to_value(&self) -> Value {
-        let mut v = serde_json::to_value(self).expect("DeliberationRequest serialisation infallible");
-        if let Some(obj) = v.as_object_mut() {
-            obj.insert("kind".into(), Value::String(DELIBERATE_KIND.into()));
-        }
-        v
-    }
-
-    /// Deserialise from the opaque value carried by `Effect::CallLlm`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the value is not a valid [`DeliberationRequest`].
-    pub fn from_value(v: Value) -> Result<Self, serde_json::Error> {
-        serde_json::from_value(v)
-    }
-
-    /// `true` if `request` carries the deliberation discriminator.
-    #[must_use]
-    pub fn is_deliberation(request: &Value) -> bool {
-        request.get("kind").and_then(Value::as_str) == Some(DELIBERATE_KIND)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -254,30 +187,4 @@ mod tests {
         assert!(store.exists("discovery"));
     }
 
-    #[test]
-    fn deliberation_request_round_trips_with_kind() {
-        let req = DeliberationRequest {
-            thread: "intake".into(),
-            system_role: "You are a consultant".into(),
-            instruction: "classify intent".into(),
-            tools: vec!["read_file".into(), "grep".into()],
-            schema: serde_json::json!({"type": "object"}),
-            schema_name: "intake_decision".into(),
-            model: None,
-            max_tool_rounds: Some(8),
-        };
-        let v = req.to_value();
-        assert_eq!(v["kind"], "deliberate");
-        assert!(DeliberationRequest::is_deliberation(&v));
-        let back = DeliberationRequest::from_value(v).unwrap();
-        assert_eq!(back.thread, "intake");
-        assert_eq!(back.tools.len(), 2);
-        assert_eq!(back.max_tool_rounds, Some(8));
-    }
-
-    #[test]
-    fn non_deliberation_value_is_rejected() {
-        let v = serde_json::json!({"kind": "extract_intent", "text": "x"});
-        assert!(!DeliberationRequest::is_deliberation(&v));
-    }
 }

@@ -30,7 +30,7 @@ use sven_config::{Config, ModelConfig};
 use sven_core::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
-    CompositeExecutorBuilder, DeliberationExecutor, TurnExecutor,
+    CompositeExecutorBuilder, TurnExecutor,
 };
 use sven_hsm::{Context, ErasedRuntime, Event, EventSink, RuntimeStatus, ToolCallId};
 use sven_llm::ConversationStore;
@@ -131,13 +131,13 @@ pub struct RuntimeBuilder {
     /// Tool-level question channel: forwarded into the tool registry so
     /// tools that call `ask_user` can route questions to the TUI modal.
     tool_question_tx: Option<mpsc::Sender<QuestionRequest>>,
-    /// Conversation history to seed into the converse agent before the
+    /// Conversation history to seed into the machine's thread before the
     /// first turn (used when resuming or switching sessions).
     initial_history: Vec<Message>,
     /// Optional permission requester for tool-call approval gating
     /// (e.g., ACP sends `session/request_permission` to the IDE).
     permission_requester: Option<Arc<dyn PermissionRequester>>,
-    /// Shared abort slot wired into the `ConverseExecutor`. The TUI drops
+    /// Shared abort slot wired into the `TurnExecutor`. The TUI drops
     /// the sender (via `send_abort_signal`) to cancel an in-flight LLM turn.
     cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
 }
@@ -205,7 +205,7 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Seed the converse agent with prior conversation history before the
+    /// Seed the machine's conversation thread with prior history before the
     /// first turn (used when resuming a saved session or switching between
     /// multi-session tabs).
     pub fn with_initial_history(mut self, messages: Vec<Message>) -> Self {
@@ -223,7 +223,7 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Provide the TUI's shared abort slot so the `ConverseExecutor` can
+    /// Provide the TUI's shared abort slot so the `TurnExecutor` can
     /// be cancelled via the existing `/abort` command.
     ///
     /// The slot is the same `Arc` held in `App::agent.cancel`. Before each
@@ -375,35 +375,15 @@ impl RuntimeBuilder {
             .unwrap_or_else(|| PathBuf::from("."));
 
         // ── Assemble executor ─────────────────────────────────────────────────
-        // Shared cancel slot the TUI uses to abort an in-flight turn/deliberation.
         let cancel_handle = self
             .cancel_handle
             .clone()
             .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(None)));
 
-        // SDLC mode runs the deliberation engine: each state issues a
-        // state-scoped model↔tool agentic loop against an append-only thread.
-        let is_sdlc = self.mode.as_str() == "sdlc";
-        let deliberation_executor = if is_sdlc {
-            let resolver_config = Arc::clone(&self.config);
-            let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
-                let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
-                let provider = sven_model::from_config(&model_cfg)?;
-                Ok(Arc::from(provider) as Arc<dyn sven_model::ModelProvider>)
-            });
-            Some(DeliberationExecutor::new(
-                model.clone(),
-                Some(model_resolver),
-                Arc::clone(&tool_registry),
-                cancel_handle.clone(),
-            ))
-        } else {
-            None
-        };
-
         // Parallel-execution fan-out: in SDLC mode install a child spawner so
         // the kernel can service `Effect::InstantiateSubmachine` by running each
         // decomposed task as an isolated concurrent child kernel.
+        let is_sdlc = self.mode.as_str() == "sdlc";
         let child_spawner: Option<Arc<dyn sven_hsm::ChildSpawner>> = if is_sdlc {
             Some(Arc::new(crate::child_spawner::SdlcChildSpawner::new(
                 model.clone(),
@@ -425,17 +405,14 @@ impl RuntimeBuilder {
             cancel_handle.clone(),
         );
 
-        let mut executor_builder = CompositeExecutorBuilder::default()
+        let executor = CompositeExecutorBuilder::default()
             .with_tools(tool_registry, Default::default())
             .with_user(question_tx, approval_tx)
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)
             .with_audit(audit_log_path)
-            .with_turn(turn_executor);
-        if let Some(delib) = deliberation_executor {
-            executor_builder = executor_builder.with_deliberation(delib);
-        }
-        let executor = executor_builder.build();
+            .with_turn(turn_executor)
+            .build();
 
         // ── Permission policy — per-machine real policy ───────────────────────
         // Use the machine's declared policy so the kernel enforces capability

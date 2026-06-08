@@ -42,8 +42,6 @@
 pub mod audit;
 pub mod checkpoint;
 pub mod composite;
-pub mod converse;
-pub mod deliberation;
 pub mod internal;
 pub mod timer;
 pub mod tool;
@@ -54,8 +52,6 @@ pub mod user;
 pub use audit::AuditExecutor;
 pub use checkpoint::CheckpointExecutor;
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
-pub use converse::ConverseExecutor;
-pub use deliberation::DeliberationExecutor;
 pub use internal::InternalExecutor;
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
