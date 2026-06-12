@@ -14,7 +14,7 @@ runner, and a networked P2P node - all from the same workspace.
   - GUI work → `.cursor/skills/programming/ratatui/SKILL.md` (patterns section) - Slint uses a declarative `.slint` DSL compiled to Rust bindings
   - Rust code → `.cursor/skills/programming/rust/SKILL.md`
   - Public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`
-  - New HSM machine → read `sven-hsm/src/machine.rs` and `sven-core/src/machines/conversation.rs` as reference
+  - New HSM machine → prefer `GraphMachine` over a new hardcoded Rust machine. Read `sven-graph/src/compile.rs` (`GraphBuilder` API) and `sven-core/src/machines/graph/mod.rs`. See [docs/technical/graph-machine.md](docs/technical/graph-machine.md).
 - **Tests**: Run `make test` before committing. E2E tests require `bats-core`: `make tests/e2e/basic`.
 - **Linting**: `make check` runs clippy with `-D warnings`. Zero warnings policy - all new code must be warning-free.
 
@@ -63,7 +63,8 @@ runner, and a networked P2P node - all from the same workspace.
 | `sven-audio` | WAV decoding, resampling, and audio data-URL helpers |
 | `sven-input` | Chat document model, history, title generation heuristics |
 | `sven-tools` | Full tool suite, approval policy, `Tool`/`ToolDisplay` traits |
-| `sven-core` | HSM machines: `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry`, completion guards |
+| `sven-graph` | Graph DSL model (`Graph`, `NodeData`, `EdgeData`, `NodeKind`, `GuardExpr`, `EffectTmpl`), `GraphBuilder` compiler, guard evaluator, template interpolator, dot renderer, `NativeRegistry` |
+| `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `GraphMachine` (generic graph-driven interpreter), `ModeRegistry`, loop-core helpers, completion guards |
 | `sven-runtime` | Shared runtime utilities (workspace root, skill/agent discovery) |
 | `sven-bootstrap` | `RuntimeBuilder` - assembles the HSM kernel from config and mode string |
 | `sven-ci` | Headless CI runner (`CiRunner` + `RuntimeRunner`) and output formatting |
