@@ -31,6 +31,8 @@ members = [
     # HSM phase 2 crates
     "crates/sven-llm",
     "crates/sven-executors",
+    # Graph DSL
+    "crates/sven-graph",
 ]
 
 [workspace.dependencies]
