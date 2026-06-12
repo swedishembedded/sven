@@ -348,7 +348,7 @@ impl GraphBuilder {
 /// Return `true` if any edge in the list has a guard that mentions `decision.*`.
 fn edges_reference_decision(edges: &[EdgeData]) -> bool {
     edges.iter().any(|e| {
-        e.guard.as_ref().map(|g| guard_references_decision(g)).unwrap_or(false)
+        e.guard.as_ref().map(guard_references_decision).unwrap_or(false)
     })
 }
 

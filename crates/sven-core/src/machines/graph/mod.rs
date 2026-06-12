@@ -278,19 +278,18 @@ impl Machine for GraphMachine {
     }
 
     fn top(&self) -> NodeId {
-        self.graph.root.clone()
+        self.graph.root
     }
 
     fn initial(&self) -> NodeId {
         self.graph
             .node(&self.graph.root)
             .initial
-            .clone()
             .expect("root node must have an initial child")
     }
 
     fn superstate(&self, state: NodeId) -> NodeId {
-        self.graph.node(&state).parent.clone()
+        self.graph.node(&state).parent
     }
 
     fn is_terminal(&self, state: NodeId) -> bool {

@@ -92,7 +92,7 @@ fn emit_node(
                 let children: Vec<NodeId> = graph
                     .iter_nodes()
                     .filter(|n| &n.parent == id && n.id != *id)
-                    .map(|n| n.id.clone())
+                    .map(|n| n.id)
                     .collect();
                 for child in children {
                     emit_node(graph, &child, out, depth + 1, emitted);

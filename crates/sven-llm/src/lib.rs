@@ -24,8 +24,7 @@ pub fn strip_code_fences(s: &str) -> &str {
     // Handle ```json or ``` prefix
     let s = if let Some(rest) = s.strip_prefix("```") {
         // Skip optional language tag on first line
-        let rest = if let Some(nl) = rest.find('\n') { &rest[nl + 1..] } else { rest };
-        rest
+        if let Some(nl) = rest.find('\n') { &rest[nl + 1..] } else { rest }
     } else {
         s
     };

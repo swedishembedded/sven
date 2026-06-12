@@ -134,6 +134,7 @@ impl LoopState {
 ///
 /// This is the single canonical way machines produce a turn effect so the
 /// `TurnRequest` shape stays consistent.
+#[allow(clippy::too_many_arguments)]
 pub fn build_turn_effect(
     thread: &str,
     tools: &[String],
