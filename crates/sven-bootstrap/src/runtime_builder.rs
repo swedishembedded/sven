@@ -30,7 +30,7 @@ use sven_config::{Config, ModelConfig};
 use sven_core::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
-    CompositeExecutorBuilder, TurnExecutor,
+    CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
 use sven_hsm::{Context, ErasedRuntime, Event, EventSink, RuntimeStatus, ToolCallId};
 use sven_llm::ConversationStore;
@@ -396,17 +396,27 @@ impl RuntimeBuilder {
 
         // ── TurnExecutor (kernel-native single-turn LLM+tools loop) ──────────
         // All modes now use TurnExecutor for kind="turn" effects.
+        // Clone the Arcs so ToolExecutor can share the same backing store and
+        // call-id registry — tool results must be appended under the exact thread
+        // and with the original LLM-assigned call id before the continuation call.
         let turn_executor = TurnExecutor::new(
             model.clone(),
             None,
             Arc::clone(&tool_registry),
-            conv_store,
-            call_id_to_thread,
+            Arc::clone(&conv_store),
+            Arc::clone(&call_id_to_thread),
             cancel_handle.clone(),
         );
 
+        let tool_executor = ToolExecutor::with_shared_store(
+            tool_registry,
+            Default::default(),
+            call_id_to_thread,
+            conv_store,
+        );
+
         let executor = CompositeExecutorBuilder::default()
-            .with_tools(tool_registry, Default::default())
+            .with_tool_executor(tool_executor)
             .with_user(question_tx, approval_tx)
             .with_timers(Arc::new(sven_hsm::SystemClock::new()))
             .with_checkpoints(checkpoint_dir)

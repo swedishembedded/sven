@@ -168,12 +168,27 @@ impl CompositeExecutorBuilder {
     }
 
     /// Attach the tool executor with the given registry and capability allow-list.
+    ///
+    /// This creates a **fresh** `ToolExecutor` with its own empty `call_id_to_thread`
+    /// registry.  If you need tool results to be appended to the same conversation
+    /// thread that `TurnExecutor` is writing to, use [`Self::with_tool_executor`]
+    /// and pass a pre-wired [`ToolExecutor::with_shared_store`] instance instead.
     pub fn with_tools(
         mut self,
         registry: Arc<ToolRegistry>,
         allowed_capabilities: HashSet<sven_hsm::ToolCapability>,
     ) -> Self {
         self.tool = Some(ToolExecutor::new(registry, allowed_capabilities));
+        self
+    }
+
+    /// Attach a pre-built [`ToolExecutor`].
+    ///
+    /// Use this when the `ToolExecutor` must share its `call_id_to_thread`
+    /// registry and `ConversationStore` with a `TurnExecutor` so tool results
+    /// are appended under the correct thread before the continuation LLM call.
+    pub fn with_tool_executor(mut self, exec: ToolExecutor) -> Self {
+        self.tool = Some(exec);
         self
     }
 

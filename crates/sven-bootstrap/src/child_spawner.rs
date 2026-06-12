@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sven_config::Config;
 use sven_core::TaskMachine;
-use sven_executors::{CompositeExecutorBuilder, TurnExecutor};
+use sven_executors::{CompositeExecutorBuilder, ToolExecutor, TurnExecutor};
 use sven_hsm::{
     event::InternalEvent, ChildSpawner, Context, Event, EventSink, Hsm, MachineId,
     PermissionPolicy, Runtime, SystemClock, ToolCallId, ToolCapability,
@@ -103,14 +103,21 @@ impl ChildSpawner for SdlcChildSpawner {
             self.default_model.clone(),
             Some(model_resolver),
             Arc::clone(&self.tool_registry),
-            conv_store,
-            call_id_to_thread,
+            Arc::clone(&conv_store),
+            Arc::clone(&call_id_to_thread),
             cancel_handle,
+        );
+
+        let tool_executor = ToolExecutor::with_shared_store(
+            Arc::clone(&self.tool_registry),
+            Default::default(),
+            call_id_to_thread,
+            conv_store,
         );
 
         let executor = CompositeExecutorBuilder::default()
             .with_turn(turn_executor)
-            .with_tools(Arc::clone(&self.tool_registry), Default::default())
+            .with_tool_executor(tool_executor)
             .with_timers(Arc::new(SystemClock::new()))
             .build();
 
