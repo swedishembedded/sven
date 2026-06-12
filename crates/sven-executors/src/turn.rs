@@ -54,9 +54,14 @@ fn append_messages(store: &Mutex<ConversationStore>, thread_id: &str, messages: 
     }
 }
 
-/// Register call_id → thread in the registry (non-async).
+/// Register call_id → (thread, original_id) in the registry (non-async).
+///
+/// The `original_id` is the raw tool_call_id string returned by the LLM (e.g.
+/// `"call_HyZJn1bTtqVbmzzS3W4VM4xb"` for OpenAI).  It is preserved so that
+/// `ToolExecutor` can append tool results with the *same* id that appears in the
+/// assistant message — the API rejects mismatches.
 fn register_calls(
-    registry: &Mutex<HashMap<ToolCallId, String>>,
+    registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
     thread_id: &str,
     calls: &[sven_tools::ToolCall],
     tools: &ToolRegistry,
@@ -66,7 +71,7 @@ fn register_calls(
         for tc in calls {
             let capability = tools.capability_of(&tc.name);
             let call_id = ToolCallId::from_str_lossy(&tc.id);
-            reg.insert(call_id, thread_id.to_string());
+            reg.insert(call_id, (thread_id.to_string(), tc.id.clone()));
             proposed.push(ProposedToolCall {
                 call_id,
                 name: tc.name.clone(),
@@ -186,9 +191,9 @@ pub struct TurnExecutor {
     tools: Arc<ToolRegistry>,
     /// Append-only per-thread conversation history.
     store: Arc<Mutex<ConversationStore>>,
-    /// Maps `call_id → thread_id`; fed to `ToolExecutor` so results land on
-    /// the right thread.
-    call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+    /// Maps `call_id → (thread_id, original_call_id)`; fed to `ToolExecutor`
+    /// so results land on the right thread using the exact id the LLM assigned.
+    call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
     /// Shared cancel slot; a sender stored here is dropped by the TUI abort
     /// handler to interrupt an in-flight stream.
     cancel_handle: Arc<TokioMutex<Option<oneshot::Sender<()>>>>,
@@ -201,7 +206,7 @@ impl TurnExecutor {
         model_resolver: Option<ModelResolver>,
         tools: Arc<ToolRegistry>,
         store: Arc<Mutex<ConversationStore>>,
-        call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+        call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
         cancel_handle: Arc<TokioMutex<Option<oneshot::Sender<()>>>>,
     ) -> Self {
         Self {
@@ -379,6 +384,7 @@ impl EffectExecutor for TurnExecutor {
             &self.tools,
         );
 
+        let has_tool_calls = !proposed.is_empty();
         let _ = sink
             .emit(Event::LlmTurnComplete {
                 thread: thread_id,
@@ -387,6 +393,12 @@ impl EffectExecutor for TurnExecutor {
             })
             .await;
 
-        obs.emit(UiEvent::TurnComplete);
+        // Only mark the turn complete when the LLM returned no tool calls.
+        // When tool calls are pending the machine stays in Generating and will
+        // trigger another LLM turn after the tools finish; emitting TurnComplete
+        // here would cause headless mode to exit prematurely.
+        if !has_tool_calls {
+            obs.emit(UiEvent::TurnComplete);
+        }
     }
 }

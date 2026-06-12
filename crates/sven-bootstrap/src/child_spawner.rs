@@ -87,7 +87,7 @@ impl ChildSpawner for SdlcChildSpawner {
         // Each child gets its own fresh conversation store (append-only thread).
         let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(
-            HashMap::<ToolCallId, String>::new(),
+            HashMap::<ToolCallId, (String, String)>::new(),
         ));
         // Each child gets its own cancel slot so siblings never clobber each other.
         let cancel_handle = Arc::new(tokio::sync::Mutex::new(None));

@@ -36,8 +36,8 @@ pub struct ToolExecutor {
     registry: Arc<ToolRegistry>,
     /// Globally-allowed capabilities (second-line defence check).
     allowed_capabilities: HashSet<ToolCapability>,
-    /// Maps `call_id → thread_id`; populated by `TurnExecutor`.
-    pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+    /// Maps `call_id → (thread_id, original_call_id)`; populated by `TurnExecutor`.
+    pub call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
     /// Shared conversation store; tool results are appended here when a
     /// thread mapping exists.
     pub store: Arc<Mutex<ConversationStore>>,
@@ -69,7 +69,7 @@ impl ToolExecutor {
     pub fn with_shared_store(
         registry: Arc<ToolRegistry>,
         allowed_capabilities: HashSet<ToolCapability>,
-        call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, String>>>,
+        call_id_to_thread: Arc<Mutex<HashMap<ToolCallId, (String, String)>>>,
         store: Arc<Mutex<ConversationStore>>,
     ) -> Self {
         Self {
@@ -120,8 +120,20 @@ impl EffectExecutor for ToolExecutor {
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
+            // Resolve the (thread, original_call_id) mapping before running the
+            // tool.  The original_call_id is the raw string the LLM returned (e.g.
+            // "call_HyZJn1bTtqVbmzzS3W4VM4xb") — it must match the id recorded in
+            // the preceding assistant message or the API will reject the continuation.
+            let mapping = call_id_to_thread
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&call_id).cloned());
+
             let tool_call = ToolCall {
-                id: call_id.as_uuid().to_string(),
+                id: mapping
+                    .as_ref()
+                    .map(|(_, orig)| orig.clone())
+                    .unwrap_or_else(|| call_id.as_uuid().to_string()),
                 name: name.clone(),
                 args,
             };
@@ -130,19 +142,12 @@ impl EffectExecutor for ToolExecutor {
             let output = registry.execute(&tool_call).await;
 
             // Append to conversation thread if a mapping exists.
-            let thread_id = call_id_to_thread
-                .lock()
-                .ok()
-                .and_then(|m| m.get(&call_id).cloned());
-            if let Some(tid) = thread_id {
+            if let Some((tid, orig)) = mapping {
                 if let Ok(mut s) = store.lock() {
                     let msg = if output.is_error {
-                        Message::tool_result(
-                            call_id.as_uuid().to_string(),
-                            format!("error: {}", output.content),
-                        )
+                        Message::tool_result(orig, format!("error: {}", output.content))
                     } else {
-                        Message::tool_result(call_id.as_uuid().to_string(), &output.content)
+                        Message::tool_result(orig, &output.content)
                     };
                     s.append(&tid, msg);
                 }

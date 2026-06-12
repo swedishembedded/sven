@@ -352,7 +352,7 @@ impl RuntimeBuilder {
         // and ToolExecutor so appended tool results can be retrieved per-thread.
         let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::<ToolCallId, String>::new(),
+            std::collections::HashMap::<ToolCallId, (String, String)>::new(),
         ));
 
         // ── User/approval channels ────────────────────────────────────────────
