@@ -341,7 +341,7 @@ fn to_recovery(
 
 /// Parse a raw LLM response text as a JSON decision value.
 /// Tolerates code fences and extracts the first `{...}` object on failure.
-pub(super) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
+pub(crate) fn parse_sdlc_decision(raw: &str) -> Option<Value> {
     let stripped = sven_llm::strip_code_fences(raw);
     serde_json::from_str::<Value>(stripped).ok().or_else(|| {
         let start = stripped.find('{')?;
