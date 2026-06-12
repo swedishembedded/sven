@@ -84,7 +84,7 @@
 //! # Skill body here...
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -599,8 +599,15 @@ pub(crate) fn discover_skills_impl(
 ) -> Vec<SkillInfo> {
     // Keyed by command; later insertions (higher-precedence sources) win.
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
+    // Track canonical paths already scanned so symlinks (e.g. .cursor → .claude)
+    // don't cause the same physical directory to be parsed twice.
+    let mut scanned: HashSet<PathBuf> = HashSet::new();
 
     let mut load = |dir: PathBuf, source: &str| {
+        let canonical = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        if !scanned.insert(canonical) {
+            return;
+        }
         for skill in scan_skills_dir(&dir, source) {
             map.insert(skill.command.clone(), skill);
         }
