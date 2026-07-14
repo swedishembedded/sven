@@ -411,6 +411,22 @@ impl RuntimeBuilder {
         // Conversation store and call-id registry are shared between TurnExecutor
         // and ToolExecutor so appended tool results can be retrieved per-thread.
         let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        // Seed prior conversation history into the reactive-agent thread so a
+        // resumed or piped session sees the full context on its very first turn.
+        // Only the reactive `agent`/`chat` machines read `CHAT_THREAD`; the SDLC
+        // machine uses per-phase threads and simply ignores this seed. Seeding
+        // happens before any dispatch, so the append-only cache-safety invariant
+        // of the thread is preserved (empty → history → new user turn).
+        if !self.initial_history.is_empty() {
+            if let Ok(mut store) = conv_store.lock() {
+                for msg in &self.initial_history {
+                    store.append(
+                        sven_core::machines::reactive_agent::CHAT_THREAD,
+                        msg.clone(),
+                    );
+                }
+            }
+        }
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::<ToolCallId, (String, String)>::new(),
         ));

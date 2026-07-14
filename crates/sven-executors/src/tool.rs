@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use sven_hsm::{
-    Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability,
+    Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability, UiEvent,
 };
 use sven_llm::ConversationStore;
 use sven_model::Message;
@@ -85,7 +85,7 @@ impl ToolExecutor {
 
 #[async_trait]
 impl EffectExecutor for ToolExecutor {
-    async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
+    async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let Effect::CallTool {
             call_id,
             name,
@@ -119,6 +119,7 @@ impl EffectExecutor for ToolExecutor {
         let call_id_to_thread = Arc::clone(&self.call_id_to_thread);
         let store = Arc::clone(&self.store);
         let sink = sink.clone();
+        let obs = obs.clone();
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -140,8 +141,25 @@ impl EffectExecutor for ToolExecutor {
                 args,
             };
 
+            // Display id used for outward observation correlation: the exact
+            // id the LLM assigned (matching the earlier `UiEvent::ToolStarted`),
+            // falling back to the internal uuid when no mapping exists.
+            let display_id = tool_call.id.clone();
+
             tracing::debug!(tool = %name, "ToolExecutor: invoking tool (spawned)");
             let output = registry.execute(&tool_call).await;
+
+            // Emit the outward completion observation so headless / UI observers
+            // can render the tool result. This mirrors `UiEvent::ToolStarted`
+            // (emitted by the turn stream) and carries no inward semantics — the
+            // authoritative result still flows via `Event::ToolSucceeded` /
+            // `Event::ToolFailed` below.
+            obs.emit(UiEvent::ToolFinished {
+                call_id: display_id,
+                name: name.clone(),
+                output: output.content.clone(),
+                is_error: output.is_error,
+            });
 
             // Append to conversation thread if a mapping exists.
             if let Some((tid, orig)) = mapping {

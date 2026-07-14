@@ -1551,17 +1551,61 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         (String::new(), cli.prompt.clone())
     };
 
-    // ── Opt-in HSM kernel path ────────────────────────────────────────────────
-    // Route headless runs through the HSM kernel (`RuntimeRunner`) when:
-    //  • `SVEN_HSM=1` is set (explicit opt-in for any mode), OR
-    //  • the mode is `sdlc` or `chat` (these have no legacy CiRunner
-    //    implementation; CiRunner only knows the old agentic loop).
-    // Multi-step JSONL workflows always use the legacy runner regardless.
-    let hsm_enabled = std::env::var("SVEN_HSM")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-        || matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
-    if hsm_enabled && load_jsonl.is_none() {
+    // ── HSM kernel path (default) ─────────────────────────────────────────────
+    // The HSM kernel (`RuntimeRunner`) is the DEFAULT headless path for every
+    // run — plain single prompts, default `agent` mode, and piped multi-step
+    // pipe chains all route through the kernel. The old `CiRunner` is the
+    // *deprecated legacy* runner and is now opt-out only: set
+    // `SVEN_HSM=0` (or `false`/`no`/`off`) to force it. Any other value (or an
+    // unset variable) keeps the kernel default.
+    //
+    // The `RuntimeRunner` is the reactive-agent kernel path: it drives one turn
+    // to completion and streams a conversation document. It handles a fresh
+    // single prompt *and* a piped prior-conversation document replayed as
+    // history (`sven '…' | sven 'next task'`). Genuine multi-step workflow
+    // orchestration (markdown `--file`, JSONL, `--var` templating,
+    // `--artifacts-dir`, `--dry-run`, `--output-format json/compact`,
+    // `--output-last-message`, `--system-prompt-file`) still lives in the legacy
+    // `CiRunner`, so a run that uses one of those workflow features falls
+    // through to it regardless of `SVEN_HSM` rather than lose the feature.
+    // `sdlc`/`chat` modes always use the kernel (no legacy path exists) even
+    // when `SVEN_HSM=0` is set.
+    let hsm_opt_out = std::env::var("SVEN_HSM")
+        .map(|v| matches!(v.as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(false);
+    let mode_requires_hsm = matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
+    let hsm_enabled = !hsm_opt_out || mode_requires_hsm;
+
+    // Piped stdin that itself looks like a prior sven conversation document is
+    // replayed as history (parsed into prior messages + a trailing pending
+    // turn), not concatenated into a single prompt.
+    let input_is_conversation = input.lines().any(|line| {
+        matches!(
+            line.trim_end(),
+            "## User" | "## Sven" | "## Tool" | "## Tool Result"
+        )
+    });
+
+    // The kernel `RuntimeRunner` drives one reactive-agent turn to completion.
+    // It handles both a fresh single prompt *and* a piped prior-conversation
+    // document replayed as history (`sven '…' | sven 'next task'`). Genuine
+    // multi-step workflow features (workflow `--file`, `--var` templating,
+    // `--artifacts-dir`, `--dry-run`, JSON/JSONL/compact output, chat I/O,
+    // `--system-prompt-file`, `--output-last-message`) still live in the legacy
+    // `CiRunner`; a run using any of them falls through to preserve those
+    // features. `sdlc`/`chat` modes always use the kernel.
+    let workflow_features_absent = cli.file.is_none()
+        && matches!(cli.output_format, OutputFormatArg::Conversation)
+        && cli.artifacts_dir.is_none()
+        && !cli.dry_run
+        && cli.output_last_message.is_none()
+        && cli.system_prompt_file.is_none()
+        && cli.vars.is_empty()
+        && cli.effective_load_chat().is_none()
+        && cli.effective_output_chat().is_none()
+        && cli.effective_output_jsonl().is_none();
+
+    if hsm_enabled && load_jsonl.is_none() && (mode_requires_hsm || workflow_features_absent) {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
             match cli.mode {
                 AgentMode::Chat => "chat",
@@ -1570,10 +1614,66 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             }
             .to_string()
         });
-        let prompt = match &extra_prompt {
-            Some(p) if !input.trim().is_empty() => format!("{input}\n\n{p}"),
-            Some(p) => p.clone(),
-            None => input.clone(),
+        // Resolve the new prompt and any prior history to replay.
+        //
+        // When stdin is a prior sven conversation document, parse it into
+        // history + a trailing pending user turn. The new task is the CLI
+        // positional prompt (if any), else the pending turn. History is seeded
+        // into the kernel thread so the turn sees full context. Otherwise stdin
+        // is plain text: trim it (notably the trailing newline piped stdin
+        // always carries so exact-match model routing sees `"ping"`, not
+        // `"ping\n"`) and merge with any positional prompt.
+        let (prompt, history) = if input_is_conversation {
+            match sven_input::parse_conversation(&input) {
+                Ok(conv) => {
+                    let new_task = extra_prompt
+                        .as_ref()
+                        .map(|p| p.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .or(conv.pending_user_input);
+                    match new_task {
+                        Some(task) => (task, conv.history),
+                        None => {
+                            eprintln!(
+                                "[sven:error] Piped conversation has no pending task.\n\
+                                 \n\
+                                 To continue a piped conversation provide a prompt:\n\
+                                 \n\
+                                 \tsven 'task1' | sven 'task2'\n\
+                                 \n\
+                                 Or end the piped output with an unanswered ## User section\n\
+                                 so the next sven instance picks it up automatically."
+                            );
+                            std::process::exit(2);
+                        }
+                    }
+                }
+                // If the document fails to parse, fall back to treating stdin as
+                // a plain single prompt rather than losing the run.
+                Err(e) => {
+                    eprintln!(
+                        "[sven:warn] Failed to parse piped input as conversation ({e}), \
+                         treating as plain prompt"
+                    );
+                    let prompt = match &extra_prompt {
+                        Some(p) if !input.trim().is_empty() => {
+                            format!("{}\n\n{}", input.trim(), p.trim())
+                        }
+                        Some(p) => p.trim().to_string(),
+                        None => input.trim().to_string(),
+                    };
+                    (prompt, Vec::new())
+                }
+            }
+        } else {
+            let prompt = match &extra_prompt {
+                Some(p) if !input.trim().is_empty() => {
+                    format!("{}\n\n{}", input.trim(), p.trim())
+                }
+                Some(p) => p.trim().to_string(),
+                None => input.trim().to_string(),
+            };
+            (prompt, Vec::new())
         };
         // Apply the `--model` override into the config the kernel builds from
         // (the legacy CiRunner does the same before constructing its agent).
@@ -1589,8 +1689,12 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
             .run(sven_ci::RuntimeRunnerOptions {
                 mode: kernel_mode,
                 prompt,
+                history,
                 project_root: project_root.clone(),
                 timeout_secs: cli.run_timeout,
+                step_timeout_secs: cli.step_timeout,
+                max_tokens_budget: cli.max_tokens,
+                append_system_prompt: cli.append_system_prompt.clone(),
                 trace_level: cli.verbose,
             })
             .await;
