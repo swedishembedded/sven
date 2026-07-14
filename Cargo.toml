@@ -33,6 +33,14 @@ members = [
     "crates/sven-executors",
     # Graph DSL
     "crates/sven-graph",
+    # Cloud tether protocol (control plane <-> companion)
+    "crates/sven-wire",
+    # Customer-side companion binary (remote hands)
+    "crates/sven-companion",
+    # Cloud control plane: companion registry + tether routing
+    "crates/sven-cloud",
+    # LLM metering: pricing catalog, credit ledger, statements
+    "crates/sven-metering",
 ]
 
 [workspace.dependencies]
@@ -86,7 +94,7 @@ slint-build  = "1.15"
 
 [package]
 name    = "sven"
-version = "1.9.1"
+version = "1.10.0"
 edition = "2021"
 description = "A CLI and CI AI coding agent"
 license = "Apache-2.0"
@@ -106,6 +114,7 @@ sven-ci          = { path = "crates/sven-ci" }
 sven-team        = { path = "crates/sven-team" }
 sven-tui         = { path = "crates/sven-tui" }
 sven-node        = { path = "crates/sven-node" }
+sven-node-client = { path = "crates/sven-node-client" }
 sven-mcp         = { path = "crates/sven-mcp" }
 sven-acp         = { path = "crates/sven-acp" }
 sven-gui         = { path = "crates/sven-gui" }
