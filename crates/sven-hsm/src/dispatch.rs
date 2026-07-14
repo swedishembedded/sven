@@ -152,7 +152,7 @@ impl<M: Machine> Hsm<M> {
         }
 
         // --- Phase 2: act on the reaction. ---
-        let outcome = match reaction {
+        let mut outcome = match reaction {
             Reaction::Transition {
                 target,
                 effects: tran_effects,
@@ -211,7 +211,9 @@ impl<M: Machine> Hsm<M> {
             Reaction::Super(_) => unreachable!("phase 1 loop exits before a Super reaction"),
         };
 
-        // Every dispatch appends exactly one audit record (event-sourcing spine).
+        // Every dispatch appends exactly one audit record (event-sourcing spine),
+        // attributed to the session principal when one is set.
+        outcome.audit.stamp_principal(ctx.principal.as_ref());
         ctx.audit.push(outcome.audit.clone());
         outcome
     }

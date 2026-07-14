@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::context::Context;
+use crate::context::{Context, Principal};
 use crate::dispatch::Hsm;
 use crate::effect::{Effect, EffectKind};
 use crate::event::{Event, EventKind};
@@ -46,6 +46,14 @@ pub struct AuditRecord {
     pub outcome: AuditOutcome,
     /// Error message, set only when `outcome == Rejected`.
     pub error: Option<String>,
+    /// Tenant that owned the session at dispatch time, if a
+    /// [`Principal`] was set on the context. `None` for local sessions
+    /// and for records serialized before principals existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// Actor that drove the session at dispatch time (see `tenant_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
 }
 
 impl AuditRecord {
@@ -66,6 +74,8 @@ impl AuditRecord {
             rationale,
             outcome: AuditOutcome::Transition,
             error: None,
+            tenant_id: None,
+            actor_id: None,
         }
     }
 
@@ -85,6 +95,8 @@ impl AuditRecord {
             rationale: None,
             outcome: AuditOutcome::InternalHandled,
             error: None,
+            tenant_id: None,
+            actor_id: None,
         }
     }
 
@@ -100,6 +112,8 @@ impl AuditRecord {
             rationale: None,
             outcome: AuditOutcome::Ignored,
             error: None,
+            tenant_id: None,
+            actor_id: None,
         }
     }
 
@@ -122,6 +136,17 @@ impl AuditRecord {
             rationale: None,
             outcome: AuditOutcome::Rejected,
             error: Some(error.into()),
+            tenant_id: None,
+            actor_id: None,
+        }
+    }
+
+    /// Stamps the owning principal's tenant and actor ids into this record.
+    /// A `None` principal leaves the record unattributed (local session).
+    pub fn stamp_principal(&mut self, principal: Option<&Principal>) {
+        if let Some(p) = principal {
+            self.tenant_id = Some(p.tenant_id.clone());
+            self.actor_id = Some(p.actor_id.clone());
         }
     }
 }
@@ -161,6 +186,15 @@ pub struct ToolAuditRecord {
     pub outcome: ToolAuditOutcome,
     /// Error or denial reason; `None` for `Started` / `ApprovalRequired`.
     pub message: Option<String>,
+    /// Tenant that owned the session when the call was classified, if a
+    /// [`Principal`] was set on the context. `None` for local sessions and
+    /// for records serialized before principals existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// Actor that drove the session when the call was classified (see
+    /// `tenant_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
 }
 
 impl ToolAuditRecord {
@@ -179,6 +213,8 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::Started,
             message: None,
+            tenant_id: None,
+            actor_id: None,
         }
     }
 
@@ -198,6 +234,8 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::Denied,
             message: Some(reason.into()),
+            tenant_id: None,
+            actor_id: None,
         }
     }
 
@@ -216,6 +254,17 @@ impl ToolAuditRecord {
             capability,
             outcome: ToolAuditOutcome::ApprovalRequired,
             message: None,
+            tenant_id: None,
+            actor_id: None,
+        }
+    }
+
+    /// Stamps the owning principal's tenant and actor ids into this record.
+    /// A `None` principal leaves the record unattributed (local session).
+    pub fn stamp_principal(&mut self, principal: Option<&Principal>) {
+        if let Some(p) = principal {
+            self.tenant_id = Some(p.tenant_id.clone());
+            self.actor_id = Some(p.actor_id.clone());
         }
     }
 }
@@ -243,4 +292,48 @@ where
         hsm.dispatch(event, &mut ctx);
     }
     hsm
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_record_without_principal_fields_deserializes() {
+        // Records serialized before tenant/actor stamping existed must load.
+        let json = r#"{
+            "from_state": "Idle",
+            "to_state": "Busy",
+            "event": "UserMessage",
+            "effects": [],
+            "rationale": null,
+            "outcome": "Transition",
+            "error": null
+        }"#;
+        let record: AuditRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.tenant_id, None);
+        assert_eq!(record.actor_id, None);
+    }
+
+    #[test]
+    fn stamp_principal_sets_tenant_and_actor() {
+        let mut record = AuditRecord::ignored("Idle", EventKind::UserMessage);
+        record.stamp_principal(None);
+        assert_eq!(record.tenant_id, None);
+        assert_eq!(record.actor_id, None);
+
+        let principal = Principal::new("acme", "alice");
+        record.stamp_principal(Some(&principal));
+        assert_eq!(record.tenant_id.as_deref(), Some("acme"));
+        assert_eq!(record.actor_id.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn unstamped_record_serializes_without_principal_keys() {
+        // `skip_serializing_if` keeps legacy logs byte-compatible.
+        let record = AuditRecord::ignored("Idle", EventKind::UserMessage);
+        let json = serde_json::to_value(&record).unwrap();
+        assert!(json.get("tenant_id").is_none());
+        assert!(json.get("actor_id").is_none());
+    }
 }

@@ -63,7 +63,7 @@ pub mod submachine;
 // ---- Curated public API re-exports ----
 
 pub use audit::{replay, AuditOutcome, AuditRecord, ToolAuditOutcome, ToolAuditRecord};
-pub use context::{Context, PendingApproval, PermissionState, SafetyState};
+pub use context::{Context, PendingApproval, PermissionState, Principal, SafetyState};
 pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind};
 pub use error::{MachineError, Result};
@@ -76,8 +76,8 @@ pub use permissions::{
     PermissionPolicy, PermissionPolicyBuilder, ToolCapability,
 };
 pub use runtime::{
-    ChildSpawner, Clock, EffectExecutor, ErasedReport, ErasedRuntime, EventSink, Runtime,
-    RuntimeReport, RuntimeStatus, StateLabel, SystemClock, TimerService, VirtualClock,
+    AuditTrailHandle, ChildSpawner, Clock, EffectExecutor, ErasedReport, ErasedRuntime, EventSink,
+    Runtime, RuntimeReport, RuntimeStatus, StateLabel, SystemClock, TimerService, VirtualClock,
 };
 pub use status::Reaction;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};

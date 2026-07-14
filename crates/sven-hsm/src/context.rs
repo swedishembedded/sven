@@ -16,6 +16,41 @@ use crate::audit::{AuditRecord, ToolAuditRecord};
 use crate::ids::ApprovalId;
 use crate::permissions::ToolCapability;
 
+/// The identity on whose behalf a session runs.
+///
+/// In the managed-agents platform every session is owned by a tenant and
+/// driven by an actor (a human user, a service account, an API key, ...).
+/// The kernel treats the principal as opaque data: it is stamped into every
+/// [`AuditRecord`] for attribution but never interpreted by transition logic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Principal {
+    /// The tenant (organisation / account) that owns the session.
+    pub tenant_id: String,
+    /// The concrete actor within the tenant (user, service account, ...).
+    pub actor_id: String,
+    /// Role labels used by authorisation layers above the kernel.
+    pub roles: Vec<String>,
+}
+
+impl Principal {
+    /// Creates a principal with no roles.
+    #[must_use]
+    pub fn new(tenant_id: impl Into<String>, actor_id: impl Into<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            actor_id: actor_id.into(),
+            roles: Vec::new(),
+        }
+    }
+
+    /// Adds a role label (builder-style).
+    #[must_use]
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.roles.push(role.into());
+        self
+    }
+}
+
 /// A pending request for human approval, recorded while the machine waits.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingApproval {
@@ -46,6 +81,11 @@ pub struct PermissionState {
 /// The machine's accumulated knowledge.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Context {
+    /// The identity that owns this session, if known. `None` for local /
+    /// single-user sessions (the historical default). Stamped into every
+    /// [`AuditRecord`] appended via [`Context::push_audit`].
+    #[serde(default)]
+    pub principal: Option<Principal>,
     /// Opaque domain facts (goal, problem statement, constraints, backlog, ...).
     /// Kept generic so the kernel never needs to understand the domain.
     pub facts: serde_json::Map<String, Value>,
@@ -76,6 +116,27 @@ impl Context {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Appends `record` to the audit trail, stamping the session principal
+    /// (tenant + actor) into it first when one is set.
+    ///
+    /// All kernel code must append dispatch audit records through this method
+    /// so attribution is never lost.
+    pub fn push_audit(&mut self, mut record: AuditRecord) {
+        record.stamp_principal(self.principal.as_ref());
+        self.audit.push(record);
+    }
+
+    /// Appends `record` to the per-tool-call audit trail, stamping the session
+    /// principal (tenant + actor) into it first when one is set.
+    ///
+    /// All kernel code must append tool audit records through this method so
+    /// the durable log attributes tool invocations to a tenant/actor without
+    /// needing `call_id` correlation back to a dispatch record.
+    pub fn push_tool_audit(&mut self, mut record: ToolAuditRecord) {
+        record.stamp_principal(self.principal.as_ref());
+        self.tool_audit.push(record);
     }
 
     /// Records a fact under `key`.
@@ -165,6 +226,43 @@ mod tests {
         });
         assert_eq!(ctx.approve(ApprovalId::new()), None);
         assert!(ctx.pending_approval.is_some());
+    }
+
+    #[test]
+    fn context_without_principal_field_deserializes_to_none() {
+        // Contexts serialized before `principal` existed must keep loading.
+        let ctx = Context::new();
+        let mut json = serde_json::to_value(&ctx).unwrap();
+        json.as_object_mut().unwrap().remove("principal");
+        let restored: Context = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.principal, None);
+    }
+
+    #[test]
+    fn principal_round_trips_through_serde() {
+        let mut ctx = Context::new();
+        ctx.principal = Some(Principal::new("acme", "alice").with_role("admin"));
+        let json = serde_json::to_string(&ctx).unwrap();
+        let restored: Context = serde_json::from_str(&json).unwrap();
+        let p = restored.principal.expect("principal survives round-trip");
+        assert_eq!(p.tenant_id, "acme");
+        assert_eq!(p.actor_id, "alice");
+        assert_eq!(p.roles, vec!["admin".to_string()]);
+    }
+
+    #[test]
+    fn push_audit_stamps_principal_when_set() {
+        use crate::event::EventKind;
+
+        let mut ctx = Context::new();
+        ctx.push_audit(AuditRecord::ignored("Idle", EventKind::UserMessage));
+        assert_eq!(ctx.audit[0].tenant_id, None);
+        assert_eq!(ctx.audit[0].actor_id, None);
+
+        ctx.principal = Some(Principal::new("acme", "alice"));
+        ctx.push_audit(AuditRecord::ignored("Idle", EventKind::UserMessage));
+        assert_eq!(ctx.audit[1].tenant_id.as_deref(), Some("acme"));
+        assert_eq!(ctx.audit[1].actor_id.as_deref(), Some("alice"));
     }
 
     #[test]

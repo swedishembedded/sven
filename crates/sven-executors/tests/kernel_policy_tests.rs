@@ -109,9 +109,16 @@ fn turn_executor(
     registry: Arc<ToolRegistry>,
 ) -> sven_executors::TurnExecutor {
     let store = Arc::new(Mutex::new(ConversationStore::new()));
-    let call_id_to_thread = Arc::new(Mutex::new(HashMap::<ToolCallId, String>::new()));
+    let call_id_to_thread = Arc::new(Mutex::new(HashMap::<ToolCallId, (String, String)>::new()));
     let cancel_handle = Arc::new(TokioMutex::new(None));
-    sven_executors::TurnExecutor::new(provider, None, registry, store, call_id_to_thread, cancel_handle)
+    sven_executors::TurnExecutor::new(
+        provider,
+        None,
+        registry,
+        store,
+        call_id_to_thread,
+        cancel_handle,
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -128,7 +135,7 @@ async fn unknown_tool_emits_tool_failed() {
     let obs = ObservationSink::new(4);
 
     let effect = Effect::CallTool {
-        call_id: call_id.clone(),
+        call_id,
         name: "nonexistent_tool".into(),
         args: json!({}),
         capability: ToolCapability::ReadFile,
@@ -148,7 +155,10 @@ async fn unknown_tool_emits_tool_failed() {
         .fact("last_event_kind")
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default();
-    assert_eq!(kind, "ToolFailed", "expected ToolFailed event, got {kind:?}");
+    assert_eq!(
+        kind, "ToolFailed",
+        "expected ToolFailed event, got {kind:?}"
+    );
 }
 
 /// A `ToolExecutor` configured with a non-matching capability allow-list
@@ -165,7 +175,7 @@ async fn restricted_capability_emits_tool_failed_before_registry() {
     // Allow only WriteFile; the effect requests ReadFile → blocked.
     let allowed: HashSet<ToolCapability> = [ToolCapability::WriteFile].into_iter().collect();
     let effect = Effect::CallTool {
-        call_id: call_id.clone(),
+        call_id,
         name: "read_file".into(),
         args: json!({"path": "/etc/passwd"}),
         capability: ToolCapability::ReadFile,
@@ -184,7 +194,10 @@ async fn restricted_capability_emits_tool_failed_before_registry() {
         .fact("last_event_kind")
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default();
-    assert_eq!(kind, "ToolFailed", "expected ToolFailed for restricted cap, got {kind:?}");
+    assert_eq!(
+        kind, "ToolFailed",
+        "expected ToolFailed for restricted cap, got {kind:?}"
+    );
 }
 
 /// Three independent `CallTool` effects each produce their own `ToolFailed`
@@ -205,7 +218,7 @@ async fn parallel_call_tool_effects_fan_in_correctly() {
     for id in &call_ids {
         let (rt, sink) = one_shot_runtime();
         let effect = Effect::CallTool {
-            call_id: id.clone(),
+            call_id: *id,
             name: format!("tool_for_{}", id.as_uuid()),
             args: json!({}),
             capability: ToolCapability::ExecuteShell,
@@ -225,7 +238,10 @@ async fn parallel_call_tool_effects_fan_in_correctly() {
             .fact("last_event_kind")
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
-        assert_eq!(kind, "ToolFailed", "call {i}: expected ToolFailed, got {kind:?}");
+        assert_eq!(
+            kind, "ToolFailed",
+            "call {i}: expected ToolFailed, got {kind:?}"
+        );
     }
 }
 
@@ -239,12 +255,10 @@ async fn multi_round_chat_completes_twice_via_kernel() {
     use sven_hsm::submachine::ErasedMachine;
     use sven_model::MockProvider;
 
-    let provider = Arc::new(MockProvider::default());
+    let provider = Arc::new(MockProvider);
     let registry = Arc::new(ToolRegistry::new());
     let turn = turn_executor(provider, registry);
-    let executor = CompositeExecutorBuilder::default()
-        .with_turn(turn)
-        .build();
+    let executor = CompositeExecutorBuilder::default().with_turn(turn).build();
 
     let machine: Box<dyn ErasedMachine> = Box::new(Hsm::new(ReactiveAgentMachine::new()));
     let rt = ErasedRuntime::spawn(
@@ -265,10 +279,7 @@ async fn multi_round_chat_completes_twice_via_kernel() {
 
     let mut obs = rt.subscribe_observations();
 
-    async fn await_turn_complete(
-        obs: &mut tokio::sync::broadcast::Receiver<UiEvent>,
-        label: &str,
-    ) {
+    async fn await_turn_complete(obs: &mut tokio::sync::broadcast::Receiver<UiEvent>, label: &str) {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(2000);
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -287,11 +298,19 @@ async fn multi_round_chat_completes_twice_via_kernel() {
     }
 
     // Round 1
-    rt.sink().emit(Event::UserMessage { text: "round one".into() }).await;
+    rt.sink()
+        .emit(Event::UserMessage {
+            text: "round one".into(),
+        })
+        .await;
     await_turn_complete(&mut obs, "round 1").await;
 
     // Round 2 — machine must be back in Idle to accept a second message.
-    rt.sink().emit(Event::UserMessage { text: "round two".into() }).await;
+    rt.sink()
+        .emit(Event::UserMessage {
+            text: "round two".into(),
+        })
+        .await;
     await_turn_complete(&mut obs, "round 2").await;
 
     rt.abort();

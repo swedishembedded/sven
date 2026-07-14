@@ -32,7 +32,9 @@ use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
-use sven_hsm::{Context, ErasedRuntime, Event, EventSink, RuntimeStatus, ToolCallId};
+use sven_hsm::{
+    Context, EffectExecutor, ErasedRuntime, Event, EventSink, Principal, RuntimeStatus, ToolCallId,
+};
 use sven_llm::ConversationStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
@@ -140,6 +142,16 @@ pub struct RuntimeBuilder {
     /// Shared abort slot wired into the `TurnExecutor`. The TUI drops
     /// the sender (via `send_abort_signal`) to cancel an in-flight LLM turn.
     cancel_handle: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
+    /// When set, this executor replaces the default [`CompositeExecutor`]
+    /// entirely (see [`Self::with_effect_executor`]).
+    effect_executor: Option<Box<dyn EffectExecutor>>,
+    /// Identity the session runs on behalf of (see [`Self::with_principal`]).
+    /// `None` (the default) preserves the historical single-user behaviour.
+    principal: Option<Principal>,
+    /// When set, this provider is used instead of the one
+    /// `sven_model::from_config` would construct (see
+    /// [`Self::with_model_provider`]).
+    model_provider_override: Option<Box<dyn sven_model::ModelProvider>>,
 }
 
 impl RuntimeBuilder {
@@ -167,6 +179,9 @@ impl RuntimeBuilder {
             initial_history: Vec::new(),
             permission_requester: None,
             cancel_handle: None,
+            effect_executor: None,
+            principal: None,
+            model_provider_override: None,
         }
     }
 
@@ -237,6 +252,45 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Supply a custom [`EffectExecutor`] that replaces the default
+    /// [`CompositeExecutor`](sven_executors::CompositeExecutor) entirely.
+    ///
+    /// The kernel hands **every** validated effect to `exec`; none of the
+    /// default sub-executors (turn/tool/user/timer/checkpoint/audit) are
+    /// wired. In particular the [`KernelChannels`] question/approval
+    /// receivers will observe closed channels, since the default
+    /// `UserExecutor` that feeds them is not installed.
+    ///
+    /// Intended for embedding sven's kernel with bespoke I/O (e.g. managed
+    /// cloud agents) and for tests that assert on emitted effects.
+    pub fn with_effect_executor(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.effect_executor = Some(exec);
+        self
+    }
+
+    /// Set the [`Principal`] (tenant + actor + roles) the session runs on
+    /// behalf of. It is seeded into the kernel [`Context`] so every dispatch
+    /// audit record is stamped with the tenant and actor ids.
+    pub fn with_principal(mut self, principal: Principal) -> Self {
+        self.principal = Some(principal);
+        self
+    }
+
+    /// Supply the [`sven_model::ModelProvider`] the kernel talks to instead
+    /// of letting the builder construct one from config.
+    ///
+    /// This is the structural seam gateway wrappers hang off: managed-cloud
+    /// deployments build the config provider themselves
+    /// (`sven_model::from_config`), wrap it (e.g. in `sven-cloud`'s
+    /// `MeteredProvider` so every turn is priced and debited live), and
+    /// inject the wrapped provider here — no kernel path can then reach the
+    /// model unmetered. Unlike [`Self::with_effect_executor`], all default
+    /// executors (turn/tool/user/timer/checkpoint/audit) stay wired.
+    pub fn with_model_provider(mut self, provider: Box<dyn sven_model::ModelProvider>) -> Self {
+        self.model_provider_override = Some(provider);
+        self
+    }
+
     /// Build the runtime. Returns the [`ErasedRuntime`], a cheap
     /// [`RuntimeHandle`] for posting events, the [`KernelChannels`] for
     /// the frontend, the [`McpManager`], and the MCP event receiver.
@@ -247,7 +301,7 @@ impl RuntimeBuilder {
     /// - The mode is not registered in [`ModeRegistry`].
     /// - The model provider cannot be initialised from config.
     pub async fn build(
-        self,
+        mut self,
     ) -> anyhow::Result<(
         ErasedRuntime,
         RuntimeHandle,
@@ -271,7 +325,13 @@ impl RuntimeBuilder {
             .model_cfg_override
             .clone()
             .unwrap_or(self.config.model.clone());
-        let model_provider = sven_model::from_config(&model_cfg)?;
+        // An injected provider (see `with_model_provider`) wins over the
+        // config-constructed one — that is how metering/gateway wrappers get
+        // between the kernel and the model.
+        let model_provider = match self.model_provider_override.take() {
+            Some(provider) => provider,
+            None => sven_model::from_config(&model_cfg)?,
+        };
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
         // ── MCP setup ────────────────────────────────────────────────────────
@@ -367,6 +427,20 @@ impl RuntimeBuilder {
             .map(|r| r.join(".sven").join("audit.jsonl"))
             .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"));
 
+        // Shared mirror of the kernel's audit trail: the runtime syncs it
+        // around every dispatch and then executes `PersistAudit` itself, so
+        // the AuditExecutor flushes the full hash-chained records after each
+        // dispatch (machines never emit `PersistAudit`).
+        //
+        // Concurrent sessions on the same project root share this log file;
+        // the AuditExecutor serializes appends via an advisory lock on a
+        // `<log>.lock` sidecar and re-reads the chain tip under it, so
+        // interleaved sessions extend one linear, verifiable chain. Records
+        // of different tenants are intermingled in the shared file but every
+        // dispatch and tool record carries tenant/actor attribution, so
+        // per-tenant views can be filtered out of the log.
+        let audit_trail = sven_hsm::AuditTrailHandle::new();
+
         // ── Checkpoint dir ────────────────────────────────────────────────────
         let checkpoint_dir: PathBuf = self
             .runtime_ctx
@@ -415,14 +489,22 @@ impl RuntimeBuilder {
             conv_store,
         );
 
-        let executor = CompositeExecutorBuilder::default()
-            .with_tool_executor(tool_executor)
-            .with_user(question_tx, approval_tx)
-            .with_timers(Arc::new(sven_hsm::SystemClock::new()))
-            .with_checkpoints(checkpoint_dir)
-            .with_audit(audit_log_path)
-            .with_turn(turn_executor)
-            .build();
+        // A caller-supplied executor (see `with_effect_executor`) replaces the
+        // default composite wholesale; otherwise wire the default composite
+        // exactly as before.
+        let executor: Box<dyn EffectExecutor> = match self.effect_executor {
+            Some(custom) => custom,
+            None => Box::new(
+                CompositeExecutorBuilder::default()
+                    .with_tool_executor(tool_executor)
+                    .with_user(question_tx, approval_tx)
+                    .with_timers(Arc::new(sven_hsm::SystemClock::new()))
+                    .with_checkpoints(checkpoint_dir)
+                    .with_audit_trail(audit_log_path, audit_trail.clone())
+                    .with_turn(turn_executor)
+                    .build(),
+            ),
+        };
 
         // ── Permission policy — per-machine real policy ───────────────────────
         // Use the machine's declared policy so the kernel enforces capability
@@ -437,16 +519,18 @@ impl RuntimeBuilder {
         // when a child spawner is actually installed (otherwise it stays
         // single-track and never emits orphaned InstantiateSubmachine effects).
         let mut init_ctx = Context::new();
+        init_ctx.principal = self.principal.clone();
         if child_spawner.is_some() {
             init_ctx.set_fact("parallel_execution", serde_json::json!(true));
         }
-        let erased_runtime = ErasedRuntime::spawn_with_children(
+        let erased_runtime = ErasedRuntime::spawn_with_audit_trail(
             machine,
             init_ctx,
             policy,
             executor,
             64,
             child_spawner,
+            audit_trail,
         );
 
         let handle = RuntimeHandle {
@@ -506,5 +590,173 @@ pub struct SessionBundle {
     /// Receiver for MCP server events (tools changed, server health, etc.).
     /// Consume in the frontend or drop to silence.
     pub mcp_event_rx: mpsc::Receiver<McpEvent>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use sven_hsm::{Effect, EffectKind, ObservationSink};
+
+    use super::*;
+
+    /// Forwards every effect it receives to a channel so the test can assert
+    /// the kernel routed effects to the injected executor.
+    struct RecordingExecutor {
+        tx: mpsc::UnboundedSender<Effect>,
+    }
+
+    #[async_trait::async_trait]
+    impl EffectExecutor for RecordingExecutor {
+        async fn execute(&mut self, effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {
+            let _ = self.tx.send(effect);
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_effect_executor_is_injected_and_receives_effects() {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<Effect>();
+
+        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_effect_executor(Box::new(RecordingExecutor { tx }))
+                .build()
+                .await
+                .expect("runtime should build with a custom executor");
+
+        handle.send_user_message("hello".into()).await;
+
+        // The chat machine reacts to UserMessage with a CallLlm(kind=turn)
+        // effect; it must reach the injected executor (skip any earlier
+        // init/audit effects).
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut saw_call_llm = false;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(effect)) => {
+                    if effect.kind() == EffectKind::CallLlm {
+                        saw_call_llm = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        runtime.abort();
+        assert!(
+            saw_call_llm,
+            "injected custom executor never received the CallLlm effect"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_model_provider_replaces_config_construction() {
+        // A config whose provider `from_config` cannot build: if the build
+        // succeeds, the injected provider — not the config — was used. This
+        // is the seam metering gateways (sven-cloud's MeteredProvider) hang
+        // off, so it must structurally bypass config construction.
+        let mut config = Config::default();
+        config.model.provider = "no-such-provider".into();
+        config.model.name = "ghost".into();
+        let config = Arc::new(config);
+
+        assert!(
+            RuntimeBuilder::new(Arc::clone(&config), "chat")
+                .build()
+                .await
+                .is_err(),
+            "sanity: the config alone must fail provider construction"
+        );
+
+        let (runtime, _handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(config, "chat")
+                .with_model_provider(Box::new(sven_model::MockProvider))
+                .build()
+                .await
+                .expect("an injected provider must bypass from_config");
+        runtime.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_tool_executor_installs_via_effect_executor_hook() {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+
+        // RemoteToolExecutor owns CallTool; everything else must flow to its
+        // delegate. A recording delegate stands in for the default composite.
+        let (tx, mut rx) = mpsc::unbounded_channel::<Effect>();
+        let (to_companion_tx, _to_companion_rx) = mpsc::channel(8);
+        let exec = sven_executors::RemoteToolExecutor::new(to_companion_tx)
+            .with_delegate(Box::new(RecordingExecutor { tx }));
+
+        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_effect_executor(Box::new(exec))
+                .build()
+                .await
+                .expect("runtime should build with a RemoteToolExecutor");
+
+        handle.send_user_message("hello".into()).await;
+
+        // The chat machine reacts with a CallLlm effect — not owned by the
+        // remote tool executor, so it must reach the delegate.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut saw_call_llm = false;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(effect)) => {
+                    if effect.kind() == EffectKind::CallLlm {
+                        saw_call_llm = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        runtime.abort();
+        assert!(
+            saw_call_llm,
+            "RemoteToolExecutor must delegate non-CallTool effects to the composite"
+        );
+    }
+
+    #[tokio::test]
+    async fn principal_is_stamped_into_dispatch_audit_records() {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+
+        // A recording executor keeps the kernel free of real I/O; the audit
+        // trail is written by the pure dispatch engine regardless.
+        let (tx, mut rx) = mpsc::unbounded_channel::<Effect>();
+
+        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_principal(sven_hsm::Principal::new("acme", "alice"))
+                .with_effect_executor(Box::new(RecordingExecutor { tx }))
+                .build()
+                .await
+                .expect("runtime should build");
+
+        handle.send_user_message("hello".into()).await;
+
+        // Once an effect reaches the executor, the dispatch that produced it
+        // has already appended its audit record.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let _ = tokio::time::timeout_at(deadline, rx.recv()).await;
+
+        let audit = runtime.audit_snapshot();
+        runtime.abort();
+        assert!(!audit.is_empty(), "dispatch must append audit records");
+        for record in &audit {
+            assert_eq!(record.tenant_id.as_deref(), Some("acme"));
+            assert_eq!(record.actor_id.as_deref(), Some("alice"));
+        }
+    }
 }
 

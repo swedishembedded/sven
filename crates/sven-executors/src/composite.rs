@@ -24,7 +24,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{Clock, Effect, EffectExecutor, EffectKind, EventSink, ObservationSink};
+use sven_hsm::{
+    AuditTrailHandle, Clock, Effect, EffectExecutor, EffectKind, EventSink, ObservationSink,
+};
 use sven_tools::ToolRegistry;
 use tokio::sync::mpsc;
 
@@ -37,16 +39,20 @@ use crate::turn::TurnExecutor;
 use crate::user::{ApprovalRequest, UserExecutor, UserQuestion};
 
 /// All sub-executors collected into one structure.
+///
+/// Each slot holds a `Box<dyn EffectExecutor>` so any slot can be substituted
+/// with a custom executor via the `with_*_slot` builder methods; the concrete
+/// `with_*` methods wire the default executors.
 pub struct CompositeExecutor {
     /// Single-turn engine (kernel-native loop). Handles `CallLlm` effects
     /// whose request `kind` is `"turn"`.
-    turn: Option<TurnExecutor>,
-    tool: Option<ToolExecutor>,
-    user: Option<UserExecutor>,
-    timer: Option<TimerExecutor>,
-    checkpoint: Option<CheckpointExecutor>,
-    audit: Option<AuditExecutor>,
-    internal: InternalExecutor,
+    turn: Option<Box<dyn EffectExecutor>>,
+    tool: Option<Box<dyn EffectExecutor>>,
+    user: Option<Box<dyn EffectExecutor>>,
+    timer: Option<Box<dyn EffectExecutor>>,
+    checkpoint: Option<Box<dyn EffectExecutor>>,
+    audit: Option<Box<dyn EffectExecutor>>,
+    internal: Box<dyn EffectExecutor>,
 }
 
 impl CompositeExecutor {
@@ -63,9 +69,10 @@ impl EffectExecutor for CompositeExecutor {
         match kind {
             EffectKind::CallLlm => {
                 let request_kind = match &effect {
-                    Effect::CallLlm { request } => {
-                        request.get("kind").and_then(|v| v.as_str()).map(str::to_string)
-                    }
+                    Effect::CallLlm { request } => request
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                     _ => None,
                 };
                 let is_turn = request_kind.as_deref() == Some(crate::turn::TURN_KIND);
@@ -146,14 +153,19 @@ impl EffectExecutor for CompositeExecutor {
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /// Builds a [`CompositeExecutor`] by composing sub-executors incrementally.
+///
+/// The `with_*` methods attach the default concrete executors; the
+/// `with_*_slot` methods substitute any [`EffectExecutor`] into a slot
+/// (used to inject custom executors, e.g. in tests or embeddings).
 #[derive(Default)]
 pub struct CompositeExecutorBuilder {
-    turn: Option<TurnExecutor>,
-    tool: Option<ToolExecutor>,
-    user: Option<UserExecutor>,
-    timer: Option<TimerExecutor>,
-    checkpoint: Option<CheckpointExecutor>,
-    audit: Option<AuditExecutor>,
+    turn: Option<Box<dyn EffectExecutor>>,
+    tool: Option<Box<dyn EffectExecutor>>,
+    user: Option<Box<dyn EffectExecutor>>,
+    timer: Option<Box<dyn EffectExecutor>>,
+    checkpoint: Option<Box<dyn EffectExecutor>>,
+    audit: Option<Box<dyn EffectExecutor>>,
+    internal: Option<Box<dyn EffectExecutor>>,
 }
 
 impl CompositeExecutorBuilder {
@@ -163,7 +175,7 @@ impl CompositeExecutorBuilder {
     /// which streams a single model response, appends to the
     /// `ConversationStore`, and posts `LlmTurnComplete`.
     pub fn with_turn(mut self, exec: TurnExecutor) -> Self {
-        self.turn = Some(exec);
+        self.turn = Some(Box::new(exec));
         self
     }
 
@@ -178,7 +190,7 @@ impl CompositeExecutorBuilder {
         registry: Arc<ToolRegistry>,
         allowed_capabilities: HashSet<sven_hsm::ToolCapability>,
     ) -> Self {
-        self.tool = Some(ToolExecutor::new(registry, allowed_capabilities));
+        self.tool = Some(Box::new(ToolExecutor::new(registry, allowed_capabilities)));
         self
     }
 
@@ -188,7 +200,7 @@ impl CompositeExecutorBuilder {
     /// registry and `ConversationStore` with a `TurnExecutor` so tool results
     /// are appended under the correct thread before the continuation LLM call.
     pub fn with_tool_executor(mut self, exec: ToolExecutor) -> Self {
-        self.tool = Some(exec);
+        self.tool = Some(Box::new(exec));
         self
     }
 
@@ -198,25 +210,92 @@ impl CompositeExecutorBuilder {
         question_tx: mpsc::Sender<UserQuestion>,
         approval_tx: mpsc::Sender<ApprovalRequest>,
     ) -> Self {
-        self.user = Some(UserExecutor::new(question_tx, approval_tx));
+        self.user = Some(Box::new(UserExecutor::new(question_tx, approval_tx)));
         self
     }
 
     /// Attach the timer executor backed by `clock`.
     pub fn with_timers(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.timer = Some(TimerExecutor::new(clock));
+        self.timer = Some(Box::new(TimerExecutor::new(clock)));
         self
     }
 
     /// Attach the checkpoint executor operating in `repo_dir`.
     pub fn with_checkpoints(mut self, repo_dir: impl Into<PathBuf>) -> Self {
-        self.checkpoint = Some(CheckpointExecutor::new(repo_dir));
+        self.checkpoint = Some(Box::new(CheckpointExecutor::new(repo_dir)));
         self
     }
 
     /// Attach the audit executor writing to `log_path`.
+    ///
+    /// Without a trail each `PersistAudit` appends a hash-chained checkpoint
+    /// marker only; use [`Self::with_audit_trail`] to persist the full audit
+    /// records.
     pub fn with_audit(mut self, log_path: impl Into<PathBuf>) -> Self {
-        self.audit = Some(AuditExecutor::new(log_path));
+        self.audit = Some(Box::new(AuditExecutor::new(log_path)));
+        self
+    }
+
+    /// Attach the audit executor writing the full hash-chained audit records
+    /// mirrored in `trail` to `log_path`.
+    ///
+    /// Share the same [`AuditTrailHandle`] with the runtime (see
+    /// [`sven_hsm::ErasedRuntime::spawn_with_audit_trail`]) so `PersistAudit`
+    /// flushes every dispatch and tool audit record accumulated since the
+    /// previous flush.
+    pub fn with_audit_trail(
+        mut self,
+        log_path: impl Into<PathBuf>,
+        trail: AuditTrailHandle,
+    ) -> Self {
+        self.audit = Some(Box::new(AuditExecutor::with_trail(log_path, trail)));
+        self
+    }
+
+    /// Substitute a custom executor into the turn slot (`CallLlm` with
+    /// `kind="turn"`).
+    pub fn with_turn_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.turn = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the tool slot (`CallTool`).
+    pub fn with_tool_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.tool = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the user slot (`AskUser`,
+    /// `RequestHumanApproval`).
+    pub fn with_user_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.user = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the timer slot (`ScheduleTimeout`,
+    /// `CancelTimeout`).
+    pub fn with_timer_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.timer = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the checkpoint slot
+    /// (`CreateCheckpoint`, `RollbackToCheckpoint`).
+    pub fn with_checkpoint_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.checkpoint = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the audit slot (`PersistAudit`).
+    pub fn with_audit_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.audit = Some(exec);
+        self
+    }
+
+    /// Substitute a custom executor into the internal slot (`EmitInternal`).
+    /// Defaults to [`InternalExecutor`] when not set.
+    pub fn with_internal_slot(mut self, exec: Box<dyn EffectExecutor>) -> Self {
+        self.internal = Some(exec);
         self
     }
 
@@ -229,7 +308,9 @@ impl CompositeExecutorBuilder {
             timer: self.timer,
             checkpoint: self.checkpoint,
             audit: self.audit,
-            internal: InternalExecutor::new(),
+            internal: self
+                .internal
+                .unwrap_or_else(|| Box::new(InternalExecutor::new())),
         }
     }
 }
@@ -351,6 +432,65 @@ mod tests {
             "machine should remain in Idle with no executor"
         );
         rt.abort();
+    }
+
+    /// Records every effect it receives; used to prove custom executors can
+    /// be substituted into a composite slot.
+    struct RecordingExecutor {
+        effects: Arc<std::sync::Mutex<Vec<Effect>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EffectExecutor for RecordingExecutor {
+        async fn execute(
+            &mut self,
+            effect: Effect,
+            _sink: &sven_hsm::EventSink,
+            _obs: &sven_hsm::ObservationSink,
+        ) {
+            self.effects.lock().unwrap().push(effect);
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_executor_in_slot_receives_effects() {
+        let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut exec = CompositeExecutorBuilder::default()
+            .with_tool_slot(Box::new(RecordingExecutor {
+                effects: Arc::clone(&recorded),
+            }))
+            .build();
+
+        let effect = Effect::CallTool {
+            call_id: sven_hsm::ToolCallId::new(),
+            name: "some_tool".into(),
+            args: json!({"x": 1}),
+            capability: sven_hsm::ToolCapability::ReadFile,
+        };
+
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            CompositeExecutorBuilder::default().build(),
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
+            .await;
+        rt.abort();
+
+        let effects = recorded.lock().unwrap();
+        assert_eq!(
+            effects.len(),
+            1,
+            "custom slot executor should receive the effect"
+        );
+        assert!(
+            matches!(&effects[0], Effect::CallTool { name, .. } if name == "some_tool"),
+            "expected the CallTool effect, got {:?}",
+            effects[0].kind()
+        );
     }
 
     #[tokio::test]

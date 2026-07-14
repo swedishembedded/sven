@@ -26,7 +26,9 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability};
+use sven_hsm::{
+    Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability,
+};
 use sven_llm::ConversationStore;
 use sven_model::Message;
 use sven_tools::{ToolCall, ToolRegistry};

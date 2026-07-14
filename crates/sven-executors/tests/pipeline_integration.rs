@@ -10,107 +10,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{
-    Context, Effect, EffectExecutor, ErasedRuntime, Event, EventSink, Hsm, MachineId,
-    ObservationSink, PermissionPolicy, Reaction, UiEvent,
-};
+use sven_hsm::{Context, ErasedRuntime, Event, PermissionPolicy, UiEvent};
 use tokio::sync::Mutex;
-
-// ── Shared helpers ─────────────────────────────────────────────────────────────
-
-/// Minimal one-shot machine that transitions to a terminal state on the first
-/// non-lifecycle event, recording the event kind as a context fact.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum OneShotState {
-    Top,
-    Idle,
-    Done,
-}
-
-struct OneShotMachine(MachineId);
-
-impl OneShotMachine {
-    fn new() -> Self {
-        Self(MachineId::new())
-    }
-}
-
-impl sven_hsm::Machine for OneShotMachine {
-    type State = OneShotState;
-    fn id(&self) -> MachineId {
-        self.0
-    }
-    fn top(&self) -> OneShotState {
-        OneShotState::Top
-    }
-    fn initial(&self) -> OneShotState {
-        OneShotState::Idle
-    }
-    fn superstate(&self, _s: OneShotState) -> OneShotState {
-        OneShotState::Top
-    }
-    fn is_terminal(&self, s: OneShotState) -> bool {
-        s == OneShotState::Done
-    }
-    fn dispatch_state(
-        &mut self,
-        s: OneShotState,
-        e: &Event,
-        ctx: &mut sven_hsm::Context,
-    ) -> Reaction<OneShotState> {
-        match s {
-            OneShotState::Idle if !e.is_lifecycle() => {
-                ctx.set_fact("received_kind", format!("{:?}", e.kind()));
-                Reaction::Transition {
-                    target: OneShotState::Done,
-                    effects: vec![],
-                    rationale: "got domain event".into(),
-                }
-            }
-            _ => Reaction::Handled(vec![]),
-        }
-    }
-}
-
-struct NoOpExec;
-
-#[async_trait]
-impl EffectExecutor for NoOpExec {
-    async fn execute(&mut self, _e: Effect, _s: &EventSink, _o: &ObservationSink) {}
-}
-
-/// Drive `executor.execute(effect, &sink, &obs)` against a fresh one-shot
-/// runtime and collect all `UiEvent`s that arrived on the observation sink.
-async fn drive_effect(
-    executor: &mut impl EffectExecutor,
-    effect: Effect,
-) -> (Vec<UiEvent>, String) {
-    let obs = ObservationSink::new(128);
-    let mut obs_rx = obs.subscribe();
-
-    let rt = sven_hsm::Runtime::spawn(
-        Hsm::new(OneShotMachine::new()),
-        Context::new(),
-        PermissionPolicy::builder().build(),
-        NoOpExec,
-        16,
-    );
-    let sink = rt.sink();
-    executor.execute(effect, &sink, &obs).await;
-    rt.wait_done().await;
-    let report = rt.join().await.unwrap();
-
-    let mut events = Vec::new();
-    while let Ok(ev) = obs_rx.try_recv() {
-        events.push(ev);
-    }
-    let received_kind = report
-        .ctx
-        .fact("received_kind")
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "no event received".into());
-    (events, received_kind)
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PongProvider: mock ModelProvider for tests
@@ -156,9 +57,10 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
     // Build a TurnExecutor backed by PongProvider so the machine's
     // kind="turn" CallLlm effect is handled end-to-end without a real LLM.
     let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
-    let call_id_to_thread = Arc::new(std::sync::Mutex::new(
-        std::collections::HashMap::<sven_hsm::ToolCallId, String>::new(),
-    ));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        sven_hsm::ToolCallId,
+        (String, String),
+    >::new()));
     let cancel_handle = Arc::new(Mutex::new(None));
     let turn_exec = sven_executors::TurnExecutor::new(
         Arc::new(PongProvider),
@@ -187,7 +89,12 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
     let mut rt_obs_rx = rt.subscribe_observations();
 
     // Send the user message directly into the kernel queue.
-    let sent = rt.sink().emit(Event::UserMessage { text: "ping".into() }).await;
+    let sent = rt
+        .sink()
+        .emit(Event::UserMessage {
+            text: "ping".into(),
+        })
+        .await;
     assert!(sent, "UserMessage must be accepted by the kernel sink");
 
     // Collect observations with a bounded wait (500 ms is enough for in-process mock).

@@ -13,6 +13,7 @@
 //! |--------|-------------------|----------------|
 //! | [`turn`] | `CallLlm` (kind=turn) | `LlmTurnComplete`, `LlmFailed` |
 //! | [`tool`] | `CallTool` | `ToolSucceeded`, `ToolFailed` |
+//! | [`remote_tool`] | `CallTool` (on a remote companion) | `ToolSucceeded`, `ToolFailed` |
 //! | [`user`] | `AskUser`, `RequestHumanApproval` | `UserMessage`, `HumanApproved`, `HumanRejected` |
 //! | [`timer`] | `ScheduleTimeout`, `CancelTimeout` | `Timeout` |
 //! | [`checkpoint`] | `CreateCheckpoint`, `RollbackToCheckpoint` | `Internal::Custom` |
@@ -43,16 +44,20 @@ pub mod audit;
 pub mod checkpoint;
 pub mod composite;
 pub mod internal;
+pub mod remote_tool;
 pub mod timer;
 pub mod tool;
 pub mod turn;
 pub mod user;
 
 // Re-exports
-pub use audit::AuditExecutor;
+pub use audit::{
+    append_chain, read_chain, verify_chain, AuditExecutor, ChainError, ChainedLine, GENESIS_HASH,
+};
 pub use checkpoint::CheckpointExecutor;
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
+pub use remote_tool::{RemoteToolExecutor, RemoteToolRouter, DEFAULT_REMOTE_TOOL_TIMEOUT};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::TurnExecutor;
