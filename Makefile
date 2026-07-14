@@ -27,7 +27,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic deb deb/debug deb/release clean help fmt check docs docs-pdf \
+.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud deb deb/debug deb/release clean help fmt check docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -68,8 +68,14 @@ test:
 tests/e2e/basic: build
 	bats tests/e2e/basic/
 
+## tests/e2e/cloud - run the managed-agents platform end-to-end tests (requires bats-core)
+## Drives mock LLM → cloud session → RemoteToolExecutor → companion (loopback + WSS)
+## → metered ledger → statement export via the sven-cloud e2e integration tests.
+tests/e2e/cloud:
+	bats tests/e2e/cloud/
+
 ## tests/e2e - run all end-to-end test suites (requires bats-core)
-tests/e2e: tests/e2e/basic
+tests/e2e: tests/e2e/basic tests/e2e/cloud
 
 # ── Benchmark targets ─────────────────────────────────────────────────────────
 # Run sven against Terminal-Bench 2.0 via Harbor and generate a Markdown report.

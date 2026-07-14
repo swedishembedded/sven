@@ -114,10 +114,12 @@ logic between `sven-tui` and `sven-gui` - extract it to `sven-frontend` instead.
 |--------|----------|
 | `agent` | `AgentRequest` enum, `agent_task` background task |
 | `node_agent` | `node_agent_task` - WebSocket bridge to a sven node |
+| `control` | Frontend-side mirror of the node/cloud control protocol (`ControlCommand`, `ControlEvent`) |
+| `operator` | Operator console: `OperatorConsole` (tenant selection + cross-session projection of the ControlEvent stream), `operator_console_task` (one WS bridge per `TenantEndpoint`) |
 | `segment` | `ChatSegment` - display-layer chat data model |
 | `types` | `ModelDirective`, `QueuedMessage`, `NodeBackend`, `FrontendOptions`, `SessionMeta` |
 | `commands` | Slash command system: parser, registry, completion, all built-in commands |
-| `commands::builtin` | `/model`, `/mode`, `/new`, `/abort`, `/clear`, `/inspect`, `/provider`, `/quit`, `/refresh`, `/team` |
+| `commands::builtin` | `/model`, `/mode`, `/new`, `/abort`, `/clear`, `/inspect`, `/provider`, `/quit`, `/refresh`, `/team`, `/tenant` |
 | `commands::skill` | `SkillCommand` and `AgentCommand` - dynamic commands from markdown skill files |
 | `commands::mcp` | `McpPromptCommand` - dynamic commands from MCP prompt registrations |
 | `queue` | `QueueState` - buffer user messages while the agent is busy |

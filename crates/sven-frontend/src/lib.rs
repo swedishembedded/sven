@@ -9,6 +9,9 @@
 //!
 //! - `AgentRequest` / `agent_task` - the background task that owns the Agent
 //! - `node_agent_task` - WebSocket bridge to a running sven node
+//! - `control` - frontend-side mirror of the node/cloud control protocol
+//! - `operator` - operator console: tenant selection + cross-session view
+//!   over the ControlEvent stream (`OperatorConsole`, `operator_console_task`)
 //! - `ChatSegment` - the display-layer chat data model
 //! - `ModelDirective`, `QueuedMessage`, `NodeBackend` - shared config types
 //!
@@ -27,8 +30,10 @@
 
 pub mod agent;
 pub mod commands;
+pub mod control;
 pub mod markdown;
 pub mod node_agent;
+pub mod operator;
 pub mod projection;
 pub mod queue;
 pub mod segment;
@@ -39,6 +44,10 @@ pub mod types;
 
 pub use agent::{agent_task, kernel_session_task, AgentRequest};
 pub use node_agent::{fetch_node_tools, node_agent_task};
+pub use operator::{
+    operator_console_task, OperatorConsole, OperatorRequest, OperatorSnapshot, PendingApproval,
+    SessionPhase, SessionView, TenantEndpoint, TenantInfo, TenantSelection,
+};
 pub use projection::{
     projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,
 };

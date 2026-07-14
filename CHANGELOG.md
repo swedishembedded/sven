@@ -8,7 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **E2E (sven-cloud)**: firmware wedge scenario (`crates/sven-cloud/tests/e2e_firmware.rs`, bats `tests/e2e/cloud/02_firmware_wedge.bats`) — a companion exposing `shell` + the GDB tool suite completes a build → test → debug task end-to-end through the cloud against a hermetic in-process GDB remote-protocol target (real `gdb-multiarch`, no hardware), proving the "local hands with real tooling" wedge; includes an adversarial test that a hijacked control plane cannot repurpose the local hands past the companion allowlist/jail.
+- **Companion (sven-companion)**: `CompanionPolicy` now allowlists command-less `ExecuteShell` tools (the GDB session tools `gdb_connect`/`gdb_stop`/…) by **tool name** instead of by shell command line, so a customer can opt into them explicitly (`gdb_connect`, `gdb_*`) while deny-by-default still holds.
 - **Telegram (sven-node)**: scaffolding for Telegram integration.
+- **Audit (sven-hsm/sven-executors)**: the kernel runtime now flushes the hash-chained audit log (`.sven/audit.jsonl`) after **every dispatch**, including the terminal one — machines no longer need to emit `PersistAudit` for records to reach disk.
+- **Audit (sven-hsm)**: `ToolAuditRecord` now carries tenant/actor attribution (stamped via the new `Context::push_tool_audit`); `AuditTrailHandle` gained cursor-based `records_from`/`tool_records_from` accessors.
+
+### Changed
+- **BREAKING (sven-mcp 2.0.0, sven-acp 2.0.0)**: version bumps corrected from minor to major to reflect the behavior breaks already shipped in this cycle — `call_tool` deny-by-default for `Ask`-policy tools without a wired `PermissionRequester`, and TLS verification on by default in `serve_stdio_node_proxy`. Existing 1.x integrations that relied on unattended shell/write tools or self-signed nodes must opt in explicitly (`with_permission_requester`, `ConnectOptions::insecure_dev`/`extra_ca_pem`).
+- **BREAKING (sven-node)**: `headless_policy()` no longer grants `WriteFile` or `GitOperation` to unattended P2P sessions — unsandboxed writes plus hook-executing git operations were equivalent to the `ExecuteShell` the policy denies. Unattended sessions are now read-only plus network; callers needing more must build an explicit `PermissionPolicy`.
+- **Audit (sven-executors)**: `AuditExecutor` now serializes concurrent writers through an advisory `<log>.lock` file and re-reads the chain tip on every flush, so concurrent sessions on one workspace can no longer fork/corrupt the chain; partial writes are truncated and retried (at-least-once) instead of permanently breaking verification; legacy pre-chain log files are rotated to `<log>.legacy-<timestamp>` so new records remain verifiable; entry hashing uses an explicitly key-sorted canonical JSON form independent of serde_json build features.
+
+### Fixed
+- **Audit docs (sven-executors)**: module documentation no longer overclaims tamper-evidence — the hash chain detects accidental corruption and non-adaptive tampering only; an actor with write access can recompute the whole chain (no HMAC/anchoring is implemented).
 
 ## [1.9.0] - 2026-03-22
 

@@ -81,12 +81,25 @@ pub enum ImmediateAction {
     RefreshSkills,
     ClearChat,
     NewConversation,
-    ApprovePlan { task_id: String },
-    RejectPlan { task_id: String, feedback: String },
+    ApprovePlan {
+        task_id: String,
+    },
+    RejectPlan {
+        task_id: String,
+        feedback: String,
+    },
     OpenTeamPicker,
     ToggleTaskList,
-    OpenInspector { kind: InspectorKind },
-    McpAuth { server: String },
+    OpenInspector {
+        kind: InspectorKind,
+    },
+    McpAuth {
+        server: String,
+    },
+    /// Switch the operator console's tenant scope; `None` = all tenants.
+    SelectTenant {
+        tenant: Option<String>,
+    },
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

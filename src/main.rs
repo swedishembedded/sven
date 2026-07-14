@@ -662,6 +662,8 @@ async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             token,
             model,
             provider,
+            node_ca,
+            insecure_tls,
         } => {
             if let Some(url) = node_url {
                 let tok = token.clone().ok_or_else(|| {
@@ -669,7 +671,11 @@ async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                         "--token (or SVEN_NODE_TOKEN) is required when --node-url is set"
                     )
                 })?;
-                sven_acp::serve_stdio_node_proxy(url.clone(), tok).await
+                let options = sven_node_client::ConnectOptions {
+                    extra_ca_pem: node_ca.clone(),
+                    insecure_dev: *insecure_tls,
+                };
+                sven_acp::serve_stdio_node_proxy_with_options(url.clone(), tok, options).await
             } else {
                 let mut config = sven_config::load(None)?;
                 if let Some(ref name) = model {
@@ -691,6 +697,8 @@ async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             brave_api_key,
             node_url,
             token,
+            node_ca,
+            insecure_tls,
         } => {
             if let Some(url) = node_url {
                 let tok = token.clone().ok_or_else(|| {
@@ -698,7 +706,11 @@ async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
                         "--token (or SVEN_NODE_TOKEN) is required when --node-url is set"
                     )
                 })?;
-                sven_mcp::serve_stdio_node_proxy(url.clone(), tok).await
+                let options = sven_node_client::ConnectOptions {
+                    extra_ca_pem: node_ca.clone(),
+                    insecure_dev: *insecure_tls,
+                };
+                sven_mcp::serve_stdio_node_proxy_with_options(url.clone(), tok, options).await
             } else {
                 let registry = std::sync::Arc::new(sven_mcp::build_mcp_registry(
                     brave_api_key.clone(),

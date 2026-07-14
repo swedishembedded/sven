@@ -527,8 +527,14 @@ pub async fn kernel_session_task(
                     *current_model_cfg.lock().await = model_cfg.clone();
                 }
                 let _ = mode_override;
-                debug!(msg_len = content.len(), "kernel task: posting UserMessage (Submit)");
-                tracing::info!(msg_len = content.len(), "kernel_session_task: sending UserMessage to HSM (Submit)");
+                debug!(
+                    msg_len = content.len(),
+                    "kernel task: posting UserMessage (Submit)"
+                );
+                tracing::info!(
+                    msg_len = content.len(),
+                    "kernel_session_task: sending UserMessage to HSM (Submit)"
+                );
                 if !handle.send_user_message(content).await {
                     let _ = tx
                         .send(AgentEvent::Error("kernel queue closed".into()))
@@ -545,7 +551,10 @@ pub async fn kernel_session_task(
                 mode_override,
             } => {
                 debug!("kernel task: resubmit");
-                tracing::info!(history_len = messages.len(), "kernel_session_task: Resubmit received");
+                tracing::info!(
+                    history_len = messages.len(),
+                    "kernel_session_task: Resubmit received"
+                );
                 if let Some(ref model_cfg) = model_override {
                     *current_model_cfg.lock().await = model_cfg.clone();
                 }
@@ -563,7 +572,10 @@ pub async fn kernel_session_task(
             }
 
             AgentRequest::LoadHistory(messages) => {
-                debug!(n = messages.len(), "kernel task: load history (no-op in kernel mode)");
+                debug!(
+                    n = messages.len(),
+                    "kernel task: load history (no-op in kernel mode)"
+                );
                 let _ = messages;
             }
 

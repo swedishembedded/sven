@@ -11,7 +11,8 @@
 //!
 //! # Protocol
 //!
-//! The bridge speaks the node's JSON-over-WebSocket control protocol:
+//! The bridge speaks the node's JSON-over-WebSocket control protocol
+//! ([`crate::control`]):
 //!
 //! - `AgentRequest::Submit { content }` → `NewSession` + `SendInput`
 //! - `ControlEvent::OutputDelta { role: "assistant" }` → `AgentEvent::TextDelta`
@@ -27,7 +28,7 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sven_core::AgentEvent;
 use sven_tools::{ToolCall, ToolSchema};
 use tokio::sync::{mpsc, Mutex};
@@ -35,110 +36,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::agent::AgentRequest;
-
-// ── Minimal control protocol types ────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Cmd {
-    NewSession {
-        id: Uuid,
-        mode: String,
-        working_dir: Option<String>,
-    },
-    SendInput {
-        session_id: Uuid,
-        text: String,
-    },
-    CancelSession {
-        session_id: Uuid,
-    },
-    ApproveTool {
-        session_id: Uuid,
-        call_id: String,
-    },
-    ListTools,
-    ListPeers,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Evt {
-    OutputDelta {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        delta: String,
-        role: String,
-    },
-    OutputComplete {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        text: String,
-        role: String,
-    },
-    ToolCall {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        call_id: String,
-        tool_name: String,
-        args: serde_json::Value,
-    },
-    ToolResult {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        call_id: String,
-        output: String,
-        is_error: bool,
-    },
-    ToolNeedsApproval {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        call_id: String,
-        tool_name: String,
-        #[allow(dead_code)]
-        args: serde_json::Value,
-    },
-    SessionState {
-        #[allow(dead_code)]
-        session_id: Uuid,
-        state: String,
-    },
-    AgentError {
-        #[allow(dead_code)]
-        session_id: Option<Uuid>,
-        message: String,
-    },
-    NodeError {
-        #[allow(dead_code)]
-        code: u32,
-        message: String,
-    },
-    ToolList {
-        tools: Vec<NodeToolInfo>,
-    },
-    PeerList {
-        peers: Vec<NodePeerInfo>,
-    },
-    #[serde(other)]
-    Unknown,
-}
-
-/// A peer entry as returned by the node's `ListPeers` response.
-#[derive(Debug, Deserialize)]
-struct NodePeerInfo {
-    name: String,
-    peer_id: String,
-    connected: bool,
-    can_delegate: bool,
-}
-
-/// Tool schema as returned by the node's `ListTools` response.
-#[derive(Debug, Deserialize)]
-struct NodeToolInfo {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
+use crate::control::{ControlCommand as Cmd, ControlEvent as Evt};
 
 // ── Public entry points ────────────────────────────────────────────────────────
 
@@ -154,40 +52,10 @@ pub async fn node_agent_task(
     tx: mpsc::Sender<AgentEvent>,
     cancel_handle: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 ) {
-    use tokio_tungstenite::connect_async_tls_with_config;
-    use tungstenite::http::Request;
-
-    let insecure = insecure || is_localhost_url(&node_url);
-    let connector = build_tls_connector(insecure);
-
-    let request = match Request::builder()
-        .uri(&node_url)
-        .header("Authorization", format!("Bearer {node_token}"))
-        .header("Host", "127.0.0.1")
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Key", generate_ws_key())
-        .header("Sec-WebSocket-Version", "13")
-        .body(())
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = tx
-                .send(AgentEvent::Error(format!("WS request build: {e}")))
-                .await;
-            return;
-        }
-    };
-
-    let (ws_stream, _) = match connect_async_tls_with_config(request, None, false, connector).await
-    {
+    let ws_stream = match connect_control_ws(&node_url, &node_token, insecure).await {
         Ok(s) => s,
         Err(e) => {
-            let _ = tx
-                .send(AgentEvent::Error(format!(
-                    "Could not connect to node at {node_url}: {e}"
-                )))
-                .await;
+            let _ = tx.send(AgentEvent::Error(e.to_string())).await;
             return;
         }
     };
@@ -336,28 +204,7 @@ pub async fn node_agent_task(
 
 /// Fetch the list of tools registered on the connected node.
 pub async fn fetch_node_tools(url: &str, token: &str, insecure: bool) -> Vec<ToolSchema> {
-    use tokio_tungstenite::connect_async_tls_with_config;
-    use tungstenite::http::Request;
-
-    let insecure = insecure || is_localhost_url(url);
-    let connector = build_tls_connector(insecure);
-
-    let request = match Request::builder()
-        .uri(url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Host", "127.0.0.1")
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Key", generate_ws_key())
-        .header("Sec-WebSocket-Version", "13")
-        .body(())
-    {
-        Ok(r) => r,
-        Err(_) => return vec![],
-    };
-
-    let (ws_stream, _) = match connect_async_tls_with_config(request, None, false, connector).await
-    {
+    let ws_stream = match connect_control_ws(url, token, insecure).await {
         Ok(s) => s,
         Err(_) => return vec![],
     };
@@ -404,6 +251,45 @@ pub async fn fetch_node_tools(url: &str, token: &str, insecure: bool) -> Vec<Too
     .await;
 
     result.unwrap_or_default()
+}
+
+// ── Connection helper ──────────────────────────────────────────────────────────
+
+/// A WebSocket connection to a node/cloud control endpoint.
+pub(crate) type ControlWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Opens an authenticated WebSocket to a control endpoint.
+///
+/// Shared by the single-session node bridge, the tool-schema fetch, and the
+/// operator console ([`crate::operator`]). TLS certificate verification is
+/// skipped when `insecure` is set or the URL points at loopback.
+pub(crate) async fn connect_control_ws(
+    url: &str,
+    token: &str,
+    insecure: bool,
+) -> anyhow::Result<ControlWs> {
+    use tokio_tungstenite::connect_async_tls_with_config;
+    use tungstenite::http::Request;
+
+    let insecure = insecure || is_localhost_url(url);
+    let connector = build_tls_connector(insecure);
+
+    let request = Request::builder()
+        .uri(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Host", host_header(url)?)
+        .header("Upgrade", "websocket")
+        .header("Connection", "Upgrade")
+        .header("Sec-WebSocket-Key", generate_ws_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())
+        .map_err(|e| anyhow::anyhow!("WS request build: {e}"))?;
+
+    let (ws_stream, _) = connect_async_tls_with_config(request, None, false, connector)
+        .await
+        .map_err(|e| anyhow::anyhow!("Could not connect to node at {url}: {e}"))?;
+    Ok(ws_stream)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -500,7 +386,7 @@ async fn handle_event(
             let _ = tx.send(AgentEvent::Error(message)).await;
             return true;
         }
-        Evt::ToolList { .. } | Evt::Unknown => {}
+        Evt::ToolList { .. } | Evt::SessionList { .. } | Evt::Unknown => {}
         Evt::PeerList { peers } => {
             let peer_infos = peers
                 .into_iter()
@@ -517,7 +403,10 @@ async fn handle_event(
     false
 }
 
-fn send_cmd(tx: &mpsc::UnboundedSender<String>, cmd: &impl Serialize) -> anyhow::Result<()> {
+pub(crate) fn send_cmd(
+    tx: &mpsc::UnboundedSender<String>,
+    cmd: &impl Serialize,
+) -> anyhow::Result<()> {
     let json = serde_json::to_string(cmd)?;
     tx.send(json)
         .map_err(|_| anyhow::anyhow!("WS writer channel closed"))
@@ -533,6 +422,30 @@ fn generate_ws_key() -> String {
 
 fn is_localhost_url(url: &str) -> bool {
     url.contains("://127.0.0.1:") || url.contains("://localhost:") || url.contains("://[::1]:")
+}
+
+/// The `Host` header for a control endpoint, derived from the URL authority.
+/// The operator console dials remote cloud tenant endpoints that commonly
+/// sit behind name-routing reverse proxies — a hardcoded loopback literal
+/// would be routed to the wrong backend (or 404/421) by any such proxy.
+fn host_header(url: &str) -> anyhow::Result<String> {
+    let uri: tungstenite::http::Uri = url
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid control URL {url:?}: {e}"))?;
+    let host = uri
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("control URL {url:?} has no host"))?;
+    // Re-bracket bare IPv6 literals so the Host header's port separator
+    // stays unambiguous (http::Uri may hand back either form).
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    Ok(match uri.port_u16() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
 }
 
 fn build_tls_connector(insecure: bool) -> Option<tokio_tungstenite::Connector> {
@@ -590,4 +503,24 @@ fn build_tls_connector(insecure: bool) -> Option<tokio_tungstenite::Connector> {
         .with_custom_certificate_verifier(StdArc::new(AcceptAnyCert))
         .with_no_client_auth();
     Some(tokio_tungstenite::Connector::Rustls(StdArc::new(config)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_header_follows_the_url_authority() {
+        assert_eq!(
+            host_header("wss://tenant-a.cloud.example.com/ws").unwrap(),
+            "tenant-a.cloud.example.com"
+        );
+        assert_eq!(
+            host_header("wss://tenant-a.cloud.example.com:8443/ws").unwrap(),
+            "tenant-a.cloud.example.com:8443"
+        );
+        assert_eq!(host_header("ws://127.0.0.1:9000/ws").unwrap(), "127.0.0.1:9000");
+        assert_eq!(host_header("ws://[::1]:9000/ws").unwrap(), "[::1]:9000");
+        assert!(host_header("not a url").is_err());
+    }
 }
