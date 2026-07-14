@@ -586,6 +586,34 @@ pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
     discover_skills_impl(project_root, dirs::home_dir().as_deref(), true)
 }
 
+/// Discover skills anchored to explicit roots — no real-user-home fallback.
+///
+/// Same discovery rules as [`discover_skills`], except:
+///
+/// * the ancestor walk is anchored at exactly the given `project_root` and
+///   `home` — `dirs::home_dir()` is never consulted, so the host user's
+///   config directories cannot leak in (pass `None` for `home` to skip the
+///   home walk entirely);
+/// * the system paths (`/usr/share/sven/skills`,
+///   `/usr/local/share/sven/skills`) are only scanned when `include_system`
+///   is `true`.
+///
+/// Multi-tenant hosts use this to keep each tenant's skill discovery
+/// anchored to that tenant's isolated working/home directories: sibling
+/// tenant directories are never on each other's ancestor chains, so one
+/// tenant's skills are invisible to another's discovery.
+///
+/// When `project_root` is `None`, the current working directory is used as
+/// the walk base (same as [`discover_skills`]).
+#[must_use]
+pub fn discover_skills_anchored(
+    project_root: Option<&Path>,
+    home: Option<&Path>,
+    include_system: bool,
+) -> Vec<SkillInfo> {
+    discover_skills_impl(project_root, home, include_system)
+}
+
 /// Internal implementation; `home` overrides `dirs::home_dir()`.
 ///
 /// Pass `Some(isolated_dir)` (or `None` to skip the home walk entirely) in
@@ -1130,6 +1158,48 @@ mod tests {
 
         let skills = discover_skills_impl(Some(tmp.path()), None, false);
         assert_eq!(skills.len(), 1);
+    }
+
+    #[test]
+    fn discover_skills_anchored_isolates_sibling_roots() {
+        // Two sibling "tenant" roots: a skill installed under tenant A must be
+        // visible to A's anchored discovery and invisible to B's.
+        let tmp = TempDir::new().unwrap();
+        let a_work = tmp.path().join("a").join("work");
+        let a_home = tmp.path().join("a").join("home");
+        let b_work = tmp.path().join("b").join("work");
+        let b_home = tmp.path().join("b").join("home");
+        for dir in [&a_work, &a_home, &b_work, &b_home] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        let a_skills = a_work.join(".sven").join("skills");
+        fs::create_dir_all(&a_skills).unwrap();
+        write_skill(&a_skills, "tenant-a-skill", "Tenant A only.", "", "Body.");
+        // A home-anchored skill for A as well.
+        let a_home_skills = a_home.join(".sven").join("skills");
+        fs::create_dir_all(&a_home_skills).unwrap();
+        write_skill(
+            &a_home_skills,
+            "tenant-a-home-skill",
+            "A home.",
+            "",
+            "Body.",
+        );
+
+        let a = discover_skills_anchored(Some(&a_work), Some(&a_home), false);
+        let a_cmds: Vec<&str> = a.iter().map(|s| s.command.as_str()).collect();
+        assert!(a_cmds.contains(&"tenant-a-skill"), "cwd-anchored skill");
+        assert!(
+            a_cmds.contains(&"tenant-a-home-skill"),
+            "home-anchored skill"
+        );
+
+        let b = discover_skills_anchored(Some(&b_work), Some(&b_home), false);
+        let b_cmds: Vec<&str> = b.iter().map(|s| s.command.as_str()).collect();
+        assert!(
+            !b_cmds.contains(&"tenant-a-skill") && !b_cmds.contains(&"tenant-a-home-skill"),
+            "sibling tenant's skills must not leak: {b_cmds:?}"
+        );
     }
 
     #[test]

@@ -408,7 +408,7 @@ impl crate::ModelProvider for AnthropicProvider {
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
                         if let Ok(v) = serde_json::from_str::<Value>(data) {
-                            events.push(parse_anthropic_event(&v));
+                            events.extend(parse_anthropic_events(&v));
                         }
                     }
                 }
@@ -418,6 +418,40 @@ impl crate::ModelProvider for AnthropicProvider {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+/// Parses one Anthropic SSE payload into the response events it carries.
+///
+/// Almost every payload maps to exactly one event ([`parse_anthropic_event`]).
+/// The exception is a `message_delta` with `stop_reason == "max_tokens"`:
+/// that frame carries **both** the turn's only output-token usage report and
+/// the truncation signal, so it yields `[Usage, MaxTokens]` — usage first,
+/// so token tracking and billing see the output tokens of truncated turns
+/// before the turn ends.
+pub(crate) fn parse_anthropic_events(v: &Value) -> Vec<anyhow::Result<ResponseEvent>> {
+    if v["type"].as_str() == Some("message_delta")
+        && v["delta"]["stop_reason"].as_str() == Some("max_tokens")
+    {
+        let mut events = Vec::with_capacity(2);
+        if let Some(usage) = message_delta_usage(v) {
+            events.push(Ok(usage));
+        }
+        events.push(Ok(ResponseEvent::MaxTokens));
+        return events;
+    }
+    vec![parse_anthropic_event(v)]
+}
+
+/// The output-token usage a `message_delta` payload carries, if any.
+fn message_delta_usage(v: &Value) -> Option<ResponseEvent> {
+    let usage = v.get("usage")?;
+    Some(ResponseEvent::Usage {
+        input_tokens: 0,
+        output_tokens: usage["output_tokens"].as_u64().unwrap_or(0) as u32,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    })
 }
 
 pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> {
@@ -477,21 +511,19 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
         "message_delta" => {
             // Anthropic reports the final stop_reason in delta.stop_reason.
             // When the model hit the output-token limit, emit MaxTokens so
-            // the agent knows any in-flight tool-call arguments were truncated.
-            // We prioritise this over the accompanying usage data; the output
-            // token count for a truncated turn is necessarily max_output_tokens
-            // so the slight under-count in token tracking is acceptable.
+            // the agent knows any in-flight tool-call arguments were
+            // truncated. The streaming path goes through
+            // `parse_anthropic_events`, which emits the accompanying usage
+            // *before* the MaxTokens signal — `message_delta` is the only
+            // event carrying output tokens, and truncated turns are the most
+            // expensive ones, so dropping it here would leave every
+            // max-length turn's output tokens untracked (and, in the cloud
+            // metering gateway, unbilled).
             if v["delta"]["stop_reason"].as_str() == Some("max_tokens") {
                 return Ok(ResponseEvent::MaxTokens);
             }
-            if let Some(usage) = v.get("usage") {
-                return Ok(ResponseEvent::Usage {
-                    input_tokens: 0,
-                    output_tokens: usage["output_tokens"].as_u64().unwrap_or(0) as u32,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: 0,
-                    cost_usd: None,
-                });
+            if let Some(usage) = message_delta_usage(v) {
+                return Ok(usage);
             }
             Ok(ResponseEvent::TextDelta(String::new()))
         }
@@ -879,6 +911,53 @@ mod tests {
             ),
             "unexpected: {ev:?}"
         );
+    }
+
+    #[test]
+    fn max_tokens_message_delta_yields_usage_then_max_tokens() {
+        // A max_tokens message_delta is the ONLY frame carrying the turn's
+        // output tokens; the stream must bill/track them before signalling
+        // truncation.
+        let v = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "max_tokens" },
+            "usage": { "output_tokens": 4096 }
+        });
+        let events: Vec<ResponseEvent> = parse_anthropic_events(&v)
+            .into_iter()
+            .map(|e| e.unwrap())
+            .collect();
+        assert_eq!(events.len(), 2, "usage then MaxTokens: {events:?}");
+        assert!(
+            matches!(
+                events[0],
+                ResponseEvent::Usage {
+                    input_tokens: 0,
+                    output_tokens: 4096,
+                    ..
+                }
+            ),
+            "unexpected: {:?}",
+            events[0]
+        );
+        assert!(matches!(events[1], ResponseEvent::MaxTokens));
+
+        // Without a usage payload only the truncation signal is emitted.
+        let v = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "max_tokens" }
+        });
+        let events: Vec<ResponseEvent> = parse_anthropic_events(&v)
+            .into_iter()
+            .map(|e| e.unwrap())
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], ResponseEvent::MaxTokens));
+
+        // Ordinary payloads pass through as a single event.
+        let v = serde_json::json!({ "type": "message_stop" });
+        let events = parse_anthropic_events(&v);
+        assert_eq!(events.len(), 1);
     }
 
     #[test]
