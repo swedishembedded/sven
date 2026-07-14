@@ -97,6 +97,8 @@ pub struct NodeProxyServer {
     ws_url: Arc<String>,
     /// Raw bearer token (not the hash).
     token: Arc<String>,
+    /// TLS/connection options. Defaults verify the node's certificate.
+    connect_options: Arc<sven_node_client::ConnectOptions>,
 }
 
 impl NodeProxyServer {
@@ -104,11 +106,21 @@ impl NodeProxyServer {
         Self {
             ws_url: Arc::new(ws_url.into()),
             token: Arc::new(token.into()),
+            connect_options: Arc::new(sven_node_client::ConnectOptions::default()),
         }
     }
 
+    /// Override the TLS/connection options (extra CA file, or the
+    /// `insecure_dev` local-testing mode).
+    #[must_use]
+    pub fn with_connect_options(mut self, options: sven_node_client::ConnectOptions) -> Self {
+        self.connect_options = Arc::new(options);
+        self
+    }
+
     async fn connect(&self) -> Result<sven_node_client::NodeWsStream> {
-        sven_node_client::connect(&self.ws_url, &self.token).await
+        sven_node_client::connect_with_options(&self.ws_url, &self.token, &self.connect_options)
+            .await
     }
 
     /// Send a [`WsCommand`] and collect the first matching [`WsEvent`].

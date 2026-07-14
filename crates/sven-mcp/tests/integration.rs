@@ -77,6 +77,39 @@ impl Tool for AlwaysFailTool {
     }
 }
 
+/// A tool with `Ask` policy - stands in for shell / write_file / delete_file.
+/// Must never execute unless a permission requester approves the call.
+struct AskPolicyTool;
+
+#[async_trait]
+impl Tool for AskPolicyTool {
+    fn name(&self) -> &str {
+        "dangerous_op"
+    }
+    fn description(&self) -> &str {
+        "A tool that requires human approval"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object" })
+    }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        ToolOutput::ok(&call.id, "dangerous op executed")
+    }
+}
+
+/// Permission requester with a fixed answer.
+struct FixedRequester(bool);
+
+#[async_trait]
+impl sven_tools::PermissionRequester for FixedRequester {
+    async fn request_permission(&self, _call: &ToolCall) -> bool {
+        self.0
+    }
+}
+
 // ── In-process MCP server harness ────────────────────────────────────────────
 
 /// Starts a [`SvenMcpServer`] in a background task connected to in-memory
@@ -94,12 +127,22 @@ async fn start_test_server(
     WriteHalf<DuplexStream>,
     BufReader<tokio::io::ReadHalf<DuplexStream>>,
 ) {
+    start_test_server_with(SvenMcpServer::new(registry)).await
+}
+
+/// Like [`start_test_server`] but accepts a pre-built [`SvenMcpServer`]
+/// (e.g. one with a permission requester wired up).
+async fn start_test_server_with(
+    server: SvenMcpServer,
+) -> (
+    WriteHalf<DuplexStream>,
+    BufReader<tokio::io::ReadHalf<DuplexStream>>,
+) {
     // tokio::io::duplex creates two connected halves.  Writes on one end
     // appear as reads on the other end.
     let (client_stream, server_stream) = tokio::io::duplex(65536);
 
     tokio::spawn(async move {
-        let server = SvenMcpServer::new(registry);
         if let Ok(running) = server.serve(server_stream).await {
             let _ = running.waiting().await;
         }
@@ -472,6 +515,103 @@ async fn default_registry_tools_are_listed_by_server() {
     assert!(
         names.contains(&"run_terminal_command"),
         "run_terminal_command must be listed"
+    );
+}
+
+/// An `Ask`-policy tool called over MCP with no permission requester wired
+/// must be DENIED, not executed unattended.
+#[tokio::test]
+async fn tools_call_ask_policy_tool_denied_unattended() {
+    let reg = Arc::new({
+        let mut r = ToolRegistry::new();
+        r.register(AskPolicyTool);
+        r
+    });
+    let (mut writer, mut reader) = start_test_server(reg).await;
+    initialize(&mut writer, &mut reader).await;
+
+    send_msg(
+        &mut writer,
+        &json!({
+            "jsonrpc": "2.0", "id": 10,
+            "method": "tools/call",
+            "params": { "name": "dangerous_op", "arguments": {} }
+        }),
+    )
+    .await;
+
+    let resp = recv_msg(&mut reader).await;
+    assert_eq!(
+        resp["result"]["isError"], true,
+        "Ask-policy tool must be denied unattended; got: {resp}"
+    );
+    let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        text.contains("denied"),
+        "denial must be explicit; got: {text}"
+    );
+    assert!(
+        !text.contains("dangerous op executed"),
+        "tool body must not have run"
+    );
+}
+
+/// With a permission requester that approves, an `Ask`-policy tool runs.
+#[tokio::test]
+async fn tools_call_ask_policy_tool_runs_when_approved() {
+    let reg = Arc::new({
+        let mut r = ToolRegistry::new();
+        r.register(AskPolicyTool);
+        r
+    });
+    let server = SvenMcpServer::new(reg).with_permission_requester(Arc::new(FixedRequester(true)));
+    let (mut writer, mut reader) = start_test_server_with(server).await;
+    initialize(&mut writer, &mut reader).await;
+
+    send_msg(
+        &mut writer,
+        &json!({
+            "jsonrpc": "2.0", "id": 11,
+            "method": "tools/call",
+            "params": { "name": "dangerous_op", "arguments": {} }
+        }),
+    )
+    .await;
+
+    let resp = recv_msg(&mut reader).await;
+    assert_eq!(
+        resp["result"]["isError"], false,
+        "approved Ask-policy tool must run; got: {resp}"
+    );
+    assert_eq!(resp["result"]["content"][0]["text"], "dangerous op executed");
+}
+
+/// With a permission requester that denies, an `Ask`-policy tool is blocked.
+#[tokio::test]
+async fn tools_call_ask_policy_tool_blocked_when_requester_denies() {
+    let reg = Arc::new({
+        let mut r = ToolRegistry::new();
+        r.register(AskPolicyTool);
+        r
+    });
+    let server = SvenMcpServer::new(reg).with_permission_requester(Arc::new(FixedRequester(false)));
+    let (mut writer, mut reader) = start_test_server_with(server).await;
+    initialize(&mut writer, &mut reader).await;
+
+    send_msg(
+        &mut writer,
+        &json!({
+            "jsonrpc": "2.0", "id": 12,
+            "method": "tools/call",
+            "params": { "name": "dangerous_op", "arguments": {} }
+        }),
+    )
+    .await;
+
+    let resp = recv_msg(&mut reader).await;
+    assert_eq!(
+        resp["result"]["isError"], true,
+        "denied Ask-policy tool must not run; got: {resp}"
     );
 }
 

@@ -129,6 +129,8 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct SvenAcpNodeProxy {
     ws_url: String,
     token: String,
+    /// TLS/connection options. Defaults verify the node's certificate.
+    connect_options: sven_node_client::ConnectOptions,
     sessions: RefCell<HashMap<String, Arc<ProxySession>>>,
     conn_tx: mpsc::UnboundedSender<ConnMessage>,
 }
@@ -138,9 +140,18 @@ impl SvenAcpNodeProxy {
         Self {
             ws_url,
             token,
+            connect_options: sven_node_client::ConnectOptions::default(),
             sessions: RefCell::new(HashMap::new()),
             conn_tx,
         }
+    }
+
+    /// Override the TLS/connection options (extra CA file, or the
+    /// `insecure_dev` local-testing mode).
+    #[must_use]
+    pub fn with_connect_options(mut self, options: sven_node_client::ConnectOptions) -> Self {
+        self.connect_options = options;
+        self
     }
 
     fn get_session(&self, id: &str) -> Option<Arc<ProxySession>> {
@@ -167,7 +178,7 @@ impl SvenAcpNodeProxy {
     }
 
     async fn connect_ws(&self) -> AcpResult<sven_node_client::NodeWsStream> {
-        sven_node_client::connect(&self.ws_url, &self.token)
+        sven_node_client::connect_with_options(&self.ws_url, &self.token, &self.connect_options)
             .await
             .map_err(|_| Error::internal_error())
     }

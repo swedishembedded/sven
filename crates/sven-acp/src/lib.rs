@@ -101,10 +101,21 @@ pub async fn serve_stdio(config: Arc<Config>) -> Result<()> {
 /// `ws_url` - the WebSocket URL of the node (e.g. `wss://127.0.0.1:18790/ws`)
 /// `token`  - bearer token printed by `sven node start`
 pub async fn serve_stdio_node_proxy(ws_url: String, token: String) -> Result<()> {
+    serve_stdio_node_proxy_with_options(ws_url, token, sven_node_client::ConnectOptions::default())
+        .await
+}
+
+/// Like [`serve_stdio_node_proxy`], with explicit TLS/connection options
+/// (extra CA file, or the `insecure_dev` local-testing mode).
+pub async fn serve_stdio_node_proxy_with_options(
+    ws_url: String,
+    token: String,
+    options: sven_node_client::ConnectOptions,
+) -> Result<()> {
     debug!("Starting ACP node-proxy server, node={ws_url}");
 
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::unbounded_channel::<ConnMessage>();
-    let proxy = SvenAcpNodeProxy::new(ws_url, token, conn_tx);
+    let proxy = SvenAcpNodeProxy::new(ws_url, token, conn_tx).with_connect_options(options);
 
     let local = tokio::task::LocalSet::new();
     local

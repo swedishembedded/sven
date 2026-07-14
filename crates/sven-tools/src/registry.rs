@@ -228,6 +228,82 @@ impl ToolRegistry {
         tool.execute(call).await
     }
 
+    /// Execute a tool call with **deny-by-default** approval gating.
+    ///
+    /// Unlike [`execute`](Self::execute) - which is only safe to call from
+    /// paths where the kernel's `PermissionPolicy` already gates every call -
+    /// this entry point enforces the tool's own [`ApprovalPolicy`]:
+    ///
+    /// * [`ApprovalPolicy::Auto`] - executes immediately.
+    /// * [`ApprovalPolicy::Deny`] - always denied.
+    /// * [`ApprovalPolicy::Ask`] - forwarded to `requester` (or, when `None`,
+    ///   the registry's own requester set via
+    ///   [`set_permission_requester`](Self::set_permission_requester)).
+    ///   **When no requester is available the call is DENIED**, never executed
+    ///   unattended.
+    ///
+    /// Use this from unattended entry points (MCP server, node `CallTool`,
+    /// headless runners) where no kernel policy sits in front of the registry.
+    pub async fn execute_with_requester(
+        &self,
+        call: &ToolCall,
+        requester: Option<&dyn PermissionRequester>,
+    ) -> ToolOutput {
+        let tool = match self
+            .tools
+            .read()
+            .ok()
+            .and_then(|g| g.get(&call.name).cloned())
+        {
+            Some(t) => t,
+            None => return ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
+        };
+        match tool.default_policy() {
+            ApprovalPolicy::Auto => {}
+            ApprovalPolicy::Deny => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!("tool '{}' is denied by policy", call.name),
+                );
+            }
+            ApprovalPolicy::Ask => {
+                let effective: Option<&dyn PermissionRequester> =
+                    requester.or(self.permission_requester.as_deref());
+                match effective {
+                    None => {
+                        return ToolOutput::err(
+                            &call.id,
+                            format!(
+                                "tool '{}' requires human approval and no permission \
+                                 requester is available; denied (unattended execution)",
+                                call.name
+                            ),
+                        );
+                    }
+                    Some(r) => {
+                        if !r.request_permission(call).await {
+                            return ToolOutput::err(
+                                &call.id,
+                                format!("tool '{}' was denied by the operator", call.name),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        tool.execute(call).await
+    }
+
+    /// Execute a tool call in an **unattended** context.
+    ///
+    /// Equivalent to [`execute_with_requester`](Self::execute_with_requester)
+    /// with no per-call requester: `Ask`-policy tools are denied unless a
+    /// registry-level requester was wired via
+    /// [`set_permission_requester`](Self::set_permission_requester).
+    pub async fn execute_unattended(&self, call: &ToolCall) -> ToolOutput {
+        self.execute_with_requester(call, None).await
+    }
+
     pub fn names(&self) -> Vec<String> {
         self.tools
             .read()
@@ -515,6 +591,155 @@ mod tests {
         reg.register(EchoTool { name: "t" });
         reg.register(EchoTool { name: "t" });
         assert_eq!(reg.names().len(), 1);
+    }
+
+    // ── Unattended execution gating (deny-by-default) ─────────────────────────
+
+    /// Tool whose policy is `Ask` - must never run unattended.
+    struct AskTool;
+
+    #[async_trait]
+    impl Tool for AskTool {
+        fn name(&self) -> &str {
+            "ask_tool"
+        }
+        fn description(&self) -> &str {
+            "requires approval"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Ask
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "executed")
+        }
+    }
+
+    /// Tool whose policy is `Deny` - must never run at all.
+    struct DenyTool;
+
+    #[async_trait]
+    impl Tool for DenyTool {
+        fn name(&self) -> &str {
+            "deny_tool"
+        }
+        fn description(&self) -> &str {
+            "always denied"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Deny
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "executed")
+        }
+    }
+
+    /// Requester that always answers with a fixed decision.
+    struct FixedRequester(bool);
+
+    #[async_trait]
+    impl crate::policy::PermissionRequester for FixedRequester {
+        async fn request_permission(&self, _call: &ToolCall) -> bool {
+            self.0
+        }
+    }
+
+    fn call(name: &str) -> ToolCall {
+        ToolCall {
+            id: "c1".into(),
+            name: name.into(),
+            args: json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_unattended_denies_ask_tool_without_requester() {
+        let mut reg = ToolRegistry::new();
+        reg.register(AskTool);
+        let out = reg.execute_unattended(&call("ask_tool")).await;
+        assert!(out.is_error, "Ask tool must be denied unattended");
+        assert!(
+            out.content.contains("denied"),
+            "denial must be explicit; got: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_unattended_allows_auto_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "echo" });
+        let out = reg.execute_unattended(&call("echo")).await;
+        assert!(!out.is_error, "Auto tool must run unattended");
+    }
+
+    #[tokio::test]
+    async fn execute_unattended_denies_deny_policy_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(DenyTool);
+        let out = reg.execute_unattended(&call("deny_tool")).await;
+        assert!(out.is_error, "Deny tool must never run");
+        assert!(out.content.contains("denied by policy"));
+    }
+
+    #[tokio::test]
+    async fn execute_unattended_unknown_tool_returns_error() {
+        let reg = ToolRegistry::new();
+        let out = reg.execute_unattended(&call("missing")).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn execute_with_requester_approval_runs_ask_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(AskTool);
+        let requester = FixedRequester(true);
+        let out = reg
+            .execute_with_requester(&call("ask_tool"), Some(&requester))
+            .await;
+        assert!(!out.is_error, "approved Ask tool must run");
+        assert_eq!(out.content, "executed");
+    }
+
+    #[tokio::test]
+    async fn execute_with_requester_denial_blocks_ask_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(AskTool);
+        let requester = FixedRequester(false);
+        let out = reg
+            .execute_with_requester(&call("ask_tool"), Some(&requester))
+            .await;
+        assert!(out.is_error, "denied Ask tool must not run");
+        assert!(out.content.contains("denied by the operator"));
+    }
+
+    #[tokio::test]
+    async fn execute_unattended_uses_registry_level_requester() {
+        let mut reg = ToolRegistry::new();
+        reg.register(AskTool);
+        reg.set_permission_requester(Arc::new(FixedRequester(true)));
+        let out = reg.execute_unattended(&call("ask_tool")).await;
+        assert!(
+            !out.is_error,
+            "registry-level requester approval must allow the call"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_with_requester_denies_deny_policy_even_when_approved() {
+        let mut reg = ToolRegistry::new();
+        reg.register(DenyTool);
+        let requester = FixedRequester(true);
+        let out = reg
+            .execute_with_requester(&call("deny_tool"), Some(&requester))
+            .await;
+        assert!(out.is_error, "Deny policy must override any requester");
     }
 
     // ── output_category ───────────────────────────────────────────────────────

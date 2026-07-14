@@ -122,6 +122,20 @@ pub enum McpCommands {
         /// The legacy name SVEN_GATEWAY_TOKEN is also accepted.
         #[arg(long, env = "SVEN_NODE_TOKEN", value_name = "TOKEN")]
         token: Option<String>,
+
+        /// Extra PEM CA certificate file to trust when verifying the node's
+        /// TLS certificate (e.g. a remote node's `ca-cert.pem`).
+        ///
+        /// The system trust store and the local node CA
+        /// (`~/.config/sven/node/tls/ca-cert.pem`) are always trusted.
+        #[arg(long, value_name = "FILE")]
+        node_ca: Option<std::path::PathBuf>,
+
+        /// DANGER: skip TLS certificate verification when connecting to the
+        /// node. Local testing against a `self-signed` node only - never use
+        /// this in production.
+        #[arg(long)]
+        insecure_tls: bool,
     },
 }
 
@@ -181,6 +195,20 @@ pub enum AcpCommands {
         /// May also be set via the SVEN_PROVIDER environment variable.
         #[arg(long, env = "SVEN_PROVIDER", value_name = "PROVIDER")]
         provider: Option<String>,
+
+        /// Extra PEM CA certificate file to trust when verifying the node's
+        /// TLS certificate (e.g. a remote node's `ca-cert.pem`).
+        ///
+        /// The system trust store and the local node CA
+        /// (`~/.config/sven/node/tls/ca-cert.pem`) are always trusted.
+        #[arg(long, value_name = "FILE")]
+        node_ca: Option<std::path::PathBuf>,
+
+        /// DANGER: skip TLS certificate verification when connecting to the
+        /// node. Local testing against a `self-signed` node only - never use
+        /// this in production.
+        #[arg(long)]
+        insecure_tls: bool,
     },
 }
 
