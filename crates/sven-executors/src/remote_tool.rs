@@ -56,12 +56,14 @@
 //! LLM loop. Wire it alongside (not instead of) `TurnExecutor` when a machine
 //! needs conversation continuity.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, UiEvent};
+use sven_hsm::{
+    Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, ToolCapability, UiEvent,
+};
 use sven_llm::ConversationStore;
 use sven_model::Message;
 use sven_wire::{TetherMessage, ToolCallRequest, ToolCallResult};
@@ -154,6 +156,11 @@ pub struct RemoteToolExecutor {
     router: RemoteToolRouter,
     /// Per-call deadline; on expiry the call fails with `ToolFailed`.
     timeout: Duration,
+    /// Globally-allowed capabilities (second-line defence check, mirroring
+    /// [`crate::ToolExecutor`]). Empty ⇒ allow-all (rely solely on the kernel
+    /// gate). A `CallTool` whose capability is not in a non-empty set is denied
+    /// with `ToolFailed` and never forwarded to the companion.
+    allowed_capabilities: HashSet<ToolCapability>,
     /// Receives every non-`CallTool` effect (typically the default composite).
     delegate: Option<Box<dyn EffectExecutor>>,
     /// Shared conversation store; when set (together with [`Self::call_id_to_thread`])
@@ -177,7 +184,19 @@ impl RemoteToolExecutor {
             delegate: None,
             store: None,
             call_id_to_thread: None,
+            allowed_capabilities: HashSet::new(),
         }
+    }
+
+    /// Restricts which capabilities may be forwarded to the companion.
+    ///
+    /// Mirrors [`crate::ToolExecutor`]'s second-line capability check so the
+    /// cloud kernel's `PermissionPolicy` is enforced (not merely advisory) for
+    /// remote tools. An empty set (the default) allows all capabilities.
+    #[must_use]
+    pub fn with_allowed_capabilities(mut self, allowed: HashSet<ToolCapability>) -> Self {
+        self.allowed_capabilities = allowed;
+        self
     }
 
     /// Sets the per-call timeout.
@@ -317,6 +336,30 @@ impl EffectExecutor for RemoteToolExecutor {
             }
             return;
         };
+
+        // Second-line capability check (defence-in-depth), mirroring
+        // `ToolExecutor`: enforce the kernel's `allowed_capabilities` so the
+        // cloud `PermissionPolicy` is not merely advisory for remote tools. A
+        // disallowed capability fails with `ToolFailed` and is NEVER forwarded
+        // to the companion. An empty set means allow-all.
+        if !self.allowed_capabilities.is_empty()
+            && !self.allowed_capabilities.contains(&capability)
+        {
+            tracing::warn!(
+                tool = %name,
+                ?capability,
+                "RemoteToolExecutor: capability not in allow-list (kernel gate should have caught this)"
+            );
+            let _ = sink
+                .emit(Event::ToolFailed {
+                    call_id,
+                    error: format!(
+                        "capability {capability:?} is not permitted in the current context"
+                    ),
+                })
+                .await;
+            return;
+        }
 
         // Register the waiter *before* sending so a fast companion cannot
         // race the result past the router.
@@ -562,6 +605,43 @@ mod tests {
         assert_eq!(kind, "ToolSucceeded");
         assert!(event.contains("file-a"), "observation missing: {event}");
         assert_eq!(exec.router().pending_calls(), 0, "pending map must drain");
+    }
+
+    #[tokio::test]
+    async fn disallowed_capability_is_denied_and_not_forwarded() {
+        // A restricted allowed-capability set must reject a CallTool whose
+        // capability is not in the set *before* forwarding it to the companion,
+        // exactly like `ToolExecutor` does locally.
+        let (tx, rx) = mpsc::channel(8);
+        let seen = Arc::new(std::sync::Mutex::new(0usize));
+        let seen_reply = Arc::clone(&seen);
+        let mut exec = RemoteToolExecutor::new(tx)
+            .with_allowed_capabilities([ToolCapability::ReadFile].into_iter().collect());
+        spawn_fake_companion(rx, exec.router(), move |req| {
+            *seen_reply.lock().unwrap() += 1;
+            ToolCallResult::success(
+                req.call_id,
+                WireToolOutput {
+                    content: "ran".into(),
+                    parts: vec![],
+                    is_error: false,
+                },
+            )
+        });
+
+        // call_tool_effect uses ExecuteShell, which is NOT in the allowed set.
+        let (kind, event) = run_remote_effect(&mut exec, call_tool_effect(ToolCallId::new())).await;
+        assert_eq!(kind, "ToolFailed");
+        assert!(
+            event.contains("not permitted"),
+            "expected capability denial: {event}"
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            0,
+            "a disallowed-capability call must never reach the companion"
+        );
+        assert_eq!(exec.router().pending_calls(), 0, "no waiter must be left");
     }
 
     #[tokio::test]

@@ -98,8 +98,13 @@ impl RolePolicy {
             None => true,
             Some(root) => {
                 // Canonicalize both to resolve symlinks and `..` traversal.
-                let canonical_path =
-                    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                // When the path does not yet exist `canonicalize` fails, so fall
+                // back to a *lexical* normalization (resolving `..`/`.`
+                // components without touching disk) rather than the raw path —
+                // a raw `<root>/../../etc/x` textually `starts_with` the root and
+                // would otherwise slip a not-yet-existing traversal past the jail.
+                let canonical_path = std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| lexical_normalize(path));
                 let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
                 canonical_path.starts_with(&canonical_root)
             }
@@ -134,6 +139,30 @@ impl RolePolicy {
 pub trait PermissionRequester: Send + Sync {
     /// Return `true` to allow the tool call, `false` to deny it.
     async fn request_permission(&self, call: &crate::ToolCall) -> bool;
+}
+
+/// Resolves `.` and `..` components lexically (without touching the
+/// filesystem), so a jail check can reject a not-yet-existing traversal path
+/// that `canonicalize` cannot resolve. A `..` that would climb above the root
+/// is kept (never popped past root), producing a path that can never satisfy a
+/// `starts_with(root)` check.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let popped =
+                    matches!(out.components().next_back(), Some(Component::Normal(_))) && out.pop();
+                if !popped {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Convert a simple shell glob pattern to a [`Regex`].
@@ -389,5 +418,20 @@ mod tests {
         let rp = RolePolicy::default();
         assert!(rp.is_path_allowed(Path::new("/etc/passwd")));
         assert!(rp.is_path_allowed(Path::new("/root/.ssh/id_rsa")));
+    }
+
+    #[test]
+    fn is_path_allowed_denies_nonexistent_traversal() {
+        // The target does NOT exist, so `canonicalize` fails and the old raw-path
+        // textual `starts_with` fallback let a `..` escape through. The primitive
+        // must lexically resolve `..`/`.` before the jail check.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let escape = root.join("../../etc/definitely-not-here-xyz");
+        let rp = RolePolicy::new(Vec::new(), Some(root));
+        assert!(
+            !rp.is_path_allowed(&escape),
+            "non-existent traversal path must be denied at the primitive"
+        );
     }
 }
