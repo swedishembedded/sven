@@ -690,6 +690,179 @@ pub enum WebDevicesCommands {
     },
 }
 
+// ── Cloud subcommand ──────────────────────────────────────────────────────────
+
+/// Role a minted cloud token acts under (mirrors `sven_cloud::Role`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CloudRoleArg {
+    /// Customer-side companion: may attach to the tether, nothing else.
+    Companion,
+    /// Full control of a tenant: manage users, mint/revoke tokens, run sessions.
+    Operator,
+    /// Read-only visibility for the tenant's customer.
+    ClientViewer,
+}
+
+/// How `sven cloud serve` terminates TLS on the tether endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum CloudTlsArg {
+    /// Generate an in-memory CA + loopback certificate at startup (the CA PEM
+    /// is written out so companions can trust it). Safe local-dev default.
+    #[default]
+    LocalCa,
+    /// Alias of `local-ca` (same in-memory self-signed material).
+    SelfSigned,
+    /// Terminate TLS with PEM `--cert` / `--key` files (production).
+    Files,
+    /// DANGER: plaintext `ws://` — bearer tokens cross the wire in cleartext.
+    /// Local testing only.
+    InsecureDev,
+}
+
+/// `sven cloud` subcommands - operate the managed-agents control plane.
+///
+/// The tenant/token/session admin commands operate directly on the SQLite
+/// control-plane database (shared with `sven cloud serve`); `serve` runs the
+/// long-lived tether endpoint companions dial out to.
+///
+/// Quick start:
+///
+///   sven cloud tenant create Acme
+///   sven cloud token mint --tenant acme --role companion
+///   sven cloud serve                       # long-running; prints tether URL + CA
+#[derive(Subcommand, Debug)]
+pub enum CloudCommands {
+    /// Start the control plane: the WSS tether endpoint companions dial out to.
+    ///
+    /// Authenticates companions against the tokens minted with
+    /// `sven cloud token mint` (store-backed, expiring, revocable). TLS is on
+    /// by default (`local-ca`): an in-memory CA + loopback certificate is
+    /// generated at startup and the CA PEM written to `--ca-out` so companions
+    /// can trust it. Runs until Ctrl-C.
+    Serve {
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+        /// Bind address (port 0 picks a free port).
+        #[arg(long, env = "SVEN_CLOUD_BIND", default_value = "127.0.0.1:8443")]
+        bind: String,
+        /// TLS mode: local-ca (default), self-signed, files, or insecure-dev.
+        #[arg(long, value_enum, default_value_t = CloudTlsArg::LocalCa)]
+        tls: CloudTlsArg,
+        /// Server certificate chain PEM (required for `--tls files`).
+        #[arg(long, value_name = "PEM", required_if_eq("tls", "files"))]
+        cert: Option<PathBuf>,
+        /// Private key PEM (required for `--tls files`).
+        #[arg(long, value_name = "PEM", required_if_eq("tls", "files"))]
+        key: Option<PathBuf>,
+        /// Where to write the generated CA PEM (local-ca/self-signed only).
+        /// Defaults to `cloud-ca.pem` beside the database.
+        #[arg(long, value_name = "PEM")]
+        ca_out: Option<PathBuf>,
+    },
+
+    /// Manage tenants (paying customers / accounts).
+    Tenant {
+        #[command(subcommand)]
+        command: CloudTenantCommands,
+    },
+
+    /// Mint and revoke per-tenant bearer tokens.
+    Token {
+        #[command(subcommand)]
+        command: CloudTokenCommands,
+    },
+
+    /// Open a gated cloud agent session.
+    Session {
+        #[command(subcommand)]
+        command: CloudSessionCommands,
+    },
+}
+
+/// `sven cloud tenant` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum CloudTenantCommands {
+    /// Create a tenant; prints its id (a slug of the name).
+    Create {
+        /// Human-readable tenant name (e.g. "Acme Inc").
+        name: String,
+        /// Optional subscription plan label (informational).
+        #[arg(long)]
+        plan: Option<String>,
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+    },
+    /// List all tenants.
+    List {
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+    },
+}
+
+/// `sven cloud token` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum CloudTokenCommands {
+    /// Mint a token; the raw secret is printed to stdout exactly ONCE.
+    ///
+    /// Metadata (id, role, expiry) goes to stderr; the secret alone goes to
+    /// stdout so it can be captured (`sven cloud token mint ... > token.txt`).
+    /// It is never logged and cannot be recovered afterwards.
+    Mint {
+        /// Tenant id the token is scoped to.
+        #[arg(long)]
+        tenant: String,
+        /// Role the token grants.
+        #[arg(long, value_enum)]
+        role: CloudRoleArg,
+        /// Lifetime (e.g. "30d", "12h"). Defaults to the role's maximum; the
+        /// server clamps any request to the per-role cap.
+        #[arg(long, value_name = "DURATION")]
+        ttl: Option<String>,
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+    },
+    /// Revoke a token by id (idempotent).
+    Revoke {
+        /// Token id (as printed by `mint`).
+        token_id: String,
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+    },
+}
+
+/// `sven cloud session` subcommands.
+#[derive(Subcommand, Debug)]
+pub enum CloudSessionCommands {
+    /// Open a gated session for a tenant (subscription + credit checked).
+    ///
+    /// Runs the [`SessionGate`](sven_cloud::SessionGate): it refuses unless the
+    /// tenant has an active subscription for the current period AND a positive
+    /// credit balance, then persists an active session record and prints its
+    /// id. Driving the interactive LLM turn-loop over remote hands happens
+    /// inside `sven cloud serve` (the live companion registry is in-process);
+    /// standalone kernel drive is not yet available (see the RemoteToolExecutor
+    /// turn-loop parity gap) and is reported as such.
+    Start {
+        /// Tenant id to open the session for.
+        #[arg(long)]
+        tenant: String,
+        /// Initial prompt for the session.
+        #[arg(long)]
+        prompt: String,
+        /// SQLite control-plane database path.
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+        /// Credit-ledger path. Defaults to `credit.jsonl` beside the database.
+        #[arg(long, value_name = "JSONL")]
+        ledger: Option<PathBuf>,
+    },
+}
+
 /// Output format for headless / CI runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum OutputFormatArg {
@@ -978,6 +1151,17 @@ pub enum Commands {
     Team {
         #[command(subcommand)]
         command: TeamCommands,
+    },
+
+    /// Operate the managed-agents cloud control plane.
+    ///
+    ///   sven cloud tenant create Acme               - create a tenant
+    ///   sven cloud token mint --tenant acme --role companion
+    ///   sven cloud serve                            - start the tether endpoint
+    ///   sven cloud session start --tenant acme --prompt "..."
+    Cloud {
+        #[command(subcommand)]
+        command: CloudCommands,
     },
 
     /// Generate shell completion script

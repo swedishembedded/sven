@@ -119,7 +119,12 @@ sven-mcp         = { path = "crates/sven-mcp" }
 sven-acp         = { path = "crates/sven-acp" }
 sven-gui         = { path = "crates/sven-gui" }
 sven-frontend    = { path = "crates/sven-frontend" }
+# Cloud control plane (`sven cloud` subcommand): tenants, tokens, tether, gating.
+sven-cloud       = { path = "crates/sven-cloud" }
+# Pricing catalog + credit ledger backing `sven cloud session`'s gate.
+sven-metering    = { path = "crates/sven-metering" }
 anyhow      = { workspace = true }
+humantime   = { workspace = true }
 tokio       = { workspace = true }
 clap        = { workspace = true }
 rustls      = { workspace = true }

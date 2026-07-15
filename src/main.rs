@@ -13,8 +13,9 @@ use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
 use clap::Parser;
 use cli::{
-    AcpCommands, Cli, Commands, IndexCommands, McpCommands, NodeCommands, OutputFormatArg,
-    PeerCommands, TeamCommands, ToolCommands, WebDevicesCommands,
+    AcpCommands, Cli, CloudCommands, CloudRoleArg, CloudSessionCommands, CloudTenantCommands,
+    CloudTlsArg, CloudTokenCommands, Commands, IndexCommands, McpCommands, NodeCommands,
+    OutputFormatArg, PeerCommands, TeamCommands, ToolCommands, WebDevicesCommands,
 };
 use sven_bootstrap::build_cli_tool_registry;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
@@ -55,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
             | Some(Commands::Mcp { .. })
             | Some(Commands::Acp { .. })
             | Some(Commands::Peer { .. })
+            | Some(Commands::Cloud { .. })
     );
     init_logging(cli.verbose, is_tui || is_gui, is_node);
 
@@ -135,6 +137,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Team { command } => {
                 return run_team_command(command);
+            }
+            Commands::Cloud { command } => {
+                return run_cloud_command(command).await;
             }
             Commands::Index { command } => {
                 return run_index_command(command);
@@ -1101,6 +1106,248 @@ fn run_team_command(cmd: &TeamCommands) -> anyhow::Result<()> {
             interval,
             timeout,
         } => sven_team::cli::cmd_watch(name, *interval, *timeout),
+    }
+}
+
+// ── Cloud command handler ─────────────────────────────────────────────────────
+
+impl From<CloudRoleArg> for sven_cloud::Role {
+    fn from(role: CloudRoleArg) -> Self {
+        match role {
+            CloudRoleArg::Companion => sven_cloud::Role::Companion,
+            CloudRoleArg::Operator => sven_cloud::Role::Operator,
+            CloudRoleArg::ClientViewer => sven_cloud::Role::ClientViewer,
+        }
+    }
+}
+
+/// Derive a stable tenant id (slug) from a human name: lowercase, non-alnum
+/// runs collapsed to a single '-', trimmed. Empty input falls back to "tenant".
+fn tenant_slug(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "tenant".to_string()
+    } else {
+        slug
+    }
+}
+
+/// Open (creating if needed) the SQLite control-plane store at `db`.
+fn open_cloud_store(db: &std::path::Path) -> anyhow::Result<Arc<dyn sven_cloud::CloudStore>> {
+    let store = sven_cloud::SqliteStore::open(db)
+        .with_context(|| format!("opening control-plane database {}", db.display()))?;
+    Ok(Arc::new(store))
+}
+
+async fn run_cloud_command(cmd: &CloudCommands) -> anyhow::Result<()> {
+    match cmd {
+        CloudCommands::Serve {
+            db,
+            bind,
+            tls,
+            cert,
+            key,
+            ca_out,
+        } => run_cloud_serve(db, bind, *tls, cert.as_deref(), key.as_deref(), ca_out.as_deref()).await,
+        CloudCommands::Tenant { command } => run_cloud_tenant_command(command),
+        CloudCommands::Token { command } => run_cloud_token_command(command),
+        CloudCommands::Session { command } => run_cloud_session_command(command),
+    }
+}
+
+async fn run_cloud_serve(
+    db: &std::path::Path,
+    bind: &str,
+    tls: CloudTlsArg,
+    cert: Option<&std::path::Path>,
+    key: Option<&std::path::Path>,
+    ca_out: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    use sven_cloud::{CloudConfig, CloudServer, CloudTls, CompanionRegistry, IdentityService};
+
+    let store = open_cloud_store(db)?;
+    let identity = Arc::new(IdentityService::new(store));
+    let registry = Arc::new(CompanionRegistry::new());
+
+    let tls_mode = match tls {
+        CloudTlsArg::LocalCa | CloudTlsArg::SelfSigned => CloudTls::SelfSigned,
+        CloudTlsArg::InsecureDev => CloudTls::InsecureDev,
+        CloudTlsArg::Files => {
+            let cert = cert
+                .context("--tls files requires --cert")?
+                .to_path_buf();
+            let key = key.context("--tls files requires --key")?.to_path_buf();
+            CloudTls::Pem { cert, key }
+        }
+    };
+
+    let config = CloudConfig::new(bind.to_string()).with_tls(tls_mode);
+    let server = CloudServer::start(config, identity, registry)
+        .await
+        .context("starting the cloud control plane")?;
+
+    println!("sven cloud: tether endpoint listening");
+    println!("  tether URL : {}", server.tether_url());
+    if let Some(ca_pem) = server.ca_pem() {
+        let ca_path = ca_out
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| db.with_file_name("cloud-ca.pem"));
+        std::fs::write(&ca_path, ca_pem)
+            .with_context(|| format!("writing CA certificate to {}", ca_path.display()))?;
+        println!("  CA cert    : {}", ca_path.display());
+        println!(
+            "  companions : sven-companion --url {} --ca-cert {} --tenant-id <id> --token <secret>",
+            server.tether_url(),
+            ca_path.display()
+        );
+    }
+    println!("  database   : {}", db.display());
+    println!("Press Ctrl-C to stop.");
+
+    tokio::signal::ctrl_c()
+        .await
+        .context("waiting for shutdown signal")?;
+    println!("sven cloud: shutting down");
+    server.shutdown().await;
+    Ok(())
+}
+
+fn run_cloud_tenant_command(cmd: &CloudTenantCommands) -> anyhow::Result<()> {
+    use sven_cloud::TenantRecord;
+
+    match cmd {
+        CloudTenantCommands::Create { name, plan, db } => {
+            let store = open_cloud_store(db)?;
+            let id = tenant_slug(name);
+            let record = TenantRecord {
+                id: id.clone(),
+                name: name.clone(),
+                created_at: chrono::Utc::now().timestamp(),
+            };
+            store
+                .create_tenant(&record)
+                .with_context(|| format!("creating tenant {id:?}"))?;
+            println!("created tenant");
+            println!("  id   : {id}");
+            println!("  name : {name}");
+            if let Some(plan) = plan {
+                // The store has no plan column yet; surface it as informational.
+                println!("  plan : {plan} (informational; not persisted)");
+            }
+            Ok(())
+        }
+        CloudTenantCommands::List { db } => {
+            let store = open_cloud_store(db)?;
+            let tenants = store.tenants().context("listing tenants")?;
+            if tenants.is_empty() {
+                println!("no tenants");
+                return Ok(());
+            }
+            println!("{:<24}  {:<28}  CREATED", "ID", "NAME");
+            for t in &tenants {
+                println!("{:<24}  {:<28}  {}", t.id, t.name, t.created_at);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn run_cloud_token_command(cmd: &CloudTokenCommands) -> anyhow::Result<()> {
+    use sven_cloud::{IdentityService, Role};
+
+    match cmd {
+        CloudTokenCommands::Mint {
+            tenant,
+            role,
+            ttl,
+            db,
+        } => {
+            let store = open_cloud_store(db)?;
+            let identity = IdentityService::new(store);
+            let role: Role = (*role).into();
+            let ttl = match ttl {
+                Some(spec) => humantime::parse_duration(spec)
+                    .with_context(|| format!("parsing --ttl {spec:?} (e.g. 30d, 12h)"))?,
+                // Default to the role cap; mint clamps to it regardless.
+                None => std::time::Duration::from_secs(
+                    u64::try_from(role.max_token_ttl_secs()).unwrap_or(0),
+                ),
+            };
+            let minted = identity
+                .mint_token(tenant, role, ttl)
+                .with_context(|| format!("minting {role} token for tenant {tenant:?}"))?;
+            // Metadata to stderr, the secret alone to stdout — captured with a
+            // redirect, never logged, and unrecoverable afterwards.
+            eprintln!("minted {role} token for tenant {tenant}");
+            eprintln!("  id         : {}", minted.record.id);
+            eprintln!("  expires_at : {}", minted.record.expires_at);
+            eprintln!("  secret (shown once — store it now):");
+            println!("{}", minted.secret);
+            Ok(())
+        }
+        CloudTokenCommands::Revoke { token_id, db } => {
+            let store = open_cloud_store(db)?;
+            let identity = IdentityService::new(store);
+            if identity
+                .revoke(token_id)
+                .with_context(|| format!("revoking token {token_id:?}"))?
+            {
+                println!("revoked token {token_id}");
+                Ok(())
+            } else {
+                anyhow::bail!("no such token: {token_id}");
+            }
+        }
+    }
+}
+
+fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result<()> {
+    use sven_cloud::{SessionGate, UsageMeter};
+    use sven_metering::{CreditLedger, PricingCatalog};
+
+    match cmd {
+        CloudSessionCommands::Start {
+            tenant,
+            prompt,
+            db,
+            ledger,
+        } => {
+            let store = open_cloud_store(db)?;
+            let ledger_path = ledger
+                .clone()
+                .unwrap_or_else(|| db.with_file_name("credit.jsonl"));
+            let catalog = PricingCatalog::from_yaml("version: 1\nmodels: {}\n")
+                .context("building pricing catalog")?;
+            let meter = Arc::new(UsageMeter::new(catalog, CreditLedger::new(ledger_path)));
+            let gate = SessionGate::new(store, meter);
+
+            let session = gate
+                .open_session(tenant, None)
+                .with_context(|| format!("opening a session for tenant {tenant:?}"))?;
+            println!("session opened");
+            println!("  id     : {}", session.id);
+            println!("  tenant : {}", session.tenant_id);
+            println!("  status : {}", session.status.as_str());
+            println!("  prompt : {prompt}");
+            eprintln!(
+                "note: the interactive LLM turn-loop over remote hands runs inside \
+                 `sven cloud serve` (the live companion registry is in-process). Standalone \
+                 kernel drive over RemoteToolExecutor is not yet available (turn-loop parity \
+                 gap); this command gates and records the session only."
+            );
+            Ok(())
+        }
     }
 }
 
