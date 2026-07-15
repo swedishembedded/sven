@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sven_config::{Config, ModelConfig};
+use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
 use sven_executors::{
     user::{ApprovalRequest, UserQuestion},
@@ -38,7 +38,7 @@ use sven_hsm::{
 use sven_llm::ConversationStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
-use sven_tools::{PermissionRequester, QuestionRequest};
+use sven_tools::{PermissionRequester, QuestionRequest, ToolRegistry};
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
@@ -71,6 +71,13 @@ pub struct RuntimeHandle {
     sink: EventSink,
     obs: sven_hsm::ObservationSink,
     status_rx: watch::Receiver<RuntimeStatus>,
+    /// The kernel's shared conversation store (thread → turns). Exposed so
+    /// interactive frontends can seed / replace history mid-session for the
+    /// edit-resubmit and resume flows.
+    conv_store: Arc<std::sync::Mutex<ConversationStore>>,
+    /// The live tool registry. Exposed so frontends can hot-swap MCP tools via
+    /// [`ToolRegistry::replace_mcp_tools`] without rebuilding the session.
+    tool_registry: Arc<ToolRegistry>,
 }
 
 impl RuntimeHandle {
@@ -114,6 +121,18 @@ impl RuntimeHandle {
     pub fn status_watch(&self) -> watch::Receiver<RuntimeStatus> {
         self.status_rx.clone()
     }
+
+    /// The kernel's shared conversation store (for history seeding / resume).
+    #[must_use]
+    pub fn conversation_store(&self) -> Arc<std::sync::Mutex<ConversationStore>> {
+        Arc::clone(&self.conv_store)
+    }
+
+    /// The live tool registry (for MCP tool hot-swap).
+    #[must_use]
+    pub fn tool_registry(&self) -> Arc<ToolRegistry> {
+        Arc::clone(&self.tool_registry)
+    }
 }
 
 // ── RuntimeBuilder ────────────────────────────────────────────────────────────
@@ -152,6 +171,17 @@ pub struct RuntimeBuilder {
     /// `sven_model::from_config` would construct (see
     /// [`Self::with_model_provider`]).
     model_provider_override: Option<Box<dyn sven_model::ModelProvider>>,
+    /// The interactive [`AgentMode`] this session runs as (see
+    /// [`Self::with_agent_mode`]). Selects the permission policy for the
+    /// reactive machine — `Plan`/`Research` get a read-only policy — and seeds
+    /// the tool registry's mode lock. `None` preserves the historical
+    /// full-agent behaviour.
+    agent_mode: Option<AgentMode>,
+    /// A pre-built, already-connected [`McpManager`] to reuse instead of
+    /// creating a fresh one (see [`Self::with_mcp_manager`]). Interactive
+    /// frontends share one manager across session rebuilds so the TUI's manager
+    /// handle and MCP connections stay valid when mode/model changes.
+    shared_mcp_manager: Option<Arc<McpManager>>,
 }
 
 impl RuntimeBuilder {
@@ -182,7 +212,34 @@ impl RuntimeBuilder {
             effect_executor: None,
             principal: None,
             model_provider_override: None,
+            agent_mode: None,
+            shared_mcp_manager: None,
         }
+    }
+
+    /// Set the interactive [`AgentMode`] for this session.
+    ///
+    /// The mode selects the reactive machine's permission policy —
+    /// `Plan`/`Research` build a read-only policy that forbids `WriteFile` at
+    /// the kernel gate — and seeds the tool registry's mode lock. It does not
+    /// change which kernel machine runs (that is the `mode` string passed to
+    /// [`new`](Self::new)); `Plan` and `Agent` both drive the reactive machine.
+    pub fn with_agent_mode(mut self, mode: AgentMode) -> Self {
+        self.agent_mode = Some(mode);
+        self
+    }
+
+    /// Reuse an existing, already-connected [`McpManager`] rather than
+    /// constructing and connecting a fresh one.
+    ///
+    /// The manager's background tasks and server connections are assumed to be
+    /// already running; `build` skips `connect_all`/`start_background_tasks` and
+    /// the MCP-tool wait, and the returned MCP event receiver is a closed stub
+    /// (the caller keeps consuming events from the original manager). Used by
+    /// interactive frontends to keep one manager alive across session rebuilds.
+    pub fn with_mcp_manager(mut self, manager: Arc<McpManager>) -> Self {
+        self.shared_mcp_manager = Some(manager);
+        self
     }
 
     /// Set the runtime context (project root, git, CI environment).
@@ -335,40 +392,56 @@ impl RuntimeBuilder {
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
         // ── MCP setup ────────────────────────────────────────────────────────
-        let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
-        let mcp_manager = McpManager::new(
-            self.config.mcp_servers.clone(),
-            mcp_event_tx,
-            self.allow_interactive_oauth,
-        );
-        mcp_manager.connect_all().await;
-        mcp_manager.start_background_tasks();
-
-        let has_enabled_servers = self.config.mcp_servers.values().any(|c| c.enabled);
-        if let Some(timeout_ms) = self.wait_for_mcp_tools_ms {
-            if has_enabled_servers {
-                let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-                let poll_interval = Duration::from_millis(200);
-                loop {
-                    let tools = mcp_manager.tools().await;
-                    if !tools.is_empty() {
-                        info!(
-                            count = tools.len(),
-                            "MCP tools available for kernel runtime"
-                        );
-                        break;
-                    }
-                    if tokio::time::Instant::now() >= deadline {
-                        warn!(timeout_ms, "MCP tools not available within timeout");
-                        break;
-                    }
-                    tokio::time::sleep(poll_interval).await;
-                }
+        // Reuse a caller-supplied manager (session rebuild) instead of building
+        // and connecting a fresh one, so the frontend's manager handle and MCP
+        // connections survive a mid-session mode/model change. A reused manager
+        // yields a closed event-receiver stub — the caller keeps consuming from
+        // the original manager's stream.
+        let (mcp_manager, mcp_event_rx) = match self.shared_mcp_manager.take() {
+            Some(existing) => {
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                (existing, rx)
             }
-        }
+            None => {
+                let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
+                let mcp_manager = McpManager::new(
+                    self.config.mcp_servers.clone(),
+                    mcp_event_tx,
+                    self.allow_interactive_oauth,
+                );
+                mcp_manager.connect_all().await;
+                mcp_manager.start_background_tasks();
+
+                let has_enabled_servers = self.config.mcp_servers.values().any(|c| c.enabled);
+                if let Some(timeout_ms) = self.wait_for_mcp_tools_ms {
+                    if has_enabled_servers {
+                        let deadline =
+                            tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+                        let poll_interval = Duration::from_millis(200);
+                        loop {
+                            let tools = mcp_manager.tools().await;
+                            if !tools.is_empty() {
+                                info!(count = tools.len(), "MCP tools available for kernel runtime");
+                                break;
+                            }
+                            if tokio::time::Instant::now() >= deadline {
+                                warn!(timeout_ms, "MCP tools not available within timeout");
+                                break;
+                            }
+                            tokio::time::sleep(poll_interval).await;
+                        }
+                    }
+                }
+                (mcp_manager, mcp_event_rx)
+            }
+        };
 
         // ── Build tool registry ───────────────────────────────────────────────
-        let mode_lock = Arc::new(tokio::sync::Mutex::new(sven_config::AgentMode::Agent));
+        // Seed the mode lock from the interactive mode so in-session `/mode`
+        // reads and mode-scoped tool views reflect the active mode.
+        let mode_lock = Arc::new(tokio::sync::Mutex::new(
+            self.agent_mode.unwrap_or(sven_config::AgentMode::Agent),
+        ));
         let (tool_event_tx, tool_event_rx) =
             tokio::sync::mpsc::channel::<sven_tools::events::ToolEvent>(64);
         let mut runtime = self.runtime_ctx.to_agent_runtime();
@@ -403,6 +476,9 @@ impl RuntimeBuilder {
         }
 
         let tool_registry = Arc::new(tool_registry);
+        // Clone for the RuntimeHandle before the registry is moved into the
+        // ToolExecutor below (frontends reach it for MCP tool hot-swap).
+        let tool_registry_for_handle = Arc::clone(&tool_registry);
 
         // All modes now use TurnExecutor; drop the legacy tool_event_rx.
         drop(tool_event_rx);
@@ -411,6 +487,9 @@ impl RuntimeBuilder {
         // Conversation store and call-id registry are shared between TurnExecutor
         // and ToolExecutor so appended tool results can be retrieved per-thread.
         let conv_store = Arc::new(std::sync::Mutex::new(ConversationStore::new()));
+        // Clone for the RuntimeHandle before the store is moved into the
+        // ToolExecutor below (frontends reach it for history seeding / resume).
+        let conv_store_for_handle = Arc::clone(&conv_store);
         // Seed prior conversation history into the reactive-agent thread so a
         // resumed or piped session sees the full context on its very first turn.
         // Only the reactive `agent`/`chat` machines read `CHAT_THREAD`; the SDLC
@@ -527,7 +606,15 @@ impl RuntimeBuilder {
         // restrictions per state (e.g. SDLC disallows writes outside Execution).
         let policy = match self.mode.as_str() {
             "sdlc" => SdlcMachine::permission_policy(),
-            _ => ReactiveAgentMachine::permission_policy(),
+            // Read-only planning modes get a policy that withholds `WriteFile`
+            // so the kernel forbids file mutations even if the model proposes
+            // one; all other modes keep the full reactive-agent policy.
+            _ => match self.agent_mode {
+                Some(AgentMode::Plan | AgentMode::Research) => {
+                    ReactiveAgentMachine::plan_permission_policy()
+                }
+                _ => ReactiveAgentMachine::permission_policy(),
+            },
         };
 
         // ── Spawn runtime ─────────────────────────────────────────────────────
@@ -553,6 +640,8 @@ impl RuntimeBuilder {
             sink: erased_runtime.sink(),
             obs: erased_runtime.observations(),
             status_rx: erased_runtime.status_watch(),
+            conv_store: conv_store_for_handle,
+            tool_registry: tool_registry_for_handle,
         };
 
         let channels = KernelChannels {

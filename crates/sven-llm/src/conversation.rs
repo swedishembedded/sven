@@ -59,6 +59,19 @@ impl ConversationStore {
         self.threads.entry(id.to_string()).or_default().push(message);
     }
 
+    /// Replace a thread's entire contents with `messages`.
+    ///
+    /// Unlike [`append`](Self::append), this is **not** append-only: it is the
+    /// history-seeding escape hatch used by the interactive frontends when the
+    /// user edits and resubmits an earlier turn (edit-resubmit) or resumes a
+    /// saved session. The frontend reconstructs the authoritative history and
+    /// installs it here so the next turn streams against exactly those turns,
+    /// not the store's own accumulated version. Because the prefix changes, the
+    /// provider prompt cache for this thread is intentionally invalidated.
+    pub fn replace_thread(&mut self, id: &str, messages: Vec<Message>) {
+        self.threads.insert(id.to_string(), messages);
+    }
+
     /// A read-only clone of a thread's current turns (empty if absent).
     #[must_use]
     pub fn snapshot(&self, id: &str) -> Vec<Message> {

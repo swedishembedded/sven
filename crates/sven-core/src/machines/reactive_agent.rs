@@ -108,6 +108,27 @@ impl ReactiveAgentMachine {
             .build()
     }
 
+    /// The permission policy for read-only planning modes (`Plan` / `Research`).
+    ///
+    /// Identical to [`permission_policy`](Self::permission_policy) except that
+    /// [`ToolCapability::WriteFile`] is **not** granted, so any file-mutating
+    /// tool call the model proposes is classified `Forbidden` by the kernel and
+    /// turned into a `ToolFailed` without ever reaching the executor. This is
+    /// what makes plan mode structurally read-only: the guarantee holds even if
+    /// the model ignores the (write-free) tool schemas and emits a write anyway.
+    #[must_use]
+    pub fn plan_permission_policy() -> PermissionPolicy {
+        PermissionPolicy::builder()
+            .allow_globally([
+                ToolCapability::ReadFile,
+                ToolCapability::NetworkAccess,
+                ToolCapability::GitOperation,
+                ToolCapability::ExecuteShell,
+            ])
+            .require_approval([ToolCapability::Rollback])
+            .build()
+    }
+
     /// Build the first `CallLlm { kind:"turn" }` effect for a user message.
     fn first_turn_effect(text: &str) -> Effect {
         build_turn_effect(

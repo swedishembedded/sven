@@ -34,3 +34,4 @@ tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+async-trait = { workspace = true }

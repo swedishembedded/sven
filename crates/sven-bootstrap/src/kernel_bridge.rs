@@ -395,6 +395,55 @@ impl KernelAgentSession {
     pub fn mcp_manager(&self) -> Arc<McpManager> {
         Arc::clone(&self.mcp_manager)
     }
+
+    /// The session's live [`ToolRegistry`] (for MCP tool hot-swap).
+    #[must_use]
+    pub fn tool_registry(&self) -> Arc<sven_tools::ToolRegistry> {
+        self.handle.tool_registry()
+    }
+
+    /// Replace the reactive-agent conversation thread with `messages`.
+    ///
+    /// This is the history-seeding hook the interactive frontends call before
+    /// posting a message on the edit-resubmit and resume flows: it installs the
+    /// frontend's authoritative reconstructed history so the next turn streams
+    /// against exactly those turns rather than the store's own accumulated
+    /// version. A no-op if the store mutex is poisoned.
+    pub fn seed_history(&self, messages: Vec<sven_model::Message>) {
+        if let Ok(mut store) = self.handle.conversation_store().lock() {
+            store.replace_thread(
+                sven_core::machines::reactive_agent::CHAT_THREAD,
+                messages,
+            );
+        }
+    }
+
+    /// A snapshot of the current reactive-agent conversation thread.
+    ///
+    /// Used by frontends to carry the accumulated context forward when a
+    /// session is rebuilt (e.g. on a mid-session mode/model change), so the
+    /// replacement kernel is seeded with the same history.
+    #[must_use]
+    pub fn history_snapshot(&self) -> Vec<sven_model::Message> {
+        self.handle
+            .conversation_store()
+            .lock()
+            .ok()
+            .map(|store| store.snapshot(sven_core::machines::reactive_agent::CHAT_THREAD))
+            .unwrap_or_default()
+    }
+
+    /// Refresh the live tool registry's MCP tools from the session's
+    /// [`McpManager`], so tools that appeared (or vanished) after startup become
+    /// usable mid-session without rebuilding the kernel.
+    pub async fn refresh_mcp_tools(&self) {
+        let mcp_tools = self.mcp_manager.tools().await;
+        let tools: Vec<Arc<dyn sven_tools::Tool>> = mcp_tools
+            .into_iter()
+            .map(|t| Arc::new(t) as Arc<dyn sven_tools::Tool>)
+            .collect();
+        self.handle.tool_registry().replace_mcp_tools(tools);
+    }
 }
 
 impl Drop for KernelAgentSession {
