@@ -33,11 +33,12 @@
 
 use std::sync::Arc;
 
-use sven_core::{AgentEvent, CompactionStrategyUsed};
+use sven_core::{AgentEvent, CompactionStrategyUsed, PeerInfo};
+use sven_core::prompts::CollabEvent;
 use sven_config::AgentMode;
 use sven_hsm::{ErasedRuntime, UiEvent};
 use sven_mcp_client::McpManager;
-use sven_tools::events::TodoItem;
+use sven_tools::events::{SubagentUpdate, TodoItem};
 use sven_tools::{Question, QuestionRequest, ToolCall};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -135,6 +136,54 @@ pub fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
             call_id: "sdlc_phase".to_string(),
             message: format!("SDLC: {from} → {to}"),
         },
+        // Subagent / delegate / team observations flow back to the exact
+        // `AgentEvent`s the TUI consumed before the kernel path existed.
+        // Opaque JSON payloads are deserialized back into their typed form;
+        // a corrupt payload drops only that one event (`?` → `None`).
+        UiEvent::SubagentStarted {
+            call_id,
+            handle_id,
+            description,
+            prompt,
+        } => AgentEvent::SubagentStarted {
+            call_id,
+            handle_id,
+            description,
+            prompt,
+        },
+        UiEvent::SubagentEvent {
+            call_id,
+            handle_id,
+            update,
+        } => {
+            let update: SubagentUpdate = serde_json::from_value(update).ok()?;
+            AgentEvent::SubagentEvent {
+                call_id,
+                handle_id,
+                update,
+            }
+        }
+        UiEvent::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+        } => AgentEvent::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+        },
+        UiEvent::CollabEvent(v) => {
+            let event: CollabEvent = serde_json::from_value(v).ok()?;
+            AgentEvent::CollabEvent(event)
+        }
+        UiEvent::PeerList(v) => {
+            let peers: Vec<PeerInfo> = serde_json::from_value(v).ok()?;
+            AgentEvent::PeerList(peers)
+        }
     })
 }
 
@@ -425,6 +474,68 @@ mod tests {
         assert!(matches!(&mapped[3], AgentEvent::TextComplete(t) if t == "all done"));
         assert!(matches!(&mapped[4], AgentEvent::TurnComplete));
         assert_eq!(mapped.len(), 5);
+    }
+
+    /// Regression: subagent/delegate/team events must survive the full kernel
+    /// path — `AgentEvent → UiEvent` (turn.rs) then `UiEvent → AgentEvent`
+    /// (kernel_bridge) — instead of being silently dropped at either boundary.
+    /// The TUI's child-session views, delegate summaries, and team collab
+    /// segments depend on this round-trip being lossless.
+    #[test]
+    fn subagent_started_survives_kernel_round_trip() {
+        use sven_executors::turn::agent_event_to_ui;
+
+        let original = AgentEvent::SubagentStarted {
+            call_id: "call-9".into(),
+            handle_id: "buf_0001".into(),
+            description: "explore repo".into(),
+            prompt: "Find all TODOs".into(),
+        };
+
+        let ui = agent_event_to_ui(original)
+            .expect("SubagentStarted must map to a UiEvent (was dropped)");
+        let back =
+            ui_event_to_agent_event(ui).expect("UiEvent must map back to a SubagentStarted");
+
+        match back {
+            AgentEvent::SubagentStarted {
+                call_id,
+                handle_id,
+                description,
+                prompt,
+            } => {
+                assert_eq!(call_id, "call-9");
+                assert_eq!(handle_id, "buf_0001");
+                assert_eq!(description, "explore repo");
+                assert_eq!(prompt, "Find all TODOs");
+            }
+            other => panic!("expected SubagentStarted, got {other:?}"),
+        }
+    }
+
+    /// Companion to the subagent case: a team `CollabEvent` must also survive
+    /// the `AgentEvent → UiEvent → AgentEvent` kernel round-trip intact.
+    #[test]
+    fn collab_event_survives_kernel_round_trip() {
+        use sven_core::prompts::CollabEvent;
+        use sven_executors::turn::agent_event_to_ui;
+
+        let original = AgentEvent::CollabEvent(CollabEvent::TeammateSpawned {
+            name: "alice".into(),
+            role: "reviewer".into(),
+        });
+
+        let ui =
+            agent_event_to_ui(original).expect("CollabEvent must map to a UiEvent (was dropped)");
+        let back = ui_event_to_agent_event(ui).expect("UiEvent must map back to a CollabEvent");
+
+        match back {
+            AgentEvent::CollabEvent(CollabEvent::TeammateSpawned { name, role }) => {
+                assert_eq!(name, "alice");
+                assert_eq!(role, "reviewer");
+            }
+            other => panic!("expected CollabEvent(TeammateSpawned), got {other:?}"),
+        }
     }
 
     /// The spawned observation bridge forwards a live `UiEvent` broadcast into

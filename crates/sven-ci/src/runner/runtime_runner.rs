@@ -476,6 +476,14 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             finalise_stdout(&state.streamed_text);
             return Some(EXIT_SUCCESS);
         }
+        // Subagent / delegate / team observations are rendered by the
+        // interactive frontends (child-session views, collapsible segments);
+        // the headless CI runner has no surface for them.
+        UiEvent::SubagentStarted { .. }
+        | UiEvent::SubagentEvent { .. }
+        | UiEvent::DelegateSummary { .. }
+        | UiEvent::CollabEvent(_)
+        | UiEvent::PeerList(_) => {}
     }
     None
 }

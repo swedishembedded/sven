@@ -117,6 +117,49 @@ pub enum UiEvent {
         /// Partial assistant text streamed before the abort.
         partial_text: String,
     },
+    /// A subagent was started via the task tool; the frontend creates a child
+    /// session view. Pure observation pass-through — the kernel neither
+    /// interprets nor acts on these fields.
+    SubagentStarted {
+        /// Tool-call ID of the spawning `task` call.
+        call_id: String,
+        /// Buffer handle identifying the subagent session.
+        handle_id: String,
+        /// Short human-readable description for the sidebar.
+        description: String,
+        /// Full prompt sent to the subagent (first user message in its view).
+        prompt: String,
+    },
+    /// A structured event streamed from a running subagent. `update` carries an
+    /// opaque, serialized `SubagentUpdate` (the kernel stays dependency-free of
+    /// the tool/event types).
+    SubagentEvent {
+        /// Tool-call ID of the spawning `task` call.
+        call_id: String,
+        /// Buffer handle identifying the subagent session.
+        handle_id: String,
+        /// Serialized `SubagentUpdate` payload (opaque to the kernel).
+        update: Value,
+    },
+    /// A completed delegate subtree, rendered as a collapsible summary segment.
+    DelegateSummary {
+        /// Name of the agent the work was delegated to.
+        to_name: String,
+        /// Short title of the delegated task.
+        task_title: String,
+        /// Wall-clock duration in milliseconds.
+        duration_ms: u64,
+        /// `"completed"`, `"failed"`, or `"partial"`.
+        status: String,
+        /// First meaningful line of the result, shown collapsed.
+        result_preview: String,
+    },
+    /// A team collaboration lifecycle event, shown as a collapsible chat
+    /// segment. Carries an opaque, serialized `CollabEvent`.
+    CollabEvent(Value),
+    /// List of peers (node proxy / list_peers). Carries an opaque, serialized
+    /// `Vec<PeerInfo>`.
+    PeerList(Value),
 }
 
 /// A broadcast sender for [`UiEvent`]s — the outward observation plane.

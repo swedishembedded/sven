@@ -8,7 +8,7 @@ use sven_config::{AgentMode, McpServerConfig};
 ///
 /// This is a sven-native mirror of ACP `SessionUpdate` variants, kept
 /// dependency-free so `sven-tools` does not need to depend on the ACP crate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SubagentUpdate {
     /// A chunk of assistant text (streamed).
     TextDelta(String),

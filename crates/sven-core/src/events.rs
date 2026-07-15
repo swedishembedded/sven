@@ -8,7 +8,7 @@ use sven_tools::{
 };
 
 /// Information about a connected peer (node proxy / list_peers).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PeerInfo {
     pub name: String,
     pub peer_id: String,

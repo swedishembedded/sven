@@ -437,7 +437,7 @@ pub fn format_collab_event(event: &CollabEvent) -> String {
 ///
 /// These are display-only entries that track the lifecycle of team operations
 /// without adding them to the LLM context.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CollabEvent {
     TeammateSpawned {
         name: String,

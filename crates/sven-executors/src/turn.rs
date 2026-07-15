@@ -98,7 +98,7 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 ///
 /// Returns `None` for events that have no renderable UI equivalent or that are
 /// handled directly by the executor (`TurnComplete`).
-fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
+pub fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
     use sven_core::AgentEvent as AE;
     Some(match ev {
         AE::TextDelta(d) => UiEvent::TextDelta(d),
@@ -163,15 +163,51 @@ fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
         }
         AE::ModeChanged(mode) => UiEvent::ModeChanged(format!("{mode:?}")),
         AE::ModelChanged(m) => UiEvent::ModelChanged(m),
+        // Subagent / delegate / team observations pass through the outward
+        // plane so the frontend can render child-session views, delegate
+        // summaries, and collab segments. Complex payloads are carried as
+        // opaque JSON so the kernel stays dependency-free.
+        AE::SubagentStarted {
+            call_id,
+            handle_id,
+            description,
+            prompt,
+        } => UiEvent::SubagentStarted {
+            call_id,
+            handle_id,
+            description,
+            prompt,
+        },
+        AE::SubagentEvent {
+            call_id,
+            handle_id,
+            update,
+        } => UiEvent::SubagentEvent {
+            call_id,
+            handle_id,
+            update: serde_json::to_value(&update).unwrap_or(serde_json::Value::Null),
+        },
+        AE::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+        } => UiEvent::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+        },
+        AE::CollabEvent(e) => {
+            UiEvent::CollabEvent(serde_json::to_value(&e).unwrap_or(serde_json::Value::Null))
+        }
+        AE::PeerList(peers) => {
+            UiEvent::PeerList(serde_json::to_value(&peers).unwrap_or(serde_json::Value::Null))
+        }
         // No renderable observation equivalent for these.
-        AE::Question { .. }
-        | AE::QuestionAnswer { .. }
-        | AE::TitleGenerated(_)
-        | AE::CollabEvent(_)
-        | AE::DelegateSummary { .. }
-        | AE::SubagentStarted { .. }
-        | AE::SubagentEvent { .. }
-        | AE::PeerList(_) => return None,
+        AE::Question { .. } | AE::QuestionAnswer { .. } | AE::TitleGenerated(_) => return None,
     })
 }
 
