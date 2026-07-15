@@ -55,3 +55,4 @@ Thumbs.db
 # Local runtime/IDE artefacts
 .claude/
 logs/
+**/.sven/
