@@ -23,8 +23,8 @@
 //!   tool-approval / clarification round-trip hook).
 //! * [`KernelAgentSession`] — a convenience that ties a whole [`SessionBundle`]
 //!   together: owns the runtime, spawns both bridges, and exposes `send`,
-//!   `cancel`, and the MCP manager. Phases 2-5 build one of these instead of
-//!   calling [`AgentBuilder`](crate::AgentBuilder).
+//!   `cancel`, and the MCP manager. Every interactive surface builds one of
+//!   these on top of a [`RuntimeBuilder`](crate::RuntimeBuilder) session.
 //!
 //! The adapter lives in `sven-bootstrap` (not `sven-frontend`) precisely so the
 //! headless `sven-ci` and `sven-node` surfaces can depend on it without pulling

@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! [`RuntimeBuilder`] — constructs a kernel-based runtime from config.
 //!
-//! This is the kernel-centric replacement for [`AgentBuilder`]: instead of
-//! creating an `Agent` it produces an [`ErasedRuntime`] driven by a machine
-//! fetched from [`sven_core::ModeRegistry`].
+//! This is the single entry point for constructing a runtime: it produces an
+//! [`ErasedRuntime`] driven by a machine fetched from
+//! [`sven_core::ModeRegistry`].
 //!
 //! # Usage
 //!
@@ -120,8 +120,8 @@ impl RuntimeHandle {
 
 /// Constructs a kernel-based [`ErasedRuntime`] from a [`Config`].
 ///
-/// Mirrors the API of [`AgentBuilder`] but produces the new HSM-kernel
-/// runtime instead of the legacy `Agent`.
+/// This is the sole builder for a wired runtime: it assembles the tool
+/// registry, MCP manager, executors, and HSM machine into a running kernel.
 pub struct RuntimeBuilder {
     config: Arc<Config>,
     mode: String,

@@ -42,8 +42,8 @@ use crate::control::{ControlCommand as Cmd, ControlEvent as Evt};
 
 /// Background task that bridges a frontend to a running sven node via WebSocket.
 ///
-/// Replaces `agent_task` when `SVEN_NODE_URL` and `SVEN_NODE_TOKEN` are
-/// present in the environment.
+/// Replaces `kernel_session_task` when `SVEN_NODE_URL` and `SVEN_NODE_TOKEN`
+/// are present in the environment.
 pub async fn node_agent_task(
     node_url: String,
     node_token: String,

@@ -4,11 +4,14 @@
 //! [`SvenAcpAgent`] - implements the ACP `Agent` trait for sven.
 //!
 //! Each `new_session` call builds a fresh kernel session via
-//! [`sven_bootstrap::RuntimeBuilder`] and stores its [`RuntimeHandle`] in a
-//! [`SessionEntry`] keyed by ACP [`SessionId`].  `prompt` posts
-//! `Event::UserMessage` to the kernel, subscribes to the [`UiEvent`]
-//! observation bus, and bridges those events to ACP `session/update`
-//! notifications, returning when the turn completes or is cancelled.
+//! [`sven_bootstrap::RuntimeBuilder`] and wraps it in a
+//! [`sven_bootstrap::KernelAgentSession`] — the shared HSM-kernel adapter that
+//! maps the kernel's outward observation plane onto the same
+//! [`AgentEvent`](sven_core::AgentEvent) stream every other surface consumes.
+//! The session is stored in a [`SessionEntry`] keyed by ACP [`SessionId`].
+//! `prompt` posts the user message through the session, drains the mapped
+//! `AgentEvent` stream, and bridges each event to an ACP `session/update`
+//! notification, returning when the turn completes or is cancelled.
 //!
 //! The struct is intentionally `!Send` (it uses `RefCell` for interior
 //! mutability) and lives inside a `tokio::task::LocalSet` spawned by
@@ -45,12 +48,13 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// request before defaulting to denial.
 const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
-use sven_bootstrap::{RuntimeBuilder, RuntimeContext, RuntimeHandle};
+use sven_bootstrap::{KernelAgentSession, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config};
-use sven_hsm::UiEvent;
+use sven_core::AgentEvent;
+use sven_tools::QuestionRequest;
 
 use crate::bridge::{
-    acp_mode_id_to_sven_mode, sven_mode_to_acp_mode_id, ui_event_to_session_update,
+    acp_mode_id_to_sven_mode, agent_event_to_session_update, sven_mode_to_acp_mode_id,
 };
 
 // ─── Version string ───────────────────────────────────────────────────────────
@@ -165,8 +169,12 @@ impl sven_tools::PermissionRequester for AcpPermissionRequester {
 
 /// Per-session state stored inside [`SvenAcpAgent`].
 struct SessionEntry {
-    /// Kernel handle for posting events into the session runtime.
-    handle: RuntimeHandle,
+    /// Kernel session bridged onto the shared [`AgentEvent`] stream; owns the
+    /// runtime and keeps the kernel alive for the session's lifetime.
+    session: KernelAgentSession,
+    /// Receiver for this session's mapped [`AgentEvent`] stream, drained one
+    /// turn at a time by `prompt`.
+    event_rx: tokio::sync::Mutex<mpsc::Receiver<AgentEvent>>,
     /// Mode lock shared between the agent loop and mode-change requests.
     mode_lock: Arc<tokio::sync::Mutex<AgentMode>>,
     /// Cancellation sender; replaced on each new prompt turn.
@@ -275,32 +283,35 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                 Error::internal_error()
             })?;
 
-        let handle = bundle.handle.clone();
+        // Bridge the kernel session onto the shared `AgentEvent` stream via the
+        // reusable `KernelAgentSession` adapter. The event receiver is drained
+        // one turn at a time by `prompt`; the question channel carries
+        // kernel-level clarification / approval gates.
+        let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(256);
+        let (question_tx, mut question_rx) = mpsc::channel::<QuestionRequest>(16);
+        let (session, _mcp_event_rx) = KernelAgentSession::spawn(bundle, event_tx, question_tx);
 
-        // Auto-consume kernel-level approval/question channels; tool-level
-        // approvals are handled by `AcpPermissionRequester` above.
-        let mut channels = bundle.channels;
+        // Auto-answer kernel-level gates so headless sessions never block:
+        // free-text questions resolve to an empty answer and capability
+        // approvals are granted. Tool-call approvals are gated separately via
+        // `AcpPermissionRequester` on the IDE `session/request_permission` path.
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    q = channels.question_rx.recv() => match q {
-                        Some(q) => { let _ = q.reply_tx.send(String::new()); }
-                        None => break,
-                    },
-                    a = channels.approval_rx.recv() => match a {
-                        Some(a) => { let _ = a.reply_tx.send(true); }
-                        None => break,
-                    },
-                }
+            while let Some(req) = question_rx.recv().await {
+                let is_approval = req.questions.first().is_some_and(|q| !q.options.is_empty());
+                let answer = if is_approval {
+                    "yes".to_string()
+                } else {
+                    String::new()
+                };
+                let _ = req.answer_tx.send(answer);
             }
         });
-
-        drop(bundle.runtime);
 
         let mode_lock = Arc::new(tokio::sync::Mutex::new(initial_mode));
 
         let entry = Arc::new(SessionEntry {
-            handle,
+            session,
+            event_rx: tokio::sync::Mutex::new(event_rx),
             mode_lock,
             cancel_tx: tokio::sync::Mutex::new(None),
         });
@@ -347,15 +358,21 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *entry.cancel_tx.lock().await = Some(cancel_tx);
 
-        // Subscribe to the kernel observation bus before posting the message
-        // so we don't miss the first event.
-        let mut obs_rx = entry.handle.subscribe_observations();
+        // Take exclusive ownership of this session's event stream for the turn.
+        let mut event_rx = entry.event_rx.lock().await;
+
+        // Discard any tail events buffered from a previously cancelled or
+        // errored turn (e.g. the `Error("turn cancelled") + TurnComplete` pair
+        // the kernel emits on cancel) so they never bleed into this prompt. A
+        // normal turn consumes its own `TurnComplete`, leaving the stream empty
+        // here, so this is a no-op in the common case.
+        while event_rx.try_recv().is_ok() {}
 
         // Post the user message to the kernel.
-        entry.handle.send_user_message(text).await;
+        entry.session.send_user_message(text).await;
 
-        // Bridge UiEvents to ACP session/update notifications until the turn
-        // completes (TurnComplete), is aborted (UserCancelled), or errors.
+        // Bridge AgentEvents to ACP session/update notifications until the turn
+        // completes (TurnComplete), is aborted (Aborted), or errors.
         let mut stop_reason = None::<StopReason>;
         let mut agent_error = None::<String>;
 
@@ -367,37 +384,36 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             tokio::select! {
                 _ = &mut cancel_rx => {
                     // Cancellation requested from `cancel()`.
-                    entry.handle.cancel().await;
+                    entry.session.cancel().await;
                     stop_reason = Some(StopReason::Cancelled);
                     break;
                 }
-                result = obs_rx.recv() => {
-                    use tokio::sync::broadcast::error::RecvError;
-                    let ev = match result {
-                        Ok(ev) => ev,
-                        Err(RecvError::Lagged(_)) => continue,
-                        Err(RecvError::Closed) => break,
+                maybe_ev = event_rx.recv() => {
+                    let ev = match maybe_ev {
+                        Some(ev) => ev,
+                        None => break,
                     };
 
-                    let is_turn_complete = matches!(ev, UiEvent::TurnComplete);
-                    let is_error = matches!(ev, UiEvent::Error(_));
-
-                    if is_error {
-                        if let UiEvent::Error(msg) = ev {
+                    match ev {
+                        AgentEvent::Error(msg) => {
                             agent_error = Some(msg);
+                            break;
                         }
-                        break;
-                    }
-
-                    if let Some(update) = ui_event_to_session_update(&ev) {
-                        let notification =
-                            SessionNotification::new(args.session_id.clone(), update);
-                        self.send_notification(notification).await;
-                    }
-
-                    if is_turn_complete {
-                        stop_reason = Some(StopReason::EndTurn);
-                        break;
+                        AgentEvent::TurnComplete => {
+                            stop_reason = Some(StopReason::EndTurn);
+                            break;
+                        }
+                        other => {
+                            // Non-terminal events (including `Aborted`, which
+                            // maps to `None`) are forwarded when they have an
+                            // ACP equivalent; the loop keeps draining until a
+                            // terminal `TurnComplete`/`Error` arrives.
+                            if let Some(update) = agent_event_to_session_update(&other) {
+                                let notification =
+                                    SessionNotification::new(args.session_id.clone(), update);
+                                self.send_notification(notification).await;
+                            }
+                        }
                     }
                 }
             }

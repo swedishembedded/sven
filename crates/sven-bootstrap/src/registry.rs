@@ -87,10 +87,11 @@ pub struct IntegrationProviders {
 ///
 /// ### Shared-state parameters
 ///
-/// * `mode_lock` - shared with the agent loop; `SystemTool` holds a clone so
-///   that mode changes are immediately visible to the agent.
+/// * `mode_lock` - shared with the kernel; `SystemTool` holds a clone so
+///   that mode changes are immediately visible to the running turn.
 /// * `tool_event_tx` - the sending half of the channel whose receiving end is
-///   passed to `Agent::new()`. `TodoTool` / `SystemTool` send events here.
+///   drained by the kernel's tool executor. `TodoTool` / `SystemTool` send
+///   events here.
 ///
 /// The `buffer_store` is now bundled inside the `profile` variants that need it
 /// (`Full`, `Coding`, `SubAgent`).

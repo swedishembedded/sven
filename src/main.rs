@@ -1551,30 +1551,25 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         (String::new(), cli.prompt.clone())
     };
 
-    // ── HSM kernel path (default) ─────────────────────────────────────────────
-    // The HSM kernel (`RuntimeRunner`) is the DEFAULT headless path for every
-    // run — plain single prompts, default `agent` mode, and piped multi-step
-    // pipe chains all route through the kernel. The old `CiRunner` is the
-    // *deprecated legacy* runner and is now opt-out only: set
-    // `SVEN_HSM=0` (or `false`/`no`/`off`) to force it. Any other value (or an
-    // unset variable) keeps the kernel default.
+    // ── HSM kernel path ───────────────────────────────────────────────────────
+    // Every headless run is driven by the HSM kernel. There are two kernel-backed
+    // entry points and the routing below picks between them:
     //
-    // The `RuntimeRunner` is the reactive-agent kernel path: it drives one turn
-    // to completion and streams a conversation document. It handles a fresh
-    // single prompt *and* a piped prior-conversation document replayed as
-    // history (`sven '…' | sven 'next task'`). Genuine multi-step workflow
-    // orchestration (markdown `--file`, JSONL, `--var` templating,
-    // `--artifacts-dir`, `--dry-run`, `--output-format json/compact`,
-    // `--output-last-message`, `--system-prompt-file`) still lives in the legacy
-    // `CiRunner`, so a run that uses one of those workflow features falls
-    // through to it regardless of `SVEN_HSM` rather than lose the feature.
-    // `sdlc`/`chat` modes always use the kernel (no legacy path exists) even
-    // when `SVEN_HSM=0` is set.
-    let hsm_opt_out = std::env::var("SVEN_HSM")
-        .map(|v| matches!(v.as_str(), "0" | "false" | "no" | "off"))
-        .unwrap_or(false);
-    let mode_requires_hsm = matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
-    let hsm_enabled = !hsm_opt_out || mode_requires_hsm;
+    //   * `RuntimeRunner` — the reactive-agent single-turn path: it drives one
+    //     turn to completion and streams a conversation document. It handles a
+    //     fresh single prompt *and* a piped prior-conversation document replayed
+    //     as history (`sven '…' | sven 'next task'`).
+    //   * `CiRunner` — the multi-step workflow orchestrator, also kernel-backed
+    //     (it runs every turn on the kernel via `KernelAgent`). It owns the
+    //     workflow features that `RuntimeRunner` does not: markdown `--file`,
+    //     JSONL, `--var` templating, `--artifacts-dir`, `--dry-run`,
+    //     `--output-format json/compact`, `--output-last-message`,
+    //     `--system-prompt-file`, chat load/save.
+    //
+    // A run that uses any of those workflow features falls through to `CiRunner`
+    // to preserve them; everything else takes the `RuntimeRunner` path.
+    // `sdlc`/`chat` modes always use `RuntimeRunner` (no `CiRunner` path exists).
+    let mode_forces_runtime_runner = matches!(cli.mode, AgentMode::Sdlc | AgentMode::Chat);
 
     // Piped stdin that itself looks like a prior sven conversation document is
     // replayed as history (parsed into prior messages + a trailing pending
@@ -1591,9 +1586,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     // document replayed as history (`sven '…' | sven 'next task'`). Genuine
     // multi-step workflow features (workflow `--file`, `--var` templating,
     // `--artifacts-dir`, `--dry-run`, JSON/JSONL/compact output, chat I/O,
-    // `--system-prompt-file`, `--output-last-message`) still live in the legacy
-    // `CiRunner`; a run using any of them falls through to preserve those
-    // features. `sdlc`/`chat` modes always use the kernel.
+    // `--system-prompt-file`, `--output-last-message`) live in `CiRunner`; a run
+    // using any of them falls through to preserve those features. `sdlc`/`chat`
+    // modes always use `RuntimeRunner`.
     let workflow_features_absent = cli.file.is_none()
         && matches!(cli.output_format, OutputFormatArg::Conversation)
         && cli.artifacts_dir.is_none()
@@ -1605,7 +1600,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         && cli.effective_output_chat().is_none()
         && cli.effective_output_jsonl().is_none();
 
-    if hsm_enabled && load_jsonl.is_none() && (mode_requires_hsm || workflow_features_absent) {
+    if load_jsonl.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
             match cli.mode {
                 AgentMode::Chat => "chat",

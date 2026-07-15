@@ -5,7 +5,7 @@
 //!
 //! The canonical implementation lives in `sven_frontend::agent`. This module
 //! re-exports everything needed by the TUI so that all internal references to
-//! `crate::agent::AgentRequest` and `crate::agent::agent_task` continue to
-//! resolve without changes.
+//! `crate::agent::AgentRequest` and `crate::agent::kernel_session_task`
+//! continue to resolve without changes.
 
 pub use sven_frontend::agent::{kernel_session_task, AgentRequest};

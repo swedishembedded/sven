@@ -2,47 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 /// Integration tests for sven's core logic using the mock model provider.
-use std::sync::Arc;
-
-use sven_config::{AgentConfig, AgentMode, Config};
-use sven_core::{Agent, AgentRuntimeContext};
+use sven_config::Config;
 use sven_input::{parse_conversation, parse_workflow, serialize_conversation_turn};
-use sven_model::{Message, MockProvider, Role};
-use sven_tools::{events::ToolEvent, ToolRegistry};
-use tokio::sync::{mpsc, Mutex};
-
-fn mock_agent(mode: AgentMode) -> Agent {
-    let model: Arc<dyn sven_model::ModelProvider> = Arc::new(MockProvider);
-    let tools = Arc::new(ToolRegistry::default());
-    let config = Arc::new(AgentConfig::default());
-    let mode_lock = Arc::new(Mutex::new(mode));
-    let (_tx, tool_event_rx) = mpsc::channel::<ToolEvent>(64);
-    Agent::new(
-        model,
-        tools,
-        config,
-        AgentRuntimeContext::default(),
-        mode_lock,
-        tool_event_rx,
-        128_000,
-    )
-}
-
-#[tokio::test]
-async fn agent_returns_mock_response() {
-    let mut agent = mock_agent(AgentMode::Agent);
-    let (tx, mut rx) = mpsc::channel(64);
-    agent.submit("hello", tx).await.unwrap();
-
-    let mut got_text = false;
-    while let Ok(event) = rx.try_recv() {
-        if let sven_core::AgentEvent::TextDelta(t) = event {
-            assert!(t.contains("MOCK"));
-            got_text = true;
-        }
-    }
-    assert!(got_text, "expected at least one TextDelta event");
-}
+use sven_model::{Message, Role};
 
 #[test]
 fn workflow_parsing_single_step_fallback() {

@@ -7,7 +7,8 @@
 //! both the `sven-tui` (ratatui terminal UI) and `sven-gui` (Slint desktop UI)
 //! crates. It contains:
 //!
-//! - `AgentRequest` / `agent_task` - the background task that owns the Agent
+//! - `AgentRequest` / `kernel_session_task` - the background task that drives
+//!   the HSM-kernel session and forwards its `AgentEvent` stream
 //! - `node_agent_task` - WebSocket bridge to a running sven node
 //! - `control` - frontend-side mirror of the node/cloud control protocol
 //! - `operator` - operator console: tenant selection + cross-session view
@@ -42,7 +43,7 @@ pub mod types;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
-pub use agent::{agent_task, kernel_session_task, AgentRequest};
+pub use agent::{kernel_session_task, AgentRequest};
 pub use node_agent::{fetch_node_tools, node_agent_task};
 pub use operator::{
     operator_console_task, OperatorConsole, OperatorRequest, OperatorSnapshot, PendingApproval,

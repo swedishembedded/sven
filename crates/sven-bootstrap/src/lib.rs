@@ -12,7 +12,6 @@
 //! Frontends (`sven-ci`, `sven-tui`) depend on this crate instead of
 //! inlining their own registry-building loops.
 
-pub mod agent;
 pub mod child_spawner;
 pub mod context;
 pub mod context_query;
@@ -23,7 +22,6 @@ pub mod runtime_builder;
 pub mod supervisor;
 pub mod task_tool;
 
-pub use agent::AgentBuilder;
 pub use kernel_bridge::{
     spawn_observation_bridge, spawn_question_bridge, ui_event_to_agent_event, KernelAgentSession,
 };

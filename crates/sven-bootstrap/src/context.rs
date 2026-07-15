@@ -100,7 +100,7 @@ impl RuntimeContext {
     }
 
     /// Convert this [`RuntimeContext`] into an [`AgentRuntimeContext`] suitable
-    /// for passing to [`sven_core::Agent::new`].
+    /// for seeding the kernel runtime built by [`RuntimeBuilder`].
     ///
     /// The resulting context carries project/git/CI notes, skills, agents, and
     /// knowledge but leaves `append_system_prompt` and `prior_messages` at

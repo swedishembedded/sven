@@ -43,9 +43,9 @@ pub struct ToolDisplayInfo {
 /// [`sven_runtime::SharedAgents`]: callers hold a cheap `Clone` and call
 /// `.get()` to obtain an `Arc<[ToolSchema]>` snapshot without locking.
 ///
-/// The store is populated by [`AgentBuilder`] after the registry is built so
-/// that the TUI can list available tools via `/tools` without reaching into
-/// the agent's internals.
+/// The store is populated by the runtime builder after the registry is built
+/// so that the TUI can list available tools via `/tools` without reaching into
+/// the kernel's internals.
 pub type SharedTools = sven_runtime::Shared<ToolSchema>;
 
 /// Slot for the TUI to receive the tool display registry after the agent is built.
