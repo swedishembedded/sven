@@ -139,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
                 return run_team_command(command);
             }
             Commands::Cloud { command } => {
-                return run_cloud_command(command).await;
+                return run_cloud_command(command, cli.config.as_deref()).await;
             }
             Commands::Index { command } => {
                 return run_index_command(command);
@@ -1150,7 +1150,10 @@ fn open_cloud_store(db: &std::path::Path) -> anyhow::Result<Arc<dyn sven_cloud::
     Ok(Arc::new(store))
 }
 
-async fn run_cloud_command(cmd: &CloudCommands) -> anyhow::Result<()> {
+async fn run_cloud_command(
+    cmd: &CloudCommands,
+    config_path: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
     match cmd {
         CloudCommands::Serve {
             db,
@@ -1159,11 +1162,176 @@ async fn run_cloud_command(cmd: &CloudCommands) -> anyhow::Result<()> {
             cert,
             key,
             ca_out,
-        } => run_cloud_serve(db, bind, *tls, cert.as_deref(), key.as_deref(), ca_out.as_deref()).await,
+        } => {
+            run_cloud_serve(
+                db,
+                bind,
+                *tls,
+                cert.as_deref(),
+                key.as_deref(),
+                ca_out.as_deref(),
+                config_path,
+            )
+            .await
+        }
         CloudCommands::Tenant { command } => run_cloud_tenant_command(command),
         CloudCommands::Token { command } => run_cloud_token_command(command),
         CloudCommands::Session { command } => run_cloud_session_command(command).await,
+        CloudCommands::DemoSeed {
+            tenant_name,
+            db,
+            url,
+            credit_micro_usd,
+            fee_micro_usd,
+            ttl,
+            out_dir,
+        } => run_cloud_demo_seed(
+            tenant_name,
+            db,
+            url,
+            *credit_micro_usd,
+            *fee_micro_usd,
+            ttl,
+            out_dir.as_deref(),
+        ),
     }
+}
+
+/// Provision a turnkey demo tenant: subscribe + fund it and mint an operator
+/// and a companion token, mirroring how the cloud-session runtime test funds a
+/// tenant. Writes both secrets to `<out>/operator.token` and
+/// `<out>/companion.token` and prints the run commands.
+fn run_cloud_demo_seed(
+    tenant_name: &str,
+    db: &std::path::Path,
+    url: &str,
+    credit_micro_usd: i64,
+    fee_micro_usd: i64,
+    ttl: &str,
+    out_dir: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    use sven_cloud::{IdentityService, Role, SessionGate, TenantRecord, UsageMeter};
+    use sven_metering::{CreditLedger, PricingCatalog};
+
+    let store = open_cloud_store(db)?;
+    let tenant_id = tenant_slug(tenant_name);
+
+    // ── Tenant (idempotent) ──────────────────────────────────────────────────
+    if store.tenant(&tenant_id)?.is_none() {
+        store
+            .create_tenant(&TenantRecord {
+                id: tenant_id.clone(),
+                name: tenant_name.to_string(),
+                created_at: chrono::Utc::now().timestamp(),
+            })
+            .with_context(|| format!("creating tenant {tenant_id:?}"))?;
+        println!("created tenant {tenant_id} ({tenant_name})");
+    } else {
+        println!("tenant {tenant_id} already exists; reusing");
+    }
+
+    // ── Subscription + credit on the SAME ledger `serve` reads ────────────────
+    let ledger_path = db.with_file_name("credit.jsonl");
+    let meter = UsageMeter::new(PricingCatalog::builtin(), CreditLedger::new(&ledger_path));
+    let now = chrono::Utc::now();
+    let period = SessionGate::period_of(now);
+    // Booking the platform fee for the current period activates the
+    // subscription (idempotent per tenant+period).
+    meter
+        .ledger()
+        .record_platform_fee(&tenant_id, &period, fee_micro_usd)
+        .with_context(|| format!("booking platform fee for {tenant_id} {period}"))?;
+    // Top up only when the balance would not otherwise pass the gate, so
+    // re-running the seed does not endlessly inflate the balance.
+    let balance_before = meter.balance(&tenant_id)?.balance_micro_usd();
+    if balance_before <= 0 {
+        meter
+            .ledger()
+            .record_credit(&tenant_id, credit_micro_usd, "demo-seed")
+            .with_context(|| format!("granting demo credit to {tenant_id}"))?;
+    }
+    let balance = meter.balance(&tenant_id)?.balance_micro_usd();
+    println!("  subscription: active for {period} (fee {fee_micro_usd} micro-USD)");
+    println!("  balance     : {balance} micro-USD");
+
+    // ── Operator + companion tokens ──────────────────────────────────────────
+    let identity = IdentityService::new(Arc::clone(&store));
+    let ttl = humantime::parse_duration(ttl)
+        .with_context(|| format!("parsing --ttl {ttl:?} (e.g. 30d, 12h)"))?;
+    let operator = identity
+        .mint_token(&tenant_id, Role::Operator, ttl)
+        .with_context(|| format!("minting operator token for {tenant_id}"))?;
+    let companion = identity
+        .mint_token(&tenant_id, Role::Companion, ttl)
+        .with_context(|| format!("minting companion token for {tenant_id}"))?;
+
+    // ── Persist the secrets (0600) beside the db (or --out-dir) ──────────────
+    let out = out_dir
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| db.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    std::fs::create_dir_all(&out)
+        .with_context(|| format!("creating token output dir {}", out.display()))?;
+    let operator_path = out.join("operator.token");
+    let companion_path = out.join("companion.token");
+    write_secret_file(&operator_path, &operator.secret)?;
+    write_secret_file(&companion_path, &companion.secret)?;
+
+    // ── Derive the tether URL from the portal URL (https→wss, +/tether) ──────
+    let tether_url = derive_tether_url(url);
+    let ca_path = db.with_file_name("cloud-ca.pem");
+
+    println!();
+    println!("demo tenant ready — tokens written:");
+    println!("  operator  : {}", operator_path.display());
+    println!("  companion : {}", companion_path.display());
+    println!();
+    println!("1) start the companion (remote hands) — jail it to a demo workdir:");
+    println!(
+        "     sven-companion --url {tether} --ca-cert {ca} \\\n\
+         \x20      --tenant-id {tenant} --token-file {ctok} --fs-root <demo-workdir>",
+        tether = tether_url,
+        ca = ca_path.display(),
+        tenant = tenant_id,
+        ctok = companion_path.display(),
+    );
+    println!();
+    println!("2) drive a session as the operator:");
+    println!(
+        "     sven cloud session start --url {url} --ca-cert {ca} \\\n\
+         \x20      --token \"$(cat {otok})\" --prompt \"please read the demo report\"",
+        url = url,
+        ca = ca_path.display(),
+        otok = operator_path.display(),
+    );
+    Ok(())
+}
+
+/// Writes `secret` to `path`, owner-read/write only on Unix.
+fn write_secret_file(path: &std::path::Path, secret: &str) -> anyhow::Result<()> {
+    std::fs::write(path, format!("{secret}\n"))
+        .with_context(|| format!("writing token file {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("chmod 600 {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Derives the companion tether URL from the portal base URL: `https`→`wss`,
+/// `http`→`ws`, then append `/tether`.
+fn derive_tether_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let ws = if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        trimmed.to_string()
+    };
+    format!("{ws}/tether")
 }
 
 async fn run_cloud_serve(
@@ -1173,6 +1341,7 @@ async fn run_cloud_serve(
     cert: Option<&std::path::Path>,
     key: Option<&std::path::Path>,
     ca_out: Option<&std::path::Path>,
+    config_path: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     use std::time::Duration;
 
@@ -1199,7 +1368,10 @@ async fn run_cloud_serve(
     // The cloud session runtime: `POST /sessions` builds and drives a real
     // kernel (metered LLM in the cloud, tool calls routed to the tenant's
     // companion) from the deployment's model config.
-    let agent_config = Arc::new(sven_config::load(None).unwrap_or_default());
+    // Sessions are driven from the deployment's model config (the same `--config`
+    // the operator passed to `serve`), so the demo's mock provider — or a real
+    // provider in production — actually drives cloud sessions.
+    let agent_config = Arc::new(sven_config::load(config_path).unwrap_or_default());
     let launcher = Arc::new(CloudSessionLauncher::new(
         Arc::clone(&registry),
         Arc::clone(&feed),

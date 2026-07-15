@@ -778,6 +778,43 @@ pub enum CloudCommands {
         #[command(subcommand)]
         command: CloudSessionCommands,
     },
+
+    /// Provision a ready-to-drive demo tenant in one shot (turnkey quickstart).
+    ///
+    /// Creates the tenant (idempotent), books the current-period platform fee
+    /// so the subscription is active, grants demo credit so the balance is
+    /// positive, and mints BOTH an operator token and a companion token. The
+    /// two secrets are written to `operator.token` / `companion.token` in the
+    /// output directory (0600) and the exact `sven-companion` and `sven cloud
+    /// session start` commands are printed.
+    ///
+    /// Point `--db` at the same database `sven cloud serve` uses (the credit
+    /// ledger and CA cert live beside it); everything the [`SessionGate`]
+    /// checks is satisfied against that shared state. Intended for local/demo
+    /// use — for production, grant credit and mint tokens deliberately.
+    DemoSeed {
+        /// Human-readable tenant name (its id is a slug of this).
+        #[arg(long, default_value = "Demo Inc")]
+        tenant_name: String,
+        /// SQLite control-plane database path (shared with `sven cloud serve`).
+        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
+        db: PathBuf,
+        /// Portal base URL printed in the operator command.
+        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
+        url: String,
+        /// Demo credit to grant, in micro-USD (default: $100).
+        #[arg(long, default_value_t = 100_000_000)]
+        credit_micro_usd: i64,
+        /// Current-period platform fee to book, in micro-USD (default: $1).
+        #[arg(long, default_value_t = 1_000_000)]
+        fee_micro_usd: i64,
+        /// Token lifetime (e.g. "30d", "12h"); clamped to each role's cap.
+        #[arg(long, value_name = "DURATION", default_value = "30d")]
+        ttl: String,
+        /// Directory to write the token files to (default: beside `--db`).
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
+    },
 }
 
 /// `sven cloud tenant` subcommands.
