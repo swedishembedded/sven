@@ -61,9 +61,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId};
+use sven_hsm::{Effect, EffectExecutor, Event, EventSink, ObservationSink, ToolCallId, UiEvent};
+use sven_llm::ConversationStore;
+use sven_model::Message;
 use sven_wire::{TetherMessage, ToolCallRequest, ToolCallResult};
 use tokio::sync::{mpsc, oneshot};
+
+/// Shared `call_id → (thread_id, original_call_id)` registry, populated by the
+/// `TurnExecutor` and shared with this executor so remote tool results land on
+/// the correct conversation thread (closing the turn-loop parity gap).
+type CallIdRegistry = Arc<Mutex<HashMap<ToolCallId, (String, String)>>>;
 
 /// Default per-call timeout: generous, since remote tools may compile or run
 /// test suites on the customer's machine.
@@ -149,6 +156,13 @@ pub struct RemoteToolExecutor {
     timeout: Duration,
     /// Receives every non-`CallTool` effect (typically the default composite).
     delegate: Option<Box<dyn EffectExecutor>>,
+    /// Shared conversation store; when set (together with [`Self::call_id_to_thread`])
+    /// remote tool results are appended to the thread the `TurnExecutor` wrote
+    /// the assistant tool-call into, so a multi-turn LLM loop over remote hands
+    /// sees the matching `tool_result` on the continuation call.
+    store: Option<Arc<Mutex<ConversationStore>>>,
+    /// Shared `call_id → (thread, original_id)` registry (see [`Self::store`]).
+    call_id_to_thread: Option<CallIdRegistry>,
 }
 
 impl RemoteToolExecutor {
@@ -161,6 +175,8 @@ impl RemoteToolExecutor {
             router: RemoteToolRouter::default(),
             timeout: DEFAULT_REMOTE_TOOL_TIMEOUT,
             delegate: None,
+            store: None,
+            call_id_to_thread: None,
         }
     }
 
@@ -168,6 +184,24 @@ impl RemoteToolExecutor {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Shares the `TurnExecutor`'s conversation store and `call_id → thread`
+    /// registry so remote tool results are appended to the right thread as a
+    /// `Message::tool_result` (matching the id the LLM assigned) before the
+    /// continuation LLM call — the same bookkeeping [`crate::ToolExecutor`]
+    /// does for local tools. Without this, a multi-turn kernel driven over
+    /// remote hands would send the provider an assistant `tool_call` with no
+    /// matching `tool_result`.
+    #[must_use]
+    pub fn with_shared_store(
+        mut self,
+        store: Arc<Mutex<ConversationStore>>,
+        call_id_to_thread: CallIdRegistry,
+    ) -> Self {
+        self.store = Some(store);
+        self.call_id_to_thread = Some(call_id_to_thread);
         self
     }
 
@@ -215,6 +249,53 @@ fn result_to_event(call_id: ToolCallId, result: ToolCallResult) -> Event {
     }
 }
 
+/// Reports a terminal remote-tool [`Event`] the same way [`crate::ToolExecutor`]
+/// reports a local one: emit the outward [`UiEvent::ToolFinished`] observation
+/// (so operator/UI streams render the result), append a `Message::tool_result`
+/// to the shared conversation thread when a mapping exists (so a multi-turn LLM
+/// loop sees the matching result), and finally emit the inward `event`.
+async fn report_remote_result(
+    sink: &EventSink,
+    obs: &ObservationSink,
+    store: Option<&Arc<Mutex<ConversationStore>>>,
+    mapping: Option<&(String, String)>,
+    display_id: &str,
+    name: &str,
+    event: Event,
+) {
+    let (content, is_error) = match &event {
+        Event::ToolSucceeded { observation, .. } => (
+            observation
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| observation.to_string()),
+            false,
+        ),
+        Event::ToolFailed { error, .. } => (error.clone(), true),
+        _ => (String::new(), false),
+    };
+
+    obs.emit(UiEvent::ToolFinished {
+        call_id: display_id.to_string(),
+        name: name.to_string(),
+        output: content.clone(),
+        is_error,
+    });
+
+    if let (Some(store), Some((thread_id, orig_id))) = (store, mapping) {
+        if let Ok(mut s) = store.lock() {
+            let msg = if is_error {
+                Message::tool_result(orig_id, format!("error: {content}"))
+            } else {
+                Message::tool_result(orig_id, &content)
+            };
+            s.append(thread_id, msg);
+        }
+    }
+
+    let _ = sink.emit(event).await;
+}
+
 #[async_trait]
 impl EffectExecutor for RemoteToolExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
@@ -246,6 +327,20 @@ impl EffectExecutor for RemoteToolExecutor {
             .expect("remote tool pending map poisoned")
             .insert(call_id, result_tx);
 
+        // Resolve the (thread, original_call_id) mapping before spawning, so
+        // remote results land on the right thread using the exact id the LLM
+        // assigned (the API rejects a `tool_result` whose id does not match the
+        // preceding assistant `tool_call`). The display id also correlates the
+        // outward `ToolFinished` observation with the earlier `ToolStarted`.
+        let mapping = self
+            .call_id_to_thread
+            .as_ref()
+            .and_then(|m| m.lock().ok().and_then(|g| g.get(&call_id).cloned()));
+        let display_id = mapping
+            .as_ref()
+            .map(|(_, orig)| orig.clone())
+            .unwrap_or_else(|| call_id.as_uuid().to_string());
+
         let request = ToolCallRequest {
             call_id,
             name: name.clone(),
@@ -256,6 +351,8 @@ impl EffectExecutor for RemoteToolExecutor {
         let pending = Arc::clone(&self.router.pending);
         let timeout = self.timeout;
         let sink = sink.clone();
+        let obs = obs.clone();
+        let store = self.store.clone();
 
         // Spawn-and-forget: the kernel's consumer loop returns immediately and
         // the result arrives back as an event, exactly like `ToolExecutor`.
@@ -270,12 +367,17 @@ impl EffectExecutor for RemoteToolExecutor {
                     .lock()
                     .expect("remote tool pending map poisoned")
                     .remove(&call_id);
-                let _ = sink
-                    .emit(Event::ToolFailed {
-                        call_id,
-                        error: format!("companion disconnected before tool '{name}' was sent"),
-                    })
-                    .await;
+                let error = format!("companion disconnected before tool '{name}' was sent");
+                report_remote_result(
+                    &sink,
+                    &obs,
+                    store.as_ref(),
+                    mapping.as_ref(),
+                    &display_id,
+                    &name,
+                    Event::ToolFailed { call_id, error },
+                )
+                .await;
                 return;
             }
 
@@ -300,7 +402,16 @@ impl EffectExecutor for RemoteToolExecutor {
                     }
                 }
             };
-            let _ = sink.emit(event).await;
+            report_remote_result(
+                &sink,
+                &obs,
+                store.as_ref(),
+                mapping.as_ref(),
+                &display_id,
+                &name,
+                event,
+            )
+            .await;
         });
     }
 }

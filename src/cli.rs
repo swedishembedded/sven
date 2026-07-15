@@ -838,28 +838,36 @@ pub enum CloudTokenCommands {
 /// `sven cloud session` subcommands.
 #[derive(Subcommand, Debug)]
 pub enum CloudSessionCommands {
-    /// Open a gated session for a tenant (subscription + credit checked).
+    /// Start and stream a cloud agent session against a running `sven cloud
+    /// serve`, as an OPERATOR.
     ///
-    /// Runs the [`SessionGate`](sven_cloud::SessionGate): it refuses unless the
-    /// tenant has an active subscription for the current period AND a positive
-    /// credit balance, then persists an active session record and prints its
-    /// id. Driving the interactive LLM turn-loop over remote hands happens
-    /// inside `sven cloud serve` (the live companion registry is in-process);
-    /// standalone kernel drive is not yet available (see the RemoteToolExecutor
-    /// turn-loop parity gap) and is reported as such.
+    /// Authenticates to the control plane with an operator token, `POST`s
+    /// `/sessions` with the prompt (which the server gates on subscription +
+    /// credit, then drives a real kernel: metered LLM in the cloud, tool calls
+    /// routed to the tenant's companion), and streams the live event feed —
+    /// output, tool activity and approvals — until the session finishes.
     Start {
-        /// Tenant id to open the session for.
-        #[arg(long)]
-        tenant: String,
+        /// Portal base URL of the running control plane, e.g.
+        /// `https://cloud.example.com` (no trailing path).
+        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
+        url: String,
+        /// Operator bearer token (mint with
+        /// `sven cloud token mint --role operator`).
+        #[arg(long, env = "SVEN_CLOUD_TOKEN")]
+        token: String,
         /// Initial prompt for the session.
         #[arg(long)]
         prompt: String,
-        /// SQLite control-plane database path.
-        #[arg(long, env = "SVEN_CLOUD_DB", default_value = "sven-cloud.db")]
-        db: PathBuf,
-        /// Credit-ledger path. Defaults to `credit.jsonl` beside the database.
-        #[arg(long, value_name = "JSONL")]
-        ledger: Option<PathBuf>,
+        /// Agent mode to run as.
+        #[arg(long, default_value = "agent")]
+        mode: String,
+        /// Extra CA certificate PEM to trust (for a self-signed control plane;
+        /// the file `sven cloud serve` writes as `cloud-ca.pem`).
+        #[arg(long, value_name = "PEM")]
+        ca_cert: Option<PathBuf>,
+        /// Disable TLS verification — local testing only.
+        #[arg(long)]
+        insecure: bool,
     },
 }
 

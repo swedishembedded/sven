@@ -1162,7 +1162,7 @@ async fn run_cloud_command(cmd: &CloudCommands) -> anyhow::Result<()> {
         } => run_cloud_serve(db, bind, *tls, cert.as_deref(), key.as_deref(), ca_out.as_deref()).await,
         CloudCommands::Tenant { command } => run_cloud_tenant_command(command),
         CloudCommands::Token { command } => run_cloud_token_command(command),
-        CloudCommands::Session { command } => run_cloud_session_command(command),
+        CloudCommands::Session { command } => run_cloud_session_command(command).await,
     }
 }
 
@@ -1174,11 +1174,57 @@ async fn run_cloud_serve(
     key: Option<&std::path::Path>,
     ca_out: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    use sven_cloud::{CloudConfig, CloudServer, CloudTls, CompanionRegistry, IdentityService};
+    use std::time::Duration;
+
+    use sven_cloud::{
+        portal_router, CloudConfig, CloudServer, CloudSessionLauncher, CloudTls, CompanionRegistry,
+        IdentityService, PortalConfig, PortalState, SessionFeed, SessionGate, UsageMeter,
+    };
+    use sven_metering::{CreditLedger, PricingCatalog};
 
     let store = open_cloud_store(db)?;
-    let identity = Arc::new(IdentityService::new(store));
+    let identity = Arc::new(IdentityService::new(Arc::clone(&store)));
     let registry = Arc::new(CompanionRegistry::new());
+    let feed = Arc::new(SessionFeed::new());
+
+    // Metering + session gating: prices every turn and refuses unfunded /
+    // unsubscribed sessions. The ledger lives beside the control-plane DB.
+    let ledger_path = db.with_file_name("credit.jsonl");
+    let meter = Arc::new(UsageMeter::new(
+        PricingCatalog::builtin(),
+        CreditLedger::new(ledger_path),
+    ));
+    let gate = Arc::new(SessionGate::new(Arc::clone(&store), Arc::clone(&meter)));
+
+    // The cloud session runtime: `POST /sessions` builds and drives a real
+    // kernel (metered LLM in the cloud, tool calls routed to the tenant's
+    // companion) from the deployment's model config.
+    let agent_config = Arc::new(sven_config::load(None).unwrap_or_default());
+    let launcher = Arc::new(CloudSessionLauncher::new(
+        Arc::clone(&registry),
+        Arc::clone(&feed),
+        Arc::clone(&meter),
+        Arc::clone(&store),
+        agent_config,
+    ));
+
+    // The human portal, served on the same TLS listener as the tether.
+    let portal_state = PortalState::new(
+        &PortalConfig {
+            rp_id: "localhost".to_string(),
+            rp_origin: "https://localhost".to_string(),
+            rp_name: "sven cloud".to_string(),
+            devices_path: db.with_file_name("portal-devices.yaml"),
+            session_ttl: Duration::from_secs(24 * 60 * 60),
+        },
+        Arc::clone(&identity),
+    )
+    .context("building the portal")?
+    .with_session_gate(gate)
+    .with_live_feed(Arc::clone(&feed))
+    .with_companion_registry(Arc::clone(&registry))
+    .with_session_launcher(launcher);
+    let portal = portal_router(portal_state);
 
     let tls_mode = match tls {
         CloudTlsArg::LocalCa | CloudTlsArg::SelfSigned => CloudTls::SelfSigned,
@@ -1193,12 +1239,14 @@ async fn run_cloud_serve(
     };
 
     let config = CloudConfig::new(bind.to_string()).with_tls(tls_mode);
-    let server = CloudServer::start(config, identity, registry)
-        .await
-        .context("starting the cloud control plane")?;
+    let server =
+        CloudServer::start_with_router(config, identity, registry, Some(feed), Some(portal))
+            .await
+            .context("starting the cloud control plane")?;
 
-    println!("sven cloud: tether endpoint listening");
+    println!("sven cloud: tether + portal listening");
     println!("  tether URL : {}", server.tether_url());
+    println!("  portal     : same host/port (POST /sessions, GET /events, GET /)");
     if let Some(ca_pem) = server.ca_pem() {
         let ca_path = ca_out
             .map(std::path::Path::to_path_buf)
@@ -1312,41 +1360,28 @@ fn run_cloud_token_command(cmd: &CloudTokenCommands) -> anyhow::Result<()> {
     }
 }
 
-fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result<()> {
-    use sven_cloud::{SessionGate, UsageMeter};
-    use sven_metering::{CreditLedger, PricingCatalog};
+async fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result<()> {
+    use sven_cloud::{run_operator_session, OperatorSessionOptions};
 
     match cmd {
         CloudSessionCommands::Start {
-            tenant,
+            url,
+            token,
             prompt,
-            db,
-            ledger,
+            mode,
+            ca_cert,
+            insecure,
         } => {
-            let store = open_cloud_store(db)?;
-            let ledger_path = ledger
-                .clone()
-                .unwrap_or_else(|| db.with_file_name("credit.jsonl"));
-            let catalog = PricingCatalog::from_yaml("version: 1\nmodels: {}\n")
-                .context("building pricing catalog")?;
-            let meter = Arc::new(UsageMeter::new(catalog, CreditLedger::new(ledger_path)));
-            let gate = SessionGate::new(store, meter);
-
-            let session = gate
-                .open_session(tenant, None)
-                .with_context(|| format!("opening a session for tenant {tenant:?}"))?;
-            println!("session opened");
-            println!("  id     : {}", session.id);
-            println!("  tenant : {}", session.tenant_id);
-            println!("  status : {}", session.status.as_str());
-            println!("  prompt : {prompt}");
-            eprintln!(
-                "note: the interactive LLM turn-loop over remote hands runs inside \
-                 `sven cloud serve` (the live companion registry is in-process). Standalone \
-                 kernel drive over RemoteToolExecutor is not yet available (turn-loop parity \
-                 gap); this command gates and records the session only."
-            );
-            Ok(())
+            run_operator_session(OperatorSessionOptions {
+                base_url: url.clone(),
+                token: token.clone(),
+                prompt: prompt.clone(),
+                mode: mode.clone(),
+                ca_pem: ca_cert.clone(),
+                insecure_dev: *insecure,
+            })
+            .await
+            .with_context(|| format!("running an operator session against {url}"))
         }
     }
 }

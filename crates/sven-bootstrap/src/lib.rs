@@ -34,7 +34,9 @@ pub use registry::{
     build_cli_tool_registry, build_tool_registry, build_tool_registry_with_integrations,
     IntegrationProviders,
 };
-pub use runtime_builder::{KernelChannels, RuntimeBuilder, RuntimeHandle, SessionBundle};
+pub use runtime_builder::{
+    KernelChannels, RuntimeBuilder, RuntimeHandle, SessionBundle, ToolExecutorFactory,
+};
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
 pub use task_tool::TaskTool;

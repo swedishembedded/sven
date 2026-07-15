@@ -45,6 +45,24 @@ use tracing::{info, warn};
 use crate::context::{RuntimeContext, ToolSetProfile};
 use crate::registry::build_tool_registry;
 
+/// Builds the executor installed in the composite's **tool slot** (`CallTool`),
+/// given the `TurnExecutor`'s shared conversation store and `call_id → thread`
+/// registry.
+///
+/// Installing a custom tool executor this way — instead of
+/// [`RuntimeBuilder::with_effect_executor`] — keeps every other default
+/// executor (turn/user/timer/checkpoint/audit) wired; only tool dispatch is
+/// replaced. Managed-cloud deployments pass a factory that shares the store
+/// with a `sven_executors::RemoteToolExecutor` so remote tool results append to
+/// the right thread. See [`RuntimeBuilder::with_tool_executor_override`].
+pub type ToolExecutorFactory = Box<
+    dyn FnOnce(
+            Arc<std::sync::Mutex<ConversationStore>>,
+            Arc<std::sync::Mutex<std::collections::HashMap<ToolCallId, (String, String)>>>,
+        ) -> Box<dyn EffectExecutor>
+        + Send,
+>;
+
 // ── KernelChannels ────────────────────────────────────────────────────────────
 
 /// Channel endpoints returned to the caller (TUI / node / CI) so they can
@@ -164,6 +182,10 @@ pub struct RuntimeBuilder {
     /// When set, this executor replaces the default [`CompositeExecutor`]
     /// entirely (see [`Self::with_effect_executor`]).
     effect_executor: Option<Box<dyn EffectExecutor>>,
+    /// When set, this factory builds the executor for the composite's tool
+    /// slot only (see [`Self::with_tool_executor_override`]); all other default
+    /// executors stay wired.
+    tool_executor_override: Option<ToolExecutorFactory>,
     /// Identity the session runs on behalf of (see [`Self::with_principal`]).
     /// `None` (the default) preserves the historical single-user behaviour.
     principal: Option<Principal>,
@@ -210,6 +232,7 @@ impl RuntimeBuilder {
             permission_requester: None,
             cancel_handle: None,
             effect_executor: None,
+            tool_executor_override: None,
             principal: None,
             model_provider_override: None,
             agent_mode: None,
@@ -322,6 +345,25 @@ impl RuntimeBuilder {
     /// cloud agents) and for tests that assert on emitted effects.
     pub fn with_effect_executor(mut self, exec: Box<dyn EffectExecutor>) -> Self {
         self.effect_executor = Some(exec);
+        self
+    }
+
+    /// Override only the composite's **tool slot** (`CallTool`), leaving every
+    /// other default executor (turn/user/timer/checkpoint/audit) wired.
+    ///
+    /// Unlike [`Self::with_effect_executor`] — which drops the entire default
+    /// composite — this substitutes just the tool executor. The `factory` is
+    /// handed the `TurnExecutor`'s shared [`ConversationStore`] and
+    /// `call_id → thread` registry so a custom executor (e.g.
+    /// `sven_executors::RemoteToolExecutor::with_shared_store`) can append tool
+    /// results to the exact thread the turn engine reads on its continuation
+    /// call. This is how managed-cloud sessions route `CallTool` to a customer's
+    /// companion while the LLM turn loop keeps running in the cloud.
+    ///
+    /// Ignored when [`Self::with_effect_executor`] is also set (the wholesale
+    /// override wins).
+    pub fn with_tool_executor_override(mut self, factory: ToolExecutorFactory) -> Self {
+        self.tool_executor_override = Some(factory);
         self
     }
 
@@ -577,28 +619,33 @@ impl RuntimeBuilder {
             cancel_handle.clone(),
         );
 
-        let tool_executor = ToolExecutor::with_shared_store(
-            tool_registry,
-            Default::default(),
-            call_id_to_thread,
-            conv_store,
-        );
-
         // A caller-supplied executor (see `with_effect_executor`) replaces the
-        // default composite wholesale; otherwise wire the default composite
-        // exactly as before.
+        // default composite wholesale; otherwise wire the default composite,
+        // substituting only the tool slot when a tool-executor override is set
+        // (see `with_tool_executor_override`).
         let executor: Box<dyn EffectExecutor> = match self.effect_executor {
             Some(custom) => custom,
-            None => Box::new(
-                CompositeExecutorBuilder::default()
-                    .with_tool_executor(tool_executor)
+            None => {
+                let base = CompositeExecutorBuilder::default()
                     .with_user(question_tx, approval_tx)
                     .with_timers(Arc::new(sven_hsm::SystemClock::new()))
                     .with_checkpoints(checkpoint_dir)
                     .with_audit_trail(audit_log_path, audit_trail.clone())
-                    .with_turn(turn_executor)
-                    .build(),
-            ),
+                    .with_turn(turn_executor);
+                let composed = match self.tool_executor_override.take() {
+                    Some(factory) => base.with_tool_slot(factory(
+                        Arc::clone(&conv_store),
+                        Arc::clone(&call_id_to_thread),
+                    )),
+                    None => base.with_tool_executor(ToolExecutor::with_shared_store(
+                        tool_registry,
+                        Default::default(),
+                        Arc::clone(&call_id_to_thread),
+                        Arc::clone(&conv_store),
+                    )),
+                };
+                Box::new(composed.build())
+            }
         };
 
         // ── Permission policy — per-machine real policy ───────────────────────
