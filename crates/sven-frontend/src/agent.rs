@@ -14,7 +14,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use sven_bootstrap::{AgentBuilder, McpManager, RuntimeBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
-use sven_core::{AgentEvent, CompactionStrategyUsed};
+use sven_core::AgentEvent;
 use sven_hsm::UiEvent;
 use sven_input::make_title;
 use sven_mcp_client::McpEvent;
@@ -22,7 +22,7 @@ use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_runtime::{SharedAgents, SharedSkills};
 use sven_tools::events::TodoItem;
 use sven_tools::{OutputBufferStore, Question, QuestionRequest, SharedToolDisplays, SharedTools};
-use sven_tools::{Tool, ToolCall};
+use sven_tools::Tool;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tracing::{debug, warn};
 
@@ -626,95 +626,7 @@ fn mode_to_kernel_mode(mode: AgentMode) -> &'static str {
 /// Returns `None` for observation-only events that have no `AgentEvent`
 /// equivalent (e.g. transition traces).
 fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
-    Some(match ev {
-        UiEvent::TextDelta(d) => AgentEvent::TextDelta(d),
-        UiEvent::TextComplete(t) => AgentEvent::TextComplete(t),
-        UiEvent::ThinkingDelta(d) => AgentEvent::ThinkingDelta(d),
-        UiEvent::ThinkingComplete(c) => AgentEvent::ThinkingComplete(c),
-        UiEvent::ToolStarted {
-            call_id,
-            name,
-            args,
-        } => AgentEvent::ToolCallStarted(ToolCall {
-            id: call_id,
-            name,
-            args,
-        }),
-        UiEvent::ToolProgress { call_id, message } => AgentEvent::ToolProgress { call_id, message },
-        UiEvent::ToolFinished {
-            call_id,
-            name,
-            output,
-            is_error,
-        } => AgentEvent::ToolCallFinished {
-            call_id,
-            tool_name: name,
-            output,
-            is_error,
-        },
-        UiEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        } => AgentEvent::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_read_total,
-            cache_write_total,
-            max_tokens,
-            max_output_tokens,
-            cost_usd,
-        },
-        UiEvent::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy,
-            turn,
-        } => {
-            let strategy = match strategy.as_str() {
-                "emergency" => CompactionStrategyUsed::Emergency,
-                "narrative" => CompactionStrategyUsed::Narrative,
-                _ => CompactionStrategyUsed::Structured,
-            };
-            AgentEvent::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy,
-                turn,
-            }
-        }
-        UiEvent::TodoUpdate(v) => {
-            let items: Vec<TodoItem> = serde_json::from_value(v).unwrap_or_default();
-            AgentEvent::TodoUpdate(items)
-        }
-        UiEvent::ModeChanged(s) => {
-            let mode = match s.as_str() {
-                "chat" | "Chat" => AgentMode::Chat,
-                "sdlc" | "Sdlc" => AgentMode::Sdlc,
-                "plan" | "Plan" => AgentMode::Plan,
-                "research" | "Research" => AgentMode::Research,
-                _ => AgentMode::Agent,
-            };
-            AgentEvent::ModeChanged(mode)
-        }
-        UiEvent::ModelChanged(m) => AgentEvent::ModelChanged(m),
-        UiEvent::Error(e) => AgentEvent::Error(e),
-        UiEvent::TurnComplete => AgentEvent::TurnComplete,
-        UiEvent::Aborted { partial_text } => AgentEvent::Aborted { partial_text },
-        // Bridge SDLC phase transitions to a lightweight ToolProgress status
-        // line so the user sees "SDLC: Planning > GenerateCandidatePlan"
-        // without a chat segment being added.
-        UiEvent::Transition { from, to, event: _ } => AgentEvent::ToolProgress {
-            call_id: "sdlc_phase".to_string(),
-            message: format!("SDLC: {from} → {to}"),
-        },
-    })
+    // Single source of truth lives in `sven-bootstrap` so every surface
+    // (CI/node/ACP/frontend) maps the kernel's observation plane identically.
+    sven_bootstrap::ui_event_to_agent_event(ev)
 }
