@@ -21,10 +21,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::debug;
 
-use sven_bootstrap::{AgentBuilder, RuntimeContext, ToolSetProfile};
+use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_input::{
@@ -33,7 +33,8 @@ use sven_input::{
 };
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
-use sven_tools::events::TodoItem;
+
+use crate::kernel_agent::KernelAgent;
 
 use crate::output::{write_progress, write_stderr, write_stdout};
 use crate::template::apply_template;
@@ -487,9 +488,11 @@ impl CiRunner {
             self.config.model.clone()
         };
 
-        let model =
-            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
-        let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
+        // Validate the model provider builds now so a bad `--model` / config
+        // fails fast with the same error the legacy runner surfaced before
+        // constructing the agent. The kernel session (re)builds the provider
+        // from `model_cfg` per turn.
+        let _ = sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",
@@ -629,25 +632,13 @@ impl CiRunner {
         // Resolve mode from CLI (frontmatter no longer carries a top-level mode)
         let initial_mode = opts.mode;
 
-        // ── Shared state for stateful tools ──────────────────────────────────
-        // The mode lock and tool-event channel are created inside
-        // AgentBuilder::build() so that SwitchModeTool and the agent loop
-        // share the same instances.  Only caller-owned state lives here.
-        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-        let buffer_store = Arc::new(Mutex::new(sven_tools::OutputBufferStore::new()));
-
-        let profile = ToolSetProfile::Full {
-            question_tx: None,
-            todos,
-            buffer_store,
-        };
-
-        let mut agent = AgentBuilder::new(self.config.clone())
-            .with_runtime_context(runtime_ctx)
-            .with_allow_interactive_oauth(false)
-            .with_wait_for_mcp_tools(20_000)
-            .build(initial_mode, model, profile)
-            .await;
+        // ── Build the kernel-backed agent ────────────────────────────────────
+        // Each turn runs on a freshly-built HSM kernel session (via
+        // RuntimeBuilder) seeded with the accumulated history, so per-step mode
+        // and model overrides are honoured while the streaming AgentEvent
+        // contract this runner consumes stays identical.
+        let mut agent =
+            KernelAgent::new(self.config.clone(), runtime_ctx, initial_mode, model_cfg.clone());
 
         // ── Capture system message for JSONL persistence ──────────────────────
         // Always record the exact system message used for this run so the JSONL
@@ -702,8 +693,9 @@ impl CiRunner {
         {
             // If --rerun-toolcalls: replay tool calls in-place before seeding
             if opts.rerun_toolcalls {
+                let replay_tools = agent.build_tool_registry()?;
                 let replayed =
-                    crate::toolcall_replay::replay_tool_calls(&mut parsed.records, agent.tools())
+                    crate::toolcall_replay::replay_tool_calls(&mut parsed.records, &replay_tools)
                         .await;
                 write_progress(&format!(
                     "[sven:info] Replayed {} tool call(s) with fresh results",
@@ -726,22 +718,22 @@ impl CiRunner {
                     })
                     .collect();
                 let count = msgs.len();
-                agent.seed_history(msgs).await;
+                agent.seed_history(msgs);
                 (parsed.records, count)
             } else {
                 let count = parsed.history.len();
-                agent.seed_history(parsed.history).await;
+                agent.seed_history(parsed.history);
                 (parsed.records, count)
             }
         } else if let Some(chat_msgs) = pre_parsed_chat_messages {
             // YAML chat document seed (--load-chat path)
             let count = chat_msgs.len();
-            agent.seed_history(chat_msgs).await;
+            agent.seed_history(chat_msgs);
             (Vec::new(), count)
         } else if !conversation_history.is_empty() {
             // Piped markdown conversation (legacy path)
             let count = conversation_history.len();
-            agent.seed_history(conversation_history).await;
+            agent.seed_history(conversation_history);
             (Vec::new(), count)
         } else {
             (Vec::new(), 0)
@@ -863,7 +855,7 @@ impl CiRunner {
             // Apply per-step mode override
             if let Some(mode_str) = &step.options.mode {
                 if let Some(mode) = parse_agent_mode(mode_str) {
-                    agent.set_mode(mode).await;
+                    agent.set_mode(mode);
                 } else {
                     write_stderr(&format!(
                         "[sven:warn] Unknown mode {:?} in step {step_idx}, continuing with current mode",
@@ -892,9 +884,11 @@ impl CiRunner {
             };
             if let Some(model_str) = &effective_model_str {
                 let step_model_cfg = sven_model::resolve_model_from_config(&self.config, model_str);
+                // Validate the override builds before switching; on failure keep
+                // the current model (mirrors the legacy runner's warn-and-continue).
                 match sven_model::from_config(&step_model_cfg) {
-                    Ok(m) => {
-                        agent.set_model(Arc::from(m));
+                    Ok(_) => {
+                        agent.set_model_config(step_model_cfg);
                     }
                     Err(e) => {
                         write_stderr(&format!(

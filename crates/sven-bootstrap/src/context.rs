@@ -25,7 +25,7 @@ use sven_tools::{events::TodoItem, OutputBufferStore, QuestionRequest};
 /// This is separate from [`sven_config::AgentConfig`] (which holds only
 /// config-file fields) so that the two concerns - "what the user configured"
 /// and "what we found at runtime" - stay cleanly separated.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RuntimeContext {
     /// Absolute path to the project root (detected from `.git` walk-up).
     pub project_root: Option<PathBuf>,

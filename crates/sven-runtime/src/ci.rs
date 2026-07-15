@@ -6,7 +6,7 @@
 // ─── CI context ───────────────────────────────────────────────────────────────
 
 /// Snapshot of the CI environment read from well-known environment variables.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CiContext {
     pub provider: Option<String>,
     pub repo: Option<String>,

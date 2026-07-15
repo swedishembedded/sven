@@ -15,7 +15,7 @@ const GIT_OUTPUT_LIMIT: usize = 4 * 1024;
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Live state of the git repository at the project root.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GitContext {
     pub branch: Option<String>,
     /// Short (7-char) commit hash.

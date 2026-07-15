@@ -4,6 +4,7 @@
 pub mod context;
 mod conversation;
 pub mod index;
+mod kernel_agent;
 mod jsonl_export;
 mod output;
 pub mod pipe;

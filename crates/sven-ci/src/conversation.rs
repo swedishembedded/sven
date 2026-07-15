@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::debug;
 
-use sven_bootstrap::{AgentBuilder, ToolSetProfile};
+use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
 use sven_input::{
@@ -18,8 +18,8 @@ use sven_input::{
     serialize_jsonl_records, ConversationRecord, TurnMetadata,
 };
 use sven_model::{FunctionCall, Message, MessageContent, Role};
-use sven_tools::events::TodoItem;
 
+use crate::kernel_agent::KernelAgent;
 use crate::output::{finalise_stdout, format_token_usage_line, write_stderr, write_stdout};
 
 /// Options for the conversation runner.
@@ -100,9 +100,9 @@ impl ConversationRunner {
             self.config.model.clone()
         };
 
-        let model =
-            sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
-        let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model);
+        // Validate the model provider builds now (fail fast); the kernel
+        // session rebuilds it from `model_cfg` for the turn.
+        let _ = sven_model::from_config(&model_cfg).context("failed to initialise model provider")?;
 
         write_stderr(&format!(
             "[sven:settings] model={} mode={}",
@@ -116,35 +116,28 @@ impl ConversationRunner {
             timestamp: None,
         };
 
-        // The mode lock and tool-event channel are created inside
-        // AgentBuilder::build() so that SwitchModeTool and the agent loop
-        // share the same instances.
-        let todos: Arc<Mutex<Vec<TodoItem>>> = Arc::new(Mutex::new(Vec::new()));
-        let buffer_store = Arc::new(Mutex::new(sven_tools::OutputBufferStore::new()));
+        // Kernel-backed agent: each turn runs on a freshly-built HSM kernel
+        // session (via RuntimeBuilder) seeded with the loaded history, while the
+        // streaming AgentEvent contract this runner consumes stays identical.
+        let mut agent = KernelAgent::new(
+            self.config.clone(),
+            RuntimeContext::empty(),
+            opts.mode,
+            model_cfg.clone(),
+        );
 
-        let profile = ToolSetProfile::Full {
-            question_tx: None,
-            todos,
-            buffer_store,
-        };
-
-        let mut agent = AgentBuilder::new(self.config.clone())
-            .with_allow_interactive_oauth(false)
-            .with_wait_for_mcp_tools(20_000)
-            .build(opts.mode, model.clone(), profile)
-            .await;
-
-        // Load conversation history into the agent session.
-        // replace_history_and_submit prepends the system message and then adds
-        // the new user message, so we pass history (without pending) and the
-        // pending string separately.
+        // Load conversation history into the agent session, then submit the
+        // pending user message. `seed_history` replaces the session history and
+        // `submit` posts the new user turn on top (the kernel prepends the
+        // system message internally), matching the legacy
+        // `replace_history_and_submit`.
         //
-        // The submit_fut holds a mutable borrow on `agent`. Scoping it in a
-        // block ensures it is dropped before we need to call agent.session()
-        // for subsequent operations below.
+        // The submit_fut holds a mutable borrow on `agent`; scoping it in a
+        // block ensures it is dropped before subsequent operations below.
+        agent.seed_history(history);
         let (new_records, failed) = {
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-            let submit_fut = agent.replace_history_and_submit(history, &pending, tx);
+            let submit_fut = agent.submit(&pending, tx);
 
             // Collect full-fidelity records including thinking blocks.
             // The pending user message is first (not yet in the file for md format;
