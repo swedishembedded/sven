@@ -1186,6 +1186,9 @@ async fn run_cloud_command(
             cert,
             key,
             ca_out,
+            telegram_bot_token,
+            telegram_allowed_users,
+            telegram_operator_token,
         } => {
             run_cloud_serve(
                 db,
@@ -1195,6 +1198,11 @@ async fn run_cloud_command(
                 key.as_deref(),
                 ca_out.as_deref(),
                 config_path,
+                TelegramShareArgs {
+                    bot_token: telegram_bot_token.clone(),
+                    allowed_users: telegram_allowed_users.clone(),
+                    operator_token: telegram_operator_token.clone(),
+                },
             )
             .await
         }
@@ -1358,6 +1366,15 @@ fn derive_tether_url(base_url: &str) -> String {
     format!("{ws}/tether")
 }
 
+/// Optional consultant-Telegram-steering configuration for `sven cloud serve`.
+/// All-absent leaves the bridge off (no regression).
+struct TelegramShareArgs {
+    bot_token: Option<String>,
+    allowed_users: Vec<i64>,
+    operator_token: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_cloud_serve(
     db: &std::path::Path,
     bind: &str,
@@ -1366,6 +1383,7 @@ async fn run_cloud_serve(
     key: Option<&std::path::Path>,
     ca_out: Option<&std::path::Path>,
     config_path: Option<&std::path::Path>,
+    telegram: TelegramShareArgs,
 ) -> anyhow::Result<()> {
     use std::time::Duration;
 
@@ -1435,10 +1453,20 @@ async fn run_cloud_serve(
     };
 
     let config = CloudConfig::new(bind.to_string()).with_tls(tls_mode);
-    let server =
-        CloudServer::start_with_router(config, identity, registry, Some(feed), Some(portal))
-            .await
-            .context("starting the cloud control plane")?;
+    let server = CloudServer::start_with_router(
+        config,
+        Arc::clone(&identity),
+        registry,
+        Some(feed),
+        Some(portal),
+    )
+    .await
+    .context("starting the cloud control plane")?;
+
+    // Optional consultant Telegram steering: a bot hosted here lets an
+    // allowlisted consultant steer a SHARED local session (registered via
+    // `sven share`) by chatting. Off unless both tokens are configured.
+    maybe_start_telegram_share(&telegram, &identity, &server)?;
 
     println!("sven cloud: tether + portal listening");
     println!("  tether URL : {}", server.tether_url());
@@ -1464,6 +1492,56 @@ async fn run_cloud_serve(
         .context("waiting for shutdown signal")?;
     println!("sven cloud: shutting down");
     server.shutdown().await;
+    Ok(())
+}
+
+/// Starts the consultant Telegram → shared-session steering bridge when both a
+/// bot token and an operator token are configured; otherwise a no-op (feature
+/// off). The operator identity is resolved ONCE from the configured token — the
+/// tenant/role scope of every steer comes from it, never from a chat message.
+fn maybe_start_telegram_share(
+    telegram: &TelegramShareArgs,
+    identity: &Arc<sven_cloud::IdentityService>,
+    server: &sven_cloud::CloudServer,
+) -> anyhow::Result<()> {
+    let (Some(bot_token), Some(operator_token)) =
+        (&telegram.bot_token, &telegram.operator_token)
+    else {
+        if telegram.bot_token.is_some() || telegram.operator_token.is_some() {
+            anyhow::bail!(
+                "consultant Telegram steering needs BOTH --telegram-bot-token and \
+                 --telegram-operator-token"
+            );
+        }
+        return Ok(());
+    };
+
+    // Resolve the operator token → Principal (identity is config-derived, not
+    // chat-derived) and require it to be able to run/steer sessions.
+    let principal = identity
+        .authenticate(operator_token)
+        .context("authenticating --telegram-operator-token")?;
+    sven_cloud::authorize(
+        &principal,
+        &principal.tenant_id,
+        sven_cloud::Action::RunSessions,
+    )
+    .context("the --telegram-operator-token is not an operator that may steer sessions")?;
+
+    let sender = sven_cloud::telegram_sender(bot_token.clone());
+    let bridge = sven_cloud::TelegramShareBridge::new(
+        principal.clone(),
+        telegram.allowed_users.clone(),
+        server.shared_sessions(),
+        sender,
+    );
+    let bot_token = bot_token.clone();
+    tokio::spawn(async move { bridge.run(bot_token).await });
+    println!(
+        "  telegram   : consultant steering bridge ON (tenant {}, {} allowed user(s))",
+        principal.tenant_id,
+        telegram.allowed_users.len()
+    );
     Ok(())
 }
 

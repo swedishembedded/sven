@@ -759,6 +759,24 @@ pub enum CloudCommands {
         /// Defaults to `cloud-ca.pem` beside the database.
         #[arg(long, value_name = "PEM")]
         ca_out: Option<PathBuf>,
+        /// Telegram bot token enabling consultant steering of shared sessions
+        /// from Telegram. Omit to leave the feature off (no regression).
+        /// Requires `--telegram-operator-token`.
+        #[arg(long, env = "SVEN_TELEGRAM_BOT_TOKEN", value_name = "TOKEN")]
+        telegram_bot_token: Option<String>,
+        /// Comma-separated Telegram user IDs allowed to steer via the bot.
+        /// Empty allows all authenticated bot users (not recommended).
+        #[arg(
+            long,
+            env = "SVEN_TELEGRAM_ALLOWED_USERS",
+            value_name = "IDS",
+            value_delimiter = ','
+        )]
+        telegram_allowed_users: Vec<i64>,
+        /// Operator bearer token the Telegram bridge acts as (its tenant/role
+        /// scope every steer). The identity is from THIS token, never the chat.
+        #[arg(long, env = "SVEN_TELEGRAM_OPERATOR_TOKEN", value_name = "TOKEN")]
+        telegram_operator_token: Option<String>,
     },
 
     /// Manage tenants (paying customers / accounts).
