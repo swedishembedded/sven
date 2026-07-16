@@ -27,7 +27,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud deb deb/debug deb/release clean help fmt check docs docs-pdf \
+.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -76,6 +76,18 @@ tests/e2e/cloud:
 
 ## tests/e2e - run all end-to-end test suites (requires bats-core)
 tests/e2e: tests/e2e/basic tests/e2e/cloud
+
+## demos - hermetic live-binary smoke demos (no docker, no API keys, no hardware)
+## Full-CLI coverage of the running platform: cloud brain→local hands
+## (local-demo, demo-firmware) and local brain→remote steer (demo-share).
+## Each starts a control plane on the mock LLM and asserts an OK sentinel;
+## a non-zero exit fails the target. Distinct ports so a lingering listener
+## from one demo cannot clash with the next.
+demos: release
+	@PORT=18443 bash deploy/local-demo.sh    || { echo "FAIL: deploy/local-demo.sh";    exit 1; }
+	@PORT=18444 bash deploy/demo-firmware.sh  || { echo "FAIL: deploy/demo-firmware.sh"; exit 1; }
+	@PORT=18445 bash deploy/demo-share.sh     || { echo "FAIL: deploy/demo-share.sh";    exit 1; }
+	@echo "== all deploy demos green =="
 
 # ── Benchmark targets ─────────────────────────────────────────────────────────
 # Run sven against Terminal-Bench 2.0 via Harbor and generate a Markdown report.

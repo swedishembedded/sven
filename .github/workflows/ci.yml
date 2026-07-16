@@ -57,6 +57,27 @@ jobs:
       - name: Run basic e2e tests
         run: make tests/e2e/basic
 
+  demos:
+    name: Deploy demos (hermetic live-binary smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libfontconfig-dev
+
+      # Runs the three hermetic deploy demos end-to-end against real release
+      # binaries (mock LLM, no API keys/hardware): cloud brain→local hands
+      # (local-demo, demo-firmware) and local brain→remote steer (demo-share).
+      - name: Run deploy demos
+        run: make demos
+
   # Quick smoke-test: make sure we can actually build a release binary.
   # This catches linker / feature-flag issues before a real release.
   build-smoke:
