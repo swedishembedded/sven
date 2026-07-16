@@ -156,6 +156,26 @@ impl App {
                         return false;
                     }
 
+                    // One-tap `/share`: forward the resolved broker options to
+                    // the live session's agent task, which starts the in-process
+                    // share bridge against THIS running kernel.
+                    if let Some(ImmediateAction::ShareSession { options }) =
+                        &result.immediate_action
+                    {
+                        let options = options.clone();
+                        if let Some(tx) = &self.agent.tx {
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let _ = tx.send(AgentRequest::ShareSession(options)).await;
+                            });
+                        } else {
+                            self.ui.push_toast(crate::app::ui_state::Toast::error(
+                                "No active session to share",
+                            ));
+                        }
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::ShareInstructions { ref text }) =
                         result.immediate_action
                     {

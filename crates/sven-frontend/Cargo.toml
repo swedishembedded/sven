@@ -16,6 +16,13 @@ sven-hsm         = { path = "../sven-hsm" }
 sven-executors   = { path = "../sven-executors" }
 sven-mcp-client  = { path = "../sven-mcp-client" }
 sven-runtime     = { path = "../sven-runtime" }
+# Transport-agnostic control protocol + kernel mappings (NO libp2p/axum) — the
+# one-tap `/share` bridge reuses these instead of depending on sven-node.
+sven-control     = { path = "../sven-control" }
+# The `/share` sub-protocol frames (ShareRegister / ShareFrame).
+sven-wire        = { path = "../sven-wire" }
+# WS client used to dial the broker's `/share` endpoint (bearer auth + CA trust).
+sven-node-client = { path = "../sven-node-client" }
 anyhow           = { workspace = true }
 tokio            = { workspace = true }
 futures          = { workspace = true }

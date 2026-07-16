@@ -101,9 +101,18 @@ pub enum ImmediateAction {
         tenant: Option<String>,
     },
     /// Surface share/handoff instructions to the user (a notice, not a message
-    /// to the agent). Emitted by `/share`; the frontend shows `text`.
+    /// to the agent). Emitted by `/share --print` or when no broker is
+    /// configured; the frontend shows `text`.
     ShareInstructions {
         text: String,
+    },
+    /// One-tap `/share`: expose THIS running session to the configured broker.
+    /// The frontend forwards these options to the live session's agent task as
+    /// an `AgentRequest::ShareSession`, which starts the in-process share
+    /// bridge. Carries the broker URL/token/tenant resolved from the
+    /// environment plus the (optional) share id and title.
+    ShareSession {
+        options: Box<crate::share::FrontendShareOptions>,
     },
 }
 

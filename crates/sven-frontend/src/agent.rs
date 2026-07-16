@@ -56,6 +56,10 @@ pub enum AgentRequest {
     ListPeers,
     /// Refresh MCP tools from the manager (e.g. when ToolsChanged fires).
     RefreshMcpTools,
+    /// One-tap `/share`: expose THIS running session to a broker so a remote
+    /// consultant can steer it. Handled by spawning the in-process share bridge
+    /// against the live [`RuntimeHandle`](sven_bootstrap::RuntimeHandle).
+    ShareSession(Box<crate::share::FrontendShareOptions>),
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
@@ -438,6 +442,35 @@ pub(crate) async fn run_kernel_session_task(
 
             AgentRequest::ListPeers => {
                 // Peer discovery is a node-only concern; not applicable here.
+            }
+
+            AgentRequest::ShareSession(opts) => {
+                // One-tap share: hand THIS live session's RuntimeHandle to the
+                // broker via the in-process bridge. The bridge runs for the life
+                // of the share; a `ready` signal tells us when the register was
+                // accepted so we surface "Session shared as <id>" only then.
+                let handle = session.handle();
+                let (ready_tx, ready_rx) = oneshot::channel::<String>();
+                let notice_tx = tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(share_id) = ready_rx.await {
+                        let _ = notice_tx
+                            .send(sven_core::AgentEvent::TextComplete(format!(
+                                "Session shared as {share_id}"
+                            )))
+                            .await;
+                    }
+                });
+                let err_tx = tx.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::share::run_frontend_share_bridge(handle, *opts, Some(ready_tx)).await
+                    {
+                        let _ = err_tx
+                            .send(sven_core::AgentEvent::Error(format!("share: {e:#}")))
+                            .await;
+                    }
+                });
             }
         }
     }

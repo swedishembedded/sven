@@ -33,6 +33,8 @@ members = [
     "crates/sven-executors",
     # Graph DSL
     "crates/sven-graph",
+    # Transport-agnostic operator control protocol + kernel mappings
+    "crates/sven-control",
     # Cloud tether protocol (control plane <-> companion)
     "crates/sven-wire",
     # Customer-side companion binary (remote hands)

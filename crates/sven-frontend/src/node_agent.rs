@@ -100,6 +100,17 @@ pub async fn node_agent_task(
             AgentRequest::RefreshMcpTools => {
                 continue;
             }
+            AgentRequest::ShareSession(_) => {
+                // One-tap `/share` exposes a *local* in-process kernel; in
+                // node-proxy mode the session runs on the remote node, so there
+                // is no local RuntimeHandle to bridge.
+                let _ = tx
+                    .send(AgentEvent::Error(
+                        "/share is only available for local sessions, not node-proxy mode".into(),
+                    ))
+                    .await;
+                continue;
+            }
             AgentRequest::ListPeers => {
                 if send_cmd(&ws_out_tx, &Cmd::ListPeers).is_err() {
                     let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
