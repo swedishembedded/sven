@@ -156,6 +156,20 @@ impl App {
                         return false;
                     }
 
+                    if let Some(ImmediateAction::ShareInstructions { ref text }) =
+                        result.immediate_action
+                    {
+                        use crate::markdown::StyledLines;
+                        use crate::pager::PagerOverlay;
+                        let lines = StyledLines::from(
+                            text.lines()
+                                .map(|l| ratatui::text::Line::from(l.to_string()))
+                                .collect::<Vec<_>>(),
+                        );
+                        self.ui.pager = Some(PagerOverlay::new(lines));
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::McpAuth { ref server }) = result.immediate_action {
                         if let Some(ref mgr) = self.mcp_manager {
                             let mgr = Arc::clone(mgr);

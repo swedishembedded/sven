@@ -35,6 +35,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::mode::ModeCommand));
         reg.register(Arc::new(builtin::quit::QuitCommand));
         reg.register(Arc::new(builtin::refresh::RefreshCommand));
+        reg.register(Arc::new(builtin::share::ShareCommand));
         reg.register(Arc::new(builtin::team::ApproveCommand));
         reg.register(Arc::new(builtin::team::RejectCommand));
         reg.register(Arc::new(builtin::team::AgentsCommand));

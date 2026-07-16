@@ -100,6 +100,11 @@ pub enum ImmediateAction {
     SelectTenant {
         tenant: Option<String>,
     },
+    /// Surface share/handoff instructions to the user (a notice, not a message
+    /// to the agent). Emitted by `/share`; the frontend shows `text`.
+    ShareInstructions {
+        text: String,
+    },
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────

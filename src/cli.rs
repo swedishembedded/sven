@@ -906,6 +906,40 @@ pub enum CloudSessionCommands {
         #[arg(long)]
         insecure: bool,
     },
+
+    /// Attach to a SHARED local session and steer it, as an OPERATOR/consultant.
+    ///
+    /// The inverse of `start`: here the session's brain runs on the customer's
+    /// machine (started with `sven share`) and this command drives it remotely.
+    /// Authenticates with an operator token, dials `GET /share/:share_id`,
+    /// creates a session on the shared kernel, sends `--prompt` down, and
+    /// streams the reply until the turn finishes.
+    Attach {
+        /// Portal base URL of the running control plane, e.g.
+        /// `https://cloud.example.com` (no trailing path).
+        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
+        url: String,
+        /// The shared session's id (printed by `sven share`).
+        #[arg(long)]
+        share_id: String,
+        /// Operator bearer token (mint with
+        /// `sven cloud token mint --role operator`).
+        #[arg(long, env = "SVEN_CLOUD_TOKEN")]
+        token: String,
+        /// One-shot prompt to steer the shared session with. Omit to attach and
+        /// stream read-only.
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Agent mode to run as.
+        #[arg(long, default_value = "agent")]
+        mode: String,
+        /// Extra CA certificate PEM to trust (for a self-signed control plane).
+        #[arg(long, value_name = "PEM")]
+        ca_cert: Option<PathBuf>,
+        /// Disable TLS verification — local testing only.
+        #[arg(long)]
+        insecure: bool,
+    },
 }
 
 /// Output format for headless / CI runs.
@@ -1207,6 +1241,44 @@ pub enum Commands {
     Cloud {
         #[command(subcommand)]
         command: CloudCommands,
+    },
+
+    /// Share this workspace's local session so a remote consultant can steer it.
+    ///
+    /// "Local brain, remote steer": builds a persistent kernel here (like
+    /// `sven node start`) and bridges it onto a control plane's `/share`
+    /// endpoint. A consultant attaches with
+    /// `sven cloud session attach --share-id <id>` and drives the session
+    /// against YOUR machine — tools run locally, credentials never leave.
+    ///
+    ///   sven -c sven.yaml share --url https://cloud.example.com \
+    ///     --token "$(cat tenant.token)" --tenant-id acme --share-id debug-1
+    Share {
+        /// Control-plane base URL, e.g. `https://cloud.example.com`.
+        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
+        url: String,
+        /// Tenant bearer token (any valid token of the tenant).
+        #[arg(long, env = "SVEN_CLOUD_TOKEN")]
+        token: String,
+        /// Tenant that owns this share (must match the token's tenant).
+        #[arg(long, env = "SVEN_CLOUD_TENANT")]
+        tenant_id: String,
+        /// Stable id a consultant attaches by. Defaults to a random id (printed
+        /// on startup).
+        #[arg(long)]
+        share_id: Option<String>,
+        /// Human-readable label shown to the consultant.
+        #[arg(long, default_value = "shared sven session")]
+        title: String,
+        /// Agent mode for the shared kernel.
+        #[arg(long, default_value = "agent")]
+        mode: String,
+        /// Extra CA certificate PEM to trust (for a self-signed control plane).
+        #[arg(long, value_name = "PEM")]
+        ca_cert: Option<PathBuf>,
+        /// Disable TLS verification — local testing only.
+        #[arg(long)]
+        insecure: bool,
     },
 
     /// Generate shell completion script

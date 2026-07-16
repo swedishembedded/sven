@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
             | Some(Commands::Acp { .. })
             | Some(Commands::Peer { .. })
             | Some(Commands::Cloud { .. })
+            | Some(Commands::Share { .. })
     );
     init_logging(cli.verbose, is_tui || is_gui, is_node);
 
@@ -140,6 +141,29 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Cloud { command } => {
                 return run_cloud_command(command, cli.config.as_deref()).await;
+            }
+            Commands::Share {
+                url,
+                token,
+                tenant_id,
+                share_id,
+                title,
+                mode,
+                ca_cert,
+                insecure,
+            } => {
+                return run_share_command(
+                    cli.config.as_deref(),
+                    url,
+                    token,
+                    tenant_id,
+                    share_id.as_deref(),
+                    title,
+                    mode,
+                    ca_cert.as_deref(),
+                    *insecure,
+                )
+                .await;
             }
             Commands::Index { command } => {
                 return run_index_command(command);
@@ -1533,7 +1557,9 @@ fn run_cloud_token_command(cmd: &CloudTokenCommands) -> anyhow::Result<()> {
 }
 
 async fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result<()> {
-    use sven_cloud::{run_operator_session, OperatorSessionOptions};
+    use sven_cloud::{
+        run_operator_session, run_share_attach, OperatorSessionOptions, ShareAttachOptions,
+    };
 
     match cmd {
         CloudSessionCommands::Start {
@@ -1555,7 +1581,111 @@ async fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result
             .await
             .with_context(|| format!("running an operator session against {url}"))
         }
+        CloudSessionCommands::Attach {
+            url,
+            share_id,
+            token,
+            prompt,
+            mode,
+            ca_cert,
+            insecure,
+        } => run_share_attach(ShareAttachOptions {
+            base_url: url.clone(),
+            share_id: share_id.clone(),
+            token: token.clone(),
+            mode: mode.clone(),
+            prompt: prompt.clone(),
+            ca_pem: ca_cert.clone(),
+            insecure_dev: *insecure,
+        })
+        .await
+        .with_context(|| format!("attaching to shared session {share_id} at {url}")),
     }
+}
+
+/// `sven share` — build a persistent local kernel and bridge it onto a control
+/// plane's `/share` endpoint so a remote consultant can steer it. Mirrors the
+/// kernel construction in `sven node start`; the steering translation is reused
+/// from `ControlService` inside [`sven_cloud::run_share_bridge`].
+#[allow(clippy::too_many_arguments)]
+async fn run_share_command(
+    config_path: Option<&std::path::Path>,
+    url: &str,
+    token: &str,
+    tenant_id: &str,
+    share_id: Option<&str>,
+    title: &str,
+    mode: &str,
+    ca_cert: Option<&std::path::Path>,
+    insecure: bool,
+) -> anyhow::Result<()> {
+    use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
+    use sven_cloud::{run_share_bridge, ShareBridgeOptions};
+
+    let sven_config = Arc::new(sven_config::load(config_path)?);
+
+    // Build a persistent kernel (mirrors `sven node start`).
+    let bundle = RuntimeBuilder::new(sven_config, mode)
+        .with_runtime_context(RuntimeContext::auto_detect())
+        .build_session()
+        .await
+        .context("share: failed to build the shared kernel session")?;
+    let handle = bundle.handle.clone();
+
+    // Auto-consume kernel approval/question gates so unattended shared turns run
+    // to completion (reactive mode routes approvals at the tool-registry level,
+    // exactly as the node path does).
+    let mut channels = bundle.channels;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                q = channels.question_rx.recv() => match q {
+                    Some(q) => { let _ = q.reply_tx.send(String::new()); }
+                    None => break,
+                },
+                a = channels.approval_rx.recv() => match a {
+                    Some(a) => { let _ = a.reply_tx.send(true); }
+                    None => break,
+                },
+            }
+        }
+    });
+    // Keep the runtime (and its consumer task) alive for the life of the share.
+    let _runtime = bundle.runtime;
+
+    let share_id = share_id.map(str::to_string).unwrap_or_else(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        format!("share-{nanos:x}")
+    });
+
+    println!("sharing local session as: {share_id}");
+    println!("consultant attaches with:");
+    println!(
+        "  sven cloud session attach --url {url} --share-id {share_id} \\\n    \
+         --token <operator-token>{ca}{insecure} --prompt \"…\"",
+        ca = ca_cert
+            .map(|p| format!(" --ca-cert {}", p.display()))
+            .unwrap_or_default(),
+        insecure = if insecure { " --insecure" } else { "" },
+    );
+
+    run_share_bridge(
+        handle,
+        ShareBridgeOptions {
+            broker_url: url.to_string(),
+            token: token.to_string(),
+            share_id,
+            tenant_id: tenant_id.to_string(),
+            title: title.to_string(),
+            ca_pem: ca_cert.map(std::path::Path::to_path_buf),
+            insecure_dev: insecure,
+        },
+    )
+    .await
+    .with_context(|| format!("running the share bridge against {url}"))
 }
 
 /// Print the list of saved conversations to stdout.
