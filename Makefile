@@ -83,7 +83,8 @@ tests/e2e: tests/e2e/basic tests/e2e/cloud
 ## Each starts a control plane on the mock LLM and asserts an OK sentinel;
 ## a non-zero exit fails the target. Distinct ports so a lingering listener
 ## from one demo cannot clash with the next.
-demos: release
+demos:
+	$(CARGO) build --release -p sven -p sven-companion
 	@PORT=18443 bash deploy/local-demo.sh    || { echo "FAIL: deploy/local-demo.sh";    exit 1; }
 	@PORT=18444 bash deploy/demo-firmware.sh  || { echo "FAIL: deploy/demo-firmware.sh"; exit 1; }
 	@PORT=18445 bash deploy/demo-share.sh     || { echo "FAIL: deploy/demo-share.sh";    exit 1; }
