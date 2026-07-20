@@ -1389,7 +1389,8 @@ async fn run_cloud_serve(
 
     use sven_cloud::{
         portal_router, CloudConfig, CloudServer, CloudSessionLauncher, CloudTls, CompanionRegistry,
-        IdentityService, PortalConfig, PortalState, SessionFeed, SessionGate, UsageMeter,
+        IdentityService, OperatorRuntime, PortalConfig, PortalState, SessionFeed, SessionGate,
+        UsageMeter,
     };
     use sven_metering::{CreditLedger, PricingCatalog};
 
@@ -1421,6 +1422,11 @@ async fn run_cloud_serve(
         Arc::clone(&store),
         agent_config,
     ));
+
+    // The interactive operator WebSocket endpoint (GET /operator/ws): the TUI's
+    // cloud transport. Reuses the same launcher (companion-backed kernel
+    // assembly) and gate as the portal's POST /sessions.
+    let operator = OperatorRuntime::new(Arc::clone(&launcher), Arc::clone(&gate));
 
     // The human portal, served on the same TLS listener as the tether.
     let portal_state = PortalState::new(
@@ -1459,6 +1465,7 @@ async fn run_cloud_serve(
         registry,
         Some(feed),
         Some(portal),
+        Some(operator),
     )
     .await
     .context("starting the cloud control plane")?;
