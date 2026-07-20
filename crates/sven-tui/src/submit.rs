@@ -319,15 +319,16 @@ impl App {
                         return false;
                     }
 
-                    // In node-proxy mode the node owns model/mode selection;
-                    // silently ignore /model and /mode commands.
+                    // `/model` is staged in BOTH modes: locally it rebuilds the
+                    // in-process kernel; in node-proxy mode it is forwarded to
+                    // the remote as a `SetModel` so a remote `/model` re-points
+                    // the server-side provider (the node still owns `/mode`).
+                    if let Some(model_str) = result.model_override {
+                        let resolved =
+                            sven_model::resolve_model_from_config(&self.config, &model_str);
+                        self.session.stage_model(resolved);
+                    }
                     if !self.is_node_proxy {
-                        if let Some(model_str) = result.model_override {
-                            let resolved =
-                                sven_model::resolve_model_from_config(&self.config, &model_str);
-                            self.session.stage_model(resolved);
-                        }
-
                         if let Some(mode) = result.mode_override {
                             self.session.stage_mode(mode);
                         }
@@ -399,9 +400,10 @@ impl App {
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {
         if let Some(tx) = &self.agent.tx {
-            // In node-proxy mode the node owns model/mode; never forward overrides.
+            // The model IS forwarded in node-proxy mode (the remote turns it into
+            // a SetModel); mode stays local-only (the node owns /mode).
             let (model_override, mode_override) = if self.is_node_proxy {
-                (None, None)
+                (qm.model_transition.map(ModelDirective::into_model_config), None)
             } else {
                 (
                     qm.model_transition.map(ModelDirective::into_model_config),
@@ -448,8 +450,10 @@ impl App {
         qm: QueuedMessage,
     ) {
         if let Some(tx) = &self.agent.tx {
+            // The model IS forwarded in node-proxy mode (the remote turns it into
+            // a SetModel); mode stays local-only (the node owns /mode).
             let (model_override, mode_override) = if self.is_node_proxy {
-                (None, None)
+                (qm.model_transition.map(ModelDirective::into_model_config), None)
             } else {
                 (
                     qm.model_transition.map(ModelDirective::into_model_config),

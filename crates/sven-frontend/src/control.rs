@@ -35,6 +35,10 @@ pub enum ControlCommand {
     },
     /// Submit a text message to an active session.
     SendInput { session_id: Uuid, text: String },
+    /// Switch the model of an active session (the raw `/model` override, e.g.
+    /// `"openrouter/free"`). The remote resolves it against ITS config/keys and
+    /// rebuilds the session kernel around the new provider.
+    SetModel { session_id: Uuid, model: String },
     /// Cancel a running session gracefully.
     CancelSession { session_id: Uuid },
     /// Approve a tool call waiting for operator confirmation.

@@ -146,6 +146,30 @@ impl RuntimeHandle {
         Arc::clone(&self.conv_store)
     }
 
+    /// A snapshot of the reactive-agent conversation thread.
+    ///
+    /// Used to carry accumulated context forward when a session is rebuilt
+    /// (e.g. on a mid-session model switch) so the replacement kernel can be
+    /// seeded with the same history. Empty if the store mutex is poisoned.
+    #[must_use]
+    pub fn history_snapshot(&self) -> Vec<Message> {
+        self.conv_store
+            .lock()
+            .ok()
+            .map(|store| store.snapshot(sven_core::machines::reactive_agent::CHAT_THREAD))
+            .unwrap_or_default()
+    }
+
+    /// Replace the reactive-agent conversation thread with `messages`.
+    ///
+    /// The history-seeding hook a rebuilt kernel uses so the next turn streams
+    /// against exactly those turns. A no-op if the store mutex is poisoned.
+    pub fn seed_history(&self, messages: Vec<Message>) {
+        if let Ok(mut store) = self.conv_store.lock() {
+            store.replace_thread(sven_core::machines::reactive_agent::CHAT_THREAD, messages);
+        }
+    }
+
     /// The live tool registry (for MCP tool hot-swap).
     #[must_use]
     pub fn tool_registry(&self) -> Arc<ToolRegistry> {

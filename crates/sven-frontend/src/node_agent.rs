@@ -78,6 +78,12 @@ pub async fn node_agent_task(
         }
     });
 
+    // The model the remote session should run. `/model` in the TUI arrives as a
+    // per-message `model_override`; we remember it and (re)apply it as a
+    // `SetModel` on every turn's session so a remote `/model` re-points the
+    // server-side provider instead of only changing the local UI.
+    let mut active_model: Option<String> = None;
+
     loop {
         let req = match rx.recv().await {
             Some(r) => r,
@@ -85,11 +91,26 @@ pub async fn node_agent_task(
         };
 
         let content = match req {
-            AgentRequest::Submit { content, .. } => content,
+            AgentRequest::Submit {
+                content,
+                model_override,
+                ..
+            } => {
+                if let Some(cfg) = model_override {
+                    active_model = Some(format!("{}/{}", cfg.provider, cfg.name));
+                }
+                content
+            }
             AgentRequest::Resubmit {
                 new_user_content: content,
+                model_override,
                 ..
-            } => content,
+            } => {
+                if let Some(cfg) = model_override {
+                    active_model = Some(format!("{}/{}", cfg.provider, cfg.name));
+                }
+                content
+            }
             AgentRequest::LoadHistory(_) => {
                 debug!("node_agent_task: ignoring LoadHistory (node manages history)");
                 continue;
@@ -161,6 +182,24 @@ pub async fn node_agent_task(
         {
             let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
             break;
+        }
+
+        // Apply the operator's chosen model to this session before the turn.
+        // The remote resolves the override against its OWN config/keys and
+        // rebuilds the session kernel around the new provider.
+        if let Some(model) = &active_model {
+            if send_cmd(
+                &ws_out_tx,
+                &Cmd::SetModel {
+                    session_id: sid,
+                    model: model.clone(),
+                },
+            )
+            .is_err()
+            {
+                let _ = tx.send(AgentEvent::Error("WS send failed".into())).await;
+                break;
+            }
         }
 
         if send_cmd(

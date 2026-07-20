@@ -48,6 +48,19 @@ pub enum ControlCommand {
     /// Submit a text message to an active session.
     SendInput { session_id: Uuid, text: String },
 
+    /// Switch the model of an active session.
+    ///
+    /// `model` is the raw override string an operator types into `/model`
+    /// (e.g. `"openrouter/free"`, `"anthropic/claude-opus-4-6"`, or a bare
+    /// provider id). The agent-side service resolves it against ITS OWN
+    /// configuration (provider configs + API keys) with
+    /// [`sven_model::resolve_model_from_config`] and rebuilds the session's
+    /// kernel around the new provider while PRESERVING conversation history —
+    /// so a remote operator's `/model` actually re-points the server-side
+    /// session, not just the local UI. Handled by a service layer (it rebuilds
+    /// the kernel), not the kernel queue, so it yields no kernel event.
+    SetModel { session_id: Uuid, model: String },
+
     /// Cancel a running session gracefully.
     CancelSession { session_id: Uuid },
 
@@ -407,6 +420,7 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
     match cmd {
         ControlCommand::NewSession { id, .. } => Some(*id),
         ControlCommand::SendInput { session_id, .. }
+        | ControlCommand::SetModel { session_id, .. }
         | ControlCommand::CancelSession { session_id }
         | ControlCommand::ApproveTool { session_id, .. }
         | ControlCommand::DenyTool { session_id, .. }
