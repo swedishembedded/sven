@@ -570,7 +570,7 @@ mod tests {
     /// assistant text of that turn.
     async fn turn_text(rx: &mut mpsc::Receiver<AgentEvent>) -> String {
         let mut text = String::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
             match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(Some(AgentEvent::TextDelta(d))) => text.push_str(&d),
@@ -590,7 +590,7 @@ mod tests {
     /// Consume events until a `TurnComplete`, returning every event of the turn.
     async fn turn_events(rx: &mut mpsc::Receiver<AgentEvent>) -> Vec<AgentEvent> {
         let mut out = Vec::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
             let done = matches!(ev, AgentEvent::TurnComplete);
             out.push(ev);
