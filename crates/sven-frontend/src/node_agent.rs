@@ -177,6 +177,11 @@ pub async fn node_agent_task(
         }
 
         let mut thinking_buf = String::new();
+        // Tracks whether the turn ended with a terminal `AgentEvent` (TurnComplete
+        // / Aborted / Error). Every exit that emits one sets this true; any exit
+        // that does NOT (a mid-turn stream EOF or WebSocket Close) leaves it false
+        // so the guard below can synthesise the missing completion.
+        let mut turn_terminated = false;
         loop {
             tokio::select! {
                 msg = ws_stream.next() => {
@@ -184,6 +189,7 @@ pub async fn node_agent_task(
                         Some(Ok(m)) => m,
                         Some(Err(e)) => {
                             let _ = tx.send(AgentEvent::Error(format!("WS recv: {e}"))).await;
+                            turn_terminated = true;
                             break;
                         }
                         None => break,
@@ -199,15 +205,27 @@ pub async fn node_agent_task(
                     };
                     let done = handle_event(evt, &tx, &ws_out_tx, sid, &mut thinking_buf).await;
                     if done {
+                        turn_terminated = true;
                         break;
                     }
                 }
                 Ok(()) = &mut cancel_rx => {
                     let _ = send_cmd(&ws_out_tx, &Cmd::CancelSession { session_id: sid });
                     let _ = tx.send(AgentEvent::Aborted { partial_text: String::new() }).await;
+                    turn_terminated = true;
                     break;
                 }
             }
+        }
+        // Belt-and-suspenders: a remote turn MUST always end with a terminal
+        // `AgentEvent` so the frontend clears its busy flag. If the node dropped
+        // the connection mid-turn (stream EOF or WebSocket Close), no
+        // SessionState{completed} arrived — without this, `agent.busy` would stay
+        // true forever and the TUI's 80ms anim_tick would repaint the screen at
+        // 12fps indefinitely (cursor flicker, no text selection). See the
+        // idle-must-be-stable note in the sven-tui run loop.
+        if let Some(ev) = turn_exit_event(turn_terminated) {
+            let _ = tx.send(ev).await;
         }
         cancel_handle.lock().await.take();
     }
@@ -414,6 +432,19 @@ async fn handle_event(
     false
 }
 
+/// The terminal [`AgentEvent`] a per-turn receive loop must emit on exit, given
+/// whether a terminal event was already sent during the turn.
+///
+/// A remote turn normally ends via `SessionState{completed|cancelled}` →
+/// [`AgentEvent::TurnComplete`], an error, or a local cancel → `Aborted`. But
+/// the loop can also exit on a mid-turn stream EOF / WebSocket `Close`, which
+/// carries no completion. Returning `TurnComplete` in that case guarantees the
+/// frontend always clears its busy flag, so a stray busy state can never drive a
+/// runaway spinner repaint.
+fn turn_exit_event(turn_terminated: bool) -> Option<AgentEvent> {
+    (!turn_terminated).then_some(AgentEvent::TurnComplete)
+}
+
 pub(crate) fn send_cmd(
     tx: &mpsc::UnboundedSender<String>,
     cmd: &impl Serialize,
@@ -519,6 +550,70 @@ fn build_tls_connector(insecure: bool) -> Option<tokio_tungstenite::Connector> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A remote `SessionState{completed}` MUST map to `AgentEvent::TurnComplete`
+    // (the event that clears the TUI/GUI busy flag) and terminate the turn loop.
+    // If this regresses, `agent.busy` never clears in node-proxy mode and the
+    // 80ms anim_tick repaints the screen forever.
+    #[tokio::test]
+    async fn session_state_completed_maps_to_turn_complete() {
+        for state in ["completed", "cancelled"] {
+            let (tx, mut rx) = mpsc::channel(4);
+            let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
+            let mut buf = String::new();
+            let done = handle_event(
+                Evt::SessionState {
+                    session_id: Uuid::nil(),
+                    state: state.to_string(),
+                },
+                &tx,
+                &ws_tx,
+                Uuid::nil(),
+                &mut buf,
+            )
+            .await;
+            assert!(done, "state {state:?} should terminate the turn");
+            assert!(
+                matches!(rx.try_recv(), Ok(AgentEvent::TurnComplete)),
+                "state {state:?} should emit TurnComplete",
+            );
+        }
+    }
+
+    // A non-terminal state (e.g. running) must NOT complete the turn.
+    #[tokio::test]
+    async fn session_state_running_does_not_complete() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
+        let mut buf = String::new();
+        let done = handle_event(
+            Evt::SessionState {
+                session_id: Uuid::nil(),
+                state: "running".to_string(),
+            },
+            &tx,
+            &ws_tx,
+            Uuid::nil(),
+            &mut buf,
+        )
+        .await;
+        assert!(!done);
+        assert!(rx.try_recv().is_err());
+    }
+
+    // Belt-and-suspenders: when the per-turn loop exits WITHOUT a terminal event
+    // (mid-turn disconnect: stream EOF or WebSocket Close), it must still emit
+    // TurnComplete so the frontend clears busy and the repaint loop stops.
+    #[test]
+    fn turn_exit_synthesises_completion_on_disconnect() {
+        // Turn already terminated normally: no duplicate completion.
+        assert!(turn_exit_event(true).is_none());
+        // Turn dropped mid-flight: synthesise TurnComplete so busy clears.
+        assert!(matches!(
+            turn_exit_event(false),
+            Some(AgentEvent::TurnComplete)
+        ));
+    }
 
     #[test]
     fn host_header_follows_the_url_authority() {

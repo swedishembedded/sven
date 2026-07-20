@@ -1213,6 +1213,15 @@ impl App {
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
                 }
+                // Idle-must-be-stable invariant: this is the ONLY branch that can
+                // fire on a timer, and it is gated on a busy flag. When nothing is
+                // busy the `select!` blocks on real events, so `terminal.draw()`
+                // runs only when state actually changes and (thanks to ratatui's
+                // cell diff) emits nothing for a stable view — no cursor flicker,
+                // and the user can select/copy terminal text. It follows that
+                // every path which sets a busy flag MUST have a path that clears
+                // it (see node_agent's turn-exit guard for the remote case);
+                // a stuck busy flag would repaint the screen at 12fps forever.
                 _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
                     // Advance the clock-driven animation frame. This branch also
                     // serves as the display refresh for streaming text: TextDelta
