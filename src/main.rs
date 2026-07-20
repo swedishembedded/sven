@@ -1209,6 +1209,25 @@ async fn run_cloud_command(
         CloudCommands::Tenant { command } => run_cloud_tenant_command(command),
         CloudCommands::Token { command } => run_cloud_token_command(command),
         CloudCommands::Session { command } => run_cloud_session_command(command).await,
+        CloudCommands::Connect {
+            url,
+            token,
+            mode,
+            prompt,
+            ca_cert,
+            insecure,
+        } => {
+            run_cloud_connect(
+                config_path,
+                url,
+                token.as_deref(),
+                mode,
+                prompt.as_deref(),
+                ca_cert.as_deref(),
+                *insecure,
+            )
+            .await
+        }
         CloudCommands::DemoSeed {
             tenant_name,
             db,
@@ -1686,6 +1705,81 @@ async fn run_cloud_session_command(cmd: &CloudSessionCommands) -> anyhow::Result
         .await
         .with_context(|| format!("attaching to shared session {share_id} at {url}")),
     }
+}
+
+/// `sven cloud connect` — drive a companion-backed cloud session from the
+/// normal sven UI over the operator endpoint (`GET /operator/ws`).
+///
+/// * With `--prompt`: a scriptable one-shot over
+///   [`sven_cloud::run_operator_connect`] (connect, open a session, send the
+///   prompt, stream events, exit).
+/// * Without `--prompt`: the FULL interactive TUI, wired to the operator WS as
+///   its [`NodeBackend`]. This reuses the exact node-proxy path the normal
+///   `sven` UI uses — we just point `SVEN_NODE_URL`/`SVEN_NODE_TOKEN` at the
+///   derived operator WS and hand off to [`run_tui`], so nothing about the TUI
+///   is reimplemented.
+async fn run_cloud_connect(
+    config_path: Option<&std::path::Path>,
+    url: &str,
+    token: Option<&str>,
+    mode: &str,
+    prompt: Option<&str>,
+    ca_cert: Option<&std::path::Path>,
+    insecure: bool,
+) -> anyhow::Result<()> {
+    // Token resolution: --token / SVEN_CLOUD_TOKEN, then SVEN_NODE_TOKEN.
+    let token = token
+        .map(str::to_string)
+        .or_else(|| std::env::var("SVEN_NODE_TOKEN").ok())
+        .context(
+            "no operator token: pass --token or set SVEN_CLOUD_TOKEN / SVEN_NODE_TOKEN",
+        )?;
+
+    // Scriptable one-shot path.
+    if let Some(prompt) = prompt {
+        return sven_cloud::run_operator_connect(sven_cloud::OperatorConnectOptions {
+            base_url: url.to_string(),
+            token,
+            prompt: prompt.to_string(),
+            mode: mode.to_string(),
+            ca_pem: ca_cert.map(std::path::Path::to_path_buf),
+            insecure_dev: insecure,
+        })
+        .await
+        .with_context(|| format!("driving a one-shot cloud session against {url}"));
+    }
+
+    // Interactive path: point the standard node-proxy TUI at the operator WS.
+    // `run_tui` reads SVEN_NODE_URL/SVEN_NODE_TOKEN/SVEN_NODE_INSECURE to build
+    // its NodeBackend, so we set those and hand off to the unchanged UI.
+    let ws_url = sven_cloud::operator_ws_url(url);
+    // SAFETY: single-threaded startup, before the TUI/tokio work begins.
+    unsafe {
+        std::env::set_var("SVEN_NODE_URL", &ws_url);
+        std::env::set_var("SVEN_NODE_TOKEN", &token);
+        if insecure {
+            std::env::set_var("SVEN_NODE_INSECURE", "1");
+        }
+    }
+    if let Some(ca) = ca_cert {
+        // The frontend node-proxy connector trusts loopback self-signed certs
+        // automatically; for a non-loopback self-signed control plane, install
+        // the CA into the trust store or pass --insecure.
+        eprintln!(
+            "[sven] note: --ca-cert {} is used for one-shot mode; the interactive UI \
+             trusts loopback control planes automatically — for a remote self-signed \
+             control plane, trust its CA system-wide or pass --insecure",
+            ca.display()
+        );
+    }
+
+    // Build a fresh interactive Cli (no subcommand → interactive TUI) and run it.
+    let mut tui_cli = Cli::parse_from(["sven"]);
+    tui_cli.mode = serde_json::from_value(serde_json::Value::String(mode.to_string()))
+        .unwrap_or(AgentMode::Agent);
+    tui_cli.config = config_path.map(std::path::Path::to_path_buf);
+    let config = Arc::new(sven_config::load(config_path)?);
+    run_tui(tui_cli, config).await
 }
 
 /// `sven share` — build a persistent local kernel and bridge it onto a control

@@ -797,6 +797,50 @@ pub enum CloudCommands {
         command: CloudSessionCommands,
     },
 
+    /// Drive a companion-backed cloud session from the normal sven UI.
+    ///
+    /// The one-command way to operate a cloud session over the interactive
+    /// operator endpoint (`GET /operator/ws`) — the same WebSocket transport the
+    /// normal `sven` TUI uses as its node backend.
+    ///
+    /// With no `--prompt` this launches the FULL interactive TUI wired to that
+    /// operator endpoint, so the operator gets the ordinary sven UI driving the
+    /// cloud/companion session (equivalent to setting `SVEN_NODE_URL` +
+    /// `SVEN_NODE_TOKEN` and running `sven`).
+    ///
+    /// With `--prompt` it runs a NON-interactive, scriptable one-shot: connect,
+    /// open a session, send the prompt, stream the events to stdout, exit.
+    ///
+    ///   sven cloud connect --url https://cloud.example.com --token "$OP"
+    ///   sven cloud connect --url https://cloud.example.com --token "$OP" \
+    ///     --prompt "read the report"
+    Connect {
+        /// Control-plane base URL, e.g. `https://cloud.example.com`. The
+        /// operator WS URL is derived from it (`https`→`wss`, append
+        /// `/operator/ws`).
+        #[arg(long, env = "SVEN_CLOUD_URL", default_value = "https://localhost:8443")]
+        url: String,
+        /// Operator bearer token (mint with
+        /// `sven cloud token mint --role operator`). Falls back to
+        /// `SVEN_NODE_TOKEN` when `--token`/`SVEN_CLOUD_TOKEN` are unset.
+        #[arg(long, env = "SVEN_CLOUD_TOKEN")]
+        token: Option<String>,
+        /// Agent mode to run as.
+        #[arg(long, default_value = "agent")]
+        mode: String,
+        /// Optional one-shot prompt. When set, runs non-interactively and exits
+        /// once the session finishes; when omitted, opens the interactive TUI.
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Extra CA certificate PEM to trust (for a self-signed control plane;
+        /// the file `sven cloud serve` writes as `cloud-ca.pem`).
+        #[arg(long, value_name = "PEM")]
+        ca_cert: Option<PathBuf>,
+        /// Disable TLS verification — local testing only.
+        #[arg(long)]
+        insecure: bool,
+    },
+
     /// Provision a ready-to-drive demo tenant in one shot (turnkey quickstart).
     ///
     /// Creates the tenant (idempotent), books the current-period platform fee
