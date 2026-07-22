@@ -1198,6 +1198,7 @@ async fn run_cloud_command(
             cert,
             key,
             ca_out,
+            relay_listen,
             telegram_bot_token,
             telegram_allowed_users,
             telegram_operator_token,
@@ -1209,6 +1210,7 @@ async fn run_cloud_command(
                 cert.as_deref(),
                 key.as_deref(),
                 ca_out.as_deref(),
+                relay_listen,
                 config_path,
                 TelegramShareArgs {
                     bot_token: telegram_bot_token.clone(),
@@ -1413,6 +1415,7 @@ async fn run_cloud_serve(
     cert: Option<&std::path::Path>,
     key: Option<&std::path::Path>,
     ca_out: Option<&std::path::Path>,
+    relay_listen: &str,
     config_path: Option<&std::path::Path>,
     telegram: TelegramShareArgs,
 ) -> anyhow::Result<()> {
@@ -1500,6 +1503,28 @@ async fn run_cloud_serve(
     )
     .await
     .context("starting the cloud control plane")?;
+
+    // Embedded P2P relay: lets NAT'd `sven node`s reserve a circuit here so a
+    // phone or `sven connect` can reach them across NAT. Discovery-free (no git
+    // backend), stable identity (keypair persisted beside the DB). `off`
+    // disables it. It only forwards circuits — minimal surface.
+    let _relay = if relay_listen.eq_ignore_ascii_case("off") {
+        println!("  relay      : disabled (--relay-listen off)");
+        None
+    } else {
+        let listen: sven_p2p::Multiaddr = relay_listen
+            .parse()
+            .with_context(|| format!("invalid --relay-listen multiaddr: {relay_listen}"))?;
+        let relay_key = sven_p2p::transport::load_or_create_keypair(&db.with_file_name("relay-key"))
+            .context("loading the relay keypair")?;
+        let mut handle =
+            sven_p2p::relay::spawn(listen, relay_key).context("starting the embedded relay")?;
+        match handle.listen_addr().await {
+            Some(addr) => println!("  relay      : {addr}"),
+            None => println!("  relay      : {} (peer {})", relay_listen, handle.peer_id()),
+        }
+        Some(handle)
+    };
 
     // Optional consultant Telegram steering: a bot hosted here lets an
     // allowlisted consultant steer a SHARED local session (registered via

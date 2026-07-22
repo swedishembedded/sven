@@ -116,6 +116,7 @@ sven-ci          = { path = "crates/sven-ci" }
 sven-team        = { path = "crates/sven-team" }
 sven-tui         = { path = "crates/sven-tui" }
 sven-node        = { path = "crates/sven-node" }
+sven-p2p         = { path = "crates/sven-p2p" }
 sven-node-client = { path = "crates/sven-node-client" }
 sven-mcp         = { path = "crates/sven-mcp" }
 sven-acp         = { path = "crates/sven-acp" }

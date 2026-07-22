@@ -759,6 +759,17 @@ pub enum CloudCommands {
         /// Defaults to `cloud-ca.pem` beside the database.
         #[arg(long, value_name = "PEM")]
         ca_out: Option<PathBuf>,
+        /// libp2p multiaddr the embedded P2P **relay** listens on, so NAT'd
+        /// `sven node`s can reserve a circuit here and be paired/reached across
+        /// NAT. Set to `off` to disable the relay. The relay keypair is
+        /// persisted beside the database, so its PeerId is stable.
+        #[arg(
+            long,
+            env = "SVEN_CLOUD_RELAY_LISTEN",
+            default_value = "/ip4/0.0.0.0/tcp/4002",
+            value_name = "MULTIADDR|off"
+        )]
+        relay_listen: String,
         /// Telegram bot token enabling consultant steering of shared sessions
         /// from Telegram. Omit to leave the feature off (no regression).
         /// Requires `--telegram-operator-token`.
