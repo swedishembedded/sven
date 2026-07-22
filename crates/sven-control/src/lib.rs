@@ -83,6 +83,17 @@ pub enum ControlCommand {
     /// Stop receiving events for a session.
     Unsubscribe { session_id: Uuid },
 
+    /// Attach to an existing session and request its conversation history.
+    ///
+    /// The node replies with a single [`ControlEvent::History`] snapshot of the
+    /// conversation so far (so a freshly-connected client — a phone that just
+    /// scanned the pairing QR, a second CLI joining a shared "tmux-style"
+    /// session — sees the existing transcript), and thereafter the client
+    /// receives live events on its subscription. This is the "history on
+    /// connect" half of multi-client attach; the live half is the ordinary
+    /// broadcast subscription.
+    Attach { session_id: Uuid },
+
     /// Request the current list of sessions.
     ListSessions,
 
@@ -216,6 +227,40 @@ pub enum ControlEvent {
     // ── Peer management events ────────────────────────────────────────────────
     /// Response to [`ControlCommand::ListPeers`].
     PeerList { peers: Vec<PeerListEntry> },
+
+    /// Reply to [`ControlCommand::Attach`]: the conversation transcript so far.
+    ///
+    /// Sent once, directly to the attaching client (not broadcast to everyone),
+    /// carrying the prior turns so the client can render the existing
+    /// conversation before it starts receiving live events.
+    History {
+        session_id: Uuid,
+        entries: Vec<HistoryEntry>,
+    },
+}
+
+// ── History replay types ──────────────────────────────────────────────────────
+
+/// The speaker of a replayed [`HistoryEntry`].
+///
+/// A transport-local vocabulary (deliberately NOT `sven_model::Role`) so the
+/// control protocol stays free of the model crate; the node renders its
+/// conversation store into these when answering an [`ControlCommand::Attach`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryRole {
+    User,
+    Assistant,
+    Tool,
+    System,
+}
+
+/// One replayed conversation turn returned in [`ControlEvent::History`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub role: HistoryRole,
+    /// The turn's text content, rendered flat for display.
+    pub text: String,
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -425,7 +470,8 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
         | ControlCommand::ApproveTool { session_id, .. }
         | ControlCommand::DenyTool { session_id, .. }
         | ControlCommand::Subscribe { session_id }
-        | ControlCommand::Unsubscribe { session_id } => Some(*session_id),
+        | ControlCommand::Unsubscribe { session_id }
+        | ControlCommand::Attach { session_id } => Some(*session_id),
         _ => None,
     }
 }
@@ -570,6 +616,53 @@ mod tests {
             }
             other => panic!("expected OutputDelta, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn attach_command_and_history_event_round_trip() {
+        let sid = Uuid::new_v4();
+
+        // Attach travels over the P2P (CBOR) transport.
+        let cmd = ControlCommand::Attach { session_id: sid };
+        let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
+        assert!(matches!(back, ControlCommand::Attach { session_id } if session_id == sid));
+
+        // History carries the replayed conversation to the attaching client.
+        let ev = ControlEvent::History {
+            session_id: sid,
+            entries: vec![
+                HistoryEntry {
+                    role: HistoryRole::User,
+                    text: "hello".into(),
+                },
+                HistoryEntry {
+                    role: HistoryRole::Assistant,
+                    text: "hi there".into(),
+                },
+            ],
+        };
+        let back = decode_event(&encode_event(&ev).unwrap()).unwrap();
+        match back {
+            ControlEvent::History {
+                session_id,
+                entries,
+            } => {
+                assert_eq!(session_id, sid);
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].role, HistoryRole::User);
+                assert_eq!(entries[1].text, "hi there");
+            }
+            other => panic!("expected History, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn attach_command_targets_its_session() {
+        let sid = Uuid::new_v4();
+        assert_eq!(
+            control_command_session_id(&ControlCommand::Attach { session_id: sid }),
+            Some(sid)
+        );
     }
 
     #[test]
