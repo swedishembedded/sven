@@ -90,6 +90,7 @@ demos:
 	@PORT=18444 bash deploy/demo-firmware.sh  || { echo "FAIL: deploy/demo-firmware.sh"; exit 1; }
 	@PORT=18445 bash deploy/demo-share.sh     || { echo "FAIL: deploy/demo-share.sh";    exit 1; }
 	@PORT=18446 bash deploy/demo-operator.sh  || { echo "FAIL: deploy/demo-operator.sh"; exit 1; }
+	@bash deploy/demo-pair.sh                 || { echo "FAIL: deploy/demo-pair.sh";     exit 1; }
 	@echo "== all deploy demos green =="
 
 # ── Benchmark targets ─────────────────────────────────────────────────────────
