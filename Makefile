@@ -33,7 +33,8 @@ REPO    := swedishembedded/sven
         release/patch release/minor release/major \
         _require-cargo-release \
         site/build site/publish site/serve \
-        benchmark benchmark/build benchmark/terminal-bench benchmark/report
+        benchmark benchmark/build benchmark/terminal-bench benchmark/report \
+        android android/core
 
 all: build
 
@@ -360,3 +361,17 @@ _require-cargo-release:
 	    echo "cargo-release not found - installing..."; \
 	    cargo install cargo-release --locked; \
 	fi
+
+## android - build the Android client: `:core` JVM tests (no emulator, CI-safe)
+## then the debug APK. Requires a JDK 17 and the Android SDK (ANDROID_HOME).
+## Uses the committed Gradle wrapper; override GRADLE to use a system gradle.
+ANDROID_DIR := android
+GRADLE ?= ./gradlew
+android:
+	cd $(ANDROID_DIR) && $(GRADLE) :core:test --no-daemon --console=plain
+	cd $(ANDROID_DIR) && $(GRADLE) :app:assembleDebug -Psven.android.app=true --no-daemon --console=plain
+	@echo "APK: $(ANDROID_DIR)/app/build/outputs/apk/debug/app-debug.apk"
+
+## android/core - just the CI-critical pure-JVM tests (pairing parser + wire codec)
+android/core:
+	cd $(ANDROID_DIR) && $(GRADLE) :core:test --no-daemon --console=plain
