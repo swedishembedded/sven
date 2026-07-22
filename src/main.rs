@@ -147,12 +147,30 @@ async fn main() -> anyhow::Result<()> {
                 identity,
                 message,
             } => {
-                return sven_node::connect::connect_and_run(
-                    uri,
-                    identity.as_deref(),
-                    message.as_deref(),
-                )
-                .await;
+                if let Some(message) = message {
+                    // One-shot / scriptable: pair, drive one turn, exit.
+                    return sven_node::connect::connect_and_run(
+                        uri,
+                        identity.as_deref(),
+                        Some(message),
+                    )
+                    .await;
+                }
+                // Interactive: pair over P2P, stand up a loopback WS bridge, and
+                // hand off to the SAME node-proxy TUI (`run_tui`) the cloud/node
+                // paths use — the full sven interface, over the pairing.
+                let client =
+                    sven_node::connect::pair_client(uri, identity.as_deref()).await?;
+                let ws_url = sven_node::connect_bridge::serve_bridge(client).await?;
+                // SAFETY: single-threaded startup, before the TUI/tokio work.
+                unsafe {
+                    std::env::set_var("SVEN_NODE_URL", &ws_url);
+                    std::env::set_var("SVEN_NODE_TOKEN", "p2p-bridge");
+                    std::env::set_var("SVEN_NODE_INSECURE", "1");
+                }
+                let tui_cli = Cli::parse_from(["sven"]);
+                let config = Arc::new(sven_config::load(cli.config.as_deref())?);
+                return run_tui(tui_cli, config).await;
             }
             Commands::Share {
                 url,
