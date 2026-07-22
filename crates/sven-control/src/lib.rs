@@ -133,6 +133,17 @@ pub enum ControlCommand {
     ///
     /// The node responds with a [`ControlEvent::PeerList`] broadcast.
     ListPeers,
+
+    /// Redeem a one-time pairing token to escalate an unpaired connection.
+    ///
+    /// This is the ONLY command a `Pending` (unpaired) connection may send. The
+    /// transport authenticates the peer's key (Noise/TLS) but authorizes
+    /// nothing until this succeeds: the node validates the token, auto-approves
+    /// the peer's authenticated identity into its persistent allowlist as
+    /// Operator, consumes the token (first-use-wins), and escalates the live
+    /// connection. Thereafter the peer reconnects without a token. Handled
+    /// entirely at the transport/auth layer — it yields no kernel event.
+    Pair { token: String },
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -654,6 +665,20 @@ mod tests {
             }
             other => panic!("expected History, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pair_command_round_trips_and_has_no_kernel_event() {
+        let cmd = ControlCommand::Pair {
+            token: "one-time-secret".into(),
+        };
+        // CBOR (P2P transport) round-trip.
+        let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
+        assert!(matches!(back, ControlCommand::Pair { token } if token == "one-time-secret"));
+        // Pairing is a transport-layer concern, never a kernel event, and has
+        // no session target.
+        assert!(control_command_to_kernel_event(&cmd).is_none());
+        assert_eq!(control_command_session_id(&cmd), None);
     }
 
     #[test]
