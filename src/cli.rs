@@ -1267,6 +1267,29 @@ pub enum Commands {
         command: NodeCommands,
     },
 
+    /// Connect to a paired node over P2P and steer its session.
+    ///
+    /// Scan the QR (or copy the `sven://…` URI) a node prints via
+    /// `sven node pair`, then:
+    ///
+    ///   sven connect "sven://<node-id>/<addr>?t=<token>"
+    ///
+    /// The first connection redeems the one-time token to pair this device
+    /// (its key is added to the node's allowlist); afterwards reconnect with the
+    /// same `--identity` and no token. You see the conversation on connect and
+    /// can send messages; `--message` sends one turn and exits.
+    Connect {
+        /// The `sven://…` pairing URI from the node's QR code.
+        uri: String,
+        /// Persist this client's identity keypair here so reconnects
+        /// authenticate as the same paired device.
+        #[arg(long)]
+        identity: Option<PathBuf>,
+        /// Send a single message and exit (non-interactive; for demos/scripts).
+        #[arg(long)]
+        message: Option<String>,
+    },
+
     /// Peer: list agents, chat, and search conversation history.
     ///
     /// Starts an ephemeral P2P connection - no running node required.

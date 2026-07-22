@@ -142,6 +142,18 @@ async fn main() -> anyhow::Result<()> {
             Commands::Cloud { command } => {
                 return run_cloud_command(command, cli.config.as_deref()).await;
             }
+            Commands::Connect {
+                uri,
+                identity,
+                message,
+            } => {
+                return sven_node::connect::connect_and_run(
+                    uri,
+                    identity.as_deref(),
+                    message.as_deref(),
+                )
+                .await;
+            }
             Commands::Share {
                 url,
                 token,
