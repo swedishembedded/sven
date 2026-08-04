@@ -332,12 +332,12 @@ mod tests {
     fn glob_matches_dir_anywhere() {
         // Pattern with ** on both sides matches inside any directory.
         assert!(glob_matches(
-            "**/sven-team/**",
+            "**/team/**",
             "crates/team/src/lib.rs",
             false
         ));
         assert!(!glob_matches(
-            "**/sven-team/**",
+            "**/team/**",
             "crates/other/src/lib.rs",
             false
         ));
