@@ -32,6 +32,12 @@ runner, a networked P2P node, and a **managed-agents cloud platform**
   changes" below** - it is the canonical map of every place each kind of
   change must touch.
 
+## Task notes (`.todo/`)
+
+Ad-hoc task briefs for AI agents live in `.todo/*.md` (gitignored — never part of
+repo history). When a task is finished, move its file into `.todo/completed/`
+(plain `mv`, not `git mv`, since the whole directory is ignored).
+
 ## Essential Commands
 
 | Command | Purpose |

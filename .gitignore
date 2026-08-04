@@ -48,6 +48,9 @@ Thumbs.db
 
 # Site subproject
 /site/node_modules/
+
+# Local task notes (never part of repo history)
+/.todo/
 /site/dist/
 /site/package-lock.json
 /site/public/install
