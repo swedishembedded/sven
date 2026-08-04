@@ -27,10 +27,7 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use sven_input::{
-        parse_conversation, parse_jsonl_full, parse_workflow, serialize_conversation_turn,
-        serialize_jsonl_records, ConversationRecord, Step, StepQueue,
-    };
+    use sven_input::{parse_conversation, parse_workflow, serialize_conversation_turn, Step, StepQueue};
     use sven_model::{Message, Role};
 
     // ── Helper aliases ────────────────────────────────────────────────────────
@@ -354,25 +351,30 @@ mod tests {
         assert_eq!(conv.history.len(), 2);
     }
 
-    // ── Pipe: JSONL → pending user input extraction ───────────────────────────
+    // ── Pipe: NDJSON trace steps → pending user input extraction ──────────────
+    //
+    // `--output-format jsonl` now streams one ATIF `TraceStep` JSON object per
+    // line (not a `ConversationRecord`), and the receiving instance parses it
+    // via `crate::runner::parse_jsonl_trace_steps` instead of
+    // `sven_input::parse_jsonl_full`. These fixtures build that NDJSON the
+    // same way the runner does: assemble `Message`s into turn-shaped
+    // `TraceStep`s, then serialize with `trace::persist::write_steps_ndjson`.
 
-    fn make_jsonl_conversation(messages: &[Message]) -> String {
-        let records: Vec<ConversationRecord> = messages
-            .iter()
-            .cloned()
-            .map(ConversationRecord::Message)
-            .collect();
-        serialize_jsonl_records(&records)
+    fn make_jsonl_trace(messages: &[Message]) -> String {
+        let steps = sven_input::trace_session::messages_to_steps(messages);
+        let mut buf = Vec::new();
+        trace::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
+        String::from_utf8(buf).unwrap()
     }
 
     #[test]
-    fn jsonl_with_trailing_user_yields_pending() {
+    fn jsonl_trace_with_trailing_user_yields_pending() {
         let messages = vec![
             Message::user("task1"),
             Message::assistant("done"),
             Message::user("task2"),
         ];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
         assert!(is_jsonl(&jsonl), "must be detected as JSONL");
         assert!(
@@ -380,58 +382,54 @@ mod tests {
             "must not be detected as conversation markdown"
         );
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
-        assert_eq!(parsed.pending_user_input.as_deref(), Some("task2"));
-        assert_eq!(parsed.history.len(), 2, "first two messages go to history");
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
+        assert_eq!(pending.as_deref(), Some("task2"));
+        assert_eq!(history.len(), 2, "first two messages go to history");
     }
 
     #[test]
-    fn jsonl_without_trailing_user_has_no_pending() {
+    fn jsonl_trace_without_trailing_user_has_no_pending() {
         let messages = vec![Message::user("task1"), Message::assistant("done")];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
-        assert!(parsed.pending_user_input.is_none());
-        assert_eq!(parsed.history.len(), 2);
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
+        assert!(pending.is_none());
+        assert_eq!(history.len(), 2);
     }
 
     #[test]
-    fn pipe_jsonl_with_cli_prompt_uses_prompt_as_step() {
+    fn pipe_jsonl_trace_with_cli_prompt_uses_prompt_as_step() {
         let messages = vec![
             Message::user("task1"),
             Message::assistant("Result of task1."),
         ];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
         let extra_prompt = Some("task2".to_string());
 
-        let step_content = extra_prompt
-            .or(parsed.pending_user_input)
-            .unwrap_or_default();
+        let step_content = extra_prompt.or(pending).unwrap_or_default();
 
         assert_eq!(step_content, "task2");
-        assert_eq!(parsed.history.len(), 2);
+        assert_eq!(history.len(), 2);
     }
 
     #[test]
-    fn pipe_jsonl_with_trailing_user_enables_prompt_free_relay() {
+    fn pipe_jsonl_trace_with_trailing_user_enables_prompt_free_relay() {
         let messages = vec![
             Message::user("task1"),
             Message::assistant("Here is the plan. Next step: execute."),
             Message::user("execute"),
         ];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
         assert!(is_jsonl(&jsonl));
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
-        let step_content = None::<String>
-            .or(parsed.pending_user_input)
-            .unwrap_or_default();
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
+        let step_content = None::<String>.or(pending).unwrap_or_default();
 
         assert_eq!(step_content, "execute");
-        assert_eq!(parsed.history.len(), 2);
+        assert_eq!(history.len(), 2);
     }
 
     // ── Pipe: compact output relay ────────────────────────────────────────────
@@ -539,39 +537,40 @@ mod tests {
         assert!(conv.pending_user_input.is_none());
     }
 
-    // ── Pipe: JSONL round-trip ────────────────────────────────────────────────
+    // ── Pipe: NDJSON trace round-trip ──────────────────────────────────────────
 
     #[test]
-    fn jsonl_round_trip_preserves_all_messages() {
+    fn jsonl_trace_round_trip_preserves_all_messages() {
         let messages = vec![
             Message::user("task1"),
             Message::assistant("result1"),
             Message::user("task2"),
             Message::assistant("result2"),
         ];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
         assert!(is_jsonl(&jsonl));
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
         // last message is assistant → no pending
-        assert!(parsed.pending_user_input.is_none());
-        assert_eq!(parsed.history.len(), 4);
+        assert!(pending.is_none());
+        assert_eq!(history.len(), 4);
     }
 
     #[test]
-    fn jsonl_skips_system_messages_in_history() {
+    fn jsonl_trace_skips_system_messages_in_history() {
         let messages = vec![
             Message::system("You are sven."),
             Message::user("hello"),
             Message::assistant("hi"),
         ];
-        let jsonl = make_jsonl_conversation(&messages);
+        let jsonl = make_jsonl_trace(&messages);
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
-        // System messages are stripped from history
-        assert_eq!(parsed.history.len(), 2);
-        assert_eq!(parsed.history[0].role, Role::User);
+        let (history, _pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
+        // System messages are skipped by the turn assembler (`StepAssembler`
+        // never emits a step for them - see its `push_message` doc comment).
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].role, Role::User);
     }
 
     // ── resolve_model_cfg ─────────────────────────────────────────────────────
@@ -691,29 +690,80 @@ mod tests {
         );
     }
 
-    // ── JSONL with thinking blocks ────────────────────────────────────────────
+    // ── NDJSON trace steps with a thinking block ───────────────────────────────
 
     #[test]
-    fn jsonl_with_thinking_records_parses_correctly() {
-        // Use the actual ConversationRecord serialization format:
-        //   Message  → {"type":"message","data":{"role":"...", "content":"..."}}
-        //   Thinking → {"type":"thinking","data":{"content":"..."}}
-        // MessageContent::Text is untagged, so it serializes as a plain string.
-        use serde_json::json;
-        let records = [
-            json!({"type":"message","data":{"role":"user","content":"hello"}}),
-            json!({"type":"thinking","data":{"content":"Let me think..."}}),
-            json!({"type":"message","data":{"role":"assistant","content":"world"}}),
-        ];
-        let jsonl: String = records.iter().map(|v| v.to_string() + "\n").collect();
+    fn jsonl_trace_with_thinking_step_parses_correctly() {
+        // Build via the StepAssembler directly so the thinking block folds
+        // into the same turn-shaped step a real run would produce (thinking
+        // never gets its own line - it seeds `reasoning_content` on the next
+        // agent step), then round-trip through NDJSON exactly as
+        // `--output-format jsonl` would stream it.
+        let mut asm = sven_input::trace_session::StepAssembler::new();
+        asm.push_message(&Message::user("hello"));
+        asm.push_thinking("Let me think...");
+        asm.push_message(&Message::assistant("world"));
+        let steps = asm.finish();
+
+        let mut buf = Vec::new();
+        trace::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
+        let jsonl = String::from_utf8(buf).unwrap();
 
         assert!(is_jsonl(&jsonl));
 
-        let parsed = parse_jsonl_full(&jsonl).unwrap();
-        // Thinking blocks are stored as ConversationRecord::Thinking,
-        // not as Messages, so only the two messages appear in history.
-        assert_eq!(parsed.history.len(), 2);
-        assert!(parsed.pending_user_input.is_none());
+        let (history, pending) = crate::runner::parse_jsonl_trace_steps(&jsonl).unwrap();
+        // `reasoning_content` is never replayed back into history (matches
+        // `steps_to_messages`'s documented behaviour) - only the two
+        // messages appear.
+        assert_eq!(history.len(), 2);
+        assert!(pending.is_none());
+    }
+
+    // ── Pipe: JSON summary (--output-format json) → history reconstruction ────
+    //
+    // `--output-format json` now emits the run's full ATIF `Trajectory`
+    // document (not the old {title, steps:[{user_input, agent_response}]}
+    // shape). `is_json_summary_format`'s structural sniff (top-level object
+    // with a "steps" array) still matches it, and `parse_json_summary`
+    // reconstructs history via `steps_to_messages` instead of reading
+    // bespoke `user_input`/`agent_response` fields.
+
+    #[test]
+    fn json_trajectory_output_detected_as_json_summary_not_jsonl() {
+        let messages = vec![Message::user("hi"), Message::assistant("hello")];
+        let steps = sven_input::trace_session::messages_to_steps(&messages);
+        let mut trajectory = trace::Trajectory::new(
+            sven_input::trace_session::ATIF_SCHEMA_VERSION,
+            sven_input::trace_session::default_agent_profile(),
+        );
+        trajectory.steps = steps;
+        let json = serde_json::to_string_pretty(&trajectory).unwrap();
+
+        assert!(crate::runner::is_json_summary_format(&json));
+        assert!(
+            !is_jsonl(&json),
+            "pretty-printed multi-line trajectory object is not NDJSON"
+        );
+    }
+
+    #[test]
+    fn parse_json_summary_reconstructs_history_from_trajectory_steps() {
+        let messages = vec![
+            Message::user("task1"),
+            Message::assistant("result1"),
+        ];
+        let steps = sven_input::trace_session::messages_to_steps(&messages);
+        let mut trajectory = trace::Trajectory::new(
+            sven_input::trace_session::ATIF_SCHEMA_VERSION,
+            sven_input::trace_session::default_agent_profile(),
+        );
+        trajectory.steps = steps;
+        let json = serde_json::to_string_pretty(&trajectory).unwrap();
+
+        let history = crate::runner::parse_json_summary(&json).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].as_text(), Some("task1"));
+        assert_eq!(history[1].as_text(), Some("result1"));
     }
 
     // ── Edge cases ────────────────────────────────────────────────────────────

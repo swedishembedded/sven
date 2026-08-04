@@ -13,6 +13,7 @@ sven-bootstrap = { path = "../bootstrap" }
 sven-runtime   = { path = "../runtime" }
 sven-hsm       = { path = "../hsm" }
 sven-frontend  = { path = "../frontend" }
+trace          = { path = "../trace" }
 anyhow         = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }

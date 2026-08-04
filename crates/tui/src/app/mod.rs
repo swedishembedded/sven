@@ -73,8 +73,16 @@ pub struct AppOptions {
     pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
     pub no_nvim: bool,
     pub model_override: Option<String>,
-    pub jsonl_path: Option<PathBuf>,
-    pub jsonl_load_path: Option<PathBuf>,
+    /// Combined load+output ATIF trace path (`--trace`), or the output-only
+    /// path (`--output-trace`). NOTE (ATIF migration boundary): this field
+    /// carries the new `--trace`/`--output-trace` CLI path, but `App::new`
+    /// below still reads/writes it using the OLD `ConversationRecord`/JSONL
+    /// format (`sven_input::parse_jsonl_full`) - replacing that internal
+    /// handling with ATIF-native I/O is milestone 4's job, not this one.
+    pub trace_path: Option<PathBuf>,
+    /// Load-only ATIF trace path (`--load-trace`). Same internal-format
+    /// caveat as `trace_path`.
+    pub load_trace_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
     /// When `Some`, connect the TUI to a running node instead of running a
     /// local agent.  Gives the TUI full access to the node's P2P tools.
@@ -169,7 +177,7 @@ impl App {
             .map(|(segs, path)| (segs, Some(path)))
             .unwrap_or_else(|| (Vec::new(), None));
 
-        let initial_segments = if let Some(ref jsonl) = opts.jsonl_path {
+        let initial_segments = if let Some(ref jsonl) = opts.trace_path {
             if jsonl.exists() {
                 match std::fs::read_to_string(jsonl) {
                     Ok(content) => match sven_input::parse_jsonl_full(&content) {
@@ -245,8 +253,8 @@ impl App {
         let completion_manager = CompletionManager::new(registry.clone());
 
         let jsonl_path = opts
-            .jsonl_path
-            .or_else(|| opts.jsonl_load_path.clone())
+            .trace_path
+            .or_else(|| opts.load_trace_path.clone())
             .or_else(sven_runtime::resolve_auto_log_path);
 
         // ── Load YAML chat document (if --chat / --load-chat was specified) ──
@@ -1646,8 +1654,8 @@ impl App {
             initial_history: None,
             no_nvim: true,
             model_override: None,
-            jsonl_path: None,
-            jsonl_load_path: None,
+            trace_path: None,
+            load_trace_path: None,
             initial_queue: Vec::new(),
             node_backend: None,
             chat_path: None,

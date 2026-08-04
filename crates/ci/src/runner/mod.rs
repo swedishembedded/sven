@@ -6,13 +6,14 @@ mod event;
 mod helpers;
 pub mod runtime_runner;
 
-use event::{emit_record, handle_event, StepState};
+use event::{handle_event, stream_new_steps, StepState};
 pub(crate) use helpers::{
     is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
+    parse_jsonl_trace_steps,
 };
 use helpers::{
-    json_output_to_string, normalize_label, parse_agent_mode, sanitize_cache_key,
-    write_conversation_artifact, write_step_artifact,
+    normalize_label, parse_agent_mode, sanitize_cache_key, write_conversation_artifact,
+    write_step_artifact,
 };
 
 use std::collections::HashMap;
@@ -27,12 +28,11 @@ use tracing::debug;
 use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
-use sven_input::{
-    history, parse_conversation, parse_frontmatter, parse_jsonl_full, parse_workflow,
-    serialize_jsonl_records, ConversationRecord, ParsedJsonlConversation, Step, StepQueue,
-};
+use sven_input::trace_session::{self, StepAssembler, SvenSessionMeta};
+use sven_input::{history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue};
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
+use trace::{TraceStep, Trajectory};
 
 use crate::kernel_agent::KernelAgent;
 
@@ -62,37 +62,27 @@ pub enum OutputFormat {
     /// another sven instance or loaded with `--conversation`.
     #[default]
     Conversation,
-    /// Structured JSON: one JSON object per run with step metadata.
-    /// Not designed for piping between sven instances; use `Jsonl` for that.
+    /// Structured JSON: the run's full ATIF `Trajectory` document (schema
+    /// version, agent profile, and every accumulated `steps` entry),
+    /// pretty-printed to stdout at the end of the run.  Not designed for
+    /// piping between sven instances the way `Jsonl` is (it's one big object,
+    /// not one-record-per-line); use `--output-format jsonl` for that, or
+    /// `--output-trace`/`--trace` to write the same document to a file.
     Json,
     /// Compact plain text: only the final agent response for each step,
     /// without section headings.  Matches the legacy pre-1.0 behaviour.
     Compact,
-    /// Full-fidelity JSONL: one JSON record per line, streamed to stdout in
-    /// real-time as the agent produces output.  Designed for piping:
+    /// Full-fidelity JSONL: one ATIF `TraceStep` JSON object per line,
+    /// streamed to stdout in real-time as each step is known complete.
+    /// Designed for piping:
     ///
     ///   sven 'task 1' --output-format jsonl | sven 'task 2'
     ///
     /// The receiving sven instance detects the JSONL format automatically via
-    /// `is_jsonl_format()` and loads it as prior conversation history.
+    /// `is_jsonl_format()` and loads it as prior conversation history.  See
+    /// `--output-trace`/`--trace` to persist the equivalent full trajectory
+    /// document to a file instead of streaming step-by-step.
     Jsonl,
-}
-
-// ── JSON output types ─────────────────────────────────────────────────────────
-
-pub(super) struct JsonOutput {
-    pub title: Option<String>,
-    pub steps: Vec<JsonStep>,
-}
-
-pub(super) struct JsonStep {
-    pub index: usize,
-    pub label: Option<String>,
-    pub user_input: String,
-    pub agent_response: String,
-    pub tools_used: Vec<String>,
-    pub duration_ms: u64,
-    pub success: bool,
 }
 
 // ── Options ───────────────────────────────────────────────────────────────────
@@ -135,19 +125,27 @@ pub struct CiOptions {
     /// 1 = verbose (-v): include truncated tool output and thinking blocks.
     /// 2+ = trace (-vv): reserved for future expanded tracing.
     pub trace_level: u8,
-    /// Load conversation history from this JSONL file before running.
-    /// History seeds the agent; workflow steps run on top of it.
-    pub load_jsonl: Option<PathBuf>,
-    /// Write the full-fidelity JSONL output to this path after every step.
-    /// If `None`, falls back to the auto-log path (.sven/logs/<timestamp>.jsonl).
-    pub output_jsonl: Option<PathBuf>,
-    /// Replay all tool calls in the loaded JSONL with fresh results before
-    /// submitting to the model.  Only meaningful when `load_jsonl` is set.
+    /// Load conversation history from this ATIF trajectory file
+    /// (`--load-trace`/`--trace`) before running.  History seeds the agent;
+    /// workflow steps run on top of it.
+    pub load_trace: Option<PathBuf>,
+    /// Write the full ATIF trajectory to this path after every step.
+    /// If `None`, falls back to the auto-log path
+    /// (`.sven/logs/<timestamp>.atif.json`).
+    pub output_trace: Option<PathBuf>,
+    /// Replay all tool calls recorded in the loaded trajectory with fresh
+    /// results before submitting to the model.  Only meaningful when
+    /// `load_trace` is set.
     pub rerun_toolcalls: bool,
-    /// When loading a JSONL conversation, ignore the system message stored in
-    /// that file and regenerate a fresh one from current skills and config.
-    /// By default the stored system message is reused so that resumed
-    /// conversations are fully reproducible.
+    /// When loading a trajectory, regenerate the system prompt from current
+    /// skills and config instead of reusing a stored one.
+    ///
+    /// Note: ATIF trajectories never persist the system prompt as a step (see
+    /// `sven_input::trace_session::StepAssembler::push_message`'s System-role
+    /// handling) — the agent always regenerates it. This flag therefore
+    /// currently has no additional effect on trace-loaded runs; it is kept
+    /// for CLI compatibility and in case a future ATIF `extra` convention
+    /// restores stored-system-prompt reuse.
     pub regen_system_prompt: bool,
     /// Maximum total tokens (input + output) across the entire run.
     /// When this budget is exhausted the runner exits with [`EXIT_BUDGET_EXHAUSTED`] (4).
@@ -263,8 +261,9 @@ impl CiRunner {
         // Priority: JSONL > conversation markdown > JSON summary > workflow / plain-text.
         //
         // JSONL: produced by `--output-format jsonl`.
-        //   Every non-empty line is a JSON object.  Carries full-fidelity
-        //   history including thinking blocks and tool calls.
+        //   Every non-empty line is a standalone ATIF `TraceStep` JSON object.
+        //   Carries full-fidelity history including thinking blocks and tool
+        //   calls (folded into turn-shaped steps).
         //
         // Conversation markdown: default output of `--output-format conversation`.
         //   Contains `## User` / `## Sven` / `## Tool` / `## Tool Result`
@@ -272,9 +271,8 @@ impl CiRunner {
         //   be misread as step labels).
         //
         // JSON summary: produced by `--output-format json`.
-        //   A single JSON object `{"title":..., "steps":[...]}` where each step
-        //   has `user_input` and `agent_response`.  Reconstructed into a simple
-        //   user/assistant message history for the receiving instance.
+        //   A single pretty-printed ATIF `Trajectory` document.  Reconstructed
+        //   into a simple message history for the receiving instance.
         //
         // Both JSONL and conversation formats may end with a trailing user turn
         // that has not yet received a response.  When present, that pending turn
@@ -293,11 +291,11 @@ impl CiRunner {
         // Parse the piped input: extract history to seed the agent and any
         // trailing pending user turn that was not yet answered.
         let (conversation_history, piped_pending) = if is_jsonl_input {
-            match parse_jsonl_full(markdown_body) {
-                Ok(parsed) => (parsed.history, parsed.pending_user_input),
+            match parse_jsonl_trace_steps(markdown_body) {
+                Ok((history, pending)) => (history, pending),
                 Err(e) => {
                     write_stderr(&format!(
-                        "[sven:warn] Failed to parse piped input as JSONL ({e}), \
+                        "[sven:warn] Failed to parse piped input as JSONL trace steps ({e}), \
                          treating as workflow"
                     ));
                     (Vec::new(), None)
@@ -566,50 +564,40 @@ impl CiRunner {
             }
         }
 
-        // ── Pre-parse JSONL for system message (before building agent) ────────
-        // Parse the JSONL file early so that the system message stored in it can
-        // be injected as `system_prompt_override` before the agent is built.
-        // This ensures resumed conversations are fully reproducible by default.
-        // `--regen-system-prompt` or `--system-prompt-file` bypass this.
-        let pre_parsed_jsonl: Option<ParsedJsonlConversation> =
-            if let Some(ref jpath) = opts.load_jsonl {
-                match std::fs::read_to_string(jpath) {
-                    Ok(content) => match parse_jsonl_full(&content) {
-                        Ok(parsed) => {
-                            // Apply stored system message unless caller asked to regenerate
-                            // or already provided an explicit override via --system-prompt-file.
-                            if !opts.regen_system_prompt
-                                && opts.system_prompt_file.is_none()
-                                && runtime_ctx.system_prompt_override.is_none()
-                            {
-                                if let Some(ref sys_text) = parsed.system_message {
-                                    runtime_ctx.system_prompt_override = Some(sys_text.clone());
-                                    write_progress(
-                                        "[sven:info] System prompt loaded from JSONL conversation",
-                                    );
-                                }
-                            }
-                            Some(parsed)
-                        }
-                        Err(e) => {
-                            write_stderr(&format!(
-                                "[sven:error] Failed to parse --load-jsonl {}: {e}",
-                                jpath.display()
-                            ));
-                            std::process::exit(EXIT_VALIDATION_ERROR);
-                        }
-                    },
-                    Err(e) => {
-                        write_stderr(&format!(
-                            "[sven:error] Failed to read --load-jsonl {}: {e}",
-                            jpath.display()
-                        ));
-                        std::process::exit(EXIT_VALIDATION_ERROR);
-                    }
+        // ── Pre-load an ATIF trajectory (if --load-trace/--trace was given) ────
+        // Parsed early (before the agent seeds history) so --rerun-toolcalls
+        // can mutate the loaded steps' observations before they're replayed
+        // into the agent's seeded history. Unlike the old JSONL path, there is
+        // no stored-system-prompt injection here: ATIF trajectories never
+        // persist the system prompt as a step (see
+        // `sven_input::trace_session::StepAssembler::push_message`'s
+        // System-role handling) — the agent always regenerates it fresh, so
+        // `--regen-system-prompt` has no additional effect on trace-loaded
+        // runs (see its doc comment on `CiOptions`).
+        //
+        // A missing `--load-trace`/`--trace` path is treated as "nothing to
+        // load yet", not an error, so `--trace PATH` on a fresh path creates
+        // the file on first write rather than failing the run.
+        let (mut existing_steps, existing_session_id, existing_meta): (
+            Vec<TraceStep>,
+            Option<String>,
+            Option<SvenSessionMeta>,
+        ) = match &opts.load_trace {
+            Some(tpath) if tpath.exists() => match trace_session::load_session_from(tpath) {
+                Ok(trajectory) => {
+                    let meta = SvenSessionMeta::from_trajectory(&trajectory);
+                    (trajectory.steps, trajectory.session_id, meta)
                 }
-            } else {
-                None
-            };
+                Err(e) => {
+                    write_stderr(&format!(
+                        "[sven:error] Failed to load --load-trace {}: {e:#}",
+                        tpath.display()
+                    ));
+                    std::process::exit(EXIT_VALIDATION_ERROR);
+                }
+            },
+            _ => (Vec::new(), None, None),
+        };
 
         // Resolve timeouts (CLI > config)
         // Frontmatter no longer carries timeout fields (removed in redesign).
@@ -640,18 +628,10 @@ impl CiRunner {
         let mut agent =
             KernelAgent::new(self.config.clone(), runtime_ctx, initial_mode, model_cfg.clone());
 
-        // ── Capture system message for JSONL persistence ──────────────────────
-        // Always record the exact system message used for this run so the JSONL
-        // log is fully self-contained and conversations can be resumed verbatim.
-        let run_system_record =
-            ConversationRecord::Message(agent.current_system_message(initial_mode));
-
-        // ── Load JSONL history ───────────────────────────────────────────────
-        // Use the pre-parsed JSONL (if any); fall back to piped conversation.
         // ── Pre-load YAML chat document (if --load-chat was specified) ─────────
-        // If no JSONL was provided, load history from the YAML chat document.
+        // If no trace was loaded, load history from the YAML chat document.
         let pre_parsed_chat_messages: Option<Vec<Message>> =
-            if opts.load_jsonl.is_none() && opts.load_chat.is_some() {
+            if opts.load_trace.is_none() && opts.load_chat.is_some() {
                 if let Some(ref cpath) = opts.load_chat {
                     match std::fs::read_to_string(cpath) {
                         Ok(content) => match sven_input::parse_chat_document(&content) {
@@ -689,73 +669,61 @@ impl CiRunner {
                 None
             };
 
-        let (existing_jsonl_records, jsonl_seed_count) = if let Some(mut parsed) = pre_parsed_jsonl
-        {
-            // If --rerun-toolcalls: replay tool calls in-place before seeding
+        let seed_count = if !existing_steps.is_empty() {
+            // Loaded ATIF trajectory (--load-trace/--trace path).
             if opts.rerun_toolcalls {
                 let replay_tools = agent.build_tool_registry()?;
                 let replayed =
-                    crate::toolcall_replay::replay_tool_calls(&mut parsed.records, &replay_tools)
+                    crate::toolcall_replay::replay_tool_calls(&mut existing_steps, &replay_tools)
                         .await;
                 write_progress(&format!(
                     "[sven:info] Replayed {} tool call(s) with fresh results",
                     replayed
                 ));
-                // Rebuild history from the mutated records
-                let msgs: Vec<Message> = parsed
-                    .records
-                    .iter()
-                    .filter_map(|r| {
-                        if let ConversationRecord::Message(m) = r {
-                            if m.role != Role::System {
-                                Some(m.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let count = msgs.len();
-                agent.seed_history(msgs);
-                (parsed.records, count)
-            } else {
-                let count = parsed.history.len();
-                agent.seed_history(parsed.history);
-                (parsed.records, count)
             }
+            let history_msgs = trace_session::steps_to_messages(&existing_steps);
+            let count = history_msgs.len();
+            agent.seed_history(history_msgs);
+            count
         } else if let Some(chat_msgs) = pre_parsed_chat_messages {
             // YAML chat document seed (--load-chat path)
             let count = chat_msgs.len();
             agent.seed_history(chat_msgs);
-            (Vec::new(), count)
+            count
         } else if !conversation_history.is_empty() {
-            // Piped markdown conversation (legacy path)
+            // Piped markdown/JSONL conversation (legacy path)
             let count = conversation_history.len();
             agent.seed_history(conversation_history);
-            (Vec::new(), count)
+            count
         } else {
-            (Vec::new(), 0)
+            0
         };
 
-        if jsonl_seed_count > 0 {
+        if seed_count > 0 {
             write_progress(&format!(
-                "[sven:info] Loaded {} prior message(s) into conversation history",
-                jsonl_seed_count
+                "[sven:info] Loaded {seed_count} prior message(s) into conversation history"
             ));
         }
 
-        // ── Resolve effective JSONL output path ──────────────────────────────
-        // Priority: --output-jsonl > auto-log path.
-        // Note: --load-jsonl alone does NOT imply write-back to the same file;
-        // use --jsonl (which sets both) for that behaviour.  The auto-log is
-        // always the fallback so there is always a JSONL record of the run.
-        let effective_output_jsonl: Option<PathBuf> =
-            opts.output_jsonl.clone().or_else(resolve_auto_log_path);
+        // ── Resolve effective trace output path ──────────────────────────────
+        // Priority: --output-trace > auto-log path.
+        // Note: --load-trace alone does NOT imply write-back to the same file;
+        // use --trace (which sets both) for that behaviour.  The auto-log is
+        // always the fallback so there is always a trace record of the run.
+        let effective_output_trace: Option<PathBuf> =
+            opts.output_trace.clone().or_else(resolve_auto_log_path);
 
-        // ── Accumulated full-fidelity JSONL records for this run ─────────────
-        let mut run_jsonl_records: Vec<ConversationRecord> = Vec::new();
+        // ── Turn assembler for this run's new steps ──────────────────────────
+        // Continues the step_id sequence from whatever was loaded above, so
+        // the combined `existing_steps ++ assembler` sequence stays
+        // contiguous starting at 1 (required by `trace::validate_trajectory`).
+        let mut assembler = StepAssembler::resuming(existing_steps.len() as u64 + 1);
+        // Number of `assembler.closed_steps()` already streamed to stdout;
+        // only advances when `output_format == Jsonl`, see `event::stream_new_steps`.
+        let mut emitted_steps: usize = 0;
+        // Session identity for the trajectory this run writes: reuse the
+        // loaded session (continuing it) or start a fresh one.
+        let run_session_id = existing_session_id.unwrap_or_else(trace_session::new_session_id);
 
         // ── Set up Ctrl+C handler ────────────────────────────────────────────
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
@@ -790,7 +758,6 @@ impl CiRunner {
         let run_start = Instant::now();
         let mut step_idx = 0usize;
         let mut collected: Vec<Message> = Vec::new();
-        let mut json_steps: Vec<JsonStep> = Vec::new();
         // Running session-level token counters for [sven:tokens] output.
         let mut session_input_total: u32 = 0;
         let mut session_output_total: u32 = 0;
@@ -800,36 +767,33 @@ impl CiRunner {
         let mut run_total_tokens: u64 = 0;
         let max_tokens_budget = opts.max_tokens_budget;
 
-        // Write combined JSONL to path.
-        //
-        // Layout: [system_record] ++ [existing non-system] ++ [new non-system]
-        // The system record from `system_record` is always placed first so the
-        // file is fully self-contained and reproducible.  Any system messages
-        // already present in `existing` are stripped to avoid duplication.
-        fn flush_jsonl(
-            path: &PathBuf,
-            system_record: Option<&ConversationRecord>,
-            existing: &[ConversationRecord],
-            new_records: &[ConversationRecord],
-        ) {
-            let is_system = |r: &ConversationRecord| matches!(r, ConversationRecord::Message(m) if m.role == Role::System);
-            let mut all: Vec<ConversationRecord> = Vec::new();
-            if let Some(sys) = system_record {
-                all.push(sys.clone());
-            }
-            all.extend(existing.iter().filter(|r| !is_system(r)).cloned());
-            all.extend(new_records.iter().filter(|r| !is_system(r)).cloned());
-            let serialized = serialize_jsonl_records(&all);
+        // Write the combined ATIF trajectory (existing steps ++ new steps
+        // accumulated so far) to `path`, atomically (temp file + rename; see
+        // `trace::persist::write_trajectory_atomic`) so a crash never leaves
+        // a half-written document. `expected: None` — same as the old JSONL
+        // flush, this run is the sole writer for the duration and does not
+        // need concurrent-modification detection against other processes.
+        let flush_trace = |path: &PathBuf, new_steps: &[TraceStep]| {
+            let agent_profile = trace_session::default_agent_profile()
+                .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
+            let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
+            trajectory.session_id = Some(run_session_id.clone());
+            trajectory.steps = existing_steps.iter().cloned().chain(new_steps.iter().cloned()).collect();
+
+            let mut meta = existing_meta.clone().unwrap_or_else(|| {
+                SvenSessionMeta::new(title.clone().unwrap_or_else(|| "CI Run".to_string()))
+            });
+            meta.touch();
+            meta.mode = Some(opts.mode.to_string());
+            meta.apply_to_trajectory(&mut trajectory);
+
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(path, serialized) {
-                eprintln!(
-                    "[sven:warn] Failed to write JSONL log {}: {e}",
-                    path.display()
-                );
+            if let Err(e) = trace::persist::write_trajectory_atomic(path, &trajectory, None) {
+                eprintln!("[sven:warn] Failed to write trace log {}: {e}", path.display());
             }
-        }
+        };
 
         // Consumed by the first step only: `--attach` decorates the initial
         // user turn, not every step.
@@ -921,7 +885,6 @@ impl CiRunner {
 
             // Mark where this step's messages begin in `collected`
             let step_msg_start = collected.len();
-            let _step_jsonl_start = run_jsonl_records.len();
 
             // ── --attach: pre-load attachments into the first user turn ─────
             // No tool call is involved, so this works even with models that
@@ -946,17 +909,19 @@ impl CiRunner {
                     )
                 };
 
-            // Record the user turn before submitting
+            // Record the user turn before submitting. A user message always
+            // closes any pending agent step from the *previous* CI step (see
+            // `StepAssembler::push_message`), which is what makes the
+            // flush-after-every-step behaviour below correct even though the
+            // previous step's final turn may not have been closed by
+            // anything else yet.
             let user_msg = match &attached_parts {
                 Some(parts) => Message::user_with_parts(parts.clone()),
                 None => Message::user(&step_content),
             };
             collected.push(user_msg.clone());
-            emit_record(
-                &mut run_jsonl_records,
-                ConversationRecord::Message(user_msg),
-                opts.output_format,
-            );
+            assembler.push_message(&user_msg);
+            stream_new_steps(&assembler, &mut emitted_steps, opts.output_format);
 
             // In streaming conversation format emit step label (if any) and ## User section
             if opts.output_format == OutputFormat::Conversation {
@@ -1041,8 +1006,8 @@ impl CiRunner {
                                 if !collected.is_empty() {
                                     let _ = history::save(&collected);
                                 }
-                                if let Some(ref path) = effective_output_jsonl {
-                                    flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
+                                if let Some(ref path) = effective_output_trace {
+                                    flush_trace(path, &assembler.snapshot_including_pending());
                                 }
                                 std::process::exit(EXIT_TIMEOUT);
                             }
@@ -1053,8 +1018,8 @@ impl CiRunner {
                             if !collected.is_empty() {
                                 let _ = history::save(&collected);
                             }
-                            if let Some(ref path) = effective_output_jsonl {
-                                flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
+                            if let Some(ref path) = effective_output_trace {
+                                flush_trace(path, &assembler.snapshot_including_pending());
                             }
                             std::process::exit(EXIT_INTERRUPT);
                         }
@@ -1065,7 +1030,8 @@ impl CiRunner {
                                 tools_used: &mut tools_used,
                                 failed: &mut failed,
                                 collected: &mut collected,
-                                jsonl_records: &mut run_jsonl_records,
+                                assembler: &mut assembler,
+                                emitted_steps: &mut emitted_steps,
                                 consecutive_tool_errors: &mut consecutive_tool_errors,
                                 trace_level: opts.trace_level,
                                 output_format: opts.output_format,
@@ -1089,8 +1055,8 @@ impl CiRunner {
                                 if !collected.is_empty() {
                                     let _ = history::save(&collected);
                                 }
-                                if let Some(ref path) = effective_output_jsonl {
-                                    flush_jsonl(path, Some(&run_system_record), &existing_jsonl_records, &run_jsonl_records);
+                                if let Some(ref path) = effective_output_trace {
+                                    flush_trace(path, &assembler.snapshot_including_pending());
                                 }
                                 std::process::exit(EXIT_AGENT_ERROR);
                             }
@@ -1109,7 +1075,8 @@ impl CiRunner {
                                     tools_used: &mut tools_used,
                                     failed: &mut failed,
                                     collected: &mut collected,
-                                    jsonl_records: &mut run_jsonl_records,
+                                    assembler: &mut assembler,
+                                    emitted_steps: &mut emitted_steps,
                                     consecutive_tool_errors: &mut consecutive_tool_errors,
                                     trace_level: opts.trace_level,
                                     output_format: opts.output_format,
@@ -1158,14 +1125,9 @@ impl CiRunner {
             vars.insert(format!("step.{}.output", norm), response_text.clone());
             vars.insert(format!("step.{}.output", step_idx), response_text.clone());
 
-            // ── Flush JSONL after every step ────────────────────────────────
-            if let Some(ref path) = effective_output_jsonl {
-                flush_jsonl(
-                    path,
-                    Some(&run_system_record),
-                    &existing_jsonl_records,
-                    &run_jsonl_records,
-                );
+            // ── Flush the trace after every step ─────────────────────────────
+            if let Some(ref path) = effective_output_trace {
+                flush_trace(path, &assembler.snapshot_including_pending());
             }
 
             // ── Write step output to stdout ──────────────────────────────────
@@ -1175,8 +1137,9 @@ impl CiRunner {
                     // Nothing more to write here for Conversation format.
                 }
                 OutputFormat::Jsonl => {
-                    // Streaming output: each record was already emitted to stdout
-                    // by emit_record() as it was produced.  Nothing more to write.
+                    // Streaming output: each closed step was already emitted to
+                    // stdout by `stream_new_steps()` as it closed.  Nothing more
+                    // to write here.
                 }
                 OutputFormat::Compact => {
                     if !response_text.ends_with('\n') {
@@ -1186,16 +1149,10 @@ impl CiRunner {
                     }
                 }
                 OutputFormat::Json => {
-                    // Accumulate; write at the end
-                    json_steps.push(JsonStep {
-                        index: step_idx,
-                        label: step.label.clone(),
-                        user_input: step_content.clone(),
-                        agent_response: response_text.clone(),
-                        tools_used: tools_used.clone(),
-                        duration_ms: step_duration_ms,
-                        success: !failed,
-                    });
+                    // The full trajectory (including this step's contribution)
+                    // is written once at the very end of the run, once the
+                    // assembler is finished — see the final `OutputFormat::Json`
+                    // block below.
                 }
             }
 
@@ -1236,13 +1193,8 @@ impl CiRunner {
                 if !collected.is_empty() {
                     let _ = history::save(&collected);
                 }
-                if let Some(ref path) = effective_output_jsonl {
-                    flush_jsonl(
-                        path,
-                        Some(&run_system_record),
-                        &existing_jsonl_records,
-                        &run_jsonl_records,
-                    );
+                if let Some(ref path) = effective_output_trace {
+                    flush_trace(path, &assembler.snapshot_including_pending());
                 }
                 std::process::exit(EXIT_AGENT_ERROR);
             }
@@ -1252,27 +1204,37 @@ impl CiRunner {
             }
         }
 
-        // ── Final JSONL flush ────────────────────────────────────────────────
+        // ── Finish the assembler ─────────────────────────────────────────────
+        // Flushes any still-open pending agent step (e.g. the very last turn's
+        // trailing assistant text, which nothing closed yet) into a real step.
+        // Any steps closed by this that hadn't been streamed yet (Jsonl format)
+        // are emitted now, so the NDJSON stream always ends with every step.
+        let new_steps = assembler.finish();
+        if opts.output_format == OutputFormat::Jsonl {
+            for step in &new_steps[emitted_steps..] {
+                match serde_json::to_string(step) {
+                    Ok(line) => write_stdout(&format!("{line}\n")),
+                    Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize trace step: {e}")),
+                }
+            }
+        }
+        let final_trajectory_steps: Vec<TraceStep> =
+            existing_steps.iter().cloned().chain(new_steps.iter().cloned()).collect();
+
+        // ── Final trace flush ────────────────────────────────────────────────
         // Ensure the last step is persisted even if no prior flush fired.
-        if let Some(ref path) = effective_output_jsonl {
-            flush_jsonl(
-                path,
-                Some(&run_system_record),
-                &existing_jsonl_records,
-                &run_jsonl_records,
-            );
-            write_progress(&format!("[sven:jsonl] Log written to {}", path.display()));
+        if let Some(ref path) = effective_output_trace {
+            flush_trace(path, &new_steps);
+            write_progress(&format!("[sven:trace] Trace written to {}", path.display()));
         }
 
         // ── Final YAML chat document flush ───────────────────────────────────
         if let Some(ref chat_out_path) = opts.output_chat {
-            // Build a ChatDocument from all accumulated records (existing + run).
-            let all_records: Vec<ConversationRecord> = existing_jsonl_records
-                .iter()
-                .chain(run_jsonl_records.iter())
-                .cloned()
-                .collect();
-            let turns = sven_input::records_to_turns(&all_records);
+            // Build a ChatDocument from all accumulated steps (existing + run),
+            // via the ATIF-native turn assembler rather than the retired
+            // ConversationRecord accumulator — the on-disk YAML shape and
+            // CLI behaviour of --output-chat are unchanged.
+            let turns = trace_session::steps_to_turn_records(&final_trajectory_steps);
             let doc_title = title.clone().unwrap_or_else(|| "CI Run".to_string());
             let mut doc = sven_input::ChatDocument {
                 id: sven_input::SessionId::new(),
@@ -1300,13 +1262,27 @@ impl CiRunner {
         }
 
         // ── Finalize JSON output ─────────────────────────────────────────────
+        // Emit the run's full ATIF trajectory as pretty JSON — replaces the
+        // old bespoke {title, steps:[{user_input, agent_response, ...}]}
+        // summary with the actual trace document (also what --output-trace
+        // would have written to a file).
         if opts.output_format == OutputFormat::Json {
-            let out = JsonOutput {
-                title,
-                steps: json_steps,
-            };
-            let json = json_output_to_string(&out);
-            write_stdout(&format!("{json}\n"));
+            let agent_profile = trace_session::default_agent_profile()
+                .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
+            let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
+            trajectory.session_id = Some(run_session_id.clone());
+            trajectory.steps = final_trajectory_steps.clone();
+            let mut meta = existing_meta.clone().unwrap_or_else(|| {
+                SvenSessionMeta::new(title.clone().unwrap_or_else(|| "CI Run".to_string()))
+            });
+            meta.touch();
+            meta.mode = Some(opts.mode.to_string());
+            meta.apply_to_trajectory(&mut trajectory);
+
+            match serde_json::to_string_pretty(&trajectory) {
+                Ok(json) => write_stdout(&format!("{json}\n")),
+                Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize trajectory: {e}")),
+            }
         }
 
         // ── --output-last-message ─────────────────────────────────────────────

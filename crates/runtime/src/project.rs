@@ -11,12 +11,15 @@ use anyhow::Result;
 // ─── Auto-log path resolution ─────────────────────────────────────────────────
 
 /// Walk up from the current directory looking for a `.sven` subdirectory.
-/// Returns `{sven_dir}/logs/<YYYY-MM-DD_HH-MM-SS.mmm>.jsonl` when found.
+/// Returns `{sven_dir}/logs/<YYYY-MM-DD_HH-MM-SS.mmm>.atif.json` when found.
 /// Creates the `logs/` subdirectory if it does not yet exist.
 ///
-/// This is the "black box recorder" path: sven writes a full-fidelity JSONL
-/// log here automatically in all modes (TUI and headless) whenever a `.sven/`
-/// project directory is present.
+/// This is the "black box recorder" path: sven writes a full ATIF trajectory
+/// document here automatically in all modes (TUI and headless) whenever a
+/// `.sven/` project directory is present. The `.atif.json` extension (rather
+/// than `.jsonl`) reflects that this is a single complete JSON document -
+/// the whole-document `Trajectory` a `--trace`/`--output-trace` run writes -
+/// not a line-delimited stream.
 pub fn resolve_auto_log_path() -> Option<PathBuf> {
     let start = std::env::current_dir().ok()?;
     let mut current: &Path = &start;
@@ -29,7 +32,7 @@ pub fn resolve_auto_log_path() -> Option<PathBuf> {
                 return None;
             }
             let now = chrono::Local::now();
-            let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".jsonl";
+            let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".atif.json";
             return Some(logs_dir.join(filename));
         }
         match current.parent() {
@@ -272,8 +275,8 @@ mod tests {
         let result = resolve_auto_log_path();
         if let Some(path) = result {
             assert!(
-                path.extension().and_then(|e| e.to_str()) == Some("jsonl"),
-                "auto-log path must have .jsonl extension: {path:?}"
+                path.to_string_lossy().ends_with(".atif.json"),
+                "auto-log path must have a .atif.json extension: {path:?}"
             );
             assert!(
                 path.to_string_lossy().contains("logs"),
@@ -294,11 +297,11 @@ mod tests {
         assert!(logs_dir.is_dir(), "logs dir should be creatable");
 
         let now = chrono::Local::now();
-        let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".jsonl";
-        assert!(filename.ends_with(".jsonl"));
+        let filename = now.format("%Y-%m-%d_%H-%M-%S%.3f").to_string() + ".atif.json";
+        assert!(filename.ends_with(".atif.json"));
         assert_eq!(
             filename.len(),
-            "2026-01-01_00-00-00.000.jsonl".len(),
+            "2026-01-01_00-00-00.000.atif.json".len(),
             "filename format should match expected length: {filename}"
         );
 

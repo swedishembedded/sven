@@ -4,98 +4,55 @@
 
 //! Tool-call replay: re-execute recorded tool calls with fresh results.
 //!
-//! This is used by `--rerun-toolcalls` to replay all tool calls in a loaded
-//! JSONL conversation, updating the tool-result messages in-place before
-//! seeding the agent.  The model's text responses are preserved so that the
-//! re-run reflects the original reasoning with updated tool outputs.
+//! This is used by `--rerun-toolcalls` to replay all tool calls recorded in
+//! a loaded ATIF trajectory (`--load-trace`/`--trace`), updating each
+//! matching observation result in-place before seeding the agent. The
+//! model's text and reasoning content are preserved so the re-run reflects
+//! the original reasoning with updated tool outputs.
 
 use std::sync::Arc;
 
-use sven_input::ConversationRecord;
-use sven_model::{Message, MessageContent, Role};
 use sven_tools::{ToolCall, ToolRegistry};
+use trace::{MessageBody, TraceStep};
 
-/// Return true if `record` is a ToolResult message with the given call id.
-fn is_tool_result_for(record: &ConversationRecord, id: &str) -> bool {
-    if let ConversationRecord::Message(Message {
-        role: Role::Tool,
-        content: MessageContent::ToolResult { tool_call_id, .. },
-    }) = record
-    {
-        tool_call_id == id
-    } else {
-        false
-    }
-}
-
-/// Re-execute all tool calls in `records` with fresh results.
+/// Re-execute every tool call recorded across `steps` with fresh results.
 ///
-/// Iterates the records in order, finds each assistant `ToolCall` message, runs
-/// the corresponding tool via `tools`, then locates the immediately following
-/// `ToolResult` record for the same `tool_call_id` and replaces its content
-/// with the new output.
+/// For each `TraceStep` that carries `tool_calls`, runs each invocation
+/// through `tools` and replaces the matching `observation.results` entry's
+/// `content` (matched by `source_call_id == tool_call_id`) with the fresh
+/// output. A tool call with no matching observation entry is still executed
+/// (for its side effects) but does not count toward the returned total,
+/// since there is nowhere to record its result.
 ///
-/// Returns the number of tool calls that were replayed.
-pub async fn replay_tool_calls(
-    records: &mut [ConversationRecord],
-    tools: &Arc<ToolRegistry>,
-) -> usize {
+/// Returns the number of tool calls that were replayed (i.e. had a matching
+/// observation entry updated).
+pub async fn replay_tool_calls(steps: &mut [TraceStep], tools: &Arc<ToolRegistry>) -> usize {
     let mut replayed = 0;
 
-    // Collect (index, tool_call_id, name, args) for all assistant ToolCall records
-    // so we can mutate the slice afterwards without conflicting borrows.
-    let call_sites: Vec<(usize, String, String, String)> = records
-        .iter()
-        .enumerate()
-        .filter_map(|(i, record)| {
-            if let ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content:
-                    MessageContent::ToolCall {
-                        tool_call_id,
-                        function,
-                    },
-            }) = record
-            {
-                Some((
-                    i,
-                    tool_call_id.clone(),
-                    function.name.clone(),
-                    function.arguments.clone(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for (call_idx, tool_call_id, name, args_json) in call_sites {
-        // Parse the stored JSON arguments.
-        let args = serde_json::from_str::<serde_json::Value>(&args_json)
-            .unwrap_or(serde_json::Value::Object(Default::default()));
-
-        // Execute the tool call with fresh inputs.
-        let tc = ToolCall {
-            id: tool_call_id.clone(),
-            name,
-            args,
+    for step in steps.iter_mut() {
+        let Some(tool_calls) = step.tool_calls.clone() else {
+            continue;
         };
-        let output = tools.execute(&tc).await;
 
-        // Find the matching ToolResult record after the call and update it in place.
-        let after_call = &mut records[call_idx + 1..];
-        let mut found = false;
-        for slot in after_call.iter_mut() {
-            if is_tool_result_for(slot, &tool_call_id) {
-                *slot = ConversationRecord::Message(Message::tool_result(
-                    &tool_call_id,
-                    &output.content,
-                ));
-                found = true;
-                break;
-            }
-        }
-        if found {
+        for call in &tool_calls {
+            let tc = ToolCall {
+                id: call.tool_call_id.clone(),
+                name: call.function_name.clone(),
+                args: call.arguments.clone(),
+            };
+            let output = tools.execute(&tc).await;
+
+            let Some(observation) = step.observation.as_mut() else {
+                continue;
+            };
+            let Some(entry) = observation
+                .results
+                .iter_mut()
+                .find(|r| r.source_call_id.as_deref() == Some(call.tool_call_id.as_str()))
+            else {
+                continue;
+            };
+            entry.content = Some(MessageBody::text(output.content));
             replayed += 1;
         }
     }
@@ -107,8 +64,8 @@ pub async fn replay_tool_calls(
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use sven_model::{FunctionCall, Message, MessageContent, Role};
     use sven_tools::{ApprovalPolicy, Tool, ToolOutput, ToolRegistry};
+    use trace::{ObservationEntry, StepObservation, StepOrigin, ToolInvocation};
 
     struct EchoTool;
 
@@ -136,77 +93,71 @@ mod tests {
         }
     }
 
+    /// Build a single agent step with one tool call and a stale observation
+    /// result awaiting replay.
+    fn step_with_call(id: &str, name: &str, args: serde_json::Value, stale_result: &str) -> TraceStep {
+        let mut step = TraceStep::new(1, StepOrigin::Agent, "");
+        step.tool_calls = Some(vec![ToolInvocation::new(id, name).with_arguments(args)]);
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call(id, stale_result)));
+        step
+    }
+
+    fn observation_text(step: &TraceStep, call_id: &str) -> String {
+        step.observation
+            .as_ref()
+            .expect("observation present")
+            .results
+            .iter()
+            .find(|r| r.source_call_id.as_deref() == Some(call_id))
+            .and_then(|r| r.content.as_ref())
+            .and_then(|c| c.as_text())
+            .unwrap_or("")
+            .to_string()
+    }
+
     #[tokio::test]
     async fn replays_tool_calls_and_updates_results() {
         let mut reg = ToolRegistry::new();
         reg.register(EchoTool);
         let reg = Arc::new(reg);
 
-        let mut records = vec![
-            ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: "call-1".into(),
-                    function: FunctionCall {
-                        name: "echo".into(),
-                        arguments: r#"{"message":"hello"}"#.into(),
-                    },
-                },
-            }),
-            // Stale result that should be replaced
-            ConversationRecord::Message(Message::tool_result("call-1", "old result")),
-        ];
+        let mut steps = vec![step_with_call(
+            "call-1",
+            "echo",
+            serde_json::json!({"message":"hello"}),
+            "old result",
+        )];
 
-        let count = replay_tool_calls(&mut records, &reg).await;
+        let count = replay_tool_calls(&mut steps, &reg).await;
         assert_eq!(count, 1);
 
-        if let ConversationRecord::Message(m) = &records[1] {
-            match &m.content {
-                MessageContent::ToolResult { content, .. } => {
-                    let text = content.as_text().unwrap_or("").to_string();
-                    assert!(
-                        text.contains("echo: hello"),
-                        "Expected fresh result, got: {text}"
-                    );
-                }
-                _ => panic!("Expected ToolResult"),
-            }
-        } else {
-            panic!("Expected Message record");
-        }
+        let text = observation_text(&steps[0], "call-1");
+        assert!(
+            text.contains("echo: hello"),
+            "Expected fresh result, got: {text}"
+        );
     }
 
     #[tokio::test]
     async fn handles_unknown_tool_gracefully() {
         let reg = Arc::new(ToolRegistry::new()); // empty registry
 
-        let mut records = vec![
-            ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: "call-x".into(),
-                    function: FunctionCall {
-                        name: "nonexistent".into(),
-                        arguments: "{}".into(),
-                    },
-                },
-            }),
-            ConversationRecord::Message(Message::tool_result("call-x", "stale")),
-        ];
+        let mut steps = vec![step_with_call(
+            "call-x",
+            "nonexistent",
+            serde_json::json!({}),
+            "stale",
+        )];
 
-        let count = replay_tool_calls(&mut records, &reg).await;
-        // Tool execution produces an error result; the record is still updated.
+        let count = replay_tool_calls(&mut steps, &reg).await;
+        // Tool execution produces an error result; the observation entry is
+        // still updated.
         assert_eq!(count, 1);
-        // The result record should now contain an error message (not the stale value)
-        if let ConversationRecord::Message(m) = &records[1] {
-            if let MessageContent::ToolResult { content, .. } = &m.content {
-                let text = content.as_text().unwrap_or("");
-                assert_ne!(
-                    text, "stale",
-                    "stale result should have been replaced by error output"
-                );
-            }
-        }
+        let text = observation_text(&steps[0], "call-x");
+        assert_ne!(
+            text, "stale",
+            "stale result should have been replaced by error output"
+        );
     }
 
     #[tokio::test]
@@ -215,57 +166,28 @@ mod tests {
         reg.register(EchoTool);
         let reg = Arc::new(reg);
 
-        let mut records = vec![
-            ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: "c1".into(),
-                    function: FunctionCall {
-                        name: "echo".into(),
-                        arguments: r#"{"message":"one"}"#.into(),
-                    },
-                },
-            }),
-            ConversationRecord::Message(Message::tool_result("c1", "stale-1")),
-            ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: "c2".into(),
-                    function: FunctionCall {
-                        name: "echo".into(),
-                        arguments: r#"{"message":"two"}"#.into(),
-                    },
-                },
-            }),
-            ConversationRecord::Message(Message::tool_result("c2", "stale-2")),
-        ];
+        let mut step = TraceStep::new(1, StepOrigin::Agent, "");
+        step.tool_calls = Some(vec![
+            ToolInvocation::new("c1", "echo").with_arguments(serde_json::json!({"message":"one"})),
+            ToolInvocation::new("c2", "echo").with_arguments(serde_json::json!({"message":"two"})),
+        ]);
+        step.observation = Some(StepObservation {
+            results: vec![
+                ObservationEntry::for_call("c1", "stale-1"),
+                ObservationEntry::for_call("c2", "stale-2"),
+            ],
+        });
+        let mut steps = vec![step];
 
-        let count = replay_tool_calls(&mut records, &reg).await;
+        let count = replay_tool_calls(&mut steps, &reg).await;
         assert_eq!(count, 2, "both tool calls should be replayed");
 
-        let text1 = if let ConversationRecord::Message(m) = &records[1] {
-            if let MessageContent::ToolResult { content, .. } = &m.content {
-                content.as_text().unwrap_or("").to_string()
-            } else {
-                panic!("expected ToolResult")
-            }
-        } else {
-            panic!("expected Message")
-        };
+        let text1 = observation_text(&steps[0], "c1");
         assert!(
             text1.contains("echo: one"),
             "first result should be refreshed: {text1}"
         );
-
-        let text2 = if let ConversationRecord::Message(m) = &records[3] {
-            if let MessageContent::ToolResult { content, .. } = &m.content {
-                content.as_text().unwrap_or("").to_string()
-            } else {
-                panic!("expected ToolResult")
-            }
-        } else {
-            panic!("expected Message")
-        };
+        let text2 = observation_text(&steps[0], "c2");
         assert!(
             text2.contains("echo: two"),
             "second result should be refreshed: {text2}"
@@ -273,51 +195,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_tool_records_preserved_unchanged() {
+    async fn non_tool_steps_preserved_unchanged() {
         let reg = Arc::new(ToolRegistry::new());
         let user_text = "please do something";
         let assistant_text = "I will use echo";
 
-        let mut records = vec![
-            ConversationRecord::Message(Message::user(user_text)),
-            ConversationRecord::Message(Message::assistant(assistant_text)),
+        let mut steps = vec![
+            TraceStep::new(1, StepOrigin::User, user_text),
+            TraceStep::new(2, StepOrigin::Agent, assistant_text),
         ];
 
-        let count = replay_tool_calls(&mut records, &reg).await;
+        let count = replay_tool_calls(&mut steps, &reg).await;
         assert_eq!(count, 0);
-        // Records should be completely unchanged
-        assert!(
-            matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some(user_text))
-        );
-        assert!(
-            matches!(&records[1], ConversationRecord::Message(m) if m.as_text() == Some(assistant_text))
-        );
+        // Steps should be completely unchanged.
+        assert_eq!(steps[0].message.as_text(), Some(user_text));
+        assert_eq!(steps[1].message.as_text(), Some(assistant_text));
     }
 
     #[tokio::test]
-    async fn tool_call_without_matching_result_does_not_count() {
+    async fn tool_call_without_matching_observation_does_not_count() {
         let mut reg = ToolRegistry::new();
         reg.register(EchoTool);
         let reg = Arc::new(reg);
 
-        // Tool call with no following ToolResult record
-        let mut records = vec![
-            ConversationRecord::Message(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: "c-orphan".into(),
-                    function: FunctionCall {
-                        name: "echo".into(),
-                        arguments: r#"{"message":"hi"}"#.into(),
-                    },
-                },
-            }),
-            // No ToolResult follows
-            ConversationRecord::Message(Message::user("follow-up")),
-        ];
+        // Tool call with no observation recorded at all.
+        let mut step = TraceStep::new(1, StepOrigin::Agent, "");
+        step.tool_calls = Some(vec![
+            ToolInvocation::new("c-orphan", "echo").with_arguments(serde_json::json!({"message":"hi"})),
+        ]);
+        let mut steps = vec![step];
 
-        let count = replay_tool_calls(&mut records, &reg).await;
-        // No result record to update → not counted
+        let count = replay_tool_calls(&mut steps, &reg).await;
+        // No observation entry to update → not counted.
         assert_eq!(count, 0);
     }
 }

@@ -42,8 +42,8 @@ use trace::{
 };
 
 use crate::chat_document::{ChatDocument, ChatStatus, ChatUsage};
+use crate::chat_document::{json_str_to_yaml, TurnRecord};
 use crate::conversation::ConversationRecord;
-use crate::chat_document::TurnRecord;
 
 /// The ATIF schema version string this module writes and expects to read.
 pub const ATIF_SCHEMA_VERSION: &str = "ATIF-v1.7";
@@ -332,6 +332,33 @@ impl StepAssembler {
         }
     }
 
+    /// Construct an empty assembler continuing an existing trajectory: the
+    /// next step emitted will have `step_id == next_step_id`.
+    ///
+    /// Used when appending new turns to a trajectory that already has
+    /// `steps` on disk (e.g. `--trace`/`--load-trace` continuing a prior
+    /// run) — pass `existing_step_count + 1` so the combined step sequence
+    /// stays contiguous starting at 1, as
+    /// [`crate::validate::validate_trajectory`] requires.
+    pub fn resuming(next_step_id: u64) -> Self {
+        Self {
+            steps: Vec::new(),
+            next_step_id,
+            pending: None,
+        }
+    }
+
+    /// Steps closed (pushed) so far, in order. Does **not** include any
+    /// still-open pending agent step — call [`Self::finish`] to flush that.
+    ///
+    /// Useful for a real-time streaming consumer that wants to emit each step
+    /// as soon as it is known complete, without waiting for the whole
+    /// conversation to end: compare `closed_steps().len()` against a
+    /// previously observed length to find newly-closed steps.
+    pub fn closed_steps(&self) -> &[TraceStep] {
+        &self.steps
+    }
+
     /// Feed one [`Message`] into the assembler.
     ///
     /// `Role::System` messages are skipped (matching
@@ -420,21 +447,49 @@ impl StepAssembler {
         let Some(pending) = self.pending.take() else {
             return;
         };
+        let step_id = self.take_step_id();
+        self.steps.push(Self::pending_to_step(&pending, step_id));
+    }
+
+    /// Build the `TraceStep` a [`PendingAgentStep`] would become if flushed,
+    /// without consuming it — the shared core of [`Self::flush_pending`] and
+    /// [`Self::snapshot_including_pending`].
+    fn pending_to_step(pending: &PendingAgentStep, step_id: u64) -> TraceStep {
         let mut step = TraceStep::new(
-            self.take_step_id(),
+            step_id,
             StepOrigin::Agent,
-            MessageBody::text(pending.message_text.unwrap_or_default()),
+            MessageBody::text(pending.message_text.clone().unwrap_or_default()),
         );
-        step.reasoning_content = pending.reasoning_content;
-        step.tool_calls = if pending.tool_calls.is_empty() { None } else { Some(pending.tool_calls) };
+        step.reasoning_content = pending.reasoning_content.clone();
+        step.tool_calls = if pending.tool_calls.is_empty() {
+            None
+        } else {
+            Some(pending.tool_calls.clone())
+        };
         step.observation = if pending.observation_results.is_empty() {
             None
         } else {
             Some(StepObservation {
-                results: pending.observation_results,
+                results: pending.observation_results.clone(),
             })
         };
-        self.steps.push(step);
+        step
+    }
+
+    /// All closed steps plus a snapshot of any still-open pending agent step,
+    /// without consuming the assembler or mutating its state (unlike
+    /// [`Self::finish`]).
+    ///
+    /// Useful for an abrupt-exit flush (timeout, interrupt, fatal error) that
+    /// wants to record interim progress — including a turn that was cut off
+    /// mid-tool-call — before the process exits, mirroring the crash-
+    /// survivability guarantee the old per-event JSONL flush provided.
+    pub fn snapshot_including_pending(&self) -> Vec<TraceStep> {
+        let mut steps = self.steps.clone();
+        if let Some(pending) = &self.pending {
+            steps.push(Self::pending_to_step(pending, self.next_step_id));
+        }
+        steps
     }
 
     fn push_immediate_step(&mut self, source: StepOrigin, message: MessageBody) {
@@ -622,6 +677,98 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n")
     })
+}
+
+// ── Reverse: TraceStep ⇄ TurnRecord (legacy YAML) ───────────────────────────
+
+/// Reverse of [`turn_records_to_steps`]: convert `Vec<TraceStep>` back into
+/// legacy `Vec<TurnRecord>`, for callers that accumulate ATIF-native steps
+/// during a run but still need to write (or update) a YAML `ChatDocument`
+/// from them (e.g. `--output-chat` alongside `--trace`).
+///
+/// - Steps with `is_copied_context == Some(true)` are skipped, matching
+///   [`steps_to_messages`].
+/// - `System`-source steps are skipped, except a context-compaction step
+///   (detected via [`ContextCompactionDetails::from_step_extra`]), which
+///   becomes `TurnRecord::ContextCompacted`. Any other `System` step (e.g. a
+///   [`record_subagent_spawn`] marker) has no `TurnRecord` analog and is
+///   dropped.
+/// - An agent step's `reasoning_content`, if present, becomes a leading
+///   `TurnRecord::Thinking`.
+/// - `tool_calls` are emitted next (each its own `TurnRecord::ToolCall`, in
+///   array order), matched by `tool_call_id` to their `observation.results`
+///   entry (each its own `TurnRecord::ToolResult`) — same ordering rule as
+///   [`steps_to_messages`]. Finally, non-empty step `message` text becomes a
+///   trailing `TurnRecord::User`/`TurnRecord::Assistant` (by `source`).
+pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
+    let mut out = Vec::new();
+    for step in steps {
+        if step.is_excluded_from_sft() {
+            continue;
+        }
+        match step.source {
+            StepOrigin::System => {
+                if let Some(extra) = &step.extra {
+                    if let Some(details) = ContextCompactionDetails::from_step_extra(extra) {
+                        out.push(TurnRecord::ContextCompacted {
+                            tokens_before: details.tokens_before,
+                            tokens_after: details.tokens_after,
+                            strategy: details.strategy,
+                            turn: details.turn,
+                        });
+                    }
+                }
+            }
+            StepOrigin::User => {
+                if let Some(text) = message_body_to_text(&step.message) {
+                    if !text.is_empty() {
+                        out.push(TurnRecord::User { content: text });
+                    }
+                }
+            }
+            StepOrigin::Agent => {
+                if let Some(reasoning) = &step.reasoning_content {
+                    out.push(TurnRecord::Thinking {
+                        content: reasoning.clone(),
+                    });
+                }
+                if let Some(tool_calls) = &step.tool_calls {
+                    for call in tool_calls {
+                        out.push(TurnRecord::ToolCall {
+                            tool_call_id: call.tool_call_id.clone(),
+                            name: call.function_name.clone(),
+                            arguments: json_str_to_yaml(&call.arguments.to_string()),
+                        });
+                    }
+                    if let Some(observation) = &step.observation {
+                        for call in tool_calls {
+                            if let Some(entry) = observation
+                                .results
+                                .iter()
+                                .find(|r| r.source_call_id.as_deref() == Some(call.tool_call_id.as_str()))
+                            {
+                                let content = entry
+                                    .content
+                                    .as_ref()
+                                    .and_then(message_body_to_text)
+                                    .unwrap_or_default();
+                                out.push(TurnRecord::ToolResult {
+                                    tool_call_id: call.tool_call_id.clone(),
+                                    content,
+                                });
+                            }
+                        }
+                    }
+                }
+                if let Some(text) = message_body_to_text(&step.message) {
+                    if !text.is_empty() {
+                        out.push(TurnRecord::Assistant { content: text });
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 // ── File I/O built on trace::persist ────────────────────────────────────────
@@ -1087,6 +1234,66 @@ mod tests {
     }
 
     #[test]
+    fn resuming_continues_step_id_sequence() {
+        let mut a = StepAssembler::resuming(5);
+        a.push_message(&Message::user("Continuing"));
+        a.push_message(&Message::assistant("Sure."));
+        let steps = a.finish();
+        let ids: Vec<u64> = steps.iter().map(|s| s.step_id).collect();
+        assert_eq!(ids, vec![5, 6]);
+    }
+
+    #[test]
+    fn closed_steps_reflects_pushes_without_consuming_assembler() {
+        let mut a = StepAssembler::new();
+        assert_eq!(a.closed_steps().len(), 0);
+        a.push_message(&Message::user("Hi"));
+        assert_eq!(a.closed_steps().len(), 1, "user message closes immediately");
+        a.push_message(&Message::assistant("pending, not yet closed"));
+        assert_eq!(
+            a.closed_steps().len(),
+            1,
+            "assistant text alone stays pending until something closes it"
+        );
+        a.push_message(&Message::user("Next"));
+        assert_eq!(a.closed_steps().len(), 3, "new user message flushes the pending agent step");
+        let steps = a.finish();
+        assert_eq!(steps.len(), 3);
+    }
+
+    #[test]
+    fn snapshot_including_pending_captures_in_flight_turn_without_consuming() {
+        let mut a = StepAssembler::new();
+        a.push_message(&Message::user("Hi"));
+        a.push_message(&Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "c1".into(),
+                function: FunctionCall {
+                    name: "tool".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        });
+        // No tool result / closing event yet — the agent step is still open.
+        assert_eq!(a.closed_steps().len(), 1, "only the user step has closed so far");
+
+        let snapshot = a.snapshot_including_pending();
+        assert_eq!(snapshot.len(), 2, "snapshot includes the in-flight pending agent step");
+        assert_eq!(snapshot[1].source, StepOrigin::Agent);
+        assert_eq!(snapshot[1].tool_calls.as_ref().unwrap().len(), 1);
+
+        // The assembler itself is untouched: the pending step is still open
+        // and can keep accumulating (e.g. the tool result arrives next).
+        assert_eq!(a.closed_steps().len(), 1, "snapshot must not consume pending");
+        a.push_message(&Message::tool_result("c1", "result"));
+        a.push_message(&Message::assistant("done"));
+        let steps = a.finish();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[1].observation.as_ref().unwrap().results.len(), 1);
+    }
+
+    #[test]
     fn context_compacted_becomes_system_step_with_structured_extra() {
         let mut a = StepAssembler::new();
         a.push_message(&Message::user("What is 2+2?"));
@@ -1220,6 +1427,63 @@ mod tests {
         let messages = steps_to_messages(&[step]);
         // ToolCall + ToolResult only, no trailing empty assistant text message.
         assert_eq!(messages.len(), 2);
+    }
+
+    // ── reverse: TraceStep -> TurnRecord (legacy YAML) ────────────────────
+
+    #[test]
+    fn steps_to_turn_records_round_trips_simple_turn() {
+        let steps = vec![
+            TraceStep::new(1, StepOrigin::User, "Hello"),
+            TraceStep::new(2, StepOrigin::Agent, "Hi there"),
+        ];
+        let turns = steps_to_turn_records(&steps);
+        assert_eq!(turns.len(), 2);
+        assert!(matches!(&turns[0], TurnRecord::User { content } if content == "Hello"));
+        assert!(matches!(&turns[1], TurnRecord::Assistant { content } if content == "Hi there"));
+    }
+
+    #[test]
+    fn steps_to_turn_records_preserves_thinking_and_tool_calls() {
+        let mut step = TraceStep::new(1, StepOrigin::Agent, "Found main.rs");
+        step.reasoning_content = Some("I should search first.".to_string());
+        step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob").with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
+        step.observation = Some(StepObservation::single(ObservationEntry::for_call("call_1", "src/main.rs")));
+
+        let turns = steps_to_turn_records(&[step]);
+        assert_eq!(turns.len(), 4, "thinking, tool call, tool result, assistant text");
+        assert!(matches!(&turns[0], TurnRecord::Thinking { content } if content == "I should search first."));
+        assert!(matches!(&turns[1], TurnRecord::ToolCall { tool_call_id, name, .. } if tool_call_id == "call_1" && name == "glob"));
+        assert!(matches!(&turns[2], TurnRecord::ToolResult { tool_call_id, content } if tool_call_id == "call_1" && content == "src/main.rs"));
+        assert!(matches!(&turns[3], TurnRecord::Assistant { content } if content == "Found main.rs"));
+    }
+
+    #[test]
+    fn steps_to_turn_records_converts_context_compaction_system_step() {
+        let mut a = StepAssembler::new();
+        a.push_message(&Message::user("Hi"));
+        a.push_message(&Message::assistant("Hello"));
+        a.push_context_compacted(1000, 100, Some("structured"), Some(2));
+        let steps = a.finish();
+
+        let turns = steps_to_turn_records(&steps);
+        let compaction = turns
+            .iter()
+            .find(|t| matches!(t, TurnRecord::ContextCompacted { .. }))
+            .expect("context-compaction turn present");
+        assert!(matches!(
+            compaction,
+            TurnRecord::ContextCompacted { tokens_before: 1000, tokens_after: 100, .. }
+        ));
+    }
+
+    #[test]
+    fn steps_to_turn_records_skips_copied_context_steps() {
+        let mut copied = TraceStep::new(1, StepOrigin::Agent, "copied");
+        copied.is_copied_context = Some(true);
+        let turns = steps_to_turn_records(&[copied, TraceStep::new(2, StepOrigin::Agent, "fresh")]);
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(&turns[0], TurnRecord::Assistant { content } if content == "fresh"));
     }
 
     // ── full round-trip: multi-turn conversation, both directions ─────────

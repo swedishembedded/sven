@@ -2167,8 +2167,8 @@ async fn run_as_teammate(
                     system_prompt_file: None,
                     append_system_prompt: None,
                     trace_level: 0,
-                    load_jsonl: None,
-                    output_jsonl: None,
+                    load_trace: None,
+                    output_trace: None,
                     rerun_toolcalls: false,
                     regen_system_prompt: false,
                     max_tokens_budget: None,
@@ -2313,34 +2313,37 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         return ConversationRunner::new(config).run(opts).await;
     }
 
-    // ── Resolve effective JSONL I/O paths ────────────────────────────────────
-    // --file pointing to a .jsonl is treated as --load-jsonl automatically.
-    let file_is_jsonl = cli
+    // ── Resolve effective trace I/O paths ─────────────────────────────────────
+    // --file pointing to a .json is treated as --load-trace automatically
+    // (an ATIF trajectory document is a single JSON file, unlike the old
+    // line-delimited .jsonl format --load-jsonl used to auto-detect).
+    let file_is_trace = cli
         .file
         .as_ref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("jsonl"))
+        .map(|e| e.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
-    let load_jsonl = cli.effective_load_jsonl().cloned().or_else(|| {
-        if file_is_jsonl {
+    let load_trace = cli.effective_load_trace().cloned().or_else(|| {
+        if file_is_trace {
             cli.file.clone()
         } else {
             None
         }
     });
 
-    let output_jsonl = cli.effective_output_jsonl().cloned();
+    let output_trace = cli.effective_output_trace().cloned();
 
     // ── Read workflow input ──────────────────────────────────────────────────
-    // When --file points to a .jsonl, there is no separate workflow file;
-    // we read from stdin (or use an empty input) for the new prompt.
-    // When stdin is piped and a positional prompt is given (e.g. `cmd | sven "fix these errors"`),
-    // we append stdin to the prompt with a blank line and pass that as the single user message.
-    let (input, extra_prompt) = if file_is_jsonl {
-        // The file is a JSONL conversation, not a workflow.  New workflow
-        // input (if any) comes from stdin.
+    // When --file points to a .json trace document, there is no separate
+    // workflow file; we read from stdin (or use an empty input) for the new
+    // prompt. When stdin is piped and a positional prompt is given (e.g.
+    // `cmd | sven "fix these errors"`), we append stdin to the prompt with a
+    // blank line and pass that as the single user message.
+    let (input, extra_prompt) = if file_is_trace {
+        // The file is an ATIF trajectory document, not a workflow.  New
+        // workflow input (if any) comes from stdin.
         if !is_stdin_tty() {
             let mut buf = String::new();
             io::stdin()
@@ -2416,9 +2419,9 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         && cli.vars.is_empty()
         && cli.effective_load_chat().is_none()
         && cli.effective_output_chat().is_none()
-        && cli.effective_output_jsonl().is_none();
+        && cli.effective_output_trace().is_none();
 
-    if load_jsonl.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
+    if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
             match cli.mode {
                 AgentMode::Chat => "chat",
@@ -2537,7 +2540,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
     let load_chat = cli.effective_load_chat().cloned();
     let output_chat = cli.effective_output_chat().cloned();
 
-    let input_from_file = cli.file.is_some() && !file_is_jsonl;
+    let input_from_file = cli.file.is_some() && !file_is_trace;
 
     let opts = CiOptions {
         mode: cli.mode,
@@ -2556,8 +2559,8 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         system_prompt_file: cli.system_prompt_file,
         append_system_prompt: cli.append_system_prompt,
         trace_level: cli.verbose,
-        load_jsonl,
-        output_jsonl,
+        load_trace,
+        output_trace,
         rerun_toolcalls: cli.rerun_toolcalls,
         regen_system_prompt: cli.regen_system_prompt,
         max_tokens_budget: cli.max_tokens,
@@ -2709,17 +2712,17 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     // ── Load workflow into initial TUI queue ─────────────────────────────────
     // If --file points to a markdown workflow, parse the steps and push them
     // into the TUI queue so the user can review them before they are sent.
-    // The file must NOT be a JSONL file; JSONL is handled via --load-jsonl.
-    let file_is_jsonl = cli
+    // The file must NOT be an ATIF trace document; that's handled via --load-trace.
+    let file_is_trace = cli
         .file
         .as_ref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("jsonl"))
+        .map(|e| e.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
     let initial_queue: Vec<QueuedMessage> = if let Some(path) = &cli.file {
-        if !file_is_jsonl {
+        if !file_is_trace {
             match std::fs::read_to_string(path) {
                 Ok(content) => {
                     let (fm, body) = parse_frontmatter(&content);
@@ -2765,10 +2768,18 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         Vec::new()
     };
 
-    // Resolve JSONL paths for TUI: --load-jsonl feeds initial history; output
-    // goes to --output-jsonl (or --jsonl which combines both).
-    let jsonl_load_path = cli.effective_load_jsonl().cloned();
-    let jsonl_save_path = cli.effective_output_jsonl().cloned();
+    // Resolve trace paths for TUI: --load-trace feeds initial history; output
+    // goes to --output-trace (or --trace which combines both).
+    //
+    // NOTE (ATIF migration boundary): these are threaded into `AppOptions`
+    // under the new `trace_path`/`load_trace_path` names, but the TUI's own
+    // internal handling of them (`App::new` below, and `chat_ops.rs`) still
+    // reads/writes the OLD `ConversationRecord`/JSONL format at that path -
+    // that's intentional and unchanged by this milestone (see
+    // `crates/tui/src/app/mod.rs` and `chat_ops.rs`; replacing their
+    // internals with ATIF-native I/O is milestone 4's job).
+    let trace_load_path = cli.effective_load_trace().cloned();
+    let trace_save_path = cli.effective_output_trace().cloned();
 
     // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN
     // are present (injected by the node into web PTY sessions), connect the
@@ -2803,8 +2814,8 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         initial_history,
         no_nvim: !cli.nvim,
         model_override: cli.model,
-        jsonl_path: jsonl_save_path,
-        jsonl_load_path,
+        trace_path: trace_save_path,
+        load_trace_path: trace_load_path,
         initial_queue,
         node_backend,
         chat_path: chat_load_path,

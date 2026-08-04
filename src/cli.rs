@@ -1022,16 +1022,23 @@ pub enum OutputFormatArg {
     /// Output is valid sven conversation markdown and fully pipeable.
     #[default]
     Conversation,
-    /// Structured JSON: title + array of steps with metadata.
-    /// Not designed for piping between sven instances; use --output-format jsonl for that.
+    /// Structured JSON: the run's full ATIF trajectory document (schema
+    /// version, agent profile, and every step), pretty-printed to stdout.
+    /// Not designed for piping between sven instances; use --output-format
+    /// jsonl for that, or --output-trace/--trace to write the same
+    /// document to a file.
     Json,
     /// Compact plain text: only the final agent response for each step.
     /// Matches the legacy pre-enhancement behaviour.
     Compact,
-    /// Full-fidelity JSONL: one JSON record per line (messages, thinking, tool calls).
+    /// Full-fidelity JSONL: one ATIF trajectory step (TraceStep) JSON object
+    /// per line, streamed as each step is known complete (messages,
+    /// thinking, tool calls all folded into their turn-shaped step).
     /// Designed for piping between sven instances:
     ///   sven 'task 1' --output-format jsonl | sven 'task 2'
-    /// The receiving sven instance automatically detects and loads the history.
+    /// The receiving sven instance automatically detects and loads the
+    /// history. See --output-trace/--trace to persist the equivalent full
+    /// trajectory document to a file instead of streaming step-by-step.
     Jsonl,
 }
 
@@ -1142,25 +1149,25 @@ pub struct Cli {
     #[arg(long, short = 'o', value_name = "PATH")]
     pub output_last_message: Option<PathBuf>,
 
-    /// Load conversation history from a JSONL file before running.
-    /// The file is parsed as a full-fidelity JSONL conversation; the history
+    /// Load conversation history from a saved ATIF trajectory file before running.
+    /// The file is parsed as a full-fidelity ATIF trajectory document; the history
     /// seeds the agent and any workflow steps run on top of it.
-    /// Cannot be combined with --jsonl.
-    #[arg(long, value_name = "PATH", conflicts_with = "jsonl")]
-    pub load_jsonl: Option<PathBuf>,
+    /// Cannot be combined with --trace.
+    #[arg(long, value_name = "PATH", conflicts_with = "trace")]
+    pub load_trace: Option<PathBuf>,
 
-    /// Write the output JSONL to this path after the run.
-    /// If omitted, output goes to the auto-log path (.sven/logs/<timestamp>.jsonl).
-    /// Cannot be combined with --jsonl.
-    #[arg(long, value_name = "PATH", conflicts_with = "jsonl")]
-    pub output_jsonl: Option<PathBuf>,
+    /// Write the ATIF trajectory to this path after the run.
+    /// If omitted, output goes to the auto-log path (.sven/logs/<timestamp>.atif.json).
+    /// Cannot be combined with --trace.
+    #[arg(long, value_name = "PATH", conflicts_with = "trace")]
+    pub output_trace: Option<PathBuf>,
 
-    /// Combined load + output JSONL: equivalent to --load-jsonl PATH --output-jsonl PATH.
-    /// Loads an existing conversation from PATH, runs, and writes back to the same file.
+    /// Combined load + output trace: equivalent to --load-trace PATH --output-trace PATH.
+    /// Loads an existing ATIF trajectory from PATH, runs, and writes back to the same file.
     /// In TUI mode the file is kept in sync after every turn.
     /// If the file does not exist it is created automatically.
     #[arg(long, value_name = "PATH")]
-    pub jsonl: Option<PathBuf>,
+    pub trace: Option<PathBuf>,
 
     /// Load (and save) a YAML chat document.
     /// The file is parsed as a ChatDocument; the conversation history seeds the agent
@@ -1181,15 +1188,20 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub output_chat: Option<PathBuf>,
 
-    /// Replay all tool calls in the loaded JSONL conversation with fresh results
-    /// before submitting to the model.  Requires --load-jsonl or --jsonl.
+    /// Replay all tool calls recorded in the loaded trajectory with fresh
+    /// results before submitting to the model.  Requires --load-trace or --trace.
     #[arg(long)]
     pub rerun_toolcalls: bool,
 
-    /// When loading a conversation with --load-jsonl or --jsonl, regenerate the
-    /// system prompt from the current skills and config instead of reusing the
-    /// one stored in the JSONL file.  By default the stored system prompt is
-    /// used so that resumed conversations are fully reproducible.
+    /// When loading a conversation with --load-trace or --trace, regenerate
+    /// the system prompt from the current skills and config instead of
+    /// reusing a stored one.
+    ///
+    /// Note: ATIF trajectories never persist the system prompt as a step -
+    /// the agent always regenerates it fresh on load, so this flag currently
+    /// has no additional effect on trace-loaded runs. It is kept for CLI
+    /// compatibility and in case a future convention restores stored-system-
+    /// prompt reuse.
     #[arg(long)]
     pub regen_system_prompt: bool,
 
@@ -1559,14 +1571,14 @@ impl Cli {
             || !std::io::stdout().is_terminal()
     }
 
-    /// Resolve the effective JSONL input path: --load-jsonl takes priority, then --jsonl.
-    pub fn effective_load_jsonl(&self) -> Option<&PathBuf> {
-        self.load_jsonl.as_ref().or(self.jsonl.as_ref())
+    /// Resolve the effective trace input path: --load-trace takes priority, then --trace.
+    pub fn effective_load_trace(&self) -> Option<&PathBuf> {
+        self.load_trace.as_ref().or(self.trace.as_ref())
     }
 
-    /// Resolve the effective JSONL output path: --output-jsonl takes priority, then --jsonl.
-    pub fn effective_output_jsonl(&self) -> Option<&PathBuf> {
-        self.output_jsonl.as_ref().or(self.jsonl.as_ref())
+    /// Resolve the effective trace output path: --output-trace takes priority, then --trace.
+    pub fn effective_output_trace(&self) -> Option<&PathBuf> {
+        self.output_trace.as_ref().or(self.trace.as_ref())
     }
 
     /// Resolve the effective YAML chat input path: --load-chat takes priority, then --chat.

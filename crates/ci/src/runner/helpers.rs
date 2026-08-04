@@ -4,13 +4,12 @@
 //! Utility functions: format detection, artifact writing, JSON serialisation,
 //! agent mode parsing, cache key sanitisation, and label normalisation.
 
+use anyhow::Context;
 use sven_config::AgentMode;
 use sven_input::serialize_conversation_turn;
 use sven_model::Message;
 
 use crate::output::write_stderr;
-
-use super::JsonOutput;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,12 +27,15 @@ pub(crate) fn is_conversation_format(s: &str) -> bool {
     })
 }
 
-/// Return true if the input looks like a JSONL conversation stream: every
-/// non-empty line must start with `{`.
+/// Return true if the input looks like an NDJSON stream of ATIF `TraceStep`
+/// objects: every non-empty line must start with `{`.
 ///
-/// Used to detect when `--output-format jsonl` output from a prior sven run is
-/// piped into the next instance.  We inspect at most the first 10 non-empty
-/// lines to keep detection fast on large streams.
+/// Used to detect when `--output-format jsonl` output from a prior sven run
+/// is piped into the next instance — each line is a standalone `TraceStep`
+/// JSON object (see [`trace::persist::read_steps_ndjson`]), not the whole
+/// `Trajectory` document `--output-trace`/`--trace` write to a file.  We
+/// inspect at most the first 10 non-empty lines to keep detection fast on
+/// large streams.
 pub(crate) fn is_jsonl_format(s: &str) -> bool {
     let mut checked = 0usize;
     for line in s.lines() {
@@ -52,12 +54,38 @@ pub(crate) fn is_jsonl_format(s: &str) -> bool {
     checked > 0
 }
 
-/// Return true if the input looks like the JSON summary produced by
-/// `--output-format json`: a single JSON object containing a `"steps"` array.
+/// Parse an NDJSON stream of ATIF `TraceStep` objects (as detected by
+/// [`is_jsonl_format`] / produced by `--output-format jsonl`) into a message
+/// history and any trailing pending user turn.
+///
+/// Mirrors the old `sven_input::parse_jsonl_full`'s `(history,
+/// pending_user_input)` contract for the `ConversationRecord` format: if the
+/// last step is a `User`-source step, it is treated as not yet answered and
+/// stripped from `history` into `pending_user_input`; otherwise `history`
+/// covers every step and there is no pending turn.
+pub(crate) fn parse_jsonl_trace_steps(s: &str) -> anyhow::Result<(Vec<Message>, Option<String>)> {
+    let steps = trace::persist::read_steps_ndjson(std::io::Cursor::new(s.as_bytes()))
+        .context("parsing piped NDJSON trace steps")?;
+
+    let (history_steps, pending): (&[trace::TraceStep], Option<String>) = match steps.last() {
+        Some(step) if step.source == trace::StepOrigin::User => {
+            let pending = step.message.as_text().unwrap_or("").to_string();
+            (&steps[..steps.len() - 1], Some(pending))
+        }
+        _ => (&steps[..], None),
+    };
+
+    let history = sven_input::trace_session::steps_to_messages(history_steps);
+    Ok((history, pending))
+}
+
+/// Return true if the input looks like the JSON output produced by
+/// `--output-format json`: a single JSON object containing a `"steps"` array
+/// (an ATIF `Trajectory` document).
 ///
 /// Used to detect when the output of a prior `sven --output-format json` run
 /// is piped into the next instance so we can reconstruct conversation history
-/// from the step data instead of treating the JSON as a workflow.
+/// from the trajectory's steps instead of treating the JSON as a workflow.
 pub(crate) fn is_json_summary_format(s: &str) -> bool {
     let trimmed = s.trim();
     if !trimmed.starts_with('{') {
@@ -71,33 +99,17 @@ pub(crate) fn is_json_summary_format(s: &str) -> bool {
     }
 }
 
-/// Reconstruct a flat user/assistant `Message` history from the JSON summary
-/// format produced by `--output-format json`.
+/// Reconstruct a flat `Message` history from the JSON output produced by
+/// `--output-format json`: a pretty-printed ATIF `Trajectory` document.
 ///
-/// Each step contributes a `user` message (`user_input`) followed by an
-/// `assistant` message (`agent_response`).  Steps that have an empty
-/// `agent_response` (e.g. failed steps) contribute only the user message.
+/// Delegates to [`sven_input::trace_session::steps_to_messages`] so the
+/// reconstruction rules (system/copied-context steps skipped, tool calls
+/// un-merged from their observations, reasoning never replayed) match every
+/// other trace-consuming path in the runner.
 pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
-    let v: serde_json::Value = serde_json::from_str(s.trim())?;
-    let steps = v
-        .get("steps")
-        .and_then(|s| s.as_array())
-        .ok_or_else(|| anyhow::anyhow!("JSON summary missing 'steps' array"))?;
-
-    let mut history = Vec::new();
-    for step in steps {
-        if let Some(user_input) = step.get("user_input").and_then(|u| u.as_str()) {
-            if !user_input.is_empty() {
-                history.push(Message::user(user_input));
-            }
-        }
-        if let Some(agent_response) = step.get("agent_response").and_then(|a| a.as_str()) {
-            if !agent_response.is_empty() {
-                history.push(Message::assistant(agent_response));
-            }
-        }
-    }
-    Ok(history)
+    let trajectory: trace::Trajectory = serde_json::from_str(s.trim())
+        .context("parsing --output-format json output as an ATIF trajectory")?;
+    Ok(sven_input::trace_session::steps_to_messages(&trajectory.steps))
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────────
@@ -141,32 +153,6 @@ pub(super) fn write_conversation_artifact(dir: &std::path::Path, messages: &[Mes
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-pub(super) fn json_output_to_string(out: &JsonOutput) -> String {
-    let steps: Vec<serde_json::Value> = out
-        .steps
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "index": s.index,
-                "label": s.label,
-                "user_input": s.user_input,
-                "agent_response": s.agent_response,
-                "tools_used": s.tools_used,
-                "duration_ms": s.duration_ms,
-                "success": s.success,
-            })
-        })
-        .collect();
-
-    let obj = serde_json::json!({
-        "title": out.title,
-        "steps": steps,
-    });
-
-    serde_json::to_string_pretty(&obj)
-        .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}"))
-}
 
 pub(super) fn parse_agent_mode(s: &str) -> Option<AgentMode> {
     match s.trim() {

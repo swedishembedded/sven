@@ -84,16 +84,18 @@ load helpers
     [[ "${STDOUT_OUT}" == *'"steps"'* ]]
 }
 
-@test "06.10 json output contains agent_response field" {
+@test "06.10 json output contains the ATIF schema_version marker" {
     run_split_output bash -c \
         'echo "ping" | "$BIN" --headless --model mock --output-format json'
-    [[ "${STDOUT_OUT}" == *'"agent_response"'* ]]
+    [[ "${STDOUT_OUT}" == *'"schema_version"'* ]]
+    [[ "${STDOUT_OUT}" == *"ATIF-v"* ]]
 }
 
-@test "06.11 json output contains success field" {
+@test "06.11 json output contains the model reply in an agent step message" {
     run_split_output bash -c \
         'echo "ping" | "$BIN" --headless --model mock --output-format json'
-    [[ "${STDOUT_OUT}" == *'"success"'* ]]
+    [[ "${STDOUT_OUT}" == *'"source": "agent"'* ]]
+    [[ "${STDOUT_OUT}" == *"pong"* ]]
 }
 
 # ── --output-last-message ─────────────────────────────────────────────────────

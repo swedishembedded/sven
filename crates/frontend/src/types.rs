@@ -69,8 +69,11 @@ pub struct FrontendOptions {
     pub initial_prompt: Option<String>,
     pub initial_history: Option<(Vec<ChatSegment>, PathBuf)>,
     pub model_override: Option<String>,
-    pub jsonl_path: Option<PathBuf>,
-    pub jsonl_load_path: Option<PathBuf>,
+    /// Combined load+output ATIF trace path (`--trace`), or the output-only
+    /// path (`--output-trace`).
+    pub trace_path: Option<PathBuf>,
+    /// Load-only ATIF trace path (`--load-trace`).
+    pub load_trace_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
     /// When `Some`, connect the frontend to a running node.
     pub node_backend: Option<NodeBackend>,
@@ -87,8 +90,8 @@ impl Default for FrontendOptions {
             initial_prompt: None,
             initial_history: None,
             model_override: None,
-            jsonl_path: None,
-            jsonl_load_path: None,
+            trace_path: None,
+            load_trace_path: None,
             initial_queue: vec![],
             node_backend: None,
             chat_path: None,

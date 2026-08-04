@@ -1,33 +1,43 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Per-step event handler: collects messages and records, tracks token usage.
+//! Per-step event handler: folds `AgentEvent`s into a
+//! [`StepAssembler`](sven_input::trace_session::StepAssembler), collects
+//! plain `Message`s for the legacy markdown history/artifact paths, and
+//! tracks token usage.
 
 use sven_core::AgentEvent;
-use sven_input::ConversationRecord;
+use sven_input::trace_session::StepAssembler;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 
 use crate::output::{format_token_usage_line, write_stderr, write_stdout};
 
 use super::{OutputFormat, EXIT_BUDGET_EXHAUSTED};
 
-/// Push a `ConversationRecord` and, when `output_format` is `Jsonl`, also
-/// stream the serialized line to stdout immediately.  This is the single place
-/// that ensures JSONL output is consistent across all code paths.
-pub(super) fn emit_record(
-    records: &mut Vec<ConversationRecord>,
-    record: ConversationRecord,
-    output_format: OutputFormat,
-) {
+/// Stream every step the assembler has newly closed (since `emitted`) to
+/// stdout as NDJSON — one ATIF `TraceStep` JSON object per line — when
+/// `output_format` is `Jsonl`. Always advances `*emitted` to the assembler's
+/// current closed-step count, regardless of output format, so a later call
+/// only ever sees steps closed after this one.
+///
+/// This is the single place that keeps real-time JSONL streaming consistent
+/// with the turn-shaped step assembler: a step is only known complete (and
+/// thus emittable) once something closes it — a user message, a fresh
+/// thinking block, a context-compaction marker, or the final flush at the
+/// end of the run. That is coarser-grained than the old one-record-per-raw-
+/// event stream, but matches ATIF's turn-shaped `StepObject`: a `ToolCall`
+/// and its result are one step, not two independent lines.
+pub(super) fn stream_new_steps(assembler: &StepAssembler, emitted: &mut usize, output_format: OutputFormat) {
+    let closed = assembler.closed_steps();
     if output_format == OutputFormat::Jsonl {
-        match serde_json::to_string(&record) {
-            Ok(line) => write_stdout(&format!("{line}\n")),
-            Err(e) => write_stderr(&format!(
-                "[sven:warn] Failed to serialize JSONL record: {e}"
-            )),
+        for step in &closed[*emitted..] {
+            match serde_json::to_string(step) {
+                Ok(line) => write_stdout(&format!("{line}\n")),
+                Err(e) => write_stderr(&format!("[sven:warn] Failed to serialize trace step: {e}")),
+            }
         }
     }
-    records.push(record);
+    *emitted = closed.len();
 }
 
 /// Per-step mutable state threaded through the event handler.
@@ -36,7 +46,11 @@ pub(super) struct StepState<'a> {
     pub tools_used: &'a mut Vec<String>,
     pub failed: &'a mut bool,
     pub collected: &'a mut Vec<Message>,
-    pub jsonl_records: &'a mut Vec<ConversationRecord>,
+    /// Turn assembler accumulating this run's `TraceStep`s.
+    pub assembler: &'a mut StepAssembler,
+    /// Number of `assembler.closed_steps()` already streamed to stdout (only
+    /// meaningful when `output_format == Jsonl`); see [`stream_new_steps`].
+    pub emitted_steps: &'a mut usize,
     pub consecutive_tool_errors: &'a mut u32,
     pub trace_level: u8,
     pub output_format: OutputFormat,
@@ -53,13 +67,14 @@ pub(super) struct StepState<'a> {
     pub max_tokens_budget: Option<u64>,
 }
 /// Process a single agent event: write diagnostics to stderr, collect
-/// messages into `collected` and `jsonl_records`, and track response text / tool usage.
+/// messages into `collected`, fold the event into `assembler`, and track
+/// response text / tool usage.
 pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
     let response_text = &mut *s.response_text;
     let tools_used = &mut *s.tools_used;
     let failed = &mut *s.failed;
     let collected = &mut *s.collected;
-    let jsonl_records = &mut *s.jsonl_records;
+    let assembler = &mut *s.assembler;
     let consecutive_tool_errors = &mut *s.consecutive_tool_errors;
     let trace_level = s.trace_level;
     let output_format = s.output_format;
@@ -78,12 +93,10 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         }
         AgentEvent::TextComplete(text) => {
             if !text.is_empty() {
-                collected.push(Message::assistant(&text));
-                emit_record(
-                    jsonl_records,
-                    ConversationRecord::Message(Message::assistant(&text)),
-                    output_format,
-                );
+                let msg = Message::assistant(&text);
+                collected.push(msg.clone());
+                assembler.push_message(&msg);
+                stream_new_steps(assembler, s.emitted_steps, output_format);
                 // Ensure trailing newline after streamed text in conversation format
                 if output_format == OutputFormat::Conversation && *sven_header_emitted {
                     if !text.ends_with('\n') {
@@ -132,11 +145,8 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
             }
             collected.push(msg.clone());
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Message(msg),
-                output_format,
-            );
+            assembler.push_message(&msg);
+            stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::ToolCallFinished {
             call_id,
@@ -179,11 +189,8 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             }
             let msg = Message::tool_result(&call_id, &output);
             collected.push(msg.clone());
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Message(msg),
-                output_format,
-            );
+            assembler.push_message(&msg);
+            stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::ContextCompacted {
             tokens_before,
@@ -199,16 +206,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             write_stderr(&format!(
                 "[sven:context:compacted:{strategy}] {tokens_before} → {tokens_after} tokens{turn_note}"
             ));
-            emit_record(
-                jsonl_records,
-                ConversationRecord::ContextCompacted {
-                    tokens_before,
-                    tokens_after,
-                    strategy: Some(strategy.to_string()),
-                    turn: Some(turn),
-                },
-                output_format,
-            );
+            let strategy_str = strategy.to_string();
+            assembler.push_context_compacted(tokens_before, tokens_after, Some(&strategy_str), Some(turn));
+            stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::Error(msg) => {
             write_stderr(&format!("[sven:agent:error] {msg}"));
@@ -275,11 +275,8 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         AgentEvent::ThinkingDelta(_) => {}
         AgentEvent::ThinkingComplete(content) => {
             write_stderr(&format!("[sven:thinking] {content}"));
-            emit_record(
-                jsonl_records,
-                ConversationRecord::Thinking { content },
-                output_format,
-            );
+            assembler.push_thinking(&content);
+            stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::ToolProgress { message, .. } => {
             write_stderr(&format!("[sven:progress] {message}"));
@@ -297,11 +294,8 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stderr(&format!("[sven:agent:aborted] partial={:?}", partial_text));
                 let msg = Message::assistant(&partial_text);
                 collected.push(msg.clone());
-                emit_record(
-                    jsonl_records,
-                    ConversationRecord::Message(msg),
-                    output_format,
-                );
+                assembler.push_message(&msg);
+                stream_new_steps(assembler, s.emitted_steps, output_format);
             } else {
                 write_stderr("[sven:agent:aborted]");
             }

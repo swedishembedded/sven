@@ -41,7 +41,6 @@ use sven_tools::ToolRegistry;
 /// exposes the exact method slice ([`submit`](Self::submit),
 /// [`seed_history`](Self::seed_history), [`set_mode`](Self::set_mode),
 /// [`set_model_config`](Self::set_model_config),
-/// [`current_system_message`](Self::current_system_message),
 /// [`build_tool_registry`](Self::build_tool_registry)) the runners drive.
 pub struct KernelAgent {
     config: Arc<Config>,
@@ -92,43 +91,6 @@ impl KernelAgent {
     /// legacy `Agent::seed_history` used once before the step loop.
     pub fn seed_history(&mut self, messages: Vec<Message>) {
         self.history = messages;
-    }
-
-    /// Reconstruct the exact system [`Message`] the run uses, for the
-    /// self-contained JSONL `system` record.
-    ///
-    /// This mirrors `sven_core::Agent::current_system_message`: the STABLE
-    /// portion of the composed prompt (volatile git/CI context is injected
-    /// per-request and deliberately excluded here so the record stays cacheable
-    /// and reproducible).
-    pub fn current_system_message(&self, mode: AgentMode) -> Message {
-        let git_note = self
-            .runtime_ctx
-            .git_context
-            .as_ref()
-            .and_then(|g| g.to_prompt_section());
-        let ci_note = self
-            .runtime_ctx
-            .ci_context
-            .as_ref()
-            .and_then(|c| c.to_prompt_section());
-        let ctx = sven_core::prompts::PromptContext {
-            project_root: self.runtime_ctx.project_root.as_deref(),
-            git_context: git_note.as_deref(),
-            project_context_file: self.runtime_ctx.project_context_file.as_deref(),
-            ci_context: ci_note.as_deref(),
-            append: self.runtime_ctx.append_system_prompt.as_deref(),
-            skills: self.runtime_ctx.skills.get(),
-            agents: self.runtime_ctx.agents.get(),
-            knowledge: self.runtime_ctx.knowledge.get(),
-            knowledge_drift_note: self.runtime_ctx.knowledge_drift_note.as_deref(),
-        };
-        let custom = self
-            .runtime_ctx
-            .system_prompt_override
-            .as_deref()
-            .or(self.config.agent.system_prompt.as_deref());
-        Message::system(sven_core::system_prompt(mode, custom, ctx.stable_only()))
     }
 
     /// Build a standalone [`ToolRegistry`] for tool-call replay
