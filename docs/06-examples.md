@@ -370,50 +370,46 @@ sven --headless --output-format compact \
 
 ## Example 13 - Export conversation traces for fine-tuning
 
-When building fine-tuning datasets from real agent interactions, use
-`--jsonl-output` to capture the complete conversation including system prompts:
+When building fine-tuning or RL datasets from real agent interactions, use
+`--output-trace` to capture the complete run as an
+[ATIF](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md)
+trajectory document:
 
 ```sh
-# Run a workflow and save the raw API trace (OpenAI format by default)
-sven --file code-review.md --jsonl-output traces/review-001.jsonl
-
-# Choose format explicitly
-sven --file code-review.md --jsonl-output traces/review-001.jsonl --jsonl-format openai
-sven --file code-review.md --jsonl-output traces/review-002.jsonl --jsonl-format anthropic
+# Run a workflow and save the trajectory
+sven --file code-review.md --output-trace traces/review-001.json
 
 # Inspect the trace
-cat traces/review-001.jsonl | head -3
-# {"role":"system","content":"You are Sven, an AI coding agent..."}
-# {"role":"user","content":"Review the authentication code..."}
-# {"role":"assistant","content":"I'll review the authentication code..."}
+jq '.steps[] | {source, message}' traces/review-001.json | head -20
 ```
 
-The JSONL output includes:
-- Complete system prompts with all injected context (project root, git info, CI context)
-- All user messages
-- Assistant responses (both text and tool calls in API-compatible format)
-- Tool results with proper `tool_call_id` linking
-- Everything in API-native format ready for fine-tuning
+The trajectory document includes:
+- Agent identity and model metadata (`agent`)
+- Every step in order: user messages, agent reasoning + text + tool calls,
+  and the paired tool observations, each tagged with its `source`
+- Per-step and aggregate token/cost metrics (`metrics`, `final_metrics`)
+- Everything needed for debugging, visualization, SFT, or RL pipelines,
+  directly ATIF-spec-compliant so it's consumable by any ATIF-aware tooling
 
 Validate and analyze the trace:
 
 ```sh
 # Validate JSON syntax
-python3 -m json.tool < traces/review-001.jsonl > /dev/null && echo "Valid"
+jq empty traces/review-001.json && echo "Valid"
 
-# Count messages by role
-grep -o '"role":"[^"]*"' traces/review-001.jsonl | sort | uniq -c
+# Count steps by source
+jq '[.steps[].source] | group_by(.) | map({(.[0]): length}) | add' traces/review-001.json
 
-# Extract just the system prompt
-head -1 traces/review-001.jsonl | jq -r '.content' | less
+# Extract just the user/agent text exchange
+jq -r '.steps[] | select(.message != "") | "\(.source): \(.message)"' traces/review-001.json | less
 
 # Collect multiple traces for a dataset
 for workflow in workflows/*.md; do
     name=$(basename "$workflow" .md)
-    sven --file "$workflow" --jsonl-output "dataset/$name.jsonl" --jsonl-format openai
+    sven --file "$workflow" --output-trace "dataset/$name.json"
 done
 
-# Verify format compatibility
-head -1 dataset/review-001.jsonl | jq 'has("role") and has("content")'
+# Verify schema compatibility
+jq 'has("schema_version") and has("agent") and has("steps")' dataset/review-001.json
 # Should output: true
 ```

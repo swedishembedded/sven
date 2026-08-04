@@ -303,34 +303,26 @@ polluting stdout, so you can still capture the full conversation on stdout:
 sven --file review.md --output-last-message summary.txt > full-review.md
 ```
 
-### JSONL Trace Output
+### ATIF Trace Output
 
-Save the complete raw conversation trace in JSONL format (one message per line).
-This includes system prompts, all messages, tool calls, and tool results in
-API-compatible format suitable for creating fine-tuning datasets:
+Save the complete conversation trace as a standards-compliant [ATIF](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md)
+trajectory document — steps, reasoning, tool calls, observations, and token
+metrics, directly consumable by Harbor-style debugging, visualization, SFT,
+and RL pipelines:
 
 ```bash
-# Save complete trace for fine-tuning (OpenAI format by default)
-sven --file workflow.md --jsonl-output trace.jsonl
-
-# Specify format explicitly
-sven --file workflow.md --jsonl-output trace.jsonl --jsonl-format openai
-sven --file workflow.md --jsonl-output trace.jsonl --jsonl-format anthropic
-sven --file workflow.md --jsonl-output trace.jsonl --jsonl-format raw
+# Save the complete trajectory
+sven --file workflow.md --output-trace trace.json
 
 # Works with any run mode
-sven --headless "analyze the code" --jsonl-output analysis-trace.jsonl
-sven --file conversation.md --conversation --jsonl-output continued-trace.jsonl
+sven --headless "analyze the code" --output-trace analysis-trace.json
+sven --file conversation.md --conversation --output-trace continued-trace.json
 ```
 
-**Available formats:**
-- `openai` (default) - Compatible with OpenAI, Azure OpenAI, and most fine-tuning APIs. Uses `tool_calls` array format.
-- `anthropic` - Claude-specific format with content blocks
-- `raw` - Sven's internal format (for debugging or custom processing)
-
-The JSONL file contains one JSON object per line, where each object represents
-a message with its role and content. Unlike markdown conversation files, system
-messages are **included** so you get the complete prompt and response sequence.
+The trace file is a single pretty-printed JSON document (an ATIF `Trajectory`
+object), not line-delimited — see
+**[docs/technical/pipe-composition.md](technical/pipe-composition.md)** for
+the full field reference.
 
 ### Redirect by format
 
@@ -584,9 +576,9 @@ sven 'list all public APIs' | sven 'write tests for each API listed above'
 sven 'find null-pointer bugs' --output-format compact \
   | sven 'fix each of the following bugs'
 
-# Multi-stage pipeline with full-fidelity JSONL handoff
-sven 'stage 1' --output-jsonl /tmp/run.jsonl
-sven 'stage 2' --load-jsonl  /tmp/run.jsonl
+# Multi-stage pipeline with full-fidelity ATIF trace handoff
+sven 'stage 1' --output-trace /tmp/run.json
+sven 'stage 2' --load-trace  /tmp/run.json
 
 # Pending-user relay: last ## User in output drives the next agent
 sven --file plan-and-relay.md | sven
@@ -626,8 +618,9 @@ Frontmatter takes precedence over config file.
 | `--model MODEL` | config | Model override (e.g. `anthropic/claude-opus-4-5`) |
 | `--output-format FMT` | `conversation` | `conversation`, `compact`, or `json` |
 | `--output-last-message PATH` | - | Write final agent response to a file |
-| `--jsonl-output PATH` | - | Write complete raw trace as JSONL (includes system prompts) |
-| `--jsonl-format FMT` | `openai` | JSONL format: `openai`, `anthropic`, or `raw` |
+| `--output-trace PATH` | - | Write the complete ATIF trajectory document |
+| `--load-trace PATH` | - | Load history from a saved ATIF trajectory |
+| `--trace PATH` | - | Combined `--load-trace PATH --output-trace PATH` |
 | `--artifacts-dir DIR` | - | Save per-step artifacts to directory |
 | `--var KEY=VALUE` | - | Template variable (repeatable) |
 | `--step-timeout SECS` | 0 (none) | Per-step wall-clock timeout |

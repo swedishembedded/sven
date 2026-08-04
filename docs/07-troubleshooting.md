@@ -341,11 +341,12 @@ ls -t ~/.local/share/sven/history/ | head -5
 cat ~/.local/share/sven/history/<timestamp>_<slug>.md
 ```
 
-To capture the raw API trace for debugging or fine-tuning, use `--jsonl-output`:
+To capture the complete trajectory for debugging or fine-tuning, use
+`--output-trace` (writes a single ATIF trajectory document):
 
 ```sh
-sven --file workflow.md --jsonl-output trace.jsonl
-cat trace.jsonl | python3 -m json.tool | less
+sven --file workflow.md --output-trace trace.json
+jq . trace.json | less
 ```
 
 ---

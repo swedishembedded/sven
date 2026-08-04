@@ -78,6 +78,7 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-image` | Image reading helpers |
 | `sven-audio` | WAV decoding, resampling, and audio data-URL helpers |
 | `sven-input` | ATIF trajectory-backed session store (`trace_session`), legacy YAML chat import, markdown history, conversation parse/render |
+| **`trace`** | **ATIF v1.7 trajectory format** (package name `trace`, deliberately without the `sven-` prefix): `Trajectory`/`TraceStep`/`AgentProfile`/etc. model, spec validation (`validate_trajectory`), atomic whole-document JSON persistence with concurrent-modification detection, header-only fast reads, NDJSON step streaming. Zero dependencies on other sven crates - `sven-input::trace_session` is the sole consumer. |
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
 | `sven-graph` | Graph DSL (`Graph`/`NodeData`/`EdgeData`/`GuardExpr`/`EffectTmpl`), `GraphBuilder`, guard/template evaluators, `NativeRegistry` |
 | `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `GraphMachine`, `ModeRegistry`, `loop_core`; `AgentEvent` + the kernel→AgentEvent adapter |

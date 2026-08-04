@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`trace`**: new crate (package name `trace`, deliberately without the `sven-` prefix) implementing the [ATIF v1.7](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md) agent-trajectory format end to end — full schema (multimodal content, subagent trajectory embedding/refs, context-management convention, RL-oriented token/logprob fields), spec validation, atomic whole-document JSON persistence with concurrent-modification detection, header-only fast reads for listing, and NDJSON step streaming.
+- **sven-input**: `trace_session` module — ATIF-backed session storage (save/load/list) and bidirectional turn assembly between `sven_model::Message` streams and ATIF `TraceStep`s, replacing the previous YAML `ChatDocument`/JSONL `ConversationRecord` formats as the canonical persistence layer for headless runs, the TUI, and the GUI.
+
+### Changed
+- **BREAKING (sven-ci, CLI)**: `--jsonl`/`--load-jsonl`/`--output-jsonl` and `--chat`/`--load-chat`/`--output-chat` are replaced by a single `--trace`/`--load-trace`/`--output-trace` flag family backed by ATIF. `--output-format json` now emits the full ATIF trajectory document instead of the old bespoke JSON summary; `--output-format jsonl` streams ATIF `TraceStep` objects (one per line) instead of the old `ConversationRecord` shape. The auto-log path is now `.sven/logs/<timestamp>.atif.json` (a single JSON document) instead of `.sven/logs/<timestamp>.jsonl` (an append-only line stream).
+- **BREAKING (sven-tui, sven-gui)**: interactive session storage moved from `~/.local/share/sven/chats/*.yaml` to ATIF trajectory documents under `~/.local/share/sven/sessions/*.json`. Pre-existing `.yaml` sessions are still discoverable and openable (read-only import); once reopened, subsequent saves write the new ATIF format.
+- All crate directories dropped the `sven-` prefix (`crates/sven-hsm` → `crates/hsm`, etc.); Cargo package names are unchanged (`sven-hsm` still depends on `sven-hsm = { path = "../hsm" }`), so this does not affect downstream consumers of the published crates.
+
+### Removed
+- **sven-ci**: deleted the dead, never-wired `jsonl_export`/`write_jsonl_trace` fine-tuning-export module (zero callers outside its own tests).
 - **E2E (sven-cloud)**: firmware wedge scenario (`crates/cloud/tests/e2e_firmware.rs`, bats `tests/e2e/cloud/02_firmware_wedge.bats`) — a companion exposing `shell` + the GDB tool suite completes a build → test → debug task end-to-end through the cloud against a hermetic in-process GDB remote-protocol target (real `gdb-multiarch`, no hardware), proving the "local hands with real tooling" wedge; includes an adversarial test that a hijacked control plane cannot repurpose the local hands past the companion allowlist/jail.
 - **Companion (sven-companion)**: `CompanionPolicy` now allowlists command-less `ExecuteShell` tools (the GDB session tools `gdb_connect`/`gdb_stop`/…) by **tool name** instead of by shell command line, so a customer can opt into them explicitly (`gdb_connect`, `gdb_*`) while deny-by-default still holds.
 - **Telegram (sven-node)**: scaffolding for Telegram integration.
