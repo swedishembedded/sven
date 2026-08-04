@@ -43,6 +43,8 @@ members = [
     "crates/cloud",
     # LLM metering: pricing catalog, credit ledger, statements
     "crates/metering",
+    # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
+    "crates/trace",
 ]
 
 [workspace.dependencies]
