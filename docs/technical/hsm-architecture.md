@@ -55,7 +55,7 @@ testable control flow with intelligence injected at well-defined points.
 
 Events are the sole input to a machine. User messages, LLM/loop completions,
 tool results, approvals, and timers all become a typed `Event`
-(`sven-hsm/src/event.rs`) before they touch the machine. Payloads that are
+(`hsm/src/event.rs`) before they touch the machine. Payloads that are
 domain-specific are carried as opaque `serde_json::Value` so the kernel stays
 domain-agnostic.
 
@@ -89,7 +89,7 @@ records and transition-coverage assertions.
 
 ## Effects - the only output
 
-Transitions return `Vec<Effect>` (`sven-hsm/src/effect.rs`). An effect is pure
+Transitions return `Vec<Effect>` (`hsm/src/effect.rs`). An effect is pure
 data, not a function call; executors perform the work *after* the machine has
 advanced. This keeps transition functions pure: `(state, event) → (new_state,
 effects)`.
@@ -119,7 +119,7 @@ a capability, so only they are gated by the permission check.
 ## Permission policy - the single choke point
 
 Before any effect in a batch is executed, `validate_effects_are_allowed`
-(`sven-hsm/src/permissions.rs`) checks it against the active `PermissionPolicy`.
+(`hsm/src/permissions.rs`) checks it against the active `PermissionPolicy`.
 The policy is keyed by the `Debug` label of the current state, so it works for
 any machine's opaque state type without the kernel knowing the concrete type.
 
@@ -154,7 +154,7 @@ for every tool call in every mode - there is no longer a separate
 
 ## Audit and replay - the event-sourcing spine
 
-Every dispatch appends exactly one `AuditRecord` (`sven-hsm/src/audit.rs`) to
+Every dispatch appends exactly one `AuditRecord` (`hsm/src/audit.rs`) to
 the `Context`. A record captures `from_state`, `to_state`, the `EventKind`, the
 payload-free `EffectKind`s emitted, an optional rationale, and an `AuditOutcome`
 (`Transition`, `InternalHandled`, `Ignored`, or `Rejected`). Rejected batches
@@ -175,7 +175,7 @@ an append-only JSONL log on the `PersistAudit` effect.
 
 ## Runtime - the Active Object
 
-The kernel runs inside a tokio **Active Object** (`sven-hsm/src/runtime.rs`): a
+The kernel runs inside a tokio **Active Object** (`hsm/src/runtime.rs`): a
 single consumer task that owns the machine and drains an `mpsc` event queue.
 That single task is what guarantees **Run-to-Completion (RTC)**: one event is
 fully processed (dispatched, effects validated, effects executed) before the
@@ -223,7 +223,7 @@ missed.
 
 ## Dispatch algorithm - two phases and a real LCA
 
-Dispatch (`sven-hsm/src/dispatch.rs`) is a faithful implementation of Samek's
+Dispatch (`hsm/src/dispatch.rs`) is a faithful implementation of Samek's
 two-phase HSM algorithm (from *Practical UML Statecharts in C/C++*), in pure
 Rust:
 
@@ -260,7 +260,7 @@ collected in execution order into a single `Vec<Effect>` returned by
 
 ## The two data planes
 
-A session is driven by two strictly separated planes (`sven-hsm/src/observation.rs`):
+A session is driven by two strictly separated planes (`hsm/src/observation.rs`):
 
 | Plane | Direction | Transport | Purpose |
 |-------|-----------|-----------|---------|
@@ -300,11 +300,11 @@ channel after every dispatch (`RuntimeStatus`: `state_label`, `done`,
 
 ## Machines and the `ModeRegistry`
 
-A `Machine` (`sven-hsm/src/machine.rs`) describes a state hierarchy: its states
+A `Machine` (`hsm/src/machine.rs`) describes a state hierarchy: its states
 (`type State`), each state's `superstate`, and a single `dispatch_state`
 handler. The kernel's `Hsm<M>` drives any `Machine` generically.
 
-`ModeRegistry` (`sven-core/src/mode.rs`) maps a mode **string** to a machine
+`ModeRegistry` (`core/src/mode.rs`) maps a mode **string** to a machine
 factory. This is the authoritative wiring; `RuntimeBuilder` looks up the machine
 by the mode string and builds an `ErasedRuntime` around it.
 
@@ -327,7 +327,7 @@ Mode selection at startup (see `src/main.rs`) is, in priority order:
 
 ### `ReactiveAgentMachine` (modes `agent` / `reactive` / `chat`)
 
-The default streaming coding agent (`sven-core/src/machines/reactive_agent.rs`).
+The default streaming coding agent (`core/src/machines/reactive_agent.rs`).
 A turn-lifecycle machine driven by the shared `loop_core` state handlers:
 
 ```
@@ -349,7 +349,7 @@ returns to `Idle`.
 ### `SdlcMachine` (mode `sdlc`)
 
 The deliberation-driven software-development lifecycle machine
-(`sven-core/src/machines/sdlc/`). Every phase is a *deliberation*: the state
+(`core/src/machines/sdlc/`). Every phase is a *deliberation*: the state
 issues one comprehensive instruction on its own append-only conversation thread
 with a state-scoped tool subset, and the model returns a structured decision
 whose `status` drives the transition.
@@ -379,7 +379,7 @@ Fan-out](parallel-submachines.md)**.
 
 Each executor implements `EffectExecutor` and performs the I/O for a subset of
 effects, streaming `UiEvent`s outward and posting result `Event`s inward. The
-`CompositeExecutor` (`sven-executors/src/composite.rs`), built by
+`CompositeExecutor` (`executors/src/composite.rs`), built by
 `RuntimeBuilder`, routes each effect to the right sub-executor.
 
 | Executor | Effects handled |
@@ -406,7 +406,7 @@ no-op for that legacy path.
 
 The kernel supports two forms of composition:
 
-- **In-process child (`Submachine<P>`, `sven-hsm/src/submachine.rs`).** A parent
+- **In-process child (`Submachine<P>`, `hsm/src/submachine.rs`).** A parent
   holds an optional active child behind the object-safe `ErasedMachine` trait.
   While a child is active, events route to it first and bubble unhandled events
   to the parent; on child completion the parent receives
@@ -461,7 +461,7 @@ calls, tool results), `ResponseEvent` (the streamed `TextDelta` /
 
 ## Tools (`sven-tools`)
 
-`ToolRegistry` (`sven-tools/src/registry.rs`) holds all available tools behind a
+`ToolRegistry` (`tools/src/registry.rs`) holds all available tools behind a
 `RwLock` (so MCP tools can be swapped at runtime). Beyond execution it provides
 the **tool-subset API** the `SdlcMachine` relies on:
 
@@ -479,7 +479,7 @@ to keep provider cache breakpoints stable. `execute` honours an optional
 
 ## Multi-session supervisor and `RuntimeBuilder`
 
-`RuntimeBuilder` (`sven-bootstrap/src/runtime_builder.rs`) is the per-session
+`RuntimeBuilder` (`bootstrap/src/runtime_builder.rs`) is the per-session
 factory. It looks up the machine from the `ModeRegistry`, builds the model
 provider, tool registry, and MCP manager, assembles the `CompositeExecutor`
 (wiring `TurnExecutor` for all modes; for `sdlc` also installs `SdlcChildSpawner`),
@@ -520,7 +520,7 @@ event source:
 
 ## CI / headless mode
 
-`RuntimeRunner` (`sven-ci/src/runner/runtime_runner.rs`) drives the kernel with
+`RuntimeRunner` (`ci/src/runner/runtime_runner.rs`) drives the kernel with
 no UI. It builds a `SessionBundle` (mapping the caller's mode to a registered
 kernel mode - coding/plan/research all resolve to `agent`, `chat`→`chat`,
 `sdlc`→`sdlc`), **auto-approves every human gate** (questions get an empty
@@ -578,8 +578,8 @@ E2E bats tests use `--model mock` so no real API key is required.
   isolated child kernels, `TaskMachine`, `SdlcChildSpawner`, and the Execution
   fan-out/aggregation flow.
 - Miro Samek, *Practical UML Statecharts in C/C++, 2nd ed.* - the dispatch
-  algorithm in `sven-hsm/src/dispatch.rs` follows its two-phase design.
-- [sven-hsm tests](../../crates/sven-hsm/tests/) - LCA ordering, permission
+  algorithm in `hsm/src/dispatch.rs` follows its two-phase design.
+- [sven-hsm tests](../../crates/hsm/tests/) - LCA ordering, permission
   rejection, replay equality, virtual-time timeouts, and child-spawner fan-out.
-- [SdlcMachine source](../../crates/sven-core/src/machines/sdlc/) ·
-  [ReactiveAgentMachine source](../../crates/sven-core/src/machines/reactive_agent.rs)
+- [SdlcMachine source](../../crates/core/src/machines/sdlc/) ·
+  [ReactiveAgentMachine source](../../crates/core/src/machines/reactive_agent.rs)

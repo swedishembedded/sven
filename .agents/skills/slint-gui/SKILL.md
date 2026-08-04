@@ -3,17 +3,17 @@ name: slint-gui
 description: |
     Use when creating, refactoring, or debugging Slint UI in sven-gui. Covers .slint markup,
     Theme usage, Rust bindings, callbacks, and sven-specific layout patterns. Load for tasks
-    involving crates/sven-gui, .slint files, Slint components, or sven desktop UI changes.
+    involving crates/gui, .slint files, Slint components, or sven desktop UI changes.
 ---
 
 # Slint GUI - sven-gui
 
 ## Location and structure
 
-Slint UI lives in `crates/sven-gui/`:
+Slint UI lives in `crates/gui/`:
 
 ```
-crates/sven-gui/
+crates/gui/
 ├── build.rs              # Compiles ui/main-window.slint
 ├── src/
 │   └── lib.rs            # Rust bridge: instantiates MainWindow, wires callbacks

@@ -560,7 +560,7 @@ model:
 ```
 
 For providers not yet in the registry, this allows immediate use via the OpenAI
-compatibility layer.  See [DRIVERS.md](../crates/sven-model/DRIVERS.md) for how
+compatibility layer.  See [DRIVERS.md](../crates/model/DRIVERS.md) for how
 to contribute a proper driver with registry metadata.
 
 ---

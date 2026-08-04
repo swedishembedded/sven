@@ -36,7 +36,7 @@ back to the parent for append-only aggregation.
 ### `ChildSpawner`
 
 The kernel is machine-agnostic, so it cannot build a concrete child from an
-opaque descriptor. The `ChildSpawner` trait (`sven-hsm/src/runtime.rs`) bridges
+opaque descriptor. The `ChildSpawner` trait (`hsm/src/runtime.rs`) bridges
 that gap:
 
 ```rust,ignore
@@ -105,7 +105,7 @@ flowchart TD
 
 ## The `TaskMachine`
 
-`TaskMachine` (`sven-core/src/machines/sdlc/task.rs`) is the one-shot child the
+`TaskMachine` (`core/src/machines/sdlc/task.rs`) is the one-shot child the
 SDLC parent fans out to. It uses the `loop_core` state handlers to run a
 kernel-mediated multi-round turn loop for a single task on its own isolated
 `task` conversation thread, then completes:
@@ -134,7 +134,7 @@ a terminal state with a harvestable `out` fact.
 
 ## The production `SdlcChildSpawner`
 
-`SdlcChildSpawner` (`sven-bootstrap/src/child_spawner.rs`) is the production
+`SdlcChildSpawner` (`bootstrap/src/child_spawner.rs`) is the production
 `ChildSpawner` for SDLC fan-out. For each task it builds a **fully isolated child
 kernel**:
 
@@ -166,7 +166,7 @@ spawner never emits orphaned `InstantiateSubmachine` effects.
 ## The Execution fan-out / aggregation flow
 
 Fan-out lives entirely in the `Execution` state of the `SdlcMachine`
-(`sven-core/src/machines/sdlc/mod.rs`):
+(`core/src/machines/sdlc/mod.rs`):
 
 1. **Decide to fan out.** On `Entry`, Execution reads `plan_payload` and extracts
    its `tasks` array (`tasks_of`). `should_fan_out` is true when there are **≥2
@@ -214,18 +214,18 @@ or recovery phases rather than relied upon to pause inside a child.
 
 ## Source of truth in code
 
-- `sven-hsm/src/runtime.rs` - `ChildSpawner`, `spawn_children`, the child
+- `hsm/src/runtime.rs` - `ChildSpawner`, `spawn_children`, the child
   registry, `note_child_completion`, `spawn_with_children`.
-- `sven-hsm/src/event.rs` - `InternalEvent::SubmachineCompleted { machine, result }`.
-- `sven-hsm/src/submachine.rs` - the synchronous in-process `Submachine<P>` path.
-- `sven-hsm/tests/child_spawner.rs` - proves concurrent fan-out and result
+- `hsm/src/event.rs` - `InternalEvent::SubmachineCompleted { machine, result }`.
+- `hsm/src/submachine.rs` - the synchronous in-process `Submachine<P>` path.
+- `hsm/tests/child_spawner.rs` - proves concurrent fan-out and result
   aggregation (peak concurrent children ≥ 2; summed child results).
-- `sven-core/src/machines/loop_core.rs` - shared `Generating` / `RunningTools` /
+- `core/src/machines/loop_core.rs` - shared `Generating` / `RunningTools` /
   `AwaitingApproval` state handlers used by `TaskMachine` and `SdlcMachine`.
-- `sven-core/src/machines/sdlc/task.rs` - `TaskMachine`.
-- `sven-core/src/machines/sdlc/mod.rs` - the Execution fan-out/aggregation logic
+- `core/src/machines/sdlc/task.rs` - `TaskMachine`.
+- `core/src/machines/sdlc/mod.rs` - the Execution fan-out/aggregation logic
   (`tasks_of`, `should_fan_out`, `merge_child_results`).
-- `sven-bootstrap/src/child_spawner.rs` - `SdlcChildSpawner` (uses `TurnExecutor`
+- `bootstrap/src/child_spawner.rs` - `SdlcChildSpawner` (uses `TurnExecutor`
   + `ToolExecutor` with tightened child policy).
-- `sven-bootstrap/src/runtime_builder.rs` - installs the spawner and the
+- `bootstrap/src/runtime_builder.rs` - installs the spawner and the
   `parallel_execution` fact in `sdlc` mode.

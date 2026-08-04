@@ -2,47 +2,47 @@
 resolver = "2"
 members = [
     ".",
-    "crates/sven-hsm",
-    "crates/sven-config",
-    "crates/sven-model",
-    "crates/sven-image",
+    "crates/hsm",
+    "crates/config",
+    "crates/model",
+    "crates/image",
     "crates/sven-audio",
-    "crates/sven-input",
-    "crates/sven-tools",
-    "crates/sven-core",
-    "crates/sven-runtime",
-    "crates/sven-bootstrap",
-    "crates/sven-ci",
-    "crates/sven-tui",
-    "crates/sven-frontend",
-    "crates/sven-gui",
+    "crates/input",
+    "crates/tools",
+    "crates/core",
+    "crates/runtime",
+    "crates/bootstrap",
+    "crates/ci",
+    "crates/tui",
+    "crates/frontend",
+    "crates/gui",
     "crates/sven-p2p",
     "crates/sven-node",
     "crates/sven-node-client",
-    "crates/sven-mcp",
-    "crates/sven-mcp-client",
-    "crates/sven-acp",
-    "crates/sven-team",
+    "crates/mcp",
+    "crates/mcp-client",
+    "crates/acp",
+    "crates/team",
     # New integration crates
-    "crates/sven-channels",
-    "crates/sven-scheduler",
-    "crates/sven-integrations",
-    "crates/sven-memory",
+    "crates/channels",
+    "crates/scheduler",
+    "crates/integrations",
+    "crates/memory",
     # HSM phase 2 crates
-    "crates/sven-llm",
-    "crates/sven-executors",
+    "crates/llm",
+    "crates/executors",
     # Graph DSL
-    "crates/sven-graph",
+    "crates/graph",
     # Transport-agnostic operator control protocol + kernel mappings
-    "crates/sven-control",
+    "crates/control",
     # Cloud tether protocol (control plane <-> companion)
-    "crates/sven-wire",
+    "crates/wire",
     # Customer-side companion binary (remote hands)
-    "crates/sven-companion",
+    "crates/companion",
     # Cloud control plane: companion registry + tether routing
-    "crates/sven-cloud",
+    "crates/cloud",
     # LLM metering: pricing catalog, credit ledger, statements
-    "crates/sven-metering",
+    "crates/metering",
 ]
 
 [workspace.dependencies]
@@ -106,26 +106,26 @@ name = "sven"
 path = "src/main.rs"
 
 [dependencies]
-sven-config      = { path = "crates/sven-config" }
-sven-model       = { path = "crates/sven-model" }
-sven-input       = { path = "crates/sven-input" }
-sven-tools       = { path = "crates/sven-tools" }
-sven-core        = { path = "crates/sven-core" }
-sven-bootstrap   = { path = "crates/sven-bootstrap" }
-sven-ci          = { path = "crates/sven-ci" }
-sven-team        = { path = "crates/sven-team" }
-sven-tui         = { path = "crates/sven-tui" }
+sven-config      = { path = "crates/config" }
+sven-model       = { path = "crates/model" }
+sven-input       = { path = "crates/input" }
+sven-tools       = { path = "crates/tools" }
+sven-core        = { path = "crates/core" }
+sven-bootstrap   = { path = "crates/bootstrap" }
+sven-ci          = { path = "crates/ci" }
+sven-team        = { path = "crates/team" }
+sven-tui         = { path = "crates/tui" }
 sven-node        = { path = "crates/sven-node" }
 sven-p2p         = { path = "crates/sven-p2p" }
 sven-node-client = { path = "crates/sven-node-client" }
-sven-mcp         = { path = "crates/sven-mcp" }
-sven-acp         = { path = "crates/sven-acp" }
-sven-gui         = { path = "crates/sven-gui" }
-sven-frontend    = { path = "crates/sven-frontend" }
+sven-mcp         = { path = "crates/mcp" }
+sven-acp         = { path = "crates/acp" }
+sven-gui         = { path = "crates/gui" }
+sven-frontend    = { path = "crates/frontend" }
 # Cloud control plane (`sven cloud` subcommand): tenants, tokens, tether, gating.
-sven-cloud       = { path = "crates/sven-cloud" }
+sven-cloud       = { path = "crates/cloud" }
 # Pricing catalog + credit ledger backing `sven cloud session`'s gate.
-sven-metering    = { path = "crates/sven-metering" }
+sven-metering    = { path = "crates/metering" }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
@@ -146,11 +146,11 @@ chrono      = { workspace = true }
 [dev-dependencies]
 serde_json       = { workspace = true }
 uuid             = { workspace = true }
-sven-bootstrap   = { path = "crates/sven-bootstrap" }
-sven-tools       = { path = "crates/sven-tools" }
-sven-config      = { path = "crates/sven-config" }
-sven-model       = { path = "crates/sven-model" }
-sven-channels    = { path = "crates/sven-channels" }
+sven-bootstrap   = { path = "crates/bootstrap" }
+sven-tools       = { path = "crates/tools" }
+sven-config      = { path = "crates/config" }
+sven-model       = { path = "crates/model" }
+sven-channels    = { path = "crates/channels" }
 async-trait      = { workspace = true }
 tokio            = { workspace = true }
 tempfile         = { workspace = true }

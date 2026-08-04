@@ -1,0 +1,38 @@
+[package]
+name    = "sven-tools"
+version = "1.1.0"
+edition = "2021"
+
+[dependencies]
+sven-config  = { path = "../config" }
+sven-hsm     = { path = "../hsm" }
+sven-image   = { path = "../image" }
+sven-audio   = { path = "../sven-audio" }
+sven-model   = { path = "../model" }
+sven-runtime = { path = "../runtime" }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+serde_yaml  = { workspace = true }
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+tracing     = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+regex       = { workspace = true }
+reqwest     = { workspace = true }
+html2text   = { workspace = true }
+async-recursion = { workspace = true }
+dirs        = { workspace = true }
+similar     = { workspace = true }
+walkdir     = { workspace = true }
+memmap2     = { workspace = true }
+tempfile    = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc        = { workspace = true }
+gdbmi       = "0.0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

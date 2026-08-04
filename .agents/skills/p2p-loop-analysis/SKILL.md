@@ -24,8 +24,8 @@ A loop requires an infinite message sequence. All invariants make that impossibl
 
 ## Unified Hop Budget
 
-All three channels share **one constant**: `MAX_HOP_DEPTH = 4` in `sven-node/src/tools.rs`
-(must equal `MAX_ROOM_POST_DEPTH = 4` in `sven-p2p/src/protocol/types.rs`).
+All three channels share **one constant**: `MAX_HOP_DEPTH = 4` in `node/src/tools.rs`
+(must equal `MAX_ROOM_POST_DEPTH = 4` in `p2p/src/protocol/types.rs`).
 
 When an agent **switches protocols**, the accumulated depth carries forward:
 
@@ -46,13 +46,13 @@ This means the combined chain across any number of protocol switches cannot exce
 Read these files in order:
 
 ```text
-crates/sven-p2p/src/protocol/types.rs     - wire types; MAX_ROOM_POST_DEPTH
-crates/sven-node/src/tools.rs             - MAX_HOP_DEPTH, SessionDepthTracker, all tool impls
-crates/sven-node/src/agent_builder.rs     - how depth handles are initialised per agent type
-crates/sven-node/src/node.rs              - run_task_executor, run_session_executor,
+crates/p2p/src/protocol/types.rs     - wire types; MAX_ROOM_POST_DEPTH
+crates/node/src/tools.rs             - MAX_HOP_DEPTH, SessionDepthTracker, all tool impls
+crates/node/src/agent_builder.rs     - how depth handles are initialised per agent type
+crates/node/src/node.rs              - run_task_executor, run_session_executor,
                                             execute_inbound_task, execute_inbound_session_message,
                                             build_session_agent
-crates/sven-p2p/src/node.rs               - on_gossipsub_message (room depth guard)
+crates/p2p/src/node.rs               - on_gossipsub_message (room depth guard)
 ```
 
 For each handler that sends an outbound message, ask:
@@ -181,14 +181,14 @@ Apply this checklist when adding any new `P2pRequest` variant or auto-responder 
 
 | Symbol | Location | Purpose |
 | ------ | -------- | ------- |
-| `MAX_HOP_DEPTH` | `crates/sven-node/src/tools.rs` | Unified cap - all channels share this budget |
-| `MAX_ROOM_POST_DEPTH` | `crates/sven-p2p/src/protocol/types.rs` | Must equal `MAX_HOP_DEPTH`; enforced in `on_gossipsub_message` |
-| `MAX_CONCURRENT_TASKS` | `crates/sven-node/src/node.rs` | Concurrency semaphore (separate from depth) |
-| `SessionDepthTracker` | `crates/sven-node/src/tools.rs` | Per-peer session depth; `default_depth` seeds cross-protocol budget |
-| `RoomDepthHandle` | `crates/sven-node/src/tools.rs` | Room post depth; set to incoming depth before reactive agent runs |
-| `SessionRole::User` / `::Assistant` | `crates/sven-p2p/src/protocol/types.rs` | Session invariant signal |
-| `TaskRequest::depth` / `::chain` | `crates/sven-p2p/src/protocol/types.rs` | Task invariant fields |
-| `P2pHandle::local_peer_id_string()` | `crates/sven-p2p/src/node.rs` | Returns `""` until OnceLock set |
+| `MAX_HOP_DEPTH` | `crates/node/src/tools.rs` | Unified cap - all channels share this budget |
+| `MAX_ROOM_POST_DEPTH` | `crates/p2p/src/protocol/types.rs` | Must equal `MAX_HOP_DEPTH`; enforced in `on_gossipsub_message` |
+| `MAX_CONCURRENT_TASKS` | `crates/node/src/node.rs` | Concurrency semaphore (separate from depth) |
+| `SessionDepthTracker` | `crates/node/src/tools.rs` | Per-peer session depth; `default_depth` seeds cross-protocol budget |
+| `RoomDepthHandle` | `crates/node/src/tools.rs` | Room post depth; set to incoming depth before reactive agent runs |
+| `SessionRole::User` / `::Assistant` | `crates/p2p/src/protocol/types.rs` | Session invariant signal |
+| `TaskRequest::depth` / `::chain` | `crates/p2p/src/protocol/types.rs` | Task invariant fields |
+| `P2pHandle::local_peer_id_string()` | `crates/p2p/src/node.rs` | Returns `""` until OnceLock set |
 
 ---
 

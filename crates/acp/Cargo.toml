@@ -1,0 +1,32 @@
+[package]
+name        = "sven-acp"
+version     = "2.0.0"
+edition     = "2021"
+description = "ACP (Agent Client Protocol) server for sven - exposes sven as an ACP-compliant agent"
+license     = "Apache-2.0"
+
+[dependencies]
+sven-core        = { path = "../core" }
+sven-tools       = { path = "../tools" }
+sven-hsm         = { path = "../hsm" }
+sven-bootstrap   = { path = "../bootstrap" }
+sven-config      = { path = "../config" }
+sven-model       = { path = "../model" }
+sven-node        = { path = "../sven-node" }
+anyhow           = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+tokio            = { workspace = true }
+tracing          = { workspace = true }
+uuid             = { workspace = true }
+async-trait      = { workspace = true }
+futures          = { workspace = true }
+agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"] }
+sven-node-client = { path = "../sven-node-client" }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tokio-util       = { version = "0.7", features = ["compat"] }
+rustls           = { workspace = true }
+futures-util     = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+[dev-dependencies]
+tokio  = { workspace = true }

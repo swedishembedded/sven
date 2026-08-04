@@ -1,0 +1,41 @@
+[package]
+name    = "sven-tui"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+sven-config    = { path = "../config" }
+sven-model     = { path = "../model" }
+sven-input     = { path = "../input" }
+sven-tools     = { path = "../tools" }
+sven-core      = { path = "../core" }
+sven-bootstrap = { path = "../bootstrap" }
+sven-mcp-client = { path = "../mcp-client" }
+sven-runtime   = { path = "../runtime" }
+sven-frontend  = { path = "../frontend" }
+anyhow      = { workspace = true }
+tokio       = { workspace = true }
+futures     = { workspace = true }
+tracing     = { workspace = true }
+ratatui     = { workspace = true }
+crossterm   = { workspace = true }
+unicode-width = { workspace = true }
+pulldown-cmark = { workspace = true }
+regex       = { workspace = true }
+syntect     = { workspace = true }
+serde_json  = { workspace = true }
+serde       = { workspace = true }
+nvim-rs     = { workspace = true }
+rmpv        = { workspace = true }
+async-trait = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+base64      = { workspace = true }
+rand        = "0.8"
+rustls      = { workspace = true }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
+notify       = { workspace = true }
+
+[dev-dependencies]
+tempfile     = { workspace = true }

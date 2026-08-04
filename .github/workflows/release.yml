@@ -142,7 +142,7 @@ jobs:
 
   # ── macOS universal binary ────────────────────────────────────────────────────
   # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
-  # sven-node/Cargo.toml (which owns the webauthn-rs dependency).  Cargo feature
+  # node/Cargo.toml (which owns the webauthn-rs dependency).  Cargo feature
   # unification propagates `vendored` to the single openssl-sys compile unit, so
   # OpenSSL is always built from source - no system library or Homebrew bottle
   # required.  This is the only reliable strategy when cross-compiling from the

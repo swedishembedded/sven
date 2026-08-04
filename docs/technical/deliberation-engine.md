@@ -77,7 +77,7 @@ the single policy evaluator and the audit trail captures every tool I/O entry.
 Each SDLC thread (`intake`, `discovery`, `planning`, `execution`,
 `verification`, `delivery`, `recovery`, and `task` for fan-out children) has its
 own conversation history, owned for the lifetime of the runtime by a
-`ConversationStore` (`sven-llm/src/conversation.rs`):
+`ConversationStore` (`llm/src/conversation.rs`):
 
 ```rust,ignore
 pub struct ConversationStore {
@@ -108,7 +108,7 @@ tool-call messages, and tool-result messages.
 
 A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
 `request` value carries a `kind: "turn"` discriminator. The wire shape mirrors
-`TurnRequest` (`sven-llm/src/conversation.rs`):
+`TurnRequest` (`llm/src/conversation.rs`):
 
 | Field | Meaning |
 |-------|---------|
@@ -124,7 +124,7 @@ A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
 `TurnRequest::is_turn` checks the `kind` tag; the `CompositeExecutor` uses it to
 route the effect to the `TurnExecutor`.
 
-The `SdlcMachine`'s prompts (`sven-core/src/machines/sdlc/prompts.rs`) build
+The `SdlcMachine`'s prompts (`core/src/machines/sdlc/prompts.rs`) build
 these values directly with the same wire shape. The **instruction is a real
 command, not raw JSON** - it frames the role, summarises the process step, states
 the explicit task, and tells the model how to answer.
@@ -133,11 +133,11 @@ the explicit task, and tells the model how to answer.
 
 ## The kernel-mediated turn loop
 
-`TurnExecutor` (`sven-executors/src/turn.rs`) deserialises the request, resolves
+`TurnExecutor` (`executors/src/turn.rs`) deserialises the request, resolves
 the model (honouring a per-state override when a resolver is present), resolves
 the tool subset against the live registry (`ToolRegistry::schemas_for_names`),
 builds a `ResponseFormat` from the schema, and calls `stream_turn`
-(`sven-core/src/stream_turn.rs`) against the thread.
+(`core/src/stream_turn.rs`) against the thread.
 
 `stream_turn` performs a **single model pass**: it streams `TextDelta` /
 `ThinkingDelta` as `UiEvent`s and accumulates proposed tool calls - it does
@@ -145,7 +145,7 @@ builds a `ResponseFormat` from the schema, and calls `stream_turn`
 `LlmTurnComplete`.
 
 The machine (`SdlcMachine` / `TaskMachine`) then drives the loop using the shared
-`loop_core` state handlers (`sven-core/src/machines/loop_core.rs`):
+`loop_core` state handlers (`core/src/machines/loop_core.rs`):
 
 ```mermaid
 flowchart TD
@@ -255,7 +255,7 @@ decisions (scope confirmation, plan approval, delivery sign-off).
 ## The decision envelope
 
 Every deliberation returns a JSON object matching the shared schema
-(`sven-core/src/machines/sdlc/decisions.rs`). The authority field is `status`:
+(`core/src/machines/sdlc/decisions.rs`). The authority field is `status`:
 
 | `status` | Machine behaviour |
 |----------|-------------------|
@@ -283,7 +283,7 @@ instruction can reference them.
 
 ## The SDLC phase walk
 
-`SdlcMachine` (`sven-core/src/machines/sdlc/mod.rs`) is a flat hierarchy whose
+`SdlcMachine` (`core/src/machines/sdlc/mod.rs`) is a flat hierarchy whose
 single superstate is `Top` (which handles global `UserCancelled` → `Cancelled`).
 Each phase handler is self-contained: it issues its deliberation on `Entry`,
 routes `DeliberationComplete` by `status`, re-deliberates on a developer
@@ -385,16 +385,16 @@ unattended without changing the machine.
 
 Source of truth in code:
 
-- `sven-core/src/machines/sdlc/` - `mod.rs` (the machine), `prompts.rs`
+- `core/src/machines/sdlc/` - `mod.rs` (the machine), `prompts.rs`
   (instructions + subsets), `decisions.rs` (the envelope + schema), `task.rs`
   (the fan-out child).
-- `sven-core/src/machines/loop_core.rs` - `Generating`, `RunningTools`,
+- `core/src/machines/loop_core.rs` - `Generating`, `RunningTools`,
   `AwaitingApproval` shared state handlers.
-- `sven-core/src/stream_turn.rs` - `stream_turn` (single-pass model streaming).
-- `sven-executors/src/turn.rs` - `TurnExecutor` + decision parsing.
-- `sven-executors/src/tool.rs` - `ToolExecutor` (spawn-and-forget, appends
+- `core/src/stream_turn.rs` - `stream_turn` (single-pass model streaming).
+- `executors/src/turn.rs` - `TurnExecutor` + decision parsing.
+- `executors/src/tool.rs` - `ToolExecutor` (spawn-and-forget, appends
   results to the right thread via the `call_id → thread` registry).
-- `sven-llm/src/conversation.rs` - `ConversationStore` + `TurnRequest`.
-- `sven-model/src/types.rs` - `ResponseFormat` + `response_format` on
+- `llm/src/conversation.rs` - `ConversationStore` + `TurnRequest`.
+- `model/src/types.rs` - `ResponseFormat` + `response_format` on
   `CompletionRequest`.
-- `sven-tools/src/registry.rs` - `schemas_for_names` (the tool-subset API).
+- `tools/src/registry.rs` - `schemas_for_names` (the tool-subset API).

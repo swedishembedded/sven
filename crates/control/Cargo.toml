@@ -1,0 +1,27 @@
+# Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name        = "sven-control"
+version     = "0.1.0"
+edition     = "2021"
+description = "Transport-agnostic operator control protocol (ControlCommand/ControlEvent) and its kernel mappings, shared by sven-node, sven-cloud and sven-frontend"
+license     = "Apache-2.0"
+
+[dependencies]
+# The kernel vocabulary the control protocol maps to/from (Event, UiEvent,
+# ApprovalId). This is the ONLY sven crate on the spine that sven-control
+# pulls in besides config/tools — deliberately no libp2p/axum, so a frontend
+# can depend on the protocol + mappings without the heavy node stack.
+sven-hsm    = { path = "../hsm" }
+sven-config = { path = "../config" }
+sven-tools  = { path = "../tools" }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+uuid       = { workspace = true, features = ["serde", "v4"] }
+# CBOR codec for the P2P transport (JSON is used over WebSocket).
+ciborium   = "0.2"
+
+[dev-dependencies]
+serde_json = { workspace = true }

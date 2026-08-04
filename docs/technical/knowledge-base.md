@@ -35,8 +35,8 @@ Each knowledge document is a plain Markdown file with YAML frontmatter:
 ---
 subsystem: P2P Networking
 files:
-  - crates/sven-p2p/**
-  - crates/sven-node/**
+  - crates/p2p/**
+  - crates/node/**
 updated: 2026-03-01
 ---
 
@@ -109,9 +109,9 @@ Found 3 knowledge document(s):
 
 Subsystem                      Covers                                   Updated      File
 ----------------------------------------------------------------------------------------------------
-Agent Loop & Compaction        crates/sven-core/**                      2026-03-01   sven-core.md
-P2P Networking                 crates/sven-p2p/**, crates/sven-node/**  2026-03-01   sven-p2p.md
-Tool System                    crates/sven-tools/**                     2026-03-01   sven-tools.md
+Agent Loop & Compaction        crates/core/**                      2026-03-01   sven-core.md
+P2P Networking                 crates/p2p/**, crates/node/**  2026-03-01   sven-p2p.md
+Tool System                    crates/tools/**                     2026-03-01   sven-tools.md
 
 Use `search_knowledge "<query>"` to find relevant content across all docs.
 ```
@@ -165,7 +165,7 @@ date.  If drift is detected, a warning appears in the system prompt:
 ## Knowledge Drift Detected
 
 ⚠ `.sven/knowledge/sven-p2p.md` covers `P2P Networking` - last updated 2026-01-15.
-  Files committed since then: crates/sven-p2p/src/node.rs
+  Files committed since then: crates/p2p/src/node.rs
   Before editing these files, call `search_knowledge "P2P Networking"` and update the doc after changes.
 ```
 

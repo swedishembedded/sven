@@ -734,8 +734,8 @@ or agent first.
 
 | File pattern              | Before changes: load              |
 |---------------------------|-----------------------------------|
-| crates/sven-p2p/**        | `/p2p-specialist`                 |
-| crates/sven-model/**      | `/model-integrator`               |
+| crates/p2p/**        | `/p2p-specialist`                 |
+| crates/model/**      | `/model-integrator`               |
 | .sven/knowledge/**        | update `updated:` date when done  |
 | src/auth/**               | `/security-auditor` (readonly)    |
 ```
@@ -749,12 +749,12 @@ touching matching files.
 
 ### Tips
 
-- **Use glob patterns.** `crates/sven-p2p/**` matches any file under that
+- **Use glob patterns.** `crates/p2p/**` matches any file under that
   directory; `src/**/*.rs` matches all Rust source files.
 - **Cross-reference with knowledge docs.** If a subsystem has a knowledge doc,
   note it in the routing table:
   ```markdown
-  | crates/sven-p2p/**  | search_knowledge "P2P Networking" before changes |
+  | crates/p2p/**  | search_knowledge "P2P Networking" before changes |
   ```
 - **Combine with skills.** Skills can themselves contain routing sub-tables
   for their own sub-components.

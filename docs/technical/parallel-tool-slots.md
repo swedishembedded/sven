@@ -55,7 +55,7 @@ before pushing them to the session.
 
 ## ToolSlotManager
 
-`ToolSlotManager` (in `crates/sven-core/src/tool_slots.rs`) owns the entire
+`ToolSlotManager` (in `crates/core/src/tool_slots.rs`) owns the entire
 lifecycle of a turn's tool calls.  One instance is created at the start of each
 `stream_one_turn` call and consumed by `join_all` at the end.
 

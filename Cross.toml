@@ -1,7 +1,7 @@
 # Cross.toml - configuration for `cross` (Docker-based cross-compilation).
 #
 # OpenSSL is vendored via the `openssl/vendored` Cargo feature declared in
-# sven-node/Cargo.toml, so openssl-sys always compiles OpenSSL from its bundled
+# node/Cargo.toml, so openssl-sys always compiles OpenSSL from its bundled
 # source (openssl-src).  The default cross image does not have `perl`, which is
 # required by OpenSSL's ./Configure script, so we install it in pre-build.
 

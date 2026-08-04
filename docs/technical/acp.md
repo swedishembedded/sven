@@ -143,7 +143,7 @@ Clients can switch modes at any time using the `session/setMode` RPC call.  Sven
 
 ## Event mapping
 
-The bridge layer in `crates/sven-acp/src/bridge.rs` translates sven's internal `AgentEvent` stream into ACP `SessionUpdate` notifications:
+The bridge layer in `crates/acp/src/bridge.rs` translates sven's internal `AgentEvent` stream into ACP `SessionUpdate` notifications:
 
 | `sven_core::AgentEvent`          | ACP `SessionUpdate`             |
 |----------------------------------|---------------------------------|

@@ -273,7 +273,7 @@ the only difference is the source (stdin vs file).
 
 ## Implementation notes
 
-The detection and routing live in `crates/sven-ci/src/runner.rs`:
+The detection and routing live in `crates/ci/src/runner.rs`:
 
 - `is_conversation_format(s)` - scans lines for reserved H2 headings
 - `is_jsonl_format(s)` - checks up to 10 non-empty lines for `{` prefix
@@ -281,6 +281,6 @@ The detection and routing live in `crates/sven-ci/src/runner.rs`:
 - Both conversation and JSONL parsers return `(history, pending_user_input)`
 - Step content = `extra_prompt` OR `pending_user_input` OR exit(2). When stdin is plain text and a CLI prompt is given, the CLI merges them (prompt + blank line + stdin) before the runner sees input, so the runner gets one step.
 
-The 91 unit tests in `crates/sven-ci/src/tests.rs` cover every detection
+The 91 unit tests in `crates/ci/src/tests.rs` cover every detection
 branch, the priority chain, round-trips, tool-call preservation, thinking
 block handling, and all documented error cases.

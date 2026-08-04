@@ -25,7 +25,7 @@ runner, a networked P2P node, and a **managed-agents cloud platform**
   public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`;
   TUI → `.cursor/skills/programming/ratatui/SKILL.md`; GUI → Slint `.slint` DSL.
 - **New behaviour**: prefer a `GraphMachine` graph over a new hardcoded Rust
-  machine. See `sven-graph/src/compile.rs` and `docs/technical/graph-machine.md`.
+  machine. See `graph/src/compile.rs` and `docs/technical/graph-machine.md`.
 - **Tests**: `make test` (unit/integration), `make check` (clippy `-D warnings`,
   zero-warning policy), `make tests/e2e/basic` (bats E2E; needs `bats-core`).
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
@@ -50,7 +50,7 @@ runner, a networked P2P node, and a **managed-agents cloud platform**
 |--------|-------------|-------------|
 | `sven` | `src/main.rs` | Interactive TUI, headless CI runner, P2P node, CLI |
 | `sven-ui` | `src/ui_main.rs` (crate `sven-gui`) | Slint desktop GUI |
-| `sven-companion` | `crates/sven-companion/src/main.rs` | Customer-premises "local hands": dials out to the cloud, executes constrained tools locally |
+| `sven-companion` | `crates/companion/src/main.rs` | Customer-premises "local hands": dials out to the cloud, executes constrained tools locally |
 
 The cloud **control plane** is not a separate binary — it is the `sven cloud`
 subcommand of the `sven` binary: `sven cloud serve` (control plane),
@@ -132,48 +132,48 @@ the canonical checklist: find your change's axis and touch **every** listed
 site. When you add a new axis of extension, add a row here.
 
 ### Add a new `Effect` variant
-1. `sven-hsm/src/effect.rs` - the `Effect` enum, its `EffectKind`, and
+1. `hsm/src/effect.rs` - the `Effect` enum, its `EffectKind`, and
    `required_capability()` (return `Some` iff it must be permission-gated).
-2. `sven-executors/src/composite.rs` - route the new `EffectKind` to an executor
+2. `executors/src/composite.rs` - route the new `EffectKind` to an executor
    slot in `CompositeExecutor::execute` (or a new slot).
 3. The executor that performs the I/O (new file in `sven-executors` or an
    existing one); it must post result `Event`s back via the `EventSink`.
-4. `sven-hsm/src/audit.rs` - it is captured automatically as an `EffectKind`, but
+4. `hsm/src/audit.rs` - it is captured automatically as an `EffectKind`, but
    check `AuditOutcome` handling if it needs special treatment.
 5. Any machine in `sven-core` that should emit it.
 
 ### Add a new tool
-1. `sven-tools/src/builtin/…` - implement `Tool` (+ `parameters_schema`,
+1. `tools/src/builtin/…` - implement `Tool` (+ `parameters_schema`,
    `kernel_capability`, `default_policy`, `modes`) and `ToolDisplay`.
 2. Register it: `sven-bootstrap` tool-registry assembly + `sven-tools` registry.
-3. If exposed over MCP: `sven-mcp/src/registry.rs` (`DEFAULT_TOOL_NAMES`).
+3. If exposed over MCP: `mcp/src/registry.rs` (`DEFAULT_TOOL_NAMES`).
 4. If it needs a new capability: see "Add a `ToolCapability`".
 5. Constrained-hands profile: `sven-companion` manifest (its `main.rs` tool set).
 6. Tests: unit test + a bats case in `tests/e2e/basic/` if it has headless output.
 
 ### Add a `ToolCapability` (permission bucket)
-1. `sven-hsm/src/permissions.rs` - the `ToolCapability` enum,
+1. `hsm/src/permissions.rs` - the `ToolCapability` enum,
    `is_inherently_dangerous`, and the classify path.
 2. Every machine's `permission_policy()` in `sven-core` (`reactive_agent.rs`,
    `sdlc/mod.rs`) - decide allow/approval per state.
-3. `sven-node/src/p2p_kernel.rs::headless_policy()` and any cloud
+3. `node/src/p2p_kernel.rs::headless_policy()` and any cloud
    `SessionGate`/policy that enumerates capabilities.
 4. `sven-tools` `kernel_capability()` of the tools that use it.
 
 ### Add a new HSM machine / mode
-1. `sven-core/src/machines/…` - implement `Machine` (or author a `GraphMachine`
+1. `core/src/machines/…` - implement `Machine` (or author a `GraphMachine`
    graph - preferred).
-2. `sven-core/src/mode.rs::default_registry()` - register the mode string.
+2. `core/src/mode.rs::default_registry()` - register the mode string.
 3. Its `permission_policy()`.
-4. `sven-bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
+4. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
 5. Config: `sven-config` `AgentMode` if it's user-selectable.
 
 ### Add a new model provider / driver
-1. `sven-model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
+1. `model/src/registry.rs` - the `DRIVERS` table (env var, base URL,
    `requires_api_key`).
 2. A driver module (usually reuse `openai_compat`; bespoke only if the wire
    format differs).
-3. `sven-model/src/catalog.rs` - model metadata; **and pricing in
+3. `model/src/catalog.rs` - model metadata; **and pricing in
    `sven-metering`** if it should be billable.
 
 ### Change what a session/agent run looks like on a SURFACE
@@ -182,11 +182,11 @@ A change to session lifecycle, event streaming, approval flow, or cancellation
 must be applied to **each surface that constructs a kernel via
 `RuntimeBuilder`**:
 1. **Headless** - `sven-ci` (`RuntimeRunner` + workflow orchestration).
-2. **Interactive TUI/GUI** - `sven-frontend/src/agent.rs` (+ its `AgentEvent`
+2. **Interactive TUI/GUI** - `frontend/src/agent.rs` (+ its `AgentEvent`
    adapter usage; TUI/GUI consume `AgentEvent`).
 3. **P2P node** - `sven-node` (`control/service.rs`, `agent_builder.rs`,
    `node.rs`, `p2p_kernel.rs`).
-4. **Local ACP** - `sven-acp/src/agent.rs`.
+4. **Local ACP** - `acp/src/agent.rs`.
 5. **Cloud** - `sven-cloud` session path (+ `RemoteToolExecutor`).
    Grep guard: `grep -rn "RuntimeBuilder" crates` finds every construction site.
 
@@ -199,13 +199,13 @@ must be applied to **each surface that constructs a kernel via
    Missing one silently drops the event on that surface - check all.
 
 ### Add identity / tenancy / auth
-1. `sven-hsm/src/context.rs` `Principal`; stamped into `AuditRecord`.
+1. `hsm/src/context.rs` `Principal`; stamped into `AuditRecord`.
 2. `sven-bootstrap` `SessionSupervisor` (tenant→session ownership).
 3. `sven-cloud` `identity.rs` (token roles/scopes), `auth.rs`, `gate.rs`.
 4. `sven-node` control-plane auth if the surface is network-facing.
 
 ### Add a config field
-1. `sven-config/src/schema.rs` (+ `#[serde(default)]` for back-compat).
+1. `config/src/schema.rs` (+ `#[serde(default)]` for back-compat).
 2. `loader.rs` if it needs env expansion or layering rules.
 3. The consumer crate; document in `docs/` and the config example.
 

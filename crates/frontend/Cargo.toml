@@ -1,0 +1,44 @@
+[package]
+name    = "sven-frontend"
+version = "0.2.0"
+edition = "2021"
+description = "Shared agent-wiring layer for sven frontends (TUI and GUI)"
+license = "Apache-2.0"
+
+[dependencies]
+sven-config      = { path = "../config" }
+sven-model       = { path = "../model" }
+sven-input       = { path = "../input" }
+sven-tools       = { path = "../tools" }
+sven-core        = { path = "../core" }
+sven-bootstrap   = { path = "../bootstrap" }
+sven-hsm         = { path = "../hsm" }
+sven-executors   = { path = "../executors" }
+sven-mcp-client  = { path = "../mcp-client" }
+sven-runtime     = { path = "../runtime" }
+# Transport-agnostic control protocol + kernel mappings (NO libp2p/axum) — the
+# one-tap `/share` bridge reuses these instead of depending on sven-node.
+sven-control     = { path = "../control" }
+# The `/share` sub-protocol frames (ShareRegister / ShareFrame).
+sven-wire        = { path = "../wire" }
+# WS client used to dial the broker's `/share` endpoint (bearer auth + CA trust).
+sven-node-client = { path = "../sven-node-client" }
+anyhow           = { workspace = true }
+tokio            = { workspace = true }
+futures          = { workspace = true }
+tracing          = { workspace = true }
+serde_json       = { workspace = true }
+serde            = { workspace = true }
+uuid             = { workspace = true }
+base64           = { workspace = true }
+chrono           = { workspace = true }
+unicode-width    = { workspace = true }
+rustls           = { workspace = true }
+rand             = "0.8"
+pulldown-cmark   = { workspace = true }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+async-trait = { workspace = true }

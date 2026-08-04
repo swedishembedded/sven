@@ -1,0 +1,28 @@
+[package]
+name    = "sven-ci"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+sven-config    = { path = "../config" }
+sven-model     = { path = "../model" }
+sven-tools     = { path = "../tools" }
+sven-core      = { path = "../core" }
+sven-input     = { path = "../input" }
+sven-bootstrap = { path = "../bootstrap" }
+sven-runtime   = { path = "../runtime" }
+sven-hsm       = { path = "../hsm" }
+sven-frontend  = { path = "../frontend" }
+anyhow         = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+chrono         = { workspace = true }
+tokio          = { workspace = true }
+futures        = { workspace = true }
+tracing        = { workspace = true }
+
+[dev-dependencies]
+sven-input   = { path = "../input" }
+sven-tools   = { path = "../tools" }
+async-trait  = { workspace = true }
+tempfile     = { workspace = true }

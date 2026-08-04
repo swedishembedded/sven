@@ -629,8 +629,8 @@ mod e2e_pipeline_tests {
     use super::*;
     use sven_tools::builtin::context::ContextGrepTool;
 
-    const STORE_RS: &str = "crates/sven-tools/src/builtin/context/store.rs";
-    const CONTEXT_DIR: &str = "crates/sven-tools/src/builtin/context";
+    const STORE_RS: &str = "crates/tools/src/builtin/context/store.rs";
+    const CONTEXT_DIR: &str = "crates/tools/src/builtin/context";
 
     /// Full RLM pipeline on a real source file:
     ///   context_open → context_grep → context_query (targeted) → context_reduce
