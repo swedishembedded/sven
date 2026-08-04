@@ -771,6 +771,22 @@ pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
     out
 }
 
+/// Reverse of [`conversation_records_to_steps`]: convert `Vec<TraceStep>` back
+/// into full-fidelity `Vec<ConversationRecord>` (messages, thinking blocks,
+/// context-compaction markers), for callers that need to reconstruct a
+/// display-oriented event stream from ATIF steps rather than the flat
+/// `Message`-only view [`steps_to_messages`] provides.
+///
+/// Built directly on [`steps_to_turn_records`] + [`crate::chat_document::turns_to_records`]
+/// — the same full-fidelity turn list, just re-expressed as `ConversationRecord`
+/// instead of the legacy YAML-oriented `TurnRecord`. This keeps exactly one
+/// TraceStep-to-turn-shape algorithm in the crate rather than duplicating the
+/// step-walking logic for two output types.
+pub fn steps_to_conversation_records(steps: &[TraceStep]) -> Vec<ConversationRecord> {
+    let turns = steps_to_turn_records(steps);
+    crate::chat_document::turns_to_records(&turns)
+}
+
 // ── File I/O built on trace::persist ────────────────────────────────────────
 
 /// Directory sven stores ATIF trajectory session files in.
@@ -907,6 +923,119 @@ pub fn list_sessions(limit: Option<usize>) -> Result<Vec<SessionEntry>> {
         entries.truncate(n);
     }
     Ok(entries)
+}
+
+// ── Unified listing: new ATIF sessions + legacy YAML chats ─────────────────
+
+/// One row in the unified session picker: either a native ATIF session
+/// (`is_legacy == false`) or a legacy YAML chat that has not yet been
+/// re-saved in the new format (`is_legacy == true`).
+///
+/// # Legacy visibility policy
+///
+/// A legacy `.yaml` chat is surfaced here **only until** a same-`session_id`
+/// `.json` file exists in [`session_dir`] — once a legacy session is opened
+/// and saved again (which always writes the new format; see
+/// [`import_legacy_chat_document`]'s doc comment), its `.json` twin appears
+/// in the new-format listing under the same id and this function stops
+/// surfacing the old `.yaml` entry. The original `.yaml` file itself is
+/// **never deleted or modified** by this crate — it is left on disk,
+/// superseded, purely for manual archival/recovery. This keeps the picker
+/// free of duplicate rows while never destroying old data.
+#[derive(Debug, Clone)]
+pub struct UnifiedSessionEntry {
+    /// Session identifier (shared between the legacy and new-format file for
+    /// the same session, since [`import_legacy_chat_document`] preserves it).
+    pub session_id: String,
+    /// Full path to the backing file (`.json` if `!is_legacy`, `.yaml` if `is_legacy`).
+    pub path: PathBuf,
+    /// Human-readable title.
+    pub title: String,
+    /// Session lifecycle status.
+    pub status: ChatStatus,
+    /// Parent session ID when this is a subagent task conversation.
+    pub parent_session_id: Option<String>,
+    /// Cumulative token usage and cost, if any.
+    pub usage: Option<ChatUsage>,
+    /// When this session was last updated.
+    pub updated_at: DateTime<Utc>,
+    /// `true` iff this entry is backed by a legacy YAML `ChatDocument` file
+    /// with no new-format `.json` twin yet.
+    pub is_legacy: bool,
+}
+
+/// List every known session — native ATIF sessions from [`session_dir`] plus
+/// any legacy YAML chats from [`crate::chat_document::chat_dir`] that have not
+/// yet been superseded by a same-id `.json` file — most recently updated
+/// first. See [`UnifiedSessionEntry`]'s doc comment for the exact legacy
+/// visibility policy.
+///
+/// Uses [`list_sessions`] (header-only reads) for the new-format half, so
+/// listing stays cheap even with many/large session files.
+pub fn list_all_sessions(limit: Option<usize>) -> Result<Vec<UnifiedSessionEntry>> {
+    let native = list_sessions(None)?;
+    let legacy = crate::chat_document::list_chats(None).unwrap_or_default();
+    let mut out = merge_native_and_legacy(native, legacy);
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    if let Some(n) = limit {
+        out.truncate(n);
+    }
+    Ok(out)
+}
+
+/// Pure merge/dedup step behind [`list_all_sessions`], factored out so it can
+/// be unit-tested without touching the real [`session_dir`]/[`crate::chat_document::chat_dir`]
+/// filesystem locations. Does not sort or truncate — callers do that.
+fn merge_native_and_legacy(
+    native: Vec<SessionEntry>,
+    legacy: Vec<crate::chat_document::ChatEntry>,
+) -> Vec<UnifiedSessionEntry> {
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<UnifiedSessionEntry> = Vec::with_capacity(native.len() + legacy.len());
+
+    for entry in native {
+        seen_ids.insert(entry.session_id.clone());
+        let (title, status, parent_session_id, updated_at) = match &entry.meta {
+            Some(meta) => (
+                meta.title.clone(),
+                meta.status,
+                meta.parent_session_id.clone(),
+                meta.updated_at,
+            ),
+            None => ("Untitled".to_string(), ChatStatus::default(), None, Utc::now()),
+        };
+        let usage = entry.final_metrics.as_ref().map(final_metrics_to_chat_usage);
+        out.push(UnifiedSessionEntry {
+            session_id: entry.session_id,
+            path: entry.path,
+            title,
+            status,
+            parent_session_id,
+            usage,
+            updated_at,
+            is_legacy: false,
+        });
+    }
+
+    for chat in legacy {
+        let id = chat.id.as_str().to_string();
+        if seen_ids.contains(&id) {
+            // Superseded by a new-format twin; do not surface the legacy row.
+            continue;
+        }
+        out.push(UnifiedSessionEntry {
+            session_id: id,
+            path: chat.path,
+            title: chat.title,
+            status: chat.status,
+            parent_session_id: chat.parent_id.map(|p| p.as_str().to_string()),
+            usage: chat.usage,
+            updated_at: chat.updated_at,
+            is_legacy: true,
+        });
+    }
+
+    out
 }
 
 // ── Legacy YAML importer ────────────────────────────────────────────────────
@@ -1486,6 +1615,98 @@ mod tests {
         assert!(matches!(&turns[0], TurnRecord::Assistant { content } if content == "fresh"));
     }
 
+    // ── reverse: TraceStep -> ConversationRecord ──────────────────────────
+
+    #[test]
+    fn steps_to_conversation_records_round_trips_simple_turn() {
+        let records = vec![
+            ConversationRecord::Message(Message::user("Hello")),
+            ConversationRecord::Message(Message::assistant("Hi there")),
+        ];
+        let steps = conversation_records_to_steps(&records);
+        let back = steps_to_conversation_records(&steps);
+        assert_eq!(msg_values_of_records(&back), msg_values_of_records(&records));
+    }
+
+    #[test]
+    fn steps_to_conversation_records_preserves_thinking_and_tool_calls() {
+        let records = vec![
+            ConversationRecord::Message(Message::user("What is 2+2?")),
+            ConversationRecord::Thinking {
+                content: "I should compute it.".to_string(),
+            },
+            ConversationRecord::Message(Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall {
+                        name: "calc".into(),
+                        arguments: r#"{"expr":"2+2"}"#.into(),
+                    },
+                },
+            }),
+            ConversationRecord::Message(Message::tool_result("call_1", "4")),
+            ConversationRecord::Message(Message::assistant("The answer is 4.")),
+        ];
+        let steps = conversation_records_to_steps(&records);
+        let back = steps_to_conversation_records(&steps);
+
+        assert!(
+            back.iter()
+                .any(|r| matches!(r, ConversationRecord::Thinking { content } if content == "I should compute it.")),
+            "thinking record must survive the round trip: {back:?}"
+        );
+        let tool_call_present = back.iter().any(|r| {
+            matches!(
+                r,
+                ConversationRecord::Message(m)
+                    if matches!(&m.content, MessageContent::ToolCall { tool_call_id, .. } if tool_call_id == "call_1")
+            )
+        });
+        assert!(tool_call_present, "tool call must survive: {back:?}");
+        let tool_result_present = back.iter().any(|r| {
+            matches!(
+                r,
+                ConversationRecord::Message(m)
+                    if matches!(&m.content, MessageContent::ToolResult { tool_call_id, .. } if tool_call_id == "call_1")
+            )
+        });
+        assert!(tool_result_present, "tool result must survive: {back:?}");
+    }
+
+    #[test]
+    fn steps_to_conversation_records_preserves_context_compaction() {
+        let mut a = StepAssembler::new();
+        a.push_message(&Message::user("Hi"));
+        a.push_message(&Message::assistant("Hello"));
+        a.push_context_compacted(1000, 100, Some("structured"), Some(2));
+        let steps = a.finish();
+
+        let records = steps_to_conversation_records(&steps);
+        let compaction = records
+            .iter()
+            .find(|r| matches!(r, ConversationRecord::ContextCompacted { .. }))
+            .expect("context-compaction record present");
+        assert!(matches!(
+            compaction,
+            ConversationRecord::ContextCompacted { tokens_before: 1000, tokens_after: 100, .. }
+        ));
+    }
+
+    #[test]
+    fn steps_to_conversation_records_skips_copied_context_steps() {
+        let mut copied = TraceStep::new(1, StepOrigin::Agent, "copied");
+        copied.is_copied_context = Some(true);
+        let records =
+            steps_to_conversation_records(&[copied, TraceStep::new(2, StepOrigin::Agent, "fresh")]);
+        assert_eq!(records.len(), 1);
+        assert!(matches!(&records[0], ConversationRecord::Message(m) if m.as_text() == Some("fresh")));
+    }
+
+    fn msg_values_of_records(records: &[ConversationRecord]) -> Vec<Value> {
+        records.iter().map(|r| serde_json::to_value(r).unwrap()).collect()
+    }
+
     // ── full round-trip: multi-turn conversation, both directions ─────────
 
     #[test]
@@ -1616,6 +1837,77 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
         assert!(!missing.exists());
+    }
+
+    // ── unified listing: merge native + legacy ────────────────────────────
+
+    fn native_entry(id: &str, title: &str, updated_at: DateTime<Utc>) -> SessionEntry {
+        let mut meta = SvenSessionMeta::new(title);
+        meta.updated_at = updated_at;
+        SessionEntry {
+            session_id: id.to_string(),
+            path: PathBuf::from(format!("/sessions/{id}.json")),
+            meta: Some(meta),
+            final_metrics: None,
+        }
+    }
+
+    fn legacy_entry(id: &str, title: &str, updated_at: DateTime<Utc>) -> crate::chat_document::ChatEntry {
+        crate::chat_document::ChatEntry {
+            id: SessionId::from_string(id.to_string()),
+            path: PathBuf::from(format!("/chats/{id}.yaml")),
+            title: title.to_string(),
+            turns: 2,
+            updated_at,
+            status: ChatStatus::Active,
+            parent_id: None,
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn merge_marks_native_entries_as_not_legacy() {
+        let now = Utc::now();
+        let merged = merge_native_and_legacy(vec![native_entry("s1", "Native", now)], vec![]);
+        assert_eq!(merged.len(), 1);
+        assert!(!merged[0].is_legacy);
+        assert_eq!(merged[0].session_id, "s1");
+        assert_eq!(merged[0].title, "Native");
+    }
+
+    #[test]
+    fn merge_marks_legacy_only_entries_as_legacy() {
+        let now = Utc::now();
+        let merged = merge_native_and_legacy(vec![], vec![legacy_entry("s2", "Legacy", now)]);
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].is_legacy);
+        assert_eq!(merged[0].session_id, "s2");
+    }
+
+    #[test]
+    fn merge_hides_legacy_entry_superseded_by_native_twin() {
+        // Same session_id present in both native and legacy: the legacy
+        // (superseded) row must not be surfaced.
+        let now = Utc::now();
+        let merged = merge_native_and_legacy(
+            vec![native_entry("s3", "Resaved", now)],
+            vec![legacy_entry("s3", "Old title", now - chrono::Duration::hours(1))],
+        );
+        assert_eq!(merged.len(), 1, "the legacy twin must be hidden: {merged:?}");
+        assert!(!merged[0].is_legacy);
+        assert_eq!(merged[0].title, "Resaved");
+    }
+
+    #[test]
+    fn merge_keeps_both_when_ids_differ() {
+        let now = Utc::now();
+        let merged = merge_native_and_legacy(
+            vec![native_entry("s4", "Native", now)],
+            vec![legacy_entry("s5", "Legacy", now)],
+        );
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().any(|e| e.session_id == "s4" && !e.is_legacy));
+        assert!(merged.iter().any(|e| e.session_id == "s5" && e.is_legacy));
     }
 
     // ── legacy YAML importer ────────────────────────────────────────────

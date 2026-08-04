@@ -74,23 +74,17 @@ pub struct AppOptions {
     pub no_nvim: bool,
     pub model_override: Option<String>,
     /// Combined load+output ATIF trace path (`--trace`), or the output-only
-    /// path (`--output-trace`). NOTE (ATIF migration boundary): this field
-    /// carries the new `--trace`/`--output-trace` CLI path, but `App::new`
-    /// below still reads/writes it using the OLD `ConversationRecord`/JSONL
-    /// format (`sven_input::parse_jsonl_full`) - replacing that internal
-    /// handling with ATIF-native I/O is milestone 4's job, not this one.
+    /// path (`--output-trace`). Loaded and saved as a native ATIF `Trajectory`
+    /// document (see `trace_session::load_session_from`/`save_session_atomic`) -
+    /// this is now the ONE session-persistence path for the TUI; there is no
+    /// separate YAML/JSONL branch.
     pub trace_path: Option<PathBuf>,
-    /// Load-only ATIF trace path (`--load-trace`). Same internal-format
-    /// caveat as `trace_path`.
+    /// Load-only ATIF trace path (`--load-trace`).
     pub load_trace_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
     /// When `Some`, connect the TUI to a running node instead of running a
     /// local agent.  Gives the TUI full access to the node's P2P tools.
     pub node_backend: Option<NodeBackend>,
-    /// Load an existing YAML chat document to resume the conversation.
-    pub chat_path: Option<PathBuf>,
-    /// Save the chat to this YAML path (for headless/CI mode output).
-    pub output_chat_path: Option<PathBuf>,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -137,7 +131,6 @@ pub struct App {
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tools::SharedToolDisplays,
     pub(crate) history_path: Option<PathBuf>,
-    pub(crate) jsonl_path: Option<PathBuf>,
     /// Set to `true` after a tool call completes - triggers a terminal-state
     /// recovery pass before the next draw.
     pub(crate) needs_terminal_recover: bool,
@@ -157,8 +150,8 @@ pub struct App {
     pub(crate) layout: LayoutCache,
     /// Multi-session manager - holds all chat sessions and the shared event mux.
     pub(crate) sessions: SessionManager,
-    /// Path to the YAML chat document for the current active session.
-    pub(crate) yaml_path: Option<PathBuf>,
+    /// Path to the ATIF trajectory file for the current active session.
+    pub(crate) session_path: Option<PathBuf>,
     /// Title of the current active chat session.
     pub(crate) chat_title: String,
     /// Shared question sender - cloned into every agent task so that question
@@ -177,52 +170,26 @@ impl App {
             .map(|(segs, path)| (segs, Some(path)))
             .unwrap_or_else(|| (Vec::new(), None));
 
-        let initial_segments = if let Some(ref jsonl) = opts.trace_path {
-            if jsonl.exists() {
-                match std::fs::read_to_string(jsonl) {
-                    Ok(content) => match sven_input::parse_jsonl_full(&content) {
-                        Ok(parsed) => parsed
-                            .records
+        // ── Load an ATIF trajectory (if --trace / --load-trace was given) ──────
+        // `--trace PATH` is both the load source and the sync-after-every-turn
+        // save target; `--load-trace PATH` alone only seeds history (matching
+        // the headless runner's "load doesn't imply write-back" convention -
+        // see `CiOptions::load_trace`'s doc comment).
+        let trace_load_path = opts.trace_path.clone().or_else(|| opts.load_trace_path.clone());
+        let mut loaded_trajectory: Option<trace::Trajectory> = None;
+        let initial_segments = if let Some(ref path) = trace_load_path {
+            if path.exists() {
+                match sven_input::load_session_from(path) {
+                    Ok(trajectory) => {
+                        let segs = sven_input::steps_to_conversation_records(&trajectory.steps)
                             .into_iter()
-                            .filter_map(|r| match r {
-                                sven_input::ConversationRecord::Message(m) => {
-                                    if m.role != sven_model::Role::System {
-                                        Some(ChatSegment::Message(m))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                sven_input::ConversationRecord::Thinking { content } => {
-                                    Some(ChatSegment::Thinking { content })
-                                }
-                                sven_input::ConversationRecord::ContextCompacted {
-                                    tokens_before,
-                                    tokens_after,
-                                    strategy,
-                                    turn,
-                                } => {
-                                    use sven_core::CompactionStrategyUsed;
-                                    let strategy = match strategy.as_deref() {
-                                        Some("emergency") => CompactionStrategyUsed::Emergency,
-                                        Some("narrative") => CompactionStrategyUsed::Narrative,
-                                        _ => CompactionStrategyUsed::Structured,
-                                    };
-                                    Some(ChatSegment::ContextCompacted {
-                                        tokens_before,
-                                        tokens_after,
-                                        strategy,
-                                        turn: turn.unwrap_or(0),
-                                    })
-                                }
-                            })
-                            .collect(),
-                        Err(e) => {
-                            debug!("failed to parse JSONL conversation file: {e}");
-                            initial_segments
-                        }
-                    },
+                            .filter_map(conversation_record_to_chat_segment)
+                            .collect();
+                        loaded_trajectory = Some(trajectory);
+                        segs
+                    }
                     Err(e) => {
-                        debug!("failed to read JSONL conversation file: {e}");
+                        debug!("failed to load ATIF trajectory {}: {e}", path.display());
                         initial_segments
                     }
                 }
@@ -252,51 +219,6 @@ impl App {
         let registry = Arc::new(registry);
         let completion_manager = CompletionManager::new(registry.clone());
 
-        let jsonl_path = opts
-            .trace_path
-            .or_else(|| opts.load_trace_path.clone())
-            .or_else(sven_runtime::resolve_auto_log_path);
-
-        // ── Load YAML chat document (if --chat / --load-chat was specified) ──
-        // Only load from YAML when the segments are still empty (JSONL loading
-        // takes priority when both --jsonl and --chat are specified).
-        // `loaded_doc` captures the parsed document so we can restore its
-        // metadata (title, status, timestamps) into the initial SessionEntry.
-        let mut loaded_doc: Option<sven_input::ChatDocument> = None;
-        let initial_segments = if initial_segments.is_empty() {
-            if let Some(ref yaml_path) = opts.chat_path {
-                if yaml_path.exists() {
-                    match std::fs::read_to_string(yaml_path) {
-                        Ok(content) => match sven_input::parse_chat_document(&content) {
-                            Ok(doc) => {
-                                let segs = sven_input::turns_to_messages(&doc.turns)
-                                    .into_iter()
-                                    .filter(|m| m.role != sven_model::Role::System)
-                                    .map(ChatSegment::Message)
-                                    .collect();
-                                loaded_doc = Some(doc);
-                                segs
-                            }
-                            Err(e) => {
-                                debug!("failed to parse YAML chat document: {e}");
-                                Vec::new()
-                            }
-                        },
-                        Err(e) => {
-                            debug!("failed to read YAML chat document: {e}");
-                            Vec::new()
-                        }
-                    }
-                } else {
-                    initial_segments
-                }
-            } else {
-                initial_segments
-            }
-        } else {
-            initial_segments
-        };
-
         let mut chat = ChatState::new();
         chat.segments = initial_segments;
 
@@ -312,22 +234,20 @@ impl App {
 
         // ── Session manager initialization ────────────────────────────────────
         let (mut session_manager, mut initial_session_entry) = SessionManager::new();
-        // If we loaded a YAML document, restore its title/status/timestamps into
+        // If we loaded a trajectory, restore its title/status/timestamps into
         // the initial session entry so the sidebar shows the correct metadata.
-        if let Some(ref doc) = loaded_doc {
+        if let Some(ref trajectory) = loaded_trajectory {
             initial_session_entry =
-                SessionEntry::from_document_into(doc, initial_session_entry.id.clone());
+                SessionEntry::from_trajectory_into(trajectory, initial_session_entry.id.clone(), None, false);
         }
         let active_session_id = initial_session_entry.id.clone();
-        let initial_yaml_path = opts
-            .output_chat_path
-            .clone()
-            .or_else(|| opts.chat_path.clone())
-            .or_else(|| {
-                sven_input::ensure_chat_dir()
-                    .ok()
-                    .map(|dir| dir.join(format!("{}.yaml", active_session_id)))
-            });
+        // `--trace PATH` is kept in sync after every turn; `--load-trace`-only
+        // (or no flag at all) falls back to the canonical per-session path.
+        let initial_session_path = opts.trace_path.clone().or_else(|| {
+            sven_input::ensure_session_dir()
+                .ok()
+                .map(|dir| dir.join(format!("{}.json", active_session_id)))
+        });
 
         // Register the initial session entry (without stored_chat - App.chat IS the chat).
         session_manager.register(initial_session_entry);
@@ -341,9 +261,10 @@ impl App {
         // Do not auto-restore the most recent session on fresh startup.
         // Start with a clean, new chat buffer. The first user message will
         // create a new chat entry as usual.
-        let chat_title = loaded_doc
+        let chat_title = loaded_trajectory
             .as_ref()
-            .map(|d| d.title.clone())
+            .and_then(sven_input::SvenSessionMeta::from_trajectory)
+            .map(|m| m.title)
             .unwrap_or_else(|| "New chat".to_string());
 
         let mut app = Self {
@@ -364,7 +285,6 @@ impl App {
             mcp_prompt_commands: std::collections::HashMap::new(),
             mcp_refresh_tx: None,
             history_path,
-            jsonl_path,
             needs_terminal_recover: false,
             buffer_store,
             chat,
@@ -377,7 +297,7 @@ impl App {
             prefs: SplitPrefs::new(),
             layout: LayoutCache::new(),
             sessions: session_manager,
-            yaml_path: initial_yaml_path,
+            session_path: initial_session_path,
             chat_title,
             question_tx: None,
             toast_tx: None,
@@ -1286,16 +1206,14 @@ impl App {
         // queued messages don't bleed into the new session's agent.
         self.queue = QueueState::new();
         self.edit = EditState::new();
-        // New TUI sessions use YAML persistence only; no JSONL path.
-        self.jsonl_path = None;
 
         // Spawn an agent task; sets self.agent.tx and the entry's agent_tx/cancel.
         self.spawn_agent_for_session(&new_id).await;
 
         self.chat_title = "New chat".to_string();
-        self.yaml_path = sven_input::ensure_chat_dir()
-            .ok()
-            .map(|dir| dir.join(format!("{}.yaml", new_id)));
+        // Deferred: resolved lazily on first save (see `save_history_async`),
+        // matching every other transient session.
+        self.session_path = None;
 
         self.sessions.promote_to_top(&new_id);
         self.sessions.sync_list_selection_to_active();
@@ -1314,41 +1232,50 @@ impl App {
             .get_mut(&target_id)
             .and_then(|e| e.stored_chat.take());
 
-        // If the target session has no stored chat, try to load from disk.
-        // Also refresh session entry metadata (title, status, created_at) from
-        // the full document - load_from_disk only has ChatEntry approximations.
+        // If the target session has no stored chat, try to load from disk -
+        // either its native ATIF session file, or (for a not-yet-migrated
+        // session) a legacy YAML chat via the read-only importer. Also
+        // refresh session entry metadata (title, status, created_at) from
+        // the full trajectory - load_from_disk only has header approximations.
         let target_chat = target_chat.or_else(|| {
-            let yaml_path = self.sessions.get(&target_id)?.yaml_path.clone()?;
-            if yaml_path.exists() {
-                let content = std::fs::read_to_string(&yaml_path).ok()?;
-                let doc = sven_input::parse_chat_document(&content).ok()?;
-                let segments: Vec<crate::chat::segment::ChatSegment> =
-                    sven_input::turns_to_messages(&doc.turns)
-                        .into_iter()
-                        .filter(|m| m.role != sven_model::Role::System)
-                        .map(crate::chat::segment::ChatSegment::Message)
-                        .collect();
-                // Refresh entry metadata from the full document.
-                if let Some(entry) = self.sessions.get_mut(&target_id) {
-                    let refreshed = SessionEntry::from_document(&doc);
-                    entry.title = refreshed.title;
-                    entry.status = refreshed.status;
-                    entry.created_at = refreshed.created_at;
-                    entry.updated_at = refreshed.updated_at;
-                    // Restore persisted usage only when the entry has no live data yet
-                    // (i.e. this session has never been active in this process run).
-                    if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {
-                        entry.total_context_tokens = refreshed.total_context_tokens;
-                        entry.total_output_tokens = refreshed.total_output_tokens;
-                        entry.total_cost_usd = refreshed.total_cost_usd;
-                    }
-                }
-                let mut chat = ChatState::new();
-                chat.segments = segments;
-                Some(chat)
+            let entry = self.sessions.get(&target_id)?;
+            let trajectory = if let Some(path) = entry.session_path.clone() {
+                sven_input::load_session_from(&path).ok()
+            } else if let Some(legacy_path) = entry.legacy_path.clone() {
+                let doc = sven_input::load_chat_from(&legacy_path).ok()?;
+                Some(sven_input::import_legacy_chat_document(&doc))
             } else {
                 None
+            }?;
+
+            let segments: Vec<crate::chat::segment::ChatSegment> =
+                sven_input::steps_to_conversation_records(&trajectory.steps)
+                    .into_iter()
+                    .filter_map(conversation_record_to_chat_segment)
+                    .collect();
+
+            // Refresh entry metadata from the full trajectory.
+            if let Some(entry) = self.sessions.get_mut(&target_id) {
+                let is_legacy = entry.is_legacy;
+                let legacy_path = entry.legacy_path.clone();
+                let refreshed =
+                    SessionEntry::from_trajectory_into(&trajectory, target_id.clone(), None, is_legacy);
+                entry.title = refreshed.title;
+                entry.status = refreshed.status;
+                entry.created_at = refreshed.created_at;
+                entry.updated_at = refreshed.updated_at;
+                entry.legacy_path = legacy_path;
+                // Restore persisted usage only when the entry has no live data yet
+                // (i.e. this session has never been active in this process run).
+                if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {
+                    entry.total_context_tokens = refreshed.total_context_tokens;
+                    entry.total_output_tokens = refreshed.total_output_tokens;
+                    entry.total_cost_usd = refreshed.total_cost_usd;
+                }
             }
+            let mut chat = ChatState::new();
+            chat.segments = segments;
+            Some(chat)
         });
 
         // Subagent sessions get their stored_chat populated via SubagentEvent updates
@@ -1447,20 +1374,16 @@ impl App {
             }
         }
 
-        // Update chat title, yaml path, and jsonl path.
+        // Update chat title and session path.
         self.chat_title = self
             .sessions
             .get(&target_id)
             .map(|e| e.title.clone())
             .unwrap_or_else(|| "Chat".to_string());
-        self.yaml_path = self
+        self.session_path = self
             .sessions
             .get(&target_id)
-            .and_then(|e| e.yaml_path.clone());
-        self.jsonl_path = self
-            .sessions
-            .get(&target_id)
-            .and_then(|e| e.jsonl_path.clone());
+            .and_then(|e| e.session_path.clone());
 
         // Cancel any in-progress inline edit so stale edit state doesn't bleed
         // into the newly active session.
@@ -1491,10 +1414,11 @@ impl App {
 
     /// Snapshot the current active session's chat state into its SessionEntry.
     ///
-    /// For idle sessions that have a yaml_path (i.e. their content is already
-    /// persisted on disk), the snapshot is stored but then immediately evicted
-    /// (`stored_chat` cleared) to free memory.  Busy background sessions keep
-    /// their `stored_chat` so incoming agent event segments are not lost.
+    /// For idle sessions that have a `session_path` (i.e. their content is
+    /// already persisted on disk), the snapshot is stored but then immediately
+    /// evicted (`stored_chat` cleared) to free memory.  Busy background
+    /// sessions keep their `stored_chat` so incoming agent event segments are
+    /// not lost.
     fn save_active_to_session_entry(&mut self) {
         let active_id = self.sessions.active_id.clone();
         if let Some(entry) = self.sessions.get_mut(&active_id) {
@@ -1504,8 +1428,7 @@ impl App {
             entry.stored_input_attachments = Some(self.input.attachments.clone());
             entry.stored_queue = Some(self.queue.clone());
             entry.session_state = Some(self.session.clone());
-            entry.jsonl_path = self.jsonl_path.clone();
-            entry.yaml_path = self.yaml_path.clone();
+            entry.session_path = self.session_path.clone();
             entry.busy = self.agent.busy;
             entry.current_tool = self.agent.current_tool.clone();
             entry.title = self.chat_title.clone();
@@ -1521,7 +1444,7 @@ impl App {
             // Busy sessions must keep their chat state in memory so that
             // background agent events can still push segments into it.
             let has_disk_backing = entry
-                .yaml_path
+                .session_path
                 .as_ref()
                 .map(|p| p.exists())
                 .unwrap_or(false);
@@ -1658,8 +1581,6 @@ impl App {
             load_trace_path: None,
             initial_queue: Vec::new(),
             node_backend: None,
-            chat_path: None,
-            output_chat_path: None,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(config, opts);
@@ -1727,6 +1648,46 @@ impl App {
         }
         self.agent.busy = false;
         self.agent.current_tool = None;
+    }
+}
+
+// ── ConversationRecord ⇄ ChatSegment ────────────────────────────────────────
+
+/// Convert one full-fidelity [`sven_input::ConversationRecord`] (as produced
+/// by [`sven_input::steps_to_conversation_records`] from a loaded ATIF
+/// trajectory) into a [`ChatSegment`], dropping system messages (the agent
+/// always regenerates its own system prompt at runtime).
+pub(crate) fn conversation_record_to_chat_segment(
+    record: sven_input::ConversationRecord,
+) -> Option<ChatSegment> {
+    match record {
+        sven_input::ConversationRecord::Message(m) => {
+            if m.role == sven_model::Role::System {
+                None
+            } else {
+                Some(ChatSegment::Message(m))
+            }
+        }
+        sven_input::ConversationRecord::Thinking { content } => Some(ChatSegment::Thinking { content }),
+        sven_input::ConversationRecord::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => {
+            use sven_core::CompactionStrategyUsed;
+            let strategy = match strategy.as_deref() {
+                Some("emergency") => CompactionStrategyUsed::Emergency,
+                Some("narrative") => CompactionStrategyUsed::Narrative,
+                _ => CompactionStrategyUsed::Structured,
+            };
+            Some(ChatSegment::ContextCompacted {
+                tokens_before,
+                tokens_after,
+                strategy,
+                turn: turn.unwrap_or(0),
+            })
+        }
     }
 }
 

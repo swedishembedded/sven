@@ -2172,8 +2172,6 @@ async fn run_as_teammate(
                     rerun_toolcalls: false,
                     regen_system_prompt: false,
                     max_tokens_budget: None,
-                    load_chat: None,
-                    output_chat: None,
                     attachments: Vec::new(),
                 };
 
@@ -2417,8 +2415,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         && cli.output_last_message.is_none()
         && cli.system_prompt_file.is_none()
         && cli.vars.is_empty()
-        && cli.effective_load_chat().is_none()
-        && cli.effective_output_chat().is_none()
         && cli.effective_output_trace().is_none();
 
     if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
@@ -2537,9 +2533,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         OutputFormatArg::Jsonl => OutputFormat::Jsonl,
     };
 
-    let load_chat = cli.effective_load_chat().cloned();
-    let output_chat = cli.effective_output_chat().cloned();
-
     let input_from_file = cli.file.is_some() && !file_is_trace;
 
     let opts = CiOptions {
@@ -2564,8 +2557,6 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         rerun_toolcalls: cli.rerun_toolcalls,
         regen_system_prompt: cli.regen_system_prompt,
         max_tokens_budget: cli.max_tokens,
-        load_chat,
-        output_chat,
         attachments: cli.attach,
     };
 
@@ -2769,15 +2760,9 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
     };
 
     // Resolve trace paths for TUI: --load-trace feeds initial history; output
-    // goes to --output-trace (or --trace which combines both).
-    //
-    // NOTE (ATIF migration boundary): these are threaded into `AppOptions`
-    // under the new `trace_path`/`load_trace_path` names, but the TUI's own
-    // internal handling of them (`App::new` below, and `chat_ops.rs`) still
-    // reads/writes the OLD `ConversationRecord`/JSONL format at that path -
-    // that's intentional and unchanged by this milestone (see
-    // `crates/tui/src/app/mod.rs` and `chat_ops.rs`; replacing their
-    // internals with ATIF-native I/O is milestone 4's job).
+    // goes to --output-trace (or --trace which combines both). This is the
+    // ONE session-persistence flag family for the TUI - loaded and saved as
+    // a native ATIF trajectory (see `crates/tui/src/app/mod.rs`/`chat_ops.rs`).
     let trace_load_path = cli.effective_load_trace().cloned();
     let trace_save_path = cli.effective_output_trace().cloned();
 
@@ -2805,9 +2790,6 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         }
     };
 
-    let chat_load_path = cli.effective_load_chat().cloned();
-    let chat_output_path = cli.effective_output_chat().cloned();
-
     let opts = AppOptions {
         mode: cli.mode,
         initial_prompt: cli.prompt,
@@ -2818,8 +2800,6 @@ async fn run_tui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<(
         load_trace_path: trace_load_path,
         initial_queue,
         node_backend,
-        chat_path: chat_load_path,
-        output_chat_path: chat_output_path,
     };
 
     let app = App::new(config, opts);

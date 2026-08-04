@@ -29,8 +29,9 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use sven_core::AgentEvent;
-use sven_input::{ChatDocument, ChatEntry, ChatStatus, ChatUsage, SessionId};
+use sven_input::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
 use tokio::sync::{mpsc, Mutex};
+use trace::Trajectory;
 
 use crate::{
     agent::AgentRequest,
@@ -55,8 +56,19 @@ pub(crate) struct SessionEntry {
     pub parent_id: Option<SessionId>,
     pub title: String,
     pub status: ChatStatus,
-    /// Path to the `.yaml` file backing this session, or `None` for transient sessions.
-    pub yaml_path: Option<PathBuf>,
+    /// Path to the ATIF `.json` trajectory file backing this session (either
+    /// the canonical `session_dir()/<id>.json` path or an explicit
+    /// `--trace`/`--output-trace` path). `None` for a session that has never
+    /// been saved yet.
+    pub session_path: Option<PathBuf>,
+    /// `true` iff this entry is currently backed by a legacy YAML chat file
+    /// (`legacy_path`) that has not yet been re-saved in the new ATIF format.
+    /// The next save clears this and writes a fresh `.json` file instead,
+    /// leaving the old `.yaml` file untouched on disk (superseded, not deleted).
+    pub is_legacy: bool,
+    /// The original legacy `.yaml` path, kept only for reference/deletion
+    /// while `is_legacy` is true; never written to again.
+    pub legacy_path: Option<PathBuf>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
@@ -78,8 +90,6 @@ pub(crate) struct SessionEntry {
     /// Saved model/mode state for this session (populated when session is inactive).
     /// The active session's live state is in `App.session`.
     pub session_state: Option<crate::state::SessionState>,
-    /// JSONL log path for this session (None for TUI-created sessions that use YAML).
-    pub jsonl_path: Option<std::path::PathBuf>,
 
     // ── Subagent buffer handle ────────────────────────────────────────────────
     /// Output buffer handle for subagent sessions (e.g. "buf_0001").
@@ -113,80 +123,45 @@ pub(crate) struct SessionEntry {
 }
 
 impl SessionEntry {
-    /// Create a new `SessionEntry` from a `ChatDocument`, keeping the document's
-    /// original `SessionId` so the file path derived from it stays consistent.
-    pub fn from_document(doc: &ChatDocument) -> Self {
-        let (total_input_tokens, total_output_tokens, total_cost_usd) = doc
-            .usage
+    /// Restore metadata from a `Trajectory` into a pre-existing entry, keeping
+    /// the supplied `id` (so the session manager's `active_id` reference
+    /// stays valid) and file-backing info. Used when continuing a loaded
+    /// session in the TUI, both native (`is_legacy: false`) and freshly
+    /// imported from a legacy YAML chat (`is_legacy: true`).
+    pub fn from_trajectory_into(
+        trajectory: &Trajectory,
+        id: SessionId,
+        session_path: Option<PathBuf>,
+        is_legacy: bool,
+    ) -> Self {
+        let meta = SvenSessionMeta::from_trajectory(trajectory);
+        let usage = trajectory
+            .final_metrics
             .as_ref()
-            .map(|u| {
-                (
-                    u.total_input_tokens,
-                    u.total_output_tokens,
-                    u.total_cost_usd,
-                )
-            })
+            .map(sven_input::final_metrics_to_chat_usage);
+        let (total_input_tokens, total_output_tokens, total_cost_usd) = usage
+            .map(|u| (u.total_input_tokens, u.total_output_tokens, u.total_cost_usd))
             .unwrap_or((0, 0, 0.0));
-        Self {
-            id: doc.id.clone(),
-            parent_id: None,
-            title: doc.title.clone(),
-            status: doc.status,
-            yaml_path: Some(sven_input::chat_path(&doc.id)),
-            created_at: doc.created_at,
-            updated_at: doc.updated_at,
-            stored_chat: None,
-            stored_input_buffer: None,
-            stored_input_cursor: None,
-            stored_input_attachments: None,
-            stored_queue: None,
-            session_state: None,
-            jsonl_path: None,
-            buffer_handle: None,
-            initial_prompt: None,
-            agent_tx: None,
-            agent_cancel: Arc::new(Mutex::new(None)),
-            busy: false,
-            current_tool: None,
-            context_pct: 0,
-            total_context_tokens: total_input_tokens as u32,
-            total_context_pct: 0,
-            total_output_tokens: total_output_tokens as u32,
-            total_cost_usd,
-            cache_hit_pct: 0,
-        }
-    }
-
-    /// Restore metadata from a `ChatDocument` into a pre-existing entry,
-    /// keeping the supplied `id` (so the session manager's active_id reference
-    /// stays valid).  Used when continuing a loaded chat in the TUI.
-    pub fn from_document_into(doc: &ChatDocument, id: SessionId) -> Self {
-        let (total_input_tokens, total_output_tokens, total_cost_usd) = doc
-            .usage
-            .as_ref()
-            .map(|u| {
-                (
-                    u.total_input_tokens,
-                    u.total_output_tokens,
-                    u.total_cost_usd,
-                )
-            })
-            .unwrap_or((0, 0, 0.0));
+        let now = Utc::now();
         Self {
             id,
-            parent_id: None,
-            title: doc.title.clone(),
-            status: doc.status,
-            yaml_path: None, // set separately via initial_yaml_path
-            created_at: doc.created_at,
-            updated_at: doc.updated_at,
+            parent_id: meta
+                .as_ref()
+                .and_then(|m| m.parent_session_id.clone())
+                .map(SessionId::from_string),
+            title: meta.as_ref().map(|m| m.title.clone()).unwrap_or_else(|| "Untitled".to_string()),
+            status: meta.as_ref().map(|m| m.status).unwrap_or_default(),
+            session_path: if is_legacy { None } else { session_path.clone() },
+            is_legacy,
+            legacy_path: if is_legacy { session_path } else { None },
+            created_at: meta.as_ref().map(|m| m.created_at).unwrap_or(now),
+            updated_at: meta.as_ref().map(|m| m.updated_at).unwrap_or(now),
             stored_chat: None,
             stored_input_buffer: None,
             stored_input_cursor: None,
             stored_input_attachments: None,
             stored_queue: None,
             session_state: None,
-            jsonl_path: None,
             buffer_handle: None,
             initial_prompt: None,
             agent_tx: None,
@@ -210,7 +185,9 @@ impl SessionEntry {
             parent_id: None,
             title: title.into(),
             status: ChatStatus::Active,
-            yaml_path: None,
+            session_path: None,
+            is_legacy: false,
+            legacy_path: None,
             created_at: now,
             updated_at: now,
             stored_chat: None,
@@ -219,7 +196,6 @@ impl SessionEntry {
             stored_input_attachments: None,
             stored_queue: None,
             session_state: None,
-            jsonl_path: None,
             buffer_handle: None,
             initial_prompt: None,
             agent_tx: None,
@@ -248,7 +224,9 @@ impl SessionEntry {
             parent_id: Some(parent_id),
             title: title.into(),
             status: ChatStatus::Active,
-            yaml_path: None,
+            session_path: None,
+            is_legacy: false,
+            legacy_path: None,
             created_at: now,
             updated_at: now,
             stored_chat: None,
@@ -257,7 +235,6 @@ impl SessionEntry {
             stored_input_attachments: None,
             stored_queue: None,
             session_state: None,
-            jsonl_path: None,
             buffer_handle,
             initial_prompt: Some(prompt),
             agent_tx: None,
@@ -273,16 +250,11 @@ impl SessionEntry {
         }
     }
 
-    /// Build a `ChatDocument` from this entry, the supplied chat state, and
-    /// runtime display metadata.  The entry's `created_at` is preserved so
-    /// repeated saves don't reset the document's creation timestamp.
-    pub fn to_document(
-        &self,
-        chat: &ChatState,
-        model: Option<String>,
-        mode: Option<String>,
-    ) -> ChatDocument {
-        use sven_input::{records_to_turns, ConversationRecord};
+    /// Build an ATIF [`Trajectory`] from this entry, the supplied chat state,
+    /// and runtime display metadata.  The entry's `created_at` is preserved
+    /// so repeated saves don't reset the trajectory's creation timestamp.
+    pub fn to_trajectory(&self, chat: &ChatState, model: Option<String>, mode: Option<String>) -> Trajectory {
+        use sven_input::ConversationRecord;
         use sven_model::Role;
 
         let records: Vec<ConversationRecord> = chat
@@ -316,34 +288,37 @@ impl SessionEntry {
             })
             .collect();
 
-        let turns = records_to_turns(&records);
+        let steps = sven_input::conversation_records_to_steps(&records);
 
-        let usage = {
-            let u = ChatUsage {
-                total_input_tokens: self.total_context_tokens as u64,
-                total_output_tokens: self.total_output_tokens as u64,
-                total_cache_read_tokens: 0,
-                total_cache_write_tokens: 0,
-                total_cost_usd: self.total_cost_usd,
-            };
-            if u.is_empty() {
-                None
-            } else {
-                Some(u)
-            }
+        let mut agent = sven_input::default_agent_profile();
+        if let Some(m) = &model {
+            agent = agent.with_model(m.clone());
+        }
+        let mut trajectory = Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+        trajectory.session_id = Some(self.id.as_str().to_string());
+        trajectory.steps = steps;
+
+        let usage = ChatUsage {
+            total_input_tokens: self.total_context_tokens as u64,
+            total_output_tokens: self.total_output_tokens as u64,
+            total_cache_read_tokens: 0,
+            total_cache_write_tokens: 0,
+            total_cost_usd: self.total_cost_usd,
         };
-        ChatDocument {
-            id: self.id.clone(),
+        if !usage.is_empty() {
+            trajectory.final_metrics = Some(sven_input::chat_usage_to_final_metrics(&usage));
+        }
+
+        let meta = SvenSessionMeta {
             title: self.title.clone(),
-            model,
-            mode,
             status: self.status,
+            mode,
+            parent_session_id: self.parent_id.as_ref().map(|p| p.as_str().to_string()),
             created_at: self.created_at,
             updated_at: Utc::now(),
-            parent_id: self.parent_id.clone(),
-            usage,
-            turns,
-        }
+        };
+        meta.apply_to_trajectory(&mut trajectory);
+        trajectory
     }
 
     /// Apply a background agent event to this entry's stored state.
@@ -517,6 +492,41 @@ impl SessionEntry {
     }
 }
 
+/// Build a [`SessionEntry`] from a listing row ([`UnifiedSessionEntry`]),
+/// with no stored chat/agent state yet (populated lazily on first switch-to).
+fn session_entry_from_unified(entry: UnifiedSessionEntry, parent_id: Option<SessionId>) -> SessionEntry {
+    let id = SessionId::from_string(entry.session_id);
+    SessionEntry {
+        id,
+        parent_id,
+        title: entry.title,
+        status: entry.status,
+        session_path: if entry.is_legacy { None } else { Some(entry.path.clone()) },
+        is_legacy: entry.is_legacy,
+        legacy_path: if entry.is_legacy { Some(entry.path) } else { None },
+        created_at: entry.updated_at,
+        updated_at: entry.updated_at,
+        stored_chat: None,
+        stored_input_buffer: None,
+        stored_input_cursor: None,
+        stored_input_attachments: None,
+        stored_queue: None,
+        session_state: None,
+        buffer_handle: None,
+        initial_prompt: None,
+        agent_tx: None,
+        agent_cancel: Arc::new(Mutex::new(None)),
+        busy: false,
+        current_tool: None,
+        context_pct: 0,
+        total_context_tokens: entry.usage.as_ref().map(|u| u.total_input_tokens as u32).unwrap_or(0),
+        total_context_pct: 0,
+        total_output_tokens: entry.usage.as_ref().map(|u| u.total_output_tokens as u32).unwrap_or(0),
+        total_cost_usd: entry.usage.as_ref().map(|u| u.total_cost_usd).unwrap_or(0.0),
+        cache_hit_pct: 0,
+    }
+}
+
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 /// TUI multi-session UI state - the **session manager** that owns the set of active
@@ -626,147 +636,70 @@ impl SessionManager {
     /// Sessions are inserted at the end of the display order (older entries
     /// pushed down), sorted by updated_at descending. Subagent sessions
     /// (with parent_id) are restored as children under their parent.
+    ///
+    /// Lists BOTH native ATIF sessions and legacy YAML chats (tagged
+    /// `is_legacy: true`) that have not yet been superseded by a same-id
+    /// `.json` file — see [`sven_input::list_all_sessions`]'s doc comment
+    /// for the exact legacy-visibility policy. Opening a legacy entry and
+    /// saving it writes a brand new `.json` file; the original `.yaml` is
+    /// left untouched on disk.
     pub fn load_from_disk(&mut self) {
-        let mut entries = match sven_input::list_chats(Some(50)) {
+        let mut entries = match sven_input::list_all_sessions(Some(50)) {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!("failed to list chats from disk: {e}");
+                tracing::warn!("failed to list sessions from disk: {e}");
                 return;
             }
         };
-        // Sort newest first; already sorted by list_chats but re-sort to be safe.
+        // Sort newest first; already sorted by list_all_sessions but re-sort to be safe.
         entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
         // Separate roots and children; register roots first so parents exist
         // when we add children. Orphan children (parent not loaded) become roots.
         let (roots, children): (Vec<_>, Vec<_>) =
-            entries.into_iter().partition(|e| e.parent_id.is_none());
+            entries.into_iter().partition(|e| e.parent_session_id.is_none());
 
-        for chat_entry in roots.into_iter().rev() {
-            let id = chat_entry.id.clone();
+        for entry in roots.into_iter().rev() {
+            let id = SessionId::from_string(entry.session_id.clone());
             if self.entries.contains_key(&id) {
                 continue;
             }
-            let session_entry = SessionEntry {
-                id: id.clone(),
-                parent_id: None,
-                title: chat_entry.title,
-                status: chat_entry.status,
-                yaml_path: Some(chat_entry.path),
-                created_at: chat_entry.updated_at,
-                updated_at: chat_entry.updated_at,
-                stored_chat: None,
-                stored_input_buffer: None,
-                stored_input_cursor: None,
-                stored_input_attachments: None,
-                stored_queue: None,
-                session_state: None,
-                jsonl_path: None,
-                buffer_handle: None,
-                initial_prompt: None,
-                agent_tx: None,
-                agent_cancel: Arc::new(Mutex::new(None)),
-                busy: false,
-                current_tool: None,
-                context_pct: 0,
-                total_context_tokens: 0,
-                total_context_pct: 0,
-                total_output_tokens: 0,
-                total_cost_usd: 0.0,
-                cache_hit_pct: 0,
-            };
-            self.register(session_entry);
+            self.register(session_entry_from_unified(entry, None));
         }
 
         // Register children in topological order so each parent exists before its child.
         // Iterate until all are registered; orphan children (parent not loaded) become roots.
-        let mut pending: Vec<ChatEntry> = children;
+        let mut pending: Vec<UnifiedSessionEntry> = children;
         let mut prev_len = usize::MAX;
         while prev_len != pending.len() {
             prev_len = pending.len();
             let mut remaining = Vec::new();
-            for chat_entry in pending {
-                let id = chat_entry.id.clone();
+            for entry in pending {
+                let id = SessionId::from_string(entry.session_id.clone());
                 if self.entries.contains_key(&id) {
                     continue;
                 }
-                let parent_id = chat_entry
-                    .parent_id
+                let parent_id = entry
+                    .parent_session_id
                     .as_ref()
-                    .filter(|pid| self.entries.contains_key(pid))
-                    .cloned();
+                    .map(|pid| SessionId::from_string(pid.clone()))
+                    .filter(|pid| self.entries.contains_key(pid));
 
-                if parent_id.is_some() {
-                    let session_entry = SessionEntry {
-                        id: id.clone(),
-                        parent_id: parent_id.clone(),
-                        title: chat_entry.title,
-                        status: chat_entry.status,
-                        yaml_path: Some(chat_entry.path),
-                        created_at: chat_entry.updated_at,
-                        updated_at: chat_entry.updated_at,
-                        stored_chat: None,
-                        stored_input_buffer: None,
-                        stored_input_cursor: None,
-                        stored_input_attachments: None,
-                        stored_queue: None,
-                        session_state: None,
-                        jsonl_path: None,
-                        buffer_handle: None,
-                        initial_prompt: None,
-                        agent_tx: None,
-                        agent_cancel: Arc::new(Mutex::new(None)),
-                        busy: false,
-                        current_tool: None,
-                        context_pct: 0,
-                        total_context_tokens: 0,
-                        total_context_pct: 0,
-                        total_output_tokens: 0,
-                        total_cost_usd: 0.0,
-                        cache_hit_pct: 0,
-                    };
-                    self.register(session_entry);
+                if let Some(parent_id) = parent_id {
+                    self.register(session_entry_from_unified(entry, Some(parent_id)));
                 } else {
-                    remaining.push(chat_entry);
+                    remaining.push(entry);
                 }
             }
             pending = remaining;
         }
         // Remaining orphans: parent not in loaded set; register as roots.
-        for chat_entry in pending {
-            let id = chat_entry.id.clone();
+        for entry in pending {
+            let id = SessionId::from_string(entry.session_id.clone());
             if self.entries.contains_key(&id) {
                 continue;
             }
-            let session_entry = SessionEntry {
-                id: id.clone(),
-                parent_id: None,
-                title: chat_entry.title,
-                status: chat_entry.status,
-                yaml_path: Some(chat_entry.path),
-                created_at: chat_entry.updated_at,
-                updated_at: chat_entry.updated_at,
-                stored_chat: None,
-                stored_input_buffer: None,
-                stored_input_cursor: None,
-                stored_input_attachments: None,
-                stored_queue: None,
-                session_state: None,
-                jsonl_path: None,
-                buffer_handle: None,
-                initial_prompt: None,
-                agent_tx: None,
-                agent_cancel: Arc::new(Mutex::new(None)),
-                busy: false,
-                current_tool: None,
-                context_pct: 0,
-                total_context_tokens: 0,
-                total_context_pct: 0,
-                total_output_tokens: 0,
-                total_cost_usd: 0.0,
-                cache_hit_pct: 0,
-            };
-            self.register(session_entry);
+            self.register(session_entry_from_unified(entry, None));
         }
     }
 
@@ -872,9 +805,14 @@ impl SessionManager {
             if !rows.is_empty() && self.list_selected >= rows.len() {
                 self.list_selected = rows.len() - 1;
             }
-            if let Some(path) = entry.yaml_path {
+            if let Some(path) = entry.session_path {
                 if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!(path = %path.display(), "failed to delete chat file: {e}");
+                    tracing::warn!(path = %path.display(), "failed to delete session file: {e}");
+                }
+            }
+            if let Some(path) = entry.legacy_path {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!(path = %path.display(), "failed to delete legacy chat file: {e}");
                 }
             }
             true
@@ -897,5 +835,181 @@ impl SessionManager {
             entry.title = title;
             entry.updated_at = Utc::now();
         }
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::segment::ChatSegment;
+    use sven_model::{FunctionCall, Message, MessageContent, Role};
+
+    fn chat_with_multi_turn_tool_call_and_thinking() -> ChatState {
+        let mut chat = ChatState::new();
+        chat.segments = vec![
+            ChatSegment::Message(Message::user("What is 2+2?")),
+            ChatSegment::Thinking {
+                content: "I should compute it.".to_string(),
+            },
+            ChatSegment::Message(Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall {
+                        name: "calc".into(),
+                        arguments: r#"{"expr":"2+2"}"#.into(),
+                    },
+                },
+            }),
+            ChatSegment::Message(Message::tool_result("call_1", "4")),
+            ChatSegment::Message(Message::assistant("The answer is 4.")),
+            ChatSegment::Message(Message::user("Thanks!")),
+            ChatSegment::Message(Message::assistant("You're welcome!")),
+        ];
+        chat
+    }
+
+    #[test]
+    fn to_trajectory_save_load_round_trip_preserves_thinking_and_tool_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-abc.json");
+
+        let mut entry = SessionEntry::new_blank("Test session");
+        entry.id = SessionId::from_string("session-abc".to_string());
+        let chat = chat_with_multi_turn_tool_call_and_thinking();
+
+        let trajectory = entry.to_trajectory(&chat, Some("anthropic/claude-3-5".to_string()), Some("agent".to_string()));
+        assert_eq!(trajectory.session_id.as_deref(), Some("session-abc"));
+        trace::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
+
+        let loaded = sven_input::load_session_from(&path).unwrap();
+        let records = sven_input::steps_to_conversation_records(&loaded.steps);
+        let segments: Vec<ChatSegment> = records
+            .into_iter()
+            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .collect();
+
+        // Every original message must survive: 2 user + 2 assistant text +
+        // 1 tool call + 1 tool result = 6 Message segments, plus 1 Thinking.
+        let thinking_count = segments
+            .iter()
+            .filter(|s| matches!(s, ChatSegment::Thinking { .. }))
+            .count();
+        assert_eq!(thinking_count, 1, "thinking must survive the round trip: {segments:?}");
+
+        let tool_call_present = segments.iter().any(|s| {
+            matches!(
+                s,
+                ChatSegment::Message(m)
+                    if matches!(&m.content, MessageContent::ToolCall { tool_call_id, .. } if tool_call_id == "call_1")
+            )
+        });
+        assert!(tool_call_present, "tool call must survive: {segments:?}");
+
+        let tool_result_present = segments.iter().any(|s| {
+            matches!(
+                s,
+                ChatSegment::Message(m)
+                    if matches!(&m.content, MessageContent::ToolResult { tool_call_id, .. } if tool_call_id == "call_1")
+            )
+        });
+        assert!(tool_result_present, "tool result must survive: {segments:?}");
+
+        let user_texts: Vec<&str> = segments
+            .iter()
+            .filter_map(|s| match s {
+                ChatSegment::Message(m) if m.role == Role::User => m.as_text(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(user_texts, vec!["What is 2+2?", "Thanks!"]);
+
+        let assistant_texts: Vec<&str> = segments
+            .iter()
+            .filter_map(|s| match s {
+                ChatSegment::Message(m) if m.role == Role::Assistant => m.as_text(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_texts, vec!["The answer is 4.", "You're welcome!"]);
+    }
+
+    #[test]
+    fn to_trajectory_preserves_meta_and_usage() {
+        let mut entry = SessionEntry::new_blank("My title");
+        entry.id = SessionId::from_string("session-meta".to_string());
+        entry.status = ChatStatus::Completed;
+        entry.total_context_tokens = 100;
+        entry.total_output_tokens = 50;
+        entry.total_cost_usd = 0.02;
+        let chat = chat_with_multi_turn_tool_call_and_thinking();
+
+        let trajectory = entry.to_trajectory(&chat, Some("gpt-4o".to_string()), Some("code".to_string()));
+        let meta = SvenSessionMeta::from_trajectory(&trajectory).expect("meta present");
+        assert_eq!(meta.title, "My title");
+        assert_eq!(meta.status, ChatStatus::Completed);
+        assert_eq!(meta.mode.as_deref(), Some("code"));
+        assert_eq!(trajectory.agent.model_name.as_deref(), Some("gpt-4o"));
+
+        let metrics = trajectory.final_metrics.expect("usage present");
+        assert_eq!(metrics.total_prompt_tokens, Some(100));
+        assert_eq!(metrics.total_completion_tokens, Some(50));
+    }
+
+    #[test]
+    fn from_trajectory_into_legacy_import_produces_working_entry() {
+        use sven_input::chat_document::{ChatDocument, TurnRecord};
+
+        let mut doc = ChatDocument::new("Legacy chat");
+        doc.model = Some("anthropic/claude-3-5".to_string());
+        doc.turns = vec![
+            TurnRecord::User {
+                content: "Hello from legacy".to_string(),
+            },
+            TurnRecord::Thinking {
+                content: "thinking about it".to_string(),
+            },
+            TurnRecord::Assistant {
+                content: "Hi there!".to_string(),
+            },
+        ];
+        let legacy_id = doc.id.clone();
+
+        let trajectory = sven_input::import_legacy_chat_document(&doc);
+        // Simulate what SessionManager::load_from_disk / switch_session does:
+        // a legacy entry with `session_path: None`, `legacy_path: Some(..)`.
+        let entry = SessionEntry::from_trajectory_into(
+            &trajectory,
+            legacy_id.clone(),
+            Some(PathBuf::from("/chats/legacy.yaml")),
+            true,
+        );
+
+        assert!(entry.is_legacy, "must be tagged legacy");
+        assert!(entry.session_path.is_none(), "legacy entries have no native session_path yet");
+        assert_eq!(entry.legacy_path, Some(PathBuf::from("/chats/legacy.yaml")));
+        assert_eq!(entry.title, "Legacy chat");
+        assert_eq!(entry.id, legacy_id);
+
+        // Opening it (steps_to_conversation_records) must yield a working
+        // chat, including the thinking block the old YAML turn carried.
+        let records = sven_input::steps_to_conversation_records(&trajectory.steps);
+        let segments: Vec<ChatSegment> = records
+            .into_iter()
+            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .collect();
+        assert!(segments.iter().any(|s| matches!(s, ChatSegment::Thinking { content } if content == "thinking about it")));
+        assert!(segments.iter().any(
+            |s| matches!(s, ChatSegment::Message(m) if m.role == Role::User && m.as_text() == Some("Hello from legacy"))
+        ));
+
+        // The NEXT save (mirroring `resolve_session_path`) must write a fresh
+        // `.json`, never touch the `.yaml` again - modeled here directly since
+        // `resolve_session_path` needs a live `App`.
+        let fresh_path = sven_input::session_path(legacy_id.as_str());
+        assert!(fresh_path.extension().and_then(|e| e.to_str()) == Some("json"));
+        assert_ne!(fresh_path, PathBuf::from("/chats/legacy.yaml"));
     }
 }

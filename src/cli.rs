@@ -1164,29 +1164,12 @@ pub struct Cli {
 
     /// Combined load + output trace: equivalent to --load-trace PATH --output-trace PATH.
     /// Loads an existing ATIF trajectory from PATH, runs, and writes back to the same file.
-    /// In TUI mode the file is kept in sync after every turn.
-    /// If the file does not exist it is created automatically.
+    /// This is the ONE session-persistence flag for both headless runs and
+    /// interactive TUI/GUI launches - in TUI/GUI mode the file is kept in
+    /// sync after every turn. If the file does not exist it is created
+    /// automatically with a fresh session ID.
     #[arg(long, value_name = "PATH")]
     pub trace: Option<PathBuf>,
-
-    /// Load (and save) a YAML chat document.
-    /// The file is parsed as a ChatDocument; the conversation history seeds the agent
-    /// and new turns are appended.  In TUI mode the file is kept in sync after every turn.
-    /// If the file does not exist it is created automatically with a fresh session ID.
-    /// Equivalent to --load-chat PATH --output-chat PATH.
-    #[arg(long, value_name = "PATH", conflicts_with = "load_chat")]
-    pub chat: Option<PathBuf>,
-
-    /// Load conversation history from a YAML chat document before running.
-    /// Cannot be combined with --chat.
-    #[arg(long, value_name = "PATH", conflicts_with = "chat")]
-    pub load_chat: Option<PathBuf>,
-
-    /// Write the chat document to this YAML path after the run.
-    /// If omitted and --load-chat is set, the original file is updated in place.
-    /// Cannot be combined with --chat.
-    #[arg(long, value_name = "PATH")]
-    pub output_chat: Option<PathBuf>,
 
     /// Replay all tool calls recorded in the loaded trajectory with fresh
     /// results before submitting to the model.  Requires --load-trace or --trace.
@@ -1579,19 +1562,6 @@ impl Cli {
     /// Resolve the effective trace output path: --output-trace takes priority, then --trace.
     pub fn effective_output_trace(&self) -> Option<&PathBuf> {
         self.output_trace.as_ref().or(self.trace.as_ref())
-    }
-
-    /// Resolve the effective YAML chat input path: --load-chat takes priority, then --chat.
-    pub fn effective_load_chat(&self) -> Option<&PathBuf> {
-        self.load_chat.as_ref().or(self.chat.as_ref())
-    }
-
-    /// Resolve the effective YAML chat output path: --output-chat takes priority, then --chat.
-    pub fn effective_output_chat(&self) -> Option<&PathBuf> {
-        self.output_chat
-            .as_ref()
-            .or(self.load_chat.as_ref())
-            .or(self.chat.as_ref())
     }
 }
 

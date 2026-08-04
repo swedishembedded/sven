@@ -1217,14 +1217,19 @@ impl App {
                     .map(|(id, _)| id.clone())
                 {
                     self.sessions.archive(&id);
-                    // Save the updated status to disk.
+                    // Save the updated status to disk (native ATIF sessions
+                    // only; a legacy-only entry is archived in memory and
+                    // picks up the status on its next real save, which also
+                    // migrates it off the YAML format - see `resolve_session_path`).
                     if let Some(entry) = self.sessions.get(&id) {
-                        if let Some(path) = entry.yaml_path.clone() {
+                        if let Some(path) = entry.session_path.clone() {
                             if path.exists() {
-                                if let Ok(content) = std::fs::read_to_string(&path) {
-                                    if let Ok(mut doc) = sven_input::parse_chat_document(&content) {
-                                        doc.status = sven_input::ChatStatus::Archived;
-                                        let _ = sven_input::save_chat_to(&path, &mut doc);
+                                if let Ok(mut trajectory) = sven_input::load_session_from(&path) {
+                                    if let Some(mut meta) = sven_input::SvenSessionMeta::from_trajectory(&trajectory) {
+                                        meta.status = sven_input::ChatStatus::Archived;
+                                        meta.touch();
+                                        meta.apply_to_trajectory(&mut trajectory);
+                                        let _ = trace::persist::write_trajectory_atomic(&path, &trajectory, None);
                                     }
                                 }
                             }

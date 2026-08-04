@@ -1,12 +1,21 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! YAML-based chat document format for full-fidelity conversation persistence.
+//! **Legacy** YAML chat document format - superseded by the ATIF
+//! trajectory-backed session store in [`crate::trace_session`].
 //!
-//! Each chat is stored as a single `.yaml` file in `~/.local/share/sven/chats/`.
-//! The YAML format is human-readable and human-editable: multi-line strings use
-//! block scalars (`|`), tool arguments are native YAML maps, and the document
-//! structure mirrors the natural conversation flow.
+//! This module is now READ-ONLY: it exists solely so a user's pre-existing
+//! `.yaml` chat files (`~/.local/share/sven/chats/*.yaml`, from before the
+//! ATIF migration) can still be discovered ([`list_chats`]) and opened
+//! ([`load_chat`]/[`load_chat_from`]) via [`crate::trace_session::import_legacy_chat_document`].
+//! Nothing in sven ever writes a `.yaml` file anymore - once a legacy session
+//! is opened, its next save always writes a new `.json` trajectory file
+//! instead (see `trace_session`'s module docs), leaving the original `.yaml`
+//! untouched on disk.
+//!
+//! Each legacy chat was stored as a single `.yaml` file in
+//! `~/.local/share/sven/chats/`. The YAML format is human-readable: multi-line
+//! strings use block scalars (`|`) and tool arguments are native YAML maps.
 //!
 //! # File format example
 //!
@@ -237,107 +246,28 @@ impl ChatDocument {
     }
 }
 
-// ── Serialization ─────────────────────────────────────────────────────────────
-
-/// YAML document start marker. Prepended so saved files are valid multi-document
-/// YAML and clearly delimited.
-const YAML_DOCUMENT_START: &str = "---\n";
-
-/// Serialize a `ChatDocument` to a YAML string.
-///
-/// Uses `serde_yaml` which automatically formats multi-line strings as
-/// YAML block scalars (`|`) for human readability. Output is prefixed with `---`
-/// and uses 2-space indentation for nested structures.
-pub fn serialize_chat_document(doc: &ChatDocument) -> Result<String> {
-    let raw = serde_yaml::to_string(doc).context("serializing ChatDocument to YAML")?;
-    let out = if raw.starts_with("---") {
-        raw
-    } else {
-        format!("{YAML_DOCUMENT_START}{raw}")
-    };
-    Ok(out)
-}
+// ── Parsing (read-only; no writer - see module docs) ────────────────────────
 
 /// Parse a `ChatDocument` from YAML text.
 pub fn parse_chat_document(yaml: &str) -> Result<ChatDocument> {
     serde_yaml::from_str(yaml).context("parsing ChatDocument from YAML")
 }
 
-// ── Conversion from ConversationRecord ───────────────────────────────────────
+// ── Conversion to ConversationRecord ─────────────────────────────────────────
+//
+// Only the `TurnRecord -> ConversationRecord` direction survives here - it
+// backs `trace_session::steps_to_conversation_records` (steps -> turns via
+// `trace_session::steps_to_turn_records`, then turns -> records here), the
+// full-fidelity reverse of an ATIF trajectory back into sven's runtime event
+// shape. The opposite direction (`ConversationRecord -> TurnRecord`, i.e.
+// accumulating a live session into legacy YAML `TurnRecord`s) has no
+// remaining caller now that nothing writes `.yaml` files - see the deleted
+// `records_to_turns`/`message_to_turn` in git history if it's ever needed
+// again. Likewise `TurnRecord -> Message` (`turns_to_messages`) has no
+// remaining caller: seeding an agent's history from a resumed session goes
+// through `trace_session::steps_to_messages` directly now.
 
-/// Convert a slice of `ConversationRecord`s to `TurnRecord`s for embedding in
-/// a `ChatDocument`.
-///
-/// System messages are skipped - the agent regenerates the system prompt at
-/// runtime from the current config.
-pub fn records_to_turns(records: &[ConversationRecord]) -> Vec<TurnRecord> {
-    records.iter().filter_map(record_to_turn).collect()
-}
-
-fn record_to_turn(record: &ConversationRecord) -> Option<TurnRecord> {
-    match record {
-        ConversationRecord::Message(m) => message_to_turn(m),
-        ConversationRecord::Thinking { content } => Some(TurnRecord::Thinking {
-            content: content.clone(),
-        }),
-        ConversationRecord::ContextCompacted {
-            tokens_before,
-            tokens_after,
-            strategy,
-            turn,
-        } => Some(TurnRecord::ContextCompacted {
-            tokens_before: *tokens_before,
-            tokens_after: *tokens_after,
-            strategy: strategy.clone(),
-            turn: *turn,
-        }),
-    }
-}
-
-fn message_to_turn(msg: &Message) -> Option<TurnRecord> {
-    match (&msg.role, &msg.content) {
-        (Role::System, _) => None, // system messages skipped
-
-        (Role::User, MessageContent::Text(t)) => Some(TurnRecord::User { content: t.clone() }),
-
-        (Role::Assistant, MessageContent::Text(t)) => {
-            Some(TurnRecord::Assistant { content: t.clone() })
-        }
-
-        (
-            Role::Assistant,
-            MessageContent::ToolCall {
-                tool_call_id,
-                function,
-            },
-        ) => {
-            let arguments = json_str_to_yaml(&function.arguments);
-            Some(TurnRecord::ToolCall {
-                tool_call_id: tool_call_id.clone(),
-                name: function.name.clone(),
-                arguments,
-            })
-        }
-
-        (
-            Role::Tool,
-            MessageContent::ToolResult {
-                tool_call_id,
-                content,
-            },
-        ) => Some(TurnRecord::ToolResult {
-            tool_call_id: tool_call_id.clone(),
-            content: content.to_string(),
-        }),
-
-        _ => None,
-    }
-}
-
-// ── Conversion to ConversationRecord / Message ────────────────────────────────
-
-/// Convert `TurnRecord`s from a `ChatDocument` to `ConversationRecord`s for
-/// JSONL export or history replay.
+/// Convert `TurnRecord`s from a `ChatDocument` to `ConversationRecord`s.
 pub fn turns_to_records(turns: &[TurnRecord]) -> Vec<ConversationRecord> {
     turns.iter().filter_map(turn_to_record).collect()
 }
@@ -389,44 +319,6 @@ fn turn_to_record(turn: &TurnRecord) -> Option<ConversationRecord> {
     }
 }
 
-/// Convert `TurnRecord`s to `Message`s suitable for seeding an `Agent`.
-///
-/// System messages are never included; `ContextCompacted` and `Thinking`
-/// entries are skipped (the agent reconstructs them during the run).
-pub fn turns_to_messages(turns: &[TurnRecord]) -> Vec<Message> {
-    turns.iter().filter_map(turn_to_message).collect()
-}
-
-fn turn_to_message(turn: &TurnRecord) -> Option<Message> {
-    match turn {
-        TurnRecord::User { content } => Some(Message::user(content)),
-        TurnRecord::Assistant { content } => Some(Message::assistant(content)),
-        TurnRecord::Thinking { .. } => None, // thinking not sent back to model
-        TurnRecord::ToolCall {
-            tool_call_id,
-            name,
-            arguments,
-        } => {
-            let args_json = yaml_to_json_str(arguments);
-            Some(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: tool_call_id.clone(),
-                    function: FunctionCall {
-                        name: name.clone(),
-                        arguments: args_json,
-                    },
-                },
-            })
-        }
-        TurnRecord::ToolResult {
-            tool_call_id,
-            content,
-        } => Some(Message::tool_result(tool_call_id.clone(), content)),
-        TurnRecord::ContextCompacted { .. } => None,
-    }
-}
-
 // ── Chat directory and file operations ───────────────────────────────────────
 
 /// Returns the directory where sven stores chat documents.
@@ -455,215 +347,6 @@ pub fn ensure_chat_dir() -> Result<PathBuf> {
 /// Returns the file path for a chat document with the given session ID.
 pub fn chat_path(id: &SessionId) -> PathBuf {
     chat_dir().join(format!("{}.yaml", id))
-}
-
-/// Save a `ChatDocument` to its canonical path in the chat directory.
-pub fn save_chat(doc: &mut ChatDocument) -> Result<()> {
-    doc.touch();
-    let dir = ensure_chat_dir()?;
-    let path = dir.join(format!("{}.yaml", doc.id));
-    let content = serialize_chat_document(doc)?;
-    std::fs::write(&path, content)
-        .with_context(|| format!("writing chat document to {}", path.display()))
-}
-
-/// Save a `ChatDocument` to a specific path.
-pub fn save_chat_to(path: &Path, doc: &mut ChatDocument) -> Result<()> {
-    doc.touch();
-    let content = serialize_chat_document(doc)?;
-    std::fs::write(path, content)
-        .with_context(|| format!("writing chat document to {}", path.display()))
-}
-
-// ── Atomic save with modification detection ───────────────────────────────────
-
-/// Error returned when the file was modified after we read it but before we
-/// tried to write, indicating a concurrent modification.
-#[derive(Debug, thiserror::Error)]
-#[error("file was modified by another process")]
-pub struct FileModifiedError;
-
-impl From<anyhow::Error> for FileModifiedError {
-    fn from(_: anyhow::Error) -> Self {
-        FileModifiedError
-    }
-}
-/// Save a `ChatDocument` atomically, checking for concurrent modifications.
-///
-/// Atomicity is enforced by the kernel:
-/// 1. Prepare new content and write it to a temp file.
-/// 2. Take an exclusive `flock` on a lock file (same directory as the chat file).
-/// 3. While holding the lock, check that the target file is unchanged (ino/mtime).
-/// 4. Replace the target with the temp file via a single `rename()` (atomic on POSIX).
-/// 5. Release the lock.
-///
-/// The lock ensures no other writer can change the file between our check and
-/// rename, so we never overwrite a file that has changed.
-///
-/// Returns `Err(FileModifiedError)` if the file was modified by another
-/// process after we read it.
-pub fn save_chat_atomic(doc: &mut ChatDocument) -> Result<(), FileModifiedError> {
-    let dir = ensure_chat_dir().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let path = dir.join(format!("{}.yaml", doc.id));
-    save_chat_to_atomic(&path, doc)
-}
-
-/// Save a `ChatDocument` to a specific path atomically, checking for concurrent
-/// modifications. See [`save_chat_atomic`] for details.
-pub fn save_chat_to_atomic(path: &Path, doc: &mut ChatDocument) -> Result<(), FileModifiedError> {
-    doc.touch();
-    let content = serialize_chat_document(doc).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    // Snapshot of target metadata before we prepare the write (no lock yet)
-    let initial_metadata = match std::fs::metadata(path) {
-        Ok(m) => Some(file_identity_from_metadata(&m)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err(FileModifiedError),
-    };
-
-    // Write to a temporary file in the same directory (rename must be same fs)
-    let temp_path = path.with_extension("yaml.tmp");
-    std::fs::write(&temp_path, &content).map_err(|_| FileModifiedError)?;
-
-    // From here on, check and replace must be atomic: hold exclusive lock so
-    // no other writer can change the file between our stat and rename.
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let lock_path = path.with_extension("lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|_| FileModifiedError)?;
-        let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
-        if ret != 0 {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(FileModifiedError);
-        }
-        let _guard = LockGuard(lock_file);
-        // With lock held: we are the only writer; target cannot change until we unlock.
-        if let Some((initial_ino, initial_mtime)) = initial_metadata {
-            match std::fs::metadata(path) {
-                Ok(m) => {
-                    let (ino, mt) = file_identity_from_metadata(&m);
-                    if ino != initial_ino || mt != initial_mtime {
-                        let _ = std::fs::remove_file(&temp_path);
-                        return Err(FileModifiedError);
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // File was deleted; we're (re)creating it, not overwriting
-                }
-                Err(_) => {
-                    let _ = std::fs::remove_file(&temp_path);
-                    return Err(FileModifiedError);
-                }
-            }
-        }
-        std::fs::rename(&temp_path, path).map_err(|_| FileModifiedError)?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        if let Some((initial_ino, initial_mtime)) = initial_metadata {
-            match std::fs::metadata(path) {
-                Ok(m) => {
-                    let (ino, mt) = file_identity_from_metadata(&m);
-                    if ino != initial_ino || mt != initial_mtime {
-                        let _ = std::fs::remove_file(&temp_path);
-                        return Err(FileModifiedError);
-                    }
-                }
-                Err(_) => {}
-            }
-        }
-        std::fs::rename(&temp_path, path).map_err(|_| FileModifiedError)?;
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-struct LockGuard(std::fs::File);
-
-#[cfg(unix)]
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        use std::os::unix::io::AsRawFd;
-        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
-    }
-}
-
-/// Load a `ChatDocument` along with its file metadata for later atomic write
-/// verification. The metadata can be passed to [`save_chat_with_metadata`] to
-/// detect concurrent modifications.
-pub fn load_chat_with_metadata(id: &SessionId) -> Result<(ChatDocument, FileMetadata)> {
-    let path = chat_path(id);
-    load_chat_from_with_metadata(&path)
-}
-
-/// Load a `ChatDocument` from an explicit file path along with its metadata.
-pub fn load_chat_from_with_metadata(path: &Path) -> Result<(ChatDocument, FileMetadata)> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("reading chat document metadata {}", path.display()))?;
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("reading chat document {}", path.display()))?;
-    let doc = parse_chat_document(&content)
-        .with_context(|| format!("parsing chat document {}", path.display()))?;
-    Ok((doc, FileMetadata::from(metadata)))
-}
-
-/// File metadata used for detecting concurrent modifications.
-///
-/// On Unix, `inode` is the real inode number. On other platforms it stores a
-/// stable fingerprint (currently file size) paired with `mtime` for change detection.
-#[derive(Debug, Clone)]
-pub struct FileMetadata {
-    inode: u64,
-    mtime: i64,
-}
-
-/// Identity tuple for comparing a file before/after an atomic write.
-fn file_identity_from_metadata(m: &std::fs::Metadata) -> (u64, i64) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        (m.ino(), m.mtime())
-    }
-    #[cfg(not(unix))]
-    {
-        let len = m.len();
-        let mt = m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        (len, mt)
-    }
-}
-
-impl FileMetadata {
-    /// Check if the file has been modified since this metadata was captured.
-    pub fn is_modified(&self, path: &Path) -> bool {
-        match std::fs::metadata(path) {
-            Ok(m) => {
-                let (ino, mt) = file_identity_from_metadata(&m);
-                ino != self.inode || mt != self.mtime
-            }
-            Err(_) => true, // File doesn't exist or can't be read = modified
-        }
-    }
-}
-
-impl From<std::fs::Metadata> for FileMetadata {
-    fn from(m: std::fs::Metadata) -> Self {
-        let (inode, mtime) = file_identity_from_metadata(&m);
-        Self { inode, mtime }
-    }
 }
 
 /// Load a `ChatDocument` from its canonical path using the session ID.
@@ -826,6 +509,14 @@ pub fn yaml_to_json_str(val: &serde_yaml::Value) -> String {
 mod tests {
     use super::*;
 
+    /// Test-only YAML serializer. There is no production writer anymore (see
+    /// module docs) - this exists purely so these tests can build fixtures
+    /// without hand-writing YAML for every case, exercising [`parse_chat_document`]
+    /// against real `serde_yaml` output rather than only hand-rolled strings.
+    fn to_yaml_for_test(doc: &ChatDocument) -> Result<String> {
+        serde_yaml::to_string(doc).context("serializing ChatDocument to YAML for a test fixture")
+    }
+
     fn make_doc() -> ChatDocument {
         let mut doc = ChatDocument::new("Test conversation");
         doc.model = Some("anthropic/claude-3-5".to_string());
@@ -843,7 +534,7 @@ mod tests {
     #[test]
     fn round_trip_simple() {
         let doc = make_doc();
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         let parsed = parse_chat_document(&yaml).unwrap();
         assert_eq!(parsed.title, doc.title);
         assert_eq!(parsed.turns.len(), 2);
@@ -878,7 +569,7 @@ mod tests {
             },
         ];
 
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         let parsed = parse_chat_document(&yaml).unwrap();
         assert_eq!(parsed.turns.len(), 4);
 
@@ -932,7 +623,7 @@ mod tests {
             },
         ];
 
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         let parsed = parse_chat_document(&yaml).unwrap();
         assert_eq!(parsed.turns.len(), 4);
 
@@ -953,13 +644,22 @@ mod tests {
     }
 
     #[test]
-    fn turns_to_messages_skips_thinking_and_compacted() {
+    fn turns_to_records_converts_thinking_and_tool_calls() {
         let turns = vec![
             TurnRecord::User {
                 content: "Do task".to_string(),
             },
             TurnRecord::Thinking {
                 content: "reasoning".to_string(),
+            },
+            TurnRecord::ToolCall {
+                tool_call_id: "call_1".to_string(),
+                name: "shell".to_string(),
+                arguments: json_str_to_yaml(r#"{"command":"ls"}"#),
+            },
+            TurnRecord::ToolResult {
+                tool_call_id: "call_1".to_string(),
+                content: "file1.rs".to_string(),
             },
             TurnRecord::Assistant {
                 content: "Done.".to_string(),
@@ -971,40 +671,10 @@ mod tests {
                 turn: None,
             },
         ];
-        let messages = turns_to_messages(&turns);
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].as_text(), Some("Do task"));
-        assert_eq!(messages[1].as_text(), Some("Done."));
-    }
-
-    #[test]
-    fn records_to_turns_and_back() {
-        let records = vec![
-            ConversationRecord::Message(Message::user("Hello")),
-            ConversationRecord::Message(Message::assistant("Hi")),
-            ConversationRecord::Thinking {
-                content: "thinking".to_string(),
-            },
-        ];
-        let turns = records_to_turns(&records);
-        assert_eq!(turns.len(), 3);
-        let back = turns_to_records(&turns);
-        assert_eq!(back.len(), 3);
-    }
-
-    #[test]
-    fn system_messages_skipped_in_conversion() {
-        let records = vec![
-            ConversationRecord::Message(Message::system("You are sven.")),
-            ConversationRecord::Message(Message::user("Hello")),
-            ConversationRecord::Message(Message::assistant("Hi")),
-        ];
-        let turns = records_to_turns(&records);
-        assert_eq!(turns.len(), 2, "system message must be skipped");
-        match &turns[0] {
-            TurnRecord::User { content } => assert_eq!(content, "Hello"),
-            _ => panic!("expected User"),
-        }
+        let records = turns_to_records(&turns);
+        assert_eq!(records.len(), 6);
+        assert!(matches!(&records[1], ConversationRecord::Thinking { content } if content == "reasoning"));
+        assert!(matches!(&records[5], ConversationRecord::ContextCompacted { tokens_before: 500, .. }));
     }
 
     #[test]
@@ -1028,7 +698,7 @@ mod tests {
         doc.turns = vec![TurnRecord::User {
             content: long.to_string(),
         }];
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         let parsed = parse_chat_document(&yaml).unwrap();
         match &parsed.turns[0] {
             TurnRecord::User { content } => assert_eq!(content, long),
@@ -1051,7 +721,7 @@ mod tests {
         doc.turns = vec![TurnRecord::User {
             content: "Hi".to_string(),
         }];
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         let parsed = parse_chat_document(&yaml).unwrap();
         let u = parsed
             .usage
@@ -1083,7 +753,7 @@ turns:
     #[test]
     fn usage_is_empty_skips_serialization() {
         let doc = ChatDocument::new("Brand new chat");
-        let yaml = serialize_chat_document(&doc).unwrap();
+        let yaml = to_yaml_for_test(&doc).unwrap();
         assert!(
             !yaml.contains("usage:"),
             "empty usage field must be omitted from YAML output: {yaml}"

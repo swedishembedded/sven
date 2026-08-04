@@ -77,7 +77,7 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-config` | Config schema + layered loader (`sven.yaml`); env-var secret expansion |
 | `sven-image` | Image reading helpers |
 | `sven-audio` | WAV decoding, resampling, and audio data-URL helpers |
-| `sven-input` | Chat document model (YAML sessions), history, conversation parse/render |
+| `sven-input` | ATIF trajectory-backed session store (`trace_session`), legacy YAML chat import, markdown history, conversation parse/render |
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
 | `sven-graph` | Graph DSL (`Graph`/`NodeData`/`EdgeData`/`GuardExpr`/`EffectTmpl`), `GraphBuilder`, guard/template evaluators, `NativeRegistry` |
 | `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `GraphMachine`, `ModeRegistry`, `loop_core`; `AgentEvent` + the kernel→AgentEvent adapter |

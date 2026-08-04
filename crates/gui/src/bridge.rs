@@ -21,7 +21,7 @@ use sven_frontend::{
     queue::QueueState,
     AgentRequest, NodeBackend, QueuedMessage,
 };
-use sven_input::{chat_path, list_chats, load_chat_from, ChatStatus, ChatUsage, SessionId};
+use sven_input::{list_all_sessions, ChatStatus, ChatUsage, SessionId};
 use sven_model::catalog;
 use sven_model::{FunctionCall, Message as SvenMessage, MessageContent, Role};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, TodoItem};
@@ -34,9 +34,9 @@ use crate::{
     queue_ops::sync_queue_model,
     search::new_shared_search,
     sessions::{
-        build_tool_result_blocks, chat_document_to_plain_messages, delete_session_from_disk,
-        format_fields_json, markdown_to_md_blocks_with_options, markdown_to_plain_messages,
-        save_session_to_disk, strip_inline_markdown,
+        build_tool_result_blocks, delete_session_from_disk, format_fields_json, load_session_by_id,
+        markdown_to_md_blocks_with_options, markdown_to_plain_messages, save_session_to_disk,
+        strip_inline_markdown, trajectory_to_plain_messages,
     },
     ChatMessage, CompletionEntry, MainWindow, MdBlock, PickerItem, QuestionItem, QueueItem,
     SessionItem, ToastItem,
@@ -103,29 +103,30 @@ impl SvenApp {
         let session_usage: Arc<Mutex<HashMap<String, ChatUsage>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        if let Ok(entries) = list_chats(Some(50)) {
+        // Lists both native ATIF sessions and any legacy YAML chats not yet
+        // superseded by a same-id `.json` file (see
+        // `sven_input::list_all_sessions`'s doc comment for the exact
+        // legacy-visibility policy). Opening and saving a legacy entry always
+        // writes the new format; its original `.yaml` file is left untouched.
+        if let Ok(entries) = list_all_sessions(Some(50)) {
             let mut usage_map = session_usage.lock().unwrap();
-            for chat_entry in &entries {
-                let id_str = chat_entry.id.as_str().to_string();
-                let cost = chat_entry
-                    .usage
-                    .as_ref()
-                    .map(|u| u.total_cost_usd as f32)
-                    .unwrap_or(0.0);
+            for entry in &entries {
+                let id_str = entry.session_id.clone();
+                let cost = entry.usage.as_ref().map(|u| u.total_cost_usd as f32).unwrap_or(0.0);
                 sessions_model.push(SessionItem {
                     id: SharedString::from(&id_str),
-                    title: SharedString::from(&chat_entry.title),
+                    title: SharedString::from(&entry.title),
                     busy: false,
                     active: false,
                     depth: 0,
-                    status: SharedString::from(match chat_entry.status {
+                    status: SharedString::from(match entry.status {
                         ChatStatus::Active => "active",
                         ChatStatus::Completed => "completed",
                         ChatStatus::Archived => "archived",
                     }),
                     total_cost_usd: cost,
                 });
-                if let Some(u) = chat_entry.usage.clone() {
+                if let Some(u) = entry.usage.clone() {
                     usage_map.insert(id_str, u);
                 }
             }
@@ -1147,28 +1148,17 @@ impl SvenApp {
                 let saved = session_msgs_ss.lock().unwrap().get(&new_id).cloned();
                 let saved = match saved {
                     Some(msgs) => msgs,
-                    None => {
-                        let sid = SessionId::from_string(new_id.clone());
-                        let path = chat_path(&sid);
-                        if path.exists() {
-                            match load_chat_from(&path) {
-                                Ok(doc) => {
-                                    let msgs = chat_document_to_plain_messages(&doc);
-                                    session_msgs_ss
-                                        .lock()
-                                        .unwrap()
-                                        .insert(new_id.clone(), msgs.clone());
-                                    msgs
-                                }
-                                Err(e) => {
-                                    tracing::warn!("failed to load chat {}: {e}", path.display());
-                                    Vec::new()
-                                }
-                            }
-                        } else {
+                    None => match load_session_by_id(&new_id) {
+                        Ok(trajectory) => {
+                            let msgs = trajectory_to_plain_messages(&trajectory);
+                            session_msgs_ss.lock().unwrap().insert(new_id.clone(), msgs.clone());
+                            msgs
+                        }
+                        Err(e) => {
+                            tracing::debug!("no session found on disk for {new_id}: {e}");
                             Vec::new()
                         }
-                    }
+                    },
                 };
 
                 while msgs_ss.row_count() > 0 {

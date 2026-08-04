@@ -13,6 +13,7 @@ sven-bootstrap = { path = "../bootstrap" }
 sven-mcp-client = { path = "../mcp-client" }
 sven-runtime   = { path = "../runtime" }
 sven-frontend  = { path = "../frontend" }
+trace          = { path = "../trace" }
 anyhow      = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }

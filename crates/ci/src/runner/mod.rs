@@ -151,11 +151,6 @@ pub struct CiOptions {
     /// When this budget is exhausted the runner exits with [`EXIT_BUDGET_EXHAUSTED`] (4).
     /// `None` or `0` means unlimited.
     pub max_tokens_budget: Option<u64>,
-    /// Load conversation history from a YAML chat document before running.
-    /// Parsed into messages that seed the agent; workflow steps run on top.
-    pub load_chat: Option<PathBuf>,
-    /// Write (or update) the YAML chat document after every step.
-    pub output_chat: Option<PathBuf>,
     /// Files attached to the **initial** user turn (from repeated `--attach`).
     ///
     /// Unlike the `attach_file` tool this needs no tool call, so it works with
@@ -628,47 +623,6 @@ impl CiRunner {
         let mut agent =
             KernelAgent::new(self.config.clone(), runtime_ctx, initial_mode, model_cfg.clone());
 
-        // ── Pre-load YAML chat document (if --load-chat was specified) ─────────
-        // If no trace was loaded, load history from the YAML chat document.
-        let pre_parsed_chat_messages: Option<Vec<Message>> =
-            if opts.load_trace.is_none() && opts.load_chat.is_some() {
-                if let Some(ref cpath) = opts.load_chat {
-                    match std::fs::read_to_string(cpath) {
-                        Ok(content) => match sven_input::parse_chat_document(&content) {
-                            Ok(doc) => {
-                                let msgs = sven_input::turns_to_messages(&doc.turns)
-                                    .into_iter()
-                                    .filter(|m| m.role != sven_model::Role::System)
-                                    .collect::<Vec<_>>();
-                                write_progress(&format!(
-                                    "[sven:info] Loaded {} message(s) from YAML chat document",
-                                    msgs.len()
-                                ));
-                                Some(msgs)
-                            }
-                            Err(e) => {
-                                write_stderr(&format!(
-                                    "[sven:error] Failed to parse --load-chat {}: {e}",
-                                    cpath.display()
-                                ));
-                                std::process::exit(EXIT_VALIDATION_ERROR);
-                            }
-                        },
-                        Err(e) => {
-                            write_stderr(&format!(
-                                "[sven:error] Failed to read --load-chat {}: {e}",
-                                cpath.display()
-                            ));
-                            std::process::exit(EXIT_VALIDATION_ERROR);
-                        }
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
         let seed_count = if !existing_steps.is_empty() {
             // Loaded ATIF trajectory (--load-trace/--trace path).
             if opts.rerun_toolcalls {
@@ -684,11 +638,6 @@ impl CiRunner {
             let history_msgs = trace_session::steps_to_messages(&existing_steps);
             let count = history_msgs.len();
             agent.seed_history(history_msgs);
-            count
-        } else if let Some(chat_msgs) = pre_parsed_chat_messages {
-            // YAML chat document seed (--load-chat path)
-            let count = chat_msgs.len();
-            agent.seed_history(chat_msgs);
             count
         } else if !conversation_history.is_empty() {
             // Piped markdown/JSONL conversation (legacy path)
@@ -1226,39 +1175,6 @@ impl CiRunner {
         if let Some(ref path) = effective_output_trace {
             flush_trace(path, &new_steps);
             write_progress(&format!("[sven:trace] Trace written to {}", path.display()));
-        }
-
-        // ── Final YAML chat document flush ───────────────────────────────────
-        if let Some(ref chat_out_path) = opts.output_chat {
-            // Build a ChatDocument from all accumulated steps (existing + run),
-            // via the ATIF-native turn assembler rather than the retired
-            // ConversationRecord accumulator — the on-disk YAML shape and
-            // CLI behaviour of --output-chat are unchanged.
-            let turns = trace_session::steps_to_turn_records(&final_trajectory_steps);
-            let doc_title = title.clone().unwrap_or_else(|| "CI Run".to_string());
-            let mut doc = sven_input::ChatDocument {
-                id: sven_input::SessionId::new(),
-                title: doc_title,
-                model: Some(format!("{}/{}", model_cfg.provider, model_cfg.name)),
-                mode: Some(opts.mode.to_string()),
-                status: sven_input::ChatStatus::Completed,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-                parent_id: None,
-                usage: None,
-                turns,
-            };
-            if let Err(e) = sven_input::save_chat_to(chat_out_path, &mut doc) {
-                write_stderr(&format!(
-                    "[sven:warn] Failed to write YAML chat document to {}: {e}",
-                    chat_out_path.display()
-                ));
-            } else {
-                write_progress(&format!(
-                    "[sven:chat] Chat document written to {}",
-                    chat_out_path.display()
-                ));
-            }
         }
 
         // ── Finalize JSON output ─────────────────────────────────────────────

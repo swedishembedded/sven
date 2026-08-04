@@ -7,10 +7,8 @@ use sven_frontend::{
     markdown::{parse_markdown_blocks, MarkdownBlock},
     tool_view::extract_tool_view,
 };
-use sven_input::{
-    chat_path, ensure_chat_dir, json_str_to_yaml, yaml_to_json_str, ChatDocument, ChatStatus,
-    ChatUsage, SessionId, TurnRecord,
-};
+use sven_input::{json_str_to_yaml, yaml_to_json_str, ChatStatus, ChatUsage, SvenSessionMeta, TurnRecord};
+use trace::Trajectory;
 
 use crate::{
     highlight::highlight_code,
@@ -635,10 +633,19 @@ fn strip_inline_code_backticks(s: &str) -> String {
 
 // ── Session persistence ───────────────────────────────────────────────────────
 
-/// Convert a `ChatDocument`'s turns to `PlainChatMessage`s for display.
-pub fn chat_document_to_plain_messages(doc: &ChatDocument) -> Vec<PlainChatMessage> {
+/// Convert an ATIF [`Trajectory`]'s steps to `PlainChatMessage`s for display.
+/// Built on [`sven_input::steps_to_turn_records`] (the same full-fidelity
+/// turn-shaped view the legacy YAML `ChatDocument` used to provide) so this
+/// crate's own turn-to-`PlainChatMessage` conversion below needs no changes.
+pub fn trajectory_to_plain_messages(trajectory: &Trajectory) -> Vec<PlainChatMessage> {
+    let turns = sven_input::steps_to_turn_records(&trajectory.steps);
+    turns_to_plain_messages(&turns)
+}
+
+/// Convert a legacy/native turn list to `PlainChatMessage`s for display.
+pub fn turns_to_plain_messages(turns: &[TurnRecord]) -> Vec<PlainChatMessage> {
     let mut out = Vec::new();
-    for turn in &doc.turns {
+    for turn in turns {
         match turn {
             TurnRecord::User { content } => {
                 out.extend(markdown_to_plain_messages(content, "user"));
@@ -894,7 +901,8 @@ pub fn parse_context_compacted(s: &str) -> Option<(usize, usize, String)> {
     Some((before, after, strat.to_string()))
 }
 
-/// Persist a session's messages to disk in the same format used by the TUI.
+/// Persist a session's messages to disk as an ATIF trajectory, in the same
+/// `session_dir()` used by the TUI (`~/.local/share/sven/sessions/<id>.json`).
 pub fn save_session_to_disk(
     session_id: &str,
     plain: &[PlainChatMessage],
@@ -907,37 +915,195 @@ pub fn save_session_to_disk(
     if turns.is_empty() {
         return;
     }
-    let sid = SessionId::from_string(session_id.to_string());
-    let path = chat_path(&sid);
-    if let Err(e) = ensure_chat_dir() {
-        tracing::warn!("cannot create chat dir: {e}");
-        return;
+    let steps = sven_input::turn_records_to_steps(&turns);
+
+    let mut agent = sven_input::default_agent_profile();
+    if let Some(m) = model {
+        agent = agent.with_model(m.to_string());
     }
+    let mut trajectory = Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+    trajectory.session_id = Some(session_id.to_string());
+    trajectory.steps = steps;
+
     let persisted_usage = usage.filter(|u| !u.is_empty());
-    let mut doc = ChatDocument {
-        id: sid,
+    if let Some(u) = &persisted_usage {
+        trajectory.final_metrics = Some(sven_input::chat_usage_to_final_metrics(u));
+    }
+    let meta = SvenSessionMeta {
         title: title.to_string(),
-        model: model.map(String::from),
-        mode: mode.map(String::from),
         status: ChatStatus::Active,
+        mode: mode.map(String::from),
+        parent_session_id: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
-        parent_id: None,
-        usage: persisted_usage,
-        turns,
     };
-    if let Err(e) = sven_input::save_chat_to(&path, &mut doc) {
-        tracing::warn!("failed to save chat {}: {e}", path.display());
+    meta.apply_to_trajectory(&mut trajectory);
+
+    if let Err(e) = sven_input::ensure_session_dir() {
+        tracing::warn!("cannot create session dir: {e}");
+        return;
+    }
+    let path = sven_input::session_path(session_id);
+    if let Err(e) = trace::persist::write_trajectory_atomic(&path, &trajectory, None) {
+        tracing::warn!("failed to save session {}: {e}", path.display());
     }
 }
 
-/// Delete a session from disk.
+/// Load a session by id, preferring its native ATIF `.json` file and falling
+/// back to a legacy YAML `ChatDocument` (read-only import) when no native
+/// file exists yet - mirrors the TUI's `switch_session` legacy-open path.
+/// Does NOT write anything; the next [`save_session_to_disk`] call always
+/// writes the new format (the original `.yaml`, if any, is left untouched).
+pub fn load_session_by_id(session_id: &str) -> anyhow::Result<Trajectory> {
+    let native_path = sven_input::session_path(session_id);
+    if native_path.exists() {
+        return sven_input::load_session_from(&native_path);
+    }
+    let sid = sven_input::SessionId::from_string(session_id.to_string());
+    let legacy_path = sven_input::chat_path(&sid);
+    let doc = sven_input::load_chat_from(&legacy_path)?;
+    Ok(sven_input::import_legacy_chat_document(&doc))
+}
+
+/// Delete a session from disk - both the native `.json` file (if any) and a
+/// legacy `.yaml` twin (if any), so "delete" fully removes the session
+/// regardless of which format currently backs it.
 pub fn delete_session_from_disk(session_id: &str) {
-    let sid = SessionId::from_string(session_id.to_string());
-    let path = chat_path(&sid);
-    if path.exists() {
-        if let Err(e) = std::fs::remove_file(&path) {
-            tracing::warn!("failed to delete chat {}: {e}", path.display());
+    let native_path = sven_input::session_path(session_id);
+    if native_path.exists() {
+        if let Err(e) = std::fs::remove_file(&native_path) {
+            tracing::warn!("failed to delete session {}: {e}", native_path.display());
         }
+    }
+    let sid = sven_input::SessionId::from_string(session_id.to_string());
+    let legacy_path = sven_input::chat_path(&sid);
+    if legacy_path.exists() {
+        if let Err(e) = std::fs::remove_file(&legacy_path) {
+            tracing::warn!("failed to delete legacy chat {}: {e}", legacy_path.display());
+        }
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_call_message() -> PlainChatMessage {
+        PlainChatMessage {
+            message_type: "tool-call",
+            content: r#"{"path":"/tmp/x"}"#.to_string(),
+            role: "assistant",
+            tool_name: "read_file".to_string(),
+            tool_result_content: "file contents".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn sample_plain_messages() -> Vec<PlainChatMessage> {
+        vec![
+            PlainChatMessage {
+                message_type: "user",
+                content: "What is 2+2?".to_string(),
+                role: "user",
+                is_first_in_group: true,
+                ..Default::default()
+            },
+            PlainChatMessage {
+                message_type: "thinking",
+                content: "I should compute it.".to_string(),
+                role: "thinking",
+                ..Default::default()
+            },
+            tool_call_message(),
+            PlainChatMessage {
+                message_type: "assistant",
+                content: "The answer is 4.".to_string(),
+                role: "assistant",
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn plain_messages_to_turns_and_back_preserves_thinking_and_tool_calls() {
+        let plain = sample_plain_messages();
+        let turns = plain_messages_to_turns(&plain);
+
+        assert!(turns.iter().any(|t| matches!(t, TurnRecord::Thinking { content } if content == "I should compute it.")));
+        assert!(turns.iter().any(|t| matches!(t, TurnRecord::ToolCall { name, .. } if name == "read_file")));
+        assert!(turns.iter().any(|t| matches!(t, TurnRecord::ToolResult { content, .. } if content == "file contents")));
+
+        let back = turns_to_plain_messages(&turns);
+        assert!(back.iter().any(|m| m.message_type == "thinking" && m.content == "I should compute it."));
+        assert!(back.iter().any(|m| m.message_type == "tool-call" && m.tool_name == "read_file"));
+    }
+
+    #[test]
+    fn save_and_load_session_round_trip_through_atif() {
+        // Use a random UUID-shaped id so this test never collides with a real
+        // user session in the shared session_dir(); clean up afterward.
+        let session_id = format!("test-{}", uuid::Uuid::new_v4());
+        let plain = sample_plain_messages();
+
+        save_session_to_disk(
+            &session_id,
+            &plain,
+            "Test session",
+            Some("anthropic/claude-3-5"),
+            Some("agent"),
+            Some(ChatUsage {
+                total_input_tokens: 10,
+                total_output_tokens: 20,
+                total_cache_read_tokens: 0,
+                total_cache_write_tokens: 0,
+                total_cost_usd: 0.01,
+            }),
+        );
+
+        let path = sven_input::session_path(&session_id);
+        assert!(path.exists(), "save_session_to_disk must write the native ATIF file");
+
+        let loaded = load_session_by_id(&session_id).expect("load must succeed");
+        assert_eq!(loaded.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(loaded.agent.model_name.as_deref(), Some("anthropic/claude-3-5"));
+
+        let restored = trajectory_to_plain_messages(&loaded);
+        assert!(restored.iter().any(|m| m.message_type == "thinking"));
+        assert!(restored.iter().any(|m| m.message_type == "tool-call" && m.tool_name == "read_file"));
+        assert!(restored.iter().any(|m| m.content.contains("The answer is 4.")));
+
+        delete_session_from_disk(&session_id);
+        assert!(!path.exists(), "delete_session_from_disk must remove the file");
+    }
+
+    #[test]
+    fn load_session_by_id_falls_back_to_legacy_yaml() {
+        use sven_input::chat_document::{ChatDocument, TurnRecord as LegacyTurn};
+
+        let session_id = format!("legacy-{}", uuid::Uuid::new_v4());
+        let mut doc = ChatDocument::new("Legacy GUI chat");
+        doc.id = sven_input::SessionId::from_string(session_id.clone());
+        doc.turns = vec![
+            LegacyTurn::User {
+                content: "Hello from legacy".to_string(),
+            },
+            LegacyTurn::Assistant {
+                content: "Hi!".to_string(),
+            },
+        ];
+        let legacy_path = sven_input::chat_path(&doc.id);
+        sven_input::ensure_chat_dir().unwrap();
+        std::fs::write(&legacy_path, serde_yaml::to_string(&doc).unwrap()).unwrap();
+
+        let native_path = sven_input::session_path(&session_id);
+        assert!(!native_path.exists(), "no native twin must exist yet for this fresh id");
+
+        let loaded = load_session_by_id(&session_id).expect("legacy fallback must succeed");
+        let restored = trajectory_to_plain_messages(&loaded);
+        assert!(restored.iter().any(|m| m.content.contains("Hello from legacy")));
+
+        let _ = std::fs::remove_file(&legacy_path);
     }
 }

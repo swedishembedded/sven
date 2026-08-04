@@ -27,11 +27,9 @@ use crate::{
     },
     history_save, history_save_to,
     markdown::render_markdown,
-    serialize_jsonl_records,
     ui::theme::{BAR_AGENT, BAR_THINKING},
     ui::tool_renderer,
     ui::width_utils::{col_to_byte_offset, display_width, truncate_to_width},
-    ConversationRecord,
 };
 
 /// Number of lines to show in tier-1 (partial) view.
@@ -406,182 +404,150 @@ impl App {
 
     // ── History persistence ───────────────────────────────────────────────────
 
+    /// Collect the current chat's non-display-only messages, for the separate
+    /// markdown `history_save`/`history_save_to` archive (an orthogonal,
+    /// unrelated feature from ATIF session persistence - see module docs on
+    /// `sven_input::history`).
+    fn active_chat_messages(&self) -> Vec<sven_model::Message> {
+        self.chat
+            .segments
+            .iter()
+            .filter_map(|seg| match seg {
+                ChatSegment::Message(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Resolve (and, if this is the session's first save, assign) the ATIF
+    /// session path: an explicit `--trace`/`--output-trace` path if one was
+    /// given at startup, otherwise the canonical `session_dir()/<id>.json`
+    /// path. Also flips a legacy entry's `is_legacy` off, since from this
+    /// point on the session is backed by the new format (the original
+    /// `.yaml` file, if any, is left untouched on disk).
+    fn resolve_session_path(&mut self) -> std::path::PathBuf {
+        if let Some(path) = self.session_path.clone() {
+            return path;
+        }
+        let active_id = self.sessions.active_id.clone();
+        let path = sven_input::session_path(active_id.as_str());
+        self.session_path = Some(path.clone());
+        if let Some(entry) = self.sessions.get_mut(&active_id) {
+            entry.session_path = Some(path.clone());
+            entry.is_legacy = false;
+        }
+        path
+    }
+
+    /// Build the ATIF [`trace::Trajectory`] for the active session from its
+    /// current chat segments.
+    fn active_session_trajectory(&self) -> trace::Trajectory {
+        let model = Some(self.session.model_display.clone());
+        let mode = Some(self.session.mode.to_string());
+        let active_id = self.sessions.active_id.clone();
+        if let Some(entry) = self.sessions.get(&active_id) {
+            entry.to_trajectory(&self.chat, model, mode)
+        } else {
+            // Fallback for the rare case where the active entry isn't found.
+            let records: Vec<sven_input::ConversationRecord> = self
+                .chat
+                .segments
+                .iter()
+                .filter_map(|seg| match seg {
+                    ChatSegment::Message(m) => Some(sven_input::ConversationRecord::Message(m.clone())),
+                    ChatSegment::Thinking { content } => Some(sven_input::ConversationRecord::Thinking {
+                        content: content.clone(),
+                    }),
+                    ChatSegment::ContextCompacted {
+                        tokens_before,
+                        tokens_after,
+                        strategy,
+                        turn,
+                    } => Some(sven_input::ConversationRecord::ContextCompacted {
+                        tokens_before: *tokens_before,
+                        tokens_after: *tokens_after,
+                        strategy: Some(strategy.to_string()),
+                        turn: Some(*turn),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let steps = sven_input::conversation_records_to_steps(&records);
+            let mut agent = sven_input::default_agent_profile();
+            if let Some(m) = &model {
+                agent = agent.with_model(m.clone());
+            }
+            let mut trajectory = trace::Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+            trajectory.session_id = Some(active_id.as_str().to_string());
+            trajectory.steps = steps;
+            let meta = sven_input::SvenSessionMeta {
+                title: self.chat_title.clone(),
+                status: sven_input::ChatStatus::Active,
+                mode,
+                parent_session_id: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            meta.apply_to_trajectory(&mut trajectory);
+            trajectory
+        }
+    }
+
+    /// `true` iff the active chat has anything worth persisting (mirrors the
+    /// old `records.is_empty()` early-return: display-only segments like
+    /// `TodoUpdate`/`CollabEvent`/`Error` never count).
+    fn active_chat_has_persistable_content(&self) -> bool {
+        self.chat.segments.iter().any(|seg| {
+            matches!(
+                seg,
+                ChatSegment::Message(_) | ChatSegment::Thinking { .. } | ChatSegment::ContextCompacted { .. }
+            )
+        })
+    }
+
     /// Synchronous variant of `save_history_async` for use at clean exit.
     ///
     /// Called just before `run()` returns so that any messages typed in the
     /// current session are written to disk even if the tokio runtime is about
     /// to drop (which would cancel any pending `tokio::spawn` write tasks).
     pub(crate) fn save_history_sync(&mut self) {
-        let records: Vec<ConversationRecord> = self
-            .chat
-            .segments
-            .iter()
-            .filter_map(|seg| match seg {
-                ChatSegment::Message(m) => Some(ConversationRecord::Message(m.clone())),
-                ChatSegment::Thinking { content } => Some(ConversationRecord::Thinking {
-                    content: content.clone(),
-                }),
-                ChatSegment::ContextCompacted {
-                    tokens_before,
-                    tokens_after,
-                    strategy,
-                    turn,
-                } => Some(ConversationRecord::ContextCompacted {
-                    tokens_before: *tokens_before,
-                    tokens_after: *tokens_after,
-                    strategy: Some(strategy.to_string()),
-                    turn: Some(*turn),
-                }),
-                _ => None,
-            })
-            .collect();
-
-        if records.is_empty() {
+        if !self.active_chat_has_persistable_content() {
             return;
         }
-
-        let yaml_path = self.yaml_path.clone();
-        let model = Some(self.session.model_display.clone());
-        let mode = Some(self.session.mode.to_string());
-        let active_id = self.sessions.active_id.clone();
-        let mut doc = if let Some(entry) = self.sessions.get(&active_id) {
-            entry.to_document(&self.chat, model, mode)
-        } else {
-            let turns = sven_input::records_to_turns(&records);
-            sven_input::ChatDocument {
-                id: active_id.clone(),
-                title: self.chat_title.clone(),
-                model,
-                mode,
-                status: sven_input::ChatStatus::Active,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-                parent_id: None,
-                usage: None,
-                turns,
-            }
-        };
-
-        let result = if let Some(ref path) = yaml_path {
-            sven_input::save_chat_to(path, &mut doc)
-        } else {
-            let path = sven_input::chat_path(&doc.id);
-            let r = sven_input::save_chat_to(&path, &mut doc);
-            if r.is_ok() {
-                if let Some(entry) = self.sessions.get_mut(&active_id) {
-                    entry.yaml_path = Some(path.clone());
-                }
-                self.yaml_path = Some(path);
-            }
-            r
-        };
-        if let Err(e) = result {
-            tracing::debug!("failed to save YAML chat document on exit: {e}");
+        let path = self.resolve_session_path();
+        let trajectory = self.active_session_trajectory();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = trace::persist::write_trajectory_atomic(&path, &trajectory, None) {
+            tracing::debug!("failed to save session trajectory on exit: {e}");
         }
     }
 
     pub(crate) fn save_history_async(&mut self) {
-        let records: Vec<ConversationRecord> = self
-            .chat
-            .segments
-            .iter()
-            .filter_map(|seg| match seg {
-                ChatSegment::Message(m) => Some(ConversationRecord::Message(m.clone())),
-                ChatSegment::Thinking { content } => Some(ConversationRecord::Thinking {
-                    content: content.clone(),
-                }),
-                ChatSegment::ContextCompacted {
-                    tokens_before,
-                    tokens_after,
-                    strategy,
-                    turn,
-                } => Some(ConversationRecord::ContextCompacted {
-                    tokens_before: *tokens_before,
-                    tokens_after: *tokens_after,
-                    strategy: Some(strategy.to_string()),
-                    turn: Some(*turn),
-                }),
-                ChatSegment::Error(_) => None,
-                // Display-only segments: never persisted to JSONL / history.
-                ChatSegment::TodoUpdate(_) => None,
-                ChatSegment::CollabEvent(_) => None,
-                ChatSegment::DelegateSummary { .. } => None,
-            })
-            .collect();
-
-        if records.is_empty() {
+        if !self.active_chat_has_persistable_content() {
             return;
         }
 
-        let messages: Vec<sven_model::Message> = records
-            .iter()
-            .filter_map(|r| {
-                if let ConversationRecord::Message(m) = r {
-                    Some(m.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if let Some(jsonl_path) = self.jsonl_path.clone() {
-            let serialized = serialize_jsonl_records(&records);
-            tokio::spawn(async move {
-                if let Err(e) = std::fs::write(&jsonl_path, &serialized) {
-                    tracing::debug!("failed to update JSONL conversation file: {e}");
-                }
-            });
-        }
-
-        // Save as YAML chat document, preserving the original created_at timestamp.
-        {
-            let mut yaml_path = self.yaml_path.clone();
-            let model = Some(self.session.model_display.clone());
-            let mode = Some(self.session.mode.to_string());
-            let active_id = self.sessions.active_id.clone();
-            let mut doc = if let Some(entry) = self.sessions.get(&active_id) {
-                entry.to_document(&self.chat, model, mode)
-            } else {
-                // Fallback for the rare case where the active entry isn't found.
-                let turns = sven_input::records_to_turns(&records);
-                sven_input::ChatDocument {
-                    id: active_id.clone(),
-                    title: self.chat_title.clone(),
-                    model,
-                    mode,
-                    status: sven_input::ChatStatus::Active,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    parent_id: None,
-                    usage: None,
-                    turns,
-                }
-            };
-            if yaml_path.is_none() {
-                let path = sven_input::chat_path(&doc.id);
-                yaml_path = Some(path.clone());
-                if let Some(entry) = self.sessions.get_mut(&active_id) {
-                    entry.yaml_path = Some(path.clone());
-                }
-                self.yaml_path = Some(path);
+        let path = self.resolve_session_path();
+        let trajectory = self.active_session_trajectory();
+        tokio::spawn(async move {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
-            let path_for_save = yaml_path.clone();
-            tokio::spawn(async move {
-                let result = if let Some(ref path) = path_for_save {
-                    sven_input::save_chat_to(path, &mut doc)
-                } else {
-                    sven_input::save_chat(&mut doc)
-                };
-                if let Err(e) = result {
-                    tracing::debug!("failed to save YAML chat document: {e}");
-                }
-            });
-        }
+            if let Err(e) = trace::persist::write_trajectory_atomic(&path, &trajectory, None) {
+                tracing::debug!("failed to save session trajectory: {e}");
+            }
+        });
 
+        // Separately, append to the plain markdown conversation history
+        // archive (`sven_input::history`) - an orthogonal, unrelated feature
+        // (used by `sven chats` / headless `--resume`) from ATIF session
+        // persistence above.
+        let messages = self.active_chat_messages();
         if messages.is_empty() {
             return;
         }
-
         let path_opt = self.history_path.clone();
         match path_opt {
             None => match history_save(&messages) {

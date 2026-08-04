@@ -16,6 +16,7 @@ sven-model    = { path = "../model" }
 sven-bootstrap = { path = "../bootstrap" }
 sven-runtime  = { path = "../runtime" }
 sven-mcp-client = { path = "../mcp-client" }
+trace         = { path = "../trace" }
 slint         = { workspace = true }
 tokio         = { workspace = true }
 futures       = { workspace = true }
@@ -28,3 +29,6 @@ syntect       = { workspace = true }
 pulldown-cmark = { workspace = true }
 [build-dependencies]
 slint-build = { workspace = true }
+
+[dev-dependencies]
+serde_yaml   = { workspace = true }
