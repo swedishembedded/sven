@@ -476,14 +476,54 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             finalise_stdout(&state.streamed_text);
             return Some(EXIT_SUCCESS);
         }
-        // Subagent / delegate / team observations are rendered by the
-        // interactive frontends (child-session views, collapsible segments);
-        // the headless CI runner has no surface for them.
-        UiEvent::SubagentStarted { .. }
-        | UiEvent::SubagentEvent { .. }
-        | UiEvent::DelegateSummary { .. }
-        | UiEvent::CollabEvent(_)
-        | UiEvent::PeerList(_) => {}
+        // Subagent / delegate / team observations are otherwise rendered as
+        // rich child-session views by the interactive frontends; this runner
+        // has no such surface (and, unlike `CiRunner`, no ATIF trace
+        // document to embed a subagent trajectory into — `RuntimeRunner`
+        // never writes `--output-trace`; see `main.rs`'s runner-routing
+        // comment, which forces `CiRunner` whenever `--output-trace` is
+        // given). Still emit the same `[sven:subagent:...]` stderr tokens
+        // `CiRunner` does (see `crates/ci/src/runner/event.rs`) so a plain
+        // `sven --headless` run (no `--output-trace`) has the same
+        // subagent-lifecycle visibility on stderr instead of silently
+        // dropping these — previously the case for every field here.
+        UiEvent::SubagentStarted {
+            call_id,
+            handle_id,
+            description,
+            ..
+        } => {
+            write_stderr(&format!(
+                "[sven:subagent:started] call_id=\"{call_id}\" handle_id=\"{handle_id}\" description={description:?}"
+            ));
+        }
+        UiEvent::SubagentEvent { handle_id, update, .. } => {
+            if let Ok(update) = serde_json::from_value::<sven_tools::events::SubagentUpdate>(update) {
+                match update {
+                    sven_tools::events::SubagentUpdate::Finished { .. } => {
+                        write_stderr(&format!("[sven:subagent:finished] handle_id=\"{handle_id}\""));
+                    }
+                    sven_tools::events::SubagentUpdate::Failed { reason } => {
+                        write_stderr(&format!(
+                            "[sven:subagent:failed] handle_id=\"{handle_id}\" reason={reason:?}"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        UiEvent::DelegateSummary {
+            to_name,
+            task_title,
+            duration_ms,
+            status,
+            result_preview,
+        } => {
+            write_stderr(&format!(
+                "[sven:subagent:delegate_summary] to=\"{to_name}\" task={task_title:?} status=\"{status}\" duration_ms={duration_ms} result_preview={result_preview:?}"
+            ));
+        }
+        UiEvent::CollabEvent(_) | UiEvent::PeerList(_) => {}
     }
     None
 }

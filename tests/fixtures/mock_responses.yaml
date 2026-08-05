@@ -133,6 +133,27 @@ responses:
           shell_command: "ls /tmp"
     after_tool_reply: "Listed /tmp directory. Found the expected files."
 
+  # ── Subagent delegation (task tool) ─────────────────────────────────────────
+  #
+  # Spawns a real `sven acp serve` child process (see `crates/bootstrap/src/
+  # task_tool.rs`). `model: mock` is passed explicitly rather than relying on
+  # the task tool's own model passthrough, because that passthrough forwards
+  # this provider's own reported name ("yaml-mock", from `YamlMockProvider::
+  # name()`) as the child's `--model`, which isn't a registered driver id —
+  # only the bare `mock` id is. The child inherits SVEN_MOCK_RESPONSES from
+  # the environment, so its own prompt ("ping") is matched against this same
+  # file's "ping" -> "pong" rule above.
+  - match_type: contains
+    pattern: "delegate a subtask"
+    tool_calls:
+      - id: tc-task
+        tool: task
+        args:
+          prompt: "ping"
+          description: "mock subagent smoke test"
+          model: "mock"
+    after_tool_reply: "The delegated subtask finished."
+
   # ── Shell execution ─────────────────────────────────────────────────────────
 
   - match_type: contains

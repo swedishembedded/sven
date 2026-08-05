@@ -52,9 +52,17 @@ pub const ATIF_SCHEMA_VERSION: &str = "ATIF-v1.7";
 pub const AGENT_NAME: &str = "sven";
 
 /// Build a default [`AgentProfile`] for a fresh trajectory: `name = "sven"`,
-/// `version` = this crate's own package version. Callers that know the
-/// actual running binary version should build their own `AgentProfile`
-/// instead; this is just a reasonable default for tests and simple callers.
+/// `version` = this crate's own package version, which is `version.workspace
+/// = true` in `crates/input/Cargo.toml` — i.e. the *real* top-level `sven`
+/// binary version (`[workspace.package].version` in the root `Cargo.toml`),
+/// not an independently-versioned library crate. Prior to that inheritance
+/// being wired up, this returned a permanently-frozen `"1.0.0"` regardless of
+/// the actual release, because this crate had its own stale hardcoded
+/// `Cargo.toml` version. Callers embedding a *different* binary's trajectory
+/// (e.g. a subagent that could in principle run a different sven build)
+/// should still build their own `AgentProfile` instead of relying on this
+/// default; this is the reasonable default for the common case where the
+/// running process is that binary.
 pub fn default_agent_profile() -> AgentProfile {
     AgentProfile::new(AGENT_NAME, env!("CARGO_PKG_VERSION"))
 }
@@ -239,6 +247,56 @@ pub fn record_subagent_spawn(parent: &mut Trajectory, child_session_id: &str, ch
         extra: None,
     }])));
     parent.steps.push(step);
+}
+
+/// Build the standalone `System` marker step [`record_subagent_embedded`]
+/// appends: a single [`SubagentRef`] resolved by `trajectory_id` (the
+/// embedded form, as opposed to [`record_subagent_spawn`]'s
+/// `trajectory_path` file-ref form). [`StepAssembler::push_subagent_embedded`]
+/// does *not* use this — it attaches to whatever step is already pending
+/// instead of creating a standalone one; see that method's doc comment for
+/// why a standalone step is wrong for a streaming caller.
+fn subagent_embedded_marker_step(step_id: u64, child_trajectory_id: &str, child_session_id: Option<&str>) -> TraceStep {
+    let mut step = TraceStep::new(
+        step_id,
+        StepOrigin::System,
+        format!("subagent embedded: trajectory_id={child_trajectory_id}"),
+    );
+    step.observation = Some(StepObservation::single(ObservationEntry::for_subagent(vec![SubagentRef {
+        trajectory_id: Some(child_trajectory_id.to_string()),
+        trajectory_path: None,
+        session_id: child_session_id.map(str::to_string),
+        extra: None,
+    }])));
+    step
+}
+
+/// Best-effort helper: embed a completed subagent's own trajectory directly
+/// into the *parent* trajectory, using ATIF v1.7's single-file
+/// multi-agent-storage mechanism (`Trajectory.subagent_trajectories`) rather
+/// than [`record_subagent_spawn`]'s file-ref form. Appends a new `System`
+/// step to `parent.steps` (sequential `step_id`) carrying an observation
+/// with a single [`SubagentRef`] resolved by `trajectory_id`, then pushes
+/// `child` itself onto `parent.subagent_trajectories`.
+///
+/// # Panics
+///
+/// Panics if `child.trajectory_id` is `None` — per ATIF v1.7, every entry in
+/// `subagent_trajectories` REQUIRES a `trajectory_id`
+/// (`trace::validate::validate_trajectory`'s `MissingSubagentTrajectoryId`
+/// rule), so callers must mint one before calling this function. There is no
+/// separate trajectory-id minting helper in this codebase; reuse
+/// [`new_session_id`], the same helper `Trajectory.session_id` is minted
+/// with elsewhere in this module.
+pub fn record_subagent_embedded(parent: &mut Trajectory, child: Trajectory) {
+    let child_trajectory_id = child
+        .trajectory_id
+        .clone()
+        .expect("record_subagent_embedded: child.trajectory_id must be set before embedding");
+    let step_id = parent.steps.len() as u64 + 1;
+    let step = subagent_embedded_marker_step(step_id, &child_trajectory_id, child.session_id.as_deref());
+    parent.steps.push(step);
+    parent.subagent_trajectories.get_or_insert_with(Vec::new).push(child);
 }
 
 // ── Context-compaction structured details (extra.sven on a System step) ────
@@ -430,6 +488,63 @@ impl StepAssembler {
             .expect("just ensured object")
             .insert("sven".to_string(), serde_json::to_value(&details).expect("always serializes"));
         self.steps.push(step);
+    }
+
+    /// Attach a completed subagent's embedded-trajectory reference to the
+    /// *currently pending* agent step (creating one if none is open yet) as
+    /// an additional observation result, carrying a [`SubagentRef`]
+    /// (embedded form, resolved via `trajectory_id`) pointing at
+    /// `child_trajectory_id`.
+    ///
+    /// # Why attach instead of closing the step (like [`record_subagent_embedded`] does)
+    ///
+    /// The obvious-looking alternative — flush whatever's pending and push a
+    /// standalone `System` marker step, mirroring [`record_subagent_embedded`]'s
+    /// shape — is wrong for a *streaming* caller: the `task` tool call that
+    /// spawned the subagent is itself part of the currently-pending step
+    /// (its `ToolCallStarted` always arrives before the subagent's own
+    /// completion signal), and that tool call's own result observation
+    /// hasn't necessarily arrived yet either. Flushing here would split the
+    /// tool call from its eventual tool-result observation across two
+    /// different steps — which `trace::validate::validate_trajectory`'s
+    /// `DanglingSourceCallId` rule rejects, since a `source_call_id` must
+    /// resolve against a `tool_calls` entry in the *same* step. Attaching to
+    /// the still-open pending step instead keeps everything about this turn
+    /// (the tool call, its result, and the subagent it delegated to)
+    /// together in one step, the same way a plain tool call's result does.
+    /// (This was found by testing against a real `task`-tool run, not
+    /// designed up front — see the CI runner's `event::finalize_subagent_child`.)
+    ///
+    /// `source_call_id`, when given, is the spawning tool call's id (e.g.
+    /// the `task` call's `tool_call_id`) — passing it correlates this
+    /// observation with that `tool_calls` entry the same way the tool's own
+    /// result observation will.
+    ///
+    /// This is the streaming-friendly sibling of [`record_subagent_embedded`]:
+    /// that function needs a full `Trajectory` already in hand, whereas a
+    /// running turn only has this `StepAssembler` — the `Trajectory` doesn't
+    /// exist yet. The caller is responsible for appending the completed
+    /// child `Trajectory` itself to the eventual `Trajectory.subagent_trajectories`
+    /// once one is assembled (see `sven_ci::runner::event`'s `SubagentEvent`
+    /// handling).
+    pub fn push_subagent_embedded(
+        &mut self,
+        source_call_id: Option<&str>,
+        child_trajectory_id: &str,
+        child_session_id: Option<&str>,
+    ) {
+        let entry = ObservationEntry {
+            source_call_id: source_call_id.map(str::to_string),
+            content: None,
+            subagent_trajectory_ref: Some(vec![SubagentRef {
+                trajectory_id: Some(child_trajectory_id.to_string()),
+                trajectory_path: None,
+                session_id: child_session_id.map(str::to_string),
+                extra: None,
+            }]),
+            extra: None,
+        };
+        self.pending_or_new().observation_results.push(entry);
     }
 
     /// Flush any still-open agent step and return the complete, ordered
@@ -1239,6 +1354,70 @@ mod tests {
         assert!(trace::validate_trajectory(&parent).is_ok());
     }
 
+    #[test]
+    fn record_subagent_embedded_appends_child_trajectory_and_resolvable_ref() {
+        let mut parent = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        parent.session_id = Some("root-session-1".to_string());
+        parent.steps.push(TraceStep::new(1, StepOrigin::User, "Do the subtask"));
+
+        let mut child = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        child.trajectory_id = Some("child-traj-1".to_string());
+        child.session_id = Some("child-session-1".to_string());
+        child.steps.push(TraceStep::new(1, StepOrigin::User, "Delegated prompt"));
+        child.steps.push(TraceStep::new(2, StepOrigin::Agent, "Delegated result"));
+
+        record_subagent_embedded(&mut parent, child.clone());
+
+        // The marker step was appended to the parent's own step sequence.
+        assert_eq!(parent.steps.len(), 2);
+        let step = &parent.steps[1];
+        assert_eq!(step.step_id, 2);
+        assert_eq!(step.source, StepOrigin::System);
+        let obs = step.observation.as_ref().expect("observation present");
+        let refs = obs.results[0].subagent_trajectory_ref.as_ref().expect("refs present");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].trajectory_id.as_deref(), Some("child-traj-1"));
+        assert_eq!(refs[0].session_id.as_deref(), Some("child-session-1"));
+        assert!(refs[0].trajectory_path.is_none());
+        assert!(!refs[0].is_unresolvable());
+
+        // The reference resolves against the embedded trajectory.
+        let embedded = parent.subagent_trajectories.as_ref().expect("subagent_trajectories present");
+        assert_eq!(embedded.len(), 1);
+        assert_eq!(embedded[0].trajectory_id.as_deref(), refs[0].trajectory_id.as_deref());
+        assert_eq!(embedded[0].steps.len(), 2);
+
+        // The resulting document — parent plus embedded child — validates cleanly.
+        assert!(trace::validate_trajectory(&parent).is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "trajectory_id must be set")]
+    fn record_subagent_embedded_panics_without_child_trajectory_id() {
+        let mut parent = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        let child = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        record_subagent_embedded(&mut parent, child);
+    }
+
+    // ── agent.version ─────────────────────────────────────────────────────
+
+    #[test]
+    fn default_agent_profile_reports_the_real_sven_binary_version_not_a_frozen_crate_version() {
+        // Regression guard: `crates/input/Cargo.toml` used to carry its own
+        // permanently-frozen `version = "1.0.0"`, so every ATIF trace this
+        // crate wrote claimed `agent.version = "1.0.0"` no matter what the
+        // actual top-level `sven` binary release was. `crates/input` now
+        // inherits `version.workspace = true` from the root Cargo.toml's
+        // `[workspace.package].version`, so `env!("CARGO_PKG_VERSION")` here
+        // always matches the real release version.
+        let profile = default_agent_profile();
+        assert_ne!(
+            profile.version, "1.0.0",
+            "agent.version is still the old frozen crates/input version, not the real sven release version"
+        );
+        assert_eq!(profile.version, env!("CARGO_PKG_VERSION"));
+    }
+
     // ── StepAssembler: forward turn assembly ────────────────────────────────
 
     #[test]
@@ -1445,6 +1624,72 @@ mod tests {
         assert_eq!(details.tokens_after, 100);
         assert_eq!(details.strategy.as_deref(), Some("structured"));
         assert_eq!(details.turn, Some(3));
+    }
+
+    #[test]
+    fn push_subagent_embedded_attaches_to_pending_tool_call_step_without_splitting_it() {
+        // Mirrors the real `task`-tool event order: ToolCallStarted (task)
+        // arrives, then the subagent's own completion signal arrives — all
+        // *before* the task tool's own ToolCallFinished (its own execute()
+        // call hasn't returned to the parent event stream yet), and finally
+        // assistant text closes the turn. If `push_subagent_embedded` closed
+        // the pending step early (as an earlier version of this method did),
+        // the tool call and its eventual result would land in different
+        // steps and `trace::validate_trajectory` would reject the document
+        // with a `DanglingSourceCallId` error — this test is the regression
+        // guard for that.
+        let mut a = StepAssembler::new();
+        a.push_message(&Message::user("delegate this"));
+        a.push_message(&Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "tc-task".into(),
+                function: FunctionCall {
+                    name: "task".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        });
+        assert_eq!(a.closed_steps().len(), 1, "only the user step has closed so far");
+
+        a.push_subagent_embedded(Some("tc-task"), "child-traj-9", Some("child-session-9"));
+        a.push_message(&Message::tool_result("tc-task", "pong"));
+        a.push_message(&Message::assistant("The delegated subtask finished."));
+
+        let steps = a.finish();
+        assert_eq!(steps.len(), 2, "everything about this turn stays in one agent step");
+        let step = &steps[1];
+        assert_eq!(step.source, StepOrigin::Agent);
+        assert_eq!(step.tool_calls.as_ref().unwrap().len(), 1);
+        assert_eq!(step.message.as_text(), Some("The delegated subtask finished."));
+
+        let obs = step.observation.as_ref().expect("observation present");
+        assert_eq!(obs.results.len(), 2, "subagent ref + tool result, both in this step");
+        let subagent_result = obs
+            .results
+            .iter()
+            .find(|r| r.subagent_trajectory_ref.is_some())
+            .expect("subagent ref result present");
+        assert_eq!(subagent_result.source_call_id.as_deref(), Some("tc-task"));
+        let refs = subagent_result.subagent_trajectory_ref.as_ref().unwrap();
+        assert_eq!(refs[0].trajectory_id.as_deref(), Some("child-traj-9"));
+        assert_eq!(refs[0].session_id.as_deref(), Some("child-session-9"));
+        assert!(refs[0].trajectory_path.is_none());
+        let tool_result = obs
+            .results
+            .iter()
+            .find(|r| r.content.is_some())
+            .expect("tool-result observation present");
+        assert_eq!(tool_result.source_call_id.as_deref(), Some("tc-task"));
+
+        // Build a full document (with the referenced child embedded) and
+        // confirm the real validator accepts it.
+        let mut trajectory = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        trajectory.steps = steps;
+        let mut child = Trajectory::new(ATIF_SCHEMA_VERSION, default_agent_profile());
+        child.trajectory_id = Some("child-traj-9".to_string());
+        trajectory.subagent_trajectories = Some(vec![child]);
+        assert!(trace::validate_trajectory(&trajectory).is_ok());
     }
 
     #[test]

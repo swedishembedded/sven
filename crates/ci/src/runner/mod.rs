@@ -6,7 +6,7 @@ mod event;
 mod helpers;
 pub mod runtime_runner;
 
-use event::{handle_event, stream_new_steps, StepState};
+use event::{handle_event, stream_new_steps, StepState, SubagentChildState};
 pub(crate) use helpers::{
     is_conversation_format, is_json_summary_format, is_jsonl_format, parse_json_summary,
     parse_jsonl_trace_steps,
@@ -716,18 +716,37 @@ impl CiRunner {
         let mut run_total_tokens: u64 = 0;
         let max_tokens_budget = opts.max_tokens_budget;
 
+        // In-progress `task`-tool subagents (keyed by ACP `handle_id`) and
+        // the trajectories of those that have finished so far — both
+        // threaded through every `StepState` for the life of the run (not
+        // reset per-step) so a subagent spawned in one step and finished in
+        // a later one still resolves correctly. See `event::SubagentChildState`
+        // and `StepState::completed_subagents`.
+        let mut subagent_children: HashMap<String, SubagentChildState> = HashMap::new();
+        let mut completed_subagents: Vec<Trajectory> = Vec::new();
+
         // Write the combined ATIF trajectory (existing steps ++ new steps
         // accumulated so far) to `path`, atomically (temp file + rename; see
         // `trace::persist::write_trajectory_atomic`) so a crash never leaves
         // a half-written document. `expected: None` — same as the old JSONL
         // flush, this run is the sole writer for the duration and does not
         // need concurrent-modification detection against other processes.
-        let flush_trace = |path: &PathBuf, new_steps: &[TraceStep]| {
+        // `subagent_trajectories` — like `new_steps` — is passed as a
+        // parameter rather than captured by reference: both `assembler` and
+        // `completed_subagents` keep mutating after this closure is defined,
+        // so each call site passes a fresh snapshot instead of the closure
+        // holding a live (and therefore borrow-conflicting) reference.
+        let flush_trace = |path: &PathBuf,
+                           new_steps: &[TraceStep],
+                           subagent_trajectories: &[Trajectory]| {
             let agent_profile = trace_session::default_agent_profile()
                 .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
             trajectory.session_id = Some(run_session_id.clone());
             trajectory.steps = existing_steps.iter().cloned().chain(new_steps.iter().cloned()).collect();
+            if !subagent_trajectories.is_empty() {
+                trajectory.subagent_trajectories = Some(subagent_trajectories.to_vec());
+            }
 
             let mut meta = existing_meta.clone().unwrap_or_else(|| {
                 SvenSessionMeta::new(title.clone().unwrap_or_else(|| "CI Run".to_string()))
@@ -927,6 +946,11 @@ impl CiRunner {
                 };
 
                 let mut consecutive_tool_errors = 0;
+                // Set by `handle_event` when `--max-tokens` is exceeded; see
+                // `StepState::budget_exhausted`'s doc comment for why this is
+                // a flag checked here rather than a direct `process::exit`
+                // inside the event handler.
+                let mut budget_exhausted = false;
 
                 tokio::pin!(submit_fut);
 
@@ -956,7 +980,11 @@ impl CiRunner {
                                     let _ = history::save(&collected);
                                 }
                                 if let Some(ref path) = effective_output_trace {
-                                    flush_trace(path, &assembler.snapshot_including_pending());
+                                    flush_trace(
+                                        path,
+                                        &assembler.snapshot_including_pending(),
+                                        &completed_subagents,
+                                    );
                                 }
                                 std::process::exit(EXIT_TIMEOUT);
                             }
@@ -968,7 +996,11 @@ impl CiRunner {
                                 let _ = history::save(&collected);
                             }
                             if let Some(ref path) = effective_output_trace {
-                                flush_trace(path, &assembler.snapshot_including_pending());
+                                flush_trace(
+                                    path,
+                                    &assembler.snapshot_including_pending(),
+                                    &completed_subagents,
+                                );
                             }
                             std::process::exit(EXIT_INTERRUPT);
                         }
@@ -990,7 +1022,29 @@ impl CiRunner {
                                 any_tool_errors: &mut any_tool_errors,
                                 run_total_tokens: &mut run_total_tokens,
                                 max_tokens_budget,
+                                budget_exhausted: &mut budget_exhausted,
+                                subagent_children: &mut subagent_children,
+                                completed_subagents: &mut completed_subagents,
                             });
+
+                            // Abort if the `--max-tokens` budget was exhausted.
+                            // Flushing here (rather than in `handle_event`) is
+                            // what makes `--output-trace` still get a valid
+                            // partial document when this fires — see
+                            // `StepState::budget_exhausted`'s doc comment.
+                            if budget_exhausted {
+                                if !collected.is_empty() {
+                                    let _ = history::save(&collected);
+                                }
+                                if let Some(ref path) = effective_output_trace {
+                                    flush_trace(
+                                        path,
+                                        &assembler.snapshot_including_pending(),
+                                        &completed_subagents,
+                                    );
+                                }
+                                std::process::exit(EXIT_BUDGET_EXHAUSTED);
+                            }
 
                             // Abort if too many consecutive tool errors
                             const MAX_CONSECUTIVE_TOOL_ERRORS: u32 = 20;
@@ -1005,7 +1059,11 @@ impl CiRunner {
                                     let _ = history::save(&collected);
                                 }
                                 if let Some(ref path) = effective_output_trace {
-                                    flush_trace(path, &assembler.snapshot_including_pending());
+                                    flush_trace(
+                                        path,
+                                        &assembler.snapshot_including_pending(),
+                                        &completed_subagents,
+                                    );
                                 }
                                 std::process::exit(EXIT_AGENT_ERROR);
                             }
@@ -1035,7 +1093,26 @@ impl CiRunner {
                                     any_tool_errors: &mut any_tool_errors,
                                     run_total_tokens: &mut run_total_tokens,
                                     max_tokens_budget,
+                                    budget_exhausted: &mut budget_exhausted,
+                                    subagent_children: &mut subagent_children,
+                                    completed_subagents: &mut completed_subagents,
                                 });
+                                if budget_exhausted {
+                                    break;
+                                }
+                            }
+                            if budget_exhausted {
+                                if !collected.is_empty() {
+                                    let _ = history::save(&collected);
+                                }
+                                if let Some(ref path) = effective_output_trace {
+                                    flush_trace(
+                                        path,
+                                        &assembler.snapshot_including_pending(),
+                                        &completed_subagents,
+                                    );
+                                }
+                                std::process::exit(EXIT_BUDGET_EXHAUSTED);
                             }
                             break;
                         }
@@ -1076,7 +1153,11 @@ impl CiRunner {
 
             // ── Flush the trace after every step ─────────────────────────────
             if let Some(ref path) = effective_output_trace {
-                flush_trace(path, &assembler.snapshot_including_pending());
+                flush_trace(
+                    path,
+                    &assembler.snapshot_including_pending(),
+                    &completed_subagents,
+                );
             }
 
             // ── Write step output to stdout ──────────────────────────────────
@@ -1143,7 +1224,11 @@ impl CiRunner {
                     let _ = history::save(&collected);
                 }
                 if let Some(ref path) = effective_output_trace {
-                    flush_trace(path, &assembler.snapshot_including_pending());
+                    flush_trace(
+                        path,
+                        &assembler.snapshot_including_pending(),
+                        &completed_subagents,
+                    );
                 }
                 std::process::exit(EXIT_AGENT_ERROR);
             }
@@ -1173,7 +1258,7 @@ impl CiRunner {
         // ── Final trace flush ────────────────────────────────────────────────
         // Ensure the last step is persisted even if no prior flush fired.
         if let Some(ref path) = effective_output_trace {
-            flush_trace(path, &new_steps);
+            flush_trace(path, &new_steps, &completed_subagents);
             write_progress(&format!("[sven:trace] Trace written to {}", path.display()));
         }
 
@@ -1188,6 +1273,9 @@ impl CiRunner {
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
             trajectory.session_id = Some(run_session_id.clone());
             trajectory.steps = final_trajectory_steps.clone();
+            if !completed_subagents.is_empty() {
+                trajectory.subagent_trajectories = Some(completed_subagents.clone());
+            }
             let mut meta = existing_meta.clone().unwrap_or_else(|| {
                 SvenSessionMeta::new(title.clone().unwrap_or_else(|| "CI Run".to_string()))
             });

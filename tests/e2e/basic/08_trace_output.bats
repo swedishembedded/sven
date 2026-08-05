@@ -222,3 +222,96 @@ load helpers
     tool_result_line=$(echo "${STDERR_OUT}" | grep '\[sven:tool:result\]' | head -1)
     [[ "${tool_result_line}" == *"output="* ]]
 }
+
+# ── task-tool subagent trajectories embed into the parent --output-trace ────
+#
+# The `task` tool spawns a real `sven acp serve` child process over ACP (see
+# `crates/bootstrap/src/task_tool.rs`); its conversation used to be entirely
+# unrecorded — `AgentEvent::SubagentStarted`/`SubagentEvent` were silently
+# dropped by the CI runner's event handler (`crates/ci/src/runner/event.rs`),
+# and even before reaching there, `ToolEvent::SubagentStarted`/`SubagentEvent`
+# never reached the `AgentEvent` stream at all (the receiving end of that
+# channel was unconditionally dropped in `crates/bootstrap/src/
+# runtime_builder.rs` — "all modes now use TurnExecutor"). Both gaps are now
+# fixed, so the parent document's `subagent_trajectories` should contain the
+# child's own turns, referenced from a resolvable `trajectory_id`.
+#
+# The mock fixture (`tests/fixtures/mock_responses.yaml`, "delegate a
+# subtask" rule) delegates with prompt "ping"; the spawned child inherits
+# SVEN_MOCK_RESPONSES and replies "pong" per this same file's "ping" rule.
+
+@test "08.28 task tool delegation produces a non-empty subagent_trajectories" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "delegate a subtask to a subagent" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    [ "${status}" -eq 0 ]
+    run python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get('subagent_trajectories') else 1)" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.29 embedded subagent trajectory contains the child's own turns" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "delegate a subtask to a subagent" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+child = d['subagent_trajectories'][0]
+steps = child['steps']
+assert any(s.get('message') == 'ping' for s in steps), steps
+assert any(s.get('message') == 'pong' for s in steps), steps
+" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.30 parent step's subagent_trajectory_ref resolves to the embedded child's trajectory_id" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "delegate a subtask to a subagent" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+child_id = d['subagent_trajectories'][0]['trajectory_id']
+assert child_id, 'child trajectory_id must be set'
+refs = [
+    r
+    for step in d['steps']
+    for r in (step.get('observation') or {}).get('results', [])
+    if r.get('subagent_trajectory_ref')
+]
+assert refs, 'no subagent_trajectory_ref observation found in parent steps'
+resolved = [ref['trajectory_id'] for r in refs for ref in r['subagent_trajectory_ref']]
+assert child_id in resolved, (child_id, resolved)
+" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "08.31 [sven:subagent:started] and [sven:subagent:embedded] appear on stderr with --output-trace" {
+    # --output-trace is one of the flags that routes to CiRunner (see
+    # main.rs's runner-routing comment) - the [sven:subagent:embedded] token
+    # only fires there, once the child trajectory is actually folded into
+    # the parent document.
+    local trace_file
+    trace_file="$(tmp_file)"
+    run_split_output bash -c 'echo "delegate a subtask to a subagent" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
+    [[ "${STDERR_OUT}" == *"[sven:subagent:started]"* ]]
+    [[ "${STDERR_OUT}" == *"[sven:subagent:embedded]"* ]]
+    rm -f "${trace_file}"
+}
+
+@test "08.32 [sven:subagent:started] still appears on stderr without --output-trace (RuntimeRunner path)" {
+    # A plain `sven --headless` invocation with no workflow flags routes to
+    # the *other* headless runner, `RuntimeRunner` (see main.rs's
+    # runner-routing comment) - a separate implementation from `CiRunner`'s
+    # event.rs that had the identical silently-dropped-subagent-events bug.
+    # It has no ATIF trace document to embed into (RuntimeRunner never
+    # writes --output-trace), so there is no [sven:subagent:embedded] token
+    # here, but the lifecycle should still be visible on stderr rather than
+    # silently dropped.
+    run_split_output bash -c 'echo "delegate a subtask to a subagent" | "$BIN" --headless --model mock'
+    [[ "${STDERR_OUT}" == *"[sven:subagent:started]"* ]]
+    [[ "${STDERR_OUT}" == *"[sven:subagent:finished]"* ]]
+}

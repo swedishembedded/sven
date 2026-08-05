@@ -33,11 +33,13 @@ use sven_executors::{
     CompositeExecutorBuilder, ToolExecutor, TurnExecutor,
 };
 use sven_hsm::{
-    Context, EffectExecutor, ErasedRuntime, Event, EventSink, Principal, RuntimeStatus, ToolCallId,
+    Context, EffectExecutor, ErasedRuntime, Event, EventSink, ObservationSink, Principal,
+    RuntimeStatus, ToolCallId, UiEvent,
 };
 use sven_llm::ConversationStore;
 use sven_mcp_client::{McpEvent, McpManager, McpTool};
 use sven_model::Message;
+use sven_tools::events::ToolEvent;
 use sven_tools::{PermissionRequester, QuestionRequest, ToolRegistry};
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
@@ -546,8 +548,13 @@ impl RuntimeBuilder {
         // ToolExecutor below (frontends reach it for MCP tool hot-swap).
         let tool_registry_for_handle = Arc::clone(&tool_registry);
 
-        // All modes now use TurnExecutor; drop the legacy tool_event_rx.
-        drop(tool_event_rx);
+        // `tool_event_rx` is forwarded onto the kernel's `ObservationSink` once
+        // one exists — see the `spawn_tool_event_forwarder` call below, after
+        // `erased_runtime` is spawned. It is *not* dropped here; TurnExecutor
+        // does not read `ToolEvent`s itself (only the kernel's own `UiEvent`
+        // plane), but several tools (`task`, `todo`, `system`) still report
+        // through this side channel — see that function's doc comment for the
+        // full history.
 
         // ── Shared TurnExecutor resources ─────────────────────────────────────
         // Conversation store and call-id registry are shared between TurnExecutor
@@ -707,6 +714,13 @@ impl RuntimeBuilder {
             audit_trail,
         );
 
+        // Forward the legacy `ToolEvent` side channel onto the kernel's own
+        // `ObservationSink` now that one exists (`erased_runtime.observations()`
+        // is only available after the runtime is spawned, which is why this
+        // isn't done up where `tool_event_rx` was created). See
+        // `spawn_tool_event_forwarder`'s doc comment.
+        spawn_tool_event_forwarder(tool_event_rx, erased_runtime.observations());
+
         let handle = RuntimeHandle {
             sink: erased_runtime.sink(),
             obs: erased_runtime.observations(),
@@ -766,6 +780,93 @@ pub struct SessionBundle {
     /// Receiver for MCP server events (tools changed, server health, etc.).
     /// Consume in the frontend or drop to silence.
     pub mcp_event_rx: mpsc::Receiver<McpEvent>,
+}
+
+// ── Legacy ToolEvent → UiEvent forwarding ───────────────────────────────────
+
+/// Forward [`ToolEvent`]s onto the kernel's [`ObservationSink`] as the
+/// matching [`UiEvent`], for as long as `rx`'s sender half is alive.
+///
+/// # Why this exists
+///
+/// `sven_tools::events::ToolEvent` predates the HSM kernel: it was how tools
+/// reported side-band state changes (todo list updates, mode/model switches,
+/// subagent lifecycle, delegate summaries) back to the old `sven_core::Agent`
+/// loop. Several tools still send through it — `TodoTool`, `TaskTool`
+/// (`SubagentStarted`/`SubagentEvent`), `SystemTool` (`ModeChanged`) — but
+/// [`build`](RuntimeBuilder::build) used to just `drop` the receiver ("all
+/// modes now use `TurnExecutor`"), on the assumption that `TurnExecutor` had
+/// a replacement path for all of it. It doesn't: `TurnExecutor` only reads
+/// the kernel's own `UiEvent` observation plane, which nothing was ever
+/// posting these to. The result was silent, total data loss — not just the
+/// `task`-tool `AgentEvent::SubagentStarted`/`SubagentEvent` this module was
+/// changed to fix (see `crates/ci/src/runner/event.rs`), but todo-list
+/// updates and mode changes reported by tools too, on every surface (TUI,
+/// GUI, CI, node, ACP), since `RuntimeBuilder` is the one assembly point
+/// every one of them goes through.
+///
+/// This function is the fix: it re-threads the side channel onto the
+/// observation plane using the same field-for-field mapping
+/// `sven_executors::turn::agent_event_to_ui` already uses for the equivalent
+/// `AgentEvent` variants, so a `ToolEvent` and an `AgentEvent` reporting the
+/// same fact produce the identical `UiEvent`.
+///
+/// `ToolEvent::McpServerAdded`/`McpServerRemoved` are deliberately **not**
+/// forwarded — they are registry mutations (add/remove a tool from the live
+/// `ToolRegistry`), not renderable observations, and have no `UiEvent`
+/// counterpart; wiring those up is a separate change (hot MCP registry
+/// reload), out of scope here.
+fn spawn_tool_event_forwarder(mut rx: mpsc::Receiver<ToolEvent>, obs: ObservationSink) {
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let ui_event = match event {
+                ToolEvent::TodoUpdate(items) => UiEvent::TodoUpdate(
+                    serde_json::to_value(&items).unwrap_or(serde_json::Value::Null),
+                ),
+                ToolEvent::ModeChanged(mode) => UiEvent::ModeChanged(format!("{mode:?}")),
+                ToolEvent::ModelChanged(m) => UiEvent::ModelChanged(m),
+                ToolEvent::Progress { call_id, message } => {
+                    UiEvent::ToolProgress { call_id, message }
+                }
+                ToolEvent::DelegateSummary {
+                    to_name,
+                    task_title,
+                    duration_ms,
+                    status,
+                    result_preview,
+                } => UiEvent::DelegateSummary {
+                    to_name,
+                    task_title,
+                    duration_ms,
+                    status,
+                    result_preview,
+                },
+                ToolEvent::SubagentStarted {
+                    call_id,
+                    handle_id,
+                    description,
+                    prompt,
+                } => UiEvent::SubagentStarted {
+                    call_id,
+                    handle_id,
+                    description,
+                    prompt,
+                },
+                ToolEvent::SubagentEvent {
+                    call_id,
+                    handle_id,
+                    update,
+                } => UiEvent::SubagentEvent {
+                    call_id,
+                    handle_id,
+                    update: serde_json::to_value(&update).unwrap_or(serde_json::Value::Null),
+                },
+                // No `UiEvent` counterpart — see the doc comment above.
+                ToolEvent::McpServerAdded { .. } | ToolEvent::McpServerRemoved(_) => continue,
+            };
+            obs.emit(ui_event);
+        }
+    });
 }
 
 #[cfg(test)]

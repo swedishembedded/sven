@@ -619,3 +619,48 @@ EOF
     assert_output_contains "timeout=60s"
     rm -f "${wf}"
 }
+
+# ── --max-tokens budget exhaustion still flushes --output-trace ─────────────
+#
+# Regression coverage: exhausting the `--max-tokens` budget used to call
+# `std::process::exit` directly from inside the per-event handler
+# (`crates/ci/src/runner/event.rs`), before the runner's trace-flush code
+# ever ran — so a budget-aborted run exited 4 but left `--output-trace`
+# completely unwritten. The runner now signals the budget exhaustion back to
+# `runner/mod.rs` (see `StepState::budget_exhausted`), which flushes the
+# partial trajectory through the same `flush_trace` closure every other
+# abort path uses, then exits 4 itself.
+
+@test "06.56 --max-tokens budget exhaustion exits 4" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --max-tokens 1 --output-trace "$1"' -- "${trace_file}"
+    [ "${status}" -eq 4 ]
+    rm -f "${trace_file}"
+}
+
+@test "06.57 --max-tokens budget exhaustion still writes a non-empty --output-trace file" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --max-tokens 1 --output-trace "$1"' -- "${trace_file}"
+    [ -s "${trace_file}" ]
+    rm -f "${trace_file}"
+}
+
+@test "06.58 --max-tokens budget-exhaustion trace file is valid JSON" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --max-tokens 1 --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
+
+@test "06.59 --max-tokens budget-exhaustion trace has an ATIF schema_version" {
+    local trace_file
+    trace_file="$(tmp_file)"
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --max-tokens 1 --output-trace "$1"' -- "${trace_file}"
+    run python3 -c "import json,sys; v=json.load(open(sys.argv[1]))['schema_version']; sys.exit(0 if v.startswith('ATIF-') else 1)" "${trace_file}"
+    [ "${status}" -eq 0 ]
+    rm -f "${trace_file}"
+}
