@@ -47,6 +47,17 @@ members = [
     "crates/trace",
 ]
 
+# Single source of truth for the sven release version. The top-level `sven`
+# binary crate's `[package]` inherits this (see below), and so does
+# `crates/input` — the ATIF trace writer reads `env!("CARGO_PKG_VERSION")`
+# there to stamp `Trajectory.agent.version` (see `trace_session::default_agent_profile`).
+# Before this existed, `crates/input/Cargo.toml` carried its own frozen
+# `version = "1.0.0"`, so every trace this binary wrote claimed agent version
+# "1.0.0" instead of the real release version. Inheriting from here keeps the
+# two permanently in sync with no runtime plumbing required.
+[workspace.package]
+version = "1.10.0"
+
 [workspace.dependencies]
 libc         = "0.2"
 fs4          = "0.13"
@@ -98,7 +109,7 @@ slint-build  = "1.15"
 
 [package]
 name    = "sven"
-version = "1.10.0"
+version.workspace = true
 edition = "2021"
 description = "A CLI and CI AI coding agent"
 license = "Apache-2.0"
