@@ -118,6 +118,42 @@ load helpers
     [ "${status}" -ne 0 ]
 }
 
+# ── --mode plan/research headless permission gating ─────────────────────────
+# Regression tests for a real bug: --mode plan/research accepted the flag
+# (01.17/01.18 above) but never actually denied a write headlessly --
+# RuntimeBuilder::with_agent_mode (the only thing that selects the read-only
+# permission policy) was called from the TUI/GUI builder only, never from
+# either headless runner. Fixed by threading AgentMode through KernelAgent
+# and RuntimeRunnerOptions into with_agent_mode. The "permission probe file"
+# mock trigger (tests/fixtures/mock_responses.yaml) scripts a write_file
+# attempt so this proves the KERNEL denies it, not just that a well-behaved
+# model declines to try.
+
+@test "01.25 --mode plan denies a scripted write attempt (file never created)" {
+    rm -f /tmp/sven_e2e_permission_probe.txt
+    run bash -c 'echo "please write the permission probe file" | "$BIN" --headless --model mock --mode plan 2>&1'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "[sven:tool:call]"
+    [ ! -e /tmp/sven_e2e_permission_probe.txt ]
+}
+
+@test "01.26 --mode research denies a scripted write attempt (file never created)" {
+    rm -f /tmp/sven_e2e_permission_probe.txt
+    run bash -c 'echo "please write the permission probe file" | "$BIN" --headless --model mock --mode research 2>&1'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "[sven:tool:call]"
+    [ ! -e /tmp/sven_e2e_permission_probe.txt ]
+}
+
+@test "01.27 --mode agent (control) actually performs the same write" {
+    rm -f /tmp/sven_e2e_permission_probe.txt
+    run bash -c 'echo "please write the permission probe file" | "$BIN" --headless --model mock --mode agent 2>&1'
+    [ "${status}" -eq 0 ]
+    [ -e /tmp/sven_e2e_permission_probe.txt ]
+    [ "$(cat /tmp/sven_e2e_permission_probe.txt)" = "written by sven mock agent" ]
+    rm -f /tmp/sven_e2e_permission_probe.txt
+}
+
 # ── --model flag ──────────────────────────────────────────────────────────────
 
 @test "01.21 --model mock accepted" {

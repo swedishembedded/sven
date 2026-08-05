@@ -56,7 +56,7 @@ members = [
 # "1.0.0" instead of the real release version. Inheriting from here keeps the
 # two permanently in sync with no runtime plumbing required.
 [workspace.package]
-version = "1.10.1"
+version = "1.10.2"
 
 [workspace.dependencies]
 libc         = "0.2"

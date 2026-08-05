@@ -2500,6 +2500,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         let code = runner
             .run(sven_ci::RuntimeRunnerOptions {
                 mode: kernel_mode,
+                agent_mode: cli.mode,
                 prompt,
                 history,
                 project_root: project_root.clone(),

@@ -22,7 +22,7 @@ use anyhow::Context as _;
 use tokio::sync::broadcast::error::RecvError;
 
 use sven_bootstrap::{KernelChannels, RuntimeBuilder, RuntimeContext};
-use sven_config::Config;
+use sven_config::{AgentMode, Config};
 use sven_hsm::{Event, EventSink, UiEvent};
 use sven_model::Message;
 
@@ -46,8 +46,17 @@ pub struct RuntimeRunner {
 /// Options for a single kernel-driven CI run.
 #[derive(Debug)]
 pub struct RuntimeRunnerOptions {
-    /// Mode string (e.g. `"agent"`, `"chat"`, `"sdlc"`).
+    /// Mode string (e.g. `"agent"`, `"chat"`, `"sdlc"`) — selects which kernel
+    /// machine runs. `Self::kernel_mode` collapses `Plan`/`Research`/`Agent`
+    /// to the same "agent" machine string; `agent_mode` below is what
+    /// actually differentiates their PERMISSION policy.
     pub mode: String,
+    /// The original interactive [`AgentMode`], passed to
+    /// `RuntimeBuilder::with_agent_mode`. Without this, `--mode plan`/
+    /// `--mode research` silently ran with full write permissions through
+    /// this runner (confirmed against a real packaged build before this fix)
+    /// -- see the identical field on `crate::kernel_agent::KernelAgent`.
+    pub agent_mode: AgentMode,
     /// The single user prompt to execute.
     pub prompt: String,
     /// Prior conversation history to seed into the kernel thread before the
@@ -160,6 +169,7 @@ impl RuntimeRunner {
 
         let bundle = RuntimeBuilder::new(self.config.clone(), kernel_mode)
             .with_runtime_context(runtime_ctx)
+            .with_agent_mode(opts.agent_mode)
             .with_allow_interactive_oauth(false)
             .with_initial_history(history)
             .build_session()
@@ -556,6 +566,7 @@ mod tests {
     fn runtime_runner_options_debug() {
         let opts = RuntimeRunnerOptions {
             mode: "agent".into(),
+            agent_mode: AgentMode::Agent,
             prompt: "hello".into(),
             history: Vec::new(),
             project_root: None,

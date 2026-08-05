@@ -45,8 +45,21 @@ use sven_tools::ToolRegistry;
 pub struct KernelAgent {
     config: Arc<Config>,
     runtime_ctx: RuntimeContext,
-    /// Current kernel mode string (`"agent"`, `"chat"`, `"sdlc"`, …).
+    /// Current kernel mode string (`"agent"`, `"chat"`, `"sdlc"`, …) — selects
+    /// which machine runs (`kernel_mode`: `Plan`/`Research`/`Agent` all drive
+    /// the same "agent"-string reactive machine).
     mode: String,
+    /// The original interactive [`AgentMode`], kept alongside the derived
+    /// `mode` string and passed to `RuntimeBuilder::with_agent_mode` on every
+    /// rebuilt session. `Plan`/`Research` collapse to the SAME kernel-mode
+    /// string as `Agent` (see `kernel_mode`) since they drive the same
+    /// machine; the read-only permission policy that's the entire point of
+    /// those modes is selected by `with_agent_mode`, not by `mode`. Without
+    /// this field, `--mode plan` silently ran with full write permissions in
+    /// every headless run (`CiRunner`/`KernelAgent` is what `--output-trace`
+    /// always routes through) -- confirmed against a real packaged build
+    /// before this fix.
+    agent_mode: AgentMode,
     /// Current model config for the next turn (per-step overridable).
     model_cfg: ModelConfig,
     /// Accumulated conversation history seeded into every rebuilt session.
@@ -69,6 +82,7 @@ impl KernelAgent {
             config,
             runtime_ctx,
             mode: kernel_mode(initial_mode).to_string(),
+            agent_mode: initial_mode,
             model_cfg,
             history: Vec::new(),
             wait_for_mcp_ms: 20_000,
@@ -78,6 +92,7 @@ impl KernelAgent {
     /// Override the mode used for subsequent turns (per-step `mode=` option).
     pub fn set_mode(&mut self, mode: AgentMode) {
         self.mode = kernel_mode(mode).to_string();
+        self.agent_mode = mode;
     }
 
     /// Override the model config used for subsequent turns (per-step
@@ -136,6 +151,7 @@ impl KernelAgent {
         let ctx = self.runtime_ctx.clone();
         let bundle = RuntimeBuilder::new(self.config.clone(), self.mode.clone())
             .with_runtime_context(ctx)
+            .with_agent_mode(self.agent_mode)
             .with_model_config(self.model_cfg.clone())
             .with_allow_interactive_oauth(false)
             .with_wait_for_mcp_tools(self.wait_for_mcp_ms)
