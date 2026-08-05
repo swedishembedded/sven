@@ -53,8 +53,27 @@ use crate::tool_slots::attempt_json_repair;
 pub type ModelResolver =
     std::sync::Arc<dyn Fn(&str) -> anyhow::Result<std::sync::Arc<dyn ModelProvider>> + Send + Sync>;
 
-/// Maximum idle time between stream chunks before the connection is declared stale.
-const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(300);
+/// Default maximum idle time between stream chunks before the connection is
+/// declared stale, when `SVEN_STREAM_CHUNK_TIMEOUT_SECS` is unset.
+const DEFAULT_STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Environment variable overriding [`DEFAULT_STREAM_CHUNK_TIMEOUT`]. A slow but
+/// live provider -- e.g. CPU-backed prefill of a large tool-schema-laden prompt,
+/// which can legitimately stay silent on the wire well past 300s before its
+/// first streamed token -- would otherwise be indistinguishable from a genuinely
+/// stale connection and abort the turn.
+const STREAM_CHUNK_TIMEOUT_ENV: &str = "SVEN_STREAM_CHUNK_TIMEOUT_SECS";
+
+/// Resolve the per-chunk stream idle timeout: [`STREAM_CHUNK_TIMEOUT_ENV`] if
+/// set to a valid positive integer, else [`DEFAULT_STREAM_CHUNK_TIMEOUT`].
+fn stream_chunk_timeout() -> Duration {
+    std::env::var(STREAM_CHUNK_TIMEOUT_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&secs| secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_STREAM_CHUNK_TIMEOUT)
+}
 
 // ─── Accumulation-only slot ───────────────────────────────────────────────────
 
@@ -165,14 +184,15 @@ pub async fn stream_turn(
     let mut slots: HashMap<u32, AccumSlot> = HashMap::new();
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
+    let chunk_timeout = stream_chunk_timeout();
 
     loop {
-        let maybe_event = tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next())
+        let maybe_event = tokio::time::timeout(chunk_timeout, stream.next())
             .await
             .map_err(|_| {
                 anyhow::anyhow!(
                     "model stream idle for >{} s - stale connection",
-                    STREAM_CHUNK_TIMEOUT.as_secs()
+                    chunk_timeout.as_secs()
                 )
             })?;
 
@@ -400,4 +420,53 @@ pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolC
 
     let cleaned = invoke_re.replace_all(text, "").trim().to_string();
     (cleaned, tool_calls)
+}
+
+#[cfg(test)]
+mod stream_chunk_timeout_tests {
+    use super::*;
+
+    // Mutating a process-global env var races other tests only if they touch
+    // the same name; STREAM_CHUNK_TIMEOUT_ENV is dedicated to this test module,
+    // so no serialization guard is needed beyond restoring the original value.
+    #[test]
+    fn defaults_to_300s_when_unset() {
+        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
+        unsafe { std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV) };
+        assert_eq!(stream_chunk_timeout(), DEFAULT_STREAM_CHUNK_TIMEOUT);
+        unsafe {
+            match &orig {
+                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
+                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
+            }
+        }
+    }
+
+    #[test]
+    fn honors_a_valid_override() {
+        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
+        unsafe { std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, "900") };
+        assert_eq!(stream_chunk_timeout(), Duration::from_secs(900));
+        unsafe {
+            match &orig {
+                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
+                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
+            }
+        }
+    }
+
+    #[test]
+    fn falls_back_to_default_on_zero_or_garbage() {
+        let orig = std::env::var_os(STREAM_CHUNK_TIMEOUT_ENV);
+        for bad in ["0", "-5", "not-a-number", ""] {
+            unsafe { std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, bad) };
+            assert_eq!(stream_chunk_timeout(), DEFAULT_STREAM_CHUNK_TIMEOUT, "input {bad:?} should fall back to default");
+        }
+        unsafe {
+            match &orig {
+                Some(v) => std::env::set_var(STREAM_CHUNK_TIMEOUT_ENV, v),
+                None => std::env::remove_var(STREAM_CHUNK_TIMEOUT_ENV),
+            }
+        }
+    }
 }
