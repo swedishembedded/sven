@@ -1619,3 +1619,89 @@ async fn from_config_probed_falls_back_to_config_when_probe_fails() {
     assert_eq!(probed_provider.catalog_context_window(), Some(128_000));
     assert_eq!(probed_provider.catalog_context_window(), plain_provider.catalog_context_window());
 }
+
+// ── from_config_probed: empty brain model name resolution ──────────────────
+//
+// Reproduces `sven-config`'s loader.rs auto-detect sentinel: provider =
+// "brain", name = "" (loader.rs cannot ask brain what it's serving - it's
+// sync/network-free by design). from_config_probed is where the async
+// resolution actually happens.
+
+#[tokio::test]
+async fn from_config_probed_resolves_empty_brain_name_from_single_chat_model() {
+    let models_body = serde_json::json!({
+        "object": "list",
+        "data": [
+            {"id": "brain/imageops", "object": "model", "owned_by": "brain"},
+            {"id": "Qwen/Qwen3-0.6B", "object": "model", "owned_by": "brain", "context_length": 2048},
+        ],
+    })
+    .to_string();
+    // 3 requests in order: (1) name-resolution GET /v1/models, (2) the
+    // resolved provider's /props probe (404 - brain has none), (3) the
+    // /v1/models fallback for probe_context_window.
+    let port = mock_server_sequence(vec![
+        (200, models_body.clone()),
+        (404, "{}".to_string()),
+        (200, models_body),
+    ])
+    .await;
+
+    let cfg = ModelConfig {
+        provider: "brain".into(),
+        name: String::new(), // the loader's auto-detect sentinel
+        api_key: Some("sk-brain-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config_probed(&cfg).await.unwrap();
+    assert_eq!(provider.model_name(), "Qwen/Qwen3-0.6B", "the sole chat-capable entry must be resolved");
+    assert_eq!(provider.catalog_context_window(), Some(2048));
+}
+
+#[tokio::test]
+async fn from_config_probed_leaves_empty_brain_name_unresolved_when_ambiguous() {
+    // Two chat-capable entries (both carry context_length) - no single
+    // unambiguous answer, so the name must stay empty rather than guessing.
+    let models_body = serde_json::json!({
+        "object": "list",
+        "data": [
+            {"id": "Qwen/Qwen3-0.6B", "object": "model", "owned_by": "brain", "context_length": 2048},
+            {"id": "Qwen/Qwen3-4B", "object": "model", "owned_by": "brain", "context_length": 4096},
+        ],
+    })
+    .to_string();
+    let port = mock_server_sequence(vec![
+        (200, models_body),
+        (404, "{}".to_string()), // /props for the (still-empty-named) provider
+        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+    ])
+    .await;
+
+    let cfg = ModelConfig {
+        provider: "brain".into(),
+        name: String::new(),
+        api_key: Some("sk-brain-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config_probed(&cfg).await.unwrap();
+    assert_eq!(provider.model_name(), "", "an ambiguous model list must not be guessed at");
+}
+
+#[tokio::test]
+async fn from_config_probed_does_not_touch_a_non_empty_brain_model_name() {
+    // A user-specified name (explicit `model:` block, or `--model brain/X`)
+    // must never be overridden by auto-resolution, ambiguous or not.
+    let port = mock_server_sequence(vec![(404, "{}".to_string()), (404, "{}".to_string())]).await;
+
+    let cfg = ModelConfig {
+        provider: "brain".into(),
+        name: "Qwen/Qwen3-0.6B".into(),
+        api_key: Some("sk-brain-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config_probed(&cfg).await.unwrap();
+    assert_eq!(provider.model_name(), "Qwen/Qwen3-0.6B");
+}

@@ -68,14 +68,19 @@ pub(crate) fn build_http_client() -> reqwest::Client {
 /// When the user has configured neither an explicit key nor a key-env override,
 /// and the provider's registry entry lists a default env var, we check that env
 /// var immediately.  If absent, we bail with an actionable message instead of
-/// letting the first HTTP request surface an opaque 401.
+/// letting the first HTTP request surface an opaque 401. A provider-specific
+/// keys file (see [`key_file_for`]/[`read_key_from_file`]) also satisfies the
+/// requirement — must mirror [`resolve_api_key`]'s precedence exactly, or this
+/// bails on a config that would actually have resolved a key.
 fn check_api_key_requirement(cfg: &ModelConfig) -> anyhow::Result<()> {
     if cfg.api_key.is_some() || cfg.api_key_env.is_some() {
         return Ok(());
     }
     if let Some(meta) = registry::get_driver(&cfg.provider) {
         if let Some(env_var) = meta.default_api_key_env {
-            if std::env::var(env_var).is_err() {
+            let has_env_key = std::env::var(env_var).is_ok();
+            let has_file_key = read_key_from_file(&cfg.provider).is_some();
+            if !has_env_key && !has_file_key {
                 bail!(
                     "No API key found for provider '{}' (model '{}').\n\
                      Please set the {env_var} environment variable:\n\
@@ -594,9 +599,21 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 /// config has no `max_tokens` at all, the probed value is used as-is;
 /// when neither is present the result is identical to `from_config`.
 ///
-/// Does one extra network round-trip before returning; `probe_context_window`
-/// itself is a short-timeout (5s) best-effort call, never a hard failure.
+/// Also resolves an EMPTY `cfg.name` for `provider: "brain"` (the sentinel
+/// `sven-config`'s loader writes when it auto-detects brain without knowing
+/// which resident model it's serving — loader.rs is sync/network-free and
+/// genuinely cannot know) by asking brain's own `/v1/models`. Only resolves
+/// when the answer is unambiguous (exactly one chat-capable entry, i.e.
+/// exactly one entry advertising `context_length` — see the paired brain
+/// commit populating that truthfully); otherwise `cfg.name` stays empty and
+/// the eventual request fails with brain's own `model_not_found`, which
+/// Part 1's fail-loudly fix now surfaces clearly instead of silently.
+///
+/// Does one to two extra network round-trips before returning;
+/// `probe_context_window` and the model-list fetch are both short-timeout
+/// (5s) best-effort calls, never a hard failure.
 pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+    let cfg = &resolve_empty_brain_model_name(cfg).await;
     let (inner, config_ctx, max_output_tokens) = build_inner(cfg)?;
     let probed = inner.probe_context_window().await;
     let context_window = match (config_ctx, probed) {
@@ -615,6 +632,110 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
     }))
 }
 
+/// See [`from_config_probed`]'s doc comment. Returns `cfg` unchanged unless
+/// `provider == "brain"`, `name` is empty, and exactly one chat-capable
+/// model (one `/v1/models` entry with `context_length` present) is found.
+async fn resolve_empty_brain_model_name(cfg: &ModelConfig) -> ModelConfig {
+    if cfg.provider != "brain" || !cfg.name.is_empty() {
+        return cfg.clone();
+    }
+    let Some(meta) = registry::get_driver("brain") else {
+        return cfg.clone();
+    };
+    let base = cfg
+        .base_url
+        .clone()
+        .or_else(|| meta.default_base_url.map(str::to_string));
+    let Some(base) = base else {
+        return cfg.clone();
+    };
+    let key = resolve_api_key(cfg);
+    let client = build_http_client();
+    let mut req = client
+        .get(format!("{}/models", base.trim_end_matches('/')))
+        .timeout(Duration::from_secs(5));
+    if let Some(k) = &key {
+        req = req.bearer_auth(k);
+    }
+    let Ok(resp) = req.send().await else {
+        return cfg.clone();
+    };
+    if !resp.status().is_success() {
+        return cfg.clone();
+    }
+    let Ok(body) = resp.json::<serde_json::Value>().await else {
+        return cfg.clone();
+    };
+    let Some(entries) = body["data"].as_array() else {
+        return cfg.clone();
+    };
+    let chat_capable: Vec<&str> = entries
+        .iter()
+        .filter(|m| m.get("context_length").is_some())
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    match chat_capable.as_slice() {
+        [only] => ModelConfig {
+            name: (*only).to_string(),
+            ..cfg.clone()
+        },
+        _ => cfg.clone(),
+    }
+}
+
+/// Path to a provider's local keys file, when it has one.
+///
+/// Only "brain" has this today: it mints a fresh random `sk-brain-<32hex>`
+/// key on every start and can write it (plus every other surface's key) to
+/// a JSON file via `--api-keys-out`. Reading that file each time a provider
+/// is constructed (rather than caching) means a brain restart with a new
+/// key just works on the next `sven` invocation, with no env var to
+/// re-export by hand.
+///
+/// Precedence: `$BRAIN_API_KEYS_FILE` (explicit override) → per-user
+/// `$XDG_RUNTIME_DIR/brain/api-keys.json` (tmpfs, appropriate for a value
+/// that's regenerated every server start and shouldn't outlive a reboot) →
+/// `~/.local/state/brain/api-keys.json` (falls back when no runtime dir is
+/// set, e.g. some container/service setups).
+fn key_file_for(provider: &str) -> Option<std::path::PathBuf> {
+    if provider != "brain" {
+        return None;
+    }
+    if let Ok(p) = std::env::var("BRAIN_API_KEYS_FILE") {
+        if !p.is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        if !runtime_dir.is_empty() {
+            return Some(std::path::Path::new(&runtime_dir).join("brain/api-keys.json"));
+        }
+    }
+    dirs::state_dir().map(|d| d.join("brain/api-keys.json"))
+}
+
+/// Read a single dialect's key out of a brain-shaped keys JSON file:
+/// `{"<dialect>": "<key>", ...}`. Pure and path-parameterised (no env
+/// lookup) so it is directly unit-testable without touching process state.
+fn read_key_from_json_file(path: &std::path::Path, dialect_key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    json.get(dialect_key)?.as_str().map(str::to_string)
+}
+
+/// Read a provider's key out of its keys file (see [`key_file_for`]).
+///
+/// brain's `--api-keys-out` format is `{"<dialect>": "<key>", ...}` - one
+/// entry per surface it serves (`"openai"`/`"anthropic"`/`"openrouter"`,
+/// brain's `Provider::as_str()`), NOT `"brain"` - sven's driver id and
+/// brain's dialect name are different namespaces that happen to both exist.
+/// sven's "brain" driver always targets brain's OpenAI-compatible surface
+/// (base_url ends in `/v1`, throughout this codebase), so the JSON lookup
+/// is hardcoded to `"openai"` regardless of what `provider` (sven's id) is.
+fn read_key_from_file(provider: &str) -> Option<String> {
+    read_key_from_json_file(&key_file_for(provider)?, "openai")
+}
+
 fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     if let Some(k) = &cfg.api_key {
         return Some(k.clone());
@@ -625,10 +746,13 @@ fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     // Auto-resolve from registry default env var if neither is set.
     if let Some(meta) = registry::get_driver(&cfg.provider) {
         if let Some(env_var) = meta.default_api_key_env {
-            return std::env::var(env_var).ok();
+            if let Ok(key) = std::env::var(env_var) {
+                return Some(key);
+            }
         }
     }
-    None
+    // Last resort: a provider-specific keys file (see key_file_for).
+    read_key_from_file(&cfg.provider)
 }
 
 /// Spawn a background tokio task to refresh the OpenRouter model catalog cache.
@@ -1095,6 +1219,150 @@ mod tests {
         };
         let key = resolve_api_key(&cfg);
         assert_eq!(key.as_deref(), Some("explicit-key"));
+    }
+
+    // ── brain driver + keys file discovery ──────────────────────────────────
+    //
+    // Serializes env-var-touching tests: std::env::set_var mutates global
+    // process state, which races under cargo test's default parallelism.
+
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn unique_temp_path(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("sven-model-test-{tag}-{}-{n}.json", std::process::id()))
+    }
+
+    #[test]
+    fn brain_driver_is_registered_with_correct_defaults() {
+        let meta = get_driver("brain").expect("brain must be registered");
+        assert_eq!(meta.default_base_url, Some("http://127.0.0.1:8788/v1"));
+        assert_eq!(meta.default_api_key_env, Some("BRAIN_API_KEY"));
+        assert!(meta.requires_api_key);
+    }
+
+    #[test]
+    fn from_config_brain_uses_registry_defaults() {
+        // Explicit key sidesteps env/file discovery entirely - this test is
+        // only about the driver construction (base_url + auth), not discovery.
+        let cfg = ModelConfig {
+            provider: "brain".into(),
+            name: "Qwen/Qwen3-0.6B".into(),
+            api_key: Some("sk-brain-test".into()),
+            ..ModelConfig::default()
+        };
+        let provider = from_config(&cfg).expect("brain must be a recognised driver");
+        assert_eq!(provider.model_name(), "Qwen/Qwen3-0.6B");
+    }
+
+    // read_key_from_json_file: pure, path-parameterised - no env vars, no races.
+
+    #[test]
+    fn read_key_from_json_file_finds_the_openai_dialect_key() {
+        let path = unique_temp_path("keys-ok");
+        std::fs::write(&path, r#"{"openai":"sk-brain-abc123","anthropic":"sk-brain-def456"}"#).unwrap();
+        let key = read_key_from_json_file(&path, "openai");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(key.as_deref(), Some("sk-brain-abc123"));
+    }
+
+    #[test]
+    fn read_key_from_json_file_missing_dialect_is_none() {
+        let path = unique_temp_path("keys-missing-dialect");
+        std::fs::write(&path, r#"{"anthropic":"sk-brain-def456"}"#).unwrap();
+        let key = read_key_from_json_file(&path, "openai");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(key, None);
+    }
+
+    #[test]
+    fn read_key_from_json_file_missing_file_is_none_not_error() {
+        let path = unique_temp_path("keys-does-not-exist");
+        assert_eq!(read_key_from_json_file(&path, "openai"), None);
+    }
+
+    #[test]
+    fn read_key_from_json_file_malformed_json_is_none_not_panic() {
+        let path = unique_temp_path("keys-malformed");
+        std::fs::write(&path, "{ not json").unwrap();
+        let key = read_key_from_json_file(&path, "openai");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(key, None);
+    }
+
+    // key_file_for / resolve_api_key end-to-end: env-var precedence, locked.
+
+    #[test]
+    fn key_file_for_non_brain_provider_is_none() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(key_file_for("openai"), None);
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_brain_keys_file_when_no_env_key() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("resolve-precedence");
+        std::fs::write(&path, r#"{"openai":"sk-brain-from-file"}"#).unwrap();
+
+        let prior = std::env::var("BRAIN_API_KEYS_FILE").ok();
+        let prior_key_env = std::env::var("BRAIN_API_KEY").ok();
+        // SAFETY (test-only, single-threaded via ENV_MUTEX): remove_var/set_var
+        // are documented as unsound under concurrent access from other threads;
+        // the mutex above is exactly what makes this call-site safe.
+        unsafe {
+            std::env::remove_var("BRAIN_API_KEY");
+            std::env::set_var("BRAIN_API_KEYS_FILE", &path);
+        }
+
+        let cfg = ModelConfig { provider: "brain".into(), name: "Qwen/Qwen3-0.6B".into(), ..ModelConfig::default() };
+        let key = resolve_api_key(&cfg);
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("BRAIN_API_KEYS_FILE", v),
+                None => std::env::remove_var("BRAIN_API_KEYS_FILE"),
+            }
+            match prior_key_env {
+                Some(v) => std::env::set_var("BRAIN_API_KEY", v),
+                None => std::env::remove_var("BRAIN_API_KEY"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(key.as_deref(), Some("sk-brain-from-file"));
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_env_var_over_keys_file() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("resolve-precedence-env-wins");
+        std::fs::write(&path, r#"{"openai":"sk-brain-from-file"}"#).unwrap();
+
+        let prior = std::env::var("BRAIN_API_KEYS_FILE").ok();
+        let prior_key_env = std::env::var("BRAIN_API_KEY").ok();
+        unsafe {
+            std::env::set_var("BRAIN_API_KEY", "sk-brain-from-env");
+            std::env::set_var("BRAIN_API_KEYS_FILE", &path);
+        }
+
+        let cfg = ModelConfig { provider: "brain".into(), name: "Qwen/Qwen3-0.6B".into(), ..ModelConfig::default() };
+        let key = resolve_api_key(&cfg);
+
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("BRAIN_API_KEYS_FILE", v),
+                None => std::env::remove_var("BRAIN_API_KEYS_FILE"),
+            }
+            match prior_key_env {
+                Some(v) => std::env::set_var("BRAIN_API_KEY", v),
+                None => std::env::remove_var("BRAIN_API_KEY"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(key.as_deref(), Some("sk-brain-from-env"), "an explicit env var must win over the keys file");
     }
 
     #[test]

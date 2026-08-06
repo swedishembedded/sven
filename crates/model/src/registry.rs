@@ -276,6 +276,14 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
     },
     DriverMeta {
+        id: "brain",
+        name: "Brain (local edge-AI server)",
+        description: "brain serve --openai on this machine (http://127.0.0.1:8788); auto-detected when BRAIN_API_KEY or a brain keys file is present",
+        default_api_key_env: Some("BRAIN_API_KEY"),
+        default_base_url: Some("http://127.0.0.1:8788/v1"),
+        requires_api_key: true,
+    },
+    DriverMeta {
         id: "ollama",
         name: "Ollama",
         description: "Ollama local model runner (http://localhost:11434)",
