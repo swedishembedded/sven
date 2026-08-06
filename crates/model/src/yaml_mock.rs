@@ -29,6 +29,10 @@
 ///
 ///   - match_type: default
 ///     reply: "I understand your request."
+///
+///   - match_type: contains
+///     pattern: "trigger provider error"
+///     error: "the model failed to process the request"
 /// ```
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -69,6 +73,14 @@ pub struct ResponseRule {
     pub tool_calls: Vec<ToolCallDef>,
     /// Text reply to send after tool results arrive (second round).
     pub after_tool_reply: Option<String>,
+    /// When set, `complete()` returns a stream that yields a single `Err`
+    /// carrying this message instead of any response event - simulating a
+    /// provider that fails mid-stream (e.g. an OpenAI-compatible server that
+    /// admits a request with `HTTP 200` + SSE headers, then rejects it, as
+    /// brain does when a prompt exceeds its serving capacity). Used to
+    /// exercise the fail-loudly path end-to-end: `[sven:error]` on stderr,
+    /// `success=false` in the step trace, non-zero exit.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -155,6 +167,11 @@ impl crate::ModelProvider for YamlMockProvider {
         debug!(call_num, has_tool_results, last_user = %last_user_text, "yaml mock complete()");
 
         let rule = self.find_rule(&last_user_text);
+
+        if let Some(msg) = rule.and_then(|r| r.error.as_deref()) {
+            let err: anyhow::Result<ResponseEvent> = Err(anyhow::anyhow!("{msg}"));
+            return Ok(Box::pin(stream::iter(vec![err])));
+        }
 
         let events = if has_tool_results {
             // Round 2: tool results are in - respond with after_tool_reply or reply
@@ -288,6 +305,10 @@ responses:
 
   - match_type: default
     reply: "default reply"
+
+  - match_type: equals
+    pattern: "trigger provider error"
+    error: "the model failed to process the request"
 "#;
 
     fn provider() -> YamlMockProvider {
@@ -355,6 +376,22 @@ responses:
         assert!(events
             .iter()
             .any(|e| matches!(e, ResponseEvent::TextDelta(t) if t == "default reply")));
+    }
+
+    // ── Error simulation ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn error_rule_yields_err_instead_of_response_event() {
+        let p = provider();
+        let mut stream = p.complete(req("trigger provider error")).await.unwrap();
+        let first = stream.next().await.expect("stream must yield one item");
+        let err = first.expect_err("error rule must yield Err, not a ResponseEvent");
+        assert!(
+            err.to_string().contains("the model failed to process the request"),
+            "unexpected error message: {err}"
+        );
+        // Exactly one item - a stream that fails mid-request has nothing more to say.
+        assert!(stream.next().await.is_none());
     }
 
     // ── Tool call sequence ────────────────────────────────────────────────────

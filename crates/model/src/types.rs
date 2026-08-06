@@ -583,9 +583,12 @@ pub enum ResponseEvent {
     /// to detect that any pending tool-call arguments were truncated, so that
     /// partial content can be recovered rather than silently discarded.
     MaxTokens,
-    /// A structured error the provider sent as a stream event rather than an
-    /// HTTP status, because the response had already started streaming when
-    /// the failure happened. Terminates the turn.
+    /// A fatal error surfaced mid-stream by the provider.
+    ///
+    /// Consumers must treat this as a hard failure of the turn, not a
+    /// warning: `sven-core`'s `stream_turn` returns `Err` on receipt so it
+    /// reaches the caller as a real failure instead of silently producing an
+    /// empty "successful" completion.
     Error(String),
 }
 

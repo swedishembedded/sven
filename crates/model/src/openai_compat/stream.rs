@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! SSE stream parsing for OpenAI-compatible chat completion responses.
 
+use anyhow::bail;
 use serde_json::Value;
 
 use crate::ResponseEvent;
@@ -67,14 +68,23 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
 }
 
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
-    // Mid-stream error chunk: `{"error": {"message": ..., "type": ..., ...}}`.
-    // A real provider failure after the response has already started
-    // streaming (200 + headers committed) can't be downgraded to an HTTP
-    // error status, so it arrives as a data chunk shaped like this instead
-    // of `choices[0]` — checked first so it isn't misread as an empty delta.
+    // Error frame - some OpenAI-compatible servers admit a streaming request
+    // with `HTTP 200` + SSE headers, then discover mid-stream that it can't
+    // actually be served (context too large, model overloaded, etc.) and
+    // emit `{"error": {...}}` in place of a `choices` delta, followed by
+    // `[DONE]`.  Such a frame has no `choices` for a conformant client to key
+    // off, so without this check it falls all the way through to the
+    // catch-all empty `TextDelta` below and the caller sees a "successful"
+    // empty completion instead of the failure the server actually reported.
     if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
-        let msg = err["message"].as_str().unwrap_or("model stream error").to_string();
-        return Ok(ResponseEvent::Error(msg));
+        let message = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("(no message)");
+        match err.get("code").and_then(|c| c.as_str()) {
+            Some(code) => bail!("server error ({code}): {message}"),
+            None => bail!("server error: {message}"),
+        }
     }
 
     // Usage-only chunk (emitted when stream_options.include_usage = true)
@@ -143,13 +153,28 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
         });
     }
 
-    let choice = &v["choices"][0];
+    // A frame that is none of the recognised shapes above (usage, timings,
+    // error) and carries no `choices[0]` either is not a shape this parser
+    // understands.  Bailing here - rather than silently falling through to
+    // an empty `TextDelta` - is what makes the error-frame check above
+    // actually matter: without it, any error frame that later changes shape
+    // (or any other server's non-standard error encoding) would still
+    // degrade to a silent "success".
+    let Some(choice) = v["choices"].get(0).filter(|c| !c.is_null()) else {
+        bail!("unrecognised stream frame (no usage/timings/error/choices): {v}");
+    };
 
     // finish_reason=length means the model hit its output-token limit.
     // Emit MaxTokens so the agent knows any pending tool-call arguments
     // are truncated.  The [DONE] sentinel that follows will emit Done.
-    if choice["finish_reason"].as_str() == Some("length") {
-        return Ok(ResponseEvent::MaxTokens);
+    // finish_reason=content_filter/error means the provider stopped the
+    // generation itself; surface that as a hard failure rather than letting
+    // it look like a normal (if truncated) completion.
+    match choice["finish_reason"].as_str() {
+        Some("length") => return Ok(ResponseEvent::MaxTokens),
+        Some("content_filter") => bail!("stream stopped: content_filter"),
+        Some("error") => bail!("stream stopped: error"),
+        _ => {}
     }
 
     let delta = &choice["delta"];

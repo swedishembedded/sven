@@ -905,15 +905,89 @@ mod tests {
     }
 
     #[test]
-    fn parse_sse_mid_stream_error_chunk_becomes_error_event() {
-        // Shape brain's apiserve (and real OpenAI) send for a failure after
-        // the response has already started streaming: `{"error": {...}}`,
-        // no `choices` field at all. Must not be misread as an empty delta.
+    fn parse_sse_error_frame_is_hard_failure() {
+        // Reproduces brain's actual on-the-wire behaviour: HTTP 200 + SSE
+        // headers are already committed, then the server discovers the
+        // request can't be served and emits `{"error": {...}}` in place of
+        // a `choices` delta.  Without this check the frame falls through to
+        // the catch-all empty TextDelta and the caller sees a "successful"
+        // empty completion instead of the failure the server reported.
         let v = serde_json::json!({
-            "error": { "message": "the model failed to process the request", "type": "server_error", "param": null, "code": "server_error" }
+            "error": {
+                "code": "invalid_request",
+                "message": "the model failed to process the request",
+                "type": "invalid_request_error"
+            }
+        });
+        let err = parse_sse_chunk(&v).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid_request"), "unexpected message: {msg}");
+        assert!(
+            msg.contains("the model failed to process the request"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_error_frame_without_code_still_fails() {
+        let v = serde_json::json!({ "error": { "message": "boom" } });
+        let err = parse_sse_chunk(&v).unwrap_err();
+        assert!(err.to_string().contains("boom"));
+    }
+
+    #[test]
+    fn parse_sse_null_error_falls_through() {
+        // `"error": null` is not an error frame - some providers include the
+        // key unconditionally. Must fall through to normal delta parsing.
+        let v = serde_json::json!({
+            "error": null,
+            "choices": [{ "delta": { "content": "hi" } }]
         });
         let ev = parse_sse_chunk(&v).unwrap();
-        assert!(matches!(ev, ResponseEvent::Error(m) if m == "the model failed to process the request"));
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t == "hi"));
+    }
+
+    #[test]
+    fn parse_sse_frame_with_no_choices_and_no_known_shape_is_hard_failure() {
+        // Not usage, not timings, not error, not choices - an unrecognised
+        // shape must never silently degrade to an empty "success".
+        let v = serde_json::json!({ "id": "chatcmpl-x", "object": "chat.completion.chunk" });
+        assert!(parse_sse_chunk(&v).is_err());
+    }
+
+    #[test]
+    fn parse_sse_finish_reason_content_filter_is_hard_failure() {
+        let v = serde_json::json!({
+            "choices": [{ "finish_reason": "content_filter", "delta": {} }]
+        });
+        assert!(parse_sse_chunk(&v).is_err());
+    }
+
+    #[test]
+    fn parse_sse_finish_reason_error_is_hard_failure() {
+        let v = serde_json::json!({
+            "choices": [{ "finish_reason": "error", "delta": {} }]
+        });
+        assert!(parse_sse_chunk(&v).is_err());
+    }
+
+    #[test]
+    fn parse_sse_finish_reason_length_is_max_tokens() {
+        let v = serde_json::json!({
+            "choices": [{ "finish_reason": "length", "delta": {} }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::MaxTokens));
+    }
+
+    #[test]
+    fn parse_sse_finish_reason_stop_falls_through_to_delta() {
+        // "stop" is the normal, successful terminal reason - must not error.
+        let v = serde_json::json!({
+            "choices": [{ "finish_reason": "stop", "delta": { "content": "" } }]
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::TextDelta(t) if t.is_empty()));
     }
 
     #[test]

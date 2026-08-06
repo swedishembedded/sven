@@ -504,6 +504,16 @@ responses:
           prompt: "Synthesise the results above."
     after_tool_reply: "Attempted context_reduce with an invalid handle. Error handled gracefully."
 
+  # ── Provider failure simulation ──────────────────────────────────────────────
+  # Simulates a server that fails mid-stream (e.g. brain rejecting a request
+  # that exceeds its serving capacity). Used to verify sven fails loudly -
+  # [sven:error] on stderr, success=false, non-zero exit - rather than
+  # reporting a silent empty success (11_error_handling.bats).
+
+  - match_type: equals
+    pattern: "trigger provider error"
+    error: "the model failed to process the request"
+
   # ── Default fallback ─────────────────────────────────────────────────────────
 
   - match_type: default

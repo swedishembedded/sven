@@ -137,3 +137,30 @@ load helpers
     # status 124 means timeout killed the process (hang detected).
     [ "${status}" -ne 124 ]
 }
+
+# ── Provider fails mid-stream: fail loudly, not silently ─────────────────────
+# Reproduces the "false success" bug: a server that admits a request (HTTP 200
+# + SSE) and then fails mid-stream (e.g. brain rejecting an oversized prompt)
+# must surface as a hard failure, not an empty "successful" completion.
+
+@test "11.16 provider mid-stream error exits non-zero" {
+    run bash -c 'echo "trigger provider error" | "$BIN" --headless --model mock 2>/dev/null'
+    [ "${status}" -ne 0 ]
+}
+
+@test "11.17 provider mid-stream error prints [sven:error] on stderr" {
+    run bash -c 'echo "trigger provider error" | "$BIN" --headless --model mock 2>&1 >/dev/null'
+    assert_output_contains "[sven:error]"
+    assert_output_contains "the model failed to process the request"
+}
+
+@test "11.18 provider mid-stream error reports success=false in the step trace" {
+    run bash -c 'echo "trigger provider error" | "$BIN" --headless --model mock 2>&1 >/dev/null'
+    assert_output_contains "success=false"
+}
+
+@test "11.19 provider mid-stream error produces no stdout content" {
+    # No fake "successful" assistant answer must reach stdout.
+    run bash -c 'echo "trigger provider error" | "$BIN" --headless --model mock 2>/dev/null'
+    [ -z "${output}" ]
+}

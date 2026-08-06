@@ -31,9 +31,24 @@
 //! # Cancellation
 //!
 //! A shared cancel slot allows the TUI to abort an in-flight turn.
+//!
+//! # Empty turns
+//!
+//! A turn with no text and no tool calls is tolerated once per thread -
+//! `GeneratingAction::EmptyTurn` nudges the model to try again - but a
+//! streak of [`EMPTY_TURN_FAILURE_THRESHOLD`] consecutive empty turns on the
+//! same thread fails the turn instead of letting the run silently "succeed"
+//! with no output. This guards against providers that admit a streaming
+//! request (`HTTP 200` + SSE) and only discover mid-stream that it can't be
+//! served, since headless mode otherwise treats `UiEvent::TurnComplete` as
+//! "the run finished successfully" regardless of what it actually produced.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+/// Consecutive empty turns (no text, no tool calls) on one thread before the
+/// turn is failed outright instead of nudged again. See the module docs.
+const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 
 // ─── Sync helpers ─────────────────────────────────────────────────────────────
 
@@ -233,6 +248,10 @@ pub struct TurnExecutor {
     /// Shared cancel slot; a sender stored here is dropped by the TUI abort
     /// handler to interrupt an in-flight stream.
     cancel_handle: Arc<TokioMutex<Option<oneshot::Sender<()>>>>,
+    /// Consecutive-empty-turn counter per thread; see the module docs and
+    /// [`EMPTY_TURN_FAILURE_THRESHOLD`]. Internal to this executor - not
+    /// shared with `ToolExecutor` like `call_id_to_thread` is.
+    empty_turns: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl TurnExecutor {
@@ -252,6 +271,7 @@ impl TurnExecutor {
             store,
             call_id_to_thread,
             cancel_handle,
+            empty_turns: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -389,6 +409,38 @@ impl EffectExecutor for TurnExecutor {
             }
         };
 
+        // Track consecutive empty turns (no text, no tool calls) per thread.
+        // A single empty turn is tolerated - the machine's
+        // `GeneratingAction::EmptyTurn` nudges the model to try again - but a
+        // thread that keeps returning nothing must fail loudly rather than
+        // let the run be treated as a successful (if silent) completion.
+        let is_empty_turn = text.is_empty() && tool_calls.is_empty();
+        let empty_turn_count = {
+            let mut counts = self
+                .empty_turns
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if is_empty_turn {
+                let count = counts.entry(thread_id.clone()).or_insert(0);
+                *count += 1;
+                *count
+            } else {
+                counts.remove(&thread_id);
+                0
+            }
+        };
+
+        if is_empty_turn && empty_turn_count >= EMPTY_TURN_FAILURE_THRESHOLD {
+            let msg = format!(
+                "model returned no content and no tool calls after \
+                 {empty_turn_count} consecutive attempts"
+            );
+            obs.emit(UiEvent::Error(msg.clone()));
+            let _ = sink.emit(Event::LlmFailed { error: msg }).await;
+            obs.emit(UiEvent::TurnComplete);
+            return;
+        }
+
         // Append the assistant turn to the thread (append-only, cache-safe).
         // Build the messages list first, then call the non-async helper.
         {
@@ -429,11 +481,16 @@ impl EffectExecutor for TurnExecutor {
             })
             .await;
 
-        // Only mark the turn complete when the LLM returned no tool calls.
-        // When tool calls are pending the machine stays in Generating and will
-        // trigger another LLM turn after the tools finish; emitting TurnComplete
-        // here would cause headless mode to exit prematurely.
-        if !has_tool_calls {
+        // Only mark the turn complete when the LLM returned tool calls or a
+        // real final answer. When tool calls are pending the machine stays in
+        // Generating and will trigger another LLM turn after the tools
+        // finish; emitting TurnComplete here would cause headless mode to
+        // exit prematurely. An under-threshold empty turn must likewise NOT
+        // report TurnComplete: `GeneratingAction::EmptyTurn` needs to run its
+        // nudge effect and trigger another LLM call, and headless mode
+        // treats TurnComplete as "the run is over" - emitting it here would
+        // exit with a false success instead of giving the nudge a chance.
+        if !has_tool_calls && !is_empty_turn {
             obs.emit(UiEvent::TurnComplete);
         }
     }
