@@ -296,6 +296,25 @@ config-file `agent.system_prompt`) still supply text, that text is sent
 verbatim as the entire system message. With none of those, `--no-system`
 means no system message is sent at all.
 
+## Tool Suppression
+
+Disable all tools for a session with `--no-tools`: no tool schemas are sent
+to the model (it has no way to know any tool exists), and any tool call it
+attempts anyway is refused rather than executed. Useful for models with a
+small context window where the tool schemas alone would exceed the budget,
+or for a pure text-in/text-out run where tool use makes no sense.
+
+```bash
+# No tools at all - just the conversation
+sven --no-tools "explain what this error message means: <paste>"
+
+# The absolute minimum request: no system prompt, no tools
+sven --bare "hi"
+```
+
+`--bare` is shorthand for `--no-system --no-tools` together - the smallest
+possible request, useful for fitting very small local/test models.
+
 ---
 
 ## Capturing Output
@@ -642,5 +661,7 @@ Frontmatter takes precedence over config file.
 | `--system-prompt-file PATH` | - | Replace default system prompt from file |
 | `--append-system-prompt TEXT` | - | Append text to default system prompt |
 | `--no-system` | off | Suppress Sven's built-in system prompt; zero system tokens unless `--system-prompt-file`/`--append-system-prompt` still supply text |
+| `--no-tools` | off | Send zero tool schemas; refuse any tool call attempted anyway |
+| `--bare` | off | Shorthand for `--no-system --no-tools` |
 | `--dry-run` | off | Validate workflow then exit without calling model |
 | `--headless` | auto | Force headless mode (normally auto-detected) |

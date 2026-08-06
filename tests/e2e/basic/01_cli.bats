@@ -195,3 +195,23 @@ load helpers
     [ "${status}" -eq 0 ]
     assert_output_contains "pong"
 }
+
+# ── --no-tools / --bare flags ─────────────────────────────────────────────────
+
+@test "01.30 --no-tools accepted alone" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-tools 2>/dev/null'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+}
+
+@test "01.31 --bare accepted alone" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --bare 2>/dev/null'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+}
+
+@test "01.32 --bare composes with --no-tools and --no-system explicitly set" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --bare --no-system --no-tools 2>/dev/null'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+}

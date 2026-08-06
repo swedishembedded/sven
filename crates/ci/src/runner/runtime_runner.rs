@@ -83,6 +83,9 @@ pub struct RuntimeRunnerOptions {
     /// [`sven_core::AgentRuntimeContext::build_system_message`] for exact
     /// semantics when combined with `append_system_prompt`.
     pub no_system: bool,
+    /// Disable all tools for this session (`--no-tools`): no tool schemas are
+    /// sent to the model and any tool call is refused.
+    pub no_tools: bool,
     /// Verbosity level (0 = minimal, 1 = verbose, 2+ = trace).
     pub trace_level: u8,
 }
@@ -149,6 +152,7 @@ impl RuntimeRunner {
             append_system_prompt: opts.append_system_prompt.clone(),
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
+            no_tools: opts.no_tools,
             skills: sven_runtime::SharedSkills::new(sven_runtime::discover_skills(
                 opts.project_root.as_deref(),
             )),
@@ -586,6 +590,7 @@ mod tests {
             max_tokens_budget: None,
             append_system_prompt: None,
             no_system: false,
+            no_tools: false,
             trace_level: 0,
         };
         assert!(format!("{opts:?}").contains("agent"));

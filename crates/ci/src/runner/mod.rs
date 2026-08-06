@@ -124,6 +124,9 @@ pub struct CiOptions {
     /// [`sven_core::AgentRuntimeContext::build_system_message`] for exact
     /// semantics when combined with `system_prompt_file`/`append_system_prompt`.
     pub no_system: bool,
+    /// Disable all tools for this session (`--no-tools`): no tool schemas are
+    /// sent to the model and any tool call is refused.
+    pub no_tools: bool,
     /// Stderr trace verbosity (mirrors CLI --verbose count).
     /// 0 = minimal (default): tool name, success/fail, size.
     /// 1 = verbose (-v): include truncated tool output and thinking blocks.
@@ -544,6 +547,7 @@ impl CiRunner {
             append_system_prompt: combined_append,
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
+            no_tools: opts.no_tools,
             skills,
             agents,
             knowledge,

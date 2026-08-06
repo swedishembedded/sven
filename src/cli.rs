@@ -1153,6 +1153,18 @@ pub struct Cli {
     #[arg(long)]
     pub no_system: bool,
 
+    /// Disable all tools for this session. No tool schemas are sent to the
+    /// model (it has no way to know any tool exists) and any tool call it
+    /// attempts anyway is refused. Use this to fit a small-context model
+    /// that can't afford the tool schemas' token cost.
+    #[arg(long)]
+    pub no_tools: bool,
+
+    /// Shorthand for --no-system --no-tools: the absolute minimal request,
+    /// just the conversation messages and nothing else.
+    #[arg(long)]
+    pub bare: bool,
+
     /// Write the final agent response to a file after the run completes.
     /// The file is created (and intermediate directories) if needed.
     #[arg(long, short = 'o', value_name = "PATH")]
