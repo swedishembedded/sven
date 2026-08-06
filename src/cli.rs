@@ -1144,6 +1144,15 @@ pub struct Cli {
     #[arg(long, value_name = "TEXT")]
     pub append_system_prompt: Option<String>,
 
+    /// Suppress Sven's built-in system prompt (identity, guidelines, project/
+    /// git/CI context, skills, agents, knowledge). With no other prompt flag,
+    /// the session starts with zero system tokens before the first message.
+    /// Composes with --system-prompt-file / --append-system-prompt: the
+    /// supplied text is still sent verbatim, just without Sven's own prompt
+    /// wrapped around it.
+    #[arg(long)]
+    pub no_system: bool,
+
     /// Write the final agent response to a file after the run completes.
     /// The file is created (and intermediate directories) if needed.
     #[arg(long, short = 'o', value_name = "PATH")]

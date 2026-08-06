@@ -120,6 +120,10 @@ pub struct CiOptions {
     pub system_prompt_file: Option<PathBuf>,
     /// Text appended to the default system prompt (after Guidelines section).
     pub append_system_prompt: Option<String>,
+    /// Suppress Sven's built-in system prompt (`--no-system`). See
+    /// [`sven_core::AgentRuntimeContext::build_system_message`] for exact
+    /// semantics when combined with `system_prompt_file`/`append_system_prompt`.
+    pub no_system: bool,
     /// Stderr trace verbosity (mirrors CLI --verbose count).
     /// 0 = minimal (default): tool name, success/fail, size.
     /// 1 = verbose (-v): include truncated tool output and thinking blocks.
@@ -511,10 +515,16 @@ impl CiRunner {
             .and_then(|w| sven_runtime::format_drift_warnings(&w));
         let knowledge = sven_runtime::SharedKnowledge::new(knowledge_items);
 
-        let project_context_file = opts
-            .project_root
-            .as_ref()
-            .and_then(|r| sven_runtime::find_project_context_file(r));
+        // Only ever consumed by the built-in system prompt (see
+        // `AgentRuntimeContext::build_system_message`), which `--no-system`
+        // bypasses entirely, so skip reading and logging it in that case.
+        let project_context_file = if opts.no_system {
+            None
+        } else {
+            opts.project_root
+                .as_ref()
+                .and_then(|r| sven_runtime::find_project_context_file(r))
+        };
 
         if let Some(path) = &project_context_file {
             write_progress(&format!(
@@ -532,7 +542,8 @@ impl CiRunner {
             ci_context: Some(ci_ctx),
             project_context_file,
             append_system_prompt: combined_append,
-            system_prompt_override: None,
+            system_prompt_override: self.config.agent.system_prompt.clone(),
+            no_system: opts.no_system,
             skills,
             agents,
             knowledge,

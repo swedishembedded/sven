@@ -277,10 +277,24 @@ sven --file workflow.md \
 sven --file workflow.md \
   --system-prompt-file .sven/base-prompt.md \
   --append-system-prompt "Extra rule for this run only."
+
+# No system prompt at all: zero tokens spent before the first message
+sven --file workflow.md --no-system
+
+# --no-system combined with --system-prompt-file: send exactly the file's
+# content as the system message, with none of Sven's built-in identity,
+# guidelines, or project/git/CI context mixed in
+sven --file workflow.md \
+  --no-system \
+  --system-prompt-file .sven/exact-prompt.md
 ```
 
 These flags work alongside config-file `agent.system_prompt` and take
-precedence over it.
+precedence over it. `--no-system` suppresses Sven's own identity/guidelines/
+context sections; if `--system-prompt-file`/`--append-system-prompt` (or
+config-file `agent.system_prompt`) still supply text, that text is sent
+verbatim as the entire system message. With none of those, `--no-system`
+means no system message is sent at all.
 
 ---
 
@@ -627,5 +641,6 @@ Frontmatter takes precedence over config file.
 | `--run-timeout SECS` | 0 (none) | Total run wall-clock timeout |
 | `--system-prompt-file PATH` | - | Replace default system prompt from file |
 | `--append-system-prompt TEXT` | - | Append text to default system prompt |
+| `--no-system` | off | Suppress Sven's built-in system prompt; zero system tokens unless `--system-prompt-file`/`--append-system-prompt` still supply text |
 | `--dry-run` | off | Validate workflow then exit without calling model |
 | `--headless` | auto | Force headless mode (normally auto-detected) |

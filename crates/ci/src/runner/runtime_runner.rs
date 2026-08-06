@@ -79,6 +79,10 @@ pub struct RuntimeRunnerOptions {
     /// Extra text appended to the composed system prompt (mirrors the legacy
     /// runner's `--append-system-prompt`). `None` leaves the prompt unchanged.
     pub append_system_prompt: Option<String>,
+    /// Suppress Sven's built-in system prompt (`--no-system`). See
+    /// [`sven_core::AgentRuntimeContext::build_system_message`] for exact
+    /// semantics when combined with `append_system_prompt`.
+    pub no_system: bool,
     /// Verbosity level (0 = minimal, 1 = verbose, 2+ = trace).
     pub trace_level: u8,
 }
@@ -116,11 +120,17 @@ impl RuntimeRunner {
     async fn run_inner(&self, opts: RuntimeRunnerOptions) -> anyhow::Result<i32> {
         // Discover the project context file (`.sven/context.md` or `AGENTS.md`)
         // and inject it, matching the legacy runner's behaviour so headless
-        // agents pick up project instructions.
-        let project_context = opts
-            .project_root
-            .as_ref()
-            .and_then(|r| sven_runtime::load_project_context_file_with_path(r));
+        // agents pick up project instructions. Skipped under `--no-system`:
+        // it is only ever consumed by the built-in system prompt (see
+        // `AgentRuntimeContext::build_system_message`), which `--no-system`
+        // bypasses entirely, so reading and logging it would be pure waste.
+        let project_context = if opts.no_system {
+            None
+        } else {
+            opts.project_root
+                .as_ref()
+                .and_then(|r| sven_runtime::load_project_context_file_with_path(r))
+        };
         if let Some((path, _)) = &project_context {
             write_stderr(&format!(
                 "[sven:info] Project context file loaded from {}",
@@ -137,7 +147,8 @@ impl RuntimeRunner {
             ci_context: Some(crate::context::detect_ci_context()),
             project_context_file: project_context.map(|(_, content)| content),
             append_system_prompt: opts.append_system_prompt.clone(),
-            system_prompt_override: None,
+            system_prompt_override: self.config.agent.system_prompt.clone(),
+            no_system: opts.no_system,
             skills: sven_runtime::SharedSkills::new(sven_runtime::discover_skills(
                 opts.project_root.as_deref(),
             )),
@@ -574,6 +585,7 @@ mod tests {
             step_timeout_secs: None,
             max_tokens_budget: None,
             append_system_prompt: None,
+            no_system: false,
             trace_level: 0,
         };
         assert!(format!("{opts:?}").contains("agent"));

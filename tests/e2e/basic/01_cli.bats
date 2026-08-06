@@ -177,3 +177,21 @@ load helpers
     run bash -c 'echo "ping" | "$BIN" --headless --model mock -vv 2>/dev/null'
     [ "${status}" -eq 0 ]
 }
+
+# ── --no-system flag ──────────────────────────────────────────────────────────
+
+@test "01.28 --no-system accepted alone" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-system 2>/dev/null'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+}
+
+@test "01.29 --no-system composes with --system-prompt-file" {
+    local sp_file
+    sp_file="$(mktemp)"
+    echo "You are a terse test bot." > "${sp_file}"
+    run bash -c "echo \"ping\" | \"\$BIN\" --headless --model mock --no-system --system-prompt-file '${sp_file}' 2>/dev/null"
+    rm -f "${sp_file}"
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+}

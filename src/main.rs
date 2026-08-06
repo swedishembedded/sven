@@ -2166,6 +2166,7 @@ async fn run_as_teammate(
                     output_last_message: Some(summary_path.clone()),
                     system_prompt_file: None,
                     append_system_prompt: None,
+                    no_system: false,
                     trace_level: 0,
                     load_trace: None,
                     output_trace: None,
@@ -2508,6 +2509,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
                 step_timeout_secs: cli.step_timeout,
                 max_tokens_budget: cli.max_tokens,
                 append_system_prompt: cli.append_system_prompt.clone(),
+                no_system: cli.no_system,
                 trace_level: cli.verbose,
             })
             .await;
@@ -2552,6 +2554,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         output_last_message: cli.output_last_message,
         system_prompt_file: cli.system_prompt_file,
         append_system_prompt: cli.append_system_prompt,
+        no_system: cli.no_system,
         trace_level: cli.verbose,
         load_trace,
         output_trace,
