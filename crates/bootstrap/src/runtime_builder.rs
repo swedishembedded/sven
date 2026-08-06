@@ -668,7 +668,10 @@ impl RuntimeBuilder {
             Arc::clone(&call_id_to_thread),
             cancel_handle.clone(),
         )
-        .with_no_tools(runtime.no_tools);
+        .with_no_tools(runtime.no_tools)
+        .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
+            &self.config.agent,
+        ));
 
         // A caller-supplied executor (see `with_effect_executor`) replaces the
         // default composite wholesale; otherwise wire the default composite,

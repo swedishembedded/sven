@@ -10,11 +10,16 @@
 //! the fail-loudly fix in [`crate::openai_compat::stream`], being silently
 //! swallowed into an empty "successful" completion.
 //!
-//! Deliberately does NOT revive `sven-core`'s dead compaction machinery
-//! (`compact_session`/`emergency_compact`, zero call sites as of this
-//! writing): reviving compaction is a much larger change, and would *hide*
-//! the failure this module exists to surface loudly. This is a hard gate,
-//! not a compactor.
+//! This module is a hard gate, not a compactor - it does not summarize or
+//! shrink anything itself. Proactive compaction (`sven_core::compact`,
+//! `sven_core::prepare_compaction`/`finish_compaction`) is wired into
+//! `TurnExecutor` (`crates/executors/src/turn.rs`), which checks this
+//! module's [`effective_input_budget`] against the configured
+//! `compaction_threshold` *before* a turn and compacts the thread when
+//! near the limit. This gate is what still fires when compaction can't
+//! (or didn't) bring a request under budget - the two are complementary,
+//! not redundant: compaction shrinks proactively; this rejects loudly when
+//! a request is oversized regardless of why.
 
 use crate::{Message, ToolSchema};
 

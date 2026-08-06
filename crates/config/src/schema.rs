@@ -694,13 +694,10 @@ pub struct AgentConfig {
     /// Maximum number of autonomous tool-call rounds before stopping
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
-    /// Token fraction at which proactive compaction triggers (0.0-1.0).
-    /// NOTE: the compaction machinery this threshold was written for
-    /// (`sven_core::compact`) has no live callers as of this writing - see
-    /// its module doc comment. This field currently has no effect. The one
-    /// live request-size gate is `sven_model::budget::effective_input_budget`,
-    /// which reserves a small fixed minimum for output rather than the full
-    /// configured max_output_tokens.
+    /// Token fraction at which proactive compaction triggers (0.0-1.0),
+    /// checked by `TurnExecutor` before every turn against the usable input
+    /// budget (`sven_model::budget::effective_input_budget`), minus
+    /// `compaction_overhead_reserve`. See `sven_core::prepare_compaction`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during
@@ -726,6 +723,12 @@ pub struct AgentConfig {
     /// Truncation is content-aware: shell output keeps head+tail lines, grep
     /// keeps leading matches, read_file keeps head+tail lines.  A value of
     /// 0 disables per-result truncation entirely.
+    ///
+    /// NOTE: `sven_core::smart_truncate` (the function this field configures)
+    /// has no live callers as of this writing - unlike session-level
+    /// compaction (`compaction_threshold` and friends, wired into
+    /// `TurnExecutor`), per-result truncation is a separate, still-unwired
+    /// concern. This field currently has no effect.
     #[serde(default = "default_tool_result_token_cap")]
     pub tool_result_token_cap: usize,
     /// Fraction of the context window reserved for tool schemas, the dynamic

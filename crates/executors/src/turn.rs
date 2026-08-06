@@ -257,6 +257,59 @@ pub struct TurnExecutor {
     /// `ToolExecutor::with_no_tools` so a tool call is refused even if one
     /// somehow still arrives.
     no_tools: bool,
+    /// Proactive-compaction configuration (`AgentConfig`'s `compaction_*`
+    /// fields). See [`CompactionConfig`] and [`Self::with_compaction_config`].
+    compaction: CompactionConfig,
+}
+
+/// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
+/// `compaction_*` fields (kept as a separate small struct so `TurnExecutor`'s
+/// constructor signature doesn't grow every time this feature gains a knob).
+#[derive(Clone)]
+pub struct CompactionConfig {
+    /// Fraction of the usable input budget at which compaction fires
+    /// (0.0-1.0). See `AgentConfig::compaction_threshold`.
+    pub threshold: f32,
+    /// Fraction of the context window reserved for tool schemas, dynamic
+    /// context, and estimation error - subtracted from `threshold` to get
+    /// the effective trigger point. See `AgentConfig::compaction_overhead_reserve`.
+    pub overhead_reserve: f32,
+    /// Non-system messages preserved verbatim (not summarized) at the tail
+    /// of the conversation. See `AgentConfig::compaction_keep_recent`.
+    pub keep_recent: usize,
+    /// Which prompt/format the model is asked to produce a summary in.
+    /// See `AgentConfig::compaction_strategy`.
+    pub strategy: sven_config::CompactionStrategy,
+}
+
+impl Default for CompactionConfig {
+    /// Matches `sven_config::AgentConfig::default()`'s compaction fields.
+    fn default() -> Self {
+        Self {
+            threshold: 0.85,
+            overhead_reserve: 0.10,
+            keep_recent: 6,
+            strategy: sven_config::CompactionStrategy::Structured,
+        }
+    }
+}
+
+impl CompactionConfig {
+    #[must_use]
+    pub fn from_agent_config(cfg: &sven_config::AgentConfig) -> Self {
+        Self {
+            threshold: cfg.compaction_threshold,
+            overhead_reserve: cfg.compaction_overhead_reserve,
+            keep_recent: cfg.compaction_keep_recent,
+            strategy: cfg.compaction_strategy.clone(),
+        }
+    }
+
+    /// The fraction of the usable input budget at which compaction should
+    /// fire, after accounting for overhead reserve. Never negative.
+    fn effective_threshold(&self) -> f32 {
+        (self.threshold - self.overhead_reserve).max(0.0)
+    }
 }
 
 impl TurnExecutor {
@@ -278,6 +331,7 @@ impl TurnExecutor {
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
             no_tools: false,
+            compaction: CompactionConfig::default(),
         }
     }
 
@@ -286,6 +340,13 @@ impl TurnExecutor {
     #[must_use]
     pub fn with_no_tools(mut self, no_tools: bool) -> Self {
         self.no_tools = no_tools;
+        self
+    }
+
+    /// Configure proactive compaction (see [`CompactionConfig`]).
+    #[must_use]
+    pub fn with_compaction_config(mut self, compaction: CompactionConfig) -> Self {
+        self.compaction = compaction;
         self
     }
 
@@ -305,6 +366,131 @@ impl TurnExecutor {
             }
         }
         Arc::clone(&self.default_model)
+    }
+
+    /// Compact `messages` for `thread_id`, write the result back to the
+    /// shared store, and return it so the in-flight turn continues with the
+    /// smaller history immediately (no need to wait for the next turn).
+    ///
+    /// Tries LLM-based summarization first (`sven_core::prepare_compaction` /
+    /// `finish_compaction`), asking the model itself for a summary of
+    /// everything except the most recent `compaction.keep_recent` messages.
+    /// Falls back to the deterministic, model-free `emergency_compact` (drop
+    /// older history, keep a shrinking tail, no model call) whenever the
+    /// LLM path can't be used or fails:
+    /// - Nothing to summarize (the whole history already fits in the kept
+    ///   tail) - `prepare_compaction` returns `None`.
+    /// - The summarization request itself wouldn't fit the budget - asking
+    ///   for a summary would just repeat the same failure one level down.
+    /// - The summarization call errors, or the model returns empty text.
+    ///
+    /// Emits `UiEvent::ContextCompacted` on success (whichever path was
+    /// used); does not emit anything and returns `messages` unchanged if
+    /// there was truly nothing to compact.
+    async fn compact_thread(
+        &self,
+        thread_id: &str,
+        messages: Vec<Message>,
+        model: &dyn sven_model::ModelProvider,
+        context_window: Option<u32>,
+        configured_max_output: Option<u32>,
+        obs: &ObservationSink,
+    ) -> Vec<Message> {
+        let Some(plan) =
+            sven_core::prepare_compaction(&messages, &self.compaction.strategy, self.compaction.keep_recent)
+        else {
+            return messages;
+        };
+        let tokens_before = plan.tokens_before;
+
+        let budget = sven_model::budget::effective_input_budget(context_window, configured_max_output);
+        let request_estimate =
+            sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
+        let request_fits = budget.is_none_or(|b| request_estimate <= b);
+
+        let (final_messages, strategy_label) = if request_fits {
+            match self.run_compaction_turn(&plan, model, context_window, configured_max_output).await {
+                Some(summary_text) if !summary_text.trim().is_empty() => {
+                    let strategy_label = match self.compaction.strategy {
+                        sven_config::CompactionStrategy::Structured => "structured",
+                        sven_config::CompactionStrategy::Narrative => "narrative",
+                    };
+                    (sven_core::finish_compaction(plan, &summary_text), strategy_label)
+                }
+                _ => {
+                    tracing::warn!(
+                        thread = %thread_id,
+                        "compaction: summarization call failed or returned empty text; \
+                         falling back to emergency_compact"
+                    );
+                    let mut fallback = messages.clone();
+                    sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+                    (fallback, "emergency")
+                }
+            }
+        } else {
+            // Even the summarization request alone wouldn't fit - asking the
+            // model for a summary would just fail the same way one level
+            // down. Skip straight to the deterministic fallback.
+            let mut fallback = messages.clone();
+            sven_core::emergency_compact(&mut fallback, plan.system_msg, self.compaction.keep_recent);
+            (fallback, "emergency")
+        };
+
+        let tokens_after: usize = final_messages.iter().map(Message::approx_tokens).sum();
+        if let Ok(mut store) = self.store.lock() {
+            store.replace_thread(thread_id, final_messages.clone());
+        }
+        obs.emit(UiEvent::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy: strategy_label.to_string(),
+            turn: 0,
+        });
+        final_messages
+    }
+
+    /// Run the summarization call for a compaction plan and return the
+    /// summary text, or `None` on any streaming/completion error.
+    ///
+    /// Uses a throwaway event channel: the compaction call's own text
+    /// deltas must not reach the observation plane as if the agent had said
+    /// them in response to the user's actual message.
+    async fn run_compaction_turn(
+        &self,
+        plan: &sven_core::CompactionPlan,
+        model: &dyn sven_model::ModelProvider,
+        context_window: Option<u32>,
+        configured_max_output: Option<u32>,
+    ) -> Option<String> {
+        let request_estimate = sven_model::budget::estimate_request_tokens(&plan.summarize_request, &[], None);
+        let max_output_tokens_override =
+            sven_model::budget::dynamic_output_budget(context_window, configured_max_output, request_estimate);
+
+        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        let result = stream_turn(
+            model,
+            plan.summarize_request.clone(),
+            vec![],
+            None,
+            None,
+            None,
+            max_output_tokens_override,
+            &tx,
+        )
+        .await;
+        drop(tx);
+        let _ = drain.await;
+
+        match result {
+            Ok((text, _tool_calls)) => Some(text),
+            Err(e) => {
+                tracing::warn!(error = %e, "compaction: summarization call failed");
+                None
+            }
+        }
     }
 }
 
@@ -349,7 +535,7 @@ impl EffectExecutor for TurnExecutor {
 
         // Snapshot the thread before any async I/O (guard is dropped immediately
         // by the helper so it is never held across an await boundary).
-        let messages = snapshot_thread(&self.store, &thread_id);
+        let mut messages = snapshot_thread(&self.store, &thread_id);
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
         // `--no-tools` overrides whatever the requesting machine asked for -
@@ -379,8 +565,26 @@ impl EffectExecutor for TurnExecutor {
         // see `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
         let configured_max_output = model.catalog_max_output_tokens();
-        let estimate =
+        let mut estimate =
             sven_model::budget::estimate_request_tokens(&messages, &tool_schemas, req.dynamic_suffix.as_deref());
+
+        // Proactive compaction: fires *before* the hard gate below, while
+        // there's still enough room to ask the model for a summary. Only
+        // possible when the window is known (same precondition as the gate
+        // itself - see `effective_input_budget`'s doc comment).
+        if let Some(budget) = sven_model::budget::effective_input_budget(context_window, configured_max_output) {
+            if budget > 0 && (estimate as f32 / budget as f32) >= self.compaction.effective_threshold() {
+                messages = self
+                    .compact_thread(&thread_id, messages, model.as_ref(), context_window, configured_max_output, obs)
+                    .await;
+                estimate = sven_model::budget::estimate_request_tokens(
+                    &messages,
+                    &tool_schemas,
+                    req.dynamic_suffix.as_deref(),
+                );
+            }
+        }
+
         if let Some(budget) = sven_model::budget::effective_input_budget(context_window, configured_max_output) {
             if estimate > budget {
                 let msg = format!(

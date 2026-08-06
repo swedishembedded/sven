@@ -60,5 +60,5 @@ pub use internal::InternalExecutor;
 pub use remote_tool::{RemoteToolExecutor, RemoteToolRouter, DEFAULT_REMOTE_TOOL_TIMEOUT};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
-pub use turn::TurnExecutor;
+pub use turn::{CompactionConfig, TurnExecutor};
 pub use user::{ApprovalRequest, UserExecutor, UserQuestion};
