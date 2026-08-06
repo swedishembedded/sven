@@ -12,7 +12,9 @@ use futures::StreamExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use sven_config::ModelConfig;
-use sven_model::{from_config, CompletionRequest, ContentPart, Message, ResponseEvent, ToolSchema};
+use sven_model::{
+    from_config, from_config_probed, CompletionRequest, ContentPart, Message, ResponseEvent, ToolSchema,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -1435,4 +1437,185 @@ async fn openrouter_gemini_last_tool_gets_cache_control() {
         tools[1]["function"]["cache_control"]["type"], "ephemeral",
         "last tool must have cache_control"
     );
+}
+
+// ── probe_context_window ────────────────────────────────────────────────────
+//
+// Reproduces the shape of a real multi-model server (brain): `/props`
+// (llama.cpp's single-model convention) doesn't exist, but `GET /v1/models`
+// lists several models and the matching one carries a real `context_length`.
+
+/// Bind a mock server that accepts up to `routes.len()` connections in order,
+/// replying to each with the corresponding `(status, body)`. Unlike
+/// `mock_server_once`, this supports the two sequential requests
+/// `probe_context_window` may issue (`/props` then `/v1/models`).
+async fn mock_server_sequence(routes: Vec<(u16, String)>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        for (status, body) in routes {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            // Drain the request (request line + headers) without needing the body.
+            let mut content_length: usize = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    break;
+                }
+                if let Some((k, v)) = trimmed.split_once(": ") {
+                    if k.eq_ignore_ascii_case("content-length") {
+                        content_length = v.parse().unwrap_or(0);
+                    }
+                }
+            }
+            if content_length > 0 {
+                let mut buf = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut buf).await;
+            }
+            let http_resp = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            let _ = write_half.write_all(http_resp.as_bytes()).await;
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn probe_context_window_falls_back_to_models_list_when_props_absent() {
+    // brain's actual shape: no /props (404), then /v1/models lists several
+    // models, only one of which matches the configured model id.
+    let models_body = serde_json::json!({
+        "object": "list",
+        "data": [
+            {"id": "brain/fastvlm", "object": "model", "owned_by": "brain"},
+            {"id": "Qwen/Qwen3-0.6B", "object": "model", "owned_by": "brain", "context_length": 2048},
+        ],
+    })
+    .to_string();
+    let port = mock_server_sequence(vec![
+        (404, "{}".to_string()),
+        (200, models_body),
+    ])
+    .await;
+
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "Qwen/Qwen3-0.6B".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let ctx = provider.probe_context_window().await;
+    assert_eq!(ctx, Some(2048), "must fall back to the /v1/models context_length when /props 404s");
+}
+
+#[tokio::test]
+async fn probe_context_window_none_when_neither_path_answers() {
+    // Both /props and /v1/models fail (simulating a hosted provider like real
+    // OpenAI, which has neither n_ctx nor a per-model context_length) -
+    // config value must stand, i.e. this returns None with no error.
+    let port = mock_server_sequence(vec![
+        (404, "{}".to_string()),
+        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+    ])
+    .await;
+
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let ctx = provider.probe_context_window().await;
+    assert_eq!(ctx, None, "no matching entry anywhere must yield None, not an error");
+}
+
+// ── from_config_probed ──────────────────────────────────────────────────────
+//
+// Reproduces the exact scenario that motivated it: a hand-written
+// `max_tokens: 40960` (the checkpoint's architectural max) sent to a server
+// whose real capacity is only 2048 (brain's actual behaviour when
+// BRAIN_QWEN_CTX defaults to 2048). The clamp must narrow to the smaller,
+// real number - never widen a config value the probe can't corroborate.
+
+#[tokio::test]
+async fn from_config_probed_clamps_to_the_smaller_of_config_and_probed() {
+    let models_body = serde_json::json!({
+        "object": "list",
+        "data": [{"id": "Qwen/Qwen3-0.6B", "object": "model", "owned_by": "brain", "context_length": 2048}],
+    })
+    .to_string();
+    let port = mock_server_sequence(vec![(404, "{}".to_string()), (200, models_body)]).await;
+
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "Qwen/Qwen3-0.6B".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        max_tokens: Some(40960), // the checkpoint's architectural max, NOT what the server can serve
+        ..ModelConfig::default()
+    };
+    let provider = from_config_probed(&cfg).await.unwrap();
+    assert_eq!(
+        provider.catalog_context_window(),
+        Some(2048),
+        "must clamp down to the server's real capacity, not trust the config's larger number"
+    );
+}
+
+#[tokio::test]
+async fn from_config_probed_uses_probed_value_when_config_has_none() {
+    let models_body = serde_json::json!({
+        "object": "list",
+        "data": [{"id": "Qwen/Qwen3-0.6B", "object": "model", "owned_by": "brain", "context_length": 2048}],
+    })
+    .to_string();
+    let port = mock_server_sequence(vec![(404, "{}".to_string()), (200, models_body)]).await;
+
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "Qwen/Qwen3-0.6B".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        max_tokens: None,
+        ..ModelConfig::default()
+    };
+    let provider = from_config_probed(&cfg).await.unwrap();
+    assert_eq!(provider.catalog_context_window(), Some(2048));
+}
+
+#[tokio::test]
+async fn from_config_probed_falls_back_to_config_when_probe_fails() {
+    // Both discovery paths fail (hosted-provider shape) - behaviour must be
+    // identical to plain from_config, i.e. the config value stands untouched.
+    let port = mock_server_sequence(vec![
+        (404, "{}".to_string()),
+        (200, serde_json::json!({"object": "list", "data": []}).to_string()),
+    ])
+    .await;
+
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        max_tokens: Some(128_000),
+        ..ModelConfig::default()
+    };
+    let probed_provider = from_config_probed(&cfg).await.unwrap();
+    let plain_provider = from_config(&cfg).unwrap();
+    assert_eq!(probed_provider.catalog_context_window(), Some(128_000));
+    assert_eq!(probed_provider.catalog_context_window(), plain_provider.catalog_context_window());
 }

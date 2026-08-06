@@ -61,4 +61,16 @@ impl crate::ModelProvider for OpenAiProvider {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         self.inner.complete(req).await
     }
+
+    async fn probe_context_window(&self) -> Option<u32> {
+        // Without this delegation the trait default (`None`) silently wins
+        // and OpenAiProvider can never discover a live context window, even
+        // though the inner OpenAICompatProvider fully implements it - a real
+        // hosted OpenAI endpoint has neither /props nor a per-model
+        // context_length, so this still correctly resolves to None there;
+        // it only matters when `base_url` is overridden to point at a local
+        // OpenAI-compatible server (exactly what `--model openai` + a custom
+        // base_url in config is for).
+        self.inner.probe_context_window().await
+    }
 }

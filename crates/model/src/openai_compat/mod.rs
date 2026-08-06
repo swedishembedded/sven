@@ -167,6 +167,69 @@ impl OpenAICompatProvider {
             server_root: None,
         }
     }
+
+    /// Attach this provider's auth to a request builder, matching the pattern
+    /// used throughout this module (`list_models`, `complete`).
+    fn authed(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => match self.auth_style {
+                AuthStyle::Bearer => req.bearer_auth(key),
+                AuthStyle::ApiKeyHeader => req.header("api-key", key),
+                AuthStyle::None => req,
+            },
+            None => req,
+        }
+    }
+
+    /// Discovery path 1: llama.cpp-style `GET {server_root}/props`.
+    /// See [`Self::probe_context_window`]'s doc comment for why this only
+    /// makes sense for a single-model server, and short-timeouts since it is
+    /// a startup hint, not a critical path.
+    async fn probe_context_window_via_props(&self) -> Option<u32> {
+        let root = self.server_root.as_deref()?;
+        let props_url = format!("{root}/props");
+        let req = self.authed(
+            self.client
+                .get(&props_url)
+                .timeout(std::time::Duration::from_secs(5)),
+        );
+        let resp = req.send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body: serde_json::Value = resp.json().await.ok()?;
+        // llama.cpp /props returns {"n_ctx": <u32>, ...}
+        body["n_ctx"].as_u64().map(|v| v as u32)
+    }
+
+    /// Discovery path 2: find this provider's own model in the standard
+    /// `GET {models_url}` list and read its `context_length`. Per-model, so
+    /// this is correct for a server hosting several models with different
+    /// capacities - unlike `/props`, which has no way to name a model.
+    async fn probe_context_window_via_models_list(&self) -> Option<u32> {
+        let url = self.models_url.as_deref()?;
+        let req = self.authed(
+            self.client
+                .get(url)
+                .timeout(std::time::Duration::from_secs(5)),
+        );
+        let resp = req.send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body: serde_json::Value = resp.json().await.ok()?;
+        // OpenAI-shaped list envelope: {"object":"list","data":[{"id":...,...}]}.
+        // OpenRouter and brain both put `context_length` directly on the
+        // entry; real OpenAI has no such field on any entry, so this simply
+        // finds nothing for hosted providers - identical to today's `None`.
+        body["data"]
+            .as_array()?
+            .iter()
+            .find(|m| m["id"].as_str() == Some(self.model.as_str()))?
+            ["context_length"]
+            .as_u64()
+            .map(|v| v as u32)
+    }
 }
 
 /// Derive the server root from a `/v1`-prefixed API base URL.
@@ -200,38 +263,34 @@ impl crate::ModelProvider for OpenAICompatProvider {
         &self.model
     }
 
-    /// Query the server's `/props` endpoint for the actual loaded context window.
+    /// Query the actual loaded context window for the configured model.
     ///
-    /// llama.cpp and compatible servers expose `GET /props` which includes
-    /// `n_ctx` - the actual KV-cache size the model was loaded with.  This
-    /// value may be smaller than the catalog entry (e.g. the server was
-    /// started with `--ctx-size 54272`).
+    /// Two discovery paths, tried in order:
+    /// 1. `GET {server_root}/props` - llama.cpp and compatible servers expose
+    ///    this with `n_ctx`, the actual KV-cache size the model was loaded
+    ///    with. Only meaningful for a single-model server; there is no model
+    ///    parameter, so a multi-model server has nothing correct to answer
+    ///    here (see 2).
+    /// 2. `GET {models_url}` (the standard `/models` list) - find the entry
+    ///    whose `id` matches the configured model and read `context_length`.
+    ///    Per-model, so this is the correct path for a server that hosts
+    ///    several models with different capacities (e.g. brain). Real OpenAI
+    ///    doesn't populate this field; hosted providers therefore still fall
+    ///    through to `None` here exactly as before this path existed.
     ///
-    /// Returns `Some(n_ctx)` on success, `None` when the endpoint is absent
-    /// (hosted providers like OpenAI, Anthropic) or unreachable.
+    /// Either value may be smaller than the static catalog entry (e.g. the
+    /// server was started with a smaller context budget than the checkpoint
+    /// architecturally supports) - that's the whole point of asking the live
+    /// server instead of trusting a hand-written config number.
+    ///
+    /// Returns `Some(n)` on success, `None` when neither path answers (hosted
+    /// providers like OpenAI/Anthropic, or an unreachable/non-conforming
+    /// server).
     async fn probe_context_window(&self) -> Option<u32> {
-        let root = self.server_root.as_deref()?;
-        let props_url = format!("{root}/props");
-        let mut req = self
-            .client
-            .get(&props_url)
-            // Short timeout: the probe is a startup hint, not a critical path.
-            // A slow or unreachable server must not block agent startup.
-            .timeout(std::time::Duration::from_secs(5));
-        if let Some(key) = &self.api_key {
-            req = match self.auth_style {
-                AuthStyle::Bearer => req.bearer_auth(key),
-                AuthStyle::ApiKeyHeader => req.header("api-key", key),
-                AuthStyle::None => req,
-            };
+        if let Some(n) = self.probe_context_window_via_props().await {
+            return Some(n);
         }
-        let resp = req.send().await.ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        let body: serde_json::Value = resp.json().await.ok()?;
-        // llama.cpp /props returns {"n_ctx": <u32>, ...}
-        body["n_ctx"].as_u64().map(|v| v as u32)
+        self.probe_context_window_via_models_list().await
     }
 
     /// List models via `GET /models`, enriched with metadata.

@@ -93,6 +93,14 @@ impl ChildSpawner for SdlcChildSpawner {
         let cancel_handle = Arc::new(tokio::sync::Mutex::new(None));
 
         let resolver_config = Arc::clone(&self.config);
+        // Deliberately `from_config`, not `from_config_probed`: `ModelResolver`
+        // (`sven_core::stream_turn::ModelResolver`) is a synchronous `Fn`,
+        // called synchronously from `TurnExecutor::resolve_model`, and
+        // `from_config_probed` needs an `.await`. Probing here would require
+        // making `ModelResolver` itself async across every call site — a
+        // larger, separate refactor. The primary session model IS probed
+        // (`runtime_builder.rs::build`); only a per-state/per-child model
+        // override (this path) is not.
         let model_resolver: sven_core::ModelResolver = Arc::new(move |model_str: &str| {
             let model_cfg = sven_model::resolve_model_from_config(&resolver_config, model_str);
             let provider = sven_model::from_config(&model_cfg)?;

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod anthropic;
 mod aws;
+pub mod budget;
 pub mod catalog;
 mod cohere;
 #[cfg(all(unix, feature = "dbus"))]
@@ -226,12 +227,13 @@ impl ModelProvider for ConfigBoundedProvider {
 
 // ── from_config ───────────────────────────────────────────────────────────────
 
-/// Construct a boxed [`ModelProvider`] from configuration.
+/// Select and construct the driver implementation for `cfg.provider`, plus
+/// the two config-derived limits [`from_config`]/[`from_config_probed`] wrap
+/// it with. Shared by both so neither duplicates the driver-selection match
+/// or double-wraps the result in [`ConfigBoundedProvider`].
 ///
-/// Selects the driver implementation based on `cfg.provider`.  Run
-/// `sven list-providers` to see all recognised provider ids.
-///
-/// The resolved output token limit is determined in priority order:
+/// The resolved output token limit (third tuple element) is determined in
+/// priority order:
 /// 1. `cfg.max_output_tokens` - explicit per-request output cap
 /// 2. `cfg.max_tokens` - backward-compatible total/output cap
 /// 3. Static catalog `max_output_tokens` for the model
@@ -241,7 +243,11 @@ impl ModelProvider for ConfigBoundedProvider {
 /// total context window (used by compaction decisions).  When only
 /// `cfg.max_tokens` is set, it serves as both the output cap and context
 /// window (original behaviour, fully backward-compatible).
-pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+///
+/// `(driver, config_context_window, resolved_max_output_tokens)`.
+type BuiltProvider = (Box<dyn ModelProvider>, Option<u32>, Option<u32>);
+
+fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
     check_api_key_requirement(cfg)?;
 
     // key() returns a fresh Option<String> on each call so that each match arm
@@ -543,15 +549,65 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
         }
     };
 
-    // Wrap the inner provider with config-specified limits so that
-    // catalog_context_window() and catalog_max_output_tokens() reflect the
-    // user's explicit configuration rather than the static catalog alone.
-    // This ensures compaction thresholds and session budget calculations use
-    // the correct values even for models not present in the bundled catalog.
+    Ok((inner, config_ctx, resolved_max_tokens))
+}
+
+/// Construct a boxed [`ModelProvider`] from configuration.
+///
+/// Selects the driver implementation based on `cfg.provider`.  Run
+/// `sven list-providers` to see all recognised provider ids. See
+/// [`build_inner`] for the output-token resolution priority order.
+///
+/// Wraps the driver in [`ConfigBoundedProvider`] so that
+/// `catalog_context_window()` and `catalog_max_output_tokens()` reflect the
+/// user's explicit configuration rather than the static catalog alone. This
+/// ensures compaction thresholds and session budget calculations use the
+/// correct values even for models not present in the bundled catalog.
+///
+/// Does no I/O beyond what driver construction itself requires (none, for
+/// every current driver) — for a version that additionally probes the live
+/// server for its actual context window, see [`from_config_probed`].
+pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+    let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
     Ok(Box::new(ConfigBoundedProvider {
         inner,
-        context_window: config_ctx,
-        max_output_tokens: resolved_max_tokens,
+        context_window,
+        max_output_tokens,
+        input_modalities: cfg
+            .input_modalities
+            .as_deref()
+            .and_then(parse_input_modalities),
+    }))
+}
+
+/// Like [`from_config`], but additionally probes the live provider for its
+/// actual context window (see [`ModelProvider::probe_context_window`]) and
+/// clamps the exposed `catalog_context_window()` to `min(config, probed)`
+/// when the probe succeeds — never widens it, only narrows a hand-written
+/// number down to what the server can actually serve.
+///
+/// This is what stops a config `max_tokens` from exceeding a live server's
+/// real capacity (e.g. brain's per-model capacity, discovered via
+/// `/v1/models`'s `context_length` — see
+/// `openai_compat::probe_context_window_via_models_list`). When the probe
+/// fails (hosted providers, an unreachable/non-conforming server) or the
+/// config has no `max_tokens` at all, the probed value is used as-is;
+/// when neither is present the result is identical to `from_config`.
+///
+/// Does one extra network round-trip before returning; `probe_context_window`
+/// itself is a short-timeout (5s) best-effort call, never a hard failure.
+pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
+    let (inner, config_ctx, max_output_tokens) = build_inner(cfg)?;
+    let probed = inner.probe_context_window().await;
+    let context_window = match (config_ctx, probed) {
+        (Some(c), Some(p)) => Some(c.min(p)),
+        (Some(c), None) => Some(c),
+        (None, ctx) => ctx,
+    };
+    Ok(Box::new(ConfigBoundedProvider {
+        inner,
+        context_window,
+        max_output_tokens,
         input_modalities: cfg
             .input_modalities
             .as_deref()

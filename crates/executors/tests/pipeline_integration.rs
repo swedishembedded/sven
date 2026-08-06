@@ -44,6 +44,41 @@ impl sven_model::ModelProvider for PongProvider {
     }
 }
 
+/// A provider with a fixed, known-small context window (mirroring brain's
+/// real default capacity) that PANICS if `complete()` is ever called. Used
+/// to prove the prompt-size budget gate rejects an oversized request before
+/// building it or making any network call — not merely before the response
+/// arrives.
+struct CappedProvider {
+    context_window: u32,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for CappedProvider {
+    fn name(&self) -> &str {
+        "capped"
+    }
+    fn model_name(&self) -> &str {
+        "capped"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(self.context_window)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(0)
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        panic!("complete() must never be called for a request the budget gate should reject");
+    }
+}
+
 /// Streams only `Done` — no text, no tool calls — every turn. Used to
 /// reproduce a provider that "succeeds" transport-wise but never actually
 /// answers (e.g. a server that silently discards a request it can't serve).
@@ -251,6 +286,82 @@ async fn empty_provider_fails_loudly_instead_of_silent_success() {
     assert!(
         error_idx < turn_complete_idx,
         "Error must be emitted before the terminal TurnComplete: {events:?}"
+    );
+
+    rt.abort();
+}
+
+/// A prompt that exceeds the model's known effective window must fail before
+/// `ModelProvider::complete()` is ever called (`CappedProvider::complete`
+/// panics if reached) — the request never leaves the process, exactly what
+/// stops sven from building a request the server would reject after already
+/// paying the connection/admission cost.
+#[tokio::test]
+async fn oversized_prompt_fails_before_any_network_call() {
+    use sven_core::ReactiveAgentMachine;
+    use sven_executors::CompositeExecutorBuilder;
+    use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+
+    let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        sven_hsm::ToolCallId,
+        (String, String),
+    >::new()));
+    let cancel_handle = Arc::new(Mutex::new(None));
+    // Mirrors brain's real default capacity (BRAIN_QWEN_CTX=2048) from the
+    // false-success bug this whole workstream started from.
+    let turn_exec = sven_executors::TurnExecutor::new(
+        Arc::new(CappedProvider { context_window: 2048 }),
+        None,
+        Arc::new(sven_tools::ToolRegistry::new()),
+        store,
+        call_id_to_thread,
+        cancel_handle,
+    );
+    let executor = CompositeExecutorBuilder::default()
+        .with_turn(turn_exec)
+        .build();
+
+    let machine: Box<dyn ErasedMachine> = Box::new(Hsm::new(ReactiveAgentMachine::new()));
+    let rt = ErasedRuntime::spawn(
+        machine,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        executor,
+        64,
+    );
+
+    let mut rt_obs_rx = rt.subscribe_observations();
+
+    // Comfortably over 2048 tokens at the chars/4 heuristic.
+    let huge_prompt = "a".repeat(60_000);
+    let sent = rt.sink().emit(Event::UserMessage { text: huge_prompt }).await;
+    assert!(sent, "UserMessage must be accepted by the kernel sink");
+
+    let mut events: Vec<UiEvent> = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(3);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        tokio::select! {
+            Ok(ev) = rt_obs_rx.recv() => {
+                let is_turn_complete = ev == UiEvent::TurnComplete;
+                events.push(ev);
+                if is_turn_complete { break; }
+            }
+            _ = tokio::time::sleep(remaining) => break,
+        }
+    }
+
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::Error(msg) if msg.contains("usable input budget"))),
+        "an Error describing the budget rejection must be emitted: {events:?}"
+    );
+    assert!(
+        events.contains(&UiEvent::TurnComplete),
+        "the turn must still terminate (not hang) after the budget rejection: {events:?}"
     );
 
     rt.abort();

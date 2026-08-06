@@ -349,6 +349,36 @@ impl EffectExecutor for TurnExecutor {
             vec![]
         };
 
+        // Fail fast when the request is too large for the model's known
+        // effective window, instead of building it, sending it, and letting
+        // the server reject it after already paying the connection/admission
+        // cost (or - before the fail-loudly SSE fix - silently swallowing
+        // the rejection into an empty "successful" completion). `model` here
+        // is whatever `from_config_probed` resolved at session build time,
+        // so `catalog_context_window()`/`catalog_max_output_tokens()` already
+        // reflect the live-probed, clamped values when a probe succeeded.
+        // No gate at all (not even a wrong one) when the window isn't known -
+        // see `sven_model::budget::effective_input_budget`'s doc comment.
+        if let Some(budget) = sven_model::budget::effective_input_budget(
+            model.catalog_context_window(),
+            model.catalog_max_output_tokens(),
+        ) {
+            let estimate =
+                sven_model::budget::estimate_request_tokens(&messages, &tool_schemas, req.dynamic_suffix.as_deref());
+            if estimate > budget {
+                let msg = format!(
+                    "prompt (~{estimate} tokens) exceeds the model's usable input budget of {budget} tokens \
+                     (context {ctx}, reserved output {out}); reduce context or raise the server's capacity",
+                    ctx = model.catalog_context_window().unwrap_or(0),
+                    out = model.catalog_max_output_tokens().unwrap_or(0),
+                );
+                obs.emit(UiEvent::Error(msg.clone()));
+                let _ = sink.emit(Event::LlmFailed { error: msg }).await;
+                obs.emit(UiEvent::TurnComplete);
+                return;
+            }
+        }
+
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {
             None

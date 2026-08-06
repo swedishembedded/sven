@@ -455,7 +455,15 @@ impl RuntimeBuilder {
         // between the kernel and the model.
         let model_provider = match self.model_provider_override.take() {
             Some(provider) => provider,
-            None => sven_model::from_config(&model_cfg)?,
+            // `_probed` additionally asks the live server for its actual
+            // context window (a short-timeout, best-effort HTTP call) and
+            // clamps a hand-written `max_tokens` down to what the server can
+            // really serve — this is what stops sven from building a prompt
+            // the server will reject after already admitting the request.
+            // `build()` already does I/O two lines below (MCP connect), so
+            // this adds no new purity concern; it is a builder, not a
+            // transition.
+            None => sven_model::from_config_probed(&model_cfg).await?,
         };
         let model: Arc<dyn sven_model::ModelProvider> = Arc::from(model_provider);
 
