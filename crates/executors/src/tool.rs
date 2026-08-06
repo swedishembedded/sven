@@ -43,6 +43,12 @@ pub struct ToolExecutor {
     /// Shared conversation store; tool results are appended here when a
     /// thread mapping exists.
     pub store: Arc<Mutex<ConversationStore>>,
+    /// When set (`--no-tools`), every `CallTool` effect fails immediately
+    /// instead of reaching the registry. Defence-in-depth alongside
+    /// `TurnExecutor` sending an empty tool schema list: a model can't be
+    /// told about tools it was never offered, but this guarantees no tool
+    /// runs even if one is invoked anyway (a malformed/adversarial response).
+    no_tools: bool,
 }
 
 impl ToolExecutor {
@@ -56,7 +62,15 @@ impl ToolExecutor {
             allowed_capabilities,
             call_id_to_thread: Arc::new(Mutex::new(HashMap::new())),
             store: Arc::new(Mutex::new(ConversationStore::new())),
+            no_tools: false,
         }
+    }
+
+    /// Reject every `CallTool` effect instead of executing it (`--no-tools`).
+    #[must_use]
+    pub fn with_no_tools(mut self, no_tools: bool) -> Self {
+        self.no_tools = no_tools;
+        self
     }
 
     /// Creates an executor with no additional capability restrictions.
@@ -79,6 +93,7 @@ impl ToolExecutor {
             allowed_capabilities,
             call_id_to_thread,
             store,
+            no_tools: false,
         }
     }
 }
@@ -95,6 +110,16 @@ impl EffectExecutor for ToolExecutor {
         else {
             return;
         };
+
+        if self.no_tools {
+            let _ = sink
+                .emit(Event::ToolFailed {
+                    call_id,
+                    error: "tools are disabled for this session (--no-tools)".to_string(),
+                })
+                .await;
+            return;
+        }
 
         // Second-line capability check (defence-in-depth).
         if !self.allowed_capabilities.is_empty() && !self.allowed_capabilities.contains(&capability)
@@ -316,5 +341,72 @@ mod tests {
         };
         let kind = run_tool_effect(&mut exec, effect).await;
         assert_eq!(kind, "ToolFailed");
+    }
+
+    /// A registered tool that records whether it actually ran, so tests can
+    /// distinguish "refused before reaching the tool" from "tool ran and
+    /// happened to fail/be denied for some other reason".
+    struct MarkerTool(Arc<std::sync::atomic::AtomicBool>);
+
+    #[async_trait::async_trait]
+    impl sven_tools::Tool for MarkerTool {
+        fn name(&self) -> &str {
+            "marker"
+        }
+        fn description(&self) -> &str {
+            "test-only marker tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
+            sven_tools::ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            sven_tools::ToolOutput::ok(call.id.clone(), "ran")
+        }
+    }
+
+    #[tokio::test]
+    async fn no_tools_refuses_a_call_without_running_the_tool() {
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut registry = ToolRegistry::new();
+        registry.register(MarkerTool(Arc::clone(&ran)));
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry)).with_no_tools(true);
+
+        let effect = Effect::CallTool {
+            call_id: ToolCallId::new(),
+            name: "marker".into(),
+            capability: ToolCapability::ReadFile,
+            args: serde_json::Value::Null,
+        };
+        let kind = run_tool_effect(&mut exec, effect).await;
+        assert_eq!(kind, "ToolFailed");
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "no_tools must short-circuit before the tool ever runs"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_tools_false_lets_a_registered_tool_run() {
+        // Sanity check for the test above: with no_tools left at its default
+        // (false), the same registered tool actually executes, proving the
+        // refusal above is specifically `no_tools`'s doing.
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut registry = ToolRegistry::new();
+        registry.register(MarkerTool(Arc::clone(&ran)));
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
+
+        let effect = Effect::CallTool {
+            call_id: ToolCallId::new(),
+            name: "marker".into(),
+            capability: ToolCapability::ReadFile,
+            args: serde_json::Value::Null,
+        };
+        let kind = run_tool_effect(&mut exec, effect).await;
+        assert_eq!(kind, "ToolSucceeded");
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

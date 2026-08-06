@@ -40,6 +40,11 @@ pub struct AgentRuntimeContext {
     /// (from `--no-system`). See [`Self::build_system_message`] for exact
     /// semantics when combined with `system_prompt_override`/`append_system_prompt`.
     pub no_system: bool,
+    /// Suppress tool availability entirely (from `--no-tools`): no tool
+    /// schemas are sent to the model and any tool call is refused. Consumed
+    /// by `RuntimeBuilder` (wires `TurnExecutor`/`ToolExecutor`), not by
+    /// `build_system_message` - independent of `no_system`.
+    pub no_tools: bool,
     /// Skills discovered from the standard search hierarchy.
     ///
     /// Held as [`SharedSkills`] so the TUI can trigger a live refresh (via

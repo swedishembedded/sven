@@ -252,6 +252,11 @@ pub struct TurnExecutor {
     /// [`EMPTY_TURN_FAILURE_THRESHOLD`]. Internal to this executor - not
     /// shared with `ToolExecutor` like `call_id_to_thread` is.
     empty_turns: Arc<Mutex<HashMap<String, u32>>>,
+    /// When set (`--no-tools`), no tool schemas are ever sent to the model -
+    /// the request carries only the conversation messages. Pairs with
+    /// `ToolExecutor::with_no_tools` so a tool call is refused even if one
+    /// somehow still arrives.
+    no_tools: bool,
 }
 
 impl TurnExecutor {
@@ -272,7 +277,16 @@ impl TurnExecutor {
             call_id_to_thread,
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
+            no_tools: false,
         }
+    }
+
+    /// Send zero tool schemas to the model regardless of what the requesting
+    /// machine asks for (`--no-tools`).
+    #[must_use]
+    pub fn with_no_tools(mut self, no_tools: bool) -> Self {
+        self.no_tools = no_tools;
+        self
     }
 
     /// Resolve the model provider, honouring a per-state override when both
@@ -338,7 +352,11 @@ impl EffectExecutor for TurnExecutor {
         let messages = snapshot_thread(&self.store, &thread_id);
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
-        let tool_schemas = if !req.tools.is_empty() {
+        // `--no-tools` overrides whatever the requesting machine asked for -
+        // the model never sees a single tool definition.
+        let tool_schemas = if self.no_tools {
+            vec![]
+        } else if !req.tools.is_empty() {
             to_model_schemas(self.tools.schemas_for_names(&req.tools))
         } else if !req.all_tools_mode.is_empty() {
             let mode_val = serde_json::Value::String(req.all_tools_mode.clone());

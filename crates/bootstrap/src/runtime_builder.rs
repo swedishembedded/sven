@@ -524,6 +524,7 @@ impl RuntimeBuilder {
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
         runtime.no_system = self.runtime_ctx.no_system;
+        runtime.no_tools = self.runtime_ctx.no_tools;
 
         let todos = Arc::new(tokio::sync::Mutex::new(
             Vec::<sven_tools::events::TodoItem>::new(),
@@ -666,7 +667,8 @@ impl RuntimeBuilder {
             Arc::clone(&conv_store),
             Arc::clone(&call_id_to_thread),
             cancel_handle.clone(),
-        );
+        )
+        .with_no_tools(runtime.no_tools);
 
         // A caller-supplied executor (see `with_effect_executor`) replaces the
         // default composite wholesale; otherwise wire the default composite,
@@ -686,12 +688,15 @@ impl RuntimeBuilder {
                         Arc::clone(&conv_store),
                         Arc::clone(&call_id_to_thread),
                     )),
-                    None => base.with_tool_executor(ToolExecutor::with_shared_store(
-                        tool_registry,
-                        Default::default(),
-                        Arc::clone(&call_id_to_thread),
-                        Arc::clone(&conv_store),
-                    )),
+                    None => base.with_tool_executor(
+                        ToolExecutor::with_shared_store(
+                            tool_registry,
+                            Default::default(),
+                            Arc::clone(&call_id_to_thread),
+                            Arc::clone(&conv_store),
+                        )
+                        .with_no_tools(runtime.no_tools),
+                    ),
                 };
                 Box::new(composed.build())
             }
@@ -1127,5 +1132,32 @@ mod tests {
         assert_eq!(system_msgs.len(), 1);
         assert_eq!(system_msgs[0].as_text(), Some("Exact prompt."));
     }
+
+    #[tokio::test]
+    async fn default_session_sends_nonempty_tool_schemas() {
+        let req = first_request_with(RuntimeContext::empty()).await;
+        assert!(
+            !req.tools.is_empty(),
+            "a default session must advertise its tool set"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_tools_sends_zero_tool_schemas() {
+        let mut ctx = RuntimeContext::empty();
+        ctx.no_tools = true;
+        let req = first_request_with(ctx).await;
+        assert!(
+            req.tools.is_empty(),
+            "--no-tools must send zero tool schemas regardless of mode"
+        );
+    }
+
+    // The defence-in-depth guarantee - a tool call is refused even if a model
+    // somehow attempts one despite seeing no schemas - is covered at the
+    // focused unit level in `sven_executors::tool::tests`
+    // (`no_tools_refuses_a_call_without_running_the_tool`), which can observe
+    // the ToolExecutor's `Event::ToolFailed` output directly instead of
+    // racing the kernel's observation bus.
 }
 
