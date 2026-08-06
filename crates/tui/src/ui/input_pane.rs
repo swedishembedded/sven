@@ -188,10 +188,6 @@ impl Widget for InputPane<'_> {
         if wrap.lines.is_empty() || (wrap.lines.len() == 1 && wrap.lines[0].is_empty()) {
             if text_height > 0 {
                 let placeholder = "Ask anything... (Enter to send, / for commands)";
-                let ph_chars: String = placeholder
-                    .chars()
-                    .take(effective_text_width as usize)
-                    .collect();
                 buf.set_string(
                     prompt_x,
                     text_start_y,
@@ -202,12 +198,21 @@ impl Widget for InputPane<'_> {
                         prompt_unfocused
                     },
                 );
-                buf.set_string(
-                    text_x,
-                    text_start_y,
-                    &ph_chars,
-                    Style::default().fg(TEXT_DIM).add_modifier(Modifier::DIM),
-                );
+                // Only draw the hint when the WHOLE thing fits. A truncated
+                // fragment (e.g. just "A" at effective_text_width == 1, the
+                // pane's narrowest legal width) reads as stray typed content
+                // - and disappears the instant the user actually types,
+                // which is exactly what made it look like a bug rather than
+                // an intentional hint. Showing nothing at that width is
+                // strictly better than showing something misleading.
+                if effective_text_width as usize >= placeholder.chars().count() {
+                    buf.set_string(
+                        text_x,
+                        text_start_y,
+                        placeholder,
+                        Style::default().fg(TEXT_DIM).add_modifier(Modifier::DIM),
+                    );
+                }
             }
         } else {
             for (vis_row, wrapped_line) in wrap
@@ -318,4 +323,74 @@ pub fn input_cursor_screen_pos(
     let vis_row = (cursor_row - scroll) as u16;
     let col = (wrap.cursor_col as u16).min(effective_text_width.saturating_sub(1));
     Some((inner.x + PROMPT_WIDTH + col, text_start_y + vis_row))
+}
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn empty_pane(focused: bool) -> InputPane<'static> {
+        InputPane {
+            content: "",
+            cursor_pos: 0,
+            scroll_offset: 0,
+            focused,
+            ascii: false,
+            edit_mode: InputEditMode::Normal,
+            attachments: &[],
+            is_resizing: false,
+        }
+    }
+
+    /// The exact bug report: at the pane's narrowest legal width
+    /// (`inner.width == 3`, so `text_width == inner.width - PROMPT_WIDTH ==
+    /// 1`), the placeholder used to be truncated to its first character -
+    /// literally "A" from "Ask anything..." - which reads as stray typed
+    /// content and vanishes the instant the user types (since the
+    /// placeholder branch stops applying). The fix: don't render a
+    /// truncated fragment at all.
+    #[test]
+    fn narrow_pane_does_not_render_a_truncated_placeholder_fragment() {
+        // Block borders are TOP|BOTTOM only (see open_pane_block_resizing),
+        // so inner.width == area.width and inner.height == area.height - 2.
+        // area.width=3 -> inner.width=3 -> text_width=1.
+        let area = Rect::new(0, 0, 3, 3);
+        let mut buf = Buffer::empty(area);
+        empty_pane(true).render(area, &mut buf);
+
+        // The text row is at inner.y (=1) + 0 attachment rows; the
+        // placeholder (if rendered at all) starts at inner.x + PROMPT_WIDTH.
+        let text_y = area.y + 1;
+        let text_x = area.x + PROMPT_WIDTH;
+        let cell = &buf[(text_x, text_y)];
+        assert_ne!(
+            cell.symbol(),
+            "A",
+            "a single truncated placeholder character must never be rendered"
+        );
+    }
+
+    /// Guard against the fix over-correcting: a pane with plenty of room
+    /// must still show the full placeholder hint, unmodified.
+    #[test]
+    fn wide_pane_still_renders_the_full_placeholder() {
+        let area = Rect::new(0, 0, 80, 3);
+        let mut buf = Buffer::empty(area);
+        empty_pane(true).render(area, &mut buf);
+
+        let text_y = area.y + 1;
+        let text_x = area.x + PROMPT_WIDTH;
+        let mut rendered = String::new();
+        for i in 0..48u16 {
+            rendered.push_str(buf[(text_x + i, text_y)].symbol());
+        }
+        assert!(
+            rendered.starts_with("Ask anything..."),
+            "the full placeholder must render when there's room: {rendered:?}"
+        );
+    }
 }
