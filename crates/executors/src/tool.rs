@@ -49,6 +49,14 @@ pub struct ToolExecutor {
     /// told about tools it was never offered, but this guarantees no tool
     /// runs even if one is invoked anyway (a malformed/adversarial response).
     no_tools: bool,
+    /// Maximum tokens for a single tool result before it is deterministically
+    /// truncated on the way into the conversation store (see
+    /// `sven_core::smart_truncate`; category comes from
+    /// `ToolRegistry::output_category`). `0` disables truncation. Mirrors
+    /// `AgentConfig::tool_result_token_cap`; only affects what's stored for
+    /// the model's next turn - `UiEvent::ToolFinished`/`Event::ToolSucceeded`
+    /// still carry the full, untruncated output for human/audit visibility.
+    tool_result_token_cap: usize,
 }
 
 impl ToolExecutor {
@@ -63,6 +71,7 @@ impl ToolExecutor {
             call_id_to_thread: Arc::new(Mutex::new(HashMap::new())),
             store: Arc::new(Mutex::new(ConversationStore::new())),
             no_tools: false,
+            tool_result_token_cap: 0,
         }
     }
 
@@ -70,6 +79,15 @@ impl ToolExecutor {
     #[must_use]
     pub fn with_no_tools(mut self, no_tools: bool) -> Self {
         self.no_tools = no_tools;
+        self
+    }
+
+    /// Deterministically truncate tool results over `cap` tokens before they
+    /// enter the conversation store (`0` disables truncation). See
+    /// `sven_core::smart_truncate`.
+    #[must_use]
+    pub fn with_tool_result_token_cap(mut self, cap: usize) -> Self {
+        self.tool_result_token_cap = cap;
         self
     }
 
@@ -94,6 +112,7 @@ impl ToolExecutor {
             call_id_to_thread,
             store,
             no_tools: false,
+            tool_result_token_cap: 0,
         }
     }
 }
@@ -145,6 +164,7 @@ impl EffectExecutor for ToolExecutor {
         let store = Arc::clone(&self.store);
         let sink = sink.clone();
         let obs = obs.clone();
+        let tool_result_token_cap = self.tool_result_token_cap;
 
         // Spawn-and-forget: the task runs concurrently with other effects.
         tokio::spawn(async move {
@@ -186,13 +206,21 @@ impl EffectExecutor for ToolExecutor {
                 is_error: output.is_error,
             });
 
-            // Append to conversation thread if a mapping exists.
+            // Append to conversation thread if a mapping exists. Truncated
+            // deterministically and content-aware (`sven_core::smart_truncate`,
+            // category from the tool's own declaration) so the stored history
+            // never carries an oversized single result into every future turn
+            // - unlike UiEvent::ToolFinished/Event::ToolSucceeded above, which
+            // always carry the full output for human/audit visibility.
             if let Some((tid, orig)) = mapping {
                 if let Ok(mut s) = store.lock() {
+                    let category = registry.output_category(&name);
+                    let truncated =
+                        sven_core::smart_truncate(&output.content, category, tool_result_token_cap);
                     let msg = if output.is_error {
-                        Message::tool_result(orig, format!("error: {}", output.content))
+                        Message::tool_result(orig, format!("error: {truncated}"))
                     } else {
-                        Message::tool_result(orig, &output.content)
+                        Message::tool_result(orig, &truncated)
                     };
                     s.append(&tid, msg);
                 }
@@ -221,7 +249,7 @@ impl EffectExecutor for ToolExecutor {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use sven_hsm::{
         Context, Effect, EffectExecutor, Event, EventSink, Hsm, MachineId, ObservationSink,
@@ -408,5 +436,201 @@ mod tests {
         let kind = run_tool_effect(&mut exec, effect).await;
         assert_eq!(kind, "ToolSucceeded");
         assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // ── tool_result_token_cap / smart_truncate wiring ─────────────────────────
+
+    /// A registered tool that always returns a large, fixed-category output
+    /// so truncation behavior can be observed deterministically.
+    struct BigOutputTool {
+        category: sven_tools::OutputCategory,
+        is_error: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl sven_tools::Tool for BigOutputTool {
+        fn name(&self) -> &str {
+            "big"
+        }
+        fn description(&self) -> &str {
+            "test-only large-output tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn default_policy(&self) -> sven_tools::ApprovalPolicy {
+            sven_tools::ApprovalPolicy::Auto
+        }
+        fn output_category(&self) -> sven_tools::OutputCategory {
+            self.category
+        }
+        async fn execute(&self, call: &sven_tools::ToolCall) -> sven_tools::ToolOutput {
+            // 100 numbered lines, comfortably over any small token cap.
+            let content = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+            if self.is_error {
+                sven_tools::ToolOutput::err(call.id.clone(), content)
+            } else {
+                sven_tools::ToolOutput::ok(call.id.clone(), content)
+            }
+        }
+    }
+
+    /// Runs `effect` against a `ToolExecutor` wired with a real shared store
+    /// and a pre-registered call_id -> thread mapping, then returns exactly
+    /// what was appended to the conversation thread - unlike
+    /// `run_tool_effect`, which only reports the event kind, this is what's
+    /// needed to assert on the *content* truncation produces.
+    async fn run_tool_effect_and_get_stored_content(
+        exec: &mut ToolExecutor,
+        store: Arc<Mutex<sven_llm::ConversationStore>>,
+        thread_id: &str,
+        call_id: ToolCallId,
+        tool_name: &str,
+    ) -> String {
+        let orig_id = call_id.as_uuid().to_string();
+        exec.call_id_to_thread
+            .lock()
+            .unwrap()
+            .insert(call_id, (thread_id.to_string(), orig_id));
+        exec.store = Arc::clone(&store);
+
+        let rt = Runtime::spawn(
+            Hsm::new(OneShotMachine::new()),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let sink = rt.sink();
+        exec.execute(
+            Effect::CallTool {
+                call_id,
+                name: tool_name.into(),
+                capability: ToolCapability::ReadFile,
+                args: serde_json::Value::Null,
+            },
+            &sink,
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        rt.wait_done().await;
+        let _ = rt.join().await;
+
+        // Message::as_text() only handles Text/ContentParts, not ToolResult -
+        // extract directly from the tool-result content instead.
+        let last = store.lock().unwrap().snapshot(thread_id).into_iter().last();
+        match last.map(|m| m.content) {
+            Some(sven_model::MessageContent::ToolResult { content, .. }) => {
+                content.as_text().unwrap_or_default().to_string()
+            }
+            _ => String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_result_token_cap_zero_disables_truncation() {
+        let mut registry = ToolRegistry::new();
+        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry)); // cap defaults to 0
+
+        let content = run_tool_effect_and_get_stored_content(
+            &mut exec,
+            store,
+            "t1",
+            ToolCallId::new(),
+            "big",
+        )
+        .await;
+        assert!(content.contains("line 99"), "the full output must be stored untruncated");
+        assert!(!content.contains("omitted"), "no truncation notice when the cap is 0: {content}");
+    }
+
+    #[tokio::test]
+    async fn tool_result_token_cap_truncates_large_output() {
+        let mut registry = ToolRegistry::new();
+        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let mut exec =
+            ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
+
+        let content = run_tool_effect_and_get_stored_content(
+            &mut exec,
+            store,
+            "t1",
+            ToolCallId::new(),
+            "big",
+        )
+        .await;
+        assert!(content.contains("omitted"), "a truncation notice must be present: {content}");
+        assert!(
+            !content.contains("line 99"),
+            "the tail of a 100-line Generic-category output must be cut, not kept: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_result_token_cap_respects_output_category() {
+        // HeadTail keeps both ends; Generic hard-cuts from the start only.
+        // Same content, same cap, different category -> different result,
+        // proving the category actually reaches smart_truncate.
+        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+
+        let mut generic_registry = ToolRegistry::new();
+        generic_registry
+            .register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: false });
+        let mut generic_exec =
+            ToolExecutor::unrestricted(Arc::new(generic_registry)).with_tool_result_token_cap(30);
+        let generic_content = run_tool_effect_and_get_stored_content(
+            &mut generic_exec,
+            Arc::clone(&store),
+            "t-generic",
+            ToolCallId::new(),
+            "big",
+        )
+        .await;
+
+        let mut headtail_registry = ToolRegistry::new();
+        headtail_registry
+            .register(BigOutputTool { category: sven_tools::OutputCategory::HeadTail, is_error: false });
+        let mut headtail_exec =
+            ToolExecutor::unrestricted(Arc::new(headtail_registry)).with_tool_result_token_cap(30);
+        let headtail_content = run_tool_effect_and_get_stored_content(
+            &mut headtail_exec,
+            store,
+            "t-headtail",
+            ToolCallId::new(),
+            "big",
+        )
+        .await;
+
+        assert!(
+            !generic_content.contains("line 99"),
+            "Generic must not keep the tail: {generic_content}"
+        );
+        assert!(
+            headtail_content.contains("line 99"),
+            "HeadTail must keep the tail: {headtail_content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_result_token_cap_applies_to_error_output_too() {
+        let mut registry = ToolRegistry::new();
+        registry.register(BigOutputTool { category: sven_tools::OutputCategory::Generic, is_error: true });
+        let store = Arc::new(Mutex::new(sven_llm::ConversationStore::new()));
+        let mut exec =
+            ToolExecutor::unrestricted(Arc::new(registry)).with_tool_result_token_cap(10);
+
+        let content = run_tool_effect_and_get_stored_content(
+            &mut exec,
+            store,
+            "t1",
+            ToolCallId::new(),
+            "big",
+        )
+        .await;
+        assert!(content.starts_with("error:"), "error prefix must be preserved: {content}");
+        assert!(content.contains("omitted"), "error output must also be truncated: {content}");
     }
 }

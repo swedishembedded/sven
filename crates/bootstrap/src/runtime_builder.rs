@@ -698,7 +698,8 @@ impl RuntimeBuilder {
                             Arc::clone(&call_id_to_thread),
                             Arc::clone(&conv_store),
                         )
-                        .with_no_tools(runtime.no_tools),
+                        .with_no_tools(runtime.no_tools)
+                        .with_tool_result_token_cap(self.config.agent.tool_result_token_cap),
                     ),
                 };
                 Box::new(composed.build())

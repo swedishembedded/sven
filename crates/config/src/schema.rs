@@ -718,17 +718,18 @@ pub struct AgentConfig {
     #[serde(default)]
     pub compaction_strategy: CompactionStrategy,
     /// Maximum tokens allowed for a single tool result before it is
-    /// deterministically truncated before entering the session.
+    /// deterministically truncated before entering the session, applied by
+    /// `ToolExecutor` on the way into the conversation store (`sven_core::
+    /// smart_truncate`; category comes from the tool's own
+    /// `Tool::output_category()`).
     ///
     /// Truncation is content-aware: shell output keeps head+tail lines, grep
     /// keeps leading matches, read_file keeps head+tail lines.  A value of
     /// 0 disables per-result truncation entirely.
     ///
-    /// NOTE: `sven_core::smart_truncate` (the function this field configures)
-    /// has no live callers as of this writing - unlike session-level
-    /// compaction (`compaction_threshold` and friends, wired into
-    /// `TurnExecutor`), per-result truncation is a separate, still-unwired
-    /// concern. This field currently has no effect.
+    /// Only affects what's stored for the model's next turn - the full,
+    /// untruncated output still reaches `UiEvent::ToolFinished` (TUI/GUI
+    /// display) and the audit trail.
     #[serde(default = "default_tool_result_token_cap")]
     pub tool_result_token_cap: usize,
     /// Fraction of the context window reserved for tool schemas, the dynamic
