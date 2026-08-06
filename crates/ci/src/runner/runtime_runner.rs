@@ -434,6 +434,12 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             max_output_tokens,
             ..
         } => {
+            // Usage often arrives before TextComplete (many providers send
+            // the usage chunk as the last SSE frame ahead of [DONE]). Close
+            // any open `## Sven` streaming section first so this stderr
+            // write doesn't land glued onto the end of the still-open
+            // stdout text with no newline between them.
+            close_sven_section(state);
             write_progress(&format_token_usage_line(
                 input,
                 output,

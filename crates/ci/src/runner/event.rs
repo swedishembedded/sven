@@ -315,6 +315,15 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                     *s.budget_exhausted = true;
                 }
             }
+            // Usage often arrives before TextComplete (many providers send
+            // the usage chunk as the last SSE frame ahead of [DONE]). Close
+            // any open `## Sven` streaming section first so this stderr
+            // write doesn't land glued onto the end of the still-open
+            // stdout text with no newline between them.
+            if output_format == OutputFormat::Conversation && *sven_header_emitted {
+                write_stdout("\n\n");
+                *sven_header_emitted = false;
+            }
             let mut line = format_token_usage_line(
                 input,
                 output,
