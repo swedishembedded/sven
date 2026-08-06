@@ -523,6 +523,7 @@ impl RuntimeBuilder {
         let mut runtime = self.runtime_ctx.to_agent_runtime();
         runtime.append_system_prompt = self.runtime_ctx.append_system_prompt;
         runtime.system_prompt_override = self.runtime_ctx.system_prompt_override;
+        runtime.no_system = self.runtime_ctx.no_system;
 
         let todos = Arc::new(tokio::sync::Mutex::new(
             Vec::<sven_tools::events::TodoItem>::new(),
@@ -571,20 +572,29 @@ impl RuntimeBuilder {
         // Clone for the RuntimeHandle before the store is moved into the
         // ToolExecutor below (frontends reach it for history seeding / resume).
         let conv_store_for_handle = Arc::clone(&conv_store);
-        // Seed prior conversation history into the reactive-agent thread so a
-        // resumed or piped session sees the full context on its very first turn.
-        // Only the reactive `agent`/`chat` machines read `CHAT_THREAD`; the SDLC
-        // machine uses per-phase threads and simply ignores this seed. Seeding
-        // happens before any dispatch, so the append-only cache-safety invariant
-        // of the thread is preserved (empty → history → new user turn).
-        if !self.initial_history.is_empty() {
-            if let Ok(mut store) = conv_store.lock() {
-                for msg in &self.initial_history {
-                    store.append(
-                        sven_core::machines::reactive_agent::CHAT_THREAD,
-                        msg.clone(),
-                    );
-                }
+        // Seed the system message, then prior conversation history, into the
+        // reactive-agent thread so a fresh, resumed, or piped session sees the
+        // full context on its very first turn. Only the reactive `agent`/`chat`
+        // machines read `CHAT_THREAD`; the SDLC machine uses per-phase threads
+        // and simply ignores this seed. Seeding happens before any dispatch, so
+        // the append-only cache-safety invariant of the thread is preserved
+        // (system → history → new user turn). `build_system_message` returns
+        // `None` when `--no-system` was given with no override/append text,
+        // in which case no system message is appended at all - zero tokens
+        // spent before the first message. `initial_history` never itself
+        // contains a system-role message by convention (parsers that seed it
+        // strip the system message into `system_prompt_override` instead), so
+        // there is no risk of a duplicate.
+        if let Ok(mut store) = conv_store.lock() {
+            let mode = self.agent_mode.unwrap_or(sven_config::AgentMode::Agent);
+            if let Some(system_msg) = runtime.build_system_message(mode) {
+                store.append(sven_core::machines::reactive_agent::CHAT_THREAD, system_msg);
+            }
+            for msg in &self.initial_history {
+                store.append(
+                    sven_core::machines::reactive_agent::CHAT_THREAD,
+                    msg.clone(),
+                );
             }
         }
         let call_id_to_thread = Arc::new(std::sync::Mutex::new(
@@ -1042,6 +1052,80 @@ mod tests {
             assert_eq!(record.tenant_id.as_deref(), Some("acme"));
             assert_eq!(record.actor_id.as_deref(), Some("alice"));
         }
+    }
+
+    /// Drive one turn through the default composite executor with a scripted
+    /// provider and return the exact request it received, so `--no-system`
+    /// wiring can be asserted end-to-end (not just at the `PromptContext`
+    /// composition level covered by `sven_core::runtime_context` unit tests).
+    async fn first_request_with(runtime_ctx: RuntimeContext) -> sven_model::CompletionRequest {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+
+        let provider = sven_model::ScriptedMockProvider::always_text("hi");
+        let last_request = provider.last_request.clone();
+
+        let (runtime, handle, _channels, _mcp_manager, _mcp_event_rx) =
+            RuntimeBuilder::new(Arc::new(config), "chat")
+                .with_runtime_context(runtime_ctx)
+                .with_model_provider(Box::new(provider))
+                .build()
+                .await
+                .expect("runtime should build");
+
+        handle.send_user_message("hello".into()).await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if last_request.lock().unwrap().is_some() || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        runtime.abort();
+
+        let req = last_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the model must have received a request");
+        req
+    }
+
+    #[tokio::test]
+    async fn default_session_seeds_a_system_message() {
+        let req = first_request_with(RuntimeContext::empty()).await;
+        assert_eq!(
+            req.messages.first().map(|m| m.role.clone()),
+            Some(sven_model::Role::System)
+        );
+    }
+
+    #[tokio::test]
+    async fn no_system_alone_sends_zero_system_messages() {
+        let mut ctx = RuntimeContext::empty();
+        ctx.no_system = true;
+        let req = first_request_with(ctx).await;
+        assert!(
+            req.messages.iter().all(|m| m.role != sven_model::Role::System),
+            "--no-system with no override/append must add zero system tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_system_with_override_sends_exactly_the_override() {
+        let mut ctx = RuntimeContext::empty();
+        ctx.no_system = true;
+        ctx.system_prompt_override = Some("Exact prompt.".to_string());
+        let req = first_request_with(ctx).await;
+        let system_msgs: Vec<_> = req
+            .messages
+            .iter()
+            .filter(|m| m.role == sven_model::Role::System)
+            .collect();
+        assert_eq!(system_msgs.len(), 1);
+        assert_eq!(system_msgs[0].as_text(), Some("Exact prompt."));
     }
 }
 

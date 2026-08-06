@@ -41,6 +41,9 @@ pub struct RuntimeContext {
     pub append_system_prompt: Option<String>,
     /// Full system prompt override (from `--system-prompt-file`).
     pub system_prompt_override: Option<String>,
+    /// Suppress Sven's built-in identity/guidelines/context prompt
+    /// (from `--no-system`). See [`sven_core::AgentRuntimeContext::build_system_message`].
+    pub no_system: bool,
     /// Skills discovered from the standard search hierarchy.
     ///
     /// Using [`SharedSkills`] allows the TUI to share the same instance and
@@ -84,6 +87,7 @@ impl RuntimeContext {
             project_context_file,
             append_system_prompt: None,
             system_prompt_override: None,
+            no_system: false,
             skills,
             agents,
             knowledge,
@@ -103,9 +107,11 @@ impl RuntimeContext {
     /// for seeding the kernel runtime built by [`RuntimeBuilder`].
     ///
     /// The resulting context carries project/git/CI notes, skills, agents, and
-    /// knowledge but leaves `append_system_prompt` and `prior_messages` at
-    /// their defaults - callers that need to inject additional prompt text or
-    /// pre-loaded messages should mutate the returned struct before use.
+    /// knowledge but leaves `append_system_prompt`, `system_prompt_override`,
+    /// `no_system`, and `prior_messages` at their defaults - callers that need
+    /// to inject additional prompt text or pre-loaded messages should mutate
+    /// the returned struct before use (see `RuntimeBuilder::build`, which does
+    /// exactly that for the three system-prompt fields).
     pub fn to_agent_runtime(&self) -> AgentRuntimeContext {
         AgentRuntimeContext {
             project_root: self.project_root.clone(),
