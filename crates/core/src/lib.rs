@@ -16,7 +16,8 @@ pub mod mode;
 
 pub use stream_turn::{stream_turn, to_model_schemas, ModelResolver};
 pub use compact::{
-    compact_session, compact_session_with_strategy, emergency_compact, smart_truncate,
+    compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
+    prepare_compaction, smart_truncate, CompactionPlan,
 };
 pub use completion::development_complete;
 pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};

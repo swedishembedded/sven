@@ -76,6 +76,123 @@ pub fn compact_session_with_strategy(
     before
 }
 
+/// A prepared compaction round: the request to actually send to the model
+/// for summarization, plus the bookkeeping needed to reassemble the final
+/// history once the summary text comes back (see [`finish_compaction`]).
+///
+/// Produced by [`prepare_compaction`]; the caller (an executor - this is
+/// pure, no I/O) is responsible for sending `summarize_request` to the model
+/// and passing the resulting text to [`finish_compaction`].
+pub struct CompactionPlan {
+    /// Send this to the model to get the summary/checkpoint text back.
+    /// Contains only the system message (if any) and the summarization
+    /// prompt - never the messages being summarized verbatim, since those
+    /// are exactly what compaction is trying to shrink.
+    pub summarize_request: Vec<Message>,
+    /// The most recent messages, preserved verbatim - reattach these after
+    /// the summary in [`finish_compaction`].
+    pub keep_tail: Vec<Message>,
+    /// The system message, if `messages` started with one - reattached at
+    /// the front by [`finish_compaction`].
+    pub system_msg: Option<Message>,
+    /// Token estimate of `messages` before compaction (chars/4 heuristic,
+    /// consistent with `sven_model::budget::estimate_request_tokens`'s
+    /// message-side estimate), for `UiEvent::ContextCompacted` reporting.
+    pub tokens_before: usize,
+}
+
+/// Split `messages` into a summarization request (covering everything except
+/// the most recent `keep_recent` messages) and a verbatim tail to preserve,
+/// so a compaction round loses detail only on the *older* part of the
+/// conversation the model is least likely to need turn-by-turn.
+///
+/// Returns `None` when there is nothing worth summarizing - the whole
+/// (non-system) history already fits within `keep_recent`. Callers should
+/// treat that as "compaction cannot help here" and fall back to
+/// [`emergency_compact`] if the caller still needs to shrink the session (a
+/// pathologically small `keep_recent`/window combination), or simply proceed
+/// uncompacted and let the hard request-size gate be the final word.
+#[must_use]
+pub fn prepare_compaction(
+    messages: &[Message],
+    strategy: &CompactionStrategy,
+    keep_recent: usize,
+) -> Option<CompactionPlan> {
+    let system_msg = messages.first().filter(|m| m.role == Role::System).cloned();
+    let non_system: Vec<Message> = messages
+        .iter()
+        .filter(|m| m.role != Role::System)
+        .cloned()
+        .collect();
+
+    let start = clean_boundary_start(&non_system, keep_recent);
+    if start == 0 {
+        // Everything is within the preserved tail - nothing to summarize.
+        return None;
+    }
+
+    let to_summarize = &non_system[..start];
+    let keep_tail = non_system[start..].to_vec();
+
+    let prompt = match strategy {
+        CompactionStrategy::Structured => STRUCTURED_COMPACTION_PROMPT,
+        CompactionStrategy::Narrative => SUMMARIZE_PROMPT,
+    };
+    let history_text = serialize_history(to_summarize);
+    let summary_request_msg = Message::user(format!("{prompt}\n\n---\n\n{history_text}"));
+
+    let mut summarize_request = Vec::with_capacity(2);
+    if let Some(sys) = &system_msg {
+        summarize_request.push(sys.clone());
+    }
+    summarize_request.push(summary_request_msg);
+
+    let tokens_before = messages.iter().map(Message::approx_tokens).sum();
+
+    Some(CompactionPlan {
+        summarize_request,
+        keep_tail,
+        system_msg,
+        tokens_before,
+    })
+}
+
+/// Reassemble the final compacted history once the model has produced
+/// `summary_text` for `plan.summarize_request`: system message (if any),
+/// then the summary as an assistant message, then the preserved tail
+/// verbatim.
+#[must_use]
+pub fn finish_compaction(plan: CompactionPlan, summary_text: &str) -> Vec<Message> {
+    let mut result = Vec::with_capacity(2 + plan.keep_tail.len());
+    if let Some(sys) = plan.system_msg {
+        result.push(sys);
+    }
+    result.push(Message::assistant(summary_text));
+    result.extend(plan.keep_tail);
+    result
+}
+
+/// Advance `start` (an index into `messages`, already at `len - keep`) past
+/// any leading `ToolResult`/`ToolCall` messages so a preserved slice always
+/// begins at a clean boundary - i.e. not inside a tool-call/tool-result
+/// group. Sending a `ToolResult` without its preceding assistant `ToolCall`
+/// (or vice versa) causes a 400 error from most provider APIs.
+fn clean_boundary_start(messages: &[Message], keep_n: usize) -> usize {
+    use sven_model::MessageContent;
+
+    let keep = keep_n.min(messages.len());
+    let mut start = messages.len().saturating_sub(keep);
+    while start < messages.len() {
+        match &messages[start].content {
+            MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
+                start += 1;
+            }
+            _ => break,
+        }
+    }
+    start
+}
+
 /// Emergency fallback compaction used when the session is too large to fit even
 /// a compaction prompt within the context window.
 ///
@@ -92,30 +209,13 @@ pub fn emergency_compact(
     system_msg: Option<Message>,
     keep_n: usize,
 ) -> usize {
-    use sven_model::MessageContent;
-
     let before = messages.len();
     let non_system: Vec<Message> = messages
         .iter()
         .filter(|m| m.role != Role::System)
         .cloned()
         .collect();
-    let keep = keep_n.min(non_system.len());
-    let mut start = non_system.len().saturating_sub(keep);
-
-    // Advance `start` past any leading ToolResult or ToolCall messages so the
-    // preserved slice always begins at a clean boundary.  Sending ToolResult
-    // messages without a preceding assistant ToolCall message causes a 400
-    // error from the API.
-    while start < non_system.len() {
-        match &non_system[start].content {
-            MessageContent::ToolResult { .. } | MessageContent::ToolCall { .. } => {
-                start += 1;
-            }
-            _ => break,
-        }
-    }
-
+    let start = clean_boundary_start(&non_system, keep_n);
     let preserved: Vec<Message> = non_system[start..].to_vec();
     let notice = Message::assistant(
         "[Context emergency-compacted: earlier history was dropped to prevent a \
@@ -479,6 +579,126 @@ mod tests {
         assert!(
             text.contains("What is Rust?"),
             "history must be embedded in prompt"
+        );
+    }
+
+    // ── prepare_compaction / finish_compaction ────────────────────────────────
+
+    /// 8 non-system turns: user/assistant pairs, easy to reason about which
+    /// end up in the summarized head vs the preserved tail.
+    fn long_history() -> Vec<Message> {
+        let mut msgs = vec![Message::system("You are a helpful assistant.")];
+        for i in 0..4 {
+            msgs.push(Message::user(format!("question {i}")));
+            msgs.push(Message::assistant(format!("answer {i}")));
+        }
+        msgs
+    }
+
+    #[test]
+    fn prepare_compaction_none_when_everything_fits_in_keep_recent() {
+        let msgs = long_history();
+        // 8 non-system messages, keep_recent covers all of them.
+        assert!(prepare_compaction(&msgs, &CompactionStrategy::Structured, 8).is_none());
+        assert!(prepare_compaction(&msgs, &CompactionStrategy::Structured, 100).is_none());
+    }
+
+    #[test]
+    fn prepare_compaction_splits_head_and_tail() {
+        let msgs = long_history();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        assert_eq!(plan.keep_tail.len(), 2, "must preserve exactly keep_recent messages");
+        // The two most recent messages are "question 3" and "answer 3".
+        assert_eq!(plan.keep_tail[0].as_text(), Some("question 3"));
+        assert_eq!(plan.keep_tail[1].as_text(), Some("answer 3"));
+    }
+
+    #[test]
+    fn prepare_compaction_summarize_request_contains_only_the_head() {
+        let msgs = long_history();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        let request_text = plan.summarize_request.last().unwrap().as_text().unwrap();
+        assert!(request_text.contains("question 0"), "older turns must be in the summarize request");
+        assert!(
+            !request_text.contains("question 3"),
+            "the preserved tail must NOT be duplicated into the summarize request"
+        );
+    }
+
+    #[test]
+    fn prepare_compaction_carries_system_message_separately() {
+        let msgs = long_history();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        assert_eq!(plan.system_msg.as_ref().unwrap().role, Role::System);
+        assert_eq!(plan.summarize_request[0].role, Role::System);
+    }
+
+    #[test]
+    fn prepare_compaction_without_system_message_omits_it() {
+        let msgs: Vec<Message> = long_history().into_iter().skip(1).collect();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        assert!(plan.system_msg.is_none());
+        assert_eq!(plan.summarize_request[0].role, Role::User);
+    }
+
+    #[test]
+    fn prepare_compaction_records_tokens_before() {
+        let msgs = long_history();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        assert!(plan.tokens_before > 0);
+    }
+
+    #[test]
+    fn finish_compaction_assembles_system_summary_and_tail() {
+        let msgs = long_history();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        let final_msgs = finish_compaction(plan, "## Active Task\nSummary text here.");
+        assert_eq!(final_msgs[0].role, Role::System);
+        assert_eq!(final_msgs[1].role, Role::Assistant);
+        assert_eq!(final_msgs[1].as_text(), Some("## Active Task\nSummary text here."));
+        assert_eq!(final_msgs[2].as_text(), Some("question 3"));
+        assert_eq!(final_msgs[3].as_text(), Some("answer 3"));
+        assert_eq!(final_msgs.len(), 4);
+    }
+
+    #[test]
+    fn finish_compaction_without_system_message() {
+        let msgs: Vec<Message> = long_history().into_iter().skip(1).collect();
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 2).unwrap();
+        let final_msgs = finish_compaction(plan, "summary");
+        assert_eq!(final_msgs[0].role, Role::Assistant);
+        assert_eq!(final_msgs.len(), 3);
+    }
+
+    #[test]
+    fn prepare_compaction_respects_tool_call_boundary() {
+        // Force the naive split point to land inside a tool-call/tool-result
+        // pair; the boundary must move to keep them together.
+        let mut msgs = vec![Message::system("sys")];
+        msgs.push(Message::user("do something"));
+        msgs.push(Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: "call-1".into(),
+                function: FunctionCall {
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        });
+        msgs.push(Message::tool_result("call-1", "output"));
+        msgs.push(Message::assistant("done"));
+
+        // keep_recent=1 would naively split right before the ToolResult;
+        // the boundary scan must advance past the whole ToolCall/ToolResult
+        // pair instead of separating them.
+        let plan = prepare_compaction(&msgs, &CompactionStrategy::Structured, 1).unwrap();
+        assert!(
+            plan.keep_tail
+                .iter()
+                .all(|m| !matches!(m.content, MessageContent::ToolResult { .. })),
+            "a ToolResult must never be preserved without its ToolCall: {:?}",
+            plan.keep_tail
         );
     }
 
