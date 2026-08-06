@@ -958,8 +958,9 @@ impl<'a> ModelResolver<'a> {
 /// - bare registered provider id (e.g. `"groq"`, `"ollama"`) → changes provider, keeps model name
 /// - bare model name (no `/`, not a known provider id) → changes model name, keeps provider
 ///
-/// When the provider changes, inherited `api_key` / `api_key_env` fields are
-/// cleared so the correct credential env-var for the new provider is looked up.
+/// When the provider changes, every field that describes the *old*
+/// provider/model's capacity or wire quirks is cleared - see the comment
+/// below for the full list and why each one is provider-specific.
 pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig {
     let mut cfg = base.clone();
     let provider_changed;
@@ -975,17 +976,46 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
         cfg.name = override_str.to_string();
         provider_changed = false;
     }
-    // When the provider changes, the inherited credentials and custom base_url
-    // belong to the original provider.  Clear them so resolve_api_key() falls
-    // through to the new provider's registry default env var and from_config()
-    // uses the new provider's canonical endpoint instead of the old one.
-    // Example: config.model has base_url="http://koala:8000/v1" (local GGUF)
-    // and the user runs `--model openai/gpt-5.5`; without clearing base_url the
-    // openai provider would hit the local server instead of api.openai.com.
+    // When the provider changes, everything inherited from `base` that
+    // describes the *old* provider/model belongs to it, not the new one -
+    // clear all of it so the new provider starts from a clean slate (its
+    // registry defaults / live probe / catalog entry), rather than silently
+    // wearing the old provider's capacity limits and wire quirks:
+    //
+    // - `api_key`/`api_key_env`/`base_url`: resolve_api_key() falls through
+    //   to the new provider's registry default env var and from_config()
+    //   uses the new provider's canonical endpoint instead of the old one.
+    //   Example: config.model has base_url="http://koala:8000/v1" (local
+    //   GGUF) and the user runs `--model openai/gpt-5.5`; without clearing
+    //   base_url the openai provider would hit the local server instead of
+    //   api.openai.com.
+    // - `max_tokens`/`max_output_tokens`/`max_input_tokens`: these are a
+    //   specific model's measured/configured capacity (e.g. a tiny local
+    //   model's 1024-token window). Carrying them into an unrelated provider
+    //   makes `effective_input_budget` reject requests using a context
+    //   window and output reservation that belong to a different model
+    //   entirely - confirmed in practice: `--model brain/Qwen/Qwen3-0.6B`
+    //   inherited a `sven`-provider config's `max_tokens: 1024,
+    //   max_output_tokens: 1024` verbatim, rejecting a 1-token prompt with
+    //   "budget of 0 tokens" for a model that was never actually configured
+    //   that way.
+    // - `driver_options`: provider-specific extra request-body fields (e.g.
+    //   `chat_template_kwargs`) that a different provider's server may not
+    //   understand or may interpret differently.
+    // - `azure_resource`/`azure_deployment`/`azure_api_version`/`aws_region`:
+    //   meaningless (or actively wrong) outside their own provider.
     if provider_changed {
         cfg.api_key = None;
         cfg.api_key_env = None;
         cfg.base_url = None;
+        cfg.max_tokens = None;
+        cfg.max_output_tokens = None;
+        cfg.max_input_tokens = None;
+        cfg.driver_options = serde_json::Value::Null;
+        cfg.azure_resource = None;
+        cfg.azure_deployment = None;
+        cfg.azure_api_version = None;
+        cfg.aws_region = None;
     }
     cfg
 }
@@ -1450,6 +1480,55 @@ mod tests {
             Some("OPENAI_API_KEY"),
             "key env must not be cleared when provider is unchanged"
         );
+    }
+
+    /// Regression test: `--model brain/Qwen/Qwen3-0.6B` against a config
+    /// whose `model:` section actually described a different local server
+    /// (provider "sven", 1024-token capacity) inherited that server's
+    /// max_tokens/max_output_tokens/driver_options verbatim, making the
+    /// client-side budget gate reject a 1-token prompt with "budget of 0
+    /// tokens" for a model that was never configured that way at all.
+    fn local_server_base() -> ModelConfig {
+        ModelConfig {
+            provider: "sven".into(),
+            name: "Qwen/Qwen3-0.6B".into(),
+            base_url: Some("http://127.0.0.1:8788/v1".into()),
+            max_tokens: Some(1024),
+            max_output_tokens: Some(1024),
+            max_input_tokens: Some(512),
+            driver_options: serde_json::json!({"chat_template_kwargs": {"enable_thinking": false}}),
+            azure_resource: Some("leftover".into()),
+            aws_region: Some("leftover".into()),
+            ..ModelConfig::default()
+        }
+    }
+
+    #[test]
+    fn resolve_slash_separated_clears_capacity_and_driver_options_on_provider_change() {
+        let cfg = resolve_model_cfg(&local_server_base(), "brain/Qwen/Qwen3-0.6B");
+        assert_eq!(cfg.provider, "brain");
+        assert_eq!(cfg.max_tokens, None, "a different provider's context window must not carry over");
+        assert_eq!(cfg.max_output_tokens, None);
+        assert_eq!(cfg.max_input_tokens, None);
+        assert!(cfg.driver_options.is_null(), "a different provider's extra request fields must not carry over");
+        assert_eq!(cfg.azure_resource, None);
+        assert_eq!(cfg.aws_region, None);
+        // base_url clearing was already covered above; capacity/driver_options
+        // is the new part of this regression test.
+        assert_eq!(cfg.base_url, None);
+    }
+
+    #[test]
+    fn resolve_same_provider_keeps_capacity_and_driver_options() {
+        let cfg = resolve_model_cfg(&local_server_base(), "sven/some-other-model");
+        assert_eq!(cfg.provider, "sven");
+        assert_eq!(
+            cfg.max_tokens,
+            Some(1024),
+            "capacity settings for the SAME provider must be preserved"
+        );
+        assert_eq!(cfg.max_output_tokens, Some(1024));
+        assert!(!cfg.driver_options.is_null());
     }
 
     // ── resolve_model_from_config ─────────────────────────────────────────────
