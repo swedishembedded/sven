@@ -150,9 +150,16 @@ impl AccumSlot {
 ///
 /// `tx` receives [`AgentEvent`]s for UI bridging while the stream runs.
 ///
+/// `max_output_tokens_override`, when set, is forwarded verbatim as the
+/// request's output-token limit (see [`sven_model::budget::dynamic_output_budget`]
+/// for how callers typically compute it — scaled to the actual prompt size
+/// rather than a fixed reservation). `None` lets the provider apply its own
+/// built-in default, unchanged from before this parameter existed.
+///
 /// # Errors
 ///
 /// Returns an error if the model API call fails or the stream stalls.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_turn(
     model: &dyn ModelProvider,
     messages: Vec<Message>,
@@ -160,6 +167,7 @@ pub async fn stream_turn(
     cache_key: Option<String>,
     dynamic_suffix: Option<String>,
     response_format: Option<ResponseFormat>,
+    max_output_tokens_override: Option<u32>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> anyhow::Result<(String, Vec<ToolCall>)> {
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
@@ -172,7 +180,7 @@ pub async fn stream_turn(
         stream: true,
         system_dynamic_suffix: dynamic_suffix,
         cache_key,
-        max_output_tokens_override: None,
+        max_output_tokens_override,
         core_tool_count,
         response_format,
     };

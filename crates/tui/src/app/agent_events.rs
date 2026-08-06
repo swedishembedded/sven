@@ -279,16 +279,18 @@ impl App {
                 // beginning of each API call within the turn.
                 if input > 0 || cache_read > 0 || cache_write > 0 {
                     let total_ctx = input + cache_read + cache_write;
-                    // Use the usable input budget as the denominator so that
-                    // ctx% matches the fraction used for compaction decisions.
-                    // Falls back to max_tokens when max_output_tokens is 0.
-                    let input_budget = if max_output_tokens > 0 {
-                        max_tokens.saturating_sub(max_output_tokens)
-                    } else if max_tokens > 0 {
-                        max_tokens
-                    } else {
-                        200_000
-                    } as u32;
+                    // Use the same usable-input-budget formula the request
+                    // gate actually enforces (sven_model::budget) so ctx%
+                    // reflects real headroom rather than a locally
+                    // reimplemented (and possibly drifted) copy of it. Falls
+                    // back to a generous default when max_tokens is unknown
+                    // (0 is the event's "unknown" sentinel, not Option, so it
+                    // maps to None here).
+                    let input_budget = sven_model::budget::effective_input_budget(
+                        (max_tokens > 0).then_some(max_tokens as u32),
+                        (max_output_tokens > 0).then_some(max_output_tokens as u32),
+                    )
+                    .unwrap_or(200_000) as u32;
                     self.agent.context_pct = (total_ctx * 100 / input_budget).min(100) as u8;
                     self.agent.context_tokens = total_ctx;
                     // Mirror into total_context_tokens immediately so the status bar

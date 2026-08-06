@@ -16,7 +16,7 @@ pub(crate) struct AgentConn {
     /// Name of the tool currently executing (shown in the status bar).
     pub current_tool: Option<String>,
     /// Context window usage for the last turn (0-100 %), relative to the
-    /// usable input budget (`max_tokens − max_output_tokens`).
+    /// usable input budget (`sven_model::budget::effective_input_budget`).
     pub context_pct: u8,
     /// Exact input token count for the current/last turn (provider-reported).
     /// Equals `input_tokens + cache_read_tokens + cache_write_tokens`.
@@ -33,7 +33,8 @@ pub(crate) struct AgentConn {
     /// Used to calculate cumulative context percentage.
     pub max_tokens: usize,
     /// The model's maximum output tokens per completion, from the last TokenUsage event.
-    /// Used to calculate the usable input budget (max_tokens - max_output_tokens).
+    /// Used to calculate the usable input budget - see
+    /// `sven_model::budget::effective_input_budget`.
     pub max_output_tokens: usize,
     /// Output tokens generated during the current turn, accumulated across all
     /// API calls within the turn (a tool-use turn involves multiple API calls,

@@ -377,18 +377,17 @@ impl EffectExecutor for TurnExecutor {
         // reflect the live-probed, clamped values when a probe succeeded.
         // No gate at all (not even a wrong one) when the window isn't known -
         // see `sven_model::budget::effective_input_budget`'s doc comment.
-        if let Some(budget) = sven_model::budget::effective_input_budget(
-            model.catalog_context_window(),
-            model.catalog_max_output_tokens(),
-        ) {
-            let estimate =
-                sven_model::budget::estimate_request_tokens(&messages, &tool_schemas, req.dynamic_suffix.as_deref());
+        let context_window = model.catalog_context_window();
+        let configured_max_output = model.catalog_max_output_tokens();
+        let estimate =
+            sven_model::budget::estimate_request_tokens(&messages, &tool_schemas, req.dynamic_suffix.as_deref());
+        if let Some(budget) = sven_model::budget::effective_input_budget(context_window, configured_max_output) {
             if estimate > budget {
                 let msg = format!(
-                    "prompt (~{estimate} tokens) exceeds the model's usable input budget of {budget} tokens \
-                     (context {ctx}, reserved output {out}); reduce context or raise the server's capacity",
-                    ctx = model.catalog_context_window().unwrap_or(0),
-                    out = model.catalog_max_output_tokens().unwrap_or(0),
+                    "prompt (~{estimate} tokens) leaves no room for a response in this model's context \
+                     (context {ctx} tokens, usable input budget {budget} tokens after reserving a minimal \
+                     response); reduce context or raise the server's capacity",
+                    ctx = context_window.unwrap_or(0),
                 );
                 obs.emit(UiEvent::Error(msg.clone()));
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;
@@ -396,6 +395,15 @@ impl EffectExecutor for TurnExecutor {
                 return;
             }
         }
+        // Scale the requested output-token limit down to whatever room this
+        // specific prompt actually leaves (never up past the configured cap,
+        // and never touched at all when no cap is configured or the window
+        // isn't known - see the doc comment on `dynamic_output_budget`). A
+        // fixed reservation of the full configured cap on every request is
+        // what made a 2-token "hi" against a small-context model with a
+        // capacity-sized output cap impossible to send at all.
+        let max_output_tokens_override =
+            sven_model::budget::dynamic_output_budget(context_window, configured_max_output, estimate);
 
         // Build optional structured-output constraint.
         let response_format = if req.schema.is_null() {
@@ -438,6 +446,7 @@ impl EffectExecutor for TurnExecutor {
                 Some(thread_id.clone()),
                 req.dynamic_suffix.clone(),
                 response_format,
+                max_output_tokens_override,
                 &tx,
             ) => r,
         };

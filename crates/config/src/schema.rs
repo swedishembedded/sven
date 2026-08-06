@@ -695,9 +695,12 @@ pub struct AgentConfig {
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
     /// Token fraction at which proactive compaction triggers (0.0-1.0).
-    /// The budget gate compares effective tokens (calibrated estimate + schema
-    /// overhead) against the model's usable input budget, which is
-    /// context_window minus max_output_tokens.
+    /// NOTE: the compaction machinery this threshold was written for
+    /// (`sven_core::compact`) has no live callers as of this writing - see
+    /// its module doc comment. This field currently has no effect. The one
+    /// live request-size gate is `sven_model::budget::effective_input_budget`,
+    /// which reserves a small fixed minimum for output rather than the full
+    /// configured max_output_tokens.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Number of recent non-system messages preserved verbatim during

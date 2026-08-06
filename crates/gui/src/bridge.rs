@@ -2034,13 +2034,18 @@ impl SvenApp {
                         max_output_tokens,
                         cost_usd,
                     } => {
-                        let ctx_pct = if max_tokens > 0 {
-                            let budget = max_tokens.saturating_sub(max_output_tokens);
+                        // Same formula the request gate actually enforces
+                        // (see sven_model::budget) rather than a locally
+                        // reimplemented, driftable copy of it.
+                        let ctx_pct = sven_model::budget::effective_input_budget(
+                            (max_tokens > 0).then_some(max_tokens as u32),
+                            (max_output_tokens > 0).then_some(max_output_tokens as u32),
+                        )
+                        .map(|budget| {
                             let prompt = input + cache_read + cache_write;
                             ((prompt as f64 / budget as f64) * 100.0).clamp(0.0, 100.0) as i32
-                        } else {
-                            0
-                        };
+                        })
+                        .unwrap_or(0);
                         // Accumulate into per-session usage map.
                         let sid = streaming_sid_ev
                             .lock()

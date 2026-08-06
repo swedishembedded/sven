@@ -93,7 +93,8 @@ pub enum AgentEvent {
         /// The model's maximum context window (tokens).  Zero means unknown.
         max_tokens: usize,
         /// The model's maximum output tokens per completion.  Zero means unknown.
-        /// The usable input budget is `max_tokens − max_output_tokens`.
+        /// See `sven_model::budget::effective_input_budget` for how this and
+        /// `max_tokens` combine into a usable input budget.
         max_output_tokens: usize,
         /// Cost in USD when reported by the API (e.g. OpenRouter).
         cost_usd: Option<f64>,

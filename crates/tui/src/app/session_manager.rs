@@ -108,7 +108,7 @@ pub(crate) struct SessionEntry {
     /// Which tool this session is currently running (if busy).
     pub current_tool: Option<String>,
     /// Context window usage for the last turn (0-100 %), relative to the
-    /// usable input budget (max_tokens - max_output_tokens).
+    /// usable input budget (`sven_model::budget::effective_input_budget`).
     pub context_pct: u8,
     /// Current context window size in tokens (latest turn's prompt size).
     pub total_context_tokens: u32,
@@ -424,10 +424,17 @@ impl SessionEntry {
                 ..
             } => {
                 if *max_tokens > 0 {
-                    let input_budget = max_tokens.saturating_sub(*max_output_tokens);
-                    let prompt = *input + *cache_read + *cache_write;
-                    self.context_pct =
-                        ((prompt as f64 / input_budget as f64) * 100.0).clamp(0.0, 100.0) as u8;
+                    // Same formula the request gate actually enforces (see
+                    // sven_model::budget) rather than a locally
+                    // reimplemented, driftable copy of it.
+                    if let Some(input_budget) = sven_model::budget::effective_input_budget(
+                        Some(*max_tokens as u32),
+                        (*max_output_tokens > 0).then_some(*max_output_tokens as u32),
+                    ) {
+                        let prompt = *input + *cache_read + *cache_write;
+                        self.context_pct =
+                            ((prompt as f64 / input_budget as f64) * 100.0).clamp(0.0, 100.0) as u8;
+                    }
                 }
                 if *output > 0 {
                     self.total_output_tokens = self.total_output_tokens.saturating_add(*output);

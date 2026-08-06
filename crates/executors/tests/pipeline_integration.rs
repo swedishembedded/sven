@@ -79,6 +79,51 @@ impl sven_model::ModelProvider for CappedProvider {
     }
 }
 
+/// A capped-capacity provider that records the exact request it receives
+/// instead of rejecting/panicking, then streams "pong". Used to prove the
+/// *dynamic* output-token budget: a small prompt against a small context
+/// window with a same-sized configured output cap (the exact shape that
+/// made the fixed-reservation gate reject a 2-token "hi" outright) must
+/// both (a) pass the gate and (b) actually reach the provider with a
+/// max_output_tokens_override scaled to the real prompt size, not the
+/// full configured cap and not `None`.
+struct RecordingCappedProvider {
+    context_window: u32,
+    max_output_tokens: u32,
+    last_request: Arc<std::sync::Mutex<Option<sven_model::CompletionRequest>>>,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for RecordingCappedProvider {
+    fn name(&self) -> &str {
+        "recording-capped"
+    }
+    fn model_name(&self) -> &str {
+        "recording-capped"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(self.context_window)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(self.max_output_tokens)
+    }
+    async fn complete(
+        &self,
+        req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        *self.last_request.lock().unwrap() = Some(req);
+        let events: Vec<anyhow::Result<sven_model::ResponseEvent>> = vec![
+            Ok(sven_model::ResponseEvent::TextDelta("pong".into())),
+            Ok(sven_model::ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
 /// Streams only `Done` — no text, no tool calls — every turn. Used to
 /// reproduce a provider that "succeeds" transport-wise but never actually
 /// answers (e.g. a server that silently discards a request it can't serve).
@@ -365,4 +410,94 @@ async fn oversized_prompt_fails_before_any_network_call() {
     );
 
     rt.abort();
+}
+
+/// The exact regression this whole workstream started from: a 1024-token
+/// context window, a 1024-token configured output cap - a fixed reservation
+/// of the full cap leaves *zero* usable input budget, rejecting even a
+/// 2-token "hi". The dynamic budget must let it through and must scale the
+/// output-token request down from the full 1024 (there's no room for that
+/// much output alongside the prompt) rather than sending the raw configured
+/// cap unchanged or leaving it unset.
+#[tokio::test]
+async fn tiny_prompt_fits_a_small_window_with_a_full_size_output_cap() {
+    use sven_core::ReactiveAgentMachine;
+    use sven_executors::CompositeExecutorBuilder;
+    use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+
+    let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        sven_hsm::ToolCallId,
+        (String, String),
+    >::new()));
+    let cancel_handle = Arc::new(Mutex::new(None));
+    let last_request = Arc::new(std::sync::Mutex::new(None));
+    let turn_exec = sven_executors::TurnExecutor::new(
+        Arc::new(RecordingCappedProvider {
+            context_window: 1024,
+            max_output_tokens: 1024,
+            last_request: Arc::clone(&last_request),
+        }),
+        None,
+        Arc::new(sven_tools::ToolRegistry::new()),
+        store,
+        call_id_to_thread,
+        cancel_handle,
+    );
+    let executor = CompositeExecutorBuilder::default()
+        .with_turn(turn_exec)
+        .build();
+
+    let machine: Box<dyn ErasedMachine> = Box::new(Hsm::new(ReactiveAgentMachine::new()));
+    let rt = ErasedRuntime::spawn(
+        machine,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        executor,
+        64,
+    );
+
+    let mut rt_obs_rx = rt.subscribe_observations();
+    let sent = rt.sink().emit(Event::UserMessage { text: "hi".into() }).await;
+    assert!(sent, "UserMessage must be accepted by the kernel sink");
+
+    let mut events: Vec<UiEvent> = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(3);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        tokio::select! {
+            Ok(ev) = rt_obs_rx.recv() => {
+                let is_turn_complete = ev == UiEvent::TurnComplete;
+                events.push(ev);
+                if is_turn_complete { break; }
+            }
+            _ = tokio::time::sleep(remaining) => break,
+        }
+    }
+    rt.abort();
+
+    assert!(
+        !events.iter().any(|e| matches!(e, UiEvent::Error(_))),
+        "a 2-token prompt must not be rejected by the budget gate: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::TextDelta(t) if t == "pong")),
+        "the turn must actually reach the provider and stream its reply: {events:?}"
+    );
+
+    let req = last_request
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the provider must have received a request");
+    let override_tokens = req
+        .max_output_tokens_override
+        .expect("a configured cap with a known window must produce a scaled override, not None");
+    assert!(
+        override_tokens > 0 && override_tokens < 1024,
+        "the override must be scaled down from the full 1024-token cap to fit alongside the prompt, got {override_tokens}"
+    );
 }
