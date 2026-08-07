@@ -219,6 +219,10 @@ impl RuntimeRunner {
                 tools_used: 0,
                 run_total_tokens: 0,
                 token_budget,
+                total_input: 0,
+                total_output: 0,
+                latest_cache_read_total: 0,
+                latest_cache_write_total: 0,
             };
 
             // Emit the step banner and the `## User` conversation section up
@@ -244,6 +248,7 @@ impl RuntimeRunner {
                     Err(RecvError::Closed) => {
                         close_sven_section(&mut state);
                         finalise_stdout(&state.streamed_text);
+                        print_total_usage(&state);
                         break if state.had_error {
                             EXIT_AGENT_ERROR
                         } else {
@@ -304,6 +309,15 @@ struct CiOutState {
     /// Optional cumulative token budget; the run stops once
     /// `run_total_tokens` reaches it. `None` means unlimited.
     token_budget: Option<u64>,
+    /// Cumulative input tokens across every turn this run.
+    total_input: u64,
+    /// Cumulative output tokens across every turn this run.
+    total_output: u64,
+    /// Most recently reported cache_read_total/cache_write_total (already
+    /// cumulative across turns - see `TurnExecutor`'s per-thread cache
+    /// tracking - so the latest value IS the run total, nothing to sum here).
+    latest_cache_read_total: u32,
+    latest_cache_write_total: u32,
 }
 
 /// Build the verbose-only ` output=…` snippet for a `[sven:tool:result]` line.
@@ -336,6 +350,16 @@ fn close_sven_section(state: &mut CiOutState) {
         }
         state.sven_header_emitted = false;
     }
+}
+
+/// Print the run-wide `[sven:tokens:total]` summary once the run has
+/// settled: total input/output tokens across every turn, and the latest
+/// (already cumulative - see `TurnExecutor`) cache totals.
+fn print_total_usage(state: &CiOutState) {
+    write_progress(&format!(
+        "[sven:tokens:total] input={} output={} cache_read={} cache_write={}",
+        state.total_input, state.total_output, state.latest_cache_read_total, state.latest_cache_write_total
+    ));
 }
 
 /// Bridge a single [`UiEvent`] to CI output.
@@ -453,6 +477,10 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             // Enforce the cumulative token budget (mirrors the legacy runner's
             // `--max-tokens`). Stop the run when the running total reaches it.
             state.run_total_tokens += u64::from(input) + u64::from(output);
+            state.total_input += u64::from(input);
+            state.total_output += u64::from(output);
+            state.latest_cache_read_total = cache_read_total;
+            state.latest_cache_write_total = cache_write_total;
             if let Some(budget) = state.token_budget {
                 if budget > 0 && state.run_total_tokens >= budget {
                     write_stderr(&format!(
@@ -461,6 +489,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
                     ));
                     close_sven_section(state);
                     finalise_stdout(&state.streamed_text);
+                    print_total_usage(state);
                     return Some(EXIT_BUDGET_EXHAUSTED);
                 }
             }
@@ -490,6 +519,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
         UiEvent::TurnComplete => {
             close_sven_section(state);
             finalise_stdout(&state.streamed_text);
+            print_total_usage(state);
             return Some(if state.had_error {
                 EXIT_AGENT_ERROR
             } else {
@@ -505,6 +535,7 @@ fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
             }
             close_sven_section(state);
             finalise_stdout(&state.streamed_text);
+            print_total_usage(state);
             return Some(EXIT_SUCCESS);
         }
         // Subagent / delegate / team observations are otherwise rendered as
@@ -620,6 +651,10 @@ mod tests {
             tools_used: 0,
             run_total_tokens: 0,
             token_budget: None,
+            total_input: 0,
+            total_output: 0,
+            latest_cache_read_total: 0,
+            latest_cache_write_total: 0,
         }
     }
 
@@ -695,6 +730,46 @@ mod tests {
         let mut st = state(0);
         assert_eq!(handle_ui_event(token_usage(1_000, 1_000), &mut st), None);
         assert_eq!(st.run_total_tokens, 2_000);
+    }
+
+    fn token_usage_with_cache(
+        input: u32,
+        output: u32,
+        cache_read_total: u32,
+        cache_write_total: u32,
+    ) -> UiEvent {
+        UiEvent::TokenUsage {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+            cache_read_total,
+            cache_write_total,
+            max_tokens: 0,
+            max_output_tokens: 0,
+            cost_usd: None,
+        }
+    }
+
+    #[test]
+    fn total_input_and_output_accumulate_across_turns() {
+        let mut st = state(0);
+        handle_ui_event(token_usage(40, 10), &mut st);
+        handle_ui_event(token_usage(15, 7), &mut st);
+        assert_eq!(st.total_input, 55);
+        assert_eq!(st.total_output, 17);
+    }
+
+    #[test]
+    fn latest_cache_totals_track_the_most_recent_event_not_a_sum() {
+        // cache_read_total/cache_write_total on the event are ALREADY
+        // cumulative (TurnExecutor's job) - CiOutState must track the latest
+        // value, not sum successive already-cumulative numbers.
+        let mut st = state(0);
+        handle_ui_event(token_usage_with_cache(10, 2, 5, 3), &mut st);
+        handle_ui_event(token_usage_with_cache(10, 2, 10, 6), &mut st);
+        assert_eq!(st.latest_cache_read_total, 10);
+        assert_eq!(st.latest_cache_write_total, 6);
     }
 
     #[test]

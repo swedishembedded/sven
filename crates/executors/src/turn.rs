@@ -260,6 +260,12 @@ pub struct TurnExecutor {
     /// Proactive-compaction configuration (`AgentConfig`'s `compaction_*`
     /// fields). See [`CompactionConfig`] and [`Self::with_compaction_config`].
     compaction: CompactionConfig,
+    /// Running `(cache_read_total, cache_write_total)` per thread, across
+    /// every turn in the session - what `UiEvent::TokenUsage.cache_read_total`/
+    /// `cache_write_total` are documented to report but, before this field
+    /// existed, always came back `0` (`stream_turn` only sees one turn at a
+    /// time and has no memory of prior ones).
+    cache_totals: Arc<Mutex<HashMap<String, (u64, u64)>>>,
 }
 
 /// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
@@ -332,6 +338,7 @@ impl TurnExecutor {
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
             no_tools: false,
             compaction: CompactionConfig::default(),
+            cache_totals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -626,8 +633,44 @@ impl EffectExecutor for TurnExecutor {
         // Bridge AgentEvents → UiEvents while the stream runs.
         let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
         let obs_fwd = obs.clone();
+        // stream_turn only knows about the model call it just made - it has
+        // no memory of prior turns, so it always reports cache_read_total/
+        // cache_write_total as 0 and leaves max_tokens/max_output_tokens
+        // unset. TurnExecutor owns the per-thread session state that's
+        // actually needed to fill these in for real: running cache totals
+        // (accumulated here, across every turn on this thread) and the
+        // model's static capacity (already resolved above as
+        // context_window/configured_max_output).
+        let cache_totals = Arc::clone(&self.cache_totals);
+        let totals_thread_id = thread_id.clone();
+        let catalog_context_window = context_window.unwrap_or(0);
+        let catalog_max_output = configured_max_output.unwrap_or(0);
         let forwarder = tokio::spawn(async move {
-            while let Some(ev) = rx.recv().await {
+            while let Some(mut ev) = rx.recv().await {
+                if let AgentEvent::TokenUsage {
+                    cache_read,
+                    cache_write,
+                    cache_read_total,
+                    cache_write_total,
+                    max_tokens,
+                    max_output_tokens,
+                    ..
+                } = &mut ev
+                {
+                    let (read_total, write_total) = {
+                        let mut totals = cache_totals
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let entry = totals.entry(totals_thread_id.clone()).or_insert((0, 0));
+                        entry.0 += u64::from(*cache_read);
+                        entry.1 += u64::from(*cache_write);
+                        *entry
+                    };
+                    *cache_read_total = read_total.min(u64::from(u32::MAX)) as u32;
+                    *cache_write_total = write_total.min(u64::from(u32::MAX)) as u32;
+                    *max_tokens = catalog_context_window as usize;
+                    *max_output_tokens = catalog_max_output as usize;
+                }
                 if let Some(ui) = agent_event_to_ui(ev) {
                     obs_fwd.emit(ui);
                 }

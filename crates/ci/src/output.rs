@@ -60,20 +60,18 @@ pub fn format_token_usage_line(
     } else {
         0
     };
-    let mut line = format!("[sven:tokens] input={input} output={output}");
-    if cache_read > 0 || cache_write > 0 {
-        line.push_str(&format!(
-            " cache_read={cache_read} cache_write={cache_write}"
-        ));
-    }
+    // Always show cache_read/cache_write, even at 0 - "no cache activity" is
+    // itself useful signal (e.g. a provider/config that doesn't cache at
+    // all), and was previously indistinguishable from "not computed".
+    let mut line = format!(
+        "[sven:tokens] input={input} output={output} cache_read={cache_read} cache_write={cache_write}"
+    );
     if input_budget > 0 {
         line.push_str(&format!(" ctx_pct={ctx_pct} ctx_cache={ctx_cache}"));
     }
-    if cache_read_total > 0 || cache_write_total > 0 {
-        line.push_str(&format!(
-            " cache_read_total={cache_read_total} cache_write_total={cache_write_total}"
-        ));
-    }
+    line.push_str(&format!(
+        " cache_read_total={cache_read_total} cache_write_total={cache_write_total}"
+    ));
     line
 }
 
@@ -117,5 +115,42 @@ mod tests {
     #[test]
     fn write_progress_does_not_panic() {
         write_progress("[sven:step:start] 1/3 label=\"Analyse codebase\"");
+    }
+
+    // ── format_token_usage_line ────────────────────────────────────────────
+
+    #[test]
+    fn cache_read_and_write_always_shown_even_at_zero() {
+        // Previously gated behind `> 0`, so "no cache activity" was
+        // indistinguishable from "not computed" - always show both.
+        let line = format_token_usage_line(10, 5, 0, 0, 0, 0, 0, 0);
+        assert!(line.contains("cache_read=0"), "{line}");
+        assert!(line.contains("cache_write=0"), "{line}");
+    }
+
+    #[test]
+    fn cache_read_and_write_shown_when_nonzero() {
+        let line = format_token_usage_line(10, 5, 3, 7, 0, 0, 0, 0);
+        assert!(line.contains("cache_read=3"), "{line}");
+        assert!(line.contains("cache_write=7"), "{line}");
+    }
+
+    #[test]
+    fn cache_totals_always_shown() {
+        let line = format_token_usage_line(10, 5, 3, 7, 103, 207, 0, 0);
+        assert!(line.contains("cache_read_total=103"), "{line}");
+        assert!(line.contains("cache_write_total=207"), "{line}");
+    }
+
+    #[test]
+    fn ctx_pct_hidden_when_budget_unknown() {
+        let line = format_token_usage_line(10, 5, 0, 0, 0, 0, 0, 0);
+        assert!(!line.contains("ctx_pct"), "{line}");
+    }
+
+    #[test]
+    fn ctx_pct_shown_when_budget_known() {
+        let line = format_token_usage_line(10, 5, 0, 0, 0, 0, 2048, 512);
+        assert!(line.contains("ctx_pct"), "{line}");
     }
 }

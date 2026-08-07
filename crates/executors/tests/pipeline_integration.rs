@@ -812,3 +812,152 @@ async fn compaction_falls_back_to_emergency_when_the_summarization_call_fails() 
         final_thread.len()
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cache-total / capacity reporting on UiEvent::TokenUsage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Streams a fixed reply plus a `Usage` chunk carrying `cache_read`/
+/// `cache_write`, on every call - used to prove `cache_read_total`/
+/// `cache_write_total` genuinely accumulate *across* turns (TurnExecutor's
+/// job) rather than reset each call (what `stream_turn` alone would report).
+struct UsageReportingProvider {
+    context_window: u32,
+    max_output_tokens: u32,
+    cache_read_per_turn: u32,
+    cache_write_per_turn: u32,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for UsageReportingProvider {
+    fn name(&self) -> &str {
+        "usage-reporting"
+    }
+    fn model_name(&self) -> &str {
+        "usage-reporting"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(self.context_window)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(self.max_output_tokens)
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        let events: Vec<anyhow::Result<sven_model::ResponseEvent>> = vec![
+            Ok(sven_model::ResponseEvent::TextDelta("ok".into())),
+            Ok(sven_model::ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 2,
+                cache_read_tokens: self.cache_read_per_turn,
+                cache_write_tokens: self.cache_write_per_turn,
+                cost_usd: None,
+            }),
+            Ok(sven_model::ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+/// `cache_read_total`/`cache_write_total` must be the running sum across
+/// every turn on the thread, and `max_tokens`/`max_output_tokens` must
+/// reflect the model's actual known capacity - none of this came from
+/// `stream_turn` itself (it always reported 0/unset before TurnExecutor
+/// started filling these in).
+#[tokio::test]
+async fn token_usage_reports_cumulative_cache_totals_and_model_capacity() {
+    use sven_core::ReactiveAgentMachine;
+    use sven_executors::CompositeExecutorBuilder;
+    use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+
+    let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        sven_hsm::ToolCallId,
+        (String, String),
+    >::new()));
+    let cancel_handle = Arc::new(Mutex::new(None));
+    let turn_exec = sven_executors::TurnExecutor::new(
+        Arc::new(UsageReportingProvider {
+            context_window: 100_000,
+            max_output_tokens: 4096,
+            cache_read_per_turn: 5,
+            cache_write_per_turn: 3,
+        }),
+        None,
+        Arc::new(sven_tools::ToolRegistry::new()),
+        store,
+        call_id_to_thread,
+        cancel_handle,
+    );
+    let executor = CompositeExecutorBuilder::default()
+        .with_turn(turn_exec)
+        .build();
+
+    let machine: Box<dyn ErasedMachine> = Box::new(Hsm::new(ReactiveAgentMachine::new()));
+    let rt = ErasedRuntime::spawn(
+        machine,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        executor,
+        64,
+    );
+    let mut rt_obs_rx = rt.subscribe_observations();
+
+    async fn run_one_turn(
+        rt: &ErasedRuntime,
+        rx: &mut tokio::sync::broadcast::Receiver<UiEvent>,
+        text: &str,
+    ) -> Vec<UiEvent> {
+        let sent = rt.sink().emit(Event::UserMessage { text: text.into() }).await;
+        assert!(sent, "UserMessage must be accepted by the kernel sink");
+        let mut events = Vec::new();
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(3);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            tokio::select! {
+                Ok(ev) = rx.recv() => {
+                    let done = ev == UiEvent::TurnComplete;
+                    events.push(ev);
+                    if done { break; }
+                }
+                _ = tokio::time::sleep(remaining) => break,
+            }
+        }
+        events
+    }
+
+    let first = run_one_turn(&rt, &mut rt_obs_rx, "one").await;
+    let second = run_one_turn(&rt, &mut rt_obs_rx, "two").await;
+    rt.abort();
+
+    fn usage(events: &[UiEvent]) -> (u32, u32, usize, usize) {
+        events
+            .iter()
+            .find_map(|e| match e {
+                UiEvent::TokenUsage { cache_read_total, cache_write_total, max_tokens, max_output_tokens, .. } => {
+                    Some((*cache_read_total, *cache_write_total, *max_tokens, *max_output_tokens))
+                }
+                _ => None,
+            })
+            .expect("a TokenUsage event must have been observed")
+    }
+
+    let (read1, write1, max_tokens1, max_output1) = usage(&first);
+    assert_eq!(read1, 5, "first turn: cache_read_total == this turn's cache_read");
+    assert_eq!(write1, 3);
+    assert_eq!(max_tokens1, 100_000, "must reflect the model's real catalog context window, not 0");
+    assert_eq!(max_output1, 4096);
+
+    let (read2, write2, ..) = usage(&second);
+    assert_eq!(read2, 10, "second turn: cache_read_total must ACCUMULATE (5 + 5), not reset to 5");
+    assert_eq!(write2, 6, "second turn: cache_write_total must accumulate (3 + 3)");
+}
