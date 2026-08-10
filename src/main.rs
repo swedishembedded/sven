@@ -2885,6 +2885,8 @@ fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
     let layer = fmt::layer()
         .with_target(false)
         .with_writer(std::io::stderr)
+        // No ANSI colour codes when stderr is piped (CI logs, e2e greps).
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .with_timer(fmt::time::uptime());
 
     let _ = tracing_subscriber::registry()

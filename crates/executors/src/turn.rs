@@ -560,6 +560,21 @@ impl EffectExecutor for TurnExecutor {
             vec![]
         };
 
+        // Observable request shape (debug level → `-v` stderr in headless
+        // mode). The e2e suite asserts on `tool_schemas=`/`system_messages=`
+        // to pin the --no-tools/--no-system/--bare contract - keep the field
+        // names stable.
+        tracing::debug!(
+            thread = %thread_id,
+            messages = messages.len(),
+            system_messages = messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::System))
+                .count(),
+            tool_schemas = tool_schemas.len(),
+            "TurnExecutor: sending completion request"
+        );
+
         // Fail fast when the request is too large for the model's known
         // effective window, instead of building it, sending it, and letting
         // the server reject it after already paying the connection/admission

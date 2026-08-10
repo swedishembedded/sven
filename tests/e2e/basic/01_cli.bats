@@ -179,11 +179,26 @@ load helpers
 }
 
 # ── --no-system flag ──────────────────────────────────────────────────────────
+#
+# The observable contract for --no-system/--no-tools/--bare is the request
+# shape TurnExecutor logs at debug level (`-v`):
+#   "TurnExecutor: sending completion request ... system_messages=N tool_schemas=M"
 
-@test "01.28 --no-system accepted alone" {
-    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-system 2>/dev/null'
+@test "01.28 --no-system sends zero system messages to the model" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-system -v 2>&1'
     [ "${status}" -eq 0 ]
     assert_output_contains "pong"
+    assert_output_contains "system_messages=0"
+}
+
+@test "01.28b without --no-system a system prompt IS sent" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock -v 2>&1'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+    # The request-shape log line must be present and must not report zero.
+    echo "${output}" | grep -q "system_messages=" || {
+        echo "missing request-shape log line"; return 1; }
+    ! echo "${output}" | grep -q "system_messages=0"
 }
 
 @test "01.29 --no-system composes with --system-prompt-file" {
@@ -198,10 +213,20 @@ load helpers
 
 # ── --no-tools / --bare flags ─────────────────────────────────────────────────
 
-@test "01.30 --no-tools accepted alone" {
-    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-tools 2>/dev/null'
+@test "01.30 --no-tools sends zero tool schemas to the model" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --no-tools -v 2>&1'
     [ "${status}" -eq 0 ]
     assert_output_contains "pong"
+    assert_output_contains "tool_schemas=0"
+}
+
+@test "01.30b without --no-tools tool schemas ARE sent" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock -v 2>&1'
+    [ "${status}" -eq 0 ]
+    assert_output_contains "pong"
+    echo "${output}" | grep -q "tool_schemas=" || {
+        echo "missing request-shape log line"; return 1; }
+    ! echo "${output}" | grep -q "tool_schemas=0"
 }
 
 @test "01.31 --bare accepted alone" {
@@ -210,8 +235,10 @@ load helpers
     assert_output_contains "pong"
 }
 
-@test "01.32 --bare composes with --no-tools and --no-system explicitly set" {
-    run bash -c 'echo "ping" | "$BIN" --headless --model mock --bare --no-system --no-tools 2>/dev/null'
+@test "01.32 --bare sends neither tool schemas nor a system prompt" {
+    run bash -c 'echo "ping" | "$BIN" --headless --model mock --bare -v 2>&1'
     [ "${status}" -eq 0 ]
     assert_output_contains "pong"
+    assert_output_contains "tool_schemas=0"
+    assert_output_contains "system_messages=0"
 }
