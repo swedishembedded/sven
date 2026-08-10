@@ -5,22 +5,25 @@
 //! `ChatDocumentHeader` trick (find the marker before the large array, parse
 //! only what precedes it) — for JSON instead of YAML.
 //!
-//! [`crate::model::Trajectory`] deliberately declares `steps` as its last
-//! Rust struct field, and `serde_json` preserves struct declaration order
-//! when serializing, so on any file this crate wrote, `"steps"` is the last
-//! top-level key. [`read_trajectory_header_fast`] exploits that: it scans
-//! for the byte offset of the top-level `"steps"` key (tracking brace/bracket
-//! depth and string escaping so it can't be fooled by a `"steps"` string
-//! appearing inside a nested `extra` value), truncates the text there, closes
-//! it into a small valid JSON object, and deserializes only that into
-//! [`TrajectoryHeader`] — never touching the (possibly huge) steps array.
+//! [`crate::model::Trajectory`] deliberately declares `subagent_trajectories`
+//! and `steps` as its last Rust struct fields, and `serde_json` preserves
+//! struct declaration order when serializing, so on any file this crate
+//! wrote, those two keys come last. [`read_trajectory_header_fast`] exploits
+//! that: it **streams** the file in chunks, scanning for the byte offset of
+//! the first top-level `"subagent_trajectories"` or `"steps"` key (tracking
+//! brace/bracket depth and string escaping so it can't be fooled by either
+//! name appearing inside a nested `extra` value), stops reading there,
+//! closes the prefix into a small valid JSON object, and deserializes only
+//! that into [`TrajectoryHeader`] — never reading, let alone parsing, the
+//! (possibly huge) step or subagent arrays.
 //!
 //! [`read_trajectory_header`] is the defensive public entry point: it tries
 //! the fast path first and falls back to a full [`crate::model::Trajectory`]
-//! parse (reduced to a header) on *any* failure — a foreign file where
-//! `steps` isn't last, a truncated file, whatever.
+//! parse (reduced to a header) on *any* failure — a foreign file where the
+//! big arrays aren't last, a truncated file, whatever.
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -39,9 +42,9 @@ pub enum HeaderReadError {
     #[error("serialization error: {0}")]
     Json(#[from] serde_json::Error),
     /// The fast-path heuristic could not locate a usable split point (e.g.
-    /// `steps` isn't the last top-level key, or the file is too short/odd
-    /// to contain one).
-    #[error("could not locate a top-level \"steps\" key to split on")]
+    /// neither big-array key is present at the top level, or the file is too
+    /// short/odd to contain one).
+    #[error("could not locate a top-level \"steps\"/\"subagent_trajectories\" key to split on")]
     NoSplitPoint,
 }
 
@@ -67,6 +70,10 @@ pub struct TrajectoryHeader {
     /// See [`Trajectory::final_metrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_metrics: Option<FinalMetrics>,
+    /// See [`Trajectory::continued_trajectory_ref`] — header data: it is how
+    /// a continuation segment is discovered without parsing any steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_trajectory_ref: Option<String>,
     /// See [`Trajectory::extra`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
@@ -81,75 +88,132 @@ impl From<&Trajectory> for TrajectoryHeader {
             agent: t.agent.clone(),
             notes: t.notes.clone(),
             final_metrics: t.final_metrics.clone(),
+            continued_trajectory_ref: t.continued_trajectory_ref.clone(),
             extra: t.extra.clone(),
         }
     }
 }
 
-/// Find the byte offset of the comma that immediately precedes a top-level
-/// (depth-1) `"steps"` key, by scanning byte-by-byte and tracking
-/// object/array nesting depth and string-literal escaping.
-///
-/// Returns `None` if `"steps"` never appears at depth 1, or if it does but
-/// has no preceding top-level comma (i.e. it would be the very first key,
-/// which can't happen for a valid `Trajectory` since `schema_version` is
-/// always emitted first — treated as "no usable split point").
-fn find_steps_split_point(json: &str) -> Option<usize> {
-    let bytes = json.as_bytes();
-    let mut depth: i32 = 0;
-    let mut in_string = false;
-    let mut escape = false;
-    let mut last_top_level_comma: Option<usize> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_string {
-            if escape {
-                escape = false;
-            } else if b == b'\\' {
-                escape = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        match b {
-            b'"' => {
-                in_string = true;
-                if depth == 1 && json[i..].starts_with("\"steps\"") {
-                    return last_top_level_comma;
-                }
-            }
-            b'{' | b'[' => depth += 1,
-            b'}' | b']' => depth -= 1,
-            b',' if depth == 1 => last_top_level_comma = Some(i),
-            _ => {}
-        }
-        i += 1;
-    }
-    None
+/// The top-level keys that begin the "big arrays" tail of a trajectory
+/// document; the header is everything before the first of them.
+const SPLIT_KEYS: [&[u8]; 2] = [b"\"subagent_trajectories\"", b"\"steps\""];
+
+/// Length of the longest split key — the scanner refuses to decide on a
+/// depth-1 quote closer than this to the end of the buffered data unless the
+/// file is at EOF, so a key can never be missed across a chunk boundary.
+const MAX_KEY_LEN: usize = 23; // "subagent_trajectories" plus both quotes
+
+enum ScanOutcome {
+    /// Byte offset of the comma immediately preceding the first big-array
+    /// key: the header is everything before it.
+    Found(usize),
+    /// Ran out of buffered bytes without a verdict; feed more data.
+    NeedMore,
+    /// The whole input was scanned and no usable split point exists.
+    NotFound,
 }
 
-/// The strict fast path: locate the top-level `"steps"` key, truncate before
-/// it, close the object, and parse only that into a [`TrajectoryHeader`].
-/// Returns [`HeaderReadError`] (never panics) if the heuristic can't find a
-/// usable split point or the truncated text doesn't parse — callers that
-/// want automatic fallback should use [`read_trajectory_header`] instead.
+/// Incremental depth/string-tracking scanner for the split point. Feed it a
+/// growing buffer (the file prefix read so far); it remembers where it
+/// stopped, so each byte is examined once.
+#[derive(Default)]
+struct SplitScanner {
+    depth: i32,
+    in_string: bool,
+    escape: bool,
+    last_top_level_comma: Option<usize>,
+    pos: usize,
+}
+
+impl SplitScanner {
+    fn scan(&mut self, buf: &[u8], eof: bool) -> ScanOutcome {
+        while self.pos < buf.len() {
+            let i = self.pos;
+            let b = buf[i];
+            if self.in_string {
+                if self.escape {
+                    self.escape = false;
+                } else if b == b'\\' {
+                    self.escape = true;
+                } else if b == b'"' {
+                    self.in_string = false;
+                }
+                self.pos += 1;
+                continue;
+            }
+            match b {
+                b'"' => {
+                    if self.depth == 1 {
+                        let rest = &buf[i..];
+                        if rest.len() < MAX_KEY_LEN && !eof {
+                            // A split key could straddle the chunk boundary:
+                            // don't decide until more bytes arrive.
+                            return ScanOutcome::NeedMore;
+                        }
+                        if SPLIT_KEYS.iter().any(|k| rest.starts_with(k)) {
+                            // No preceding comma would mean the big array is
+                            // the very first key — impossible for a valid
+                            // Trajectory (schema_version comes first), so
+                            // treat it as "no usable split point".
+                            return match self.last_top_level_comma {
+                                Some(comma) => ScanOutcome::Found(comma),
+                                None => ScanOutcome::NotFound,
+                            };
+                        }
+                    }
+                    self.in_string = true;
+                }
+                b'{' | b'[' => self.depth += 1,
+                b'}' | b']' => self.depth -= 1,
+                b',' if self.depth == 1 => self.last_top_level_comma = Some(i),
+                _ => {}
+            }
+            self.pos += 1;
+        }
+        if eof {
+            ScanOutcome::NotFound
+        } else {
+            ScanOutcome::NeedMore
+        }
+    }
+}
+
+/// The strict fast path: **stream** the file until the first top-level
+/// `"subagent_trajectories"`/`"steps"` key, truncate before it, close the
+/// object, and parse only that prefix into a [`TrajectoryHeader`] — the big
+/// arrays are never read from disk, let alone parsed. Returns
+/// [`HeaderReadError`] (never panics) if the heuristic can't find a usable
+/// split point or the prefix doesn't parse — callers that want automatic
+/// fallback should use [`read_trajectory_header`] instead.
 pub fn read_trajectory_header_fast(path: &Path) -> Result<TrajectoryHeader, HeaderReadError> {
-    let content = fs::read_to_string(path)?;
-    let split_at = find_steps_split_point(&content).ok_or(HeaderReadError::NoSplitPoint)?;
-    let mut header_json = String::with_capacity(split_at + 2);
-    header_json.push_str(&content[..split_at]);
-    header_json.push('}');
-    let header: TrajectoryHeader = serde_json::from_str(&header_json)?;
+    const CHUNK: usize = 64 * 1024;
+
+    let mut file = fs::File::open(path)?;
+    let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
+    let mut scanner = SplitScanner::default();
+    let mut chunk = vec![0u8; CHUNK];
+    let split_at = loop {
+        let n = file.read(&mut chunk)?;
+        buf.extend_from_slice(&chunk[..n]);
+        let eof = n == 0;
+        match scanner.scan(&buf, eof) {
+            ScanOutcome::Found(comma) => break comma,
+            ScanOutcome::NeedMore => continue,
+            ScanOutcome::NotFound => return Err(HeaderReadError::NoSplitPoint),
+        }
+    };
+
+    buf.truncate(split_at);
+    buf.push(b'}');
+    let header: TrajectoryHeader = serde_json::from_slice(&buf)?;
     Ok(header)
 }
 
-/// Defensive public entry point: try [`read_trajectory_header_fast`] first;
-/// on any failure, fall back to a full [`Trajectory`] parse and reduce it to
-/// a [`TrajectoryHeader`]. Only errors if *both* the fast path and the full
-/// parse fail (e.g. a genuinely truncated/corrupt file).
+/// Defensive public entry point: try [`read_trajectory_header_fast`] first
+/// (which reads only the header prefix); on any failure, fall back to one
+/// full read + full [`Trajectory`] parse reduced to a [`TrajectoryHeader`].
+/// Only errors if *both* the fast path and the full parse fail (e.g. a
+/// genuinely truncated/corrupt file).
 pub fn read_trajectory_header(path: &Path) -> Result<TrajectoryHeader, HeaderReadError> {
     if let Ok(header) = read_trajectory_header_fast(path) {
         return Ok(header);

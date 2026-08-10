@@ -84,6 +84,69 @@ fn public_reader_falls_back_gracefully_when_fast_path_heuristic_misses() {
 }
 
 #[test]
+fn header_includes_continued_trajectory_ref() {
+    // The header type documents itself as "everything except steps and
+    // subagent_trajectories" — continued_trajectory_ref is header data (it is
+    // how a continued trajectory is discovered without parsing steps).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("continued.json");
+    let mut full = big_trajectory(2);
+    full.continued_trajectory_ref = Some("next-segment.json".into());
+    std::fs::write(&path, serde_json::to_string_pretty(&full).unwrap()).unwrap();
+
+    let header = read_trajectory_header_fast(&path).unwrap();
+    assert_eq!(
+        header.continued_trajectory_ref.as_deref(),
+        Some("next-segment.json")
+    );
+}
+
+#[test]
+fn fast_path_splits_before_subagent_trajectories() {
+    // subagent_trajectories is declared before steps, and can dwarf the
+    // header. The fast path must stop BEFORE it — proven here by making its
+    // contents unparseable: a reader that includes (or parses-and-discards)
+    // it would fail.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subagents.json");
+    let json = r#"{
+        "schema_version": "ATIF-v1.7",
+        "session_id": "s-1",
+        "agent": {"name": "sven", "version": "1.0.0"},
+        "subagent_trajectories": [ {"this is": not even json ],
+        "steps": []
+    }"#;
+    std::fs::write(&path, json).unwrap();
+
+    let header = read_trajectory_header_fast(&path)
+        .expect("header read must not touch subagent_trajectories");
+    assert_eq!(header.session_id.as_deref(), Some("s-1"));
+}
+
+#[test]
+fn fast_path_reads_only_the_header_prefix_not_the_whole_file() {
+    // A "header-only fast read" must not slurp the entire file. Proven by
+    // appending invalid UTF-8 inside the steps array, past the split point:
+    // a whole-file read_to_string chokes on it; a streaming prefix read
+    // never sees it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary-tail.json");
+    let mut bytes = br#"{
+        "schema_version": "ATIF-v1.7",
+        "session_id": "s-2",
+        "agent": {"name": "sven", "version": "1.0.0"},
+        "steps": ["#
+        .to_vec();
+    bytes.extend(vec![0xFF; 256 * 1024]); // invalid UTF-8, never valid JSON
+    std::fs::write(&path, bytes).unwrap();
+
+    let header = read_trajectory_header_fast(&path)
+        .expect("the fast path must stop reading at the steps split point");
+    assert_eq!(header.session_id.as_deref(), Some("s-2"));
+    assert_eq!(header.agent.name, "sven");
+}
+
+#[test]
 fn public_reader_errors_cleanly_on_genuinely_truncated_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("truncated.json");
