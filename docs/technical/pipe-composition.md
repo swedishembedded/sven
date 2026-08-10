@@ -292,9 +292,10 @@ Pipe-based NDJSON seeding is history-equivalent to `--load-trace` at runtime
 (same `steps_to_messages` reconstruction); the wire shape and source differ
 (line-delimited stdin vs. a whole-document file).
 
-`--chat`/`--load-chat`/`--output-chat` (the YAML `ChatDocument` format) are a
-separate, still-independently-supported I/O path, primarily for TUI/GUI
-session save/resume; they are unaffected by anything in this document.
+There are no `--chat`-style flags: the legacy YAML `ChatDocument` format is
+read-only (pre-existing `.yaml` sessions are imported when opened in the
+TUI/GUI, and every save writes the ATIF `.json` format); it has no CLI I/O
+path and is unaffected by anything in this document.
 
 ---
 

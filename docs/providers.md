@@ -38,6 +38,25 @@ sven list-models --provider groq
 sven list-models --provider openai --refresh   # live API query
 ```
 
+## Default provider auto-detection
+
+When **no model is configured at all** (no `model:` block, no `--model`,
+no `SVEN_MODEL`), sven auto-selects a provider from the environment, in
+priority order:
+
+1. **`brain`** — a locally running [brain](#brain-local-edge-ai-server)
+   edge-AI model server, detected without network I/O via `BRAIN_API_KEY`,
+   `BRAIN_API_KEYS_FILE`, or brain's default api-keys file
+   (`$XDG_RUNTIME_DIR/brain/api-keys.json`, falling back to the state dir).
+   The model name is resolved by asking brain's `/v1/models` for its
+   resident model. Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out (e.g. a
+   CI machine with a stale keys file).
+2. **OpenRouter** — when `OPENROUTER_API_KEY` is set.
+3. **Anthropic** — when `ANTHROPIC_API_KEY` is set.
+4. **OpenAI** — when `OPENAI_API_KEY` is set.
+
+Any explicit model configuration always wins over auto-detection.
+
 ---
 
 ## Major Cloud Providers
@@ -479,7 +498,35 @@ Featured models: `qwen-max`, `qwen-plus`, `qwen2.5-72b-instruct`, `qwq-32b`
 
 ## Local / OSS
 
-No API key required for local providers.
+No API key required for local providers (except `brain`, which mints its own
+keys locally).
+
+### Brain (local edge-AI server)
+
+[brain](https://github.com/swedishembedded) is Swedish Embedded's edge-AI
+model server. `brain serve --openai` exposes an OpenAI-compatible endpoint on
+this machine.
+
+| Setting    | Value                                 |
+|------------|---------------------------------------|
+| Provider id | `brain`                              |
+| API key env | `BRAIN_API_KEY`                      |
+| Default URL | `http://127.0.0.1:8788/v1`           |
+
+```yaml
+model:
+  provider: brain
+  name: ""          # empty = use whatever model brain is serving
+```
+
+**Auto-detected**: when no model is configured at all, sven selects `brain`
+automatically if `BRAIN_API_KEY`, `BRAIN_API_KEYS_FILE`, or brain's default
+api-keys file (`$XDG_RUNTIME_DIR/brain/api-keys.json`) is present — see
+[Default provider auto-detection](#default-provider-auto-detection). An empty
+model name is resolved by asking brain's `/v1/models` for the resident model.
+Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out.
+
+---
 
 ### Ollama
 

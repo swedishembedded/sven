@@ -163,9 +163,10 @@ agent:
   max_tool_rounds: 200
 
   # Fraction of the input budget at which proactive compaction triggers.
-  # The input budget is context_window − max_output_tokens (not the raw
-  # context window), so this threshold is applied against the actual usable
-  # space rather than the total model window.
+  # The input budget is context_window − 256 (a minimal output reserve; the
+  # output limit itself is scaled per-request to whatever room the prompt
+  # leaves), so this threshold is applied against the usable input space
+  # rather than the raw model window.
   # 0.85 means compaction fires when 85% of the input budget is consumed.
   compaction_threshold: 0.85
 
@@ -373,7 +374,9 @@ results, sven checks an effective token count that accounts for:
 The effective threshold is `compaction_threshold − compaction_overhead_reserve`.
 For example, with defaults (0.85 − 0.10 = 0.75), compaction fires when
 calibrated session tokens reach 75% of the input budget
-(`context_window − max_output_tokens`).
+(`context_window − 256`; the fixed 256-token minimum output reserve — the
+actual per-request output limit is scaled separately to the room the prompt
+leaves).
 
 **Rolling compaction** - When the budget gate fires:
 1. The oldest `(total - compaction_keep_recent)` non-system messages are

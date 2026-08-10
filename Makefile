@@ -195,14 +195,7 @@ deb/release: release
 docs:
 	@mkdir -p target/docs
 	@printf '' > target/docs/sven-user-guide.md
-	@for f in docs/00-introduction.md \
-	           docs/01-installation.md \
-	           docs/02-quickstart.md \
-	           docs/03-user-guide.md \
-	           docs/04-ci-pipeline.md \
-	           docs/05-configuration.md \
-	           docs/06-examples.md \
-	           docs/07-troubleshooting.md; do \
+	@for f in docs/[0-9][0-9]-*.md docs/providers.md docs/cloud/*.md; do \
 		if [ -f "$$f" ]; then \
 			cat "$$f" >> target/docs/sven-user-guide.md; \
 			printf '\n---\n\n' >> target/docs/sven-user-guide.md; \

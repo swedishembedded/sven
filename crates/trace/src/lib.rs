@@ -6,11 +6,12 @@
 //! set of persistence helpers (atomic whole-document writes, cheap
 //! header-only reads, and NDJSON step streaming).
 //!
-//! This crate is a standalone, spec-complete building block. It does not
-//! (yet) wire into the rest of sven's runtime — that happens in a later
-//! migration milestone. See the ATIF RFC (v1.7) for the normative schema
-//! this crate mirrors byte-for-byte on the wire, even though the Rust-side
-//! type and module names here are an independent design.
+//! This crate is a standalone, spec-complete building block with zero
+//! dependencies on other sven crates; `sven-input::trace_session` consumes
+//! it as the session store backing the TUI/GUI/CI surfaces. See the ATIF
+//! RFC (v1.7) for the normative schema this crate mirrors byte-for-byte on
+//! the wire, even though the Rust-side type and module names here are an
+//! independent design.
 //!
 //! # Module map
 //!

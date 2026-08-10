@@ -490,6 +490,7 @@ for both command names and their arguments.
 | `/tools` | Show all available tools with descriptions and parameter counts. |
 | `/approve [task_id]` | Approve a teammate's pending plan (team mode). |
 | `/reject [task_id] [reason]` | Reject a plan with feedback (team mode). |
+| `/share [share-id]` | Share this running session so a remote consultant can steer it ("local brain, remote steer"). One-tap when a broker is configured via `SVEN_SHARE_URL`/`SVEN_SHARE_TOKEN`/`SVEN_SHARE_TENANT`; otherwise (or with `--print`) shows the scriptable `sven share` invocation. |
 | `/agents` | Show the team members overlay (also `Ctrl+A`). |
 | `/tasks` | Show the current team task list (also `Alt+T`). |
 | `/quit` | Exit sven. In the Neovim buffer, use `:q` or `:qa`. |

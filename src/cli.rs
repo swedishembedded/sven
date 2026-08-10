@@ -319,12 +319,12 @@ pub enum NodeCommands {
     ///
     /// Shows the devices in `authorized_peers.yaml` - the human operator
     /// devices (phones, laptops, CLI clients) authorized to control this
-    /// node via P2P.  Use `sven node pair` to add devices and
-    /// `sven node revoke` to remove them.
+    /// node via P2P.  Devices are added by redeeming the pairing QR/URI the
+    /// node prints at startup (`sven connect <uri>` or the mobile app), or
+    /// with `sven node authorize`; remove them with `sven node revoke`.
     ///
     /// Note: this is NOT the same as the agent `list_peers` tool, which
     /// shows other sven nodes available for task delegation.
-    /// Use `sven node authorize` to add devices, `sven node revoke` to remove.
     ListOperators {
         /// Path to the node config file.
         #[arg(long, short = 'c')]
@@ -1295,7 +1295,9 @@ pub enum Commands {
     /// Node: start the agent, pair devices, manage tokens.
     ///
     /// Run `sven node start` to expose this agent to mobile apps, Slack,
-    /// and other clients. Run `sven node pair <uri>` to authorize a device.
+    /// and other clients. The node prints a pairing QR / `sven://` URI at
+    /// startup; open it with `sven connect <uri>` (or the mobile app) to
+    /// pair, or authorize a device's own URI with `sven node authorize`.
     Node {
         #[command(subcommand)]
         command: NodeCommands,

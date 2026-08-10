@@ -80,17 +80,51 @@ When you open the node's web terminal (`https://<node>/web`), the node injects
 `SVEN_NODE_URL` and `SVEN_NODE_TOKEN` into that PTY, so the in-browser TUI is
 already connected to the node.
 
-#### Option C: P2P operator channel (for native/mobile clients)
+#### Option C: P2P operator channel (native/mobile clients and `sven connect`)
 
-This path is for native applications (e.g. a mobile app) that connect via
-libp2p rather than HTTP.  It uses `sven node authorize` to add a device to
-the allowlist.
+This path is for clients that connect via libp2p rather than HTTP: the mobile
+app, and the CLI's `sven connect`.
 
 > **This has nothing to do with agent-to-agent connections.**
 > Node-to-node connections happen automatically via mDNS or relay - there is
-> no command to run and no pairing needed.
+> no command to run and no pairing needed *between nodes*. Human operator
+> devices, in contrast, must pair.
 
-The operator device displays a `sven://` URI.  Paste it:
+**QR / one-time-token pairing (primary flow).** When the node starts with a
+`control:` section configured, it prints a pairing QR code and `sven://` URI
+carrying its identity, reachable addresses, and a **one-time pairing token**:
+
+```
+sven://12D3KooW<node-id>/ip4/…/tcp/4009?a=…&t=<one-time-token>
+```
+
+Scan the QR with the mobile app, or open the full TUI over the pairing from
+another machine:
+
+```sh
+sven connect "sven://12D3KooW...?...&t=..."
+```
+
+Redeeming the token adds that device's peer ID to the allowlist and consumes
+the token (a second redeem fails). Treat the URI like an invite link — it is
+single-use and short-lived, but whoever redeems it first gets its role.
+
+To be reachable **across NAT/networks**, point the node's control channel at
+a relay (for example the relay embedded in `sven cloud serve`, printed as its
+`relay :` address on startup):
+
+```yaml
+# node config
+control:
+  listen: "/ip4/0.0.0.0/tcp/4009"
+  relay: "/ip4/relay.example.com/tcp/4002/p2p/12D3KooW..."
+```
+
+With a relay configured the pairing QR advertises the `/p2p-circuit` address,
+so a phone on a different network can pair and connect.
+
+**Manual authorize (secondary flow).** If the operator device instead shows
+its *own* `sven://<peer-id>` URI (no token), authorize it on the node:
 
 ```sh
 sven node authorize "sven://12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz"
@@ -101,8 +135,9 @@ asks `[y/N]` before writing to the allowlist.
 
 > **`list-operators` vs `list_peers` (agent tool) - don't confuse them:**
 >
-> - `sven node list-operators` - human operator devices added with
->   `sven node authorize`. These send commands to the agent.
+> - `sven node list-operators` - human operator devices paired via the QR
+>   flow or added with `sven node authorize`. These send commands to the
+>   agent.
 > - The `list_peers` **agent tool** - other sven nodes that found each other
 >   via mDNS or relay. These receive delegated tasks.
 >
@@ -581,6 +616,10 @@ sven node start [--config PATH]
 export SVEN_NODE_TOKEN=<token-from-first-startup>
 sven node exec "delegate a task to say hi to the frontend-agent"
 
+# Open the full TUI over a P2P pairing (paste the QR/sven:// URI the node
+# printed at startup; the embedded one-time token pairs this device)
+sven connect "sven://12D3KooW...?...&t=..."
+
 # Authorize a mobile/native operator device (P2P path - paste the sven:// URI it shows)
 sven node authorize "sven://12D3KooW..." [--label "my-phone"]
 
@@ -695,13 +734,22 @@ swarm:
     - "/ip4/relay.example.com/tcp/9000/p2p/12D3KooW..."
 ```
 
+> **Two separate relay settings**: `swarm.relays` (above) is for the
+> agent-to-agent mesh.  The *operator control channel* has its own single
+> `control.relay` setting (see Option C in the quick start) so phones and
+> `sven connect` can reach the node across NAT — for that you can also reuse
+> the relay embedded in `sven cloud serve` (default port 4002, printed at
+> startup).
+
 ---
 
 ## Troubleshooting
 
 ### "P2P error: not authorized"
 
-The peer is not in the allowlist.  Authorize it with:
+The peer is not in the allowlist.  Pair it by opening the node's pairing
+QR/URI (`sven connect "sven://...?...&t=..."` — the one-time token adds the
+device automatically), or authorize the device's own URI manually:
 
 ```sh
 sven node authorize "sven://..."
