@@ -637,18 +637,91 @@ pub fn messages_to_steps(messages: &[Message]) -> Vec<TraceStep> {
 pub fn conversation_records_to_steps(records: &[ConversationRecord]) -> Vec<TraceStep> {
     let mut assembler = StepAssembler::new();
     for record in records {
-        match record {
-            ConversationRecord::Message(msg) => assembler.push_message(msg),
-            ConversationRecord::Thinking { content } => assembler.push_thinking(content),
-            ConversationRecord::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy,
-                turn,
-            } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
-        }
+        push_conversation_record(&mut assembler, record);
     }
     assembler.finish()
+}
+
+fn push_conversation_record(assembler: &mut StepAssembler, record: &ConversationRecord) {
+    match record {
+        ConversationRecord::Message(msg) => assembler.push_message(msg),
+        ConversationRecord::Thinking { content } => assembler.push_thinking(content),
+        ConversationRecord::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
+    }
+}
+
+// ── Copied-context preservation on the display→persist path ─────────────────
+//
+// The display-oriented views ([`steps_to_turn_records`],
+// [`steps_to_conversation_records`], [`steps_to_messages`]) all OMIT steps
+// with `is_copied_context == Some(true)`. Any caller that rebuilds a
+// trajectory's steps from such a display view must therefore carry the
+// omitted steps through separately — otherwise opening and re-saving a
+// trajectory permanently deletes them (they are real steps; the flag only
+// marks them as excluded from SFT export, per [`Trajectory::sft_steps`]).
+
+/// The steps of `trajectory` that display views omit (copied context from a
+/// continued trajectory), preserved verbatim for the rebuild path.
+pub fn copied_context_steps(trajectory: &Trajectory) -> Vec<TraceStep> {
+    trajectory
+        .steps
+        .iter()
+        .filter(|s| s.is_excluded_from_sft())
+        .cloned()
+        .collect()
+}
+
+/// Renumber `copied` contiguously from 1 (spec: step ids are contiguous)
+/// and return an assembler that continues after them.
+fn seed_copied(copied: &[TraceStep]) -> (Vec<TraceStep>, StepAssembler) {
+    let mut out: Vec<TraceStep> = copied.to_vec();
+    for (i, step) in out.iter_mut().enumerate() {
+        step.step_id = (i + 1) as u64;
+    }
+    let assembler = StepAssembler::resuming(out.len() as u64 + 1);
+    (out, assembler)
+}
+
+/// Like [`conversation_records_to_steps`], but prepends `copied` (the steps
+/// the display view omitted — see [`copied_context_steps`]) so a
+/// display→persist round trip does not delete them. Fresh steps are numbered
+/// after the copied prefix, keeping the sequence contiguous from 1.
+pub fn conversation_records_to_steps_with_copied_context(
+    copied: &[TraceStep],
+    records: &[ConversationRecord],
+) -> Vec<TraceStep> {
+    if copied.is_empty() {
+        return conversation_records_to_steps(records);
+    }
+    let (mut out, mut assembler) = seed_copied(copied);
+    for record in records {
+        push_conversation_record(&mut assembler, record);
+    }
+    out.extend(assembler.finish());
+    out
+}
+
+/// Like [`turn_records_to_steps`], but prepends `copied` — the
+/// [`TurnRecord`]-path twin of
+/// [`conversation_records_to_steps_with_copied_context`].
+pub fn turn_records_to_steps_with_copied_context(
+    copied: &[TraceStep],
+    turns: &[TurnRecord],
+) -> Vec<TraceStep> {
+    if copied.is_empty() {
+        return turn_records_to_steps(turns);
+    }
+    let (mut out, mut assembler) = seed_copied(copied);
+    for turn in turns {
+        push_turn_record(&mut assembler, turn);
+    }
+    out.extend(assembler.finish());
+    out
 }
 
 /// Batch convenience: assemble a legacy `&[TurnRecord]` list (from a YAML
@@ -657,39 +730,43 @@ pub fn conversation_records_to_steps(records: &[ConversationRecord]) -> Vec<Trac
 pub fn turn_records_to_steps(turns: &[TurnRecord]) -> Vec<TraceStep> {
     let mut assembler = StepAssembler::new();
     for turn in turns {
-        match turn {
-            TurnRecord::User { content } => assembler.push_message(&Message::user(content)),
-            TurnRecord::Assistant { content } => assembler.push_message(&Message::assistant(content)),
-            TurnRecord::Thinking { content } => assembler.push_thinking(content),
-            TurnRecord::ToolCall {
-                tool_call_id,
-                name,
-                arguments,
-            } => {
-                let args_json = crate::chat_document::yaml_to_json_str(arguments);
-                assembler.push_message(&Message {
-                    role: Role::Assistant,
-                    content: MessageContent::ToolCall {
-                        tool_call_id: tool_call_id.clone(),
-                        function: FunctionCall {
-                            name: name.clone(),
-                            arguments: args_json,
-                        },
-                    },
-                });
-            }
-            TurnRecord::ToolResult { tool_call_id, content } => {
-                assembler.push_message(&Message::tool_result(tool_call_id.clone(), content));
-            }
-            TurnRecord::ContextCompacted {
-                tokens_before,
-                tokens_after,
-                strategy,
-                turn,
-            } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
-        }
+        push_turn_record(&mut assembler, turn);
     }
     assembler.finish()
+}
+
+fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
+    match turn {
+        TurnRecord::User { content } => assembler.push_message(&Message::user(content)),
+        TurnRecord::Assistant { content } => assembler.push_message(&Message::assistant(content)),
+        TurnRecord::Thinking { content } => assembler.push_thinking(content),
+        TurnRecord::ToolCall {
+            tool_call_id,
+            name,
+            arguments,
+        } => {
+            let args_json = crate::chat_document::yaml_to_json_str(arguments);
+            assembler.push_message(&Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: tool_call_id.clone(),
+                    function: FunctionCall {
+                        name: name.clone(),
+                        arguments: args_json,
+                    },
+                },
+            });
+        }
+        TurnRecord::ToolResult { tool_call_id, content } => {
+            assembler.push_message(&Message::tool_result(tool_call_id.clone(), content));
+        }
+        TurnRecord::ContextCompacted {
+            tokens_before,
+            tokens_after,
+            strategy,
+            turn,
+        } => assembler.push_context_compacted(*tokens_before, *tokens_after, strategy.as_deref(), *turn),
+    }
 }
 
 // ── Reverse: TraceStep ⇄ Message ────────────────────────────────────────────
@@ -802,7 +879,12 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
 /// from them (e.g. `--output-chat` alongside `--trace`).
 ///
 /// - Steps with `is_copied_context == Some(true)` are skipped, matching
-///   [`steps_to_messages`].
+///   [`steps_to_messages`]. **Callers that rebuild a trajectory from this
+///   view must carry those steps through** (capture them with
+///   [`copied_context_steps`] and rebuild with
+///   [`turn_records_to_steps_with_copied_context`] /
+///   [`conversation_records_to_steps_with_copied_context`]) or an
+///   open→save round trip permanently deletes them.
 /// - `System`-source steps are skipped, except a context-compaction step
 ///   (detected via [`ContextCompactionDetails::from_step_extra`]), which
 ///   becomes `TurnRecord::ContextCompacted`. Any other `System` step (e.g. a

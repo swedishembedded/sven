@@ -25,6 +25,7 @@ pub fn default_chat_message(message_type: &str, content: &str, role: &str) -> Ch
         tool_summary: SharedString::new(),
         tool_category: SharedString::new(),
         tool_fields_json: SharedString::new(),
+        tool_call_id: SharedString::new(),
         tool_result_content: SharedString::new(),
         tool_result_is_error: false,
         thinking_preview: SharedString::new(),

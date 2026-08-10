@@ -1265,6 +1265,9 @@ impl App {
                 entry.created_at = refreshed.created_at;
                 entry.updated_at = refreshed.updated_at;
                 entry.legacy_path = legacy_path;
+                // The chat view omits copied-context steps: carry them on the
+                // entry so the next save doesn't delete them from the file.
+                entry.copied_context_steps = refreshed.copied_context_steps;
                 // Restore persisted usage only when the entry has no live data yet
                 // (i.e. this session has never been active in this process run).
                 if entry.total_output_tokens == 0 && entry.total_cost_usd == 0.0 {

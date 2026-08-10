@@ -671,7 +671,7 @@ pub fn turns_to_plain_messages(turns: &[TurnRecord]) -> Vec<PlainChatMessage> {
                 });
             }
             TurnRecord::ToolCall {
-                tool_call_id: _,
+                tool_call_id,
                 name,
                 arguments,
             } => {
@@ -690,6 +690,8 @@ pub fn turns_to_plain_messages(turns: &[TurnRecord]) -> Vec<PlainChatMessage> {
                     tool_summary: view.summary,
                     tool_category: view.category,
                     tool_fields_json: fields_json,
+                    // Carried so saving preserves the original correlation id.
+                    tool_call_id: tool_call_id.clone(),
                     is_expanded,
                     ..Default::default()
                 });
@@ -823,7 +825,13 @@ pub fn plain_messages_to_turns(plain: &[PlainChatMessage]) -> Vec<TurnRecord> {
                         content: std::mem::take(&mut assistant_buf),
                     });
                 }
-                let id = format!("call_{}", tool_call_counter);
+                // Keep the original correlation id; generate one only for
+                // messages that never had one.
+                let id = if p.tool_call_id.is_empty() {
+                    format!("call_{}", tool_call_counter)
+                } else {
+                    p.tool_call_id.clone()
+                };
                 tool_call_counter += 1;
                 last_tool_call_id = Some(id.clone());
                 let arguments = json_str_to_yaml(&p.content);
@@ -915,7 +923,19 @@ pub fn save_session_to_disk(
     if turns.is_empty() {
         return;
     }
-    let steps = sven_input::turn_records_to_steps(&turns);
+    // The display view omits copied-context steps (continued trajectories):
+    // carry them over from the existing file, or open→save would delete them.
+    let copied = {
+        let existing = sven_input::session_path(session_id);
+        if existing.exists() {
+            sven_input::load_session_from(&existing)
+                .map(|t| sven_input::copied_context_steps(&t))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    };
+    let steps = sven_input::turn_records_to_steps_with_copied_context(&copied, &turns);
 
     let mut agent = sven_input::default_agent_profile();
     if let Some(m) = model {
@@ -1039,6 +1059,92 @@ mod tests {
         let back = turns_to_plain_messages(&turns);
         assert!(back.iter().any(|m| m.message_type == "thinking" && m.content == "I should compute it."));
         assert!(back.iter().any(|m| m.message_type == "tool-call" && m.tool_name == "read_file"));
+    }
+
+    #[test]
+    fn display_round_trip_preserves_original_tool_call_ids() {
+        // Spec: opening a session and saving it back must not rewrite the
+        // ATIF tool_call_ids (they correlate calls with observations and any
+        // external tooling reading the trajectory). Regenerated call_{n} ids
+        // are only a fallback for messages that never had one.
+        let turns = vec![
+            TurnRecord::ToolCall {
+                tool_call_id: "toolu_01original".to_string(),
+                name: "read_file".to_string(),
+                arguments: serde_yaml::from_str("path: /tmp/x").unwrap(),
+            },
+            TurnRecord::ToolResult {
+                tool_call_id: "toolu_01original".to_string(),
+                content: "file contents".to_string(),
+            },
+        ];
+
+        let plain = turns_to_plain_messages(&turns);
+        let back = plain_messages_to_turns(&plain);
+
+        assert!(
+            back.iter().any(|t| matches!(
+                t,
+                TurnRecord::ToolCall { tool_call_id, .. } if tool_call_id == "toolu_01original"
+            )),
+            "the original tool_call_id must survive the display round trip: {back:?}"
+        );
+        assert!(
+            back.iter().any(|t| matches!(
+                t,
+                TurnRecord::ToolResult { tool_call_id, .. } if tool_call_id == "toolu_01original"
+            )),
+            "the tool result must keep the matching id: {back:?}"
+        );
+    }
+
+    #[test]
+    fn open_then_save_preserves_copied_context_steps() {
+        // Spec: copied-context steps (from a continued trajectory) are not
+        // rendered, but opening and re-saving the session must not delete
+        // them from the file.
+        let session_id = format!("test-{}", uuid::Uuid::new_v4());
+        let path = sven_input::session_path(&session_id);
+        sven_input::ensure_session_dir().unwrap();
+
+        let mut source = Trajectory::new(
+            sven_input::ATIF_SCHEMA_VERSION,
+            sven_input::default_agent_profile(),
+        );
+        source.session_id = Some(session_id.clone());
+        let mut copied =
+            trace::TraceStep::new(1, trace::StepOrigin::User, "carried-over context");
+        copied.is_copied_context = Some(true);
+        source.steps = vec![
+            copied,
+            trace::TraceStep::new(2, trace::StepOrigin::User, "fresh question"),
+        ];
+        trace::persist::write_trajectory_atomic(&path, &source, None).unwrap();
+
+        // Open → display → save, exactly like the GUI does.
+        let loaded = load_session_by_id(&session_id).unwrap();
+        let plain = trajectory_to_plain_messages(&loaded);
+        save_session_to_disk(&session_id, &plain, "Continued", None, None, None);
+
+        let saved = load_session_by_id(&session_id).unwrap();
+        delete_session_from_disk(&session_id);
+
+        let carried: Vec<_> = saved
+            .steps
+            .iter()
+            .filter(|s| s.is_copied_context == Some(true))
+            .collect();
+        assert_eq!(
+            carried.len(),
+            1,
+            "the copied-context step must survive open→save: {:?}",
+            saved.steps
+        );
+        assert_eq!(carried[0].message.as_text(), Some("carried-over context"));
+        assert!(saved
+            .steps
+            .iter()
+            .any(|s| s.message.as_text() == Some("fresh question")));
     }
 
     #[test]

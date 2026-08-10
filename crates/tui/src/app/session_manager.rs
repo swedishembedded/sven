@@ -76,6 +76,12 @@ pub(crate) struct SessionEntry {
     /// Stored chat segments for inactive sessions (active session uses `App.chat`).
     pub stored_chat: Option<ChatState>,
 
+    /// Steps of the loaded trajectory that the chat view omits
+    /// (`is_copied_context == Some(true)`, e.g. context carried over from a
+    /// continued trajectory). [`Self::to_trajectory`] prepends them so an
+    /// open→save round trip never deletes them from the file.
+    pub copied_context_steps: Vec<trace::TraceStep>,
+
     // ── Stored input/queue state (populated when session is inactive) ─────────
     /// Saved input buffer text for this session when inactive.
     pub stored_input_buffer: Option<String>,
@@ -157,6 +163,7 @@ impl SessionEntry {
             created_at: meta.as_ref().map(|m| m.created_at).unwrap_or(now),
             updated_at: meta.as_ref().map(|m| m.updated_at).unwrap_or(now),
             stored_chat: None,
+            copied_context_steps: sven_input::copied_context_steps(trajectory),
             stored_input_buffer: None,
             stored_input_cursor: None,
             stored_input_attachments: None,
@@ -191,6 +198,7 @@ impl SessionEntry {
             created_at: now,
             updated_at: now,
             stored_chat: None,
+            copied_context_steps: Vec::new(),
             stored_input_buffer: None,
             stored_input_cursor: None,
             stored_input_attachments: None,
@@ -230,6 +238,7 @@ impl SessionEntry {
             created_at: now,
             updated_at: now,
             stored_chat: None,
+            copied_context_steps: Vec::new(),
             stored_input_buffer: None,
             stored_input_cursor: None,
             stored_input_attachments: None,
@@ -288,7 +297,12 @@ impl SessionEntry {
             })
             .collect();
 
-        let steps = sven_input::conversation_records_to_steps(&records);
+        // Carry the copied-context steps the chat view omitted, or an
+        // open→save round trip would permanently delete them.
+        let steps = sven_input::conversation_records_to_steps_with_copied_context(
+            &self.copied_context_steps,
+            &records,
+        );
 
         let mut agent = sven_input::default_agent_profile();
         if let Some(m) = &model {
@@ -514,6 +528,8 @@ fn session_entry_from_unified(entry: UnifiedSessionEntry, parent_id: Option<Sess
         created_at: entry.updated_at,
         updated_at: entry.updated_at,
         stored_chat: None,
+        // Populated when the trajectory is actually loaded on switch-to.
+        copied_context_steps: Vec::new(),
         stored_input_buffer: None,
         stored_input_cursor: None,
         stored_input_attachments: None,
@@ -942,6 +958,61 @@ mod tests {
             })
             .collect();
         assert_eq!(assistant_texts, vec!["The answer is 4.", "You're welcome!"]);
+    }
+
+    #[test]
+    fn open_then_save_preserves_copied_context_steps() {
+        // Spec: copied-context steps (is_copied_context == true, e.g. from a
+        // continued trajectory) are hidden from the chat view, but an
+        // open→save round trip must NOT delete them from the file.
+        let mut source = trace::Trajectory::new(
+            sven_input::ATIF_SCHEMA_VERSION,
+            sven_input::default_agent_profile(),
+        );
+        let mut copied = trace::TraceStep::new(1, trace::StepOrigin::User, "carried-over context");
+        copied.is_copied_context = Some(true);
+        source.steps = vec![
+            copied,
+            trace::TraceStep::new(2, trace::StepOrigin::User, "fresh question"),
+        ];
+
+        let entry = SessionEntry::from_trajectory_into(
+            &source,
+            SessionId::from_string("session-copied".into()),
+            None,
+            false,
+        );
+
+        // Rebuild the chat view exactly as switch_session does (the view
+        // omits the copied step), then save.
+        let records = sven_input::steps_to_conversation_records(&source.steps);
+        let mut chat = ChatState::new();
+        chat.segments = records
+            .into_iter()
+            .filter_map(crate::app::conversation_record_to_chat_segment)
+            .collect();
+        let saved = entry.to_trajectory(&chat, None, None);
+
+        let carried: Vec<_> = saved
+            .steps
+            .iter()
+            .filter(|s| s.is_copied_context == Some(true))
+            .collect();
+        assert_eq!(
+            carried.len(),
+            1,
+            "the copied-context step must survive open→save: {:?}",
+            saved.steps
+        );
+        assert_eq!(carried[0].message.as_text(), Some("carried-over context"));
+        // The fresh step must survive too, and step ids stay contiguous.
+        assert!(saved
+            .steps
+            .iter()
+            .any(|s| s.message.as_text() == Some("fresh question")));
+        for (i, s) in saved.steps.iter().enumerate() {
+            assert_eq!(s.step_id, (i + 1) as u64, "contiguous step ids");
+        }
     }
 
     #[test]

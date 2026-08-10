@@ -1828,6 +1828,8 @@ impl SvenApp {
                             tool_summary: view.summary,
                             tool_category: view.category,
                             tool_fields_json: fields_json,
+                            // Preserved through display→persist round trips.
+                            tool_call_id: tc_call.id.clone(),
                             is_expanded,
                             ..Default::default()
                         });
@@ -2305,7 +2307,12 @@ fn plain_messages_to_sven_messages(plain: &[PlainChatMessage]) -> Vec<SvenMessag
                         std::mem::take(&mut assistant_buf),
                     )));
                 }
-                let id = format!("call_{}", tool_call_counter);
+                // Keep the original correlation id when the message has one.
+                let id = if p.tool_call_id.is_empty() {
+                    format!("call_{}", tool_call_counter)
+                } else {
+                    p.tool_call_id.clone()
+                };
                 tool_call_counter += 1;
                 last_tool_call_id = Some(id.clone());
                 segments.push(ChatSegment::Message(SvenMessage {

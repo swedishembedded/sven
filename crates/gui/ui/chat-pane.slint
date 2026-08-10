@@ -72,6 +72,9 @@ export struct ChatMessage {
     tool-summary: string,
     tool-category: string,
     tool-fields-json: string,
+    // Original provider/ATIF call id; carried (not rendered) so that saving
+    // a session preserves call↔result correlation ids.
+    tool-call-id: string,
     // Merged tool result (attached to the tool-call message)
     tool-result-content: string,
     tool-result-is-error: bool,

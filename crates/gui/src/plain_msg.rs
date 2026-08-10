@@ -145,6 +145,11 @@ pub struct PlainChatMessage {
     pub tool_summary: String,
     pub tool_category: String,
     pub tool_fields_json: String,
+    /// Original ATIF/provider tool_call_id for `tool-call` messages. Kept so
+    /// a display→persist round trip does not regenerate ids and destroy the
+    /// call↔observation correlation; empty for messages that never had one
+    /// (persistence then falls back to a generated `call_{n}`).
+    pub tool_call_id: String,
 
     pub language: String,
     pub heading_level: i32,
@@ -289,6 +294,7 @@ impl PlainChatMessage {
             tool_summary: SharedString::from(self.tool_summary.as_str()),
             tool_category: SharedString::from(self.tool_category.as_str()),
             tool_fields_json: SharedString::from(self.tool_fields_json.as_str()),
+            tool_call_id: SharedString::from(self.tool_call_id.as_str()),
             tool_result_content: SharedString::from(self.tool_result_content.as_str()),
             tool_result_is_error: self.tool_result_is_error,
             thinking_preview: SharedString::from(self.thinking_preview.as_str()),
@@ -380,6 +386,7 @@ pub fn slint_msg_to_plain(m: &ChatMessage) -> PlainChatMessage {
         tool_summary: m.tool_summary.to_string(),
         tool_category: m.tool_category.to_string(),
         tool_fields_json: m.tool_fields_json.to_string(),
+        tool_call_id: m.tool_call_id.to_string(),
         tool_result_content: m.tool_result_content.to_string(),
         tool_result_is_error: m.tool_result_is_error,
         thinking_preview: m.thinking_preview.to_string(),
