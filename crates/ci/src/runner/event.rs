@@ -557,8 +557,8 @@ fn handle_subagent_update(
 /// embedded-trajectory observation to whatever step is currently pending on
 /// `parent_assembler` ([`StepAssembler::push_subagent_embedded`], correlated
 /// with `call_id`, the spawning `task` call) and appends the child
-/// trajectory to `completed_subagents` for the next flush to attach via
-/// `sven_input::trace_session::record_subagent_embedded`.
+/// trajectory to `completed_subagents` for the next flush to attach to
+/// `Trajectory.subagent_trajectories`.
 ///
 /// Exactly one of `final_text` / `failure_reason` is expected to be `Some`
 /// (`Finished` vs. `Failed`); if a failure reason is given it is recorded as

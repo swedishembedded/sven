@@ -9,9 +9,13 @@ mod markdown;
 mod queue;
 pub mod trace_session;
 
+// Legacy YAML chat support: only the read-only import surface the GUI/TUI
+// actually use is re-exported; the rest (`chat_dir`, `list_chats`,
+// `parse_chat_document`, `turns_to_records`, `ChatDocument`, ...) stays
+// reachable under `chat_document::` for the crate-internal legacy listing
+// and the importer.
 pub use chat_document::{
-    chat_dir, chat_path, ensure_chat_dir, json_str_to_yaml, list_chats, load_chat, load_chat_from,
-    parse_chat_document, turns_to_records, yaml_to_json_str, ChatDocument, ChatEntry, ChatStatus,
+    chat_path, ensure_chat_dir, json_str_to_yaml, load_chat_from, yaml_to_json_str, ChatStatus,
     ChatUsage, SessionId, TurnRecord,
 };
 pub use conversation::{
@@ -27,9 +31,8 @@ pub use trace_session::{
     chat_usage_to_final_metrics, conversation_records_to_steps,
     conversation_records_to_steps_with_copied_context, copied_context_steps, default_agent_profile,
     ensure_session_dir, final_metrics_to_chat_usage, import_legacy_chat_document, list_all_sessions,
-    list_sessions, load_session, load_session_from, load_session_with_fingerprint, messages_to_steps,
-    new_session_id, record_subagent_spawn, save_session, save_session_atomic, session_dir, session_path,
-    steps_to_conversation_records, steps_to_messages, steps_to_turn_records, turn_records_to_steps,
-    turn_records_to_steps_with_copied_context, ContextCompactionDetails, SessionEntry, StepAssembler,
-    SvenSessionMeta, UnifiedSessionEntry, ATIF_SCHEMA_VERSION,
+    list_sessions, load_session_from, messages_to_steps, new_session_id, record_subagent_spawn,
+    session_path, steps_to_conversation_records, steps_to_messages, steps_to_turn_records,
+    turn_records_to_steps, turn_records_to_steps_with_copied_context, ContextCompactionDetails,
+    SessionEntry, StepAssembler, SvenSessionMeta, UnifiedSessionEntry, ATIF_SCHEMA_VERSION,
 };

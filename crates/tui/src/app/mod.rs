@@ -75,9 +75,10 @@ pub struct AppOptions {
     pub model_override: Option<String>,
     /// Combined load+output ATIF trace path (`--trace`), or the output-only
     /// path (`--output-trace`). Loaded and saved as a native ATIF `Trajectory`
-    /// document (see `trace_session::load_session_from`/`save_session_atomic`) -
-    /// this is now the ONE session-persistence path for the TUI; there is no
-    /// separate YAML/JSONL branch.
+    /// document (`trace_session::load_session_from` /
+    /// `trace::persist::write_trajectory_atomic`) - this is now the ONE
+    /// session-persistence path for the TUI; there is no separate YAML/JSONL
+    /// branch.
     pub trace_path: Option<PathBuf>,
     /// Load-only ATIF trace path (`--load-trace`).
     pub load_trace_path: Option<PathBuf>,

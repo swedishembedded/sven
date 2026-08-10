@@ -7,7 +7,9 @@
 //! This module is now READ-ONLY: it exists solely so a user's pre-existing
 //! `.yaml` chat files (`~/.local/share/sven/chats/*.yaml`, from before the
 //! ATIF migration) can still be discovered ([`list_chats`]) and opened
-//! ([`load_chat`]/[`load_chat_from`]) via [`crate::trace_session::import_legacy_chat_document`].
+//! ([`load_chat_from`]) via [`crate::trace_session::import_legacy_chat_document`].
+//! (`SessionId`/`TurnRecord`/`ChatStatus`/`ChatUsage` are also still the
+//! shared vocabulary types the ATIF session layer reuses.)
 //! Nothing in sven ever writes a `.yaml` file anymore - once a legacy session
 //! is opened, its next save always writes a new `.json` trajectory file
 //! instead (see `trace_session`'s module docs), leaving the original `.yaml`
@@ -347,15 +349,6 @@ pub fn ensure_chat_dir() -> Result<PathBuf> {
 /// Returns the file path for a chat document with the given session ID.
 pub fn chat_path(id: &SessionId) -> PathBuf {
     chat_dir().join(format!("{}.yaml", id))
-}
-
-/// Load a `ChatDocument` from its canonical path using the session ID.
-pub fn load_chat(id: &SessionId) -> Result<ChatDocument> {
-    let path = chat_path(id);
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading chat document {}", path.display()))?;
-    parse_chat_document(&content)
-        .with_context(|| format!("parsing chat document {}", path.display()))
 }
 
 /// Load a `ChatDocument` from an explicit file path.
