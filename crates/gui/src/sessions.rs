@@ -965,13 +965,14 @@ pub fn load_session_by_id(session_id: &str) -> anyhow::Result<Trajectory> {
     Ok(sven_input::import_legacy_chat_document(&doc))
 }
 
-/// Delete a session from disk - both the native `.json` file (if any) and a
-/// legacy `.yaml` twin (if any), so "delete" fully removes the session
-/// regardless of which format currently backs it.
+/// Delete a session from disk - both the native `.json` file (if any, along
+/// with its atomic-writer `.lock`/temp sidecars) and a legacy `.yaml` twin
+/// (if any), so "delete" fully removes the session regardless of which
+/// format currently backs it.
 pub fn delete_session_from_disk(session_id: &str) {
     let native_path = sven_input::session_path(session_id);
     if native_path.exists() {
-        if let Err(e) = std::fs::remove_file(&native_path) {
+        if let Err(e) = trace::persist::remove_trajectory(&native_path) {
             tracing::warn!("failed to delete session {}: {e}", native_path.display());
         }
     }

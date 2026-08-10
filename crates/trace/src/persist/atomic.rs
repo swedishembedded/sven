@@ -102,13 +102,16 @@ pub fn read_trajectory_with_fingerprint(path: &Path) -> Result<(Trajectory, File
 
 /// Write a trajectory to `path` atomically:
 ///
-/// 1. Serialize to a temp file in the same directory (so `rename` stays on
-///    one filesystem).
-/// 2. Take an exclusive `flock` on a sidecar lock file.
-/// 3. While holding the lock, compare the target's current
+/// 1. Take an exclusive `flock` on a sidecar lock file (Unix; on other
+///    platforms writers are only atomic against readers, not each other).
+/// 2. While holding the lock, compare the target's current
 ///    [`FileFingerprint`] against `expected`. Mismatch (or an unexpected
 ///    appearance/disappearance of the file) fails with
 ///    [`PersistError::Conflict`] instead of overwriting.
+/// 3. Serialize to a **writer-unique** temp file in the same directory (so
+///    `rename` stays on one filesystem, and concurrent writers can never
+///    stomp on each other's temp file) and `fsync` it, so the rename can
+///    never publish an empty/partial file after a crash.
 /// 4. Replace the target via a single `rename()` (atomic on POSIX).
 ///
 /// Pass `expected = None` to skip the concurrent-modification check
@@ -123,11 +126,10 @@ pub fn write_trajectory_atomic(
 ) -> Result<(), PersistError> {
     let content = serialize_pretty(trajectory)?;
 
-    let temp_path = path.with_extension("json.tmp");
-    fs::write(&temp_path, &content)?;
-
+    // Serialize writers first (Unix): the lock must be held across the
+    // fingerprint check AND the temp-write+rename, or two writers race.
     #[cfg(unix)]
-    {
+    let _guard = {
         use std::os::unix::io::AsRawFd;
         let lock_path = path.with_extension("json.lock");
         let lock_file = fs::OpenOptions::new()
@@ -141,58 +143,84 @@ pub fn write_trajectory_atomic(
         // even if we return early via `?`.
         let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
         if ret != 0 {
-            let _ = fs::remove_file(&temp_path);
             return Err(std::io::Error::last_os_error().into());
         }
-        let _guard = LockGuard(lock_file);
+        LockGuard(lock_file)
+    };
 
-        if let Some(expected) = expected {
-            match fs::metadata(path) {
-                Ok(current) => {
-                    if fingerprint_of(&current) != *expected {
-                        let _ = fs::remove_file(&temp_path);
-                        return Err(PersistError::Conflict);
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // File vanished since the caller's read: also a conflict.
-                    let _ = fs::remove_file(&temp_path);
+    if let Some(expected) = expected {
+        match fs::metadata(path) {
+            Ok(current) => {
+                if fingerprint_of(&current) != *expected {
                     return Err(PersistError::Conflict);
                 }
-                Err(e) => {
-                    let _ = fs::remove_file(&temp_path);
-                    return Err(e.into());
-                }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // File vanished since the caller's read: also a conflict.
+                return Err(PersistError::Conflict);
+            }
+            Err(e) => return Err(e.into()),
         }
-
-        fs::rename(&temp_path, path)?;
     }
 
-    #[cfg(not(unix))]
-    {
-        if let Some(expected) = expected {
-            match fs::metadata(path) {
-                Ok(current) => {
-                    if fingerprint_of(&current) != *expected {
-                        let _ = fs::remove_file(&temp_path);
-                        return Err(PersistError::Conflict);
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    let _ = fs::remove_file(&temp_path);
-                    return Err(PersistError::Conflict);
-                }
-                Err(e) => {
-                    let _ = fs::remove_file(&temp_path);
-                    return Err(e.into());
-                }
-            }
+    let temp_path = unique_temp_path(path);
+    let write_and_rename = || -> Result<(), PersistError> {
+        {
+            use std::io::Write;
+            let mut temp = fs::File::create(&temp_path)?;
+            temp.write_all(content.as_bytes())?;
+            // Durability: the data must be on disk before the rename makes
+            // it the document, or a crash could publish a truncated file.
+            temp.sync_all()?;
         }
         fs::rename(&temp_path, path)?;
+        Ok(())
+    };
+    if let Err(e) = write_and_rename() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(e);
     }
-
     Ok(())
+}
+
+/// Remove a trajectory document together with its writer artifacts: the
+/// `.json.lock` flock sidecar [`write_trajectory_atomic`] creates and any
+/// orphaned `.json.tmp.*` temp files a crashed writer left behind. Callers
+/// that delete trajectory files directly leak the sidecar — use this.
+///
+/// Missing files are not an error (idempotent); sidecar/temp cleanup is
+/// best-effort and only the document's own removal can fail.
+pub fn remove_trajectory(path: &Path) -> std::io::Result<()> {
+    let _ = fs::remove_file(path.with_extension("json.lock"));
+    if let (Some(parent), Some(temp_prefix)) = (
+        path.parent(),
+        path.with_extension("json.tmp.")
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned()),
+    ) {
+        if let Ok(entries) = fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&temp_prefix) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    match fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// A temp path beside `path` that no concurrent writer (thread or process)
+/// can collide on: `<file>.json.tmp.<pid>.<seq>`. A deterministic shared
+/// name (the old scheme) let one writer rename another's half-written temp
+/// file — or fail because a sibling already renamed the shared temp away.
+fn unique_temp_path(path: &Path) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    path.with_extension(format!("json.tmp.{}.{}", std::process::id(), seq))
 }
 
 #[cfg(unix)]

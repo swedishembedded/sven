@@ -813,7 +813,8 @@ impl SessionManager {
                 self.list_selected = rows.len() - 1;
             }
             if let Some(path) = entry.session_path {
-                if let Err(e) = std::fs::remove_file(&path) {
+                // Removes the atomic-writer `.lock`/temp sidecars too.
+                if let Err(e) = trace::persist::remove_trajectory(&path) {
                     tracing::warn!(path = %path.display(), "failed to delete session file: {e}");
                 }
             }
