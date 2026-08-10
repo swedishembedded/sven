@@ -95,10 +95,12 @@ async fn inbound_message_forwarded_through_manager() {
         .await
         .unwrap();
 
-    // Give the spawned task a moment to forward the message.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let msg = bus_rx.try_recv().expect("should have received the message");
+    // Await the forwarded message; a bounded timeout instead of a
+    // sleep+try_recv race (flaky under CI load).
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(5), bus_rx.recv())
+        .await
+        .expect("timed out waiting for the forwarded message")
+        .expect("bus channel closed");
     assert_eq!(msg.channel, "telegram");
     assert_eq!(msg.sender, "user123");
     assert_eq!(msg.text, "ping");
@@ -148,9 +150,10 @@ async fn full_echo_flow() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let inbound = bus_rx.try_recv().expect("inbound message");
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(5), bus_rx.recv())
+        .await
+        .expect("timed out waiting for the inbound message")
+        .expect("bus channel closed");
 
     // Simulate agent producing a reply and dispatching it.
     mgr.send(OutboundMessage {

@@ -360,6 +360,27 @@ mod tests {
                 .unwrap_or(false)
         }
 
+        /// Skip the test (loudly) when no `nvim` binary is installed —
+        /// but FAIL instead when `SVEN_REQUIRE_NVIM` is set, so an
+        /// environment that intends to run this suite (e.g. a CI job that
+        /// installs nvim) can never silently "pass" all 45 tests without
+        /// executing a single one.
+        macro_rules! require_nvim {
+            () => {
+                if !nvim_available() {
+                    assert!(
+                        std::env::var_os("SVEN_REQUIRE_NVIM").is_none(),
+                        "SVEN_REQUIRE_NVIM is set but no nvim binary is on PATH"
+                    );
+                    eprintln!(
+                        "SKIPPED {}: nvim not installed (set SVEN_REQUIRE_NVIM=1 to make this an error)",
+                        module_path!()
+                    );
+                    return;
+                }
+            };
+        }
+
         async fn spawn_bridge() -> NvimBridge {
             NvimBridge::spawn(80, 24)
                 .await
@@ -409,9 +430,7 @@ mod tests {
 
         #[tokio::test]
         async fn spawn_creates_a_live_bridge() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let bridge = spawn_bridge().await;
             assert_eq!(bridge.width, 80);
             assert_eq!(bridge.height, 24);
@@ -419,9 +438,7 @@ mod tests {
 
         #[tokio::test]
         async fn set_buffer_content_then_get_returns_same_text() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let content = "Hello\nWorld\nLine three";
             bridge
@@ -438,9 +455,7 @@ mod tests {
 
         #[tokio::test]
         async fn set_buffer_content_empty_clears_buffer() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.set_buffer_content("initial content").await.unwrap();
             sleep(Duration::from_millis(50)).await;
@@ -459,9 +474,7 @@ mod tests {
 
         #[tokio::test]
         async fn set_buffer_content_overwrites_previous_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.set_buffer_content("old line").await.unwrap();
             sleep(Duration::from_millis(50)).await;
@@ -474,9 +487,7 @@ mod tests {
 
         #[tokio::test]
         async fn configure_buffer_succeeds_without_error() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let result = bridge.configure_buffer().await;
             assert!(
@@ -488,9 +499,7 @@ mod tests {
 
         #[tokio::test]
         async fn configure_buffer_preserves_content_set_afterwards() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -510,9 +519,7 @@ mod tests {
 
         #[tokio::test]
         async fn set_modifiable_false_prevents_edit_via_input() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.set_buffer_content("locked content").await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -532,9 +539,7 @@ mod tests {
 
         #[tokio::test]
         async fn set_modifiable_true_allows_edit_via_input() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.set_buffer_content("editable").await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -555,9 +560,7 @@ mod tests {
 
         #[tokio::test]
         async fn resize_updates_stored_dimensions() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.resize(120, 40).await.expect("resize must not fail");
             assert_eq!(bridge.width, 120);
@@ -566,9 +569,7 @@ mod tests {
 
         #[tokio::test]
         async fn render_to_lines_reflects_buffer_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("Hello from Neovim")
@@ -587,9 +588,7 @@ mod tests {
 
         #[tokio::test]
         async fn render_to_lines_after_content_change_reflects_new_text() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.set_buffer_content("first version").await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -603,9 +602,7 @@ mod tests {
 
         #[tokio::test]
         async fn send_input_j_moves_cursor_to_next_row() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("line1\nline2\nline3")
@@ -623,9 +620,7 @@ mod tests {
 
         #[tokio::test]
         async fn send_input_gg_moves_cursor_to_first_row() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("line1\nline2\nline3")
@@ -642,9 +637,7 @@ mod tests {
 
         #[tokio::test]
         async fn diagnose_fold_state_step_by_step() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(150)).await;
@@ -671,9 +664,7 @@ mod tests {
 
         #[tokio::test]
         async fn fold_commands_execute_without_error() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -701,9 +692,7 @@ mod tests {
 
         #[tokio::test]
         async fn fold_all_and_unfold_all_commands_execute() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -729,9 +718,7 @@ mod tests {
 
         #[tokio::test]
         async fn full_tui_startup_lifecycle_preserves_all_conversation_parts() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -747,9 +734,7 @@ mod tests {
 
         #[tokio::test]
         async fn full_tui_startup_lifecycle_produces_rendered_output() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(150)).await;
@@ -770,9 +755,7 @@ mod tests {
 
         #[tokio::test]
         async fn edit_first_message_updates_buffer_content_at_correct_position() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -808,9 +791,7 @@ mod tests {
 
         #[tokio::test]
         async fn edit_middle_message_preserves_earlier_and_later_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -847,9 +828,7 @@ mod tests {
 
         #[tokio::test]
         async fn edit_last_message_does_not_affect_earlier_messages() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -880,9 +859,7 @@ mod tests {
 
         #[tokio::test]
         async fn edited_buffer_with_tool_calls_parses_to_valid_messages() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge.configure_buffer().await.unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -935,9 +912,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_moves_cursor_to_last_line_and_content_is_visible() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let lines: Vec<String> = (1..=10).map(|i| format!("buffer_line_{i}")).collect();
             bridge.set_buffer_content(&lines.join("\n")).await.unwrap();
@@ -967,9 +942,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_is_idempotent_second_press_gives_same_cursor_row() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let content: String = (1..=15)
                 .map(|i| format!("line{i}"))
@@ -993,9 +966,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_on_buffer_longer_than_grid_scrolls_and_shows_last_lines() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let grid_height = bridge.height as usize;
             let n = grid_height * 2;
@@ -1025,9 +996,7 @@ mod tests {
 
         #[tokio::test]
         async fn gg_after_g_returns_cursor_to_grid_row_zero() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let content: String = (1..=20)
                 .map(|i| format!("ln{i}"))
@@ -1055,9 +1024,7 @@ mod tests {
 
         #[tokio::test]
         async fn insert_mode_cursor_row_matches_row_containing_typed_text() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("alpha\nbeta\ngamma")
@@ -1094,9 +1061,7 @@ mod tests {
 
         #[tokio::test]
         async fn insert_mode_at_specific_line_number_cursor_aligned() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             let content: String = (1..=8)
                 .map(|i| format!("content_{i}"))
@@ -1131,9 +1096,7 @@ mod tests {
 
         #[tokio::test]
         async fn render_to_lines_with_scroll_zero_is_correct_usage() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("first_line\nsecond_line\nthird_line")
@@ -1155,9 +1118,7 @@ mod tests {
 
         #[tokio::test]
         async fn render_to_lines_with_nonzero_scroll_hides_top_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("TOP_LINE\nsecond\nthird\nfourth\nfifth")
@@ -1175,9 +1136,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_with_fold_expression_reaches_actual_last_buffer_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = two_turn_conversation();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1203,9 +1162,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_with_multi_turn_conversation_cursor_reaches_last_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let mut content = String::new();
             for i in 1..=5 {
@@ -1238,9 +1195,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_with_tool_call_conversation_cursor_reaches_last_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = conversation_with_tool_call();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1257,9 +1212,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_with_long_wrapping_response_cursor_reaches_last_buffer_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = conversation_with_long_response();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1276,9 +1229,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_is_idempotent_with_fold_expression() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = two_turn_conversation();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1298,9 +1249,7 @@ mod tests {
 
         #[tokio::test]
         async fn level1_folds_open_level2_folds_closed_after_configure_and_set_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = conversation_with_tool_call();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1335,9 +1284,7 @@ mod tests {
 
         #[tokio::test]
         async fn insert_mode_after_g_appends_at_last_buffer_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = two_turn_conversation();
             bridge.set_buffer_content(&content).await.unwrap();
@@ -1361,9 +1308,7 @@ mod tests {
 
         #[tokio::test]
         async fn insert_mode_i_places_text_at_cursor_line_not_below() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = "---\n\n**You:** First\n\
                  \n**Agent:** Response one\n\
@@ -1396,9 +1341,7 @@ mod tests {
 
         #[tokio::test]
         async fn edit_at_specific_buffer_line_updates_correct_content() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = "---\n\n**You:** Turn one\n\
                  \n**Agent:** Answer one\n\
@@ -1449,9 +1392,7 @@ mod tests {
 
         #[tokio::test]
         async fn buffer_line_count_matches_set_content_line_count() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let content = two_turn_conversation();
             let expected_lines = content.split('\n').count() as i64;
@@ -1464,9 +1405,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_with_very_long_conversation_reaches_last_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let mut content = String::new();
             for i in 1..=20 {
@@ -1495,9 +1434,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_after_rapid_content_updates_reaches_current_last_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let base = "---\n\n**You:** Hello\n";
             let mut streaming = String::from("**Agent:** ");
@@ -1520,9 +1457,7 @@ mod tests {
 
         #[tokio::test]
         async fn g_after_content_update_reaches_new_last_line() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_configured_bridge().await;
             let first_content = "---\n\n**You:** First message\n\n**Agent:** First response\n";
             bridge.set_buffer_content(first_content).await.unwrap();
@@ -1551,9 +1486,7 @@ mod tests {
 
         #[tokio::test]
         async fn flush_notify_fires_after_input_is_processed() {
-            if !nvim_available() {
-                return;
-            }
+            require_nvim!();
             let mut bridge = spawn_bridge().await;
             bridge
                 .set_buffer_content("line1\nline2\nline3")

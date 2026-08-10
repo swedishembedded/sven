@@ -82,10 +82,14 @@ impl Machine for ChildMachine {
 
 /// Spawns a fully-isolated child `Runtime` per descriptor, drives it to its
 /// terminal state, then reports the harvested result up to the parent. Tracks
-/// the peak number of simultaneously-live children to prove real parallelism.
+/// the peak number of simultaneously-live children to prove real parallelism:
+/// every child waits on a shared [`tokio::sync::Barrier`] sized to the fan-out
+/// while counted as live, so overlap is *forced* deterministically (the old
+/// sleep-stagger only made overlap likely, which was flaky under load).
 struct RealChildSpawner {
     live: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
+    rendezvous: Arc<tokio::sync::Barrier>,
 }
 
 #[async_trait]
@@ -93,11 +97,22 @@ impl ChildSpawner for RealChildSpawner {
     async fn spawn_child(&self, machine: MachineId, descriptor: Value, parent: EventSink) {
         let live = Arc::clone(&self.live);
         let peak = Arc::clone(&self.peak);
+        let rendezvous = Arc::clone(&self.rendezvous);
         // Spawn-and-forget: spawn_child must return promptly so the parent loop
         // is never blocked and siblings start concurrently.
         tokio::spawn(async move {
             let now = live.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
+
+            // Rendezvous while live: every sibling must be live at once
+            // before any proceeds — deterministic overlap, no sleeps. The
+            // timeout keeps a regression (children spawned sequentially)
+            // failing the peak assertion instead of hanging the test.
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                rendezvous.wait(),
+            )
+            .await;
 
             // Each child gets a *fresh* context seeded only with its own task.
             let mut child_ctx = Context::new();
@@ -110,8 +125,6 @@ impl ChildSpawner for RealChildSpawner {
                 NoopExec,
                 16,
             );
-            // Drive the child to completion (stagger so children overlap).
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             let _ = rt.post(Event::user_message("go")).await;
             rt.wait_done().await;
             let report = rt.join().await.expect("child runtime joined");
@@ -223,6 +236,8 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
     let spawner = Arc::new(RealChildSpawner {
         live: Arc::clone(&live),
         peak: Arc::clone(&peak),
+        // Sized to the fan-out below: all three children must be live at once.
+        rendezvous: Arc::new(tokio::sync::Barrier::new(3)),
     });
 
     let rt = Runtime::spawn_with_children(
@@ -245,8 +260,8 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
     );
     assert_eq!(report.ctx.fact("remaining").and_then(Value::as_i64), Some(0));
     assert!(
-        peak.load(Ordering::SeqCst) >= 2,
-        "children must run concurrently (peak live = {})",
+        peak.load(Ordering::SeqCst) >= 3,
+        "all three children must be live concurrently (peak live = {})",
         peak.load(Ordering::SeqCst)
     );
 }
