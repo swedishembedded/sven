@@ -161,11 +161,13 @@ async fn main() -> anyhow::Result<()> {
                 // paths use — the full sven interface, over the pairing.
                 let client =
                     sven_node::connect::pair_client(uri, identity.as_deref()).await?;
-                let ws_url = sven_node::connect_bridge::serve_bridge(client).await?;
+                let bridge = sven_node::connect_bridge::serve_bridge(client).await?;
                 // SAFETY: single-threaded startup, before the TUI/tokio work.
                 unsafe {
-                    std::env::set_var("SVEN_NODE_URL", &ws_url);
-                    std::env::set_var("SVEN_NODE_TOKEN", "p2p-bridge");
+                    std::env::set_var("SVEN_NODE_URL", &bridge.ws_url);
+                    // The bridge listens on loopback, which any local process
+                    // can reach: authenticate with its per-launch token.
+                    std::env::set_var("SVEN_NODE_TOKEN", &bridge.token);
                     std::env::set_var("SVEN_NODE_INSECURE", "1");
                 }
                 let tui_cli = Cli::parse_from(["sven"]);
