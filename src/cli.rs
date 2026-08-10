@@ -776,7 +776,8 @@ pub enum CloudCommands {
         #[arg(long, env = "SVEN_TELEGRAM_BOT_TOKEN", value_name = "TOKEN")]
         telegram_bot_token: Option<String>,
         /// Comma-separated Telegram user IDs allowed to steer via the bot.
-        /// Empty allows all authenticated bot users (not recommended).
+        /// Required when `--telegram-bot-token` is set, unless every bot
+        /// user is explicitly admitted with `--telegram-allow-all`.
         #[arg(
             long,
             env = "SVEN_TELEGRAM_ALLOWED_USERS",
@@ -784,6 +785,12 @@ pub enum CloudCommands {
             value_delimiter = ','
         )]
         telegram_allowed_users: Vec<i64>,
+        /// Explicitly allow EVERY authenticated bot user to steer shared
+        /// sessions (not recommended). Without this flag an empty
+        /// `--telegram-allowed-users` list refuses to start rather than
+        /// silently admitting everyone.
+        #[arg(long, env = "SVEN_TELEGRAM_ALLOW_ALL")]
+        telegram_allow_all: bool,
         /// Operator bearer token the Telegram bridge acts as (its tenant/role
         /// scope every steer). The identity is from THIS token, never the chat.
         #[arg(long, env = "SVEN_TELEGRAM_OPERATOR_TOKEN", value_name = "TOKEN")]

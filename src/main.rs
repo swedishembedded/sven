@@ -1221,6 +1221,7 @@ async fn run_cloud_command(
             relay_listen,
             telegram_bot_token,
             telegram_allowed_users,
+            telegram_allow_all,
             telegram_operator_token,
         } => {
             run_cloud_serve(
@@ -1235,6 +1236,7 @@ async fn run_cloud_command(
                 TelegramShareArgs {
                     bot_token: telegram_bot_token.clone(),
                     allowed_users: telegram_allowed_users.clone(),
+                    allow_all: *telegram_allow_all,
                     operator_token: telegram_operator_token.clone(),
                 },
             )
@@ -1424,6 +1426,7 @@ fn derive_tether_url(base_url: &str) -> String {
 struct TelegramShareArgs {
     bot_token: Option<String>,
     allowed_users: Vec<i64>,
+    allow_all: bool,
     operator_token: Option<String>,
 }
 
@@ -1611,19 +1614,24 @@ fn maybe_start_telegram_share(
     )
     .context("the --telegram-operator-token is not an operator that may steer sessions")?;
 
+    // An empty allowlist refuses to start rather than silently admitting
+    // every Telegram user; allow-all is an explicit opt-in flag.
+    let allowed =
+        sven_cloud::TelegramAllowlist::from_cli(telegram.allowed_users.clone(), telegram.allow_all)?;
+    let allowed_desc = allowed.describe();
+
     let sender = sven_cloud::telegram_sender(bot_token.clone());
     let bridge = sven_cloud::TelegramShareBridge::new(
         principal.clone(),
-        telegram.allowed_users.clone(),
+        allowed,
         server.shared_sessions(),
         sender,
     );
     let bot_token = bot_token.clone();
     tokio::spawn(async move { bridge.run(bot_token).await });
     println!(
-        "  telegram   : consultant steering bridge ON (tenant {}, {} allowed user(s))",
+        "  telegram   : consultant steering bridge ON (tenant {}, {allowed_desc})",
         principal.tenant_id,
-        telegram.allowed_users.len()
     );
     Ok(())
 }
