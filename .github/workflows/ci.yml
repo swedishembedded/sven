@@ -57,6 +57,28 @@ jobs:
       - name: Run basic e2e tests
         run: make tests/e2e/basic
 
+  # End-to-end managed-agents platform tests: mock LLM → cloud session →
+  # RemoteToolExecutor → companion (loopback + WSS) → metered ledger →
+  # statement export, plus the firmware wedge (real gdb-multiarch against an
+  # in-process GDB-remote stub).
+  e2e-cloud:
+    name: E2E cloud platform tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install bats-core, gdb-multiarch and Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bats gdb-multiarch libfontconfig-dev
+
+      - name: Run cloud platform e2e tests
+        run: make tests/e2e/cloud
+
   demos:
     name: Deploy demos (hermetic live-binary smoke)
     runs-on: ubuntu-latest
