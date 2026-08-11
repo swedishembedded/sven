@@ -5,6 +5,8 @@ mod anthropic;
 mod aws;
 pub mod catalog;
 mod cohere;
+#[cfg(all(unix, feature = "dbus"))]
+pub mod dbus;
 mod google;
 mod mock;
 mod openai;
@@ -17,9 +19,11 @@ mod yaml_mock;
 
 pub use anthropic::AnthropicProvider;
 pub use catalog::{InputModality, ModelCatalogEntry};
+#[cfg(all(unix, feature = "dbus"))]
+pub use dbus::{BusKind, DbusOptions, DbusProvider};
 pub use mock::{MockProvider, ScriptedMockProvider};
 pub use openai::OpenAiProvider;
-pub use provider::ModelProvider;
+pub use provider::{ModelProvider, ResponseStream};
 pub use registry::{get_driver, list_drivers, DriverMeta};
 pub use types::*;
 pub use yaml_mock::YamlMockProvider;
@@ -137,6 +141,36 @@ struct ConfigBoundedProvider {
     /// Resolved output token cap: `cfg.max_output_tokens` if set, else
     /// `cfg.max_tokens` for backward compatibility.
     max_output_tokens: Option<u32>,
+    /// Input modalities declared in config (`cfg.input_modalities`).
+    ///
+    /// The bundled catalog cannot know about self-hosted multimodal models, so
+    /// a config declaration is authoritative when present.  `None` means "no
+    /// declaration" and the inner driver's answer is used instead.
+    input_modalities: Option<Vec<InputModality>>,
+}
+
+/// Parse the config's `input_modalities` strings into [`InputModality`] values.
+///
+/// Unknown entries are dropped with a warning rather than failing the whole
+/// config; an all-unknown list yields `None` so the driver's own answer wins.
+fn parse_input_modalities(values: &[String]) -> Option<Vec<InputModality>> {
+    let mut out = Vec::with_capacity(values.len());
+    for v in values {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "text" => out.push(InputModality::Text),
+            "image" | "vision" => out.push(InputModality::Image),
+            "audio" => out.push(InputModality::Audio),
+            other => tracing::warn!(
+                modality = other,
+                "unknown value in `input_modalities`; expected one of text, image, audio"
+            ),
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 #[async_trait]
@@ -176,7 +210,9 @@ impl ModelProvider for ConfigBoundedProvider {
     }
 
     fn input_modalities(&self) -> Vec<crate::catalog::InputModality> {
-        self.inner.input_modalities()
+        self.input_modalities
+            .clone()
+            .unwrap_or_else(|| self.inner.input_modalities())
     }
 
     fn config_context_window(&self) -> Option<u32> {
@@ -399,6 +435,26 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             ))
         }
 
+        // ── Local IPC: brain over D-Bus ───────────────────────────────────────
+        //
+        // Handled explicitly *before* the catch-all below: this driver has no
+        // HTTP endpoint, so it must not inherit the generic default-base-url
+        // behaviour.
+        #[cfg(all(unix, feature = "dbus"))]
+        "dbus" => Box::new(dbus::DbusProvider::new(
+            cfg.name.clone(),
+            dbus::DbusOptions::from_driver_options(&cfg.driver_options),
+            resolved_max_tokens,
+            cfg.temperature,
+        )),
+        #[cfg(not(all(unix, feature = "dbus")))]
+        "dbus" => {
+            anyhow::bail!(
+                "the 'dbus' model provider is not available in this build \
+                 (requires a Unix target and the `dbus` feature)"
+            )
+        }
+
         // ── Testing / Mock ────────────────────────────────────────────────────
         "mock" => {
             let responses_path = std::env::var("SVEN_MOCK_RESPONSES")
@@ -459,6 +515,10 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
         inner,
         context_window: config_ctx,
         max_output_tokens: resolved_max_tokens,
+        input_modalities: cfg
+            .input_modalities
+            .as_deref()
+            .and_then(parse_input_modalities),
     }))
 }
 
@@ -823,6 +883,93 @@ mod tests {
                 "unexpected error (provider should be recognized): {e}"
             ),
         }
+    }
+
+    // ── input_modalities from config ──────────────────────────────────────────
+
+    /// The bundled catalog cannot know about self-hosted multimodal models, so
+    /// a config declaration must win over whatever the driver would report.
+    #[test]
+    fn config_input_modalities_override_the_driver() {
+        let cfg = ModelConfig {
+            input_modalities: Some(vec!["text".into(), "image".into(), "audio".into()]),
+            ..minimal_config("mock", "brain/omni")
+        };
+        let p = from_config(&cfg).expect("mock provider builds");
+        assert!(p.supports_images());
+        assert!(p.supports_audio());
+    }
+
+    #[test]
+    fn absent_input_modalities_delegate_to_the_driver() {
+        let cfg = minimal_config("mock", "mock-model");
+        let p = from_config(&cfg).unwrap();
+        // MockProvider inherits the trait default, which is catalog-driven and
+        // conservative for an unknown model.
+        assert!(!p.supports_audio());
+    }
+
+    #[test]
+    fn unknown_modality_names_are_ignored_not_fatal() {
+        let cfg = ModelConfig {
+            input_modalities: Some(vec!["text".into(), "smell".into()]),
+            ..minimal_config("mock", "m")
+        };
+        let p = from_config(&cfg).expect("an unknown modality must not fail the build");
+        assert_eq!(p.input_modalities(), vec![InputModality::Text]);
+    }
+
+    #[test]
+    fn parse_input_modalities_maps_all_known_names() {
+        let v = parse_input_modalities(&[
+            "text".into(),
+            "IMAGE".into(),
+            "audio".into(),
+            "vision".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            v,
+            vec![
+                InputModality::Text,
+                InputModality::Image,
+                InputModality::Audio,
+                InputModality::Image,
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_input_modalities_returns_none_when_nothing_is_recognised() {
+        assert!(parse_input_modalities(&["taste".into()]).is_none());
+    }
+
+    // ── D-Bus driver ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn dbus_is_a_registered_driver_with_no_default_base_url() {
+        let meta = get_driver("dbus").expect("dbus must be registered");
+        assert!(
+            meta.default_base_url.is_none(),
+            "the D-Bus driver has no HTTP endpoint and must not inherit one"
+        );
+        assert!(!meta.requires_api_key);
+        assert!(meta.default_api_key_env.is_none());
+    }
+
+    #[cfg(all(unix, feature = "dbus"))]
+    #[test]
+    fn from_config_dbus_builds_without_contacting_the_bus() {
+        // The connection is established lazily, so building must succeed even
+        // with no D-Bus session available (as in CI).
+        let cfg = ModelConfig {
+            driver_options: serde_json::json!({ "action": "generate" }),
+            ..minimal_config("dbus", "brain/omni")
+        };
+        let p = from_config(&cfg).expect("dbus provider builds");
+        assert_eq!(p.name(), "dbus");
+        assert_eq!(p.model_name(), "brain/omni");
+        assert!(p.supports_images() && p.supports_audio());
     }
 
     #[test]

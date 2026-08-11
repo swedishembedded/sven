@@ -13,6 +13,15 @@ use crate::{
     CompletionRequest, ResponseEvent,
 };
 
+/// Placeholder substituted for audio content on the Anthropic transport.
+///
+/// The Anthropic Messages API defines no audio content block, so audio for
+/// this provider must be turned into text (transcribed) upstream.  Emitting a
+/// visible placeholder keeps the request valid and makes the omission obvious
+/// in the transcript instead of silently dropping the attachment.
+const ANTHROPIC_AUDIO_OMITTED: &str =
+    "[audio omitted: the Anthropic Messages API has no audio content block]";
+
 pub struct AnthropicProvider {
     model: String,
     api_key: Option<String>,
@@ -541,6 +550,15 @@ pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, 
                         ContentPart::Text { text } => {
                             json!({ "type": "text", "text": text })
                         }
+                        // The Anthropic Messages API has no audio content block
+                        // (this mirrors the real API and is a permanent scope
+                        // boundary).  Audio must be transcribed to text before
+                        // it reaches this driver; anything that slips through
+                        // degrades to a visible placeholder rather than an
+                        // invented non-standard block.
+                        ContentPart::Audio { .. } => {
+                            json!({ "type": "text", "text": ANTHROPIC_AUDIO_OMITTED })
+                        }
                         ContentPart::Image { image_url, .. } => {
                             if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url)
                             {
@@ -608,6 +626,9 @@ pub(crate) fn build_anthropic_messages(messages: &[crate::Message]) -> (String, 
                             .map(|p| match p {
                                 ToolContentPart::Text { text } => {
                                     json!({ "type": "text", "text": text })
+                                }
+                                ToolContentPart::Audio { .. } => {
+                                    json!({ "type": "text", "text": ANTHROPIC_AUDIO_OMITTED })
                                 }
                                 ToolContentPart::Image { image_url } => {
                                     if let Ok((mime, data)) =

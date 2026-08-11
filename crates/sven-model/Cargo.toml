@@ -3,8 +3,16 @@ name    = "sven-model"
 version = "1.0.0"
 edition = "2021"
 
+[features]
+default = ["dbus"]
+# The D-Bus model transport (brain's `com.swedishembedded.Brain1` interface).
+# Unix-only; the module is compiled away entirely on other platforms.
+dbus = ["dep:zbus", "dep:nix"]
+
 [dependencies]
 sven-config = { path = "../sven-config" }
+sven-image  = { path = "../sven-image" }
+sven-audio  = { path = "../sven-audio" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
@@ -21,3 +29,14 @@ sha2        = { workspace = true }
 hex         = { workspace = true }
 chrono      = { workspace = true }
 dirs        = { workspace = true }
+base64      = { workspace = true }
+
+# ── D-Bus transport (optional) ────────────────────────────────────────────────
+zbus = { version = "5", default-features = false, features = ["tokio"], optional = true }
+nix  = { version = "0.29", features = ["mman", "fs"], optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# `p2p` lets the D-Bus provider test serve a fake Brain1.Manager over a plain
+# UnixStream pair, with no dbus-daemon and no well-known name involved.
+zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }

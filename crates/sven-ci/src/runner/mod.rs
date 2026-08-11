@@ -156,6 +156,66 @@ pub struct CiOptions {
     pub load_chat: Option<PathBuf>,
     /// Write (or update) the YAML chat document after every step.
     pub output_chat: Option<PathBuf>,
+    /// Files attached to the **initial** user turn (from repeated `--attach`).
+    ///
+    /// Unlike the `attach_file` tool this needs no tool call, so it works with
+    /// models that have no tool-calling support at all.
+    pub attachments: Vec<PathBuf>,
+}
+
+// ── Attachment loading (`--attach`) ───────────────────────────────────────────
+
+/// Build the initial user turn's content parts from the prompt plus `paths`.
+///
+/// Classification and loading go through `sven_tools::load_attachment`, the
+/// same function the `attach_file` tool uses, so the CLI flag and the tool can
+/// never disagree about how a path becomes a content part.
+async fn build_attachment_parts(
+    prompt: &str,
+    paths: &[PathBuf],
+    model: &Arc<dyn sven_model::ModelProvider>,
+    asr: &sven_config::AsrConfig,
+) -> anyhow::Result<Vec<sven_model::ContentPart>> {
+    let opts = sven_tools::AttachOptions {
+        supports_images: model.supports_images(),
+        supports_audio: model.supports_audio(),
+        force_transcribe: false,
+        asr: asr.clone(),
+    };
+    let label = format!("{}/{}", model.name(), model.model_name());
+
+    let mut parts = vec![sven_model::ContentPart::text(prompt)];
+    for path in paths {
+        let loaded = sven_tools::load_attachment(path, &opts, &label)
+            .await
+            .with_context(|| format!("attaching {}", path.display()))?;
+        write_stderr(&format!(
+            "[sven:attach] {}",
+            loaded.text().lines().next().unwrap_or("")
+        ));
+        parts.extend(loaded.into_content_parts());
+    }
+
+    // If every attachment resolved to text (e.g. all audio was transcribed),
+    // merge into one text part.  `Message::user_with_parts` then collapses it
+    // to a plain string message, so the turn is indistinguishable from an
+    // ordinary prompt for every provider.
+    if parts
+        .iter()
+        .all(|p| matches!(p, sven_model::ContentPart::Text { .. }))
+    {
+        let merged = parts
+            .iter()
+            .filter_map(|p| match p {
+                sven_model::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        return Ok(vec![sven_model::ContentPart::text(merged)]);
+    }
+
+    Ok(parts)
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -778,6 +838,10 @@ impl CiRunner {
             }
         }
 
+        // Consumed by the first step only: `--attach` decorates the initial
+        // user turn, not every step.
+        let mut pending_attachments: Vec<PathBuf> = opts.attachments.clone();
+
         while let Some(step) = queue.pop() {
             step_idx += 1;
             let label = step.label.as_deref().unwrap_or("(unlabelled)");
@@ -864,8 +928,34 @@ impl CiRunner {
             let step_msg_start = collected.len();
             let _step_jsonl_start = run_jsonl_records.len();
 
+            // ── --attach: pre-load attachments into the first user turn ─────
+            // No tool call is involved, so this works even with models that
+            // cannot call tools at all.
+            let attached_parts: Option<Vec<sven_model::ContentPart>> =
+                if pending_attachments.is_empty() {
+                    None
+                } else {
+                    let paths = std::mem::take(&mut pending_attachments);
+                    Some(
+                        build_attachment_parts(
+                            &step_content,
+                            &paths,
+                            // The agent's *current* model: a per-step override
+                            // may already have replaced the initial one, and
+                            // its modalities are what decide native vs.
+                            // transcribed audio.
+                            &Arc::clone(agent.model()),
+                            &self.config.tools.asr,
+                        )
+                        .await?,
+                    )
+                };
+
             // Record the user turn before submitting
-            let user_msg = Message::user(&step_content);
+            let user_msg = match &attached_parts {
+                Some(parts) => Message::user_with_parts(parts.clone()),
+                None => Message::user(&step_content),
+            };
             collected.push(user_msg.clone());
             emit_record(
                 &mut run_jsonl_records,
@@ -919,7 +1009,13 @@ impl CiRunner {
             // Run the agent only when there was no cache hit.
             if !cache_hit {
                 let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
-                let submit_fut = agent.submit(&step_content, tx);
+                // Boxed so both submit variants share one future type.
+                type SubmitFuture<'a> =
+                    std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>>;
+                let submit_fut: SubmitFuture<'_> = match attached_parts {
+                    Some(parts) => Box::pin(agent.submit_with_parts(parts, tx)),
+                    None => Box::pin(agent.submit(&step_content, tx)),
+                };
 
                 let mut consecutive_tool_errors = 0;
 

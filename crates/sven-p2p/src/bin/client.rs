@@ -363,11 +363,8 @@ async fn run_oneshot(
     let peers = handle.room_peers(room);
     let sent = send_message(&handle, own_name, &peers, target_name.as_deref(), &body).await;
     if sent == 0 {
-        if target_name.is_some() {
-            anyhow::bail!(
-                "peer '@{}' not found in room '{room}'",
-                target_name.unwrap()
-            );
+        if let Some(name) = target_name {
+            anyhow::bail!("peer '@{name}' not found in room '{room}'");
         } else {
             println!("(no peers in room '{room}' to broadcast to)");
         }

@@ -169,6 +169,15 @@ impl Agent {
 
     /// Used by the CI runner to switch models mid-workflow (per-step model
     /// overrides).  The session history is preserved.
+    /// The model provider that will serve the next turn.
+    ///
+    /// Callers that must adapt their input to the model's capabilities (e.g.
+    /// deciding whether audio can be attached natively) need the *current*
+    /// model, which per-step overrides may have replaced since construction.
+    pub fn model(&self) -> &Arc<dyn sven_model::ModelProvider> {
+        &self.model
+    }
+
     pub fn set_model(&mut self, model: Arc<dyn sven_model::ModelProvider>) {
         // Update context window: prefer config-specified total, then catalog.
         if let Some(cw) = model
@@ -532,7 +541,7 @@ impl Agent {
             let cap = self.config.tool_result_token_cap;
             for (tc, output) in &results {
                 let category = self.tools.output_category(&tc.name);
-                let tool_msg = if output.has_images() {
+                let tool_msg = if output.has_images() || output.has_audio() {
                     use sven_model::ToolContentPart;
                     let parts: Vec<ToolContentPart> = output
                         .parts
@@ -544,6 +553,9 @@ impl Agent {
                             }
                             sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image {
                                 image_url: url.clone(),
+                            },
+                            sven_tools::ToolOutputPart::Audio(url) => ToolContentPart::Audio {
+                                audio_url: url.clone(),
                             },
                         })
                         .collect();
@@ -683,7 +695,7 @@ impl Agent {
             let cap = self.config.tool_result_token_cap;
             for (tc, output) in &results {
                 let category = self.tools.output_category(&tc.name);
-                let tool_msg = if output.has_images() {
+                let tool_msg = if output.has_images() || output.has_audio() {
                     use sven_model::ToolContentPart;
                     let parts: Vec<ToolContentPart> = output
                         .parts
@@ -695,6 +707,9 @@ impl Agent {
                             }
                             sven_tools::ToolOutputPart::Image(url) => ToolContentPart::Image {
                                 image_url: url.clone(),
+                            },
+                            sven_tools::ToolOutputPart::Audio(url) => ToolContentPart::Audio {
+                                audio_url: url.clone(),
                             },
                         })
                         .collect();
@@ -862,12 +877,13 @@ impl Agent {
         let tools: Vec<sven_model::ToolSchema> =
             raw_schemas.into_iter().map(tool_schema_to_model).collect();
 
-        // Strip image content when the current model does not support images.
+        // Strip image / audio content when the current model does not accept it.
         let modalities = self.model.input_modalities();
         let messages = sven_model::sanitize::strip_images_if_unsupported(
             self.session.messages.clone(),
             &modalities,
         );
+        let messages = sven_model::sanitize::strip_audio_if_unsupported(messages, &modalities);
 
         let req = CompletionRequest {
             messages: messages.clone(),
@@ -923,6 +939,8 @@ impl Agent {
                         self.session.messages.clone(),
                         &modalities2,
                     );
+                    let messages2 =
+                        sven_model::sanitize::strip_audio_if_unsupported(messages2, &modalities2);
                     let req2 = CompletionRequest {
                         messages: messages2,
                         tools: tools.clone(),

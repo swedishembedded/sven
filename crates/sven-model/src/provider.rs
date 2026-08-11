@@ -101,4 +101,12 @@ pub trait ModelProvider: Send + Sync {
     fn supports_images(&self) -> bool {
         self.input_modalities().contains(&InputModality::Image)
     }
+
+    /// Returns `true` if this model supports audio input natively.
+    ///
+    /// Callers use this to decide between attaching raw audio and falling
+    /// back to a text transcript (see `sven_tools`' `attach_file` tool).
+    fn supports_audio(&self) -> bool {
+        self.input_modalities().contains(&InputModality::Audio)
+    }
 }

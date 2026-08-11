@@ -3,12 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! File operation tools.
 
+pub mod asr;
+pub mod attach_file;
+pub mod attachment;
 pub mod delete_file;
 pub mod edit_file;
 pub mod find_file;
 pub mod read_file;
 pub mod write_file;
 
+pub use attach_file::AttachFileTool;
 pub use delete_file::DeleteFileTool;
 pub use edit_file::EditFileTool;
 pub use find_file::FindFileTool;

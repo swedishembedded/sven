@@ -1,11 +1,13 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Message sanitization: strip image content when the model does not support it.
+//! Message sanitization: strip image or audio content when the model does not
+//! support it.
 //!
-//! Call [`strip_images_if_unsupported`] before building a [`CompletionRequest`]
-//! to ensure that image parts are replaced with a text placeholder whenever the
-//! target model only supports text input.
+//! Call [`strip_images_if_unsupported`] and [`strip_audio_if_unsupported`]
+//! before building a [`CompletionRequest`] to ensure that image / audio parts
+//! are replaced with a text placeholder whenever the target model cannot
+//! accept them.
 
 use crate::{
     catalog::InputModality,
@@ -13,6 +15,7 @@ use crate::{
 };
 
 const IMAGE_OMITTED: &str = "[image omitted: model does not support image input]";
+const AUDIO_OMITTED: &str = "[audio omitted: model does not support audio input]";
 
 /// Replace all image content in `messages` with a text placeholder when
 /// `modalities` does not include [`InputModality::Image`].
@@ -23,22 +26,68 @@ pub fn strip_images_if_unsupported(
     messages: Vec<Message>,
     modalities: &[InputModality],
 ) -> Vec<Message> {
-    if modalities.contains(&InputModality::Image) {
-        return messages;
-    }
-    messages.into_iter().map(strip_message).collect()
+    strip_if_unsupported(messages, modalities, InputModality::Image, IMAGE_OMITTED)
 }
 
-fn strip_message(mut m: Message) -> Message {
+/// Replace all audio content in `messages` with a text placeholder when
+/// `modalities` does not include [`InputModality::Audio`].
+///
+/// If the model *does* accept audio this is a no-op and the messages are
+/// returned unchanged.  Mirrors [`strip_images_if_unsupported`].
+pub fn strip_audio_if_unsupported(
+    messages: Vec<Message>,
+    modalities: &[InputModality],
+) -> Vec<Message> {
+    strip_if_unsupported(messages, modalities, InputModality::Audio, AUDIO_OMITTED)
+}
+
+/// Shared implementation for the per-modality strippers.
+fn strip_if_unsupported(
+    messages: Vec<Message>,
+    modalities: &[InputModality],
+    target: InputModality,
+    placeholder: &str,
+) -> Vec<Message> {
+    if modalities.contains(&target) {
+        return messages;
+    }
+    messages
+        .into_iter()
+        .map(|m| strip_message(m, target, placeholder))
+        .collect()
+}
+
+/// Return `true` when `part` carries content of the modality being stripped.
+fn part_matches(part: &ContentPart, target: InputModality) -> bool {
+    matches!(
+        (part, target),
+        (ContentPart::Image { .. }, InputModality::Image)
+            | (ContentPart::Audio { .. }, InputModality::Audio)
+    )
+}
+
+/// Return `true` when `part` carries content of the modality being stripped.
+fn tool_part_matches(part: &ToolContentPart, target: InputModality) -> bool {
+    matches!(
+        (part, target),
+        (ToolContentPart::Image { .. }, InputModality::Image)
+            | (ToolContentPart::Audio { .. }, InputModality::Audio)
+    )
+}
+
+fn strip_message(mut m: Message, target: InputModality, placeholder: &str) -> Message {
     m.content = match m.content {
         MessageContent::ContentParts(parts) => {
             let stripped: Vec<ContentPart> = parts
                 .into_iter()
-                .map(|p| match p {
-                    ContentPart::Image { .. } => ContentPart::Text {
-                        text: IMAGE_OMITTED.to_string(),
-                    },
-                    other => other,
+                .map(|p| {
+                    if part_matches(&p, target) {
+                        ContentPart::Text {
+                            text: placeholder.to_string(),
+                        }
+                    } else {
+                        p
+                    }
                 })
                 .collect();
             // Collapse single text part back to Text for cleaner serialization.
@@ -56,7 +105,7 @@ fn strip_message(mut m: Message) -> Message {
             tool_call_id,
             content,
         } => {
-            let content = strip_tool_result_content(content);
+            let content = strip_tool_result_content(content, target, placeholder);
             MessageContent::ToolResult {
                 tool_call_id,
                 content,
@@ -67,16 +116,23 @@ fn strip_message(mut m: Message) -> Message {
     m
 }
 
-fn strip_tool_result_content(content: ToolResultContent) -> ToolResultContent {
+fn strip_tool_result_content(
+    content: ToolResultContent,
+    target: InputModality,
+    placeholder: &str,
+) -> ToolResultContent {
     match content {
         ToolResultContent::Parts(parts) => {
             let stripped: Vec<ToolContentPart> = parts
                 .into_iter()
-                .map(|p| match p {
-                    ToolContentPart::Image { .. } => ToolContentPart::Text {
-                        text: IMAGE_OMITTED.to_string(),
-                    },
-                    other => other,
+                .map(|p| {
+                    if tool_part_matches(&p, target) {
+                        ToolContentPart::Text {
+                            text: placeholder.to_string(),
+                        }
+                    } else {
+                        p
+                    }
                 })
                 .collect();
             // Collapse single text part back to Text.
@@ -188,6 +244,102 @@ mod tests {
             }
             other => panic!("expected ToolResult, got {:?}", other),
         }
+    }
+
+    // ── Audio ─────────────────────────────────────────────────────────────────
+
+    fn audio_modalities() -> Vec<InputModality> {
+        vec![InputModality::Text, InputModality::Audio]
+    }
+
+    #[test]
+    fn no_op_when_audio_supported() {
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text {
+                text: "listen".into(),
+            },
+            ContentPart::audio("data:audio/wav;base64,ABC"),
+        ]);
+        let result = strip_audio_if_unsupported(vec![msg], &audio_modalities());
+        assert_eq!(result[0].audio_urls(), vec!["data:audio/wav;base64,ABC"]);
+    }
+
+    #[test]
+    fn strips_audio_parts_from_content_parts() {
+        let msg = Message::user_with_parts(vec![
+            ContentPart::Text {
+                text: "transcribe this".into(),
+            },
+            ContentPart::audio("data:audio/wav;base64,ABC"),
+        ]);
+        let result = strip_audio_if_unsupported(vec![msg], &text_only_modalities());
+        assert!(result[0].audio_urls().is_empty());
+        match &result[0].content {
+            MessageContent::ContentParts(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert!(matches!(&parts[1], ContentPart::Text { text } if text == AUDIO_OMITTED));
+            }
+            other => panic!("expected ContentParts, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn strips_audio_from_single_part_collapses_to_text() {
+        let msg = Message::user_with_parts(vec![ContentPart::audio("data:audio/wav;base64,ABC")]);
+        let result = strip_audio_if_unsupported(vec![msg], &text_only_modalities());
+        assert!(matches!(result[0].content, MessageContent::Text(_)));
+        assert_eq!(result[0].as_text(), Some(AUDIO_OMITTED));
+    }
+
+    #[test]
+    fn strips_audio_from_tool_result_parts() {
+        let parts = vec![
+            ToolContentPart::Text {
+                text: "result".into(),
+            },
+            ToolContentPart::Audio {
+                audio_url: "data:audio/wav;base64,XYZ".into(),
+            },
+        ];
+        let msg = Message::tool_result_with_parts("id-1", parts);
+        let result = strip_audio_if_unsupported(vec![msg], &text_only_modalities());
+        match &result[0].content {
+            MessageContent::ToolResult { content, .. } => {
+                assert!(content.audio_urls().is_empty());
+                match content {
+                    ToolResultContent::Parts(p) => {
+                        assert!(
+                            matches!(&p[1], ToolContentPart::Text { text } if text == AUDIO_OMITTED)
+                        );
+                    }
+                    other => panic!("expected Parts, got {:?}", other),
+                }
+            }
+            other => panic!("expected ToolResult, got {:?}", other),
+        }
+    }
+
+    /// Stripping audio must leave image parts untouched, and vice versa.
+    #[test]
+    fn audio_strip_leaves_images_intact() {
+        let msg = Message::user_with_parts(vec![
+            ContentPart::image("data:image/png;base64,IMG"),
+            ContentPart::audio("data:audio/wav;base64,AUD"),
+        ]);
+        let result = strip_audio_if_unsupported(vec![msg], &vision_modalities());
+        assert_eq!(result[0].image_urls(), vec!["data:image/png;base64,IMG"]);
+        assert!(result[0].audio_urls().is_empty());
+    }
+
+    #[test]
+    fn image_strip_leaves_audio_intact() {
+        let msg = Message::user_with_parts(vec![
+            ContentPart::image("data:image/png;base64,IMG"),
+            ContentPart::audio("data:audio/wav;base64,AUD"),
+        ]);
+        let result = strip_images_if_unsupported(vec![msg], &audio_modalities());
+        assert!(result[0].image_urls().is_empty());
+        assert_eq!(result[0].audio_urls(), vec!["data:audio/wav;base64,AUD"]);
     }
 
     #[test]

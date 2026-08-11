@@ -715,6 +715,15 @@ pub struct Cli {
     #[arg(long, short = 'M', env = "SVEN_MODEL")]
     pub model: Option<String>,
 
+    /// Attach an image or audio file to the first user turn.
+    ///
+    /// Repeatable: `--attach scene.png --attach instruction.wav`.
+    /// Images are sent as image content; audio is sent as audio when the model
+    /// accepts it and transcribed to text otherwise.  This needs no tool call,
+    /// so it also works with models that cannot call tools.
+    #[arg(long = "attach", value_name = "PATH")]
+    pub attach: Vec<std::path::PathBuf>,
+
     /// Path to a markdown workflow file (CI mode).
     /// Workflow structure (H1, preamble, `##` steps) is only applied when using
     /// this flag; stdin is never parsed as a workflow.

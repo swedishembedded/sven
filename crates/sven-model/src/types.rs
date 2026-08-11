@@ -7,14 +7,23 @@ use serde::{Deserialize, Serialize};
 
 /// A single content part in a multi-part message.
 ///
-/// Used for user and assistant messages that mix text with images.
-/// Images are always represented as data URLs (`data:<mime>;base64,<b64>`)
-/// or HTTPS URLs for providers that accept remote references.
+/// Used for user and assistant messages that mix text with images or audio.
+/// Images and audio are always represented as data URLs
+/// (`data:<mime>;base64,<b64>`) or HTTPS URLs for providers that accept
+/// remote references.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
     Text {
         text: String,
+    },
+    Audio {
+        /// Data URL: `data:audio/wav;base64,<b64>`. WAV only for now.
+        audio_url: String,
+        /// Wire format hint ("wav"|"mp3"), OpenAI's `input_audio.format` field.
+        /// Derived from the data URL's MIME subtype when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
     },
     Image {
         /// Data URL (`data:image/png;base64,...`) or HTTPS URL.
@@ -55,6 +64,66 @@ impl ContentPart {
             detail: Some(detail.into()),
         }
     }
+
+    /// Convenience constructor for an audio part; the wire format is derived
+    /// from the data URL's MIME subtype (see [`ContentPart::audio_format`]).
+    pub fn audio(audio_url: impl Into<String>) -> Self {
+        Self::Audio {
+            audio_url: audio_url.into(),
+            format: None,
+        }
+    }
+
+    /// Convenience constructor for an audio part with an explicit wire format.
+    ///
+    /// `format` should be `"wav"` or `"mp3"` (OpenAI's `input_audio.format`).
+    pub fn audio_with_format(audio_url: impl Into<String>, format: impl Into<String>) -> Self {
+        Self::Audio {
+            audio_url: audio_url.into(),
+            format: Some(format.into()),
+        }
+    }
+
+    /// Wire format string for an audio part.
+    ///
+    /// Returns the explicit `format` when set, otherwise derives it from the
+    /// data URL's MIME subtype (`audio/wav` → `wav`, `audio/mpeg` → `mp3`).
+    /// Falls back to `"wav"` for unrecognised audio URLs, and returns `""` for
+    /// non-audio parts.
+    pub fn audio_format(&self) -> &str {
+        let Self::Audio { audio_url, format } = self else {
+            return "";
+        };
+        if let Some(f) = format {
+            return f.as_str();
+        }
+        mime_to_audio_format(audio_url)
+    }
+}
+
+/// Derive an OpenAI `input_audio.format` value from a data URL (or plain URL).
+///
+/// Recognises the MIME subtypes brain and the OpenAI API care about; anything
+/// unknown falls back to `"wav"`, which is the only format brain decodes.
+fn mime_to_audio_format(url: &str) -> &'static str {
+    let lower = url.to_ascii_lowercase();
+    let mime = lower
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split(&[';', ','][..]).next())
+        .unwrap_or("");
+    match mime {
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => "wav",
+        _ => {
+            // Not a data URL (or an unknown subtype): fall back to the file
+            // extension when one is present, else assume WAV.
+            if lower.ends_with(".mp3") {
+                "mp3"
+            } else {
+                "wav"
+            }
+        }
+    }
 }
 
 /// Content returned by a tool – either a plain string or structured parts.
@@ -90,6 +159,20 @@ impl ToolResultContent {
                 .collect(),
         }
     }
+
+    /// Collect all audio URLs embedded in this content.
+    pub fn audio_urls(&self) -> Vec<&str> {
+        match self {
+            Self::Text(_) => vec![],
+            Self::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ToolContentPart::Audio { audio_url } => Some(audio_url.as_str()),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<String> for ToolResultContent {
@@ -113,7 +196,7 @@ impl std::fmt::Display for ToolResultContent {
                     .iter()
                     .filter_map(|p| match p {
                         ToolContentPart::Text { text } => Some(text.as_str()),
-                        ToolContentPart::Image { .. } => None,
+                        ToolContentPart::Image { .. } | ToolContentPart::Audio { .. } => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -134,6 +217,10 @@ pub enum ToolContentPart {
         /// Data URL (`data:image/png;base64,...`).
         image_url: String,
     },
+    Audio {
+        /// Data URL (`data:audio/wav;base64,...`).
+        audio_url: String,
+    },
 }
 
 // ─── Data URL helpers ─────────────────────────────────────────────────────────
@@ -141,6 +228,19 @@ pub enum ToolContentPart {
 /// Parse a data URL of the form `data:<mime>;base64,<b64>` and return
 /// `Ok((mime_type, base64_string))`.  Returns `Err` for non-data-URLs so
 /// callers can fall back to treating the string as a plain HTTPS URL.
+/// Approximate the token cost of an audio part from its data URL.
+///
+/// Decoding the audio just to count tokens would be wasteful, so this
+/// estimates from the base64 payload size: assume 16-bit 16 kHz mono PCM
+/// (32 000 bytes/s) and roughly 50 tokens per second of audio, with a
+/// 100-token floor so short clips are never counted as free.
+fn audio_approx_tokens(audio_url: &str) -> usize {
+    let b64_len = audio_url.split_once(',').map(|(_, d)| d.len()).unwrap_or(0);
+    let bytes = b64_len / 4 * 3;
+    let seconds = bytes as f64 / 32_000.0;
+    ((seconds * 50.0).round() as usize).max(100)
+}
+
 pub fn parse_data_url_parts(url: &str) -> Result<(String, String), &'static str> {
     let rest = url.strip_prefix("data:").ok_or("not a data URL")?;
     let (meta, b64) = rest.split_once(',').ok_or("malformed data URL")?;
@@ -249,6 +349,21 @@ impl Message {
         }
     }
 
+    /// Collect all audio URLs present in this message (user or tool content).
+    pub fn audio_urls(&self) -> Vec<&str> {
+        match &self.content {
+            MessageContent::ContentParts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::Audio { audio_url, .. } => Some(audio_url.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            MessageContent::ToolResult { content, .. } => content.audio_urls(),
+            _ => vec![],
+        }
+    }
+
     /// Collect all image URLs present in this message (user or tool content).
     pub fn image_urls(&self) -> Vec<&str> {
         match &self.content {
@@ -276,6 +391,7 @@ impl Message {
                 .iter()
                 .map(|p| match p {
                     ContentPart::Text { text } => text.len(),
+                    ContentPart::Audio { audio_url, .. } => audio_approx_tokens(audio_url) * 4,
                     ContentPart::Image { detail, .. } => {
                         // "low" → fixed 85 tokens regardless of image size.
                         // auto / high / None → ~765 tokens (conservative upper bound).
@@ -298,6 +414,7 @@ impl Message {
                     .map(|p| match p {
                         ToolContentPart::Text { text } => text.len(),
                         ToolContentPart::Image { .. } => 765 * 4,
+                        ToolContentPart::Audio { audio_url } => audio_approx_tokens(audio_url) * 4,
                     })
                     .sum(),
             },
@@ -676,6 +793,121 @@ mod tests {
             !json.contains("\"detail\""),
             "detail should not appear when None: {json}"
         );
+    }
+
+    // ── Audio parts ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn content_part_audio_round_trips() {
+        let p = ContentPart::audio("data:audio/wav;base64,ABC");
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"type\":\"audio\""), "{json}");
+        assert!(!json.contains("\"format\""), "format is None: {json}");
+        let back: ContentPart = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn content_part_audio_with_format_round_trips() {
+        let p = ContentPart::audio_with_format("data:audio/wav;base64,ABC", "wav");
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"format\":\"wav\""), "{json}");
+        assert_eq!(serde_json::from_str::<ContentPart>(&json).unwrap(), p);
+    }
+
+    #[test]
+    fn audio_format_prefers_the_explicit_value() {
+        let p = ContentPart::audio_with_format("data:audio/mpeg;base64,A", "wav");
+        assert_eq!(p.audio_format(), "wav");
+    }
+
+    #[test]
+    fn audio_format_derives_wav_from_the_mime_subtype() {
+        assert_eq!(
+            ContentPart::audio("data:audio/wav;base64,A").audio_format(),
+            "wav"
+        );
+        assert_eq!(
+            ContentPart::audio("data:audio/x-wav;base64,A").audio_format(),
+            "wav"
+        );
+    }
+
+    #[test]
+    fn audio_format_derives_mp3_from_audio_mpeg() {
+        assert_eq!(
+            ContentPart::audio("data:audio/mpeg;base64,A").audio_format(),
+            "mp3"
+        );
+        assert_eq!(
+            ContentPart::audio("data:audio/mp3;base64,A").audio_format(),
+            "mp3"
+        );
+    }
+
+    #[test]
+    fn audio_format_falls_back_to_wav_for_unknown_urls() {
+        assert_eq!(ContentPart::audio("https://x/a.ogg").audio_format(), "wav");
+        assert_eq!(ContentPart::audio("https://x/a.mp3").audio_format(), "mp3");
+    }
+
+    #[test]
+    fn audio_format_is_empty_for_non_audio_parts() {
+        assert_eq!(ContentPart::text("hi").audio_format(), "");
+        assert_eq!(
+            ContentPart::image("data:image/png;base64,A").audio_format(),
+            ""
+        );
+    }
+
+    #[test]
+    fn message_audio_urls_collects_audio_parts_only() {
+        let m = Message::user_with_parts(vec![
+            ContentPart::text("listen"),
+            ContentPart::image("data:image/png;base64,IMG"),
+            ContentPart::audio("data:audio/wav;base64,AUD"),
+        ]);
+        assert_eq!(m.audio_urls(), vec!["data:audio/wav;base64,AUD"]);
+        assert_eq!(m.image_urls(), vec!["data:image/png;base64,IMG"]);
+    }
+
+    #[test]
+    fn tool_result_audio_urls_are_collected() {
+        let m = Message::tool_result_with_parts(
+            "c1",
+            vec![ToolContentPart::Audio {
+                audio_url: "data:audio/wav;base64,T".into(),
+            }],
+        );
+        assert_eq!(m.audio_urls(), vec!["data:audio/wav;base64,T"]);
+    }
+
+    #[test]
+    fn approx_tokens_audio_part_scales_with_payload_size() {
+        // ~10 s of 16-bit 16 kHz mono audio ≈ 320 000 bytes ≈ 426 667 base64 chars.
+        let long = ContentPart::audio(format!("data:audio/wav;base64,{}", "A".repeat(426_667)));
+        let short = ContentPart::audio("data:audio/wav;base64,AAAA");
+        let long_tokens = Message::user_with_parts(vec![long]).approx_tokens();
+        let short_tokens = Message::user_with_parts(vec![short]).approx_tokens();
+        // Short clips sit on the 100-token floor rather than costing nothing.
+        assert_eq!(short_tokens, 100, "floor applies to tiny clips");
+        assert!(
+            long_tokens > short_tokens,
+            "longer audio must cost more: {long_tokens} vs {short_tokens}"
+        );
+    }
+
+    #[test]
+    fn tool_result_display_skips_audio_parts() {
+        let content = ToolResultContent::Parts(vec![
+            ToolContentPart::Text {
+                text: "here".into(),
+            },
+            ToolContentPart::Audio {
+                audio_url: "data:audio/wav;base64,A".into(),
+            },
+        ]);
+        assert_eq!(content.to_string(), "here");
     }
 
     #[test]

@@ -63,6 +63,14 @@ pub fn output_to_call_result(output: ToolOutput) -> CallToolResult {
                 let (mime, data) = parse_data_uri(&data_uri);
                 Content::image(data.to_string(), mime.to_string())
             }
+            // MCP's content schema has no audio block, so audio degrades to a
+            // text note naming its MIME type rather than being dropped.
+            ToolOutputPart::Audio(data_uri) => {
+                let (mime, _data) = parse_data_uri(&data_uri);
+                Content::text(format!(
+                    "[audio attachment ({mime}) omitted: MCP tool results carry no audio block]"
+                ))
+            }
         })
         .collect();
 

@@ -20,6 +20,12 @@ pub use tool::{
 pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};
 
 // File operation tools
+pub use builtin::file::asr::{AsrError, Transcript};
+pub use builtin::file::attach_file::AttachFileTool;
+pub use builtin::file::attachment::{
+    classify as classify_attachment, load_attachment, AttachError, AttachOptions, AttachmentKind,
+    LoadedAttachment,
+};
 pub use builtin::file::delete_file::DeleteFileTool;
 pub use builtin::file::edit_file::EditFileTool;
 pub use builtin::file::find_file::FindFileTool;

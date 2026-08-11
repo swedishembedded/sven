@@ -65,6 +65,31 @@ pub fn write_jsonl_trace(
     Ok(())
 }
 
+/// Serialise an audio content part in the OpenAI `input_audio` shape.
+///
+/// Mirrors the wire format the OpenAI-compatible driver sends, so an exported
+/// trace can be replayed against the same endpoint:
+/// `{"type":"input_audio","input_audio":{"data":"<b64>","format":"wav"}}`.
+///
+/// Like the image path, the base64 payload is written in full — the export is
+/// a fine-tuning artifact, not a human-readable log.
+fn openai_audio_part(part: &ContentPart) -> Value {
+    let ContentPart::Audio { audio_url, .. } = part else {
+        return json!({ "type": "text", "text": "" });
+    };
+    let fmt = part.audio_format().to_string();
+    match sven_model::parse_data_url_parts(audio_url) {
+        Ok((_mime, b64)) => json!({
+            "type": "input_audio",
+            "input_audio": { "data": b64, "format": fmt },
+        }),
+        Err(_) => json!({
+            "type": "text",
+            "text": format!("[audio omitted: not an inline data URL: {audio_url}]"),
+        }),
+    }
+}
+
 /// Convert messages to OpenAI fine-tuning format.
 ///
 /// This format uses:
@@ -99,6 +124,7 @@ fn convert_to_openai_format(messages: &[Message]) -> Vec<Value> {
                                 }
                                 json!({ "type": "image_url", "image_url": img_obj })
                             }
+                            audio @ ContentPart::Audio { .. } => openai_audio_part(audio),
                         })
                         .collect();
                     json!({
@@ -152,6 +178,9 @@ fn convert_to_openai_format(messages: &[Message]) -> Vec<Value> {
                                             "image_url": { "url": image_url },
                                         })
                                     }
+                                    ToolContentPart::Audio { audio_url } => {
+                                        openai_audio_part(&ContentPart::audio(audio_url.clone()))
+                                    }
                                 })
                                 .collect();
                             json!(arr)
@@ -201,6 +230,12 @@ fn convert_to_anthropic_format(messages: &[Message]) -> anyhow::Result<Vec<Value
                             ContentPart::Image { image_url, .. } => json!({
                                 "type": "image",
                                 "source": {"type": "base64", "data": image_url}
+                            }),
+                            // The Anthropic format has no audio content block;
+                            // record a text placeholder so the trace stays valid.
+                            ContentPart::Audio { .. } => json!({
+                                "type": "text",
+                                "text": "[audio omitted: the Anthropic Messages API has no audio content block]"
                             }),
                         })
                         .collect(),

@@ -106,6 +106,7 @@ impl crate::ModelProvider for CohereProvider {
                                 .map(|p| match p {
                                     crate::ContentPart::Text { text } => text.clone(),
                                     crate::ContentPart::Image { .. } => "[image]".to_string(),
+                                    crate::ContentPart::Audio { .. } => "[audio]".to_string(),
                                 })
                                 .collect::<Vec<_>>()
                                 .join("\n");
@@ -139,6 +140,9 @@ impl crate::ModelProvider for CohereProvider {
                                         crate::ToolContentPart::Text { text } => text.clone(),
                                         crate::ToolContentPart::Image { .. } => {
                                             "[image]".to_string()
+                                        }
+                                        crate::ToolContentPart::Audio { .. } => {
+                                            "[audio]".to_string()
                                         }
                                     })
                                     .collect::<Vec<_>>()

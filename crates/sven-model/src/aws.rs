@@ -34,6 +34,10 @@ use crate::{
     CompletionRequest, MessageContent, ResponseEvent, Role,
 };
 
+/// Placeholder substituted for audio content, which Bedrock Converse does not
+/// accept for the text models sven targets.
+const AUDIO_PLACEHOLDER: &str = "[audio omitted: model does not support audio input]";
+
 pub struct BedrockProvider {
     model: String,
     region: String,
@@ -117,6 +121,12 @@ impl crate::ModelProvider for BedrockProvider {
                     .iter()
                     .map(|p| match p {
                         crate::ContentPart::Text { text } => json!({ "text": text }),
+                        // Bedrock Converse has no audio content block for the
+                        // text models sven targets; degrade to a placeholder
+                        // the same way an unparsable image does.
+                        crate::ContentPart::Audio { .. } => {
+                            json!({ "text": AUDIO_PLACEHOLDER })
+                        }
                         crate::ContentPart::Image { image_url, .. } => {
                             if let Ok((mime, b64)) = crate::types::parse_data_url_parts(image_url) {
                                 let format = normalize_bedrock_image_format(&mime);
@@ -156,6 +166,9 @@ impl crate::ModelProvider for BedrockProvider {
                             .iter()
                             .map(|p| match p {
                                 crate::ToolContentPart::Text { text } => json!({ "text": text }),
+                                crate::ToolContentPart::Audio { .. } => {
+                                    json!({ "text": AUDIO_PLACEHOLDER })
+                                }
                                 crate::ToolContentPart::Image { image_url } => {
                                     if let Ok((mime, b64)) =
                                         crate::types::parse_data_url_parts(image_url)

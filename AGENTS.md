@@ -55,6 +55,7 @@ runner, and a networked P2P node — all from the same workspace.
 | `sven-config` | Config schema and loader (`sven.yaml`) |
 | `sven-model` | `ModelProvider` trait, 32+ driver implementations, catalog |
 | `sven-image` | Image reading helpers |
+| `sven-audio` | WAV decoding, resampling, and audio data-URL helpers |
 | `sven-input` | Chat document model, history, title generation heuristics |
 | `sven-tools` | Full tool suite, approval policy, `Tool`/`ToolDisplay` traits |
 | `sven-core` | Agent loop, session state, context compaction, `AgentEvent` |

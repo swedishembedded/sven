@@ -220,6 +220,7 @@ fn serialize_history(messages: &[Message]) -> String {
                     .map(|p| match p {
                         sven_model::ContentPart::Text { text } => text.clone(),
                         sven_model::ContentPart::Image { .. } => "[image]".to_string(),
+                        sven_model::ContentPart::Audio { .. } => "[audio]".to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join(" "),

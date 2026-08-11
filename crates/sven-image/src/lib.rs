@@ -60,6 +60,16 @@ pub struct EncodedImage {
 }
 
 impl EncodedImage {
+    /// Pixel dimensions `(width, height)` of the encoded bytes.
+    ///
+    /// Reads only the image header, so this is cheap enough to call just to
+    /// build a human-readable description.
+    pub fn dimensions(&self) -> Result<(u32, u32), ImageError> {
+        image::load_from_memory(&self.bytes)
+            .map(|img| (img.width(), img.height()))
+            .map_err(|e| ImageError::Decode(self.mime_type.clone(), e.to_string()))
+    }
+
     /// Return a data URL: `data:<mime>;base64,<b64>`.
     pub fn into_data_url(self) -> String {
         let encoded = B64.encode(&self.bytes);
@@ -184,6 +194,75 @@ fn resize_if_needed(img: image::DynamicImage) -> image::DynamicImage {
     img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
 }
 
+// ─── Raw HWC f32 pixels (D-Bus wire convention) ──────────────────────────────
+
+/// Default maximum dimension for the raw-pixel path.
+///
+/// Raw pixels are ~50× larger than the encoded image they came from
+/// (`w * h * 3 * 4` bytes), so a 2048×2048 image would produce a 50 MB
+/// payload — far too large for a single D-Bus message.  Callers that need a
+/// different bound use [`decode_rgb_hwc_f32_max_dim`].
+pub const DEFAULT_RAW_MAX_DIM: u32 = 1024;
+
+/// Decode encoded image bytes to interleaved HWC RGB `f32` in `[0, 1]`.
+///
+/// Returns `(pixels, width, height)` where `pixels.len() == w * h * 3`.
+/// The image is downscaled so neither dimension exceeds
+/// [`DEFAULT_RAW_MAX_DIM`]; the data-URL path's own (larger) cap is
+/// unaffected.
+pub fn decode_rgb_hwc_f32(bytes: &[u8]) -> Result<(Vec<f32>, u32, u32), ImageError> {
+    decode_rgb_hwc_f32_max_dim(bytes, DEFAULT_RAW_MAX_DIM)
+}
+
+/// [`decode_rgb_hwc_f32`] with an explicit maximum dimension.
+///
+/// A `max_dim` of 0 disables downscaling.
+pub fn decode_rgb_hwc_f32_max_dim(
+    bytes: &[u8],
+    max_dim: u32,
+) -> Result<(Vec<f32>, u32, u32), ImageError> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| ImageError::Decode("<memory>".to_string(), e.to_string()))?;
+    let img = downscale_to_max_dim(img, max_dim);
+    let rgb = img.to_rgb8();
+    let (w, h) = (rgb.width(), rgb.height());
+    let pixels: Vec<f32> = rgb.as_raw().iter().map(|&c| c as f32 / 255.0).collect();
+    Ok((pixels, w, h))
+}
+
+/// Load an image file and decode it to interleaved HWC RGB `f32` in `[0, 1]`.
+pub fn load_rgb_hwc_f32(path: &Path) -> Result<(Vec<f32>, u32, u32), ImageError> {
+    load_rgb_hwc_f32_max_dim(path, DEFAULT_RAW_MAX_DIM)
+}
+
+/// [`load_rgb_hwc_f32`] with an explicit maximum dimension.
+pub fn load_rgb_hwc_f32_max_dim(
+    path: &Path,
+    max_dim: u32,
+) -> Result<(Vec<f32>, u32, u32), ImageError> {
+    let raw = std::fs::read(path).map_err(|e| ImageError::Io(path.display().to_string(), e))?;
+    decode_rgb_hwc_f32_max_dim(&raw, max_dim).map_err(|e| match e {
+        // Re-attach the real path to decode errors raised by the byte-level API.
+        ImageError::Decode(_, msg) => ImageError::Decode(path.display().to_string(), msg),
+        other => other,
+    })
+}
+
+/// Downscale so that neither dimension exceeds `max_dim` (0 = no limit).
+fn downscale_to_max_dim(img: image::DynamicImage, max_dim: u32) -> image::DynamicImage {
+    if max_dim == 0 {
+        return img;
+    }
+    let (w, h) = (img.width(), img.height());
+    if w <= max_dim && h <= max_dim {
+        return img;
+    }
+    let ratio = (max_dim as f64 / w as f64).min(max_dim as f64 / h as f64);
+    let new_w = ((w as f64 * ratio).round() as u32).max(1);
+    let new_h = ((h as f64 * ratio).round() as u32).max(1);
+    img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
+}
+
 /// Return whether the given file extension belongs to a supported image format.
 pub fn is_image_extension(ext: &str) -> bool {
     matches!(
@@ -278,6 +357,71 @@ mod tests {
             first.bytes, second.bytes,
             "second call should return cached bytes identical to first call"
         );
+    }
+
+    // ── Raw HWC f32 decoding ──────────────────────────────────────────────────
+
+    #[test]
+    fn decode_rgb_hwc_f32_produces_w_h_3_floats() {
+        let (px, w, h) = decode_rgb_hwc_f32(MINIMAL_PNG).unwrap();
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(px.len(), (w * h * 3) as usize);
+    }
+
+    #[test]
+    fn decode_rgb_hwc_f32_normalises_to_unit_range() {
+        let (px, _, _) = decode_rgb_hwc_f32(MINIMAL_PNG).unwrap();
+        for c in &px {
+            assert!((0.0..=1.0).contains(c), "channel out of range: {c}");
+        }
+        // The fixture is a pure red pixel.
+        assert!((px[0] - 1.0).abs() < 1e-6, "red channel: {}", px[0]);
+        assert!(px[1].abs() < 1e-6, "green channel: {}", px[1]);
+        assert!(px[2].abs() < 1e-6, "blue channel: {}", px[2]);
+    }
+
+    #[test]
+    fn decode_rgb_hwc_f32_rejects_garbage_bytes() {
+        assert!(decode_rgb_hwc_f32(b"definitely not an image").is_err());
+    }
+
+    #[test]
+    fn load_rgb_hwc_f32_reads_from_disk() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), MINIMAL_PNG).unwrap();
+        let (px, w, h) = load_rgb_hwc_f32(tmp.path()).unwrap();
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(px.len(), 3);
+    }
+
+    #[test]
+    fn load_rgb_hwc_f32_missing_file_errors() {
+        let err = load_rgb_hwc_f32(Path::new("/tmp/no_such_image_abc.png")).unwrap_err();
+        assert!(matches!(err, ImageError::Io(_, _)), "got {err:?}");
+    }
+
+    #[test]
+    fn raw_path_downscales_beyond_max_dim() {
+        // 32×16 white image encoded as PNG, capped at 8 px.
+        let img = image::RgbImage::from_pixel(32, 16, image::Rgb([255, 255, 255]));
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let (px, w, h) = decode_rgb_hwc_f32_max_dim(&buf.into_inner(), 8).unwrap();
+        assert!(w <= 8 && h <= 8, "expected downscale, got {w}x{h}");
+        assert_eq!(px.len(), (w * h * 3) as usize);
+    }
+
+    #[test]
+    fn raw_path_max_dim_zero_keeps_original_size() {
+        let img = image::RgbImage::from_pixel(20, 10, image::Rgb([0, 0, 0]));
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let (_, w, h) = decode_rgb_hwc_f32_max_dim(&buf.into_inner(), 0).unwrap();
+        assert_eq!((w, h), (20, 10));
     }
 
     #[test]

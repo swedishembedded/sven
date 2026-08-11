@@ -7,6 +7,36 @@ use serde_json::{json, Value};
 
 use crate::Role;
 
+/// Build an OpenAI `input_audio` content part.
+///
+/// The OpenAI wire format carries the *bare* base64 payload (no `data:` URL
+/// prefix) plus a `format` discriminator:
+///
+/// ```json
+/// { "type": "input_audio", "input_audio": { "data": "<b64>", "format": "wav" } }
+/// ```
+///
+/// When `audio_url` is not a data URL (a plain HTTPS reference) there is
+/// nothing standard to send, so the part degrades to a text note rather than
+/// inventing a non-standard field.
+fn audio_part_json(audio_url: &str, format: Option<&str>) -> Value {
+    let derived = crate::types::ContentPart::Audio {
+        audio_url: audio_url.to_string(),
+        format: format.map(|f| f.to_string()),
+    };
+    let fmt = derived.audio_format().to_string();
+    match crate::types::parse_data_url_parts(audio_url) {
+        Ok((_mime, b64)) => json!({
+            "type": "input_audio",
+            "input_audio": { "data": b64, "format": fmt },
+        }),
+        Err(_) => json!({
+            "type": "text",
+            "text": format!("[audio omitted: not an inline data URL: {audio_url}]"),
+        }),
+    }
+}
+
 pub(crate) fn role_str(r: &Role) -> &'static str {
     match r {
         Role::System => "system",
@@ -53,6 +83,7 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
                             "type": "image_url",
                             "image_url": { "url": image_url },
                         }),
+                        ToolContentPart::Audio { audio_url } => audio_part_json(audio_url, None),
                     })
                     .collect();
                 json!(arr)
@@ -103,6 +134,9 @@ pub(crate) fn build_openai_messages(messages: &[crate::Message]) -> Vec<Value> {
                     .iter()
                     .map(|p| match p {
                         ContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                        ContentPart::Audio { audio_url, format } => {
+                            audio_part_json(audio_url, format.as_deref())
+                        }
                         ContentPart::Image { image_url, detail } => {
                             let mut img_obj = json!({ "url": image_url });
                             if let Some(d) = detail {

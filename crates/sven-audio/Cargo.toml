@@ -1,0 +1,11 @@
+[package]
+name    = "sven-audio"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+base64    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

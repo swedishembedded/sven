@@ -291,6 +291,19 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://localhost:1234/v1"),
         requires_api_key: false,
     },
+    // ── Local IPC ─────────────────────────────────────────────────────────────
+    DriverMeta {
+        id: "dbus",
+        name: "D-Bus (brain)",
+        description: "Local brain server over D-Bus (com.swedishembedded.Brain1); \
+                      carries image and audio blobs as file descriptors",
+        default_api_key_env: None,
+        // Deliberately None: this driver has no HTTP endpoint at all, and it
+        // must never fall through to the OpenAI-compat catch-all's base-URL
+        // logic.  `from_config` handles "dbus" explicitly before that arm.
+        default_base_url: None,
+        requires_api_key: false,
+    },
     // ── Testing ───────────────────────────────────────────────────────────────
     DriverMeta {
         id: "mock",

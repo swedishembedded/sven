@@ -83,6 +83,18 @@ impl ScriptedMockProvider {
         self
     }
 
+    /// Declare that this mock accepts audio input natively.
+    ///
+    /// Use this in tests that exercise the native-audio path so that
+    /// `strip_audio_if_unsupported` does **not** strip audio parts, and so
+    /// that `supports_audio()` reports `true` to tools like `attach_file`.
+    pub fn with_audio(mut self) -> Self {
+        if !self.modalities.contains(&InputModality::Audio) {
+            self.modalities.push(InputModality::Audio);
+        }
+        self
+    }
+
     /// Convenience: provider that always returns a single text reply.
     pub fn always_text(reply: impl Into<String>) -> Self {
         let r = reply.into();

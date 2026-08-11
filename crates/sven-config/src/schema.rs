@@ -282,6 +282,10 @@ pub struct ModelParams {
     /// Path to YAML mock-responses file (used when driver = "mock")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mock_responses_file: Option<String>,
+    /// Override the accepted input modalities for this model only.
+    /// Any of `text`, `image`, `audio`.  See [`ModelConfig::input_modalities`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 /// A named provider entry in the `providers` config section.
@@ -345,6 +349,12 @@ pub struct ProviderEntry {
     /// Path to YAML mock-responses file (used when name = "mock").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mock_responses_file: Option<String>,
+
+    // ── Multimodal capability declaration ────────────────────────────────────
+    /// Default accepted input modalities for all models on this endpoint.
+    /// Any of `text`, `image`, `audio`.  See [`ModelConfig::input_modalities`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 impl Default for ProviderEntry {
@@ -363,6 +373,7 @@ impl Default for ProviderEntry {
             azure_api_version: None,
             aws_region: None,
             mock_responses_file: None,
+            input_modalities: None,
         }
     }
 }
@@ -387,6 +398,7 @@ impl ProviderEntry {
             azure_api_version: self.azure_api_version.clone(),
             aws_region: self.aws_region.clone(),
             mock_responses_file: self.mock_responses_file.clone(),
+            input_modalities: self.input_modalities.clone(),
             ..ModelConfig::default()
         };
 
@@ -427,6 +439,9 @@ impl ProviderEntry {
             }
             if let Some(ref f) = params.mock_responses_file {
                 cfg.mock_responses_file = Some(f.clone());
+            }
+            if let Some(ref m) = params.input_modalities {
+                cfg.input_modalities = Some(m.clone());
             }
         }
 
@@ -575,6 +590,24 @@ pub struct ModelConfig {
     /// Path to YAML mock-responses file (used when provider = "mock").
     /// Can also be set via the SVEN_MOCK_RESPONSES environment variable.
     pub mock_responses_file: Option<String>,
+
+    // ── Multimodal capability declaration ────────────────────────────────────
+    /// Input modalities this model accepts: any of `text`, `image`, `audio`.
+    ///
+    /// The bundled static model catalog only knows about public models, so
+    /// self-hosted multimodal endpoints must declare their capabilities here.
+    /// When set, this overrides whatever the driver/catalog would report; when
+    /// absent, the driver's own answer is used.
+    ///
+    /// ```yaml
+    /// providers:
+    ///   brain_openai:
+    ///     name: openai
+    ///     base_url: http://127.0.0.1:8788/v1
+    ///     input_modalities: [text, image, audio]
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 impl Default for ModelConfig {
@@ -612,6 +645,7 @@ impl Default for ModelConfig {
             cache_tool_results: true,
             driver_options: serde_json::Value::Null,
             mock_responses_file: None,
+            input_modalities: None,
         }
     }
 }
@@ -797,6 +831,51 @@ pub struct ToolsConfig {
     /// Voice integration (TTS/STT/calls)
     #[serde(default)]
     pub voice: VoiceConfig,
+    /// Speech-to-text fallback used by the `attach_file` tool when the active
+    /// model cannot accept audio natively.
+    #[serde(default)]
+    pub asr: AsrConfig,
+}
+
+/// Speech-to-text (ASR) fallback configuration.
+///
+/// `attach_file` shells out to this command when it must turn an audio file
+/// into text — either because the active model has no audio modality, or
+/// because the caller asked for `force_transcribe`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AsrConfig {
+    /// Executable invoked for transcription (must accept the `brain do` CLI
+    /// argument shape: `<command> do <model> transcribe --json --in audio=<file>`).
+    #[serde(default = "default_asr_command")]
+    pub command: String,
+    /// Model identifier passed to the transcription command.
+    #[serde(default = "default_asr_model")]
+    pub model: String,
+    /// Hard timeout for a single transcription subprocess, in seconds.
+    #[serde(default = "default_asr_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_asr_command() -> String {
+    "brain".into()
+}
+
+fn default_asr_model() -> String {
+    "brain/qwen-asr".into()
+}
+
+fn default_asr_timeout_secs() -> u64 {
+    120
+}
+
+impl Default for AsrConfig {
+    fn default() -> Self {
+        Self {
+            command: default_asr_command(),
+            model: default_asr_model(),
+            timeout_secs: default_asr_timeout_secs(),
+        }
+    }
 }
 
 impl Default for ToolsConfig {
@@ -821,6 +900,7 @@ impl Default for ToolsConfig {
             email: EmailConfig::default(),
             calendar: CalendarConfig::default(),
             voice: VoiceConfig::default(),
+            asr: AsrConfig::default(),
         }
     }
 }
@@ -1536,5 +1616,88 @@ providers:
         );
         let cfg = entry.to_model_config("local-model");
         assert_eq!(cfg.driver_options, driver_opts);
+    }
+
+    // ── input_modalities ──────────────────────────────────────────────────────
+
+    #[test]
+    fn provider_entry_input_modalities_are_inherited_by_models() {
+        let entry = ProviderEntry {
+            name: "openai".into(),
+            input_modalities: Some(vec!["text".into(), "image".into(), "audio".into()]),
+            ..ProviderEntry::default()
+        };
+        let cfg = entry.to_model_config("brain/omni");
+        assert_eq!(
+            cfg.input_modalities.as_deref(),
+            Some(&["text".to_string(), "image".to_string(), "audio".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn per_model_input_modalities_override_the_provider_default() {
+        let mut entry = ProviderEntry {
+            name: "openai".into(),
+            input_modalities: Some(vec!["text".into()]),
+            ..ProviderEntry::default()
+        };
+        entry.models.insert(
+            "brain/omni".into(),
+            ModelParams {
+                input_modalities: Some(vec!["text".into(), "audio".into()]),
+                ..ModelParams::default()
+            },
+        );
+        let cfg = entry.to_model_config("brain/omni");
+        assert_eq!(
+            cfg.input_modalities.as_deref(),
+            Some(&["text".to_string(), "audio".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn input_modalities_default_to_unset() {
+        let entry = ProviderEntry {
+            name: "openai".into(),
+            ..ProviderEntry::default()
+        };
+        assert!(entry.to_model_config("gpt-4o").input_modalities.is_none());
+    }
+
+    #[test]
+    fn input_modalities_parse_from_yaml() {
+        let yaml = r#"
+name: openai
+base_url: http://127.0.0.1:8788/v1
+input_modalities: [text, image, audio]
+"#;
+        let entry: ProviderEntry = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            entry.input_modalities.as_deref(),
+            Some(&["text".to_string(), "image".to_string(), "audio".to_string()][..])
+        );
+    }
+
+    // ── ASR config ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn asr_config_defaults_match_the_documented_values() {
+        let a = AsrConfig::default();
+        assert_eq!(a.command, "brain");
+        assert_eq!(a.model, "brain/qwen-asr");
+        assert_eq!(a.timeout_secs, 120);
+    }
+
+    #[test]
+    fn asr_config_partial_yaml_keeps_defaults_for_absent_keys() {
+        let a: AsrConfig = serde_yaml::from_str("command: /usr/local/bin/brain\n").unwrap();
+        assert_eq!(a.command, "/usr/local/bin/brain");
+        assert_eq!(a.model, "brain/qwen-asr");
+        assert_eq!(a.timeout_secs, 120);
+    }
+
+    #[test]
+    fn tools_config_exposes_asr_defaults() {
+        assert_eq!(ToolsConfig::default().asr, AsrConfig::default());
     }
 }

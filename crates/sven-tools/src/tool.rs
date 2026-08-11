@@ -20,14 +20,16 @@ pub struct ToolCall {
 
 /// A single content item in a rich tool output.
 ///
-/// Most tools produce only `Text`.  Vision-capable tools (e.g. `read_image`)
-/// may produce a mix of `Text` and `Image` items.
+/// Most tools produce only `Text`.  Multimodal tools (e.g. `read_image`,
+/// `attach_file`) may produce a mix of `Text`, `Image`, and `Audio` items.
 #[derive(Debug, Clone)]
 pub enum ToolOutputPart {
     /// Plain UTF-8 text.
     Text(String),
     /// Base64 data URL: `data:<mime>;base64,<b64>`.
     Image(String),
+    /// Base64 audio data URL: `data:audio/wav;base64,<b64>`.
+    Audio(String),
 }
 
 /// The result of executing a tool.
@@ -105,6 +107,13 @@ impl ToolOutput {
         self.parts
             .iter()
             .any(|p| matches!(p, ToolOutputPart::Image(_)))
+    }
+
+    /// Return `true` if this output contains at least one audio part.
+    pub fn has_audio(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|p| matches!(p, ToolOutputPart::Audio(_)))
     }
 }
 

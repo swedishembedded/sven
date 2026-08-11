@@ -1326,6 +1326,7 @@ async fn run_as_teammate(
                     max_tokens_budget: None,
                     load_chat: None,
                     output_chat: None,
+                    attachments: Vec::new(),
                 };
 
                 let run_result = CiRunner::new(config.clone()).run(ci_opts).await;
@@ -1569,6 +1570,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         max_tokens_budget: cli.max_tokens,
         load_chat,
         output_chat,
+        attachments: cli.attach,
     };
 
     CiRunner::new(config).run(opts).await

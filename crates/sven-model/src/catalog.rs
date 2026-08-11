@@ -38,6 +38,7 @@ const CACHE_TTL_SECS: u64 = 86_400; // 24 hours
 pub enum InputModality {
     Text,
     Image,
+    Audio,
 }
 
 fn default_input_modalities() -> Vec<InputModality> {
@@ -71,6 +72,11 @@ impl ModelCatalogEntry {
     /// Return `true` if the model can accept image input.
     pub fn supports_images(&self) -> bool {
         self.input_modalities.contains(&InputModality::Image)
+    }
+
+    /// Return `true` if the model can accept audio input.
+    pub fn supports_audio(&self) -> bool {
+        self.input_modalities.contains(&InputModality::Audio)
     }
 }
 

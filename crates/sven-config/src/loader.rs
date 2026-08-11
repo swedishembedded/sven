@@ -277,6 +277,7 @@ const MODEL_CONFIG_KEYS: &[&str] = &[
     "cache_tool_results",
     "driver_options",
     "mock_responses_file",
+    "input_modalities",
 ];
 
 /// Known keys in [`crate::ProviderEntry`].
@@ -296,6 +297,7 @@ const PROVIDER_ENTRY_KEYS: &[&str] = &[
     "azure_api_version",
     "aws_region",
     "mock_responses_file",
+    "input_modalities",
 ];
 
 /// Known keys in [`crate::ModelParams`].
@@ -312,6 +314,7 @@ const MODEL_PARAMS_KEYS: &[&str] = &[
     "cache_images",
     "cache_tool_results",
     "mock_responses_file",
+    "input_modalities",
 ];
 
 /// Known keys in [`crate::AgentConfig`].
@@ -339,7 +342,11 @@ const TOOLS_CONFIG_KEYS: &[&str] = &[
     "memory",
     "lints",
     "gdb",
+    "asr",
 ];
+
+/// Known keys in [`crate::AsrConfig`].
+const ASR_CONFIG_KEYS: &[&str] = &["command", "model", "timeout_secs"];
 
 /// Known keys in [`crate::TuiConfig`].
 const TUI_CONFIG_KEYS: &[&str] = &["theme", "code_line_numbers", "wrap_width", "ascii_borders"];
@@ -407,6 +414,8 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
         (LINTS_CONFIG_KEYS, "tools.lints")
     } else if path == "tools.gdb" {
         (GDB_CONFIG_KEYS, "tools.gdb")
+    } else if path == "tools.asr" {
+        (ASR_CONFIG_KEYS, "tools.asr")
     } else if path == "tui" {
         (TUI_CONFIG_KEYS, "tui")
     } else if path == "providers" {
@@ -478,9 +487,11 @@ fn validate_unknown_fields(value: &serde_yaml::Value, path: &str) {
                 | ("config", "tui")
                 | ("config", "providers")
                 | ("config", "mcp_servers") => validate_unknown_fields(val, &child_path),
-                ("tools", "web") | ("tools", "memory") | ("tools", "lints") | ("tools", "gdb") => {
-                    validate_unknown_fields(val, &child_path)
-                }
+                ("tools", "web")
+                | ("tools", "memory")
+                | ("tools", "lints")
+                | ("tools", "gdb")
+                | ("tools", "asr") => validate_unknown_fields(val, &child_path),
                 ("tools.web", "search") => validate_unknown_fields(val, &child_path),
                 ("provider entry", "models") => {
                     // Each key is a model name; validate its params.

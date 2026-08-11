@@ -81,7 +81,7 @@ async fn spawn_relay(
                 ev = swarm.select_next_some() => if let SwarmEvent::NewListenAddr { address, .. } = ev {
                     let full = address.with(Protocol::P2p(local_pid));
                     swarm.add_external_address(full.clone());
-                    let _ = disc_clone.publish_relay_addrs(&[full.clone()]);
+                    let _ = disc_clone.publish_relay_addrs(std::slice::from_ref(&full));
                     if !sent_addr {
                         if let Some(tx) = addr_tx.take() { let _ = tx.send(full); }
                         sent_addr = true;
@@ -149,7 +149,8 @@ fn discovery_lifecycle() {
     let relay_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}")
         .parse()
         .unwrap();
-    disc.publish_relay_addrs(&[relay_addr.clone()]).unwrap();
+    disc.publish_relay_addrs(std::slice::from_ref(&relay_addr))
+        .unwrap();
     assert_eq!(disc.fetch_relay_addrs().unwrap(), vec![relay_addr]);
 
     // Alice publishes.
@@ -212,7 +213,8 @@ async fn agent_card_announcement_direct_connection() {
     let relay_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}")
         .parse()
         .unwrap();
-    disc.publish_relay_addrs(&[relay_addr.clone()]).unwrap();
+    disc.publish_relay_addrs(std::slice::from_ref(&relay_addr))
+        .unwrap();
 
     let alice_circuit: Multiaddr =
         format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay_pid}/p2p-circuit/p2p/{alice_pid}")

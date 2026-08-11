@@ -28,9 +28,9 @@ use sven_runtime::Shared;
 use sven_tools::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
-    AskQuestionTool, ContextStore, EditFileTool, FindFileTool, GrepTool, MemoryTool,
-    OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool, TodoTool,
-    ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    AskQuestionTool, AttachFileTool, ContextStore, EditFileTool, FindFileTool, GrepTool,
+    MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool,
+    TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -366,6 +366,15 @@ fn register_base_tools(
     reg.register(WriteTool);
     reg.register_with_display(EditFileTool);
 
+    // ── Multimodal attachments ───────────────────────────────────────────────
+    // attach_file needs the live model to decide whether audio can be sent
+    // natively or must be transcribed, so clone the Arc before `model` is
+    // moved into the context tool below.
+    reg.register(AttachFileTool::new(
+        Some(Arc::clone(&model)),
+        cfg.tools.asr.clone(),
+    ));
+
     // ── Search ────────────────────────────────────────────────────────────────
     // grep now supports whole_project=true (replaces search_codebase).
     reg.register(GrepTool);
@@ -433,6 +442,11 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(FindFileTool);
     reg.register(WriteTool);
     reg.register_with_display(EditFileTool);
+
+    // ── Multimodal attachments ───────────────────────────────────────────────
+    // No live model in the CLI registry, so audio is always transcribed —
+    // the only answer that is correct for every possible target model.
+    reg.register(AttachFileTool::new(None, cfg.tools.asr.clone()));
 
     // ── Search ────────────────────────────────────────────────────────────────
     reg.register(GrepTool);

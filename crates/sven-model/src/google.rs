@@ -230,6 +230,21 @@ fn message_to_gemini_parts(
                 .iter()
                 .map(|p| match p {
                     crate::ContentPart::Text { text } => json!({ "text": text }),
+                    // Gemini genuinely accepts audio, delivered the same way as
+                    // images: an `inline_data` blob carrying the base64 payload
+                    // with its real MIME type.
+                    crate::ContentPart::Audio { audio_url, .. } => {
+                        if let Ok((mime, data)) = crate::types::parse_data_url_parts(audio_url) {
+                            json!({
+                                "inline_data": {
+                                    "mime_type": mime,
+                                    "data": data,
+                                }
+                            })
+                        } else {
+                            json!({ "file_data": { "file_uri": audio_url } })
+                        }
+                    }
                     crate::ContentPart::Image { image_url, .. } => {
                         if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url) {
                             json!({
@@ -304,9 +319,15 @@ fn message_to_gemini_parts(
                         }
                     })];
                     for p in parts {
-                        if let crate::ToolContentPart::Image { image_url } = p {
-                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(image_url)
-                            {
+                        // Both images and audio ride along as inline_data parts
+                        // next to the functionResponse.
+                        let blob_url = match p {
+                            crate::ToolContentPart::Image { image_url } => Some(image_url),
+                            crate::ToolContentPart::Audio { audio_url } => Some(audio_url),
+                            crate::ToolContentPart::Text { .. } => None,
+                        };
+                        if let Some(url) = blob_url {
+                            if let Ok((mime, data)) = crate::types::parse_data_url_parts(url) {
                                 result_parts.push(json!({
                                     "inline_data": { "mime_type": mime, "data": data }
                                 }));

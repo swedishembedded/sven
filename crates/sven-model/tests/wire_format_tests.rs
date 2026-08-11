@@ -406,7 +406,7 @@ async fn azure_sends_api_key_header_not_bearer() {
         "azure-secret-key"
     );
     assert!(
-        req.headers.get("authorization").is_none(),
+        !req.headers.contains_key("authorization"),
         "Azure must not send an Authorization header"
     );
     // URL must include the api-version query parameter
@@ -481,7 +481,7 @@ async fn anthropic_sends_correct_request_format() {
         "sk-ant-test"
     );
     assert!(
-        req.headers.get("authorization").is_none(),
+        !req.headers.contains_key("authorization"),
         "Anthropic must not send Authorization header"
     );
 
@@ -801,7 +801,7 @@ async fn anthropic_no_caching_sends_no_beta_header() {
 
     let req = req_rx.await.unwrap();
     assert!(
-        req.headers.get("anthropic-beta").is_none(),
+        !req.headers.contains_key("anthropic-beta"),
         "no beta header should be sent when caching is disabled"
     );
 }
@@ -1133,7 +1133,7 @@ async fn anthropic_cache_images_disabled_leaves_no_cache_control() {
     // Other caching (system, conversation) is still active so the beta header
     // IS present — only the image block itself must be unmarked.
     assert!(
-        req.headers.get("anthropic-beta").is_some(),
+        req.headers.contains_key("anthropic-beta"),
         "beta header must still be sent for other active caching layers"
     );
 }
@@ -1378,7 +1378,7 @@ async fn openrouter_gemini_does_not_send_anthropic_beta_header() {
 
     let req = req_rx.await.unwrap();
     assert!(
-        req.headers.get("anthropic-beta").is_none(),
+        !req.headers.contains_key("anthropic-beta"),
         "Gemini routing must NOT send the anthropic-beta header, got: {:?}",
         req.headers.get("anthropic-beta")
     );

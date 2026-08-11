@@ -5,6 +5,7 @@ members = [
     "crates/sven-config",
     "crates/sven-model",
     "crates/sven-image",
+    "crates/sven-audio",
     "crates/sven-input",
     "crates/sven-tools",
     "crates/sven-core",
