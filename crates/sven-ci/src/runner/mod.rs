@@ -30,7 +30,7 @@ use sven_input::{
     history, parse_conversation, parse_frontmatter, parse_jsonl_full, parse_workflow,
     serialize_jsonl_records, ConversationRecord, ParsedJsonlConversation, Step, StepQueue,
 };
-use sven_model::{Message, MessageContent, Role};
+use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_runtime::resolve_auto_log_path;
 use sven_tools::events::TodoItem;
 
@@ -1323,6 +1323,17 @@ impl CiRunner {
                 .find(|m| m.role == Role::Assistant)
                 .and_then(|m| match &m.content {
                     MessageContent::Text(t) => Some(t.clone()),
+                    MessageContent::ContentParts(parts) => {
+                        let text: String = parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                ContentPart::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        if text.is_empty() { None } else { Some(text) }
+                    }
                     _ => None,
                 });
 
