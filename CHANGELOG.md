@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **sven-bootstrap**: `KernelChannels::auto_approve()` — the canonical unattended-session gate consumer (see above).
 
+### Fixed
+- **sven-node**: a session that ended via a kernel-internal `UiEvent::Aborted` (a cancellation or watchdog timeout that didn't go through the explicit `CancelSession` command) was marked `Completed` in the node's session table and never broadcast a `ControlEvent::SessionState` at all — every connected operator saw the session simply stop updating, indistinguishable from a normal finish, instead of `Cancelled`. `cloud/src/runtime.rs` already hand-compensated for the equivalent gap in `ui_event_to_control` (which has no mapping for `Aborted`); the node's observation-drain task now carries an `aborted` flag through its internal completion channel and applies the same compensation `handle_cancel`'s explicit path already did. Regression test: `aborted_completion_sets_cancelled_and_broadcasts_it`.
+
 ## [1.9.0] - 2026-03-22
 
 ### Added

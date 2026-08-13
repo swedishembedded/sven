@@ -214,14 +214,14 @@ lines = 1575
 path = "crates/cloud/src/channels.rs"
 lines = 1562
 [[allow.large_file]]
+path = "crates/node/src/control/service.rs"
+lines = 1559
+[[allow.large_file]]
 path = "crates/team/src/spawn.rs"
 lines = 1506
 [[allow.large_file]]
 path = "crates/tui/src/nvim/bridge.rs"
 lines = 1506
-[[allow.large_file]]
-path = "crates/node/src/control/service.rs"
-lines = 1474
 [[allow.large_file]]
 path = "crates/tools/tests/context_integration.rs"
 lines = 1417
