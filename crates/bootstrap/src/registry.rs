@@ -29,8 +29,8 @@ use sven_tools::GdbSessionState;
 use sven_tools::{
     events::{TodoItem, ToolEvent},
     AskQuestionTool, AttachFileTool, ContextStore, EditFileTool, FindFileTool, GrepTool,
-    MemoryTool, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool, SkillTool, SystemTool,
-    TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    MemoryTool, ModelCatalogEntry, OutputBufferStore, QuestionRequest, ReadFileTool, ShellTool,
+    SkillTool, SystemTool, TodoTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 use sven_core::AgentRuntimeContext;
@@ -79,6 +79,20 @@ pub struct IntegrationProviders {
     /// Semantic memory store for the `semantic_memory` tool.
     #[cfg(feature = "integrations")]
     pub memory_store: Option<Arc<dyn sven_memory::VectorStore>>,
+}
+
+/// Converts the model catalog into the slice-of-fields `SystemTool`'s
+/// `switch_model` fuzzy search needs, without giving `sven-tools` a direct
+/// dependency on `sven-model` for the sake of one tool's lookup.
+fn model_catalog_for_tools() -> Vec<ModelCatalogEntry> {
+    sven_model::catalog::static_catalog()
+        .into_iter()
+        .map(|e| ModelCatalogEntry {
+            id: e.id,
+            name: e.name,
+            provider: e.provider,
+        })
+        .collect()
 }
 
 /// Build a [`ToolRegistry`] populated according to the given `profile`.
@@ -296,7 +310,7 @@ fn build_profile_research(
         runtime.knowledge.clone(),
     ));
     reg.register(SkillTool::new(runtime.skills.clone()));
-    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone()));
+    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone(), model_catalog_for_tools()));
 
     if let Some(tx) = question_tx {
         reg.register(AskQuestionTool::new_tui(tx));
@@ -403,7 +417,7 @@ fn register_base_tools(
     reg.register(SkillTool::new(runtime.skills.clone()));
 
     // ── System (mode + model switching) ──────────────────────────────────────
-    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone()));
+    reg.register(SystemTool::new(mode_lock, tool_event_tx.clone(), model_catalog_for_tools()));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
     if include_full {

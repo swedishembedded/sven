@@ -15,5 +15,5 @@ pub use ask_question::AskQuestionTool;
 pub use memory::MemoryTool;
 pub use read_lints::ReadLintsTool;
 pub use skill::SkillTool;
-pub use system::SystemTool;
+pub use system::{ModelCatalogEntry, SystemTool};
 pub use todo::TodoTool;

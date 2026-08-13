@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Workspace**: all crate `version` fields now inherit `version.workspace = true` instead of drifting independently (was `sven-hsm` 0.5.0 next to `sven-acp`/`sven-node` 2.0.0 next to the workspace's own 1.10.2 — nothing is published separately, so per-crate versions carried no information).
+- **sven-tools**: `SystemTool::new` takes an extra `Vec<ModelCatalogEntry>` parameter (the `switch_model` fuzzy-search catalog). `sven-tools` no longer depends on `sven-model` in production — that was its only call site (`static_catalog()`, used to fuzzy-match a `/model` query against provider/id/name). `sven-bootstrap` (which already depends on both) builds the catalog and passes it in; `sven-model` moves to `sven-tools`'s `[dev-dependencies]` for the tests that exercise real match scoring.
 
 ### Removed
 - **Workspace**: removed 13 internal dependencies the architecture checker found with zero real use sites — 3 from a manual audit (`sven-acp`→`sven-node`, `sven-frontend`→`sven-executors`) plus 11 more the checker itself surfaced on its first run: `sven`→`sven-core`; `sven-acp`→`sven-model`; `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`→`sven-config`; `sven-llm`→`sven-hsm`; `sven-memory`→`sven-model`; `sven-node`→`sven-runtime`; `sven-team`→`sven-p2p`; `sven-ci`→`sven-frontend`. Moved `sven-node`'s dependency on `sven-frontend` to `[dev-dependencies]` (used only by a test).

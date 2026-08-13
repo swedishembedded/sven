@@ -43,7 +43,7 @@ pub use builtin::system::ask_question::{AskQuestionTool, Question, QuestionReque
 pub use builtin::system::memory::MemoryTool;
 pub use builtin::system::read_lints::ReadLintsTool;
 pub use builtin::system::skill::SkillTool;
-pub use builtin::system::system::SystemTool;
+pub use builtin::system::system::{ModelCatalogEntry, SystemTool};
 pub use builtin::system::todo::TodoTool;
 
 // Terminal tools

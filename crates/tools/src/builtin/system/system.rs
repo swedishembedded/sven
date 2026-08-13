@@ -18,7 +18,6 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 use sven_config::{AgentMode, McpOAuthConfig, McpServerConfig, McpTransport};
-use sven_model::catalog::static_catalog;
 
 use sven_hsm::ToolCapability;
 
@@ -26,17 +25,36 @@ use crate::events::ToolEvent;
 use crate::policy::ApprovalPolicy;
 use crate::tool::{Tool, ToolCall, ToolOutput};
 
+/// The `provider`/`id`/`name` slice of a model catalog entry that
+/// `switch_model`'s fuzzy search needs. A local type rather than depending on
+/// `sven_model::catalog::ModelCatalogEntry` directly: the tool layer has no
+/// other reason to know about the model-provider crate, and the catalog is
+/// static data the caller already has (via `sven_model::catalog::static_catalog()`)
+/// when it constructs a [`SystemTool`].
+#[derive(Debug, Clone)]
+pub struct ModelCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+}
+
 /// Compound system tool - mode, model, and MCP server management.
 pub struct SystemTool {
     current_mode: Arc<Mutex<AgentMode>>,
     event_tx: mpsc::Sender<ToolEvent>,
+    model_catalog: Vec<ModelCatalogEntry>,
 }
 
 impl SystemTool {
-    pub fn new(current_mode: Arc<Mutex<AgentMode>>, event_tx: mpsc::Sender<ToolEvent>) -> Self {
+    pub fn new(
+        current_mode: Arc<Mutex<AgentMode>>,
+        event_tx: mpsc::Sender<ToolEvent>,
+        model_catalog: Vec<ModelCatalogEntry>,
+    ) -> Self {
         Self {
             current_mode,
             event_tx,
+            model_catalog,
         }
     }
 
@@ -131,8 +149,8 @@ impl SystemTool {
 
         debug!(query = %query, "system tool switch_model");
 
-        let catalog = static_catalog();
-        let best = catalog
+        let best = self
+            .model_catalog
             .iter()
             .filter_map(|entry| {
                 let candidate = format!("{}/{}", entry.provider, entry.id);
@@ -486,7 +504,15 @@ mod tests {
     ) -> (SystemTool, Arc<Mutex<AgentMode>>, mpsc::Receiver<ToolEvent>) {
         let current = Arc::new(Mutex::new(mode));
         let (tx, rx) = mpsc::channel(16);
-        let tool = SystemTool::new(current.clone(), tx);
+        let catalog = sven_model::catalog::static_catalog()
+            .into_iter()
+            .map(|e| ModelCatalogEntry {
+                id: e.id,
+                name: e.name,
+                provider: e.provider,
+            })
+            .collect();
+        let tool = SystemTool::new(current.clone(), tx, catalog);
         (tool, current, rx)
     }
 
