@@ -9,7 +9,7 @@ members = [
     "crates/model",
     "crates/image",
     "crates/sven-audio",
-    "crates/input",
+    "crates/session-store",
     "crates/session-model",
     "crates/tools",
     "crates/turn",
@@ -122,7 +122,7 @@ path = "src/main.rs"
 [dependencies]
 sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
-sven-input       = { path = "crates/input" }
+sven-session-store = { path = "crates/session-store" }
 sven-tools       = { path = "crates/tools" }
 sven-bootstrap   = { path = "crates/bootstrap" }
 sven-ci          = { path = "crates/ci" }

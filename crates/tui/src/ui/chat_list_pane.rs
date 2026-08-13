@@ -17,7 +17,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Widget},
 };
-use sven_input::ChatStatus;
+use sven_session_store::ChatStatus;
 
 use crate::app::session_manager::SessionEntry;
 
@@ -232,9 +232,9 @@ impl Widget for ChatListPane<'_> {
 /// each entry. `active_busy` is the live busy state of the currently active
 /// session; we override the active entry's busy flag to avoid ghost spinners.
 pub fn build_chat_list_items<'a>(
-    tree_rows: &'a [(sven_input::SessionId, u16)],
-    entries: &'a std::collections::HashMap<sven_input::SessionId, SessionEntry>,
-    active_id: &sven_input::SessionId,
+    tree_rows: &'a [(sven_session_store::SessionId, u16)],
+    entries: &'a std::collections::HashMap<sven_session_store::SessionId, SessionEntry>,
+    active_id: &sven_session_store::SessionId,
     anim_frame: u8,
     active_busy: bool,
 ) -> Vec<ChatListItem<'a>> {

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Per-step event handler: folds `AgentEvent`s into a
-//! [`StepAssembler`](sven_input::trace_session::StepAssembler), collects
+//! [`StepAssembler`](sven_session_store::trace_session::StepAssembler), collects
 //! plain `Message`s for the legacy markdown history/artifact paths, and
 //! tracks token usage.
 
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use atif::Trajectory;
 use sven_core::AgentEvent;
-use sven_input::trace_session::{self, StepAssembler};
+use sven_session_store::trace_session::{self, StepAssembler};
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 

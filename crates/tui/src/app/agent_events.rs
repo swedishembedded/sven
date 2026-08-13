@@ -22,7 +22,7 @@ impl App {
 
     pub(crate) async fn handle_agent_event(
         &mut self,
-        session_id: sven_input::SessionId,
+        session_id: sven_session_store::SessionId,
         event: AgentEvent,
     ) -> bool {
         // Route events for background sessions to their stored state.
@@ -59,7 +59,7 @@ impl App {
                         SubagentUpdate::Finished { .. } => {
                             entry.busy = false;
                             entry.current_tool = None;
-                            entry.status = sven_input::ChatStatus::Completed;
+                            entry.status = sven_session_store::ChatStatus::Completed;
                         }
                         SubagentUpdate::Failed { .. } => {
                             entry.busy = false;
@@ -334,7 +334,7 @@ impl App {
                         None
                     });
                     if let Some(user_text) = first_user_text {
-                        let title = sven_input::make_title(&user_text);
+                        let title = sven_session_store::make_title(&user_text);
                         self.chat_title = title.clone();
                         let active_id = self.sessions.active_id.clone();
                         self.sessions.set_title(&active_id, title);
@@ -612,7 +612,7 @@ impl App {
                         SubagentUpdate::Finished { .. } => {
                             entry.busy = false;
                             entry.current_tool = None;
-                            entry.status = sven_input::ChatStatus::Completed;
+                            entry.status = sven_session_store::ChatStatus::Completed;
                         }
                         SubagentUpdate::Failed { .. } => {
                             entry.busy = false;

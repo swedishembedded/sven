@@ -53,7 +53,7 @@ sven-control = "kernel"
 sven-session-model = "kernel"
 
 # services
-sven-input      = "services"
+sven-session-store = "services"
 sven-llm        = "services"
 sven-tools      = "services"
 sven-mcp-client = "services"
@@ -169,7 +169,7 @@ dependencies of its own, so this can never become a cycle.
 path = "src/main.rs"
 lines = 2866
 [[allow.large_file]]
-path = "crates/input/src/trace_session.rs"
+path = "crates/session-store/src/trace_session.rs"
 lines = 2444
 [[allow.large_file]]
 path = "crates/node/src/node.rs"

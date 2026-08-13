@@ -407,7 +407,7 @@ impl App {
     /// Collect the current chat's non-display-only messages, for the separate
     /// markdown `history_save`/`history_save_to` archive (an orthogonal,
     /// unrelated feature from ATIF session persistence - see module docs on
-    /// `sven_input::history`).
+    /// `sven_session_store::history`).
     fn active_chat_messages(&self) -> Vec<sven_model::Message> {
         self.chat
             .segments
@@ -430,7 +430,7 @@ impl App {
             return path;
         }
         let active_id = self.sessions.active_id.clone();
-        let path = sven_input::session_path(active_id.as_str());
+        let path = sven_session_store::session_path(active_id.as_str());
         self.session_path = Some(path.clone());
         if let Some(entry) = self.sessions.get_mut(&active_id) {
             entry.session_path = Some(path.clone());
@@ -449,16 +449,16 @@ impl App {
             entry.to_trajectory(&self.chat, model, mode)
         } else {
             // Fallback for the rare case where the active entry isn't found.
-            let records: Vec<sven_input::ConversationRecord> = self
+            let records: Vec<sven_session_store::ConversationRecord> = self
                 .chat
                 .segments
                 .iter()
                 .filter_map(|seg| match seg {
                     ChatSegment::Message(m) => {
-                        Some(sven_input::ConversationRecord::Message(m.clone()))
+                        Some(sven_session_store::ConversationRecord::Message(m.clone()))
                     }
                     ChatSegment::Thinking { content } => {
-                        Some(sven_input::ConversationRecord::Thinking {
+                        Some(sven_session_store::ConversationRecord::Thinking {
                             content: content.clone(),
                         })
                     }
@@ -467,7 +467,7 @@ impl App {
                         tokens_after,
                         strategy,
                         turn,
-                    } => Some(sven_input::ConversationRecord::ContextCompacted {
+                    } => Some(sven_session_store::ConversationRecord::ContextCompacted {
                         tokens_before: *tokens_before,
                         tokens_after: *tokens_after,
                         strategy: Some(strategy.to_string()),
@@ -476,17 +476,17 @@ impl App {
                     _ => None,
                 })
                 .collect();
-            let steps = sven_input::conversation_records_to_steps(&records);
-            let mut agent = sven_input::default_agent_profile();
+            let steps = sven_session_store::conversation_records_to_steps(&records);
+            let mut agent = sven_session_store::default_agent_profile();
             if let Some(m) = &model {
                 agent = agent.with_model(m.clone());
             }
-            let mut trajectory = atif::Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+            let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
             trajectory.session_id = Some(active_id.as_str().to_string());
             trajectory.steps = steps;
-            let meta = sven_input::SvenSessionMeta {
+            let meta = sven_session_store::SvenSessionMeta {
                 title: self.chat_title.clone(),
-                status: sven_input::ChatStatus::Active,
+                status: sven_session_store::ChatStatus::Active,
                 mode,
                 parent_session_id: None,
                 created_at: chrono::Utc::now(),
@@ -547,7 +547,7 @@ impl App {
         });
 
         // Separately, append to the plain markdown conversation history
-        // archive (`sven_input::history`) - an orthogonal, unrelated feature
+        // archive (`sven_session_store::history`) - an orthogonal, unrelated feature
         // (used by `sven chats` / headless `--resume`) from ATIF session
         // persistence above.
         let messages = self.active_chat_messages();

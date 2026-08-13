@@ -183,9 +183,9 @@ impl App {
         let mut loaded_trajectory: Option<atif::Trajectory> = None;
         let initial_segments = if let Some(ref path) = trace_load_path {
             if path.exists() {
-                match sven_input::load_session_from(path) {
+                match sven_session_store::load_session_from(path) {
                     Ok(trajectory) => {
-                        let segs = sven_input::steps_to_conversation_records(&trajectory.steps)
+                        let segs = sven_session_store::steps_to_conversation_records(&trajectory.steps)
                             .into_iter()
                             .filter_map(conversation_record_to_chat_segment)
                             .collect();
@@ -254,7 +254,7 @@ impl App {
         // `--trace PATH` is kept in sync after every turn; `--load-trace`-only
         // (or no flag at all) falls back to the canonical per-session path.
         let initial_session_path = opts.trace_path.clone().or_else(|| {
-            sven_input::ensure_session_dir()
+            sven_session_store::ensure_session_dir()
                 .ok()
                 .map(|dir| dir.join(format!("{}.json", active_session_id)))
         });
@@ -273,7 +273,7 @@ impl App {
         // create a new chat entry as usual.
         let chat_title = loaded_trajectory
             .as_ref()
-            .and_then(sven_input::SvenSessionMeta::from_trajectory)
+            .and_then(sven_session_store::SvenSessionMeta::from_trajectory)
             .map(|m| m.title)
             .unwrap_or_else(|| "New chat".to_string());
 
@@ -1178,7 +1178,7 @@ impl App {
         Ok(())
     }
 
-    pub(crate) async fn recv_agent_event(&mut self) -> Option<(sven_input::SessionId, AgentEvent)> {
+    pub(crate) async fn recv_agent_event(&mut self) -> Option<(sven_session_store::SessionId, AgentEvent)> {
         self.sessions.multi_event_rx.recv().await
     }
 
@@ -1218,7 +1218,7 @@ impl App {
     }
 
     /// Switch to a different session.
-    pub(crate) async fn switch_session(&mut self, target_id: sven_input::SessionId) {
+    pub(crate) async fn switch_session(&mut self, target_id: sven_session_store::SessionId) {
         // Save active state.
         self.save_active_to_session_entry();
 
@@ -1236,16 +1236,16 @@ impl App {
         let target_chat = target_chat.or_else(|| {
             let entry = self.sessions.get(&target_id)?;
             let trajectory = if let Some(path) = entry.session_path.clone() {
-                sven_input::load_session_from(&path).ok()
+                sven_session_store::load_session_from(&path).ok()
             } else if let Some(legacy_path) = entry.legacy_path.clone() {
-                let doc = sven_input::load_chat_from(&legacy_path).ok()?;
-                Some(sven_input::import_legacy_chat_document(&doc))
+                let doc = sven_session_store::load_chat_from(&legacy_path).ok()?;
+                Some(sven_session_store::import_legacy_chat_document(&doc))
             } else {
                 None
             }?;
 
             let segments: Vec<crate::chat::segment::ChatSegment> =
-                sven_input::steps_to_conversation_records(&trajectory.steps)
+                sven_session_store::steps_to_conversation_records(&trajectory.steps)
                     .into_iter()
                     .filter_map(conversation_record_to_chat_segment)
                     .collect();
@@ -1465,7 +1465,7 @@ impl App {
 
     /// Spawn a new local agent task for the given session ID, updating
     /// `self.agent` (if it's the active session) and the entry's `agent_tx`.
-    async fn spawn_agent_for_session(&mut self, id: &sven_input::SessionId) {
+    async fn spawn_agent_for_session(&mut self, id: &sven_session_store::SessionId) {
         let (submit_tx, submit_rx) = mpsc::channel::<AgentRequest>(64);
         let (evt_tx, evt_rx) = mpsc::channel::<AgentEvent>(512);
         // Reuse the shared question sender so all sessions route questions
@@ -1660,25 +1660,25 @@ impl App {
 
 // ── ConversationRecord ⇄ ChatSegment ────────────────────────────────────────
 
-/// Convert one full-fidelity [`sven_input::ConversationRecord`] (as produced
-/// by [`sven_input::steps_to_conversation_records`] from a loaded ATIF
+/// Convert one full-fidelity [`sven_session_store::ConversationRecord`] (as produced
+/// by [`sven_session_store::steps_to_conversation_records`] from a loaded ATIF
 /// trajectory) into a [`ChatSegment`], dropping system messages (the agent
 /// always regenerates its own system prompt at runtime).
 pub(crate) fn conversation_record_to_chat_segment(
-    record: sven_input::ConversationRecord,
+    record: sven_session_store::ConversationRecord,
 ) -> Option<ChatSegment> {
     match record {
-        sven_input::ConversationRecord::Message(m) => {
+        sven_session_store::ConversationRecord::Message(m) => {
             if m.role == sven_model::Role::System {
                 None
             } else {
                 Some(ChatSegment::Message(m))
             }
         }
-        sven_input::ConversationRecord::Thinking { content } => {
+        sven_session_store::ConversationRecord::Thinking { content } => {
             Some(ChatSegment::Thinking { content })
         }
-        sven_input::ConversationRecord::ContextCompacted {
+        sven_session_store::ConversationRecord::ContextCompacted {
             tokens_before,
             tokens_after,
             strategy,

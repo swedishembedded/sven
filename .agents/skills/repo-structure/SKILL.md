@@ -54,7 +54,7 @@ sven/
 | `sven-config` | Config file parsing (`.sven.yaml`, per-project) |
 | `sven-core` | HSM machines: `ConversationMachine`, `SoftwareDevelopmentMachine`, `ClarificationMachine`, `ModeRegistry` |
 | `sven-image` | Image attachment support |
-| `sven-input` | Stdin/file/pipe input handling |
+| `sven-session-store` | ATIF trajectory-backed session store (renamed from `sven-input` in Phase 4.3) |
 | `sven-mcp` | MCP (Model Context Protocol) client integration |
 | `sven-model` | LLM provider drivers (OpenAI, Anthropic, mock, ...) |
 | `sven-node` | P2P agent node: kernel-wired control service, task/session/room executors |

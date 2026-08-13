@@ -27,7 +27,7 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use sven_input::{
+    use sven_session_store::{
         parse_conversation, parse_workflow, serialize_conversation_turn, Step, StepQueue,
     };
     use sven_model::{Message, Role};
@@ -245,7 +245,7 @@ mod tests {
         let extra_step = Step {
             label: None,
             content: "Extra context.".into(),
-            options: sven_input::StepOptions::default(),
+            options: sven_session_store::StepOptions::default(),
         };
         let mut prepended = StepQueue::from(vec![extra_step]);
         while let Some(s) = base.pop() {
@@ -358,12 +358,12 @@ mod tests {
     // `--output-format jsonl` now streams one ATIF `TraceStep` JSON object per
     // line (not a `ConversationRecord`), and the receiving instance parses it
     // via `crate::runner::parse_jsonl_trace_steps` instead of
-    // `sven_input::parse_jsonl_full`. These fixtures build that NDJSON the
+    // `sven_session_store::parse_jsonl_full`. These fixtures build that NDJSON the
     // same way the runner does: assemble `Message`s into turn-shaped
     // `TraceStep`s, then serialize with `atif::persist::write_steps_ndjson`.
 
     fn make_jsonl_trace(messages: &[Message]) -> String {
-        let steps = sven_input::trace_session::messages_to_steps(messages);
+        let steps = sven_session_store::trace_session::messages_to_steps(messages);
         let mut buf = Vec::new();
         atif::persist::write_steps_ndjson(&mut buf, &steps).unwrap();
         String::from_utf8(buf).unwrap()
@@ -477,7 +477,7 @@ mod tests {
             let mut prepended = StepQueue::from(vec![Step {
                 label: None,
                 content: prompt,
-                options: sven_input::StepOptions::default(),
+                options: sven_session_store::StepOptions::default(),
             }]);
             while let Some(s) = q.pop() {
                 prepended.push(s);
@@ -701,7 +701,7 @@ mod tests {
         // never gets its own line - it seeds `reasoning_content` on the next
         // agent step), then round-trip through NDJSON exactly as
         // `--output-format jsonl` would stream it.
-        let mut asm = sven_input::trace_session::StepAssembler::new();
+        let mut asm = sven_session_store::trace_session::StepAssembler::new();
         asm.push_message(&Message::user("hello"));
         asm.push_thinking("Let me think...");
         asm.push_message(&Message::assistant("world"));
@@ -733,10 +733,10 @@ mod tests {
     #[test]
     fn json_trajectory_output_detected_as_json_summary_not_jsonl() {
         let messages = vec![Message::user("hi"), Message::assistant("hello")];
-        let steps = sven_input::trace_session::messages_to_steps(&messages);
+        let steps = sven_session_store::trace_session::messages_to_steps(&messages);
         let mut trajectory = atif::Trajectory::new(
-            sven_input::trace_session::ATIF_SCHEMA_VERSION,
-            sven_input::trace_session::default_agent_profile(),
+            sven_session_store::trace_session::ATIF_SCHEMA_VERSION,
+            sven_session_store::trace_session::default_agent_profile(),
         );
         trajectory.steps = steps;
         let json = serde_json::to_string_pretty(&trajectory).unwrap();
@@ -751,10 +751,10 @@ mod tests {
     #[test]
     fn parse_json_summary_reconstructs_history_from_trajectory_steps() {
         let messages = vec![Message::user("task1"), Message::assistant("result1")];
-        let steps = sven_input::trace_session::messages_to_steps(&messages);
+        let steps = sven_session_store::trace_session::messages_to_steps(&messages);
         let mut trajectory = atif::Trajectory::new(
-            sven_input::trace_session::ATIF_SCHEMA_VERSION,
-            sven_input::trace_session::default_agent_profile(),
+            sven_session_store::trace_session::ATIF_SCHEMA_VERSION,
+            sven_session_store::trace_session::default_agent_profile(),
         );
         trajectory.steps = steps;
         let json = serde_json::to_string_pretty(&trajectory).unwrap();

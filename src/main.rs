@@ -21,7 +21,7 @@ use sven_bootstrap::build_cli_tool_registry;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_ci::{MapOptions, ReduceOptions, TeeOptions};
 use sven_config::AgentMode;
-use sven_input::{history, parse_frontmatter, parse_workflow};
+use sven_session_store::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
 use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
 
@@ -2373,7 +2373,7 @@ async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()
         // always carries so exact-match model routing sees `"ping"`, not
         // `"ping\n"`) and merge with any positional prompt.
         let (prompt, history) = if input_is_conversation {
-            match sven_input::parse_conversation(&input) {
+            match sven_session_store::parse_conversation(&input) {
                 Ok(conv) => {
                     let new_task = extra_prompt
                         .as_ref()

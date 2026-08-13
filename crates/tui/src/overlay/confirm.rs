@@ -32,7 +32,7 @@ pub enum ConfirmedAction {
     RemoveSegment(usize),
     /// Delete a chat session (and its YAML file). When it is the active session,
     /// the app will switch to another session first.
-    DeleteChat(sven_input::SessionId),
+    DeleteChat(sven_session_store::SessionId),
 }
 
 /// A generic centred modal dialog with a title, a message, and two buttons.

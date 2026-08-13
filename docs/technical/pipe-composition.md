@@ -308,10 +308,10 @@ The detection and routing live in `crates/ci/src/runner/` (`mod.rs`,
 - `is_jsonl_format(s)` - checks up to 10 non-empty lines for a `{` prefix (NDJSON trace steps).
 - `is_json_summary_format(s)` - checks for a single JSON object with a top-level `"steps"` array (a `Trajectory` document).
 - Detection order: NDJSON trace steps → conversation → JSON trajectory → plain text (first match wins). Workflow parsing (## steps) runs only when input was read from a file (`-f`/`--file`); stdin is always one of the four shapes above.
-- `parse_jsonl_trace_steps(s)` parses NDJSON into `(history, pending_user_input)` via `trace::persist::read_steps_ndjson` + `sven_input::trace_session::steps_to_messages`.
+- `parse_jsonl_trace_steps(s)` parses NDJSON into `(history, pending_user_input)` via `atif::persist::read_steps_ndjson` + `sven_session_store::trace_session::steps_to_messages`.
 - `parse_json_summary(s)` parses a whole `Trajectory` document into a flat history via the same `steps_to_messages` reconstruction.
 - Both return message history; step content = `extra_prompt` OR `pending_user_input` OR exit(2). When stdin is plain text and a CLI prompt is given, the CLI merges them (prompt + blank line + stdin) before the runner sees input, so the runner gets one step.
-- The turn-shaped assembly (folding a flat event stream — user messages, assistant text, tool calls/results, thinking, context-compaction markers — into ATIF `TraceStep`s) lives in `sven_input::trace_session::StepAssembler`, shared by every trace-producing/consuming path in the runner.
+- The turn-shaped assembly (folding a flat event stream — user messages, assistant text, tool calls/results, thinking, context-compaction markers — into ATIF `TraceStep`s) lives in `sven_session_store::trace_session::StepAssembler`, shared by every trace-producing/consuming path in the runner.
 
 The unit tests in `crates/ci/src/tests.rs` cover every detection branch, the
 priority chain, round-trips, tool-call preservation, thinking block handling,

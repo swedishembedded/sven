@@ -29,9 +29,11 @@ use atif::{TraceStep, Trajectory};
 use sven_bootstrap::RuntimeContext;
 use sven_config::{AgentMode, Config};
 use sven_core::AgentEvent;
-use sven_input::trace_session::{self, StepAssembler, SvenSessionMeta};
-use sven_input::{history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue};
 use sven_model::{ContentPart, Message, MessageContent, Role};
+use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
+use sven_session_store::{
+    history, parse_conversation, parse_frontmatter, parse_workflow, Step, StepQueue,
+};
 use sven_workspace::resolve_auto_log_path;
 
 use crate::kernel_agent::KernelAgent;
@@ -148,7 +150,7 @@ pub struct CiOptions {
     /// skills and config instead of reusing a stored one.
     ///
     /// Note: ATIF trajectories never persist the system prompt as a step (see
-    /// `sven_input::trace_session::StepAssembler::push_message`'s System-role
+    /// `sven_session_store::trace_session::StepAssembler::push_message`'s System-role
     /// handling) — the agent always regenerates it. This flag therefore
     /// currently has no additional effect on trace-loaded runs; it is kept
     /// for CLI compatibility and in case a future ATIF `extra` convention
@@ -558,7 +560,7 @@ impl CiRunner {
         // into the agent's seeded history. Unlike the old JSONL path, there is
         // no stored-system-prompt injection here: ATIF trajectories never
         // persist the system prompt as a step (see
-        // `sven_input::trace_session::StepAssembler::push_message`'s
+        // `sven_session_store::trace_session::StepAssembler::push_message`'s
         // System-role handling) — the agent always regenerates it fresh, so
         // `--regen-system-prompt` has no additional effect on trace-loaded
         // runs (see its doc comment on `CiOptions`).

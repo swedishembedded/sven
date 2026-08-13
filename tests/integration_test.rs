@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /// Integration tests for sven's core logic using the mock model provider.
 use sven_config::Config;
-use sven_input::{parse_conversation, parse_workflow, serialize_conversation_turn};
+use sven_session_store::{parse_conversation, parse_workflow, serialize_conversation_turn};
 use sven_model::{Message, Role};
 
 #[test]

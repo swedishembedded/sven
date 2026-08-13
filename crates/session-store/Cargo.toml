@@ -1,5 +1,5 @@
 [package]
-name    = "sven-input"
+name    = "sven-session-store"
 version.workspace = true
 edition = "2021"
 

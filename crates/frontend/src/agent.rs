@@ -15,7 +15,7 @@ use futures::StreamExt;
 use sven_bootstrap::{KernelAgentSession, McpManager, RuntimeBuilder, RuntimeContext};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
-use sven_input::make_title;
+use sven_session_store::make_title;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message, ResponseEvent};
 use sven_tools::{OutputBufferStore, QuestionRequest, SharedToolDisplays, SharedTools};

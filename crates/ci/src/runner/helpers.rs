@@ -6,7 +6,7 @@
 
 use anyhow::Context;
 use sven_config::AgentMode;
-use sven_input::serialize_conversation_turn;
+use sven_session_store::serialize_conversation_turn;
 use sven_model::Message;
 
 use crate::output::write_stderr;
@@ -58,7 +58,7 @@ pub(crate) fn is_jsonl_format(s: &str) -> bool {
 /// [`is_jsonl_format`] / produced by `--output-format jsonl`) into a message
 /// history and any trailing pending user turn.
 ///
-/// Mirrors the old `sven_input::parse_jsonl_full`'s `(history,
+/// Mirrors the old `sven_session_store::parse_jsonl_full`'s `(history,
 /// pending_user_input)` contract for the `ConversationRecord` format: if the
 /// last step is a `User`-source step, it is treated as not yet answered and
 /// stripped from `history` into `pending_user_input`; otherwise `history`
@@ -75,7 +75,7 @@ pub(crate) fn parse_jsonl_trace_steps(s: &str) -> anyhow::Result<(Vec<Message>, 
         _ => (&steps[..], None),
     };
 
-    let history = sven_input::trace_session::steps_to_messages(history_steps);
+    let history = sven_session_store::trace_session::steps_to_messages(history_steps);
     Ok((history, pending))
 }
 
@@ -102,14 +102,14 @@ pub(crate) fn is_json_summary_format(s: &str) -> bool {
 /// Reconstruct a flat `Message` history from the JSON output produced by
 /// `--output-format json`: a pretty-printed ATIF `Trajectory` document.
 ///
-/// Delegates to [`sven_input::trace_session::steps_to_messages`] so the
+/// Delegates to [`sven_session_store::trace_session::steps_to_messages`] so the
 /// reconstruction rules (system/copied-context steps skipped, tool calls
 /// un-merged from their observations, reasoning never replayed) match every
 /// other trace-consuming path in the runner.
 pub(crate) fn parse_json_summary(s: &str) -> anyhow::Result<Vec<Message>> {
     let trajectory: atif::Trajectory = serde_json::from_str(s.trim())
         .context("parsing --output-format json output as an ATIF trajectory")?;
-    Ok(sven_input::trace_session::steps_to_messages(
+    Ok(sven_session_store::trace_session::steps_to_messages(
         &trajectory.steps,
     ))
 }

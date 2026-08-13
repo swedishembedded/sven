@@ -1247,11 +1247,11 @@ impl App {
                     if let Some(entry) = self.sessions.get(&id) {
                         if let Some(path) = entry.session_path.clone() {
                             if path.exists() {
-                                if let Ok(mut trajectory) = sven_input::load_session_from(&path) {
+                                if let Ok(mut trajectory) = sven_session_store::load_session_from(&path) {
                                     if let Some(mut meta) =
-                                        sven_input::SvenSessionMeta::from_trajectory(&trajectory)
+                                        sven_session_store::SvenSessionMeta::from_trajectory(&trajectory)
                                     {
-                                        meta.status = sven_input::ChatStatus::Archived;
+                                        meta.status = sven_session_store::ChatStatus::Archived;
                                         meta.touch();
                                         meta.apply_to_trajectory(&mut trajectory);
                                         let _ = atif::persist::write_trajectory_atomic(

@@ -30,7 +30,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use atif::Trajectory;
 use chrono::{DateTime, Utc};
 use sven_core::AgentEvent;
-use sven_input::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
+use sven_session_store::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -144,7 +144,7 @@ impl SessionEntry {
         let usage = trajectory
             .final_metrics
             .as_ref()
-            .map(sven_input::final_metrics_to_chat_usage);
+            .map(sven_session_store::final_metrics_to_chat_usage);
         let (total_input_tokens, total_output_tokens, total_cost_usd) = usage
             .map(|u| {
                 (
@@ -176,7 +176,7 @@ impl SessionEntry {
             created_at: meta.as_ref().map(|m| m.created_at).unwrap_or(now),
             updated_at: meta.as_ref().map(|m| m.updated_at).unwrap_or(now),
             stored_chat: None,
-            copied_context_steps: sven_input::copied_context_steps(trajectory),
+            copied_context_steps: sven_session_store::copied_context_steps(trajectory),
             stored_input_buffer: None,
             stored_input_cursor: None,
             stored_input_attachments: None,
@@ -281,7 +281,7 @@ impl SessionEntry {
         model: Option<String>,
         mode: Option<String>,
     ) -> Trajectory {
-        use sven_input::ConversationRecord;
+        use sven_session_store::ConversationRecord;
         use sven_model::Role;
 
         let records: Vec<ConversationRecord> = chat
@@ -317,16 +317,16 @@ impl SessionEntry {
 
         // Carry the copied-context steps the chat view omitted, or an
         // open→save round trip would permanently delete them.
-        let steps = sven_input::conversation_records_to_steps_with_copied_context(
+        let steps = sven_session_store::conversation_records_to_steps_with_copied_context(
             &self.copied_context_steps,
             &records,
         );
 
-        let mut agent = sven_input::default_agent_profile();
+        let mut agent = sven_session_store::default_agent_profile();
         if let Some(m) = &model {
             agent = agent.with_model(m.clone());
         }
-        let mut trajectory = Trajectory::new(sven_input::ATIF_SCHEMA_VERSION, agent);
+        let mut trajectory = Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
         trajectory.session_id = Some(self.id.as_str().to_string());
         trajectory.steps = steps;
 
@@ -338,7 +338,7 @@ impl SessionEntry {
             total_cost_usd: self.total_cost_usd,
         };
         if !usage.is_empty() {
-            trajectory.final_metrics = Some(sven_input::chat_usage_to_final_metrics(&usage));
+            trajectory.final_metrics = Some(sven_session_store::chat_usage_to_final_metrics(&usage));
         }
 
         let meta = SvenSessionMeta {
@@ -692,12 +692,12 @@ impl SessionManager {
     ///
     /// Lists BOTH native ATIF sessions and legacy YAML chats (tagged
     /// `is_legacy: true`) that have not yet been superseded by a same-id
-    /// `.json` file — see [`sven_input::list_all_sessions`]'s doc comment
+    /// `.json` file — see [`sven_session_store::list_all_sessions`]'s doc comment
     /// for the exact legacy-visibility policy. Opening a legacy entry and
     /// saving it writes a brand new `.json` file; the original `.yaml` is
     /// left untouched on disk.
     pub fn load_from_disk(&mut self) {
-        let mut entries = match sven_input::list_all_sessions(Some(50)) {
+        let mut entries = match sven_session_store::list_all_sessions(Some(50)) {
             Ok(e) => e,
             Err(e) => {
                 tracing::warn!("failed to list sessions from disk: {e}");
@@ -943,8 +943,8 @@ mod tests {
         assert_eq!(trajectory.session_id.as_deref(), Some("session-abc"));
         atif::persist::write_trajectory_atomic(&path, &trajectory, None).unwrap();
 
-        let loaded = sven_input::load_session_from(&path).unwrap();
-        let records = sven_input::steps_to_conversation_records(&loaded.steps);
+        let loaded = sven_session_store::load_session_from(&path).unwrap();
+        let records = sven_session_store::steps_to_conversation_records(&loaded.steps);
         let segments: Vec<ChatSegment> = records
             .into_iter()
             .filter_map(crate::app::conversation_record_to_chat_segment)
@@ -1007,8 +1007,8 @@ mod tests {
         // continued trajectory) are hidden from the chat view, but an
         // open→save round trip must NOT delete them from the file.
         let mut source = atif::Trajectory::new(
-            sven_input::ATIF_SCHEMA_VERSION,
-            sven_input::default_agent_profile(),
+            sven_session_store::ATIF_SCHEMA_VERSION,
+            sven_session_store::default_agent_profile(),
         );
         let mut copied = atif::TraceStep::new(1, atif::StepOrigin::User, "carried-over context");
         copied.is_copied_context = Some(true);
@@ -1026,7 +1026,7 @@ mod tests {
 
         // Rebuild the chat view exactly as switch_session does (the view
         // omits the copied step), then save.
-        let records = sven_input::steps_to_conversation_records(&source.steps);
+        let records = sven_session_store::steps_to_conversation_records(&source.steps);
         let mut chat = ChatState::new();
         chat.segments = records
             .into_iter()
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn from_trajectory_into_legacy_import_produces_working_entry() {
-        use sven_input::chat_document::{ChatDocument, TurnRecord};
+        use sven_session_store::chat_document::{ChatDocument, TurnRecord};
 
         let mut doc = ChatDocument::new("Legacy chat");
         doc.model = Some("anthropic/claude-3-5".to_string());
@@ -1098,7 +1098,7 @@ mod tests {
         ];
         let legacy_id = doc.id.clone();
 
-        let trajectory = sven_input::import_legacy_chat_document(&doc);
+        let trajectory = sven_session_store::import_legacy_chat_document(&doc);
         // Simulate what SessionManager::load_from_disk / switch_session does:
         // a legacy entry with `session_path: None`, `legacy_path: Some(..)`.
         let entry = SessionEntry::from_trajectory_into(
@@ -1119,7 +1119,7 @@ mod tests {
 
         // Opening it (steps_to_conversation_records) must yield a working
         // chat, including the thinking block the old YAML turn carried.
-        let records = sven_input::steps_to_conversation_records(&trajectory.steps);
+        let records = sven_session_store::steps_to_conversation_records(&trajectory.steps);
         let segments: Vec<ChatSegment> = records
             .into_iter()
             .filter_map(crate::app::conversation_record_to_chat_segment)
@@ -1134,7 +1134,7 @@ mod tests {
         // The NEXT save (mirroring `resolve_session_path`) must write a fresh
         // `.json`, never touch the `.yaml` again - modeled here directly since
         // `resolve_session_path` needs a live `App`.
-        let fresh_path = sven_input::session_path(legacy_id.as_str());
+        let fresh_path = sven_session_store::session_path(legacy_id.as_str());
         assert!(fresh_path.extension().and_then(|e| e.to_str()) == Some("json"));
         assert_ne!(fresh_path, PathBuf::from("/chats/legacy.yaml"));
     }

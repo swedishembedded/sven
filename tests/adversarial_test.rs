@@ -9,7 +9,7 @@
 //!   * Config loading under boundary inputs (Category 5 continuations)
 
 use sven_config::{AgentConfig, Config};
-use sven_input::{parse_conversation, parse_workflow};
+use sven_session_store::{parse_conversation, parse_workflow};
 
 // ── Category 6 continued: Workflow parsing adversarial ────────────────────────
 
