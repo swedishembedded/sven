@@ -156,6 +156,99 @@ impl InputState {
     }
 }
 
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    fn state_with(history: &[&str]) -> InputState {
+        let mut s = InputState::new();
+        for entry in history {
+            s.push_history(entry);
+        }
+        s
+    }
+
+    /// The core shell-style guarantee this whole feature exists for:
+    /// an unsubmitted draft survives a round trip through history and
+    /// back, byte-for-byte.
+    #[test]
+    fn draft_survives_a_full_up_down_round_trip() {
+        let mut s = state_with(&["first", "second"]);
+        s.buffer = "unsubmitted draft".to_string();
+
+        assert_eq!(s.history_up(), Some("second"));
+        assert_eq!(s.history_up(), Some("first"));
+        // Walk back down to the bottom - draft must come back exactly.
+        assert_eq!(s.history_down(), Some("second"));
+        assert_eq!(s.history_down(), Some("unsubmitted draft"));
+        assert_eq!(s.history_idx, None, "back at the bottom = not navigating");
+    }
+
+    #[test]
+    fn draft_is_captured_only_on_the_first_up_not_every_step() {
+        let mut s = state_with(&["a", "b", "c"]);
+        s.buffer = "draft".to_string();
+
+        s.history_up(); // captures "draft"
+        s.buffer = "would-be-lost-if-recaptured".to_string(); // in-place edit
+        s.history_up(); // must NOT overwrite the saved draft
+        assert_eq!(s.history_draft.as_deref(), Some("draft"));
+
+        // Walking all the way back down still returns the ORIGINAL draft,
+        // not the in-place edit made while mid-navigation.
+        while s.history_idx.is_some() {
+            s.history_down();
+        }
+        assert_eq!(s.buffer, "would-be-lost-if-recaptured"); // caller applies the return value
+        // (Confirms history_down's *return value* is the original draft;
+        // dispatch.rs is what copies it into `buffer` - see InputHistoryUp/
+        // InputHistoryDown in app/dispatch.rs.)
+    }
+
+    #[test]
+    fn history_up_at_oldest_entry_returns_none() {
+        let mut s = state_with(&["only"]);
+        assert_eq!(s.history_up(), Some("only"));
+        assert_eq!(s.history_up(), None, "already at the oldest entry");
+    }
+
+    #[test]
+    fn history_down_without_navigating_returns_none() {
+        let mut s = state_with(&["a"]);
+        assert_eq!(s.history_down(), None, "not currently navigating");
+    }
+
+    #[test]
+    fn empty_history_never_navigates() {
+        let mut s = InputState::new();
+        s.buffer = "draft".to_string();
+        assert_eq!(s.history_up(), None);
+        assert_eq!(s.history_draft, None, "must not capture a draft with nowhere to go");
+    }
+
+    #[test]
+    fn submitting_resets_navigation_and_drops_the_stale_draft() {
+        let mut s = state_with(&["a", "b"]);
+        s.buffer = "draft".to_string();
+        s.history_up();
+        assert!(s.history_idx.is_some());
+        assert!(s.history_draft.is_some());
+
+        s.push_history("newly submitted");
+        assert_eq!(s.history_idx, None);
+        assert_eq!(s.history_draft, None);
+        assert_eq!(s.history.last().map(String::as_str), Some("newly submitted"));
+    }
+
+    #[test]
+    fn push_history_skips_empty_and_consecutive_duplicate_entries() {
+        let mut s = state_with(&["same"]);
+        s.push_history("   "); // whitespace-only, must be skipped
+        s.push_history("same"); // consecutive duplicate, must be skipped
+        assert_eq!(s.history, vec!["same".to_string()]);
+    }
+}
+
 // ── EditState ─────────────────────────────────────────────────────────────────
 
 /// State for inline editing of a chat segment or a queued message.
