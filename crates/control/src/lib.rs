@@ -153,37 +153,23 @@ pub enum ControlCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlEvent {
-    /// A streaming text delta from the model.
-    OutputDelta {
+    /// A session-scoped [`SessionEvent`](sven_vocab::SessionEvent), forwarded
+    /// verbatim from the kernel's outward observation plane.
+    ///
+    /// Replaces the old flattened `OutputDelta`/`OutputComplete`/`ToolCall`/
+    /// `ToolResult`/`AgentError` variants, each a lossy hand-maintained
+    /// re-encoding of a `UiEvent`/`AgentEvent` (now unified as
+    /// `SessionEvent`) that had already drifted from it — e.g. `ToolResult`
+    /// dropped the tool's name entirely, forcing every consumer to fabricate
+    /// `tool_name: String::new()`, and the translator's exhaustive-looking
+    /// match silently swallowed a dozen variants (todo updates, mode/model
+    /// changes, context compaction, the transition trace, ...) that
+    /// operators never saw as a result. Forwarding the real typed event
+    /// fixes both: every field survives, and every variant reaches
+    /// operators, not just the ones a translator happened to special-case.
+    Session {
         session_id: Uuid,
-        /// The text chunk (may be a single character in streaming mode).
-        delta: String,
-        /// `"assistant"` or `"thinking"`.
-        role: String,
-    },
-
-    /// A complete model turn (text accumulation finished).
-    OutputComplete {
-        session_id: Uuid,
-        text: String,
-        role: String,
-    },
-
-    /// The model has requested a tool call.
-    ToolCall {
-        session_id: Uuid,
-        call_id: String,
-        tool_name: String,
-        /// Tool arguments as a JSON value.
-        args: serde_json::Value,
-    },
-
-    /// A tool call completed.
-    ToolResult {
-        session_id: Uuid,
-        call_id: String,
-        output: String,
-        is_error: bool,
+        event: sven_vocab::SessionEvent,
     },
 
     /// A tool call requires operator approval before executing.
@@ -202,12 +188,6 @@ pub enum ControlEvent {
 
     /// Response to a `ListSessions` command.
     SessionList { sessions: Vec<SessionInfo> },
-
-    /// A recoverable error occurred (agent continues).
-    AgentError {
-        session_id: Option<Uuid>,
-        message: String,
-    },
 
     /// Node-level error (not session-specific).
     NodeError { code: u32, message: String },
@@ -399,65 +379,22 @@ pub struct WebDeviceSummary {
 
 // ── Kernel mappings ───────────────────────────────────────────────────────────
 
-/// Maps a kernel [`UiEvent`](sven_hsm::UiEvent) from the observation bus to a
-/// [`ControlEvent`] suitable for broadcasting to WebSocket / P2P / share
+/// Wraps a kernel [`UiEvent`](sven_hsm::UiEvent) from the observation bus as
+/// a [`ControlEvent::Session`] for broadcasting to WebSocket / P2P / share
 /// operator clients.
 ///
-/// Returns `None` for events that have no useful operator representation
-/// (e.g. token accounting, transition traces).
-pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> Option<ControlEvent> {
-    use sven_hsm::UiEvent;
-    match ev {
-        UiEvent::TextDelta(delta) => Some(ControlEvent::OutputDelta {
-            session_id,
-            delta,
-            role: "assistant".to_string(),
-        }),
-        UiEvent::TextComplete(text) => Some(ControlEvent::OutputComplete {
-            session_id,
-            text,
-            role: "assistant".to_string(),
-        }),
-        UiEvent::ThinkingDelta(delta) => Some(ControlEvent::OutputDelta {
-            session_id,
-            delta,
-            role: "thinking".to_string(),
-        }),
-        UiEvent::ThinkingComplete(text) => Some(ControlEvent::OutputComplete {
-            session_id,
-            text,
-            role: "thinking".to_string(),
-        }),
-        UiEvent::ToolCallStarted(sven_vocab::ToolCall { id, name, args }) => {
-            Some(ControlEvent::ToolCall {
-                session_id,
-                call_id: id,
-                tool_name: name,
-                args,
-            })
-        }
-        UiEvent::ToolCallFinished {
-            call_id,
-            output,
-            is_error,
-            ..
-        } => Some(ControlEvent::ToolResult {
-            session_id,
-            call_id,
-            output,
-            is_error,
-        }),
-        UiEvent::Error(message) => Some(ControlEvent::AgentError {
-            session_id: Some(session_id),
-            message,
-        }),
-        UiEvent::TurnComplete => Some(ControlEvent::SessionState {
-            session_id,
-            state: SessionState::Completed,
-        }),
-        // Token accounting, context compaction, todo updates, mode/model
-        // changes, transition traces: not forwarded to operator clients.
-        _ => None,
+/// Total (no longer `Option`-returning): every variant is forwarded
+/// verbatim, not just the handful a hand-maintained translator special-cased.
+/// Session-lifecycle bookkeeping (`SessionState::Completed`/`Cancelled` on a
+/// terminal event) is the caller's responsibility — it needs to update
+/// server-side session-table state as well as broadcast, which this pure
+/// mapping has no access to. See `sven-node`'s and `sven-cloud`'s
+/// observation-drain loops.
+#[must_use]
+pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEvent {
+    ControlEvent::Session {
+        session_id,
+        event: ev,
     }
 }
 
@@ -566,19 +503,18 @@ mod tests {
     }
 
     #[test]
-    fn output_delta_cbor_round_trip() {
+    fn session_event_cbor_round_trip() {
         let id = Uuid::new_v4();
-        let ev = ControlEvent::OutputDelta {
+        let ev = ControlEvent::Session {
             session_id: id,
-            delta: "chunk".to_string(),
-            role: "assistant".to_string(),
+            event: sven_vocab::SessionEvent::TextDelta("chunk".to_string()),
         };
         let bytes = encode_event(&ev).unwrap();
         let back = decode_event(&bytes).unwrap();
         match back {
-            ControlEvent::OutputDelta { delta, role, .. } => {
-                assert_eq!(delta, "chunk");
-                assert_eq!(role, "assistant");
+            ControlEvent::Session { session_id, event } => {
+                assert_eq!(session_id, id);
+                assert!(matches!(event, sven_vocab::SessionEvent::TextDelta(d) if d == "chunk"));
             }
             _ => panic!("wrong variant"),
         }
@@ -645,19 +581,14 @@ mod tests {
     }
 
     #[test]
-    fn ui_text_delta_maps_to_output_delta_with_session_id() {
+    fn ui_text_delta_wraps_as_session_event_with_session_id() {
         let sid = Uuid::new_v4();
         match ui_event_to_control(sven_hsm::UiEvent::TextDelta("hi".into()), sid) {
-            Some(ControlEvent::OutputDelta {
-                session_id,
-                delta,
-                role,
-            }) => {
+            ControlEvent::Session { session_id, event } => {
                 assert_eq!(session_id, sid);
-                assert_eq!(delta, "hi");
-                assert_eq!(role, "assistant");
+                assert!(matches!(event, sven_vocab::SessionEvent::TextDelta(d) if d == "hi"));
             }
-            other => panic!("expected OutputDelta, got {other:?}"),
+            other => panic!("expected Session, got {other:?}"),
         }
     }
 

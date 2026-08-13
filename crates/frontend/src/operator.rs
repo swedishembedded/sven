@@ -252,46 +252,38 @@ impl OperatorConsole {
                     row.created_at = info.created_at;
                 }
             }
-            ControlEvent::OutputDelta {
-                session_id,
-                delta,
-                role,
-            } => {
-                let row = self.row(tenant_id, session_id);
-                row.phase = SessionState::Running;
-                if role != "thinking" {
+            ControlEvent::Session { session_id, event } => match event {
+                sven_hsm::UiEvent::TextDelta(delta) => {
+                    let row = self.row(tenant_id, session_id);
+                    row.phase = SessionState::Running;
                     row.output_buffer.push_str(&delta);
                 }
-            }
-            ControlEvent::OutputComplete {
-                session_id,
-                text,
-                role,
-            } => {
-                if role != "thinking" {
+                sven_hsm::UiEvent::ThinkingDelta(_) => {
+                    self.row(tenant_id, session_id).phase = SessionState::Running;
+                }
+                sven_hsm::UiEvent::TextComplete(text) => {
                     let row = self.row(tenant_id, session_id);
                     row.last_output = Some(text);
                     row.output_buffer.clear();
                 }
-            }
-            ControlEvent::ToolCall {
-                session_id,
-                tool_name,
-                ..
-            } => {
-                let row = self.row(tenant_id, session_id);
-                row.phase = SessionState::Running;
-                row.current_tool = Some(tool_name);
-            }
-            ControlEvent::ToolResult {
-                session_id,
-                call_id,
-                ..
-            } => {
-                let row = self.row(tenant_id, session_id);
-                row.current_tool = None;
-                row.pending_approvals.retain(|a| a.call_id != call_id);
-            }
+                sven_hsm::UiEvent::ToolCallStarted(tc) => {
+                    let row = self.row(tenant_id, session_id);
+                    row.phase = SessionState::Running;
+                    row.current_tool = Some(tc.name);
+                }
+                sven_hsm::UiEvent::ToolCallFinished { call_id, .. } => {
+                    let row = self.row(tenant_id, session_id);
+                    row.current_tool = None;
+                    row.pending_approvals.retain(|a| a.call_id != call_id);
+                }
+                sven_hsm::UiEvent::Error(message) => {
+                    self.row(tenant_id, session_id).last_error = Some(message);
+                }
+                // Thinking deltas, token usage, mode/model changes, todo
+                // updates, and every other observation-plane variant have no
+                // representation in this operator-console summary view.
+                _ => {}
+            },
             ControlEvent::ToolNeedsApproval {
                 session_id,
                 call_id,
@@ -319,13 +311,6 @@ impl OperatorConsole {
                     }
                 }
             }
-            ControlEvent::AgentError {
-                session_id,
-                message,
-            } => match session_id {
-                Some(id) => self.row(tenant_id, id).last_error = Some(message),
-                None => self.note_error(format!("{tenant_id}: {message}")),
-            },
             ControlEvent::NodeError { message, .. } => {
                 self.note_error(format!("{tenant_id}: {message}"));
             }
@@ -831,10 +816,9 @@ mod tests {
         let sid = Uuid::new_v4();
         c.apply(
             "acme",
-            ControlEvent::OutputComplete {
+            ControlEvent::Session {
                 session_id: sid,
-                text: "done".into(),
-                role: "assistant".into(),
+                event: sven_hsm::UiEvent::TextComplete("done".into()),
             },
         );
         c.apply(
@@ -868,10 +852,9 @@ mod tests {
         for delta in ["hel", "lo"] {
             c.apply(
                 "acme",
-                ControlEvent::OutputDelta {
+                ControlEvent::Session {
                     session_id: sid,
-                    delta: delta.into(),
-                    role: "assistant".into(),
+                    event: sven_hsm::UiEvent::TextDelta(delta.into()),
                 },
             );
         }
@@ -882,10 +865,9 @@ mod tests {
         }
         c.apply(
             "acme",
-            ControlEvent::OutputComplete {
+            ControlEvent::Session {
                 session_id: sid,
-                text: "hello".into(),
-                role: "assistant".into(),
+                event: sven_hsm::UiEvent::TextComplete("hello".into()),
             },
         );
         let row = c.session("acme", sid).unwrap();
@@ -899,10 +881,9 @@ mod tests {
         let sid = Uuid::new_v4();
         c.apply(
             "acme",
-            ControlEvent::OutputDelta {
+            ControlEvent::Session {
                 session_id: sid,
-                delta: "pondering".into(),
-                role: "thinking".into(),
+                event: sven_hsm::UiEvent::ThinkingDelta("pondering".into()),
             },
         );
         let row = c.session("acme", sid).unwrap();
@@ -943,11 +924,14 @@ mod tests {
 
         c.apply(
             "acme",
-            ControlEvent::ToolResult {
+            ControlEvent::Session {
                 session_id: sid,
-                call_id: "call-1".into(),
-                output: "ok".into(),
-                is_error: false,
+                event: sven_hsm::UiEvent::ToolCallFinished {
+                    call_id: "call-1".into(),
+                    tool_name: "run_shell".into(),
+                    output: "ok".into(),
+                    is_error: false,
+                },
             },
         );
         assert!(c.session("acme", sid).unwrap().pending_approvals.is_empty());
@@ -960,19 +944,20 @@ mod tests {
         let sid = Uuid::new_v4();
         c.apply(
             "acme",
-            ControlEvent::OutputDelta {
+            ControlEvent::Session {
                 session_id: sid,
-                delta: "partial".into(),
-                role: "assistant".into(),
+                event: sven_hsm::UiEvent::TextDelta("partial".into()),
             },
         );
         c.apply(
             "acme",
-            ControlEvent::ToolCall {
+            ControlEvent::Session {
                 session_id: sid,
-                call_id: "call-1".into(),
-                tool_name: "read_file".into(),
-                args: json!({}),
+                event: sven_hsm::UiEvent::ToolCallStarted(sven_tools::ToolCall {
+                    id: "call-1".into(),
+                    name: "read_file".into(),
+                    args: json!({}),
+                }),
             },
         );
         c.apply(
@@ -996,9 +981,9 @@ mod tests {
         let sid = Uuid::new_v4();
         c.apply(
             "acme",
-            ControlEvent::AgentError {
-                session_id: Some(sid),
-                message: "model timeout".into(),
+            ControlEvent::Session {
+                session_id: sid,
+                event: sven_hsm::UiEvent::Error("model timeout".into()),
             },
         );
         assert_eq!(

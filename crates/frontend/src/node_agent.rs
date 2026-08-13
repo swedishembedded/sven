@@ -15,22 +15,18 @@
 //! ([`sven_control`]):
 //!
 //! - `AgentRequest::Submit { content }` → `NewSession` + `SendInput`
-//! - `ControlEvent::OutputDelta { role: "assistant" }` → `AgentEvent::TextDelta`
-//! - `ControlEvent::OutputDelta { role: "thinking" }` → `AgentEvent::ThinkingDelta`
-//! - `ControlEvent::OutputComplete { role: "assistant" }` → `AgentEvent::TextComplete`
-//! - `ControlEvent::OutputComplete { role: "thinking" }` → `AgentEvent::ThinkingComplete`
-//! - `ControlEvent::ToolCall { ... }` → `AgentEvent::ToolCallStarted`
-//! - `ControlEvent::ToolResult { ... }` → `AgentEvent::ToolCallFinished`
+//! - `ControlEvent::Session { event, .. }` → forwarded verbatim (`AgentEvent`
+//!   and the node's `SessionEvent` are the same type)
 //! - `ControlEvent::ToolNeedsApproval { ... }` → auto-approve
 //! - `ControlEvent::SessionState { Completed | Cancelled }` → `AgentEvent::TurnComplete`
-//! - `ControlEvent::AgentError` / `NodeError` → `AgentEvent::Error`
+//! - `ControlEvent::NodeError` → `AgentEvent::Error`
 
 use std::sync::Arc;
 
 use futures::StreamExt;
 use serde::Serialize;
 use sven_core::AgentEvent;
-use sven_tools::{ToolCall, ToolSchema};
+use sven_tools::ToolSchema;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -155,7 +151,7 @@ pub async fn node_agent_task(
                             Err(_) => continue,
                         };
                         let is_peer_list = matches!(evt, Evt::PeerList { .. });
-                        handle_event(evt, &tx, &ws_out_tx, Uuid::nil(), &mut String::new()).await;
+                        handle_event(evt, &tx, &ws_out_tx, Uuid::nil()).await;
                         if is_peer_list {
                             break;
                         }
@@ -216,7 +212,6 @@ pub async fn node_agent_task(
             break;
         }
 
-        let mut thinking_buf = String::new();
         // Tracks whether the turn ended with a terminal `AgentEvent` (TurnComplete
         // / Aborted / Error). Every exit that emits one sets this true; any exit
         // that does NOT (a mid-turn stream EOF or WebSocket Close) leaves it false
@@ -243,7 +238,7 @@ pub async fn node_agent_task(
                         Ok(e) => e,
                         Err(_) => continue,
                     };
-                    let done = handle_event(evt, &tx, &ws_out_tx, sid, &mut thinking_buf).await;
+                    let done = handle_event(evt, &tx, &ws_out_tx, sid).await;
                     if done {
                         turn_terminated = true;
                         break;
@@ -368,63 +363,22 @@ async fn handle_event(
     tx: &mpsc::Sender<AgentEvent>,
     ws_out_tx: &mpsc::UnboundedSender<String>,
     session_id: Uuid,
-    thinking_buf: &mut String,
 ) -> bool {
     match evt {
-        Evt::OutputDelta { delta, role, .. } => {
-            if role == "thinking" {
-                thinking_buf.push_str(&delta);
-                let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
-            } else {
-                if !thinking_buf.is_empty() {
-                    let content = std::mem::take(thinking_buf);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
-                }
-                let _ = tx.send(AgentEvent::TextDelta(delta)).await;
+        // `AgentEvent` and the node's `ControlEvent::Session`-carried
+        // `SessionEvent` are the same type now, so this is a direct forward
+        // -- no more role-string sniffing to tell text from thinking apart,
+        // no more fabricating an empty tool_name for ToolCallFinished (the
+        // old flattened `ControlEvent::ToolResult` had dropped it).
+        Evt::Session { event, .. } => {
+            let terminal = matches!(
+                event,
+                AgentEvent::TurnComplete | AgentEvent::Aborted { .. }
+            );
+            let _ = tx.send(event).await;
+            if terminal {
+                return true;
             }
-        }
-        Evt::OutputComplete { text, role, .. } => {
-            if role == "thinking" {
-                thinking_buf.push_str(&text);
-            } else {
-                if !thinking_buf.is_empty() {
-                    let content = std::mem::take(thinking_buf);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
-                }
-                let _ = tx.send(AgentEvent::TextComplete(text)).await;
-            }
-        }
-        Evt::ToolCall {
-            call_id,
-            tool_name,
-            args,
-            ..
-        } => {
-            if !thinking_buf.is_empty() {
-                let content = std::mem::take(thinking_buf);
-                let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
-            }
-            let tc = ToolCall {
-                id: call_id,
-                name: tool_name,
-                args,
-            };
-            let _ = tx.send(AgentEvent::ToolCallStarted(tc)).await;
-        }
-        Evt::ToolResult {
-            call_id,
-            output,
-            is_error,
-            ..
-        } => {
-            let _ = tx
-                .send(AgentEvent::ToolCallFinished {
-                    call_id,
-                    tool_name: String::new(),
-                    output,
-                    is_error,
-                })
-                .await;
         }
         Evt::ToolNeedsApproval {
             call_id, tool_name, ..
@@ -439,17 +393,9 @@ async fn handle_event(
         }
         Evt::SessionState { state, .. } => {
             if state == SessionState::Completed || state == SessionState::Cancelled {
-                if !thinking_buf.is_empty() {
-                    let content = std::mem::take(thinking_buf);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
-                }
                 let _ = tx.send(AgentEvent::TurnComplete).await;
                 return true;
             }
-        }
-        Evt::AgentError { message, .. } => {
-            let _ = tx.send(AgentEvent::Error(message)).await;
-            return true;
         }
         Evt::NodeError { message, .. } => {
             let _ = tx.send(AgentEvent::Error(message)).await;
@@ -607,7 +553,6 @@ mod tests {
         for state in [SessionState::Completed, SessionState::Cancelled] {
             let (tx, mut rx) = mpsc::channel(4);
             let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
-            let mut buf = String::new();
             let done = handle_event(
                 Evt::SessionState {
                     session_id: Uuid::nil(),
@@ -616,7 +561,6 @@ mod tests {
                 &tx,
                 &ws_tx,
                 Uuid::nil(),
-                &mut buf,
             )
             .await;
             assert!(done, "state {state:?} should terminate the turn");
@@ -632,7 +576,6 @@ mod tests {
     async fn session_state_running_does_not_complete() {
         let (tx, mut rx) = mpsc::channel(4);
         let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
-        let mut buf = String::new();
         let done = handle_event(
             Evt::SessionState {
                 session_id: Uuid::nil(),
@@ -641,7 +584,6 @@ mod tests {
             &tx,
             &ws_tx,
             Uuid::nil(),
-            &mut buf,
         )
         .await;
         assert!(!done);

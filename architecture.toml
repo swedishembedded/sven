@@ -166,7 +166,7 @@ path = "src/main.rs"
 lines = 2866
 [[allow.large_file]]
 path = "crates/node/src/node.rs"
-lines = 2323
+lines = 2335
 [[allow.large_file]]
 path = "crates/p2p/src/node.rs"
 lines = 2287
@@ -186,11 +186,11 @@ lines = 1781
 path = "crates/tui/src/app/mod.rs"
 lines = 1738
 [[allow.large_file]]
+path = "crates/cloud/src/server.rs"
+lines = 1729
+[[allow.large_file]]
 path = "crates/model/src/lib.rs"
 lines = 1721
-[[allow.large_file]]
-path = "crates/cloud/src/server.rs"
-lines = 1707
 [[allow.large_file]]
 path = "crates/model/tests/wire_format_tests.rs"
 lines = 1707
@@ -204,11 +204,11 @@ lines = 1589
 path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
-path = "crates/cloud/src/channels.rs"
-lines = 1562
-[[allow.large_file]]
 path = "crates/node/src/control/service.rs"
-lines = 1559
+lines = 1563
+[[allow.large_file]]
+path = "crates/cloud/src/channels.rs"
+lines = 1554
 [[allow.large_file]]
 path = "crates/config/src/schema.rs"
 lines = 1550
@@ -265,7 +265,7 @@ path = "crates/tui/src/app/session_manager.rs"
 lines = 1094
 [[allow.large_file]]
 path = "crates/frontend/src/operator.rs"
-lines = 1086
+lines = 1071
 [[allow.large_file]]
 path = "crates/core/src/compact.rs"
 lines = 1054
@@ -295,16 +295,13 @@ path = "crates/team/src/tools.rs"
 lines = 927
 [[allow.large_file]]
 path = "crates/node/src/telegram.rs"
-lines = 924
+lines = 925
 [[allow.large_file]]
 path = "crates/node/src/config.rs"
 lines = 921
 [[allow.large_file]]
 path = "crates/cloud/src/portal.rs"
 lines = 904
-[[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 884
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
 lines = 881
@@ -313,7 +310,7 @@ path = "crates/tui/src/app/term_events.rs"
 lines = 880
 [[allow.large_file]]
 path = "crates/node/src/p2p/handler.rs"
-lines = 874
+lines = 872
 [[allow.large_file]]
 path = "crates/frontend/src/agent.rs"
 lines = 862
@@ -323,6 +320,9 @@ lines = 851
 [[allow.large_file]]
 path = "tests/context_pipeline_test.rs"
 lines = 850
+[[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 848
 [[allow.large_file]]
 path = "crates/ci/src/index.rs"
 lines = 832
