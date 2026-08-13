@@ -628,6 +628,22 @@ impl App {
                     self.scroll_down(self.layout.chat_height / 2);
                 }
             }
+            Action::ScrollFullPageUp => {
+                if let Some(nvim_bridge) = &self.nvim.bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-b>").await;
+                } else {
+                    self.scroll_up(self.layout.chat_height.saturating_sub(1).max(1));
+                }
+            }
+            Action::ScrollFullPageDown => {
+                if let Some(nvim_bridge) = &self.nvim.bridge {
+                    let mut bridge = nvim_bridge.lock().await;
+                    let _ = bridge.send_input("<C-f>").await;
+                } else {
+                    self.scroll_down(self.layout.chat_height.saturating_sub(1).max(1));
+                }
+            }
             Action::ScrollTop => {
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;

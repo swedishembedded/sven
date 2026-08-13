@@ -30,6 +30,11 @@ pub enum Action {
     ShowChatHelp,
     ScrollPageUp,
     ScrollPageDown,
+    /// PgUp/PgDn: scroll the chat pane a full page, regardless of which pane
+    /// has focus (distinct from `ScrollPageUp`/`ScrollPageDown`'s vim-style
+    /// half-page `Ctrl+u`/`Ctrl+d`).
+    ScrollFullPageUp,
+    ScrollFullPageDown,
     ScrollTop,
     ScrollBottom,
 
@@ -262,6 +267,19 @@ pub fn map_key(
         };
     }
 
+    // ── PgUp/PgDn: scroll the chat output regardless of focus ────────────────
+    // These fire before every focus-specific block below (search, edit mode
+    // excepted - see below, queue, chat list, input) so paging the output
+    // works no matter which pane has keyboard focus. Alt+PgUp/PgDn are left
+    // free for paging a text buffer directly (input box, edit box).
+    if !in_edit_mode && plain {
+        match event.code {
+            KeyCode::PageUp => return Some(Action::ScrollFullPageUp),
+            KeyCode::PageDown => return Some(Action::ScrollFullPageDown),
+            _ => {}
+        }
+    }
+
     if in_search {
         return map_search_key(event);
     }
@@ -385,8 +403,10 @@ pub fn map_key(
         KeyCode::Right if in_input => Some(Action::InputMoveCursorRight),
         KeyCode::Up if in_input => Some(Action::InputMoveLineUp),
         KeyCode::Down if in_input => Some(Action::InputMoveLineDown),
-        KeyCode::PageUp if in_input => Some(Action::InputPageUp),
-        KeyCode::PageDown if in_input => Some(Action::InputPageDown),
+        // Plain PageUp/PageDown are claimed globally above (scroll the chat
+        // output). Alt+PageUp/PageDown still page the input buffer itself.
+        KeyCode::PageUp if in_input && alt => Some(Action::InputPageUp),
+        KeyCode::PageDown if in_input && alt => Some(Action::InputPageDown),
         KeyCode::Home if in_input => Some(Action::InputMoveLineStart),
         KeyCode::End if in_input => Some(Action::InputMoveLineEnd),
         KeyCode::Char(c) if in_input && plain => Some(Action::InputChar(c)),
@@ -805,6 +825,112 @@ mod tests {
         assert_eq!(
             mk(ev, false, false, false, false, false, false),
             Some(Action::ShowChatHelp)
+        );
+    }
+
+    // ── PgUp/PgDn: global chat scroll, regardless of focus ──────────────────
+
+    #[test]
+    fn page_up_scrolls_chat_when_no_pane_focused() {
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, false, false, false),
+            Some(Action::ScrollFullPageUp)
+        );
+    }
+
+    #[test]
+    fn page_down_scrolls_chat_when_no_pane_focused() {
+        let ev = key(KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, false, false, false),
+            Some(Action::ScrollFullPageDown)
+        );
+    }
+
+    #[test]
+    fn page_up_scrolls_chat_while_input_focused() {
+        // This is the reported bug: PgUp used to be swallowed as
+        // `InputPageUp` (paging the empty input buffer) instead of scrolling
+        // the output.
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, true, false, false, false, false),
+            Some(Action::ScrollFullPageUp)
+        );
+    }
+
+    #[test]
+    fn page_down_scrolls_chat_while_input_focused() {
+        let ev = key(KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, true, false, false, false, false),
+            Some(Action::ScrollFullPageDown)
+        );
+    }
+
+    #[test]
+    fn page_up_scrolls_chat_while_queue_focused() {
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, false, true, false),
+            Some(Action::ScrollFullPageUp)
+        );
+    }
+
+    #[test]
+    fn page_up_scrolls_chat_while_chat_list_focused() {
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            map_key(ev, false, false, false, false, false, true, false),
+            Some(Action::ScrollFullPageUp)
+        );
+    }
+
+    #[test]
+    fn page_up_scrolls_chat_while_searching() {
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, true, true, false, false, false, false),
+            Some(Action::ScrollFullPageUp)
+        );
+    }
+
+    #[test]
+    fn alt_page_up_still_pages_input_buffer() {
+        let ev = key(KeyCode::PageUp, KeyModifiers::ALT);
+        assert_eq!(
+            mk(ev, false, true, false, false, false, false),
+            Some(Action::InputPageUp)
+        );
+    }
+
+    #[test]
+    fn alt_page_down_still_pages_input_buffer() {
+        let ev = key(KeyCode::PageDown, KeyModifiers::ALT);
+        assert_eq!(
+            mk(ev, false, true, false, false, false, false),
+            Some(Action::InputPageDown)
+        );
+    }
+
+    #[test]
+    fn page_up_pages_edit_buffer_while_editing_a_message() {
+        // Inline-edit mode is a distinct, focused text-editing context - PgUp
+        // there pages the message being edited, not the background chat.
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, true, false, false),
+            Some(Action::InputPageUp)
+        );
+    }
+
+    #[test]
+    fn page_down_pages_edit_buffer_while_editing_a_message() {
+        let ev = key(KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(
+            mk(ev, false, false, false, true, false, false),
+            Some(Action::InputPageDown)
         );
     }
 }
