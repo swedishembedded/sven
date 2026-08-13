@@ -9,5 +9,7 @@ license     = "Apache-2.0"
 sven-model  = { path = "../model" }
 sven-vocab  = { path = "../vocab" }
 sven-hsm    = { path = "../hsm" }
+serde       = { workspace = true }
 serde_json  = { workspace = true }
+thiserror   = { workspace = true }
 tracing     = { workspace = true }

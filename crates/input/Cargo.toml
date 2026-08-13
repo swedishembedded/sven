@@ -12,6 +12,7 @@ serde         = { workspace = true }
 serde_json    = { workspace = true }
 serde_yaml    = { workspace = true }
 sven-model    = { path = "../model" }
+sven-session-model = { path = "../session-model" }
 trace         = { path = "../trace" }
 dirs          = { workspace = true }
 chrono        = { workspace = true }

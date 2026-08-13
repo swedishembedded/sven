@@ -50,6 +50,7 @@ trace            = "foundation"
 sven-model  = "kernel"
 sven-wire   = "kernel"
 sven-control = "kernel"
+sven-session-model = "kernel"
 
 # services
 sven-input      = "services"
@@ -63,7 +64,6 @@ sven-integrations  = "domain"
 sven-memory        = "domain"
 sven-metering      = "domain"
 sven-scheduler     = "domain"
-sven-session-model = "domain"
 sven-team          = "domain"
 
 # machines
@@ -117,6 +117,22 @@ schema. Not a same-tier violation in spirit -- config has zero dependents at
 the foundation tier itself, so this can never become a cycle -- but the
 checker only reasons about tiers, not sub-tier leaf status, so it is
 recorded explicitly rather than silently allowed.
+"""
+
+[[same_layer]]
+from = "sven-session-model"
+to   = "sven-model"
+why  = """
+Both are "kernel" tier: pure trait/type vocabulary crates, no execution.
+sven-session-model needs sven_model::{Message, MessageContent, Role} to name
+the messages a ChatSegment/conversation-codec deals in. Placed at kernel
+(rather than services, where its only current sven-tier peer requirement
+would have been trivially satisfiable) specifically so sven-input (services)
+can depend on it downward without a second exception: sven-session-model is
+becoming the new home for sven-input's `## User`/`## Sven` markdown codec
+(Phase 3.7), and services strictly above kernel is exactly the edge that
+move needs. No cycle risk: sven-model has no sven-tier dependents at the
+kernel tier itself.
 """
 
 [[same_layer]]
@@ -244,9 +260,6 @@ lines = 1194
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
 [[allow.large_file]]
-path = "crates/input/src/conversation.rs"
-lines = 1165
-[[allow.large_file]]
 path = "crates/bootstrap/src/task_tool.rs"
 lines = 1157
 [[allow.large_file]]
@@ -276,6 +289,9 @@ lines = 1049
 [[allow.large_file]]
 path = "crates/cloud/src/metering.rs"
 lines = 1033
+[[allow.large_file]]
+path = "crates/session-model/src/conversation.rs"
+lines = 1029
 [[allow.large_file]]
 path = "crates/tui/src/submit.rs"
 lines = 1020
