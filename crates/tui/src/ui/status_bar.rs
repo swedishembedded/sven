@@ -158,7 +158,7 @@ impl Widget for StatusBar<'_> {
             match self.focus {
                 FocusPane::Input => {
                     if self.agent_busy {
-                        "^c interrupt"
+                        "Esc/^c abort"
                     } else {
                         "Enter send · / cmd · F1 help"
                     }

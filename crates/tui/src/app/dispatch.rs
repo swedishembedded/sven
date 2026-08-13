@@ -391,8 +391,12 @@ impl App {
             //
             // Priority:
             //   1. An inline edit is in progress → cancel it (restore original).
-            //   2. Input box has content / attachments → clear it.
-            //   3. Already empty → do nothing.
+            //   2. The agent is generating → abort the turn (same as Ctrl+C /
+            //      `/abort`). Reflexive-Esc-to-abort takes priority over
+            //      clearing the input box, since a busy agent means the box
+            //      is very likely irrelevant to what the user wants right now.
+            //   3. Input box has content / attachments → clear it.
+            //   4. Already empty → do nothing.
             Action::InputEscape => {
                 if self.edit.active() {
                     // Cancel an in-progress inline edit (same logic as EditMessageCancel).
@@ -429,7 +433,13 @@ impl App {
                     self.edit.clear();
                     return false;
                 }
-                // No active edit: clear the input box completely.
+                // No active edit: if the agent is generating, Esc aborts the
+                // turn instead of clearing the box - see priority note above.
+                if self.agent.busy {
+                    self.interrupt_agent().await;
+                    return false;
+                }
+                // Otherwise: clear the input box completely.
                 self.input.buffer.clear();
                 self.input.cursor = 0;
                 self.input.scroll_offset = 0;
@@ -1023,10 +1033,7 @@ impl App {
             }
 
             Action::InterruptAgent => {
-                if self.agent.busy {
-                    self.queue.abort_pending = true;
-                    self.send_abort_signal().await;
-                }
+                self.interrupt_agent().await;
             }
 
             Action::ForceSubmitQueuedMessage => {

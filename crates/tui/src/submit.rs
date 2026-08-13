@@ -547,6 +547,16 @@ impl App {
         drop(sender);
     }
 
+    /// Abort the in-flight agent turn, if any. Shared by every user-facing
+    /// abort trigger (`Ctrl+C`, `Esc`, `/abort`) so they can never drift out
+    /// of sync. No-op when the agent is idle.
+    pub(crate) async fn interrupt_agent(&mut self) {
+        if self.agent.busy {
+            self.queue.abort_pending = true;
+            self.send_abort_signal().await;
+        }
+    }
+
     /// Force-submit the queue item at `idx`.
     pub(crate) async fn force_submit_queued_message(&mut self, idx: usize) {
         if idx >= self.queue.messages.len() {
@@ -930,6 +940,50 @@ mod submit_integration_tests {
         assert!(
             rx.try_recv().is_err(),
             "no message should have been sent automatically"
+        );
+    }
+
+    #[tokio::test]
+    async fn esc_aborts_and_does_not_clear_input_when_agent_busy() {
+        let (mut app, mut rx) = App::for_testing();
+
+        app.inject_input("first");
+        app.dispatch_action(Action::Submit).await;
+        let _first = recv_resubmit_for_test(&mut rx);
+        assert!(app.is_agent_busy());
+
+        // Text sitting in the box when the abort fires must survive - Esc
+        // aborting a busy agent is not "clear the input box" in disguise.
+        app.inject_input("unrelated draft");
+        app.dispatch_action(Action::InputEscape).await;
+
+        assert!(
+            app.is_abort_pending(),
+            "Esc must abort the in-flight turn when the agent is busy"
+        );
+        assert_eq!(
+            app.input_buffer_for_test(),
+            "unrelated draft",
+            "Esc-to-abort must not clear the input box"
+        );
+    }
+
+    #[tokio::test]
+    async fn esc_clears_input_when_agent_idle() {
+        let (mut app, _rx) = App::for_testing();
+        assert!(!app.is_agent_busy());
+
+        app.inject_input("some draft text");
+        app.dispatch_action(Action::InputEscape).await;
+
+        assert_eq!(
+            app.input_buffer_for_test(),
+            "",
+            "Esc with an idle agent must clear the input box"
+        );
+        assert!(
+            !app.is_abort_pending(),
+            "Esc with an idle agent must not touch abort_pending"
         );
     }
 

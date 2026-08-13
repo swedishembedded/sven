@@ -81,6 +81,9 @@ pub struct InputPane<'a> {
     pub attachments: &'a [InputAttachment],
     /// Whether the top border is currently being drag-resized.
     pub is_resizing: bool,
+    /// Whether the agent is currently generating - shows an "Esc:abort
+    /// generation" hint instead of the normal send/newline/history hint.
+    pub agent_busy: bool,
 }
 
 impl Widget for InputPane<'_> {
@@ -95,6 +98,7 @@ impl Widget for InputPane<'_> {
         let hint: &str = match self.edit_mode {
             InputEditMode::Queue => "Enter:update  Esc:cancel",
             InputEditMode::Segment => "Enter:confirm  Esc:cancel",
+            InputEditMode::Normal if self.agent_busy => "Esc:abort generation",
             InputEditMode::Normal => "Enter:send  Alt+Enter:newline  ^↑↓:history  ^w k:chat",
         };
 
@@ -361,6 +365,7 @@ mod tests {
             edit_mode: InputEditMode::Normal,
             attachments: &[],
             is_resizing: false,
+            agent_busy: false,
         }
     }
 
@@ -455,5 +460,30 @@ mod tests {
         assert_eq!(placeholder_for(PLACEHOLDER_SHORT.chars().count() - 1), "");
         assert_eq!(placeholder_for(1), "");
         assert_eq!(placeholder_for(0), "");
+    }
+
+    #[test]
+    fn busy_agent_shows_abort_hint_instead_of_send_hint() {
+        let area = Rect::new(0, 0, 80, 3);
+        let mut buf = Buffer::empty(area);
+        InputPane {
+            agent_busy: true,
+            ..empty_pane(true)
+        }
+        .render(area, &mut buf);
+
+        let bottom_y = area.y + area.height - 1;
+        let mut rendered = String::new();
+        for x in 0..area.width {
+            rendered.push_str(buf[(x, bottom_y)].symbol());
+        }
+        assert!(
+            rendered.contains("Esc:abort generation"),
+            "busy hint must be shown on the bottom border: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("Enter:send"),
+            "the idle hint must not also be shown: {rendered:?}"
+        );
     }
 }

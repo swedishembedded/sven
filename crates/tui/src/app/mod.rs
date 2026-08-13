@@ -601,6 +601,7 @@ impl App {
                     self.layout.resize_drag,
                     Some(crate::app::layout_cache::ResizeDrag::InputHeight { .. })
                 ),
+                agent_busy: self.agent.busy,
             },
             layout.input_pane,
         );
@@ -1583,6 +1584,10 @@ impl App {
     pub fn inject_input(&mut self, text: &str) {
         self.input.buffer = text.to_string();
         self.input.cursor = text.len();
+    }
+
+    pub fn input_buffer_for_test(&self) -> &str {
+        &self.input.buffer
     }
 
     pub async fn dispatch_action(&mut self, action: Action) -> bool {
