@@ -45,6 +45,8 @@ members = [
     "crates/metering",
     # ATIF v1.7 trajectory format (standalone; not yet wired into sven)
     "crates/trace",
+    # Workspace tooling: `cargo run -p xtask -- arch` enforces architecture.toml
+    "xtask",
 ]
 
 # Single source of truth for the sven release version. The top-level `sven`

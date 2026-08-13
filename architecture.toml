@@ -1,0 +1,428 @@
+# Architecture ratchet for the sven workspace.
+#
+# Enforced by `cargo run -p xtask -- arch` (wired into `make check`, runs before
+# clippy). Method and rationale: /data/workspace/.claude/skills/programming/rust/architecture.md
+# and /home/user/.claude/plans/use-cargo-tree-to-snug-pebble.md (the refactor plan
+# this file bootstraps).
+#
+# Rules:
+#   - A crate may depend (as a normal, non-dev dependency) only on crates at a
+#     STRICTLY LOWER tier, unless the ordered pair is listed in [[same_layer]].
+#   - dev-dependencies are exempt from the tier check entirely.
+#   - Every [[allow.*]] entry below is a REVIEWED, TEMPORARY exception with a
+#     `why` explaining what it is and when it goes away. A stale entry (the
+#     violation it names no longer exists) is itself a failure — delete it when
+#     you fix the underlying issue, don't leave it behind.
+#   - `[[allow.large_file]]` entries are a high-water mark: `lines` may only
+#     shrink release over release. `cargo run -p xtask -- arch --bless`
+#     regenerates this section from the live tree (note: bless rewrites the
+#     whole file and does not preserve comments outside `why`/data fields).
+
+[tiers]
+# Ordered low -> high. A crate may depend only on tiers strictly below its own
+# (or same-tier, if explicitly listed in [[same_layer]]).
+order = [
+    "foundation", # zero internal sven deps
+    "kernel",     # trait/type vocabulary: config schema, HSM types, provider trait, wire ids
+    "services",   # concrete registries/stores built on the kernel vocabulary
+    "domain",     # tool implementations and other domain services
+    "machines",   # pure Machine impls + the I/O executor layer that drives them
+    "assembly",   # the composition root(s): RuntimeBuilder and friends
+    "wiring",     # async surface plumbing shared by every frontend
+    "surface",    # user-visible entry points (CLI/TUI/GUI, headless runner, node, MCP server)
+    "composite",  # surfaces that assemble other surfaces (ACP proxies a node; cloud fronts a companion)
+    "binary",     # the `sven` binary itself
+]
+
+[crates]
+# foundation
+sven-config      = "foundation"
+sven-hsm         = "foundation"
+sven-image       = "foundation"
+sven-node-client = "foundation"
+sven-p2p         = "foundation"
+sven-runtime     = "foundation"
+trace            = "foundation"
+
+# kernel
+sven-graph  = "kernel"
+sven-model  = "kernel"
+sven-wire   = "kernel"
+sven-control = "kernel"
+
+# services
+sven-input      = "services"
+sven-llm        = "services"
+sven-tools      = "services"
+sven-mcp-client = "services"
+
+# domain
+sven-channels      = "domain"
+sven-integrations  = "domain"
+sven-memory        = "domain"
+sven-metering      = "domain"
+sven-scheduler     = "domain"
+sven-team          = "domain"
+
+# machines
+sven-core      = "machines"
+sven-executors = "machines"
+
+# assembly
+sven-bootstrap = "assembly"
+sven-companion = "assembly"
+
+# wiring
+sven-frontend = "wiring"
+
+# surface
+sven-ci  = "surface"
+sven-gui = "surface"
+sven-mcp = "surface"
+sven-node = "surface"
+sven-tui = "surface"
+
+# composite
+sven-acp   = "composite"
+sven-cloud = "composite"
+
+# binary
+sven = "binary"
+
+# tooling (not part of the production dependency graph; zero sven deps)
+xtask = "foundation"
+
+# ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
+[[same_layer]]
+from = "sven-mcp-client"
+to   = "sven-tools"
+why  = """
+TEMPORARY, tracked for Phase 5 of the refactor plan. mcp-client adapts external
+MCP tools into sven-tools's ToolSchema, so it needs the tool-vocabulary types.
+Once sven-tools splits into sven-tool-api (kernel tier, just the Tool trait +
+ToolSchema) and sven-tool-registry (services tier, the registry impl),
+mcp-client repoints at sven-tool-api and this edge becomes legitimately
+downward. Delete this entry when that split lands.
+"""
+
+[[same_layer]]
+from = "sven-executors"
+to   = "sven-core"
+why  = """
+TEMPORARY, tracked for Phase 4.1-4.2 of the refactor plan. This is NOT a
+legitimate peer edge: core/src/stream_turn.rs (the actual async LLM call) and
+core/src/compact.rs are impure turn-execution primitives misfiled in the
+"pure machines" crate. Nothing under core/src/machines/ imports sven_model;
+stream_turn.rs and compact.rs do. Phase 4.1 extracts them into a new
+sven-turn crate (domain tier); sven-executors depends on that instead and this
+same-tier edge disappears rather than being legitimized. See
+docs/adr/ (refactor plan) for the full analysis. Delete this entry when Phase
+4.1-4.2 land.
+"""
+
+# ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
+[[allow.upward]]
+from = "sven-wire"
+to   = "sven-tools"
+why  = """
+sven-wire (kernel tier: protocol DTOs) depends on sven-tools (services tier)
+only for two From/Into conversions between WireToolOutput and
+sven_tools::ToolOutput (wire/src/messages.rs). Fix: Phase 2.1-2.2 of the
+refactor plan moves ToolCall/ToolOutput down into a new sven-vocab crate
+(foundation tier); sven-wire depends on that instead and this edge is deleted,
+not legitimized.
+"""
+
+[[allow.upward]]
+from = "sven-control"
+to   = "sven-tools"
+why  = """
+sven-control (kernel tier: the operator control protocol) depends on
+sven-tools (services tier) for the same reason as sven-wire above -- it needs
+ToolCall/ToolCapability-shaped types to describe tool activity over the
+control protocol. Fix: same as sven-wire, Phase 2.1-2.2 moves those types to
+sven-vocab (foundation tier).
+"""
+
+[[allow.upward]]
+from = "sven-metering"
+to   = "sven-executors"
+why  = """
+sven-metering (domain tier: pricing + credit ledger) depends on
+sven-executors (machines tier) only for three sha256 append-only JSONL
+hash-chain helpers (append_chain/read_chain/verify_chain, co-located with
+AuditExecutor in executors/src/audit.rs) that have nothing to do with effects
+or I/O. Fix: Phase 2.3 of the refactor plan extracts those three functions
+into a new sven-chain crate (foundation tier); sven-metering and
+sven-companion both repoint at that and this edge is deleted.
+"""
+
+# ── Known dead/unused internal dependencies. ────────────────────────────────
+# A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep
+# on `dep` but has zero real (non-comment) `dep_ident::` references under its
+# own src/. Each of these is a first-commit-of-the-refactor deletion (Phase
+# 1.1); they are seeded here only so day one of the ratchet is green.
+[[allow.dead_dep]]
+crate = "sven-acp"
+dep   = "sven-node"
+why   = "Zero sven_node:: use sites anywhere in crates/acp/src. Delete the dependency outright."
+
+[[allow.dead_dep]]
+crate = "sven-frontend"
+dep   = "sven-executors"
+why   = "Only mention is an intra-doc link at frontend/src/projection.rs:35 (`[sven_executors::user::UserExecutor]`), which the comment-aware scan does not count as a real use. Delete the dependency; keep the doc text as plain formatting."
+
+[[allow.dead_dep]]
+crate = "sven-node"
+dep   = "sven-frontend"
+why   = "Only used by tests/control_mirror.rs (a test made obsolete by the sven-control extraction, which node/src/control/protocol.rs and node/src/control/service.rs already re-export from). Delete the test and the dependency together (or move to [dev-dependencies] if the test is kept)."
+
+# The following were found by xtask itself (not part of the original manual
+# audit) the first time this check ran. Each was spot-checked with a direct
+# grep before being seeded here: zero real reference, only doc-comment links
+# or nothing at all. All are free deletions for Phase 1.1.
+[[allow.dead_dep]]
+crate = "sven"
+dep   = "sven-core"
+why   = "No sven_core:: reference anywhere under src/. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-acp"
+dep   = "sven-model"
+why   = "No sven_model:: reference anywhere under crates/acp/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-channels"
+dep   = "sven-config"
+why   = "No sven_config:: reference anywhere under crates/channels/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-llm"
+dep   = "sven-hsm"
+why   = "Only two doc-comment links ([`sven_hsm::Event::LlmTurnComplete`], [`sven_hsm::Effect::CallLlm`]) in crates/llm/src/conversation.rs, no real reference. Delete the dependency; keep the doc text as plain formatting."
+[[allow.dead_dep]]
+crate = "sven-integrations"
+dep   = "sven-config"
+why   = "No sven_config:: reference anywhere under crates/integrations/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-memory"
+dep   = "sven-config"
+why   = "No sven_config:: reference anywhere under crates/memory/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-memory"
+dep   = "sven-model"
+why   = "No sven_model:: reference anywhere under crates/memory/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-scheduler"
+dep   = "sven-config"
+why   = "No sven_config:: reference anywhere under crates/scheduler/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-node"
+dep   = "sven-runtime"
+why   = "No sven_runtime:: reference anywhere under crates/node/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-team"
+dep   = "sven-p2p"
+why   = "No sven_p2p:: reference anywhere under crates/team/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-ci"
+dep   = "sven-frontend"
+why   = "No sven_frontend:: reference anywhere under crates/ci/src. Delete the dependency."
+[[allow.dead_dep]]
+crate = "sven-gui"
+dep   = "sven-bootstrap"
+why   = "No sven_bootstrap:: reference anywhere under crates/gui/src. Moot once crates/gui is deleted in Phase 1.2."
+[[allow.dead_dep]]
+crate = "sven-gui"
+dep   = "sven-mcp-client"
+why   = "No sven_mcp_client:: reference anywhere under crates/gui/src. Moot once crates/gui is deleted in Phase 1.2."
+
+# ── File-size ratchet. `lines` is a high-water mark: it may only shrink. ───
+# Regenerate with `cargo run -p xtask -- arch --bless`. Seeded from the
+# measured tree at the start of the refactor (2026-08-13).
+[[allow.large_file]]
+path = "src/main.rs"
+lines = 2941
+[[allow.large_file]]
+path = "crates/gui/src/bridge.rs"
+lines = 2525
+[[allow.large_file]]
+path = "crates/node/src/node.rs"
+lines = 2337
+[[allow.large_file]]
+path = "crates/p2p/src/node.rs"
+lines = 2287
+[[allow.large_file]]
+path = "crates/input/src/trace_session.rs"
+lines = 2239
+[[allow.large_file]]
+path = "crates/mcp-client/src/oauth.rs"
+lines = 2137
+[[allow.large_file]]
+path = "crates/model/src/openai_compat/mod.rs"
+lines = 1956
+[[allow.large_file]]
+path = "crates/tui/src/app/dispatch.rs"
+lines = 1781
+[[allow.large_file]]
+path = "crates/tui/src/app/mod.rs"
+lines = 1738
+[[allow.large_file]]
+path = "crates/model/src/lib.rs"
+lines = 1721
+[[allow.large_file]]
+path = "crates/model/tests/wire_format_tests.rs"
+lines = 1707
+[[allow.large_file]]
+path = "crates/cloud/src/server.rs"
+lines = 1707
+[[allow.large_file]]
+path = "crates/tools/src/builtin/file/edit_file.rs"
+lines = 1695
+[[allow.large_file]]
+path = "src/cli.rs"
+lines = 1596
+[[allow.large_file]]
+path = "crates/node/src/tools.rs"
+lines = 1589
+[[allow.large_file]]
+path = "crates/config/src/schema.rs"
+lines = 1575
+[[allow.large_file]]
+path = "crates/cloud/src/channels.rs"
+lines = 1562
+[[allow.large_file]]
+path = "crates/node/src/control/service.rs"
+lines = 1516
+[[allow.large_file]]
+path = "crates/tui/src/nvim/bridge.rs"
+lines = 1506
+[[allow.large_file]]
+path = "crates/team/src/spawn.rs"
+lines = 1506
+[[allow.large_file]]
+path = "crates/tools/tests/context_integration.rs"
+lines = 1417
+[[allow.large_file]]
+path = "crates/tui/src/app/chat_ops.rs"
+lines = 1318
+[[allow.large_file]]
+path = "crates/cloud/tests/e2e_firmware.rs"
+lines = 1309
+[[allow.large_file]]
+path = "crates/ci/src/runner/mod.rs"
+lines = 1263
+[[allow.large_file]]
+path = "crates/core/src/prompts.rs"
+lines = 1241
+[[allow.large_file]]
+path = "crates/runtime/src/skills.rs"
+lines = 1238
+[[allow.large_file]]
+path = "crates/hsm/src/runtime.rs"
+lines = 1219
+[[allow.large_file]]
+path = "crates/gui/src/sessions.rs"
+lines = 1216
+[[allow.large_file]]
+path = "crates/tui/src/chat/markdown.rs"
+lines = 1185
+[[allow.large_file]]
+path = "crates/bootstrap/src/runtime_builder.rs"
+lines = 1170
+[[allow.large_file]]
+path = "crates/executors/src/audit.rs"
+lines = 1168
+[[allow.large_file]]
+path = "crates/input/src/conversation.rs"
+lines = 1165
+[[allow.large_file]]
+path = "crates/bootstrap/src/task_tool.rs"
+lines = 1157
+[[allow.large_file]]
+path = "crates/core/src/stream_turn.rs"
+lines = 1146
+[[allow.large_file]]
+path = "crates/executors/tests/pipeline_integration.rs"
+lines = 1121
+[[allow.large_file]]
+path = "crates/model/src/anthropic.rs"
+lines = 1116
+[[allow.large_file]]
+path = "crates/frontend/src/operator.rs"
+lines = 1108
+[[allow.large_file]]
+path = "crates/tui/src/app/session_manager.rs"
+lines = 1094
+[[allow.large_file]]
+path = "crates/core/src/compact.rs"
+lines = 1054
+[[allow.large_file]]
+path = "crates/config/src/loader.rs"
+lines = 1049
+[[allow.large_file]]
+path = "crates/cloud/src/metering.rs"
+lines = 1033
+[[allow.large_file]]
+path = "crates/tui/src/submit.rs"
+lines = 1020
+[[allow.large_file]]
+path = "crates/mcp-client/src/manager.rs"
+lines = 1016
+[[allow.large_file]]
+path = "crates/tools/src/builtin/context/store.rs"
+lines = 1012
+[[allow.large_file]]
+path = "crates/tools/src/builtin/gdb/discovery.rs"
+lines = 942
+[[allow.large_file]]
+path = "crates/tui/src/keys.rs"
+lines = 936
+[[allow.large_file]]
+path = "crates/team/src/tools.rs"
+lines = 927
+[[allow.large_file]]
+path = "crates/node/src/telegram.rs"
+lines = 924
+[[allow.large_file]]
+path = "crates/node/src/config.rs"
+lines = 921
+[[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 913
+[[allow.large_file]]
+path = "crates/cloud/src/portal.rs"
+lines = 904
+[[allow.large_file]]
+path = "crates/executors/src/turn.rs"
+lines = 883
+[[allow.large_file]]
+path = "crates/cloud/tests/e2e_platform.rs"
+lines = 881
+[[allow.large_file]]
+path = "crates/tui/src/app/term_events.rs"
+lines = 880
+[[allow.large_file]]
+path = "crates/node/src/p2p/handler.rs"
+lines = 874
+[[allow.large_file]]
+path = "crates/frontend/src/agent.rs"
+lines = 856
+[[allow.large_file]]
+path = "crates/companion/src/policy.rs"
+lines = 851
+[[allow.large_file]]
+path = "tests/context_pipeline_test.rs"
+lines = 850
+[[allow.large_file]]
+path = "crates/ci/src/index.rs"
+lines = 832
+[[allow.large_file]]
+path = "crates/tools/src/registry.rs"
+lines = 828
+[[allow.large_file]]
+path = "crates/ci/src/tests.rs"
+lines = 815
+[[allow.large_file]]
+path = "crates/model/src/google.rs"
+lines = 806
+[[allow.large_file]]
+path = "crates/tui/src/app/agent_events.rs"
+lines = 801

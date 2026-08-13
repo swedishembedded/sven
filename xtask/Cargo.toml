@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition = "2021"
+publish = false
+description = "Workspace tooling: `cargo run -p xtask -- arch` enforces the crate-tier architecture ratchet described in architecture.toml."
+
+[dependencies]
+anyhow     = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+toml       = { workspace = true }

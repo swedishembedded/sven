@@ -27,7 +27,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check docs docs-pdf \
+.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -230,9 +230,13 @@ docs-pdf: docs
 fmt:
 	$(CARGO) fmt --all
 
-## check     - lint without building
-check:
+## check     - architecture ratchet, then lint without building
+check: check/arch
 	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
+
+## check/arch - enforce architecture.toml (crate tiers, dead deps, file-size ratchet)
+check/arch:
+	$(CARGO) run -q -p xtask -- arch
 
 ## relay     - build the sven-relay server (requires git-discovery feature)
 relay:
