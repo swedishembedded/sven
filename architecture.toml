@@ -232,11 +232,11 @@ lines = 1318
 path = "crates/cloud/tests/e2e_firmware.rs"
 lines = 1309
 [[allow.large_file]]
-path = "crates/ci/src/runner/mod.rs"
-lines = 1263
-[[allow.large_file]]
 path = "crates/core/src/prompts.rs"
 lines = 1241
+[[allow.large_file]]
+path = "crates/ci/src/runner/mod.rs"
+lines = 1240
 [[allow.large_file]]
 path = "crates/runtime/src/skills.rs"
 lines = 1238
@@ -310,14 +310,14 @@ lines = 921
 path = "crates/cloud/src/portal.rs"
 lines = 904
 [[allow.large_file]]
-path = "crates/ci/src/runner/runtime_runner.rs"
-lines = 895
-[[allow.large_file]]
 path = "crates/executors/src/turn.rs"
 lines = 883
 [[allow.large_file]]
 path = "crates/cloud/tests/e2e_platform.rs"
 lines = 881
+[[allow.large_file]]
+path = "crates/ci/src/runner/runtime_runner.rs"
+lines = 880
 [[allow.large_file]]
 path = "crates/tui/src/app/term_events.rs"
 lines = 880
@@ -326,7 +326,7 @@ path = "crates/node/src/p2p/handler.rs"
 lines = 874
 [[allow.large_file]]
 path = "crates/frontend/src/agent.rs"
-lines = 856
+lines = 862
 [[allow.large_file]]
 path = "crates/companion/src/policy.rs"
 lines = 851

@@ -142,27 +142,12 @@ impl RuntimeRunner {
         }
 
         let runtime_ctx = RuntimeContext {
-            project_root: opts.project_root.clone(),
-            git_context: opts
-                .project_root
-                .as_ref()
-                .map(|r| sven_runtime::collect_git_context(r)),
-            ci_context: Some(crate::context::detect_ci_context()),
             project_context_file: project_context.map(|(_, content)| content),
             append_system_prompt: opts.append_system_prompt.clone(),
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
             no_tools: opts.no_tools,
-            skills: sven_runtime::SharedSkills::new(sven_runtime::discover_skills(
-                opts.project_root.as_deref(),
-            )),
-            agents: sven_runtime::SharedAgents::new(sven_runtime::discover_agents(
-                opts.project_root.as_deref(),
-            )),
-            knowledge: sven_runtime::SharedKnowledge::new(sven_runtime::discover_knowledge(
-                opts.project_root.as_deref(),
-            )),
-            knowledge_drift_note: None,
+            ..RuntimeContext::auto_detect_at(opts.project_root.clone())
         };
 
         let kernel_mode = Self::kernel_mode(&opts.mode);

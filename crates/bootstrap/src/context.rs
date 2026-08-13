@@ -64,7 +64,44 @@ pub struct RuntimeContext {
 impl RuntimeContext {
     /// Create with auto-detected project, git, CI context, skills, and knowledge.
     pub fn auto_detect() -> Self {
-        let project_root = sven_runtime::find_project_root().ok();
+        Self::auto_detect_at(sven_runtime::find_project_root().ok())
+    }
+
+    /// Create with detected git/CI/skills/agents/knowledge context, using an
+    /// already-resolved `project_root` instead of walking up from the current
+    /// directory.
+    ///
+    /// This is the shared detection logic `auto_detect()` builds on; callers
+    /// that already have a resolved project root (headless runners passed
+    /// `--cwd`, a rebuilt session reusing the original root, ...) should call
+    /// this directly and override individual fields with struct-update syntax
+    /// (`RuntimeContext { no_system: true, ..RuntimeContext::auto_detect_at(root) }`)
+    /// rather than re-deriving skills/agents/knowledge/drift by hand -- a
+    /// hand-written copy previously dropped the knowledge-drift check by
+    /// hardcoding `knowledge_drift_note: None`.
+    pub fn auto_detect_at(project_root: Option<PathBuf>) -> Self {
+        Self::auto_detect_with(
+            project_root.clone(),
+            SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref())),
+            SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref())),
+        )
+    }
+
+    /// Create with detected git/CI/knowledge context at `project_root`,
+    /// reusing already-discovered `skills`/`agents` instead of re-walking the
+    /// skill/agent search hierarchy.
+    ///
+    /// For a long-lived interactive session (TUI) that discovers skills and
+    /// agents once at startup and then spawns a kernel session task, this is
+    /// the difference between one filesystem walk and two: the task no
+    /// longer needs to call [`Self::auto_detect`] (which would discover its
+    /// own, separate copies) and can instead pass through what the caller
+    /// already has.
+    pub fn auto_detect_with(
+        project_root: Option<PathBuf>,
+        skills: SharedSkills,
+        agents: SharedAgents,
+    ) -> Self {
         let git_context = project_root
             .as_ref()
             .map(|r| sven_runtime::collect_git_context(r));
@@ -72,8 +109,6 @@ impl RuntimeContext {
         let project_context_file = project_root
             .as_ref()
             .and_then(|r| sven_runtime::find_project_context_file(r));
-        let skills = SharedSkills::new(sven_runtime::discover_skills(project_root.as_deref()));
-        let agents = SharedAgents::new(sven_runtime::discover_agents(project_root.as_deref()));
 
         // Discover knowledge docs and check for drift against recent git commits.
         let knowledge_items = sven_runtime::discover_knowledge(project_root.as_deref());
@@ -282,10 +317,11 @@ mod tests {
     use tokio::sync::Mutex;
 
     use sven_config::AgentMode;
+    use sven_runtime::{SharedAgents, SharedSkills};
     use sven_tools::events::TodoItem;
     use sven_tools::OutputBufferStore;
 
-    use super::{has_gdb_config, ToolSetProfile};
+    use super::{has_gdb_config, RuntimeContext, ToolSetProfile};
 
     fn todos() -> Arc<Mutex<Vec<TodoItem>>> {
         Arc::new(Mutex::new(vec![]))
@@ -293,6 +329,74 @@ mod tests {
 
     fn buffer_store() -> Arc<Mutex<OutputBufferStore>> {
         Arc::new(Mutex::new(OutputBufferStore::new()))
+    }
+
+    // ── auto_detect_with ─────────────────────────────────────────────────────
+
+    fn skill(command: &str) -> sven_runtime::SkillInfo {
+        sven_runtime::SkillInfo {
+            command: command.to_string(),
+            name: command.to_string(),
+            description: String::new(),
+            version: None,
+            skill_md_path: std::path::PathBuf::new(),
+            skill_dir: std::path::PathBuf::new(),
+            content: String::new(),
+            sven_meta: None,
+        }
+    }
+
+    // Pins the fix for a regression where a caller with its own
+    // already-discovered skills/agents (the TUI, which discovers them once at
+    // startup) got a *second*, separate discovery pass baked into its kernel
+    // session's RuntimeContext via a bare `RuntimeContext::auto_detect()` call
+    // that ignored what it was handed. `auto_detect_with` must use exactly the
+    // given skills/agents, not re-derive them from `project_root` -- proven
+    // here by pointing it at an empty project root (which would discover zero
+    // skills on disk) while passing in a non-empty pre-discovered list.
+    #[test]
+    fn auto_detect_with_reuses_given_skills_and_agents_instead_of_rediscovering() {
+        let empty_root = tempfile::tempdir().unwrap();
+        let skills = SharedSkills::new(vec![skill("preloaded")]);
+        let agents = SharedAgents::empty();
+
+        let ctx = RuntimeContext::auto_detect_with(
+            Some(empty_root.path().to_path_buf()),
+            skills,
+            agents,
+        );
+
+        let got = ctx.skills.get();
+        assert_eq!(got.len(), 1, "should carry the caller's pre-discovered skill");
+        assert_eq!(got[0].command, "preloaded");
+    }
+
+    // Pins the fix for a second regression: two headless-runner call sites
+    // hand-wrote a `RuntimeContext { .. }` literal that hardcoded
+    // `knowledge_drift_note: None` and never called `discover_knowledge` at
+    // all, so `RuntimeRunner` runs never saw knowledge docs (or warned about
+    // stale ones) while `CiRunner` runs did. Both now build on
+    // `auto_detect_at`, which always runs real discovery -- proven here by
+    // planting an actual `.sven/knowledge/*.md` file and asserting it comes
+    // back, which a hardcoded-empty literal could not produce.
+    #[test]
+    fn auto_detect_at_actually_discovers_knowledge_docs() {
+        let dir = tempfile::tempdir().unwrap();
+        let knowledge_dir = dir.path().join(".sven").join("knowledge");
+        std::fs::create_dir_all(&knowledge_dir).unwrap();
+        std::fs::write(
+            knowledge_dir.join("notes.md"),
+            "---\nsubsystem: Test Subsystem\n---\n\n## Notes\n\nSome content.",
+        )
+        .unwrap();
+
+        let ctx = RuntimeContext::auto_detect_at(Some(dir.path().to_path_buf()));
+
+        assert_eq!(
+            ctx.knowledge.get().len(),
+            1,
+            "auto_detect_at should have run real discovery, not a hardcoded empty list"
+        );
     }
 
     // ── has_gdb_config ────────────────────────────────────────────────────────

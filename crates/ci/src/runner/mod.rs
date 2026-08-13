@@ -503,21 +503,6 @@ impl CiRunner {
         // no post-step metadata serialization needed)
 
         // ── Build runtime context ─────────────────────────────────────────────
-        let skills = sven_runtime::SharedSkills::new(sven_runtime::discover_skills(
-            opts.project_root.as_deref(),
-        ));
-        let agents = sven_runtime::SharedAgents::new(sven_runtime::discover_agents(
-            opts.project_root.as_deref(),
-        ));
-
-        let knowledge_items = sven_runtime::discover_knowledge(opts.project_root.as_deref());
-        let knowledge_drift_note = opts
-            .project_root
-            .as_ref()
-            .map(|r| sven_runtime::check_knowledge_drift(r, &knowledge_items))
-            .and_then(|w| sven_runtime::format_drift_warnings(&w));
-        let knowledge = sven_runtime::SharedKnowledge::new(knowledge_items);
-
         // Only ever consumed by the built-in system prompt (see
         // `AgentRuntimeContext::build_system_message`), which `--no-system`
         // bypasses entirely, so skip reading and logging it in that case.
@@ -537,21 +522,13 @@ impl CiRunner {
         }
 
         let mut runtime_ctx = RuntimeContext {
-            project_root: opts.project_root.clone(),
-            git_context: opts
-                .project_root
-                .as_ref()
-                .map(|r| sven_runtime::collect_git_context(r)),
             ci_context: Some(ci_ctx),
             project_context_file,
             append_system_prompt: combined_append,
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
             no_tools: opts.no_tools,
-            skills,
-            agents,
-            knowledge,
-            knowledge_drift_note,
+            ..RuntimeContext::auto_detect_at(opts.project_root.clone())
         };
 
         // ── --system-prompt-file override ────────────────────────────────────

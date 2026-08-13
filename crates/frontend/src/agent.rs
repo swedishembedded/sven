@@ -255,8 +255,8 @@ pub(crate) async fn run_kernel_session_task(
     tx: mpsc::Sender<AgentEvent>,
     question_tx: mpsc::Sender<QuestionRequest>,
     cancel_handle: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    _shared_skills: SharedSkills,
-    _shared_agents: SharedAgents,
+    shared_skills: SharedSkills,
+    shared_agents: SharedAgents,
     _shared_tools: SharedTools,
     _shared_tool_displays: SharedToolDisplays,
     _buffer_store: Arc<Mutex<OutputBufferStore>>,
@@ -265,7 +265,13 @@ pub(crate) async fn run_kernel_session_task(
     provider_factory: Option<ProviderFactory>,
     mcp_tools_source: Option<McpToolsSource>,
 ) {
-    let ctx = RuntimeContext::auto_detect();
+    // Reuses the caller's already-discovered skills/agents (the TUI discovers
+    // them once at startup) instead of re-walking the search hierarchy here.
+    let ctx = RuntimeContext::auto_detect_with(
+        sven_runtime::find_project_root().ok(),
+        shared_skills,
+        shared_agents,
+    );
 
     // Build the initial session. `shared_mcp = None` so the builder constructs
     // and connects the session's own McpManager, which is then shared across
