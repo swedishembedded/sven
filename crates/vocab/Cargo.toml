@@ -1,0 +1,9 @@
+[package]
+name        = "sven-vocab"
+version.workspace = true
+edition     = "2021"
+description = "Shared tool-call vocabulary (ToolCall, ToolOutput, ToolSchema, ...): pure data types with no behavior, so crates that only need to name them don't have to depend on the full tool-registry/execution crate. Zero dependencies on other sven crates."
+license     = "Apache-2.0"
+
+[dependencies]
+serde_json = { workspace = true }

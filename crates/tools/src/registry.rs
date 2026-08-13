@@ -10,21 +10,7 @@ use sven_hsm::ToolCapability;
 use crate::policy::PermissionRequester;
 use crate::tool::ToolDisplayRegistry;
 use crate::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
-
-/// A tool schema - mirrors sven_model::ToolSchema but keeps tools crate
-/// independent from the model crate.
-#[derive(Debug, Clone)]
-pub struct ToolSchema {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    /// Whether this tool comes from an external MCP server.
-    ///
-    /// MCP tools are placed after core tools in the prompt and get their own
-    /// Anthropic cache breakpoint (BP2) so that toggling servers only
-    /// invalidates the MCP section, not the stable core tools section (BP1).
-    pub is_mcp: bool,
-}
+pub use sven_vocab::ToolSchema;
 
 /// Display metadata for a tool, used by the TUI for custom rendering.
 #[derive(Debug, Clone)]

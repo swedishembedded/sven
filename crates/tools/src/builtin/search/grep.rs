@@ -308,15 +308,22 @@ mod tests {
 
     #[tokio::test]
     async fn finds_pattern_in_file() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/tool.rs");
+        // An isolated fixture, not a live crate source file: grepping
+        // tool.rs itself broke the moment ToolCall/ToolOutput moved to a
+        // separate crate, which the pattern this test greps for had nothing
+        // to do with -- it only ever needed *a* file with *some* matches.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.rs");
+        std::fs::write(&path, "pub struct Alpha;\npub struct Beta;\nfn not_matched() {}\n")
+            .unwrap();
         let out = GrepTool
             .execute(&call(json!({
                 "pattern": "pub struct",
-                "path": path,
+                "path": path.to_str().unwrap(),
             })))
             .await;
         assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("ToolCall") || out.content.contains("ToolOutput"));
+        assert!(out.content.contains("Alpha") && out.content.contains("Beta"));
     }
 
     #[tokio::test]

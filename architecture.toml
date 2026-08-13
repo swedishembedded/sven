@@ -43,6 +43,7 @@ sven-image       = "foundation"
 sven-node-client = "foundation"
 sven-p2p         = "foundation"
 sven-runtime     = "foundation"
+sven-vocab       = "foundation"
 trace            = "foundation"
 
 # kernel
@@ -120,28 +121,10 @@ docs/adr/ (refactor plan) for the full analysis. Delete this entry when Phase
 """
 
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
-[[allow.upward]]
-from = "sven-wire"
-to   = "sven-tools"
-why  = """
-sven-wire (kernel tier: protocol DTOs) depends on sven-tools (services tier)
-only for two From/Into conversions between WireToolOutput and
-sven_tools::ToolOutput (wire/src/messages.rs). Fix: Phase 2.1-2.2 of the
-refactor plan moves ToolCall/ToolOutput down into a new sven-vocab crate
-(foundation tier); sven-wire depends on that instead and this edge is deleted,
-not legitimized.
-"""
-
-[[allow.upward]]
-from = "sven-control"
-to   = "sven-tools"
-why  = """
-sven-control (kernel tier: the operator control protocol) depends on
-sven-tools (services tier) for the same reason as sven-wire above -- it needs
-ToolCall/ToolCapability-shaped types to describe tool activity over the
-control protocol. Fix: same as sven-wire, Phase 2.1-2.2 moves those types to
-sven-vocab (foundation tier).
-"""
+# None currently outstanding. sven-wire and sven-control both depended on
+# sven-tools only for ToolCall/ToolOutput/ToolSchema, which moved to
+# sven-vocab (foundation tier) in Phase 2.1-2.2 -- deleting both edges
+# rather than legitimizing them.
 
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep

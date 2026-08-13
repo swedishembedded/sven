@@ -19,11 +19,12 @@
 //! * [`control_command_to_kernel_event`] — an inbound [`ControlCommand`] →
 //!   the [`Event`](sven_hsm::Event) posted onto the kernel queue.
 //!
-//! The crate depends only on `sven-hsm` + `sven-config` + `sven-tools` (plus
-//! serde / uuid / ciborium) — **not** on `sven-node` (libp2p/axum). That is what
-//! lets `sven-frontend` reuse the protocol and mappings for the in-process
-//! one-tap `/share` bridge without bloating the interactive binaries, while
-//! `sven-node` re-exports these types so all existing call sites keep compiling.
+//! The crate depends only on `sven-hsm` + `sven-config` + `sven-vocab` (plus
+//! serde / uuid / ciborium) — **not** on `sven-tools` or `sven-node`
+//! (libp2p/axum). That is what lets `sven-frontend` reuse the protocol and
+//! mappings for the in-process one-tap `/share` bridge without bloating the
+//! interactive binaries, while `sven-node` re-exports these types so all
+//! existing call sites keep compiling.
 
 use serde::{Deserialize, Serialize};
 use sven_config::AgentMode;
@@ -347,8 +348,8 @@ pub struct ToolSchemaInfo {
     pub parameters: serde_json::Value,
 }
 
-impl From<sven_tools::ToolSchema> for ToolSchemaInfo {
-    fn from(s: sven_tools::ToolSchema) -> Self {
+impl From<sven_vocab::ToolSchema> for ToolSchemaInfo {
+    fn from(s: sven_vocab::ToolSchema) -> Self {
         Self {
             name: s.name,
             description: s.description,

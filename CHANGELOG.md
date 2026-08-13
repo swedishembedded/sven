@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **sven-executors, sven-metering, sven-companion**: `AuditExecutor` now builds on `sven_chain` instead of defining the chain format itself; `sven-metering`'s credit ledger and `sven-companion`'s local audit copy do the same. Deletes the `sven-metering → sven-executors` and `sven-companion → sven-executors` (production) dependency edges — companion's remaining need for `sven-executors::RemoteToolExecutor` is test-only (verifying the cloud-sandbox loopback path), so that dependency moves to `[dev-dependencies]`. `sven-executors` drops its now-unused `sha2`/`serde`/`thiserror` dependencies (they backed only the code that moved).
+- **sven-vocab**: new crate — `ToolCall`, `ToolOutput`/`ToolOutputPart`, `ToolSchema`, and `OutputCategory` moved out of `sven-tools` into a new zero-dependency crate below it. `sven-tools` re-exports all four at its crate root unchanged, so every existing `sven_tools::ToolCall` (etc.) call site across the workspace needed no changes. `sven-wire` and `sven-control` — both of which needed only these pure data types, not the tool-execution/registry machinery — now depend on `sven-vocab` instead of `sven-tools`, deleting both `wire → tools` and `control → tools` upward-tier edges (they were the last two `[[allow.upward]]` exceptions in `architecture.toml`; none remain).
 
 ## [1.9.0] - 2026-03-22
 

@@ -4,6 +4,7 @@ members = [
     ".",
     "crates/hsm",
     "crates/chain",
+    "crates/vocab",
     "crates/config",
     "crates/model",
     "crates/image",
