@@ -30,10 +30,10 @@ use sven_config::Config;
 use sven_machines::TaskMachine;
 use sven_executors::{CompositeExecutorBuilder, ToolExecutor, TurnExecutor};
 use sven_hsm::{
-    event::InternalEvent, Context, Event, Hsm, MachineId, PermissionPolicy, ToolCallId,
-    ToolCapability,
+    event::InternalEvent, submachine::ErasedMachine, Context, Event, Hsm, MachineId,
+    PermissionPolicy, ToolCallId, ToolCapability,
 };
-use sven_kernel::{ChildSpawner, EventSink, Runtime, SystemClock};
+use sven_kernel::{ChildSpawner, ErasedRuntime, EventSink, SystemClock};
 use sven_llm::ThreadStore;
 use sven_tools::ToolRegistry;
 
@@ -133,8 +133,8 @@ impl ChildSpawner for SdlcChildSpawner {
             .with_timers(Arc::new(SystemClock::new()))
             .build();
 
-        let rt = Runtime::spawn(
-            Hsm::new(TaskMachine::new(task)),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(TaskMachine::new(task))) as Box<dyn ErasedMachine>,
             Context::new(),
             Self::child_policy(),
             executor,
