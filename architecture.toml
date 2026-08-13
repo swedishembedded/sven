@@ -63,6 +63,7 @@ sven-integrations  = "domain"
 sven-memory        = "domain"
 sven-metering      = "domain"
 sven-scheduler     = "domain"
+sven-session-model = "domain"
 sven-team          = "domain"
 
 # machines

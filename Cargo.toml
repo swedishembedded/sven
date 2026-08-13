@@ -10,6 +10,7 @@ members = [
     "crates/image",
     "crates/sven-audio",
     "crates/input",
+    "crates/session-model",
     "crates/tools",
     "crates/core",
     "crates/runtime",

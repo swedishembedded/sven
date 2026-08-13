@@ -382,56 +382,7 @@ pub fn build_agents_section(agents: &[AgentInfo]) -> String {
 /// Called by the TUI when rendering `ChatSegment::CollabEvent` entries.
 /// Returns a short human-readable summary, e.g.:
 /// `"● spawned security-reviewer [reviewer]"`.
-pub fn format_collab_event(event: &CollabEvent) -> String {
-    match event {
-        CollabEvent::TeammateSpawned { name, role } => {
-            format!("● spawned {name} [{role}]")
-        }
-        CollabEvent::TaskDelegated {
-            task_id,
-            to_name,
-            task_title,
-        } => {
-            format!("→ delegated \"{task_title}\" to {to_name} [{task_id}]")
-        }
-        CollabEvent::WaitingForTeammates { names } => {
-            format!("⏳ waiting for: {}", names.join(", "))
-        }
-        CollabEvent::TeammateFinished {
-            name,
-            task_id,
-            status,
-        } => {
-            let icon = if status == "completed" { "✓" } else { "✗" };
-            format!("{icon} {name} finished task [{task_id}]: {status}")
-        }
-        CollabEvent::TeammateMessage { from, preview } => {
-            format!("💬 {from}: {preview}")
-        }
-        CollabEvent::TeammateIdle { name } => {
-            format!("○ {name} is idle - no more tasks")
-        }
-        CollabEvent::TeamCreated { team_name } => {
-            format!("⬡ team '{team_name}' created")
-        }
-        CollabEvent::TeamCleanedUp { team_name } => {
-            format!("⬡ team '{team_name}' cleaned up")
-        }
-        CollabEvent::PlanSubmitted { name, task_id } => {
-            format!("📋 {name} submitted plan for review [task {task_id}]")
-        }
-        CollabEvent::PlanApproved { name, task_id } => {
-            format!("✓ plan approved for {name} [task {task_id}] - implementing")
-        }
-        CollabEvent::PlanRejected {
-            name,
-            task_id,
-            feedback,
-        } => {
-            format!("✗ plan rejected for {name} [task {task_id}]: {feedback}")
-        }
-    }
-}
+pub use sven_session_model::format_collab_event;
 
 /// A collaboration event that can be recorded as a `ChatSegment::CollabEvent`.
 ///
