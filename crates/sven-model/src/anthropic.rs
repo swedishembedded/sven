@@ -511,6 +511,14 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
             Ok(ResponseEvent::TextDelta(String::new()))
         }
         "message_stop" => Ok(ResponseEvent::Done),
+        // Mid-stream error: `{"type": "error", "error": {"type": ..., "message": ...}}`.
+        // Sent after the response has already started streaming, so it can't
+        // be a plain HTTP error status; matched before the catch-all so it
+        // isn't misread as an unknown/empty delta.
+        "error" => {
+            let msg = v["error"]["message"].as_str().unwrap_or("model stream error").to_string();
+            Ok(ResponseEvent::Error(msg))
+        }
         _ => Ok(ResponseEvent::TextDelta(String::new())),
     }
 }
@@ -885,6 +893,20 @@ mod tests {
         let v = serde_json::json!({ "type": "message_stop" });
         let ev = parse_anthropic_event(&v).unwrap();
         assert!(matches!(ev, ResponseEvent::Done));
+    }
+
+    #[test]
+    fn error_event_type_becomes_error_event() {
+        // Real Anthropic shape for a mid-stream failure (already-committed
+        // response, can't downgrade to an HTTP status): `event: error`,
+        // `data: {"type": "error", "error": {...}}`. Must not fall through
+        // to the unknown-type catch-all as a silent empty delta.
+        let v = serde_json::json!({
+            "type": "error",
+            "error": { "type": "overloaded_error", "message": "the model failed to process the request" }
+        });
+        let ev = parse_anthropic_event(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::Error(m) if m == "the model failed to process the request"));
     }
 
     #[test]

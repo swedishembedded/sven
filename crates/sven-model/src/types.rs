@@ -557,7 +557,9 @@ pub enum ResponseEvent {
     /// to detect that any pending tool-call arguments were truncated, so that
     /// partial content can be recovered rather than silently discarded.
     MaxTokens,
-    /// A recoverable error (non-fatal warning)
+    /// A structured error the provider sent as a stream event rather than an
+    /// HTTP status, because the response had already started streaming when
+    /// the failure happened. Terminates the turn.
     Error(String),
 }
 

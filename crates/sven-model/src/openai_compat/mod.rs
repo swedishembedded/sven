@@ -886,6 +886,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_sse_mid_stream_error_chunk_becomes_error_event() {
+        // Shape brain's apiserve (and real OpenAI) send for a failure after
+        // the response has already started streaming: `{"error": {...}}`,
+        // no `choices` field at all. Must not be misread as an empty delta.
+        let v = serde_json::json!({
+            "error": { "message": "the model failed to process the request", "type": "server_error", "param": null, "code": "server_error" }
+        });
+        let ev = parse_sse_chunk(&v).unwrap();
+        assert!(matches!(ev, ResponseEvent::Error(m) if m == "the model failed to process the request"));
+    }
+
+    #[test]
     fn parse_sse_tool_call_start_with_id_and_name() {
         let v = serde_json::json!({
             "choices": [{

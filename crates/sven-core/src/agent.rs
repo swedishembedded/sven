@@ -1059,7 +1059,7 @@ impl Agent {
                     break;
                 }
                 ResponseEvent::Error(e) => {
-                    warn!("model stream error: {e}");
+                    return Err(anyhow::anyhow!("model stream error: {e}"));
                 }
                 _ => {}
             }

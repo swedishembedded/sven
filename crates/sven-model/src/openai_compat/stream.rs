@@ -67,6 +67,16 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
 }
 
 fn parse_sse_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
+    // Mid-stream error chunk: `{"error": {"message": ..., "type": ..., ...}}`.
+    // A real provider failure after the response has already started
+    // streaming (200 + headers committed) can't be downgraded to an HTTP
+    // error status, so it arrives as a data chunk shaped like this instead
+    // of `choices[0]` — checked first so it isn't misread as an empty delta.
+    if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
+        let msg = err["message"].as_str().unwrap_or("model stream error").to_string();
+        return Ok(ResponseEvent::Error(msg));
+    }
+
     // Usage-only chunk (emitted when stream_options.include_usage = true)
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
         // OpenAI/OpenRouter reports cached tokens in

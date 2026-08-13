@@ -1548,6 +1548,36 @@ mod agent_tests {
     }
 
     #[tokio::test]
+    async fn main_turn_stream_error_fails_the_step_instead_of_silent_empty_success() {
+        // Real-world regression (this is the exact path sven-ci's runner uses:
+        // Agent::submit -> run_agentic_loop -> stream_one_turn): a provider
+        // that crashes mid-stream (response already committed, so the failure
+        // arrives as a stream `Error` event rather than an HTTP error status)
+        // must not be conflated with a legitimate empty/thinking-only turn.
+        // Before this fix, stream_one_turn only warn!-logged ResponseEvent::Error
+        // and kept reading, so the turn fell through to the "empty response"
+        // retry path and, once retries were exhausted, `submit` returned Ok(())
+        // with no text at all -- silent success with no way for a caller
+        // (sven-ci's runner included) to detect the failure.
+        use sven_model::ResponseEvent;
+        let model = ScriptedMockProvider::new(vec![vec![
+            ResponseEvent::Error("allocate_memory: ERROR_OUT_OF_DEVICE_MEMORY".into()),
+        ]]);
+        let mut agent = default_agent(model);
+        let (tx, _rx) = mpsc::channel(64);
+
+        let result = agent.submit("do the thing", tx).await;
+        let err = match result {
+            Ok(()) => panic!("a mid-stream provider error must fail the turn, not succeed silently"),
+            Err(e) => e,
+        };
+        assert!(
+            format!("{err:#}").contains("ERROR_OUT_OF_DEVICE_MEMORY"),
+            "the real failure reason must survive to the caller; got: {err:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn compaction_empty_summary_falls_back_to_emergency() {
         // When the compaction model call returns an empty string (e.g., the
         // model chose not to respond), ensure_fits_budget must also fall back
