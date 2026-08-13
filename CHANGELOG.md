@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Audit docs (sven-executors)**: module documentation no longer overclaims tamper-evidence — the hash chain detects accidental corruption and non-adaptive tampering only; an actor with write access can recompute the whole chain (no HMAC/anchoring is implemented).
 
+### Added
+- **Workspace**: `xtask` architecture-ratchet checker (`cargo run -p xtask -- arch`, wired into `make check`) plus `architecture.toml`, enforcing crate-tier dependency legality, dead/unused internal dependency detection, and a file-size ratchet across all workspace crates. Method documented at `.claude/skills/programming/rust/architecture.md`.
+
+### Changed
+- **Workspace**: all crate `version` fields now inherit `version.workspace = true` instead of drifting independently (was `sven-hsm` 0.5.0 next to `sven-acp`/`sven-node` 2.0.0 next to the workspace's own 1.10.2 — nothing is published separately, so per-crate versions carried no information).
+
+### Removed
+- **Workspace**: removed 13 internal dependencies the architecture checker found with zero real use sites — 3 from a manual audit (`sven-acp`→`sven-node`, `sven-frontend`→`sven-executors`) plus 11 more the checker itself surfaced on its first run: `sven`→`sven-core`; `sven-acp`→`sven-model`; `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`→`sven-config`; `sven-llm`→`sven-hsm`; `sven-memory`→`sven-model`; `sven-node`→`sven-runtime`; `sven-team`→`sven-p2p`; `sven-ci`→`sven-frontend`. Moved `sven-node`'s dependency on `sven-frontend` to `[dev-dependencies]` (used only by a test).
+
 ## [1.9.0] - 2026-03-22
 
 ### Added

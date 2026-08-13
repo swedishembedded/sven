@@ -13,7 +13,6 @@ sven-tools       = { path = "../tools" }
 sven-core        = { path = "../core" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-hsm         = { path = "../hsm" }
-sven-executors   = { path = "../executors" }
 sven-mcp-client  = { path = "../mcp-client" }
 sven-runtime     = { path = "../runtime" }
 # Transport-agnostic control protocol + kernel mappings (NO libp2p/axum) — the

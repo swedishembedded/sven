@@ -6,7 +6,6 @@ description  = "Typed LLM operation contracts for the Sven HSM runtime"
 license      = "Apache-2.0"
 
 [dependencies]
-sven-hsm   = { path = "../hsm" }
 sven-model = { path = "../model" }
 anyhow     = { workspace = true }
 thiserror  = { workspace = true }

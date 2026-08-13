@@ -5,7 +5,6 @@ edition = "2021"
 description = "Email, calendar, and voice integrations for sven agents"
 
 [dependencies]
-sven-config  = { path = "../config" }
 sven-tools   = { path = "../tools" }
 
 anyhow       = { workspace = true }

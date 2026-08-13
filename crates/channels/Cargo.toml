@@ -10,7 +10,6 @@ telegram = ["dep:teloxide"]
 discord  = ["dep:serenity"]
 
 [dependencies]
-sven-config  = { path = "../config" }
 sven-tools   = { path = "../tools" }
 
 anyhow       = { workspace = true }

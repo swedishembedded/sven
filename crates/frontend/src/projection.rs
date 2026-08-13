@@ -32,7 +32,7 @@ use sven_hsm::RuntimeStatus;
 ///
 /// The projection is updated on every kernel dispatch via
 /// [`MachineProjection::from_status`] and enriched with side-channel data
-/// from the [`sven_executors::user::UserExecutor`] channels when questions or
+/// from the `sven_executors::user::UserExecutor` channels when questions or
 /// approvals arrive.
 #[derive(Clone, Debug, Default)]
 pub struct MachineProjection {

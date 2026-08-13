@@ -160,71 +160,9 @@ sven-companion both repoint at that and this edge is deleted.
 # ── Known dead/unused internal dependencies. ────────────────────────────────
 # A dependency is "dead" here if crate `crate` declares a normal (non-dev) dep
 # on `dep` but has zero real (non-comment) `dep_ident::` references under its
-# own src/. Each of these is a first-commit-of-the-refactor deletion (Phase
-# 1.1); they are seeded here only so day one of the ratchet is green.
-[[allow.dead_dep]]
-crate = "sven-acp"
-dep   = "sven-node"
-why   = "Zero sven_node:: use sites anywhere in crates/acp/src. Delete the dependency outright."
-
-[[allow.dead_dep]]
-crate = "sven-frontend"
-dep   = "sven-executors"
-why   = "Only mention is an intra-doc link at frontend/src/projection.rs:35 (`[sven_executors::user::UserExecutor]`), which the comment-aware scan does not count as a real use. Delete the dependency; keep the doc text as plain formatting."
-
-[[allow.dead_dep]]
-crate = "sven-node"
-dep   = "sven-frontend"
-why   = "Only used by tests/control_mirror.rs (a test made obsolete by the sven-control extraction, which node/src/control/protocol.rs and node/src/control/service.rs already re-export from). Delete the test and the dependency together (or move to [dev-dependencies] if the test is kept)."
-
-# The following were found by xtask itself (not part of the original manual
-# audit) the first time this check ran. Each was spot-checked with a direct
-# grep before being seeded here: zero real reference, only doc-comment links
-# or nothing at all. All are free deletions for Phase 1.1.
-[[allow.dead_dep]]
-crate = "sven"
-dep   = "sven-core"
-why   = "No sven_core:: reference anywhere under src/. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-acp"
-dep   = "sven-model"
-why   = "No sven_model:: reference anywhere under crates/acp/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-channels"
-dep   = "sven-config"
-why   = "No sven_config:: reference anywhere under crates/channels/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-llm"
-dep   = "sven-hsm"
-why   = "Only two doc-comment links ([`sven_hsm::Event::LlmTurnComplete`], [`sven_hsm::Effect::CallLlm`]) in crates/llm/src/conversation.rs, no real reference. Delete the dependency; keep the doc text as plain formatting."
-[[allow.dead_dep]]
-crate = "sven-integrations"
-dep   = "sven-config"
-why   = "No sven_config:: reference anywhere under crates/integrations/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-memory"
-dep   = "sven-config"
-why   = "No sven_config:: reference anywhere under crates/memory/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-memory"
-dep   = "sven-model"
-why   = "No sven_model:: reference anywhere under crates/memory/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-scheduler"
-dep   = "sven-config"
-why   = "No sven_config:: reference anywhere under crates/scheduler/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-node"
-dep   = "sven-runtime"
-why   = "No sven_runtime:: reference anywhere under crates/node/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-team"
-dep   = "sven-p2p"
-why   = "No sven_p2p:: reference anywhere under crates/team/src. Delete the dependency."
-[[allow.dead_dep]]
-crate = "sven-ci"
-dep   = "sven-frontend"
-why   = "No sven_frontend:: reference anywhere under crates/ci/src. Delete the dependency."
+# own src/. The 3 manually-audited entries and 11 of the 13 xtask found on its
+# first run were fixed in this commit. sven-gui's 2 entries remain, pending
+# Phase 1.2's deletion of the crate.
 [[allow.dead_dep]]
 crate = "sven-gui"
 dep   = "sven-bootstrap"

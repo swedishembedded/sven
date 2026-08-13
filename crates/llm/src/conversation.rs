@@ -90,14 +90,14 @@ pub const TURN_KIND: &str = "turn";
 
 /// A request for the HSM to run a **single streaming turn**: stream the model
 /// against a conversation thread, collect proposed tool calls, and post
-/// [`sven_hsm::Event::LlmTurnComplete`] back to the machine.
+/// `sven_hsm::Event::LlmTurnComplete` back to the machine.
 ///
 /// The executor (TurnExecutor) handles all I/O, appends the assistant turn to
 /// the store, annotates each proposed tool call with its capability, and
 /// registers `call_id → thread` in the shared registry.  The machine itself
 /// stays pure and only sees the completion event.
 ///
-/// Serialised into [`sven_hsm::Effect::CallLlm`]'s opaque `request` value with
+/// Serialised into `sven_hsm::Effect::CallLlm`'s opaque `request` value with
 /// an added `kind: "turn"` discriminator (see [`to_value`]).
 ///
 /// [`to_value`]: TurnRequest::to_value

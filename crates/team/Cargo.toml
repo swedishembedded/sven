@@ -6,7 +6,6 @@ description = "Agent team coordination: shared task lists, team config, and life
 
 [dependencies]
 sven-tools  = { path = "../tools" }
-sven-p2p    = { path = "../sven-p2p" }
 
 fs4         = { workspace = true }
 anyhow      = { workspace = true }

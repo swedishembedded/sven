@@ -5,9 +5,7 @@ edition = "2021"
 description = "Semantic (vector + BM25) memory store for sven agents"
 
 [dependencies]
-sven-config  = { path = "../config" }
 sven-tools   = { path = "../tools" }
-sven-model   = { path = "../model" }
 
 anyhow       = { workspace = true }
 thiserror    = { workspace = true }

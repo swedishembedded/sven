@@ -11,8 +11,6 @@ sven-tools       = { path = "../tools" }
 sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap" }
 sven-config      = { path = "../config" }
-sven-model       = { path = "../model" }
-sven-node        = { path = "../sven-node" }
 anyhow           = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
