@@ -75,6 +75,29 @@ pub fn format_token_usage_line(
     line
 }
 
+/// Build the verbose-only ` output=…` snippet for a `[sven:tool:result]` line.
+///
+/// Returns an empty string at default verbosity (`trace == 0`) or for empty
+/// output, so the snippet appears only at `-v`. Long output is truncated to a
+/// fixed character limit with a `…[+N chars]` suffix so a large tool payload
+/// never floods stderr.
+///
+/// Shared by `RuntimeRunner` and `CiRunner`'s event handlers — they used to
+/// carry byte-identical copies of this (one a named function, one inlined).
+pub fn tool_output_snippet(trace: u8, output: &str) -> String {
+    const TOOL_OUTPUT_SNIPPET_LIMIT: usize = 1500;
+    if trace < 1 || output.is_empty() {
+        return String::new();
+    }
+    let preview: String = output.chars().take(TOOL_OUTPUT_SNIPPET_LIMIT).collect();
+    let total = output.chars().count();
+    if total > TOOL_OUTPUT_SNIPPET_LIMIT {
+        format!(" output={:?}...[+{} chars]", preview, total - TOOL_OUTPUT_SNIPPET_LIMIT)
+    } else {
+        format!(" output={output:?}")
+    }
+}
+
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -152,5 +175,19 @@ mod tests {
     fn ctx_pct_shown_when_budget_known() {
         let line = format_token_usage_line(10, 5, 0, 0, 0, 0, 2048, 512);
         assert!(line.contains("ctx_pct"), "{line}");
+    }
+
+    // ── tool_output_snippet ────────────────────────────────────────────────
+
+    #[test]
+    fn tool_output_snippet_empty_at_default_verbosity() {
+        assert_eq!(tool_output_snippet(0, "some output"), "");
+    }
+
+    #[test]
+    fn tool_output_snippet_truncates_long_output() {
+        let long = "x".repeat(4000);
+        let snippet = tool_output_snippet(1, &long);
+        assert!(snippet.contains("...[+2500 chars]"), "{snippet}");
     }
 }

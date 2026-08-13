@@ -28,7 +28,8 @@ use sven_model::Message;
 use sven_tools::ToolCall;
 
 use crate::output::{
-    finalise_stdout, format_token_usage_line, write_progress, write_stderr, write_stdout,
+    finalise_stdout, format_token_usage_line, tool_output_snippet, write_progress, write_stderr,
+    write_stdout,
 };
 use crate::runner::{EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_SUCCESS, EXIT_TIMEOUT};
 
@@ -314,26 +315,6 @@ struct CiOutState {
     /// tracking - so the latest value IS the run total, nothing to sum here).
     latest_cache_read_total: u32,
     latest_cache_write_total: u32,
-}
-
-/// Build the verbose-only ` output=…` snippet for a `[sven:tool:result]` line.
-///
-/// Returns an empty string at default verbosity (`trace == 0`) or for empty
-/// output, so the snippet appears only at `-v`. Long output is truncated to a
-/// fixed character limit with a `…[+N chars]` suffix so a large tool payload
-/// never floods stderr.
-fn tool_output_snippet(trace: u8, output: &str) -> String {
-    const TOOL_OUTPUT_SNIPPET_LIMIT: usize = 1500;
-    if trace < 1 || output.is_empty() {
-        return String::new();
-    }
-    let preview: String = output.chars().take(TOOL_OUTPUT_SNIPPET_LIMIT).collect();
-    let total = output.chars().count();
-    if total > TOOL_OUTPUT_SNIPPET_LIMIT {
-        format!(" output={:?}...[+{} chars]", preview, total - TOOL_OUTPUT_SNIPPET_LIMIT)
-    } else {
-        format!(" output={output:?}")
-    }
 }
 
 /// Write the `## User` conversation section exactly once, right before the
@@ -845,23 +826,6 @@ mod tests {
         handle_ui_event(token_usage_with_cache(10, 2, 10, 6), &mut st);
         assert_eq!(st.latest_cache_read_total, 10);
         assert_eq!(st.latest_cache_write_total, 6);
-    }
-
-    #[test]
-    fn output_snippet_gated_by_verbosity() {
-        // Default verbosity: no snippet regardless of outcome.
-        assert_eq!(tool_output_snippet(0, "some output"), "");
-        // Verbose: snippet present.
-        assert!(tool_output_snippet(1, "some output").contains("output="));
-        // Empty output: never a snippet even at -v.
-        assert_eq!(tool_output_snippet(1, ""), "");
-    }
-
-    #[test]
-    fn output_snippet_truncates_long_output() {
-        let long = "x".repeat(4000);
-        let snippet = tool_output_snippet(1, &long);
-        assert!(snippet.contains("...[+2500 chars]"));
     }
 
     #[test]

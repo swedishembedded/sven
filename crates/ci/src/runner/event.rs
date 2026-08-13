@@ -14,7 +14,7 @@ use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tools::events::SubagentUpdate;
 use trace::Trajectory;
 
-use crate::output::{format_token_usage_line, write_stderr, write_stdout};
+use crate::output::{format_token_usage_line, tool_output_snippet, write_stderr, write_stdout};
 
 use super::OutputFormat;
 
@@ -218,21 +218,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 *consecutive_tool_errors += 1;
                 *s.any_tool_errors = true;
             } else {
-                let output_snippet = if trace_level >= 1 && !output.is_empty() {
-                    const LIMIT: usize = 1500;
-                    let preview: String = output.chars().take(LIMIT).collect();
-                    if output.chars().count() > LIMIT {
-                        format!(
-                            " output={:?}...[+{} chars]",
-                            preview,
-                            output.chars().count() - LIMIT
-                        )
-                    } else {
-                        format!(" output={output:?}")
-                    }
-                } else {
-                    String::new()
-                };
+                let output_snippet = tool_output_snippet(trace_level, &output);
                 write_stderr(&format!(
                     "[sven:tool:result] id=\"{call_id}\" name=\"{tool_name}\" success=true size={}{}",
                     output.len(),

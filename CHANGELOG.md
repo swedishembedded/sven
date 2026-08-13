@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **sven-executors, sven-bootstrap**: deleted `agent_event_to_ui`/`ui_event_to_agent_event`, the two `AgentEvent`↔`UiEvent` translators, now that both names are re-exports of the same `sven_vocab::SessionEvent` and the previous commit had already degenerated both to `Some(ev)`. Their three call sites (`sven-executors`' turn-stream forwarder, `sven-bootstrap`'s observation bridge, `sven-ci`'s `KernelAgent`) now forward the event directly. Deleted the three `kernel_bridge` tests that only exercised the translator round-trip (`maps_full_turn_ui_event_sequence`, `subagent_started_survives_kernel_round_trip`, `collab_event_survives_kernel_round_trip`) — with no translation happening, they had degenerated into asserting a value equals itself.
 
+### Changed
+- **sven-ci**: extracted `tool_output_snippet` (the verbose-only, length-capped ` output=…` snippet on `[sven:tool:result]` lines) into `crate::output` as the one shared implementation. `RuntimeRunner` (`runner/runtime_runner.rs`) had it as a named function; `CiRunner` (`runner/event.rs`) carried a byte-identical copy inlined into its `ToolCallFinished` arm. Both now call the shared version.
+
 ## [1.9.0] - 2026-03-22
 
 ### Added
