@@ -61,8 +61,14 @@ gui-release: build/release
 	@echo "Desktop GUI: target/release/sven --gui"
 
 ## test      - run all unit + integration tests
+# --workspace is required: the root Cargo.toml defines both a [workspace] and
+# its own [package] (the `sven` binary), so plain `cargo test` here tests
+# ONLY that root package - every other crate's own unit tests (sven-core,
+# sven-tui, sven-executors, ...) get compiled as library dependencies but
+# their #[cfg(test)] modules never run. Confirmed: without --workspace this
+# silently skipped 2800+ tests across 26 crates while still exiting 0.
 test:
-	$(CARGO) test $(CARGO_FLAGS)
+	$(CARGO) test --workspace $(CARGO_FLAGS)
 
 ## tests/e2e/basic - run all basic end-to-end tests (requires bats-core)
 ## All tests use the mock model; hardware-gated tests in 07 self-skip without SVEN_TEST_JLINK=1.
