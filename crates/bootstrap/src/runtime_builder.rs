@@ -862,10 +862,10 @@ pub struct SessionBundle {
 /// every one of them goes through.
 ///
 /// This function is the fix: it re-threads the side channel onto the
-/// observation plane using the same field-for-field mapping
-/// `sven_executors::turn::agent_event_to_ui` already uses for the equivalent
-/// `AgentEvent` variants, so a `ToolEvent` and an `AgentEvent` reporting the
-/// same fact produce the identical `UiEvent`.
+/// observation plane, mapping each `ToolEvent` onto the `UiEvent` variant
+/// that reports the same fact (`AgentEvent`/`UiEvent` are the same
+/// `sven_vocab::SessionEvent` type, so a `ToolEvent` and the equivalent
+/// `AgentEvent` now produce literally the same value).
 ///
 /// `ToolEvent::McpServerAdded`/`McpServerRemoved` are deliberately **not**
 /// forwarded — they are registry mutations (add/remove a tool from the live

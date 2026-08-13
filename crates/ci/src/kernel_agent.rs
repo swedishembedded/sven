@@ -24,10 +24,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use tokio::sync::mpsc;
 
-use sven_bootstrap::{
-    build_tool_registry, ui_event_to_agent_event, RuntimeBuilder, RuntimeContext,
-    ToolSetProfile,
-};
+use sven_bootstrap::{build_tool_registry, RuntimeBuilder, RuntimeContext, ToolSetProfile};
 use sven_config::{AgentMode, Config, ModelConfig};
 use sven_core::AgentEvent;
 use sven_hsm::{Event, UiEvent};
@@ -182,13 +179,11 @@ impl KernelAgent {
             match obs_rx.recv().await {
                 Ok(ev) => {
                     let terminal = matches!(ev, UiEvent::TurnComplete | UiEvent::Aborted { .. });
-                    if let Some(ae) = ui_event_to_agent_event(ev) {
-                        // Grow the internal history so the next turn is seeded
-                        // with this turn's output (mirrors the legacy session).
-                        reduce_history(&ae, &mut self.history);
-                        if tx.send(ae).await.is_err() {
-                            break;
-                        }
+                    // Grow the internal history so the next turn is seeded
+                    // with this turn's output (mirrors the legacy session).
+                    reduce_history(&ev, &mut self.history);
+                    if tx.send(ev).await.is_err() {
+                        break;
                     }
                     if terminal {
                         break;

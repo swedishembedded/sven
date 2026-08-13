@@ -123,19 +123,6 @@ use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
 use sven_tools::ToolRegistry;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
-/// Convert an [`AgentEvent`] to a [`UiEvent`] for the outward observation plane.
-///
-/// `AgentEvent` and `UiEvent` are now both re-exports of the same
-/// [`sven_vocab::SessionEvent`] type, so this is the identity function. It
-/// stays in place (rather than being deleted and call sites updated to pass
-/// the event straight through) as the seam the next refactor phase deletes,
-/// per the migration plan's identity-transform pattern for a risky enum
-/// merge: land the unification with the translator degenerated to `Some`,
-/// verify nothing else broke, delete the translator in a follow-up commit.
-pub fn agent_event_to_ui(ev: AgentEvent) -> Option<UiEvent> {
-    Some(ev)
-}
-
 /// The JSON `kind` tag that selects the single-turn engine.
 pub use sven_llm::TURN_KIND;
 
@@ -625,9 +612,7 @@ impl EffectExecutor for TurnExecutor {
                     *max_tokens = catalog_context_window as usize;
                     *max_output_tokens = catalog_max_output as usize;
                 }
-                if let Some(ui) = agent_event_to_ui(ev) {
-                    obs_fwd.emit(ui);
-                }
+                obs_fwd.emit(ev);
             }
         });
 

@@ -11,10 +11,10 @@
 //! round-trips.
 //!
 //! This module bridges the two so any surface can keep consuming the exact
-//! same [`AgentEvent`] contract while running on the kernel:
+//! same [`AgentEvent`] contract while running on the kernel. `AgentEvent` and
+//! `UiEvent` are both re-exports of the same [`sven_vocab::SessionEvent`]
+//! type, so the "bridge" is now just forwarding:
 //!
-//! * [`ui_event_to_agent_event`] — the pure per-event mapping (single source of
-//!   truth; the frontend re-exports it so TUI/GUI never diverge).
 //! * [`spawn_observation_bridge`] — forwards the whole [`UiEvent`] broadcast
 //!   into an [`AgentEvent`] `mpsc` channel (streamed text, tool progress,
 //!   token usage, mode/model changes, transitions).
@@ -43,18 +43,6 @@ use tracing::{info, warn};
 
 use crate::runtime_builder::{KernelChannels, RuntimeHandle, SessionBundle};
 
-/// Bridge a single [`UiEvent`] from the outward observation plane to the
-/// corresponding [`AgentEvent`] expected by existing consumers.
-///
-/// `AgentEvent` and `UiEvent` are now both re-exports of the same
-/// [`sven_vocab::SessionEvent`] type, so this is the identity function. See
-/// [`sven_executors::turn::agent_event_to_ui`] for why it stays in place
-/// rather than being deleted outright.
-#[must_use]
-pub fn ui_event_to_agent_event(ev: UiEvent) -> Option<AgentEvent> {
-    Some(ev)
-}
-
 /// Spawn the observation bridge: forward the kernel's outward [`UiEvent`]
 /// broadcast into `event_tx` as [`AgentEvent`]s until the observation channel
 /// closes (session shutdown).
@@ -69,11 +57,9 @@ pub fn spawn_observation_bridge(
         loop {
             match obs_rx.recv().await {
                 Ok(ev) => {
-                    if let Some(ae) = ui_event_to_agent_event(ev) {
-                        if event_tx.send(ae).await.is_err() {
-                            // Consumer dropped the receiver — nothing left to feed.
-                            break;
-                        }
+                    if event_tx.send(ev).await.is_err() {
+                        // Consumer dropped the receiver — nothing left to feed.
+                        break;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -328,125 +314,12 @@ mod tests {
         serde_json::json!({ "command": "ls" })
     }
 
-    /// The pure mapping turns a full turn's worth of `UiEvent`s
-    /// (text → tool call → tool result → assistant text → done) into the
-    /// matching `AgentEvent` sequence.
-    #[test]
-    fn maps_full_turn_ui_event_sequence() {
-        let seq = vec![
-            UiEvent::TextDelta("Hi".into()),
-            UiEvent::ToolCallStarted(ToolCall {
-                id: "call-1".into(),
-                name: "shell".into(),
-                args: tool_args(),
-            }),
-            UiEvent::ToolCallFinished {
-                call_id: "call-1".into(),
-                tool_name: "shell".into(),
-                output: "file.txt".into(),
-                is_error: false,
-            },
-            UiEvent::TextComplete("all done".into()),
-            UiEvent::TurnComplete,
-        ];
-
-        let mapped: Vec<AgentEvent> = seq
-            .into_iter()
-            .filter_map(ui_event_to_agent_event)
-            .collect();
-
-        assert!(matches!(&mapped[0], AgentEvent::TextDelta(t) if t == "Hi"));
-        match &mapped[1] {
-            AgentEvent::ToolCallStarted(tc) => {
-                assert_eq!(tc.id, "call-1");
-                assert_eq!(tc.name, "shell");
-                assert_eq!(tc.args, tool_args());
-            }
-            other => panic!("expected ToolCallStarted, got {other:?}"),
-        }
-        match &mapped[2] {
-            AgentEvent::ToolCallFinished {
-                call_id,
-                tool_name,
-                output,
-                is_error,
-            } => {
-                assert_eq!(call_id, "call-1");
-                assert_eq!(tool_name, "shell");
-                assert_eq!(output, "file.txt");
-                assert!(!is_error);
-            }
-            other => panic!("expected ToolCallFinished, got {other:?}"),
-        }
-        assert!(matches!(&mapped[3], AgentEvent::TextComplete(t) if t == "all done"));
-        assert!(matches!(&mapped[4], AgentEvent::TurnComplete));
-        assert_eq!(mapped.len(), 5);
-    }
-
-    /// Regression: subagent/delegate/team events must survive the full kernel
-    /// path — `AgentEvent → UiEvent` (turn.rs) then `UiEvent → AgentEvent`
-    /// (kernel_bridge) — instead of being silently dropped at either boundary.
-    /// The TUI's child-session views, delegate summaries, and team collab
-    /// segments depend on this round-trip being lossless.
-    #[test]
-    fn subagent_started_survives_kernel_round_trip() {
-        use sven_executors::turn::agent_event_to_ui;
-
-        let original = AgentEvent::SubagentStarted {
-            call_id: "call-9".into(),
-            handle_id: "buf_0001".into(),
-            description: "explore repo".into(),
-            prompt: "Find all TODOs".into(),
-        };
-
-        let ui = agent_event_to_ui(original)
-            .expect("SubagentStarted must map to a UiEvent (was dropped)");
-        let back =
-            ui_event_to_agent_event(ui).expect("UiEvent must map back to a SubagentStarted");
-
-        match back {
-            AgentEvent::SubagentStarted {
-                call_id,
-                handle_id,
-                description,
-                prompt,
-            } => {
-                assert_eq!(call_id, "call-9");
-                assert_eq!(handle_id, "buf_0001");
-                assert_eq!(description, "explore repo");
-                assert_eq!(prompt, "Find all TODOs");
-            }
-            other => panic!("expected SubagentStarted, got {other:?}"),
-        }
-    }
-
-    /// Companion to the subagent case: a team `CollabEvent` must also survive
-    /// the `AgentEvent → UiEvent → AgentEvent` kernel round-trip intact.
-    #[test]
-    fn collab_event_survives_kernel_round_trip() {
-        use sven_core::prompts::CollabEvent;
-        use sven_executors::turn::agent_event_to_ui;
-
-        let original = AgentEvent::CollabEvent(CollabEvent::TeammateSpawned {
-            name: "alice".into(),
-            role: "reviewer".into(),
-        });
-
-        let ui =
-            agent_event_to_ui(original).expect("CollabEvent must map to a UiEvent (was dropped)");
-        let back = ui_event_to_agent_event(ui).expect("UiEvent must map back to a CollabEvent");
-
-        match back {
-            AgentEvent::CollabEvent(CollabEvent::TeammateSpawned { name, role }) => {
-                assert_eq!(name, "alice");
-                assert_eq!(role, "reviewer");
-            }
-            other => panic!("expected CollabEvent(TeammateSpawned), got {other:?}"),
-        }
-    }
-
     /// The spawned observation bridge forwards a live `UiEvent` broadcast into
     /// the `AgentEvent` channel in order, and exits when the sink is dropped.
+    /// `AgentEvent`/`UiEvent` are the same type (`sven_vocab::SessionEvent`),
+    /// so this is the one remaining thing worth pinning: the forwarding loop
+    /// itself, not a translation (see `sven_vocab::SessionEvent`'s doc comment
+    /// for why the two names still exist).
     #[tokio::test]
     async fn observation_bridge_forwards_sequence() {
         let sink = ObservationSink::new(32);

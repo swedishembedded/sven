@@ -22,9 +22,7 @@ pub mod runtime_builder;
 pub mod supervisor;
 pub mod task_tool;
 
-pub use kernel_bridge::{
-    spawn_observation_bridge, spawn_question_bridge, ui_event_to_agent_event, KernelAgentSession,
-};
+pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};
 pub use context::{RuntimeContext, ToolSetProfile};
 pub use context_query::{
     build_context_query_tools, ContextQueryTool, ContextReduceTool, ModelSubQueryRunner,
