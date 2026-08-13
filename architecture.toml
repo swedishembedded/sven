@@ -206,7 +206,7 @@ path = "src/cli.rs"
 lines = 1589
 [[allow.large_file]]
 path = "crates/node/src/control/service.rs"
-lines = 1563
+lines = 1571
 [[allow.large_file]]
 path = "crates/cloud/src/channels.rs"
 lines = 1554
@@ -241,9 +241,6 @@ lines = 1219
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 1194
 [[allow.large_file]]
-path = "crates/core/src/prompts.rs"
-lines = 1194
-[[allow.large_file]]
 path = "crates/tui/src/chat/markdown.rs"
 lines = 1185
 [[allow.large_file]]
@@ -255,6 +252,9 @@ lines = 1157
 [[allow.large_file]]
 path = "crates/core/src/stream_turn.rs"
 lines = 1146
+[[allow.large_file]]
+path = "crates/core/src/prompts.rs"
+lines = 1145
 [[allow.large_file]]
 path = "crates/executors/tests/pipeline_integration.rs"
 lines = 1121

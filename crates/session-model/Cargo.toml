@@ -8,4 +8,6 @@ license     = "Apache-2.0"
 [dependencies]
 sven-model  = { path = "../model" }
 sven-vocab  = { path = "../vocab" }
+sven-hsm    = { path = "../hsm" }
+serde_json  = { workspace = true }
 tracing     = { workspace = true }

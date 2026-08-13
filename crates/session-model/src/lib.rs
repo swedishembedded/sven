@@ -12,6 +12,9 @@
 use sven_model::{Message, MessageContent, Role};
 use sven_vocab::{CollabEvent, CompactionStrategyUsed, TodoItem};
 
+mod projection;
+pub use projection::{projection_to_session_state, MachineProjection};
+
 /// One entry in the chat display (a concrete message or a display-only note).
 #[derive(Debug, Clone)]
 pub enum ChatSegment {
