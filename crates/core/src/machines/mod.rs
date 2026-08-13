@@ -4,7 +4,6 @@
 //! directly with [`sven_hsm::Hsm`] (pure, synchronous — perfect for tests) or
 //! wrapped in a [`sven_hsm::Runtime`] for async production use.
 
-pub mod graph;
 pub mod loop_core;
 pub mod reactive_agent;
 pub mod sdlc;

@@ -30,8 +30,6 @@ members = [
     # HSM phase 2 crates
     "crates/llm",
     "crates/executors",
-    # Graph DSL
-    "crates/graph",
     # Transport-agnostic operator control protocol + kernel mappings
     "crates/control",
     # Cloud tether protocol (control plane <-> companion)

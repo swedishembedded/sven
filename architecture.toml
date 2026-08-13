@@ -45,7 +45,6 @@ sven-runtime     = "foundation"
 trace            = "foundation"
 
 # kernel
-sven-graph  = "kernel"
 sven-model  = "kernel"
 sven-wire   = "kernel"
 sven-control = "kernel"

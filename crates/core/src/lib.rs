@@ -25,7 +25,6 @@ pub use compact::{
 pub use completion::development_complete;
 pub use events::{AgentEvent, AgentEventVisitor, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
-    graph::{policy::policy_from_graph, GraphMachine},
     reactive_agent::ReactiveAgentMachine,
     sdlc::task::TaskMachine,
     sdlc::SdlcMachine,

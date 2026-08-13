@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 sven-config  = { path = "../config" }
-sven-graph   = { path = "../graph" }
 sven-llm     = { path = "../llm" }
 sven-model   = { path = "../model" }
 sven-tools   = { path = "../tools" }

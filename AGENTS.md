@@ -25,8 +25,10 @@ briefly and was removed - the TUI is the only interactive local surface.)
 - **Skills** (load before writing code): Rust → `.cursor/skills/programming/rust/SKILL.md`;
   public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`;
   TUI → `.cursor/skills/programming/ratatui/SKILL.md`.
-- **New behaviour**: prefer a `GraphMachine` graph over a new hardcoded Rust
-  machine. See `graph/src/compile.rs` and `docs/technical/graph-machine.md`.
+- **New behaviour**: a new `Machine` impl in `core/src/machines/` reusing
+  `loop_core` for the tool-loop plumbing; register it in
+  `mode.rs::default_registry()`. (A prior graph-DSL extension path was
+  deleted — see `docs/adr/0001-delete-graph-dsl.md`.)
 - **Tests**: `make test` (unit/integration), `make check` (clippy `-D warnings`,
   zero-warning policy), `make tests/e2e/basic` (bats E2E; needs `bats-core`).
 - **Before any sweeping/cross-cutting change, read "Making cross-cutting
@@ -80,8 +82,7 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-input` | ATIF trajectory-backed session store (`trace_session`), legacy YAML chat import, markdown history, conversation parse/render |
 | **`trace`** | **ATIF v1.7 trajectory format** (package name `trace`, deliberately without the `sven-` prefix): `Trajectory`/`TraceStep`/`AgentProfile`/etc. model, spec validation (`validate_trajectory`), atomic whole-document JSON persistence with opt-in concurrent-modification detection (the interactive surfaces currently pass `expected = None`), header-only fast reads, NDJSON step streaming. Zero dependencies on other sven crates - `sven-input::trace_session` is the sole consumer. |
 | `sven-tools` | Tool suite, `Tool`/`ToolDisplay` traits, `ApprovalPolicy`, `ToolPolicy`/`RolePolicy` (fs_root jail), `PermissionRequester`, `ToolRegistry` (`execute` / `execute_with_requester` / `execute_unattended`) |
-| `sven-graph` | Graph DSL (`Graph`/`NodeData`/`EdgeData`/`GuardExpr`/`EffectTmpl`), `GraphBuilder`, guard/template evaluators, `NativeRegistry` |
-| `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `GraphMachine`, `ModeRegistry`, `loop_core`; `AgentEvent` + the kernel→AgentEvent adapter |
+| `sven-core` | HSM machines: `ReactiveAgentMachine`, `SdlcMachine`, `TaskMachine`, `ModeRegistry`, `loop_core`; `AgentEvent` + the kernel→AgentEvent adapter |
 | `sven-runtime` | Shared runtime utils: workspace root, skill/agent/knowledge discovery |
 | `sven-bootstrap` | `RuntimeBuilder` (assembles the kernel from config + mode; `with_effect_executor`, `with_principal`), `SessionSupervisor`, `SessionBundle`/`RuntimeHandle` |
 | `sven-ci` | Headless runner: `RuntimeRunner` (single-shot HSM driver) + workflow orchestration (`--file`, `--var`, jsonl/chat I/O, artifacts, output formats) driving the kernel |
@@ -169,8 +170,8 @@ site. When you add a new axis of extension, add a row here.
 4. `sven-tools` `kernel_capability()` of the tools that use it.
 
 ### Add a new HSM machine / mode
-1. `core/src/machines/…` - implement `Machine` (or author a `GraphMachine`
-   graph - preferred).
+1. `core/src/machines/…` - implement `Machine`, reusing `loop_core` for the
+   tool-loop plumbing.
 2. `core/src/mode.rs::default_registry()` - register the mode string.
 3. Its `permission_policy()`.
 4. `bootstrap/src/runtime_builder.rs` - any child-spawner wiring.
@@ -243,4 +244,5 @@ must be applied to **each surface that constructs a kernel via
 ## Documentation
 - [README.md](README.md), [docs/00-introduction.md](docs/00-introduction.md)
 - [docs/technical/](docs/technical/) - HSM architecture, ACP, skill system, P2P,
-  session protocol, graph machine, cloud platform.
+  session protocol, cloud platform.
+- [docs/adr/](docs/adr/) - architecture decision records.
