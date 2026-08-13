@@ -671,6 +671,9 @@ impl RuntimeBuilder {
         .with_no_tools(runtime.no_tools)
         .with_compaction_config(sven_executors::CompactionConfig::from_agent_config(
             &self.config.agent,
+        ))
+        .with_thinking_budget(sven_core::ThinkingBudget::from_agent_config(
+            &self.config.agent,
         ));
 
         // A caller-supplied executor (see `with_effect_executor`) replaces the

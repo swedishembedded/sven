@@ -15,3 +15,4 @@ pub mod refresh;
 pub mod share;
 pub mod team;
 pub mod tenant;
+pub mod think_limit;

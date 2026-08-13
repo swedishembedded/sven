@@ -114,7 +114,10 @@ impl ChildSpawner for SdlcChildSpawner {
             Arc::clone(&conv_store),
             Arc::clone(&call_id_to_thread),
             cancel_handle,
-        );
+        )
+        .with_thinking_budget(sven_core::ThinkingBudget::from_agent_config(
+            &self.config.agent,
+        ));
 
         let tool_executor = ToolExecutor::with_shared_store(
             Arc::clone(&self.tool_registry),

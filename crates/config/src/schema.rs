@@ -752,6 +752,26 @@ pub struct AgentConfig {
     /// Total run wall-clock timeout in seconds (0 = no limit).
     #[serde(default)]
     pub max_run_timeout_secs: u64,
+
+    /// Cap on estimated thinking/reasoning tokens for a single turn, guarding
+    /// against a model (observed with some local reasoning models, e.g. Qwen)
+    /// that loops indefinitely instead of converging to an answer. Checked by
+    /// `stream_turn` against a chars/4 estimate of accumulated
+    /// `ThinkingDelta` content. `None` (the default) falls back to 10% of the
+    /// model's resolved context window - or no cap at all when the window
+    /// isn't known. Live-adjustable in a session via `/think-limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_thinking_tokens: Option<u32>,
+
+    /// Cap on wall-clock time a model may spend emitting `ThinkingDelta`s
+    /// with no forward progress (a real text or tool-call delta) before the
+    /// turn is aborted - the other half of the thinking-loop watchdog beside
+    /// `max_thinking_tokens`, whichever fires first. Reset on every sign of
+    /// progress, so a legitimately long multi-step turn is never killed.
+    /// `None` (the default) falls back to 600s. Live-adjustable via
+    /// `/think-limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_timeout_secs: Option<u64>,
 }
 
 fn default_compaction_keep_recent() -> usize {
@@ -777,6 +797,8 @@ impl Default for AgentConfig {
             system_prompt: None,
             max_step_timeout_secs: 0,
             max_run_timeout_secs: 0,
+            max_thinking_tokens: None,
+            thinking_timeout_secs: None,
         }
     }
 }

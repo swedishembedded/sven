@@ -14,7 +14,10 @@ pub mod completion;
 pub mod machines;
 pub mod mode;
 
-pub use stream_turn::{stream_turn, to_model_schemas, ModelResolver};
+pub use stream_turn::{
+    set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
+    AbortedError, ModelResolver, ThinkingBudget,
+};
 pub use compact::{
     compact_session, compact_session_with_strategy, emergency_compact, finish_compaction,
     prepare_compaction, smart_truncate, CompactionPlan,

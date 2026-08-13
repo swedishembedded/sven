@@ -393,6 +393,8 @@ const AGENT_CONFIG_KEYS: &[&str] = &[
     "system_prompt",
     "max_step_timeout_secs",
     "max_run_timeout_secs",
+    "max_thinking_tokens",
+    "thinking_timeout_secs",
 ];
 
 /// Known keys in [`crate::ToolsConfig`].
@@ -788,6 +790,45 @@ model:
         validate_unknown_fields(&yaml, "");
     }
 
+    #[test]
+    fn thinking_watchdog_keys_survive_the_full_load_pipeline() {
+        // Regression guard for the allow-list trap: a key can be a real
+        // struct field yet still get silently flagged as unknown (or the
+        // reverse - listed but not actually a field) if `AGENT_CONFIG_KEYS`
+        // and `AgentConfig` drift apart. Round-trip through the real `load()`
+        // pipeline, not just `validate_unknown_fields`, so both the allow-list
+        // and the actual deserialisation are proven together.
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "agent:\n  max_thinking_tokens: 20000\n  thinking_timeout_secs: 300\n"
+        )
+        .unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert_eq!(cfg.agent.max_thinking_tokens, Some(20_000));
+        assert_eq!(cfg.agent.thinking_timeout_secs, Some(300));
+
+        // Also run through validate_unknown_fields directly (doesn't panic
+        // on a key it doesn't recognise, same as the existing coverage above
+        // for other agent keys) as a second, independent check that these
+        // two names are spelled identically in AGENT_CONFIG_KEYS.
+        let yaml = val(
+            "model:\n  provider: openai\n  name: gpt-4o\nagent:\n  max_thinking_tokens: 20000\n  thinking_timeout_secs: 300\n",
+        );
+        validate_unknown_fields(&yaml, "");
+    }
+
+    #[test]
+    fn thinking_watchdog_keys_default_to_none_when_unset() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "agent:\n  max_tool_rounds: 100\n").unwrap();
+        let cfg = load(Some(f.path())).unwrap();
+        assert_eq!(cfg.agent.max_thinking_tokens, None);
+        assert_eq!(cfg.agent.thinking_timeout_secs, None);
+    }
+
     // ── Adversarial config inputs ─────────────────────────────────────────────
 
     #[test]
@@ -992,6 +1033,13 @@ model:
 
     #[test]
     fn brain_keys_file_path_prefers_explicit_env_over_xdg_runtime_dir() {
+        // Missing before: this touches BRAIN_API_KEYS_FILE/XDG_RUNTIME_DIR,
+        // the same shared env vars its five neighbours above already guard
+        // with this mutex - without it, this test and the one below raced
+        // each other's set_var/remove_var and flaked under `cargo test`'s
+        // default parallel execution (reproduced: passed standalone, failed
+        // under the full workspace suite).
+        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("BRAIN_API_KEYS_FILE", "/explicit/override.json");
         std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
         let path = brain_keys_file_path();
@@ -1002,6 +1050,7 @@ model:
 
     #[test]
     fn brain_keys_file_path_falls_back_to_xdg_runtime_dir() {
+        let _guard = AUTODETECT_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("BRAIN_API_KEYS_FILE");
         std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
         let path = brain_keys_file_path();

@@ -30,7 +30,19 @@
 //!
 //! # Cancellation
 //!
-//! A shared cancel slot allows the TUI to abort an in-flight turn.
+//! A shared cancel slot allows a frontend (Esc/Ctrl+C/`/abort` in the TUI, the
+//! thinking-token/time watchdog, ACP's `cancel()`, ...) to abort an in-flight
+//! turn. Cancellation is deliberately **not** reported as a failure: the text
+//! streamed so far is teed into a local accumulator as it arrives (so it
+//! survives the dropped `stream_turn` future), persisted to the thread as an
+//! assistant message tagged `[aborted]` so the next turn knows it was cut
+//! off, and surfaced as `Event::UserCancelled` + `UiEvent::Aborted
+//! { partial_text }` rather than `Event::LlmFailed` + `UiEvent::Error`. This
+//! matters because `LlmFailed` drives `SdlcMachine` into `Recovery`/`Failed`,
+//! the right response to a *real* failure but the wrong one for a turn the
+//! user deliberately cut short. `UiEvent::Aborted` is terminal on its own
+//! (see every consumer: `RuntimeRunner`, `KernelAgent`, ACP's prompt loop),
+//! so unlike the error path it is not followed by a separate `TurnComplete`.
 //!
 //! # Empty turns
 //!
@@ -99,7 +111,7 @@ fn register_calls(
 }
 
 use async_trait::async_trait;
-use sven_core::{stream_turn, to_model_schemas, AgentEvent, ModelResolver};
+use sven_core::{stream_turn, to_model_schemas, AbortedError, AgentEvent, ModelResolver};
 use sven_hsm::{
     Effect, EffectExecutor, Event, EventSink, ObservationSink, ProposedToolCall, ToolCallId,
     UiEvent,
@@ -266,6 +278,10 @@ pub struct TurnExecutor {
     /// existed, always came back `0` (`stream_turn` only sees one turn at a
     /// time and has no memory of prior ones).
     cache_totals: Arc<Mutex<HashMap<String, (u64, u64)>>>,
+    /// Thinking-loop watchdog caps forwarded to every `stream_turn` call
+    /// (main turn and compaction turn alike). See [`sven_core::ThinkingBudget`]
+    /// and [`Self::with_thinking_budget`].
+    thinking_budget: sven_core::ThinkingBudget,
 }
 
 /// Proactive-compaction settings, mirroring `sven_config::AgentConfig`'s
@@ -339,6 +355,7 @@ impl TurnExecutor {
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
+            thinking_budget: sven_core::ThinkingBudget::default(),
         }
     }
 
@@ -354,6 +371,15 @@ impl TurnExecutor {
     #[must_use]
     pub fn with_compaction_config(mut self, compaction: CompactionConfig) -> Self {
         self.compaction = compaction;
+        self
+    }
+
+    /// Configure the thinking-loop watchdog caps (see
+    /// [`sven_core::ThinkingBudget`]). Defaults to `ThinkingBudget::default()`
+    /// (10% of the model's context window, 600s stall timeout) when not called.
+    #[must_use]
+    pub fn with_thinking_budget(mut self, thinking_budget: sven_core::ThinkingBudget) -> Self {
+        self.thinking_budget = thinking_budget;
         self
     }
 
@@ -485,6 +511,7 @@ impl TurnExecutor {
             None,
             None,
             max_output_tokens_override,
+            self.thinking_budget,
             &tx,
         )
         .await;
@@ -660,8 +687,22 @@ impl EffectExecutor for TurnExecutor {
         let totals_thread_id = thread_id.clone();
         let catalog_context_window = context_window.unwrap_or(0);
         let catalog_max_output = configured_max_output.unwrap_or(0);
+        // Teed copy of the assistant text streamed so far. `stream_turn`'s
+        // own return value is unreachable on cancellation (its future is
+        // dropped mid-poll by the `select!` below), so this is the only
+        // place the partial text survives an abort. Deliberately text-only -
+        // thinking deltas are not accumulated here, since they must never be
+        // fed back into the conversation store as if they were the model's
+        // actual reply.
+        let partial_text = Arc::new(Mutex::new(String::new()));
+        let partial_text_fwd = Arc::clone(&partial_text);
         let forwarder = tokio::spawn(async move {
             while let Some(mut ev) = rx.recv().await {
+                if let AgentEvent::TextDelta(delta) = &ev {
+                    if let Ok(mut buf) = partial_text_fwd.lock() {
+                        buf.push_str(delta);
+                    }
+                }
                 if let AgentEvent::TokenUsage {
                     cache_read,
                     cache_write,
@@ -699,7 +740,7 @@ impl EffectExecutor for TurnExecutor {
         let result = tokio::select! {
             biased;
             _ = cancel_rx => {
-                Err(anyhow::anyhow!("turn cancelled"))
+                Err(anyhow::Error::new(AbortedError("turn cancelled by user".to_string())))
             }
             r = stream_turn(
                 model.as_ref(),
@@ -709,6 +750,7 @@ impl EffectExecutor for TurnExecutor {
                 req.dynamic_suffix.clone(),
                 response_format,
                 max_output_tokens_override,
+                self.thinking_budget,
                 &tx,
             ) => r,
         };
@@ -716,6 +758,31 @@ impl EffectExecutor for TurnExecutor {
         self.cancel_handle.lock().await.take();
         drop(tx);
         let _ = forwarder.await;
+
+        // A deliberate abort (this cancel channel, or stream_turn's own
+        // thinking-token/time watchdog) is reported as `UserCancelled` +
+        // `Aborted`, never as `LlmFailed` + `Error` - see the "Cancellation"
+        // module doc for why that distinction matters to `SdlcMachine`.
+        if let Err(e) = &result {
+            if let Some(aborted) = e.downcast_ref::<AbortedError>() {
+                let partial = partial_text
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+                let marker = format!("[aborted: {aborted}]");
+                let persisted = if partial.is_empty() {
+                    marker
+                } else {
+                    format!("{partial}\n\n{marker}")
+                };
+                append_messages(&self.store, &thread_id, vec![Message::assistant(&persisted)]);
+                obs.emit(UiEvent::Aborted {
+                    partial_text: partial,
+                });
+                let _ = sink.emit(Event::UserCancelled).await;
+                return;
+            }
+        }
 
         let (text, tool_calls) = match result {
             Ok(t) => t,

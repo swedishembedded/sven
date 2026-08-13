@@ -235,6 +235,164 @@ async fn reactive_agent_machine_routes_user_message_to_text_delta_on_obs_sink() 
     rt.abort();
 }
 
+/// Streams one `TextDelta` and then hangs forever - never reaches `Done`,
+/// never errors on its own. The only way this stream ends is by dropping it,
+/// which is exactly what happens when `TurnExecutor`'s `tokio::select!`
+/// resolves via the cancel branch. Used to prove cancellation mid-stream:
+/// the partial text must survive even though the provider itself never
+/// finishes.
+struct HangingProvider;
+
+#[async_trait]
+impl sven_model::ModelProvider for HangingProvider {
+    fn name(&self) -> &str {
+        "hanging"
+    }
+    fn model_name(&self) -> &str {
+        "hanging"
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        let stream = futures::stream::unfold(0u8, move |state| async move {
+            match state {
+                0 => Some((
+                    Ok(sven_model::ResponseEvent::TextDelta("partial reply".into())),
+                    1,
+                )),
+                _ => {
+                    // Hang until the caller drops this stream (i.e. cancels).
+                    futures::future::pending::<()>().await;
+                    unreachable!("pending() never resolves")
+                }
+            }
+        });
+        Ok(Box::pin(stream))
+    }
+}
+
+/// Cancelling a turn mid-stream (the same mechanism ESC/Ctrl+C//abort use
+/// via `TurnExecutor::cancel_handle`) must: preserve the text streamed so
+/// far, report it via `UiEvent::Aborted` (not `UiEvent::Error`), post
+/// `Event::UserCancelled` (not `Event::LlmFailed`) so the machine returns
+/// cleanly to `Idle` rather than a failure state, and never emit a
+/// `UiEvent::TurnComplete` (superseded by `Aborted`, which every consumer
+/// already treats as terminal on its own).
+#[tokio::test]
+async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
+    use sven_core::ReactiveAgentMachine;
+    use sven_executors::CompositeExecutorBuilder;
+    use sven_hsm::{dispatch::Hsm, submachine::ErasedMachine};
+
+    let store = Arc::new(std::sync::Mutex::new(sven_llm::ConversationStore::new()));
+    let call_id_to_thread = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        sven_hsm::ToolCallId,
+        (String, String),
+    >::new()));
+    let cancel_handle = Arc::new(Mutex::new(None));
+    let turn_exec = sven_executors::TurnExecutor::new(
+        Arc::new(HangingProvider),
+        None,
+        Arc::new(sven_tools::ToolRegistry::new()),
+        store,
+        call_id_to_thread,
+        Arc::clone(&cancel_handle),
+    );
+    let executor = CompositeExecutorBuilder::default()
+        .with_turn(turn_exec)
+        .build();
+
+    let machine: Box<dyn ErasedMachine> = Box::new(Hsm::new(ReactiveAgentMachine::new()));
+    let rt = ErasedRuntime::spawn(
+        machine,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        executor,
+        64,
+    );
+    let mut rt_obs_rx = rt.subscribe_observations();
+
+    let sent = rt
+        .sink()
+        .emit(Event::UserMessage {
+            text: "ping".into(),
+        })
+        .await;
+    assert!(sent, "UserMessage must be accepted by the kernel sink");
+
+    // Wait for the partial text to actually land on the observation plane
+    // before cancelling - this is the same event the forwarder task uses to
+    // update the partial-text accumulator, in the same loop iteration, so
+    // seeing it here guarantees the accumulator already has it too. Without
+    // this synchronization the test would race the cancel against the
+    // delta's delivery.
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(!remaining.is_zero(), "TextDelta never arrived");
+        tokio::select! {
+            Ok(ev) = rt_obs_rx.recv() => {
+                if ev == UiEvent::TextDelta("partial reply".into()) {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep(remaining) => panic!("TextDelta never arrived"),
+        }
+    }
+
+    // Fire the abort exactly as the TUI's `send_abort_signal` does: take and
+    // drop the stored cancel sender.
+    let sender = cancel_handle.lock().await.take();
+    drop(sender);
+
+    // Collect observations until Aborted (or the deadline).
+    let mut events: Vec<UiEvent> = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        tokio::select! {
+            Ok(ev) = rt_obs_rx.recv() => {
+                let is_aborted = matches!(ev, UiEvent::Aborted { .. });
+                events.push(ev);
+                if is_aborted { break; }
+            }
+            _ = tokio::time::sleep(remaining) => break,
+        }
+    }
+
+    let aborted = events.iter().find_map(|ev| match ev {
+        UiEvent::Aborted { partial_text } => Some(partial_text.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        aborted.as_deref(),
+        Some("partial reply"),
+        "Aborted must carry the text streamed before cancellation: {events:?}"
+    );
+    assert!(
+        !events.contains(&UiEvent::TurnComplete),
+        "a cancelled turn must not also emit TurnComplete: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|ev| matches!(ev, UiEvent::Error(_))),
+        "a user-initiated cancel must not be reported as an Error: {events:?}"
+    );
+
+    // The machine must have returned cleanly to Idle (via UserCancelled),
+    // not gotten stuck or routed through a failure path.
+    rt.wait_for_state("Idle").await;
+
+    rt.abort();
+}
+
 /// A provider that always returns an empty turn (no text, no tool calls)
 /// must eventually fail the run loudly, not report a silent success.
 ///

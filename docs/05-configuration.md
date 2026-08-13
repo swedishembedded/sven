@@ -355,6 +355,8 @@ Controls the agent's autonomy and defaults.
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
 | `compaction_overhead_reserve` | `0.10` | Fraction of context reserved for schemas and dynamic context |
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
+| `max_thinking_tokens` | 10% of context window | Estimated reasoning-token cap per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
+| `thinking_timeout_secs` | `600` | Seconds a model may reason with no forward progress before the turn aborts |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.
@@ -429,6 +431,35 @@ agent:
   compaction_keep_recent: 10
   tool_result_token_cap: 6000
 ```
+
+#### Thinking-loop watchdog
+
+Some models (local reasoning models such as Qwen are the common case) can
+loop indefinitely in their reasoning without ever converging to an answer.
+`stream_turn` guards against this with two independent caps, checked on every
+`ThinkingDelta` - whichever fires first aborts the turn:
+
+- **`max_thinking_tokens`** - a per-turn ceiling on estimated reasoning
+  tokens (chars/4). Not reset by progress; it's a total budget for the turn.
+  Defaults to 10% of the model's resolved context window, or no cap at all
+  when the window isn't known.
+- **`thinking_timeout_secs`** - wall-clock time spent reasoning with *no*
+  forward progress (a real text or tool-call delta). Reset on every sign of
+  progress, so a legitimately long multi-step turn is never killed - only a
+  stalled loop is. Defaults to `600`.
+
+A watchdog abort is reported the same way as pressing `Esc` mid-generation:
+the partial text streamed so far is kept (marked `[aborted: ...]`), and the
+turn ends cleanly rather than as an error.
+
+```yaml
+agent:
+  max_thinking_tokens: 20000
+  thinking_timeout_secs: 300
+```
+
+Both caps can also be adjusted live in a running session with `/think-limit`
+(no args to show the current values).
 
 ---
 

@@ -190,6 +190,26 @@ impl App {
                         return false;
                     }
 
+                    if let Some(ImmediateAction::SetThinkingBudget(budget)) =
+                        result.immediate_action
+                    {
+                        // Process-wide and immediate - no session rebuild
+                        // needed (unlike `/model`): the very next turn on
+                        // any session/subagent in this process observes it.
+                        sven_core::set_thinking_budget_override(budget);
+                        if let Some(ref toast_tx) = self.toast_tx {
+                            let _ = toast_tx
+                                .send(crate::app::ui_state::Toast::info(match budget {
+                                    Some(_) => "Thinking-loop watchdog override set".to_string(),
+                                    None => {
+                                        "Thinking-loop watchdog override cleared".to_string()
+                                    }
+                                }))
+                                .await;
+                        }
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::McpAuth { ref server }) = result.immediate_action {
                         if let Some(ref mgr) = self.mcp_manager {
                             let mgr = Arc::clone(mgr);

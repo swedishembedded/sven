@@ -362,10 +362,10 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         let mut event_rx = entry.event_rx.lock().await;
 
         // Discard any tail events buffered from a previously cancelled or
-        // errored turn (e.g. the `Error("turn cancelled") + TurnComplete` pair
-        // the kernel emits on cancel) so they never bleed into this prompt. A
-        // normal turn consumes its own `TurnComplete`, leaving the stream empty
-        // here, so this is a no-op in the common case.
+        // errored turn (e.g. a stray `Aborted` the kernel emits on cancel) so
+        // they never bleed into this prompt. A normal turn consumes its own
+        // `TurnComplete`, leaving the stream empty here, so this is a no-op
+        // in the common case.
         while event_rx.try_recv().is_ok() {}
 
         // Post the user message to the kernel.
@@ -403,11 +403,21 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                             stop_reason = Some(StopReason::EndTurn);
                             break;
                         }
+                        AgentEvent::Aborted { .. } => {
+                            // A user-initiated abort (Esc, Ctrl+C, /abort, or
+                            // the thinking watchdog) is terminal on its own -
+                            // the kernel no longer follows it with a
+                            // `TurnComplete`, so this must break the loop
+                            // itself or a cancelled turn would hang forever
+                            // waiting for an event that will never arrive.
+                            stop_reason = Some(StopReason::Cancelled);
+                            break;
+                        }
                         other => {
-                            // Non-terminal events (including `Aborted`, which
-                            // maps to `None`) are forwarded when they have an
-                            // ACP equivalent; the loop keeps draining until a
-                            // terminal `TurnComplete`/`Error` arrives.
+                            // Non-terminal events are forwarded when they
+                            // have an ACP equivalent; the loop keeps draining
+                            // until a terminal `TurnComplete`/`Aborted`/
+                            // `Error` arrives.
                             if let Some(update) = agent_event_to_session_update(&other) {
                                 let notification =
                                     SessionNotification::new(args.session_id.clone(), update);
