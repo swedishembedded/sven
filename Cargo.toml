@@ -15,7 +15,6 @@ members = [
     "crates/ci",
     "crates/tui",
     "crates/frontend",
-    "crates/gui",
     "crates/sven-p2p",
     "crates/sven-node",
     "crates/sven-node-client",
@@ -106,8 +105,6 @@ similar      = "2"
 rmcp         = { version = "0.15", default-features = false }
 memmap2      = "0.9"
 notify       = "7"
-slint        = { version = "1.15" }
-slint-build  = "1.15"
 
 [package]
 name    = "sven"
@@ -125,7 +122,6 @@ sven-config      = { path = "crates/config" }
 sven-model       = { path = "crates/model" }
 sven-input       = { path = "crates/input" }
 sven-tools       = { path = "crates/tools" }
-sven-core        = { path = "crates/core" }
 sven-bootstrap   = { path = "crates/bootstrap" }
 sven-ci          = { path = "crates/ci" }
 sven-team        = { path = "crates/team" }
@@ -135,8 +131,6 @@ sven-p2p         = { path = "crates/sven-p2p" }
 sven-node-client = { path = "crates/sven-node-client" }
 sven-mcp         = { path = "crates/mcp" }
 sven-acp         = { path = "crates/acp" }
-sven-gui         = { path = "crates/gui" }
-sven-frontend    = { path = "crates/frontend" }
 # Cloud control plane (`sven cloud` subcommand): tenants, tokens, tether, gating.
 sven-cloud       = { path = "crates/cloud" }
 # Pricing catalog + credit ledger backing `sven cloud session`'s gate.
@@ -186,9 +180,8 @@ depends       = "$auto"
 section       = "utils"
 priority      = "optional"
 assets = [
-    # CLI/TUI/GUI binary (`sven --gui` for Slint desktop)
+    # CLI/TUI binary
     ["target/release/sven", "usr/bin/sven", "755"],
-    ["assets/sven.desktop", "usr/share/applications/sven.desktop", "644"],
     # Shell completions (generated during the deb build - see Makefile)
     ["target/completions/sven.bash", "usr/share/bash-completion/completions/sven",    "644"],
     ["target/completions/_sven",     "usr/share/zsh/vendor-completions/_sven",        "644"],

@@ -27,7 +27,7 @@ DIST    ?= dist
 DEB_OUT := target/debian
 REPO    := swedishembedded/sven
 
-.PHONY: all build build/debug build/release release gui gui-release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
+.PHONY: all build build/debug build/release release test tests/e2e tests/e2e/basic tests/e2e/cloud demos deb deb/debug deb/release clean help fmt check check/arch docs docs-pdf \
         relay relay-release p2p-client p2p-client-release p2p p2p-release p2p-test \
         release/build release/publish release/tag \
         release/patch release/minor release/major \
@@ -38,27 +38,19 @@ REPO    := swedishembedded/sven
 
 all: build
 
-## build          - alias for build/debug (debug build CLI + TUI + GUI)
+## build          - alias for build/debug (debug build CLI + TUI)
 build: build/debug
 
-## release        - alias for build/release (optimised release build CLI + TUI + GUI)
+## release        - alias for build/release (optimised release build CLI + TUI)
 release: build/release
 
-## build/debug    - debug build (CLI + TUI + GUI)
+## build/debug    - debug build (CLI + TUI)
 build/debug:
 	$(CARGO) build $(CARGO_FLAGS)
 
-## build/release  - optimised release build (CLI + TUI + GUI)
+## build/release  - optimised release build (CLI + TUI)
 build/release:
 	$(CARGO) build --release $(CARGO_FLAGS)
-
-## gui       - debug build (GUI is `target/debug/sven --gui`, same binary as TUI)
-gui: build/debug
-	@echo "Run the desktop GUI with: target/debug/sven --gui"
-
-## gui-release - release build for desktop GUI (`target/release/sven --gui`)
-gui-release: build/release
-	@echo "Desktop GUI: target/release/sven --gui"
 
 ## test      - run all unit + integration tests
 # --workspace is required: the root Cargo.toml defines both a [workspace] and

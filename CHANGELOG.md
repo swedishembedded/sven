@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - **Workspace**: removed 13 internal dependencies the architecture checker found with zero real use sites — 3 from a manual audit (`sven-acp`→`sven-node`, `sven-frontend`→`sven-executors`) plus 11 more the checker itself surfaced on its first run: `sven`→`sven-core`; `sven-acp`→`sven-model`; `sven-channels`/`sven-integrations`/`sven-memory`/`sven-scheduler`→`sven-config`; `sven-llm`→`sven-hsm`; `sven-memory`→`sven-model`; `sven-node`→`sven-runtime`; `sven-team`→`sven-p2p`; `sven-ci`→`sven-frontend`. Moved `sven-node`'s dependency on `sven-frontend` to `[dev-dependencies]` (used only by a test).
+- **BREAKING (CLI, sven-gui)**: deleted `crates/gui` (the Slint desktop GUI), the `sven --gui`/`-g` CLI flag, the `sven.desktop` application-menu launcher, and the `.agents/skills/slint-gui` skill. The TUI (`sven` with no flags, in a terminal) is the only interactive local surface; headless (`--headless`/`-H`) and the P2P node/cloud surfaces are unaffected. `libfontconfig-dev` is no longer required to cross-compile for aarch64 (`Cross.toml`).
 
 ## [1.9.0] - 2026-03-22
 

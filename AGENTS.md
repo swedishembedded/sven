@@ -1,9 +1,10 @@
 # Sven - AI Coding Agent
 
 Sven is a keyboard-driven AI coding agent built in Rust. It runs as an
-interactive TUI (`sven`), a Slint desktop GUI (`sven-ui`), a headless CI
-runner, a networked P2P node, and a **managed-agents cloud platform**
-("cloud brain, local hands") - all from the same multi-crate workspace.
+interactive TUI (`sven`), a headless CI runner, a networked P2P node, and a
+**managed-agents cloud platform** ("cloud brain, local hands") - all from the
+same multi-crate workspace. (A Slint desktop GUI, `crates/gui`, existed
+briefly and was removed - the TUI is the only interactive local surface.)
 
 ## For AI Agents Working on This Codebase
 
@@ -11,7 +12,7 @@ runner, a networked P2P node, and a **managed-agents cloud platform**
 - **The single execution engine is the HSM kernel.** There is exactly one agent
   loop: the Hierarchical State Machine in `sven-hsm`, assembled by
   `sven-bootstrap::RuntimeBuilder`. Every surface (headless CI, interactive
-  TUI/GUI, P2P node, ACP, cloud) drives that kernel. There is **no** second
+  TUI, P2P node, ACP, cloud) drives that kernel. There is **no** second
   "agent loop" - the legacy `sven_core::Agent`/`AgentBuilder` has been retired.
 - **Key principle**: The HSM is the deterministic process kernel; the LLM is an
   untrusted reasoning service; tools are invoked exclusively through typed
@@ -23,7 +24,7 @@ runner, a networked P2P node, and a **managed-agents cloud platform**
   outbound WSS tether. Credentials never leave the customer boundary.
 - **Skills** (load before writing code): Rust → `.cursor/skills/programming/rust/SKILL.md`;
   public API changes → `.cursor/skills/programming/rust-semver/SKILL.md`;
-  TUI → `.cursor/skills/programming/ratatui/SKILL.md`; GUI → Slint `.slint` DSL.
+  TUI → `.cursor/skills/programming/ratatui/SKILL.md`.
 - **New behaviour**: prefer a `GraphMachine` graph over a new hardcoded Rust
   machine. See `graph/src/compile.rs` and `docs/technical/graph-machine.md`.
 - **Tests**: `make test` (unit/integration), `make check` (clippy `-D warnings`,
@@ -55,7 +56,6 @@ repo history). When a task is finished, move its file into `.todo/completed/`
 | Binary | Entry point | Description |
 |--------|-------------|-------------|
 | `sven` | `src/main.rs` | Interactive TUI, headless CI runner, P2P node, CLI |
-| `sven-ui` | `src/ui_main.rs` (crate `sven-gui`) | Slint desktop GUI |
 | `sven-companion` | `crates/companion/src/main.rs` | Customer-premises "local hands": dials out to the cloud, executes constrained tools locally |
 
 The cloud **control plane** is not a separate binary — it is the `sven cloud`
@@ -94,7 +94,6 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 | `sven-team` | Agent-team coordination: shared task list, worktrees, P2P `TeamEvent` |
 | `sven-frontend` | **Shared frontend layer**: `MachineProjection`, `agent`/`node_agent`/`operator` tasks, `AgentEvent` consumption, slash commands, markdown, queue, tool views |
 | `sven-tui` | Ratatui TUI (`sven` binary): `UiMode`, projection consumer, keybindings |
-| `sven-gui` | Slint desktop GUI (`sven-ui` binary): `.slint` files + Rust bridge |
 | **`sven-wire`** | **Cloud tether protocol**: versioned serde types (`CompanionRegister`, `ToolCallRequest`/`Result`, `Progress`, `ApprovalRequest`/`Response`, `Heartbeat`) between control plane and companion |
 | **`sven-companion`** | **Local hands**: dials out over WSS, registers a constrained tool manifest, executes under fs_root jail + shell allowlist + approval hooks; loopback mode for tests |
 | **`sven-metering`** | Pricing catalog (per-model prices + tenant markup), usage events, append-only hash-chained credit ledger, statement export |
@@ -103,11 +102,13 @@ The dependency spine: `sven-bootstrap` (RuntimeBuilder) → `sven-hsm` (kernel) 
 ## Architecture
 
 ```
- sven (CLI/TUI)   sven-ui (GUI)   sven-cloud (control plane)   sven node (P2P/WS)
-      │                │                    │                        │
- sven-tui         sven-gui            portal/feed +            ControlService
-      └──── sven-frontend ────┘       CompanionRegistry             │
-                  │ MachineProjection / AgentEvent                  │
+ sven (CLI/TUI)        sven-cloud (control plane)   sven node (P2P/WS)
+      │                        │                        │
+ sven-tui                portal/feed +            ControlService
+      │  MachineProjection / CompanionRegistry          │
+      │  AgentEvent              │                      │
+      └──── sven-frontend ───────┘                      │
+                  │                                      │
               sven-bootstrap (RuntimeBuilder)  ◄─── one assembly point
                   │
             sven-hsm (kernel: pure transitions → Vec<Effect>)
@@ -123,11 +124,11 @@ makes the cloud split (remote tools, replay, audit ledger) possible.
 
 ## Frontend architecture
 
-TUI and GUI **share `sven-frontend`** - never duplicate logic between `sven-tui`
-and `sven-gui`; extract to `sven-frontend`. New slash commands go in
-`sven-frontend::commands::builtin`, never in `sven-tui`. Both consume the same
-`AgentEvent` stream (produced from the kernel's `UiEvent` by the adapter in
-`sven-core`) and the `MachineProjection` broadcast.
+Interactive surfaces **share `sven-frontend`** - never duplicate logic inside
+`sven-tui` that belongs in the shared layer; extract to `sven-frontend`. New
+slash commands go in `sven-frontend::commands::builtin`, never in `sven-tui`.
+Surfaces consume the `AgentEvent` stream (produced from the kernel's `UiEvent`
+by the adapter in `sven-core`) and the `MachineProjection` broadcast.
 
 ---
 
@@ -184,13 +185,13 @@ site. When you add a new axis of extension, add a row here.
    `sven-metering`** if it should be billable.
 
 ### Change what a session/agent run looks like on a SURFACE
-The kernel is one; the surfaces that drive it are the four you must keep in sync.
+The kernel is one; the surfaces that drive it are the ones you must keep in sync.
 A change to session lifecycle, event streaming, approval flow, or cancellation
 must be applied to **each surface that constructs a kernel via
 `RuntimeBuilder`**:
 1. **Headless** - `sven-ci` (`RuntimeRunner` + workflow orchestration).
-2. **Interactive TUI/GUI** - `frontend/src/agent.rs` (+ its `AgentEvent`
-   adapter usage; TUI/GUI consume `AgentEvent`).
+2. **Interactive TUI** - `frontend/src/agent.rs` (+ its `AgentEvent`
+   adapter usage; the TUI consumes `AgentEvent`).
 3. **P2P node** - `sven-node` (`control/service.rs`, `agent_builder.rs`,
    `node.rs`, `p2p_kernel.rs`).
 4. **Local ACP** - `acp/src/agent.rs`.
@@ -200,7 +201,7 @@ must be applied to **each surface that constructs a kernel via
 ### Add a new `AgentEvent` / `UiEvent`
 1. `sven-hsm` `UiEvent` (kernel-emitted) and/or `sven-core` `AgentEvent`.
 2. The `UiEvent`→`AgentEvent` adapter (`sven-core`).
-3. Consumers: `sven-frontend` (projection + renderers), `sven-tui`, `sven-gui`,
+3. Consumers: `sven-frontend` (projection + renderers), `sven-tui`,
    `sven-ci` output (`runner/event.rs`, `conversation.rs` trace tokens),
    `sven-acp` notification mapping, `sven-node` `ui_event_to_control`.
    Missing one silently drops the event on that surface - check all.
@@ -233,7 +234,7 @@ must be applied to **each surface that constructs a kernel via
   for any surface-spanning change.
 - **The `EffectExecutor` trait is the I/O seam.** New I/O = new/extended
   executor, never I/O in a transition.
-- **Never duplicate `sven-tui`/`sven-gui` logic** - shared code to `sven-frontend`.
+- **Never duplicate frontend logic inside `sven-tui`** - shared code to `sven-frontend`.
 - **Trace/output is a public contract**: the bats suite in `tests/e2e/basic/`
   pins the headless stderr/stdout tokens (`[sven:tool:call]`,
   `[sven:tool:result]`, `[sven:tokens]`, `## Tool` / `## Tool Result`). Change

@@ -21,7 +21,6 @@ use sven_bootstrap::build_cli_tool_registry;
 use sven_ci::{find_project_root, CiOptions, CiRunner, OutputFormat};
 use sven_ci::{MapOptions, ReduceOptions, TeeOptions};
 use sven_config::AgentMode;
-use sven_gui::bridge::{SvenApp, SvenAppOptions};
 use sven_input::{history, parse_frontmatter, parse_workflow};
 use sven_model::catalog::ModelCatalogEntry;
 use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
@@ -43,13 +42,11 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // In TUI/GUI mode writing to stderr corrupts the display.
+    // In TUI mode writing to stderr corrupts the display.
     // Suppress all tracing output unless the caller explicitly opts in by
     // setting SVEN_LOG_FILE (writes to that file) or by passing --verbose
     // (writes to stderr - only useful with headless / CI mode).
     let is_interactive = !cli.is_headless() && cli.command.is_none();
-    let is_tui = is_interactive && !cli.gui;
-    let is_gui = is_interactive && cli.gui;
     let is_node = matches!(
         &cli.command,
         Some(Commands::Node { .. })
@@ -59,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
             | Some(Commands::Cloud { .. })
             | Some(Commands::Share { .. })
     );
-    init_logging(cli.verbose, is_tui || is_gui, is_node);
+    init_logging(cli.verbose, is_interactive, is_node);
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
@@ -249,9 +246,7 @@ async fn main() -> anyhow::Result<()> {
         .to_string()
     });
 
-    if cli.gui {
-        run_gui(cli, config).await
-    } else if cli.is_headless() {
+    if cli.is_headless() {
         run_ci(cli, config).await
     } else {
         run_tui(cli, config).await
@@ -2227,62 +2222,6 @@ async fn run_as_teammate(
     });
 
     Ok(())
-}
-
-async fn run_gui(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
-    use sven_frontend::NodeBackend as GuiNodeBackend;
-
-    // ── Model resolution ───────────────────────────────────────────────────────
-    let model_cfg = if let Some(ref model_str) = cli.model {
-        sven_model::resolve_model_from_config(&config, model_str)
-    } else {
-        config.model.clone()
-    };
-
-    // ── Node backend (env-var / flag passthrough) ──────────────────────────────
-    let node_url = std::env::var("SVEN_NODE_URL")
-        .or_else(|_| std::env::var("SVEN_GATEWAY_URL"))
-        .ok();
-    let node_token = std::env::var("SVEN_NODE_TOKEN")
-        .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
-        .ok();
-    let node_insecure = std::env::var("SVEN_NODE_INSECURE")
-        .or_else(|_| std::env::var("SVEN_GATEWAY_INSECURE"))
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    let node_backend = match (node_url, node_token) {
-        (Some(url), Some(token)) => Some(GuiNodeBackend {
-            url,
-            token,
-            insecure: node_insecure,
-        }),
-        _ => None,
-    };
-
-    // ── Build and run the Slint GUI ────────────────────────────────────────────
-    // `app.run()` is the Slint synchronous event loop and must not be called
-    // from inside a tokio async task without yielding the thread first.
-    // `block_in_place` tells tokio "this thread will block; move other tasks
-    // elsewhere" and keeps us on the current (main) thread, which is required
-    // by Slint.  We use the existing runtime handle to drive the async build
-    // without creating a nested runtime.
-    let opts = SvenAppOptions {
-        config: Arc::clone(&config),
-        model_cfg,
-        mode: cli.mode,
-        node_backend,
-        initial_prompt: cli.prompt,
-        initial_queue: vec![],
-        tool_displays: sven_tools::SharedToolDisplays::default(),
-    };
-
-    tokio::task::block_in_place(|| {
-        let handle = tokio::runtime::Handle::current();
-        let app = handle.block_on(SvenApp::build(opts))?;
-        app.run()?;
-        Ok(())
-    })
 }
 
 async fn run_ci(cli: Cli, config: Arc<sven_config::Config>) -> anyhow::Result<()> {
