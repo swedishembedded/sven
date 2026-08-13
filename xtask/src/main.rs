@@ -481,25 +481,62 @@ fn check_profile(_workspace_root: &Path, profile: &str) -> Result<Vec<String>> {
 // --bless
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Rewrites only the `[[allow.large_file]]` array in architecture.toml,
+/// leaving every other line -- comments, `why` prose, `[[same_layer]]` /
+/// `[[allow.upward]]` / `[[allow.dead_dep]]` entries -- byte-for-byte
+/// untouched. This is a targeted text edit rather than a parse-and-
+/// re-serialize round trip specifically so blessing a routine line-count
+/// bump never drops the hand-authored rationale elsewhere in the file.
+/// Requires `[[allow.large_file]]` to be the LAST section in the file (the
+/// header comment documents this).
 fn bless_large_files(workspace_root: &Path) -> Result<()> {
-    let mut cfg = load_config(workspace_root)?;
+    let path = workspace_root.join("architecture.toml");
+    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+
+    // Find the first line that IS (after trimming) exactly the table-array
+    // header, not a substring match -- a substring search would also match
+    // this very marker appearing inside the header comment's prose above.
+    let marker = "[[allow.large_file]]";
+    let mut cut = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if line.trim() == marker {
+            cut = Some(offset);
+            break;
+        }
+        offset += line.len();
+    }
+    let cut = cut.context("architecture.toml has no [[allow.large_file]] section to bless")?;
+    let preamble = &text[..cut];
+
     let mut fresh = Vec::new();
-    for path in walk_rs_files(workspace_root)? {
-        let rel = path
+    for rs_path in walk_rs_files(workspace_root)? {
+        let rel = rs_path
             .strip_prefix(workspace_root)
-            .unwrap_or(&path)
+            .unwrap_or(&rs_path)
             .to_string_lossy()
             .replace('\\', "/");
-        let lines = count_lines(&path)?;
+        let lines = count_lines(&rs_path)?;
         if lines > 800 {
             fresh.push(LargeFile { path: rel, lines });
         }
     }
     fresh.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.path.cmp(&b.path)));
-    cfg.allow.large_file = fresh;
 
-    let text = toml::to_string_pretty(&cfg).context("serializing architecture.toml")?;
-    fs::write(workspace_root.join("architecture.toml"), text)
-        .context("writing architecture.toml")?;
+    let mut out = String::from(preamble);
+    for f in &fresh {
+        out.push_str("[[allow.large_file]]\n");
+        out.push_str(&format!("path = \"{}\"\n", toml_escape(&f.path)));
+        out.push_str(&format!("lines = {}\n", f.lines));
+    }
+
+    fs::write(&path, out).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
+}
+
+/// Escapes a string for a TOML basic string. Workspace-relative `.rs` paths
+/// never contain control characters, so this only needs to handle backslash
+/// and double-quote.
+fn toml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
